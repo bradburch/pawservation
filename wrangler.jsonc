@@ -1,0 +1,37 @@
+/**
+ * Sandboxed prototype worker — binds ONLY prototype-dedicated resources.
+ * Never bind PET_MANAGEMENT_DB, APP_CACHE, or any production bucket here.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bradpaws-embed-proto",
+  "compatibility_date": "2026-06-05",
+  "main": "./server/index.ts",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    // Prototype-grade: a committed dev secret is acceptable for the sandbox.
+    // Override with `wrangler secret put TOKEN_SECRET` before any non-demo use.
+    "TOKEN_SECRET": "embed-proto-dev-secret-not-for-production",
+  },
+  "d1_databases": [
+    {
+      "binding": "EMBED_PROTO_DB",
+      "database_name": "embed-proto-db",
+      "database_id": "23091d89-2525-4b17-9a60-aef3044d497d",
+    },
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "EMBED_PROTO_CACHE",
+      "id": "ebe8b379ffb74e5bbb70a8b87d12f92e",
+    },
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/embed/*", "/admin/*", "/demo"],
+  },
+}

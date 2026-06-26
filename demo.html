@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pawsome Site Builder — fake CMS host page</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, 'Times New Roman', serif;
+        background: #f6f3ee;
+        color: #2d2a26;
+      }
+      .site-header {
+        background: #2d2a26;
+        color: #f6f3ee;
+        padding: 18px 24px;
+        font-size: 0.9rem;
+      }
+      .site-header h1 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: normal;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+      }
+      .note {
+        max-width: 980px;
+        margin: 16px auto 0;
+        padding: 10px 16px;
+        background: #fff8e1;
+        border: 1px dashed #b08d2f;
+        font-size: 0.85rem;
+      }
+      .columns {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        max-width: 980px;
+        margin: 24px auto;
+        padding: 0 16px 48px;
+      }
+      @media (max-width: 760px) {
+        .columns {
+          grid-template-columns: 1fr;
+        }
+      }
+      .column {
+        background: white;
+        border: 1px solid #ddd6cb;
+        padding: 16px;
+      }
+      .column h2 {
+        font-weight: normal;
+        font-size: 1.05rem;
+        border-bottom: 1px solid #ddd6cb;
+        padding-bottom: 8px;
+      }
+      #toast {
+        position: fixed;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #14532d;
+        color: white;
+        padding: 10px 18px;
+        border-radius: 999px;
+        font-family: system-ui, sans-serif;
+        font-size: 0.9rem;
+        opacity: 0;
+        transition: opacity 0.3s;
+        pointer-events: none;
+      }
+      #toast.show {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <h1>Pawsome Site Builder</h1>
+    </header>
+    <p class="note">
+      This page simulates a customer's CMS website. Each column below embeds a different tenant's
+      widget via the real <code>/embed.js</code> loader — same dates, different branding, rates,
+      capacity, and data.
+    </p>
+    <main class="columns">
+      <section class="column">
+        <h2>Brad Paws — "Book a stay"</h2>
+        <script src="/embed.js" data-bradpaws-tenant="brad-paws" data-height="520"></script>
+      </section>
+      <section class="column">
+        <h2>Happy Tails — "Reserve now"</h2>
+        <script src="/embed.js" data-bradpaws-tenant="happy-tails" data-height="520"></script>
+      </section>
+    </main>
+    <div id="toast"></div>
+    <!-- External file (not inline) so the demo page works under the locked CSP. -->
+    <script src="/demo-host.js"></script>
+  </body>
+</html>
