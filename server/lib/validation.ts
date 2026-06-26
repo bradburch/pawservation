@@ -56,8 +56,6 @@ export function validateBoardingRange(
   if (!isRealDate(start)) return { error: "Invalid start date.", status: 400 };
   if (!isRealDate(end) || end <= start)
     return { error: "Invalid end date.", status: 400 };
-  if (!isFutureOrToday(start))
-    return { error: "That date is in the past.", status: 400 };
   if (nightsBetween(start, end) > MAX_RANGE_NIGHTS)
     return {
       error: `Stays are limited to ${MAX_RANGE_NIGHTS} nights.`,
@@ -69,8 +67,6 @@ export function validateBoardingRange(
 /** Validate a single-day (walk) date. */
 export function validateSingleDate(date: string): DateRangeError | null {
   if (!isRealDate(date)) return { error: "Invalid date.", status: 400 };
-  if (!isFutureOrToday(date))
-    return { error: "That date is in the past.", status: 400 };
   return null;
 }
 
