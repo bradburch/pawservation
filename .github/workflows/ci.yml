@@ -9,8 +9,9 @@ permissions:
   contents: read
 
 concurrency:
+  # Cancel superseded PR runs to save minutes, but never cancel a push to main mid-deploy.
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   quality:
@@ -41,3 +42,37 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: quality
+    # Only deploy real pushes to main — never PRs or forks.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      # Serialize deploys so one is never interrupted by the next push.
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy Worker
+        # Uses the repo's pinned wrangler (devDependency) and reads wrangler.jsonc.
+        # Runtime secrets (TOKEN_SECRET, RESEND_*) live on the Worker already and are
+        # NOT needed here — `wrangler deploy` does not touch them.
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
