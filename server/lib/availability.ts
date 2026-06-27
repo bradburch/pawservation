@@ -90,7 +90,7 @@ async function checkRange(
   // last occupied night) sees a booking that starts exactly on the checkout day. Without the +1,
   // listCapacityRows' `StartDate < end` clips that row and a full final night can be double-booked.
   const rows = await listCapacityRows(
-    env.EMBED_PROTO_DB,
+    env.PAWBOOK_DB,
     tenant.Id,
     startDate,
     addDays(endDateExclusive, 1),
@@ -115,7 +115,7 @@ async function checkSingle(
   option: TenantServiceOption,
   date: string,
 ): Promise<AvailabilityResult> {
-  const rows = await listCapacityRows(env.EMBED_PROTO_DB, tenant.Id, date, addDays(date, 1));
+  const rows = await listCapacityRows(env.PAWBOOK_DB, tenant.Id, date, addDays(date, 1));
   const capacity = buildCapacity(rowsToCapacityEvents(rows));
   if (walkHasConflict(date, capacity)) {
     return { available: false, reason: 'That day is blocked off.' };

@@ -113,7 +113,7 @@ describe('availability API — regression guards', () => {
     // A 2-pet request Mar 11→12: its last night (Mar 11) is full (1+2>2); the soft-bookend
     // look-ahead at Mar 12 must see the full next-day booking and keep the conflict — which
     // only works if the capacity fetch reaches one day past checkout.
-    await insertBookingRequest(env.EMBED_PROTO_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-03-08',
@@ -124,7 +124,7 @@ describe('availability API — regression guards', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await insertBookingRequest(env.EMBED_PROTO_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-03-12',

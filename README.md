@@ -66,7 +66,7 @@ npm run dev                                        # builds the widget + runs wr
 
 ```bash
 npx wrangler d1 create pawbook-db                  # put database_id into wrangler.jsonc
-npx wrangler kv namespace create EMBED_PROTO_CACHE # put id into wrangler.jsonc
+npx wrangler kv namespace create PAWBOOK_CACHE # put id into wrangler.jsonc
 npx wrangler secret put TOKEN_SECRET               # a strong random value (openssl rand -base64 32)
 npm run deploy
 npm run seed:remote

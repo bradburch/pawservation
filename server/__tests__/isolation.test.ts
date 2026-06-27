@@ -18,8 +18,8 @@ describe('tenant isolation', () => {
 
   it('allows the same email to exist independently under both tenants', async () => {
     const { env } = createTestEnv();
-    const userA = await upsertEndUser(env.EMBED_PROTO_DB, TENANT_A, 'jess@example.com');
-    const userB = await upsertEndUser(env.EMBED_PROTO_DB, TENANT_B, 'jess@example.com');
+    const userA = await upsertEndUser(env.PAWBOOK_DB, TENANT_A, 'jess@example.com');
+    const userB = await upsertEndUser(env.PAWBOOK_DB, TENANT_B, 'jess@example.com');
     expect(userA.Id).not.toBe(userB.Id);
     expect(userA.TenantId).toBe(TENANT_A);
     expect(userB.TenantId).toBe(TENANT_B);
@@ -27,8 +27,8 @@ describe('tenant isolation', () => {
 
   it('READ: a booking created under tenant A never appears in tenant B queries', async () => {
     const { env } = createTestEnv();
-    const userA = await upsertEndUser(env.EMBED_PROTO_DB, TENANT_A, 'jess@example.com');
-    await insertBookingRequest(env.EMBED_PROTO_DB, TENANT_A, {
+    const userA = await upsertEndUser(env.PAWBOOK_DB, TENANT_A, 'jess@example.com');
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: userA.Id,
       serviceType: 'boarding',
       startDate: '2028-08-01',
@@ -40,13 +40,13 @@ describe('tenant isolation', () => {
       status: 'pending',
     });
     // Same user id queried under tenant B must come back empty.
-    expect(await listBookingsForUser(env.EMBED_PROTO_DB, TENANT_B, userA.Id)).toEqual([]);
-    expect(await listBookingsForUser(env.EMBED_PROTO_DB, TENANT_A, userA.Id)).toHaveLength(1);
+    expect(await listBookingsForUser(env.PAWBOOK_DB, TENANT_B, userA.Id)).toEqual([]);
+    expect(await listBookingsForUser(env.PAWBOOK_DB, TENANT_A, userA.Id)).toHaveLength(1);
   });
 
   it('WRITE: a tenant-A token cannot create a booking under tenant B', async () => {
     const { env } = createTestEnv();
-    const userA = await upsertEndUser(env.EMBED_PROTO_DB, TENANT_A, 'jess@example.com');
+    const userA = await upsertEndUser(env.PAWBOOK_DB, TENANT_A, 'jess@example.com');
     const tokenForA = await mintToken(userA.Id, TENANT_A, TEST_SECRET);
     const res = await app.request(
       '/api/happy-tails/bookings',
@@ -63,14 +63,14 @@ describe('tenant isolation', () => {
       env,
     );
     expect(res.status).toBe(403);
-    expect(await listBookingsForUser(env.EMBED_PROTO_DB, TENANT_B, userA.Id)).toEqual([]);
+    expect(await listBookingsForUser(env.PAWBOOK_DB, TENANT_B, userA.Id)).toEqual([]);
   });
 
   it('LIST: my-bookings under the other tenant is empty for the same email', async () => {
     const { env } = createTestEnv();
-    const userA = await upsertEndUser(env.EMBED_PROTO_DB, TENANT_A, 'jess@example.com');
-    const userB = await upsertEndUser(env.EMBED_PROTO_DB, TENANT_B, 'jess@example.com');
-    await insertBookingRequest(env.EMBED_PROTO_DB, TENANT_A, {
+    const userA = await upsertEndUser(env.PAWBOOK_DB, TENANT_A, 'jess@example.com');
+    const userB = await upsertEndUser(env.PAWBOOK_DB, TENANT_B, 'jess@example.com');
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: userA.Id,
       serviceType: 'walk',
       startDate: '2028-08-01',

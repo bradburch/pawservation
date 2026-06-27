@@ -9,9 +9,9 @@ export const publicRoutes = new Hono<AppEnv>()
   .get('/:slug/config', async (c) => {
     const tenant = c.get('tenant');
     const [services, options, petTypes] = await Promise.all([
-      listServices(c.env.EMBED_PROTO_DB, tenant.Id),
-      listServiceOptions(c.env.EMBED_PROTO_DB, tenant.Id),
-      listPetTypes(c.env.EMBED_PROTO_DB, tenant.Id),
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+      listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
     ]);
     const enabled = new Set(services.filter((s) => s.Enabled).map((s) => s.ServiceType));
     return c.json({
@@ -50,8 +50,8 @@ export const publicRoutes = new Hono<AppEnv>()
     if (!isValidPetCount(pets)) return c.json({ error: 'Invalid pet count.' }, 400);
 
     const [services, options] = await Promise.all([
-      listServices(c.env.EMBED_PROTO_DB, tenant.Id),
-      listServiceOptions(c.env.EMBED_PROTO_DB, tenant.Id),
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
     ]);
     if (!services.some((s) => s.ServiceType === type && s.Enabled))
       return c.json({ error: 'Service not offered.' }, 400);

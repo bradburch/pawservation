@@ -44,11 +44,11 @@ export const bookingRoutes = new Hono<AppEnv>()
     }
     const petType = (body.petType as PetType | undefined) ?? null;
 
-    const services = await listServices(c.env.EMBED_PROTO_DB, tenant.Id);
+    const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
     const service = services.find((s) => s.ServiceType === type && s.Enabled);
     if (!service) return c.json({ error: 'Service not offered.' }, 400);
 
-    const options = await listServiceOptions(c.env.EMBED_PROTO_DB, tenant.Id);
+    const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
 
     // Select by optionKey when provided; fall back to first option for the service type.
     let option: (typeof options)[number] | undefined;
@@ -62,7 +62,7 @@ export const bookingRoutes = new Hono<AppEnv>()
 
     // Validate petType against the species this tenant actually accepts.
     if (petType !== null) {
-      const tenantPetTypes = await listPetTypes(c.env.EMBED_PROTO_DB, tenant.Id);
+      const tenantPetTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
       const accepted = tenantPetTypes.find((pt) => pt.PetType === petType && pt.Enabled);
       if (!accepted) return c.json({ error: 'That pet type is not accepted.' }, 400);
     }
@@ -87,7 +87,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       endDate = null;
     }
 
-    const id = await insertBookingRequest(c.env.EMBED_PROTO_DB, tenant.Id, {
+    const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
       endUserId: c.get('endUserId'),
       serviceType: type,
       startDate: start,
@@ -103,7 +103,7 @@ export const bookingRoutes = new Hono<AppEnv>()
 
   .get('/:slug/bookings/mine', async (c) => {
     const tenant = c.get('tenant');
-    const rows = await listBookingsForUser(c.env.EMBED_PROTO_DB, tenant.Id, c.get('endUserId'));
+    const rows = await listBookingsForUser(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,

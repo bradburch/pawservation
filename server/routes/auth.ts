@@ -18,10 +18,10 @@ export const authRoutes = new Hono<AppEnv>()
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
 
-    const user = await upsertEndUser(c.env.EMBED_PROTO_DB, tenant.Id, email);
+    const user = await upsertEndUser(c.env.PAWBOOK_DB, tenant.Id, email);
     const code = generateCode();
     const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-    const codeId = await createLoginCode(c.env.EMBED_PROTO_DB, tenant.Id, user.Id, code, expiresAt);
+    const codeId = await createLoginCode(c.env.PAWBOOK_DB, tenant.Id, user.Id, code, expiresAt);
 
     // PROTOTYPE ONLY: the code is returned to the client and displayed on screen instead of
     // being emailed (PRD FR9). Real email delivery is a graduation task.
@@ -37,7 +37,7 @@ export const authRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Code required.' }, 400);
 
     const endUserId = await consumeLoginCode(
-      c.env.EMBED_PROTO_DB,
+      c.env.PAWBOOK_DB,
       tenant.Id,
       body.codeId,
       body.code.trim(),

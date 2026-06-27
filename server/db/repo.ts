@@ -12,7 +12,7 @@ import type {
 import type { ServiceType } from '../lib/services';
 
 /**
- * The ONLY module allowed to touch EMBED_PROTO_DB. Every function below either resolves a
+ * The ONLY module allowed to touch PAWBOOK_DB. Every function below either resolves a
  * tenant (getTenantBySlug) / a login (getTenantUserByEmail) or takes `tenantId` as its FIRST
  * parameter and scopes its SQL with `WHERE TenantId = ?`. Importing the D1 binding elsewhere
  * is a defect.

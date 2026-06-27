@@ -13,15 +13,15 @@
   },
   "d1_databases": [
     {
-      "binding": "EMBED_PROTO_DB",
+      "binding": "PAWBOOK_DB",
       "database_name": "pawbook-db",
       "database_id": "db7d32b9-58a3-4d01-9da9-e840accaa3fc",
     },
   ],
   "kv_namespaces": [
     {
-      "binding": "EMBED_PROTO_CACHE",
-      "id": "2617a820f8e248b69e2f0d253939de57",
+      "binding": "PAWBOOK_CACHE",
+      "id": "0ff429da7602416296d626f0a441f2fa",
     },
   ],
   "assets": {

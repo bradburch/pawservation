@@ -39,11 +39,11 @@ export const adminRoutes = new Hono<AppEnv>()
   .get('/:slug/admin/settings', async (c) => {
     const tenant = c.get('tenant');
     const [services, options, petTypes, blocked, connections] = await Promise.all([
-      listServices(c.env.EMBED_PROTO_DB, tenant.Id),
-      listServiceOptions(c.env.EMBED_PROTO_DB, tenant.Id),
-      listPetTypes(c.env.EMBED_PROTO_DB, tenant.Id),
-      listBlockedRanges(c.env.EMBED_PROTO_DB, tenant.Id),
-      listProviderConnections(c.env.EMBED_PROTO_DB, tenant.Id),
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+      listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
+      listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
+      listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
     ]);
     const enabledByType = new Map(services.map((s) => [s.ServiceType, Boolean(s.Enabled)]));
     return c.json({
@@ -116,21 +116,21 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
 
-    await updateTenantSettings(c.env.EMBED_PROTO_DB, tenant.Id, {
+    await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
       displayName,
       accentColor,
       maxBoardingPets,
     });
     if (petTypes !== undefined) {
       for (const pt of PET_TYPES)
-        await setPetTypeEnabled(c.env.EMBED_PROTO_DB, tenant.Id, pt, petTypes.includes(pt));
+        await setPetTypeEnabled(c.env.PAWBOOK_DB, tenant.Id, pt, petTypes.includes(pt));
     }
     for (const svc of services) {
       const svcType = svc.type as keyof typeof SERVICE_CATALOG;
       const meta = SERVICE_CATALOG[svcType];
-      await setServiceEnabled(c.env.EMBED_PROTO_DB, tenant.Id, svcType, svc.enabled ?? false);
+      await setServiceEnabled(c.env.PAWBOOK_DB, tenant.Id, svcType, svc.enabled ?? false);
       await replaceServiceOptions(
-        c.env.EMBED_PROTO_DB,
+        c.env.PAWBOOK_DB,
         tenant.Id,
         svcType,
         (svc.options ?? []).map((o) => ({
@@ -157,7 +157,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const end = typeof body.endDate === 'string' ? body.endDate : '';
     if (!isRealDate(start) || !isRealDate(end) || end <= start)
       return c.json({ error: 'Provide a valid range (end is exclusive).' }, 400);
-    const id = await insertBookingRequest(c.env.EMBED_PROTO_DB, tenant.Id, {
+    const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: start,
@@ -173,7 +173,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .delete('/:slug/admin/blocked/:id', async (c) => {
     const tenant = c.get('tenant');
-    const deleted = await deleteBlockedRange(c.env.EMBED_PROTO_DB, tenant.Id, c.req.param('id'));
+    const deleted = await deleteBlockedRange(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
     if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
@@ -188,7 +188,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const descriptor = findCapability(c.req.param('capability'));
     if (!descriptor) return c.json({ error: 'Unknown capability.' }, 404);
     await setProviderStatus(
-      c.env.EMBED_PROTO_DB,
+      c.env.PAWBOOK_DB,
       tenant.Id,
       descriptor.capability,
       descriptor.provider,

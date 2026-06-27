@@ -19,12 +19,12 @@ export const adminAuthRoutes = new Hono<AppEnv>()
     const password = typeof body.password === 'string' ? body.password : '';
     if (!email || !password) return c.json({ error: 'Email and password required.' }, 400);
 
-    const user = await getTenantUserByEmail(c.env.EMBED_PROTO_DB, email);
+    const user = await getTenantUserByEmail(c.env.PAWBOOK_DB, email);
     // Same generic message + a verify call on the miss path to blunt user-enumeration/timing.
     const ok = user ? await verifyPassword(password, user.PasswordHash) : false;
     if (!user || !ok) return c.json({ error: 'Invalid email or password.' }, 401);
 
-    const tenant = await getTenantById(c.env.EMBED_PROTO_DB, user.TenantId);
+    const tenant = await getTenantById(c.env.PAWBOOK_DB, user.TenantId);
     if (!tenant) return c.json({ error: NOT_LINKED_ERROR }, 500);
 
     const token = await mintAdminToken(user.Id, user.TenantId, c.env.TOKEN_SECRET);
@@ -36,7 +36,7 @@ export const adminAuthRoutes = new Hono<AppEnv>()
     const token = extractBearer(c.req.header('Authorization'));
     const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
     if (!claims) return c.json({ error: 'Not signed in.' }, 401);
-    const tenant = await getTenantById(c.env.EMBED_PROTO_DB, claims.tid);
+    const tenant = await getTenantById(c.env.PAWBOOK_DB, claims.tid);
     if (!tenant) return c.json({ error: NOT_LINKED_ERROR }, 500);
     return c.json({ slug: tenant.Slug, displayName: tenant.DisplayName });
   });

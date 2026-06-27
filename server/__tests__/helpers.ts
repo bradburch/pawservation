@@ -60,8 +60,8 @@ export function createTestEnv(): { env: Env; raw: DatabaseSync } {
   raw.exec(readFileSync(join(SQL_DIR, 'schema.sql'), 'utf8'));
   raw.exec(readFileSync(join(SQL_DIR, 'seed.sql'), 'utf8'));
   const env = {
-    EMBED_PROTO_DB: makeD1(raw),
-    EMBED_PROTO_CACHE: makeKV(),
+    PAWBOOK_DB: makeD1(raw),
+    PAWBOOK_CACHE: makeKV(),
     TOKEN_SECRET: TEST_SECRET,
     ASSETS: { fetch: async () => new Response('<!doctype html>') },
   } as unknown as Env;
