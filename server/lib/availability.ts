@@ -79,6 +79,7 @@ async function checkRange(
   startDate: string,
   endDateExclusive: string,
   petCount: number,
+  excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
   // A request for more pets than the tenant's per-day cap can never fit, even on an empty
   // calendar — the range walk skips days with no existing rows, so this isolation check is
@@ -94,6 +95,7 @@ async function checkRange(
     tenant.Id,
     startDate,
     addDays(endDateExclusive, 1),
+    excludeBookingId,
   );
   const capacity = buildCapacity(rowsToCapacityEvents(rows));
   if (
@@ -114,8 +116,15 @@ async function checkSingle(
   tenant: Tenant,
   option: TenantServiceOption,
   date: string,
+  excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
-  const rows = await listCapacityRows(env.PAWBOOK_DB, tenant.Id, date, addDays(date, 1));
+  const rows = await listCapacityRows(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    date,
+    addDays(date, 1),
+    excludeBookingId,
+  );
   const capacity = buildCapacity(rowsToCapacityEvents(rows));
   if (walkHasConflict(date, capacity)) {
     return { available: false, reason: 'That day is blocked off.' };
@@ -132,8 +141,9 @@ export function checkAvailability(
   startDate: string,
   endDateExclusive: string,
   petCount = 1,
+  excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
   return SERVICE_CATALOG[serviceType].shape === 'range'
-    ? checkRange(env, tenant, option, startDate, endDateExclusive, petCount)
-    : checkSingle(env, tenant, option, startDate);
+    ? checkRange(env, tenant, option, startDate, endDateExclusive, petCount, excludeBookingId)
+    : checkSingle(env, tenant, option, startDate, excludeBookingId);
 }

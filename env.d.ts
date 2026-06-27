@@ -4,4 +4,8 @@
 interface Env {
   /** HMAC signing secret for session tokens. Set with `wrangler secret put TOKEN_SECRET`. */
   TOKEN_SECRET: string;
+  /** Resend API key for sending login codes. Unset in dev → codes are shown on screen instead. */
+  RESEND_API_KEY?: string;
+  /** Verified Resend sender, e.g. "Pawbook <bookings@yourdomain.com>". Required to send email. */
+  RESEND_FROM?: string;
 }

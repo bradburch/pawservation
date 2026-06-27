@@ -1,14 +1,19 @@
 -- Demo seed: two tenants with deliberately different branding, rates, and capacity.
--- Admin keys are printed here on purpose — prototype-grade auth (PRD FR20).
+--
+-- ⚠️  DEMO DATA ONLY — DO NOT SEED A PRODUCTION DATABASE.
+-- The sitter logins below use the publicly-known password "demo1234". Running this against a
+-- real deployment installs admin accounts anyone reading this repo can log into. `seed:remote`
+-- is intended for a throwaway demo environment; provision real tenants/logins separately.
+-- (Hashes are full-strength 600k-iteration PBKDF2 so they are at least not weak-by-iteration.)
 
 INSERT OR REPLACE INTO Tenants (Id, Slug, DisplayName, AccentColor, MaxBoardingPets) VALUES
   ('tnt_sunnypaws', 'sunny-paws', 'Sunny Paws', '#2563eb', 2),
   ('tnt_happytails', 'happy-tails', 'Happy Tails', '#d97706', 4);
 
--- Sitter dashboard logins (password is "demo1234" for both; PBKDF2 hashes precomputed).
+-- Sitter dashboard logins (DEMO password "demo1234" for both; 600k-iteration PBKDF2 hashes).
 INSERT OR REPLACE INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES
-  ('tu_sunny', 'tnt_sunnypaws', 'admin@sunnypaws.example', 'pbkdf2$100000$8b3cbb0570e55502644c341f95aadfb0$06e30230b0fe1d3b68d4917549ab0654522118aaa257e55e99bb7d948ba51f58'),
-  ('tu_dana', 'tnt_happytails', 'dana@happytails.test', 'pbkdf2$100000$ce76ce537b15e1bbd75d60957ae39bee$636b72baae9445cbd29c4e8816216e40951faf8181ca7889dfbf0555e5388d73');
+  ('tu_sunny', 'tnt_sunnypaws', 'admin@sunnypaws.example', 'pbkdf2$600000$4f4aa1b2f29635a386a62fbce18336ae$8eaa4c479048f11664af6dd8a6118996921474eb6c72ba6c4b6caf66155fc6ae'),
+  ('tu_dana', 'tnt_happytails', 'dana@happytails.test', 'pbkdf2$600000$03503c998c342f5f3704921e532a3e35$deac9874ed916391151ee6ce3b3aecb3a55c44123349729ae220d4762e911d07');
 
 -- Which services each tenant offers (on/off only; prices live in TenantServiceOptions).
 INSERT OR REPLACE INTO TenantServices (TenantId, ServiceType, Enabled) VALUES

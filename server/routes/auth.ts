@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { consumeLoginCode, createLoginCode, upsertEndUser } from '../db/repo';
+import { isEmailConfigured, sendLoginCode } from '../lib/email';
 import { mintToken } from '../lib/token';
 import type { AppEnv } from '../types';
 
@@ -23,8 +24,17 @@ export const authRoutes = new Hono<AppEnv>()
     const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
     const codeId = await createLoginCode(c.env.PAWBOOK_DB, tenant.Id, user.Id, code, expiresAt);
 
-    // PROTOTYPE ONLY: the code is returned to the client and displayed on screen instead of
-    // being emailed (PRD FR9). Real email delivery is a graduation task.
+    // When email is configured (prod), send the code and NEVER return it — returning it would be
+    // an unauthenticated account-takeover (anyone knowing the email could read the code). Without
+    // email configured (local dev), fall back to returning it so the flow is testable offline.
+    if (isEmailConfigured(c.env)) {
+      try {
+        await sendLoginCode(c.env, email, code);
+      } catch {
+        return c.json({ error: 'Could not send your code. Try again shortly.' }, 502);
+      }
+      return c.json({ codeId });
+    }
     return c.json({ codeId, prototypeCode: code });
   })
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { mintToken, verifyToken } from '../lib/token';
-import { createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
+import { mintAdminToken, mintToken, verifyToken } from '../lib/token';
+import { adminToken, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 
 describe('widget token', () => {
   it('round-trips valid claims', async () => {
@@ -24,8 +24,23 @@ describe('widget token', () => {
   });
 
   it('rejects a token signed with a different secret', async () => {
-    const token = await mintToken('user-1', TENANT_A, 'some-other-secret');
+    const token = await mintToken('user-1', TENANT_A, 'some-other-secret-0123456789');
     expect(await verifyToken(token, TEST_SECRET)).toBeNull();
+  });
+
+  it('rejects an admin (role-bearing) token so it cannot authenticate widget routes', async () => {
+    const admin = await mintAdminToken('tu_1', TENANT_A, TEST_SECRET);
+    expect(await verifyToken(admin, TEST_SECRET)).toBeNull();
+  });
+
+  it('rejects an admin token on a widget endpoint with 401', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/bookings/mine',
+      { headers: { Authorization: `Bearer ${await adminToken(TENANT_A)}` } },
+      env,
+    );
+    expect(res.status).toBe(401);
   });
 
   it('rejects a tenant-A token on tenant-B routes with 403 (middleware isolation)', async () => {

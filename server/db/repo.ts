@@ -10,6 +10,7 @@ import type {
   TenantUser,
 } from '../types';
 import type { ServiceType } from '../lib/services';
+import { constantTimeEqual } from '../lib/password';
 
 /**
  * The ONLY module allowed to touch PAWBOOK_DB. Every function below either resolves a
@@ -113,7 +114,17 @@ export async function createLoginCode(
   return id;
 }
 
-/** Atomically consume a valid, unexpired, unused code. Returns the end user id or null. */
+/** Max verify attempts before a login code is locked — caps brute-forcing a 6-digit code. */
+export const MAX_CODE_ATTEMPTS = 5;
+
+/**
+ * Consume a valid, unexpired, unused code, returning the end user id or null.
+ *
+ * Brute-force resistant: every call atomically claims one attempt against a still-live code
+ * (`Attempts < MAX`), so wrong guesses count against the cap and a code locks after MAX tries
+ * even if never guessed correctly. The code itself is compared in constant time in app code
+ * rather than via SQL `Code = ?` (which is not constant-time and can't enforce the cap).
+ */
 export async function consumeLoginCode(
   db: D1Database,
   tenantId: string,
@@ -123,21 +134,33 @@ export async function consumeLoginCode(
 ): Promise<string | null> {
   const row = await db
     .prepare(
-      `UPDATE LoginCodes SET UsedAt = ?
-       WHERE Id = ? AND TenantId = ? AND Code = ? AND UsedAt IS NULL AND ExpiresAt > ?
-       RETURNING EndUserId`,
+      `UPDATE LoginCodes SET Attempts = Attempts + 1
+       WHERE Id = ? AND TenantId = ? AND UsedAt IS NULL AND ExpiresAt > ? AND Attempts < ?
+       RETURNING Code, EndUserId`,
     )
-    .bind(nowIso, codeId, tenantId, code, nowIso)
-    .first<{ EndUserId: string }>();
-  return row?.EndUserId ?? null;
+    .bind(codeId, tenantId, nowIso, MAX_CODE_ATTEMPTS)
+    .first<{ Code: string; EndUserId: string }>();
+  if (!row) return null; // unknown / expired / used / too many attempts
+  if (!constantTimeEqual(row.Code, code)) return null; // wrong code — the attempt is already counted
+  // Correct code: consume it so it can't be replayed.
+  await db
+    .prepare('UPDATE LoginCodes SET UsedAt = ? WHERE Id = ? AND TenantId = ? AND UsedAt IS NULL')
+    .bind(nowIso, codeId, tenantId)
+    .run();
+  return row.EndUserId;
 }
 
-/** Rows that feed the capacity map: boarding + house-sitting + blocked, pending or confirmed, overlapping [from, to). */
+/**
+ * Rows that feed the capacity map: boarding + house-sitting + blocked, pending or confirmed,
+ * overlapping [from, to). `excludeId` omits one row — used by the post-insert race check so a
+ * just-created booking re-asks "do I still fit, ignoring myself?" against everyone else.
+ */
 export async function listCapacityRows(
   db: D1Database,
   tenantId: string,
   fromDate: string,
   toDateExclusive: string,
+  excludeId?: string,
 ): Promise<BookingRow[]> {
   const { results } = await db
     .prepare(
@@ -145,9 +168,10 @@ export async function listCapacityRows(
        FROM BookingRequests
        WHERE TenantId = ? AND Status IN ('pending', 'confirmed')
          AND ServiceType IN ('boarding', 'housesitting', 'blocked')
-         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?
+         AND (? IS NULL OR Id != ?)`,
     )
-    .bind(tenantId, toDateExclusive, fromDate)
+    .bind(tenantId, toDateExclusive, fromDate, excludeId ?? null, excludeId ?? null)
     .all<BookingRow>();
   return results;
 }
@@ -189,6 +213,18 @@ export async function insertBookingRequest(
     )
     .run();
   return id;
+}
+
+/** Delete a single booking by id (tenant-scoped). Used to roll back a lost overbooking race. */
+export async function deleteBookingRequest(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare('DELETE FROM BookingRequests WHERE TenantId = ? AND Id = ?')
+    .bind(tenantId, id)
+    .run();
 }
 
 export async function listBookingsForUser(
@@ -261,21 +297,19 @@ export async function replaceServiceOptions(
     rateUnit: 'night' | 'day' | 'visit';
   }[],
 ): Promise<void> {
-  // Prototype: DELETE-then-INSERT without a transaction, matching the sequential-await style used
-  // elsewhere in this module. The admin route validates every option before calling this, so a
-  // mid-write failure is not expected; a production version would wrap these in db.batch().
-  await db
-    .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
-    .bind(tenantId, serviceType)
-    .run();
-  for (const o of options) {
-    await db
-      .prepare(
-        `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
+  // DELETE-then-INSERT as ONE atomic, single-round-trip batch: a mid-write failure can no longer
+  // leave the service's options half-wiped, and N options cost one trip instead of N+1.
+  const insert = db.prepare(
+    `INSERT INTO TenantServiceOptions
+       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  await db.batch([
+    db
+      .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+    ...options.map((o) =>
+      insert.bind(
         crypto.randomUUID(),
         tenantId,
         serviceType,
@@ -284,9 +318,9 @@ export async function replaceServiceOptions(
         o.durationMinutes,
         o.rate,
         o.rateUnit,
-      )
-      .run();
-  }
+      ),
+    ),
+  ]);
 }
 
 export async function setPetTypeEnabled(

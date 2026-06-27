@@ -62,8 +62,10 @@ export const api = {
   availability: (slug: string, params: Record<string, string>) =>
     request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`),
 
+  // `prototypeCode` is only present in dev (no email provider configured); in prod the code is
+  // emailed and the response carries only `codeId`.
   identify: (slug: string, email: string) =>
-    request<{ codeId: string; prototypeCode: string }>(`/api/${slug}/identify`, {
+    request<{ codeId: string; prototypeCode?: string }>(`/api/${slug}/identify`, {
       method: 'POST',
       headers: jsonHeaders,
       body: JSON.stringify({ email }),

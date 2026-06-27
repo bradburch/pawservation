@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getTenantById, getTenantUserByEmail } from '../db/repo';
-import { verifyPassword } from '../lib/password';
+import { DUMMY_PASSWORD_HASH, verifyPassword } from '../lib/password';
 import { extractBearer, mintAdminToken, verifyAdminToken } from '../lib/token';
 import type { AppEnv } from '../types';
 
@@ -20,8 +20,9 @@ export const adminAuthRoutes = new Hono<AppEnv>()
     if (!email || !password) return c.json({ error: 'Email and password required.' }, 400);
 
     const user = await getTenantUserByEmail(c.env.PAWBOOK_DB, email);
-    // Same generic message + a verify call on the miss path to blunt user-enumeration/timing.
-    const ok = user ? await verifyPassword(password, user.PasswordHash) : false;
+    // Always run a PBKDF2 verify — against a dummy hash when the email is unknown — so the
+    // response time does not reveal whether an account exists (user-enumeration timing oracle).
+    const ok = await verifyPassword(password, user?.PasswordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !ok) return c.json({ error: 'Invalid email or password.' }, 401);
 
     const tenant = await getTenantById(c.env.PAWBOOK_DB, user.TenantId);

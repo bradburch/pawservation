@@ -137,6 +137,40 @@ describe('booking flow', () => {
     expect(reused.status).toBe(401);
   });
 
+  it('locks a login code after too many wrong attempts (brute-force cap)', async () => {
+    const { env } = createTestEnv();
+    const identifyRes = await app.request(
+      '/api/sunny-paws/identify',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'jess@example.com' }),
+      },
+      env,
+    );
+    const { codeId, prototypeCode } = (await identifyRes.json()) as {
+      codeId: string;
+      prototypeCode: string;
+    };
+    const wrongCode = prototypeCode === '000000' ? '111111' : '000000';
+
+    const verify = (code: string) =>
+      app.request(
+        '/api/sunny-paws/verify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ codeId, code }),
+        },
+        env,
+      );
+
+    // Exhaust the 5-attempt cap with wrong guesses…
+    for (let i = 0; i < 5; i++) expect((await verify(wrongCode)).status).toBe(401);
+    // …then even the CORRECT code is rejected, because the code is now locked.
+    expect((await verify(prototypeCode)).status).toBe(401);
+  });
+
   it('returns 400 (not 500) for non-string identify/verify fields', async () => {
     const { env } = createTestEnv();
     const badEmail = await app.request(

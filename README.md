@@ -54,7 +54,7 @@ resolved from the slug; capacity and pricing rules live in `src/shared/` (pure f
 ```bash
 npm install
 npm run seed:local                                # schema + demo tenants (Sunny Paws, Happy Tails)
-echo 'TOKEN_SECRET=local-dev-secret-change-me' > .dev.vars
+echo "TOKEN_SECRET=$(openssl rand -base64 32)" > .dev.vars   # random secret, even in dev
 npm run dev                                        # builds the widget + runs wrangler dev
 ```
 
@@ -69,8 +69,20 @@ npx wrangler d1 create pawbook-db                  # put database_id into wrangl
 npx wrangler kv namespace create PAWBOOK_CACHE # put id into wrangler.jsonc
 npx wrangler secret put TOKEN_SECRET               # a strong random value (openssl rand -base64 32)
 npm run deploy
-npm run seed:remote
+npm run seed:remote                                # ⚠️ demo tenants/logins — do NOT run against a real prod DB
 ```
+
+### Email delivery (login codes)
+
+In dev, login codes are shown on screen. To email them in production, set two secrets — login
+then falls back to nothing if they are absent, so this step is optional for a demo:
+
+```bash
+npx wrangler secret put RESEND_API_KEY             # from https://resend.com (free tier)
+npx wrangler secret put RESEND_FROM                # e.g. "Pawbook <bookings@yourdomain.com>" (verified sender)
+```
+
+When `RESEND_API_KEY` is set, the `/identify` response no longer returns the code — it is emailed.
 
 ## Tests & quality
 

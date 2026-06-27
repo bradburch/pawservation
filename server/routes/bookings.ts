@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import {
+  deleteBookingRequest,
   insertBookingRequest,
   listBookingsForUser,
   listPetTypes,
@@ -98,6 +99,17 @@ export const bookingRoutes = new Hono<AppEnv>()
       estCost,
       status: 'pending',
     });
+
+    // Guard against the check-then-insert race: the availability check above and this insert are
+    // not atomic, so a concurrent booking could have taken the last slot in between. Re-check now,
+    // ignoring our own just-inserted row — if we no longer fit, someone else won the race, so roll
+    // back and 409. (Two simultaneous racers may both roll back: fail-safe, never an overbooking.)
+    const recheck = await checkAvailability(c.env, tenant, type, option, start, end, pets, id);
+    if (!recheck.available) {
+      await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
+      return c.json({ error: 'Sorry — those dates just filled up.' }, 409);
+    }
+
     return c.json({ id, estCost, status: 'pending' }, 201);
   })
 

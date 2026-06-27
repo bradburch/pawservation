@@ -37,13 +37,25 @@ export async function hashPassword(password: string): Promise<string> {
   return `pbkdf2$${ITERATIONS}$${toHex(salt)}$${toHex(hash)}`;
 }
 
-/** Constant-time equality for two equal-length hex strings. */
-function timingSafeEqualHex(a: string, b: string): boolean {
+/**
+ * Constant-time string equality. Length is leaked (unavoidable without padding), but the
+ * per-character comparison does not short-circuit, so equal-length inputs take the same time.
+ * Used for both hash and login-code comparison.
+ */
+export function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
+
+/**
+ * A real (600k-iteration) PBKDF2 hash of a random string nobody knows. Verifying any password
+ * against this costs the same as verifying a real user's hash, so the login route can run a
+ * derive on the email-not-found path and avoid a user-enumeration timing oracle.
+ */
+export const DUMMY_PASSWORD_HASH =
+  'pbkdf2$600000$4f4aa1b2f29635a386a62fbce18336ae$8eaa4c479048f11664af6dd8a6118996921474eb6c72ba6c4b6caf66155fc6ae';
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const parts = stored.split('$');
@@ -51,5 +63,5 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const iterations = Number(parts[1]);
   if (!Number.isInteger(iterations) || iterations < 1) return false;
   const hash = await derive(password, fromHex(parts[2]), iterations);
-  return timingSafeEqualHex(toHex(hash), parts[3]);
+  return constantTimeEqual(toHex(hash), parts[3]);
 }

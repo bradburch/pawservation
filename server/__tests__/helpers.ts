@@ -13,7 +13,7 @@ const SQL_DIR = join(import.meta.dirname, '..', '..', 'sql');
 
 export const TENANT_A = 'tnt_sunnypaws'; // slug sunny-paws, max 2 boarding pets
 export const TENANT_B = 'tnt_happytails'; // slug happy-tails, max 4 boarding pets
-export const TEST_SECRET = 'test-secret';
+export const TEST_SECRET = 'test-secret-0123456789'; // ≥16 chars to pass the TOKEN_SECRET guard
 
 // Seeded sitter logins (password "demo1234"); see sql/seed.sql.
 export const ADMIN_EMAIL_A = 'admin@sunnypaws.example';
@@ -35,7 +35,24 @@ function makeD1(raw: DatabaseSync): D1Database {
       throw new Error('raw() not implemented in test shim');
     },
   });
-  return { prepare: (sql: string) => makeStatement(sql, []) } as unknown as D1Database;
+  type ShimStatement = { run: () => Promise<unknown> };
+  return {
+    prepare: (sql: string) => makeStatement(sql, []),
+    // Atomic batch shim: run statements inside a transaction so a mid-batch failure rolls back,
+    // mirroring D1's all-or-nothing db.batch().
+    batch: async (statements: ShimStatement[]) => {
+      raw.exec('BEGIN');
+      try {
+        const out = [];
+        for (const s of statements) out.push(await s.run());
+        raw.exec('COMMIT');
+        return out;
+      } catch (err) {
+        raw.exec('ROLLBACK');
+        throw err;
+      }
+    },
+  } as unknown as D1Database;
 }
 
 function makeKV(): KVNamespace {

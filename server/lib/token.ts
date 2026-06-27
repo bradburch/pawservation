@@ -36,6 +36,10 @@ export async function verifyToken(token: string, secret: string): Promise<Widget
     const payload = await verify(token, secret, 'HS256');
     if (typeof payload.sub !== 'string' || typeof payload.tid !== 'string') return null;
     if (typeof payload.exp !== 'number') return null;
+    // Reject anything carrying a role (i.e. an admin session token): widget and admin tokens
+    // are signed with the same secret, so without this an admin token would authenticate
+    // end-user routes. The reverse is already blocked by verifyAdminToken requiring role.
+    if ('role' in payload) return null;
     return payload as WidgetClaims;
   } catch {
     return null;

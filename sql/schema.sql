@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS LoginCodes (
   EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
   Code TEXT NOT NULL,
   ExpiresAt TEXT NOT NULL,
-  UsedAt TEXT
+  UsedAt TEXT,
+  -- Failed verify attempts; capped in consumeLoginCode so a 6-digit code can't be brute-forced.
+  Attempts INTEGER NOT NULL DEFAULT 0
 );
 
 -- Blocked days are rows with ServiceType='blocked' (EndUserId NULL, Status 'confirmed'),
