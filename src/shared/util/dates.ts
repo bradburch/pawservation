@@ -3,8 +3,10 @@ export const MS_PER_DAY = 86_400_000;
 
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** The business timezone. All Pacific date math/formatting routes through this. */
-export const PACIFIC = 'America/Los_Angeles';
+/** Instance-default business timezone used when a tenant has none set. */
+export const DEFAULT_TIMEZONE = 'America/Los_Angeles';
+/** @deprecated internal alias for offset helpers; prefer DEFAULT_TIMEZONE. */
+export const PACIFIC = DEFAULT_TIMEZONE;
 
 /**
  * Parse a `YYYY-MM-DD` (or ISO `YYYY-MM-DDTHH:MM:SS…`) string to the UTC
@@ -104,8 +106,8 @@ export function addDays(dateStr: string, days: number): string {
  * runtime's local or UTC date, so a booking near midnight resolves to the
  * correct Pacific day.
  */
-export function getPacificDateStr(date: Date = new Date()): string {
-  return date.toLocaleDateString('en-CA', { timeZone: PACIFIC });
+export function getPacificDateStr(date: Date = new Date(), timezone: string = DEFAULT_TIMEZONE): string {
+  return date.toLocaleDateString('en-CA', { timeZone: timezone });
 }
 
 /** Milliseconds in one hour. */
