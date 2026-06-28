@@ -6,7 +6,11 @@ CREATE TABLE IF NOT EXISTS Tenants (
   Slug TEXT NOT NULL UNIQUE,
   DisplayName TEXT NOT NULL,
   AccentColor TEXT NOT NULL DEFAULT '#4f46e5',
-  MaxBoardingPets INTEGER NOT NULL DEFAULT 2,
+  -- All four are NULL = unlimited / instance-default. New tenants omit them.
+  MaxBoardingPets INTEGER,
+  MaxHouseSitsPerDay INTEGER,
+  MaxStayNights INTEGER,
+  Timezone TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -19,7 +19,8 @@ import { constantTimeEqual } from '../lib/timing';
  * is a defect.
  */
 
-const TENANT_COLS = 'Id, Slug, DisplayName, AccentColor, MaxBoardingPets';
+const TENANT_COLS =
+  'Id, Slug, DisplayName, AccentColor, MaxBoardingPets, MaxHouseSitsPerDay, MaxStayNights, Timezone';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, EstCost, Status, CreatedAt';
@@ -260,13 +261,29 @@ export async function listProviderConnections(
 export async function updateTenantSettings(
   db: D1Database,
   tenantId: string,
-  settings: { displayName: string; accentColor: string; maxBoardingPets: number },
+  settings: {
+    displayName: string;
+    accentColor: string;
+    maxBoardingPets: number | null;
+    maxHouseSitsPerDay: number | null;
+    maxStayNights: number | null;
+    timezone: string | null;
+  },
 ): Promise<void> {
   await db
     .prepare(
-      'UPDATE Tenants SET DisplayName = ?, AccentColor = ?, MaxBoardingPets = ? WHERE Id = ?',
+      `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, MaxBoardingPets = ?,
+         MaxHouseSitsPerDay = ?, MaxStayNights = ?, Timezone = ? WHERE Id = ?`,
     )
-    .bind(settings.displayName, settings.accentColor, settings.maxBoardingPets, tenantId)
+    .bind(
+      settings.displayName,
+      settings.accentColor,
+      settings.maxBoardingPets,
+      settings.maxHouseSitsPerDay,
+      settings.maxStayNights,
+      settings.timezone,
+      tenantId,
+    )
     .run();
 }
 

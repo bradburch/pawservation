@@ -10,10 +10,16 @@ INSERT OR REPLACE INTO Tenants (Id, Slug, DisplayName, AccentColor, MaxBoardingP
   ('tnt_sunnypaws', 'sunny-paws', 'Sunny Paws', '#2563eb', 2),
   ('tnt_happytails', 'happy-tails', 'Happy Tails', '#d97706', 4);
 
+-- A brand-new sitter on the NEW defaults: unlimited boarding/house-sits/stay length, default
+-- timezone (all four config columns omitted → NULL). Edit its values via the admin dashboard.
+INSERT OR REPLACE INTO Tenants (Id, Slug, DisplayName, AccentColor) VALUES
+  ('tnt_pawsandrelax', 'paws-and-relax', 'Paws & Relax', '#059669');
+
 -- Sitter dashboard logins (DEMO password "demo1234" for both; 600k-iteration PBKDF2 hashes).
 INSERT OR REPLACE INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES
   ('tu_sunny', 'tnt_sunnypaws', 'admin@sunnypaws.example', 'pbkdf2$600000$4f4aa1b2f29635a386a62fbce18336ae$8eaa4c479048f11664af6dd8a6118996921474eb6c72ba6c4b6caf66155fc6ae'),
-  ('tu_dana', 'tnt_happytails', 'dana@happytails.test', 'pbkdf2$600000$03503c998c342f5f3704921e532a3e35$deac9874ed916391151ee6ce3b3aecb3a55c44123349729ae220d4762e911d07');
+  ('tu_dana', 'tnt_happytails', 'dana@happytails.test', 'pbkdf2$600000$03503c998c342f5f3704921e532a3e35$deac9874ed916391151ee6ce3b3aecb3a55c44123349729ae220d4762e911d07'),
+  ('tu_pawsandrelax', 'tnt_pawsandrelax', 'admin@pawsandrelax.example', 'pbkdf2$600000$4f4aa1b2f29635a386a62fbce18336ae$8eaa4c479048f11664af6dd8a6118996921474eb6c72ba6c4b6caf66155fc6ae');
 
 -- Which services each tenant offers (on/off only; prices live in TenantServiceOptions).
 INSERT OR REPLACE INTO TenantServices (TenantId, ServiceType, Enabled) VALUES
@@ -24,7 +30,10 @@ INSERT OR REPLACE INTO TenantServices (TenantId, ServiceType, Enabled) VALUES
   ('tnt_sunnypaws', 'checkin', 1),
   ('tnt_happytails', 'boarding', 1),
   ('tnt_happytails', 'daycare', 1),
-  ('tnt_happytails', 'walk', 1);
+  ('tnt_happytails', 'walk', 1),
+  ('tnt_pawsandrelax', 'boarding', 1),
+  ('tnt_pawsandrelax', 'housesitting', 1),
+  ('tnt_pawsandrelax', 'walk', 1);
 
 -- Priced options. Non-duration services = single 'standard' option, DurationMinutes NULL.
 -- Walks/check-ins = sitter-defined (duration, price) rows; prices are free-typed (note the sitter's
@@ -41,13 +50,18 @@ INSERT OR REPLACE INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKe
   ('opt_ht_board', 'tnt_happytails', 'boarding', 'standard', 'Standard', NULL, 40, 'night'),
   ('opt_ht_day', 'tnt_happytails', 'daycare', 'standard', 'Standard', NULL, 35, 'day'),
   ('opt_ht_walk30', 'tnt_happytails', 'walk', 'd30', '30 minutes', 30, 25, 'visit'),
-  ('opt_ht_walk60', 'tnt_happytails', 'walk', 'd60', '1 hour', 60, 40, 'visit');
+  ('opt_ht_walk60', 'tnt_happytails', 'walk', 'd60', '1 hour', 60, 40, 'visit'),
+  ('opt_pr_board', 'tnt_pawsandrelax', 'boarding', 'standard', 'Standard', NULL, 45, 'night'),
+  ('opt_pr_house', 'tnt_pawsandrelax', 'housesitting', 'standard', 'Standard', NULL, 65, 'night'),
+  ('opt_pr_walk30', 'tnt_pawsandrelax', 'walk', 'd30', '30 minutes', 30, 22, 'visit');
 
--- Accepted species: Sunny Paws takes dogs + cats; Happy Tails dogs only.
+-- Accepted species: Sunny Paws takes dogs + cats; Happy Tails dogs only; Paws & Relax dogs + cats.
 INSERT OR REPLACE INTO TenantPetTypes (TenantId, PetType, Enabled) VALUES
   ('tnt_sunnypaws', 'dog', 1),
   ('tnt_sunnypaws', 'cat', 1),
-  ('tnt_happytails', 'dog', 1);
+  ('tnt_happytails', 'dog', 1),
+  ('tnt_pawsandrelax', 'dog', 1),
+  ('tnt_pawsandrelax', 'cat', 1);
 
 -- Existing bookings so availability looks real.
 -- Sunny Paws (max 2 pets): June 20-25 already has 1 pet boarding -> 1 slot left.

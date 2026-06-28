@@ -28,7 +28,10 @@ type ServiceBody = { type?: string; enabled?: boolean; options?: OptionBody[] };
 type SettingsBody = {
   displayName?: string;
   accentColor?: string;
-  maxBoardingPets?: number;
+  maxBoardingPets?: number | null;
+  maxHouseSitsPerDay?: number | null;
+  maxStayNights?: number | null;
+  timezone?: string | null;
   petTypes?: string[];
   services?: ServiceBody[];
 };
@@ -82,13 +85,22 @@ export const adminRoutes = new Hono<AppEnv>()
       typeof body.displayName === 'string' ? body.displayName.trim() : tenant.DisplayName;
     const accentColor =
       typeof body.accentColor === 'string' ? body.accentColor : tenant.AccentColor;
-    const maxBoardingPets = body.maxBoardingPets ?? tenant.MaxBoardingPets;
+    const maxBoardingPets =
+      'maxBoardingPets' in body ? (body.maxBoardingPets ?? null) : tenant.MaxBoardingPets;
+    const maxHouseSitsPerDay =
+      'maxHouseSitsPerDay' in body ? (body.maxHouseSitsPerDay ?? null) : tenant.MaxHouseSitsPerDay;
+    const maxStayNights =
+      'maxStayNights' in body ? (body.maxStayNights ?? null) : tenant.MaxStayNights;
+    const timezone = 'timezone' in body ? (body.timezone ?? null) : tenant.Timezone;
     const petTypes = body.petTypes;
     const services = body.services ?? [];
 
     if (!displayName) return c.json({ error: 'Display name required.' }, 400);
     if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
-    if (!Number.isInteger(maxBoardingPets) || maxBoardingPets < 1 || maxBoardingPets > 50)
+    if (
+      maxBoardingPets !== null &&
+      (!Number.isInteger(maxBoardingPets) || maxBoardingPets < 1 || maxBoardingPets > 50)
+    )
       return c.json({ error: 'Boarding capacity must be 1-50 pets.' }, 400);
     if (petTypes !== undefined) {
       if (!Array.isArray(petTypes) || !petTypes.every(isPetType))
@@ -120,6 +132,9 @@ export const adminRoutes = new Hono<AppEnv>()
       displayName,
       accentColor,
       maxBoardingPets,
+      maxHouseSitsPerDay,
+      maxStayNights,
+      timezone,
     });
     if (petTypes !== undefined) {
       for (const pt of PET_TYPES)

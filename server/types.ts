@@ -7,7 +7,10 @@ export type Tenant = {
   Slug: string;
   DisplayName: string;
   AccentColor: string;
-  MaxBoardingPets: number;
+  MaxBoardingPets: number | null; // null = unlimited
+  MaxHouseSitsPerDay: number | null; // null = unlimited
+  MaxStayNights: number | null; // null = unlimited
+  Timezone: string | null; // null = DEFAULT_TIMEZONE
 };
 
 export type TenantUser = {
