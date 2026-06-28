@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { providerViews, type CapabilityDescriptor } from '../lib/providers';
 import { mintToken } from '../lib/token';
-import { adminToken, createTestEnv, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
+import { adminHeaders, adminToken, createTestEnv, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
 /** Admin Bearer headers for a tenant, optionally with a JSON content type. */
 async function auth(tenantId: string, json = false): Promise<Record<string, string>> {
@@ -364,5 +364,64 @@ describe('tenant admin', () => {
     const boarding = cfg.services.find((s) => s.type === 'boarding')!;
     expect(boarding.options).toHaveLength(1);
     expect(boarding.options[0].rate).toBe(50);
+  });
+});
+
+describe('configurable limits via admin settings', () => {
+  it('persists null (unlimited) and new limit fields, surfaced in config', async () => {
+    const { env } = createTestEnv();
+    const put = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: { ...(await adminHeaders(TENANT_A)), 'content-type': 'application/json' },
+        body: JSON.stringify({
+          maxBoardingPets: null,
+          maxHouseSitsPerDay: 1,
+          maxStayNights: 14,
+          timezone: 'America/New_York',
+        }),
+      },
+      env,
+    );
+    expect(put.status).toBe(204);
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      maxBoardingPets: number | null;
+      maxHouseSitsPerDay: number | null;
+      maxStayNights: number | null;
+      timezone: string | null;
+    };
+    expect(cfg.maxBoardingPets).toBeNull();
+    expect(cfg.maxHouseSitsPerDay).toBe(1);
+    expect(cfg.maxStayNights).toBe(14);
+    expect(cfg.timezone).toBe('America/New_York');
+  });
+
+  it('rejects an invalid timezone', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: { ...(await adminHeaders(TENANT_A)), 'content-type': 'application/json' },
+        body: JSON.stringify({ timezone: 'Mars/Phobos' }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a boarding cap above the old ceiling of 50', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: { ...(await adminHeaders(TENANT_A)), 'content-type': 'application/json' },
+        body: JSON.stringify({ maxBoardingPets: 80 }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
   });
 });

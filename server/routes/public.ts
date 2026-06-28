@@ -19,6 +19,9 @@ export const publicRoutes = new Hono<AppEnv>()
       displayName: tenant.DisplayName,
       accentColor: tenant.AccentColor,
       maxBoardingPets: tenant.MaxBoardingPets,
+      maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
+      maxStayNights: tenant.MaxStayNights,
+      timezone: tenant.Timezone,
       petTypes: petTypes.filter((p) => p.Enabled).map((p) => p.PetType),
       services: [...enabled].map((type) => ({
         type,
