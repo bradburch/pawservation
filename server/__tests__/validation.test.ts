@@ -35,8 +35,9 @@ describe('configurable stay length', () => {
   });
 
   it('still rejects an absurd range beyond the defensive rail even when unlimited', () => {
-    const end = '2099-01-01';
-    expect(validateBoardingRange('2026-01-01', end, null)?.status).toBe(400);
+    const result = validateBoardingRange('2028-01-01', '2099-01-01', null);
+    expect(result?.status).toBe(400);
+    expect(result?.error).toBe('Invalid date range.');
     expect(DEFENSIVE_MAX_NIGHTS).toBe(3650);
   });
 
