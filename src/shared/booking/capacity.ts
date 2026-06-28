@@ -4,9 +4,17 @@ import { addDays, DATE_RE } from '../util/dates.js';
 // Single source of truth for the booking calendar's capacity + conflict rules,
 // shared between the web client (calendar UX) and the web server (validation).
 //
-// Capacity rules: max 2 boarding/day, max 1 house-sit/day, any block = full.
+// Capacity is per-tenant config via CapacityLimits: a `null` dimension is UNLIMITED
+// (auto pass-through) and is never compared. Admin-blocked dates always block.
+// House-sit/boarding may overlap by at most one day (structural rule, not a number).
 // Boundary (bookend) sharing: the start/end day of an existing booking may be
 // shared by a new booking's endpoint, EXCEPT for blocked events.
+
+/** Per-tenant capacity limits. `null` means no limit (auto pass-through). */
+export type CapacityLimits = {
+  maxBoardingPets: number | null;
+  maxHouseSitsPerDay: number | null;
+};
 
 export type DayCapacity = {
   boarding: number;
@@ -66,47 +74,44 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
   return byDate;
 }
 
-/** A day is unavailable at 2 boarding, 1 house sit, or any block. */
-export function isUnavailableDate(capacity: DayCapacity): boolean {
-  return capacity.houseSits >= 1 || capacity.boarding >= 2 || capacity.blocked >= 1;
+/** A day is unavailable when blocked, or a configured boarding/house-sit limit is met. */
+export function isUnavailableDate(capacity: DayCapacity, limits: CapacityLimits): boolean {
+  if (capacity.blocked >= 1) return true;
+  if (limits.maxHouseSitsPerDay !== null && capacity.houseSits >= limits.maxHouseSitsPerDay)
+    return true;
+  if (limits.maxBoardingPets !== null && capacity.boarding >= limits.maxBoardingPets) return true;
+  return false;
 }
 
 /**
- * Can't a request of `requestPets` pets occupy this day IN ISOLATION? Any block or house-sit
- * is a hard stop. For a boarding request the day is full when existing boarding pets + the
- * request's pets exceed 2 (boarding capacity is counted in PETS, max 2/day); for a house-sit
- * request (no pet limit) two boardings already fill the day.
- *
- * This is the raw per-day capacity decision WITHOUT the range-level boundary/bookend
- * exemptions — exported so per-day cell displays (calendar) and per-day availability probes
- * (check_availability) ask the SAME count-aware question the range conflict check does,
- * instead of re-implementing it. `requestPets` defaults to 1 (min-floored).
+ * Can a request of `requestPets` pets NOT occupy this day in isolation? A block is always a
+ * hard stop. Otherwise each request type is governed only by its OWN configured limit; a `null`
+ * limit never blocks (auto pass-through). Cross-type interaction (a house-sit may not overlap
+ * occupied boarding by more than one day) is enforced at the range level, not here.
  */
 export function dayBlocksRequest(
   capacity: DayCapacity,
   requestType: 'boarding' | 'house-sit',
+  limits: CapacityLimits,
   requestPets = 1,
 ): boolean {
-  const pets = Math.max(1, requestPets);
-  if (capacity.blocked >= 1 || capacity.houseSits >= 1) return true;
-  return requestType === 'boarding' ? capacity.boarding + pets > 2 : capacity.boarding >= 2;
+  if (capacity.blocked >= 1) return true;
+  if (requestType === 'boarding') {
+    const pets = Math.max(1, requestPets);
+    return limits.maxBoardingPets !== null && capacity.boarding + pets > limits.maxBoardingPets;
+  }
+  return limits.maxHouseSitsPerDay !== null && capacity.houseSits + 1 > limits.maxHouseSitsPerDay;
 }
 
-/**
- * Does a boarding/house-sit request over [startDate, endDateExclusive) conflict
- * with existing bookings? `endDateExclusive` is the checkout day (no overnight),
- * matching `requestDateRange`. House sits may overlap boarding by at most one day.
- * The request's own endpoints (check-in and last night) may share a boundary day.
- */
 export function rangeHasConflict(
   startDate: string,
   endDateExclusive: string,
   requestType: 'boarding' | 'house-sit',
   capacityByDate: Map<string, DayCapacity>,
+  limits: CapacityLimits,
   requestPetCount = 1,
 ): boolean {
   const requestEnd = addDays(endDateExclusive, -1); // last occupied night
-  // Boarding is counted in pets (max 2/day): adding this request's pets must not exceed 2.
   const requestPets = Math.max(1, requestPetCount);
   let houseSitBoardingOverlapDays = 0;
 
@@ -114,22 +119,22 @@ export function rangeHasConflict(
     const capacity = capacityByDate.get(date);
     if (!capacity) continue;
 
+    // Structural rule: a house-sit may overlap existing boarding by at most one day.
     if (requestType === 'house-sit' && capacity.boarding > 0) {
       houseSitBoardingOverlapDays += 1;
       if (houseSitBoardingOverlapDays > 1) return true;
     }
 
-    if (!dayBlocksRequest(capacity, requestType, requestPets)) continue;
+    if (!dayBlocksRequest(capacity, requestType, limits, requestPets)) continue;
 
     const isRequestEndpoint = date === startDate || date === requestEnd;
     if (isRequestEndpoint && capacity.isBoundary) continue;
 
     // Soft bookend: an unavailable (non-blocked) endpoint is allowed when the next day has
-    // room for this request — the existing booking is ending here. The look-ahead is
-    // count-aware too, so a multi-pet request isn't waved through a still-occupied next day.
+    // room for this request — the existing booking is ending here.
     if (isRequestEndpoint && capacity.blocked === 0) {
       const next = capacityByDate.get(addDays(date, 1));
-      if (!next || !dayBlocksRequest(next, requestType, requestPets)) continue;
+      if (!next || !dayBlocksRequest(next, requestType, limits, requestPets)) continue;
     }
 
     return true;
@@ -164,6 +169,7 @@ export function findOpenings(
     nights?: number;
     limit?: number;
     petCount?: number;
+    limits: CapacityLimits;
   },
 ): Opening[] {
   const limit = opts.limit ?? 3;
@@ -188,6 +194,7 @@ export function findOpenings(
           end,
           opts.requestType as 'boarding' | 'house-sit',
           capacity,
+          opts.limits,
           opts.petCount,
         )
       ) {

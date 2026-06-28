@@ -6,6 +6,7 @@ export {
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
+  type CapacityLimits,
   type DayCapacity,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
