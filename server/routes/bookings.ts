@@ -71,7 +71,9 @@ export const bookingRoutes = new Hono<AppEnv>()
     // Re-validate dates at submit time with the same logic the widget used (PRD FR13).
     const shape = SERVICE_CATALOG[type].shape;
     const dateError =
-      shape === 'range' ? validateBoardingRange(start, end) : validateSingleDate(start);
+      shape === 'range'
+        ? validateBoardingRange(start, end, tenant.MaxStayNights, tenant.Timezone ?? undefined)
+        : validateSingleDate(start, tenant.Timezone ?? undefined);
     if (dateError) return c.json({ error: dateError.error }, dateError.status);
     const endDate = shape === 'range' ? end : null;
 

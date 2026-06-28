@@ -6,16 +6,20 @@ import { DATE_RE, getPacificDateStr, nightsBetween } from '../../src/shared/inde
  * — so date inputs go through `isRealDate`, and ranges are bounded.
  */
 
-/** Longest bookable span; also caps the per-request capacity loop so a huge range can't burn CPU. */
-export const MAX_RANGE_NIGHTS = 365;
+/** Safety rail (NOT a business cap): bounds the per-request capacity loop so an unlimited stay
+ * length can't burn CPU. ~10 years — far beyond any real booking. */
+export const DEFENSIVE_MAX_NIGHTS = 3650;
 
-/** Upper bound on a single request's pet count — keeps absurd values out of capacity arithmetic. */
-export const MAX_PET_COUNT = 50;
+/** Safety rail (NOT a business cap): input sanity bound on a single request's pet count. */
+export const DEFENSIVE_MAX_PET_COUNT = 1000;
 
-/** True for a whole number in [1, MAX_PET_COUNT]. */
+/** True for a whole number in [1, DEFENSIVE_MAX_PET_COUNT]. */
 export function isValidPetCount(value: unknown): value is number {
   return (
-    typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_PET_COUNT
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= DEFENSIVE_MAX_PET_COUNT
   );
 }
 
@@ -29,8 +33,8 @@ export function isRealDate(value: string): boolean {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
-export function isFutureOrToday(value: string): boolean {
-  return value >= getPacificDateStr();
+export function isFutureOrToday(value: string, timezone?: string): boolean {
+  return value >= getPacificDateStr(undefined, timezone);
 }
 
 export type DateRangeError = { error: string; status: 400 };
@@ -40,22 +44,27 @@ export type DateRangeError = { error: string; status: 400 };
  * Enforces: real calendar dates, exclusive end strictly after start, not in the past,
  * and a bounded span.
  */
-export function validateBoardingRange(start: string, end: string): DateRangeError | null {
+export function validateBoardingRange(
+  start: string,
+  end: string,
+  maxStayNights: number | null,
+  timezone?: string,
+): DateRangeError | null {
   if (!isRealDate(start)) return { error: 'Invalid start date.', status: 400 };
   if (!isRealDate(end) || end <= start) return { error: 'Invalid end date.', status: 400 };
-  if (!isFutureOrToday(start)) return { error: 'That date is in the past.', status: 400 };
-  if (nightsBetween(start, end) > MAX_RANGE_NIGHTS)
-    return {
-      error: `Stays are limited to ${MAX_RANGE_NIGHTS} nights.`,
-      status: 400,
-    };
+  if (!isFutureOrToday(start, timezone)) return { error: 'That date is in the past.', status: 400 };
+  const nights = nightsBetween(start, end);
+  // Defensive rail first: an over-rail range is malformed input, not "over capacity".
+  if (nights > DEFENSIVE_MAX_NIGHTS) return { error: 'Invalid date range.', status: 400 };
+  if (maxStayNights !== null && nights > maxStayNights)
+    return { error: `Stays are limited to ${maxStayNights} nights.`, status: 400 };
   return null;
 }
 
 /** Validate a single-day (walk) date. */
-export function validateSingleDate(date: string): DateRangeError | null {
+export function validateSingleDate(date: string, timezone?: string): DateRangeError | null {
   if (!isRealDate(date)) return { error: 'Invalid date.', status: 400 };
-  if (!isFutureOrToday(date)) return { error: 'That date is in the past.', status: 400 };
+  if (!isFutureOrToday(date, timezone)) return { error: 'That date is in the past.', status: 400 };
   return null;
 }
 
