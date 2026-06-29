@@ -4,6 +4,7 @@ import { adminRoutes } from './routes/admin';
 import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
 import { bookingRoutes } from './routes/bookings';
+import { oauthRoutes } from './routes/oauth';
 import { publicRoutes } from './routes/public';
 import type { AppEnv } from './types';
 
@@ -57,6 +58,7 @@ app.route('/api', publicRoutes);
 app.route('/api', authRoutes);
 app.route('/api', bookingRoutes);
 app.route('/api', adminRoutes);
+app.route('/', oauthRoutes); // global OAuth callback — no slug, no tenant middleware
 
 /** Serve a built Vite page for a worker-routed path, with mutable headers. */
 const page = (asset: string) =>

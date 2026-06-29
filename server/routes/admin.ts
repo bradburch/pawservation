@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import {
+  clearProviderConnection,
   deleteBlockedRange,
+  getProviderConnection,
   insertBookingRequest,
   listBlockedRanges,
   listPetTypes,
@@ -13,10 +15,13 @@ import {
   setServiceEnabled,
   updateTenantSettings,
 } from '../db/repo';
+import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
+import { signState } from '../lib/oauth-state';
 import { findCapability, providerViews } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import { isPetType, isServiceType, PET_TYPES, SERVICE_CATALOG } from '../lib/services';
+import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
 import {
   DEFENSIVE_MAX_NIGHTS,
@@ -259,4 +264,30 @@ export const adminRoutes = new Hono<AppEnv>()
       'connected-stub',
     );
     return c.json({ status: 'connected-stub' });
+  })
+
+  .get('/:slug/admin/providers/calendar/oauth/start', async (c) => {
+    const tenant = c.get('tenant');
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
+      return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
+    const nonce = crypto.randomUUID();
+    await c.env.PAWBOOK_CACHE.put(`gcal:nonce:${nonce}`, '1', { expirationTtl: 600 });
+    const state = await signState(c.env.TOKEN_SECRET, {
+      tenantId: tenant.Id, nonce, exp: Date.now() + 600_000,
+    });
+    return c.json({ url: buildAuthUrl(c.env, state) });
+  })
+
+  .post('/:slug/admin/providers/calendar/disconnect', async (c) => {
+    const tenant = c.get('tenant');
+    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    if (conn?.RefreshToken) {
+      try {
+        await revokeToken(await decryptToken(c.env.TOKEN_SECRET, conn.RefreshToken));
+      } catch {
+        /* best-effort revoke; clear locally regardless */
+      }
+    }
+    await clearProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    return c.json({ status: 'disconnected' });
   });
