@@ -13,4 +13,11 @@ interface Env {
    * on screen when email is unconfigured; anything else (incl. unset) fails closed in production.
    */
   ENVIRONMENT?: string;
+  /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
+  GOOGLE_CLIENT_ID: string;
+  /** Google OAuth2 client secret. `wrangler secret put GOOGLE_CLIENT_SECRET`. */
+  GOOGLE_CLIENT_SECRET: string;
+  /** Absolute URL of the global OAuth callback, registered in Google Cloud. Used in the consent
+   *  URL and the code exchange (must match exactly). e.g. https://<worker>/oauth/google/callback */
+  GOOGLE_OAUTH_REDIRECT_URI: string;
 }

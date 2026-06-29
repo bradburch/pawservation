@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS EndUsers (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   Email TEXT NOT NULL,
+  Name TEXT,
+  InvitedAt TEXT,
+  Status TEXT NOT NULL DEFAULT 'active' CHECK (Status IN ('invited', 'active')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (TenantId, Email)
 );
@@ -85,6 +88,8 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
   PetType TEXT, -- booked species ('dog'|'cat'); NULL for blocked. No pricing/capacity effect.
   PetCount INTEGER NOT NULL DEFAULT 1,
+  StartTime TEXT, -- 'HH:MM' wall-clock for timed bookings (walk/check-in); NULL = all-day event
+  GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
   EstCost INTEGER,
   Status TEXT NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending', 'confirmed', 'cancelled')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -98,7 +103,12 @@ CREATE TABLE IF NOT EXISTS ProviderConnections (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   Capability TEXT NOT NULL,
   Provider TEXT NOT NULL,
-  Status TEXT NOT NULL DEFAULT 'disconnected' CHECK (Status IN ('disconnected', 'connected-stub')),
+  Status TEXT NOT NULL DEFAULT 'disconnected' CHECK (Status IN ('disconnected', 'connected-stub', 'connected')),
   ConnectedAt TEXT,
+  -- AES-GCM ciphertext (base64 iv||ct), key derived from TOKEN_SECRET. NEVER returned to a client.
+  AccessToken TEXT,
+  RefreshToken TEXT,
+  TokenExpiresAt TEXT,
+  CalendarId TEXT,
   UNIQUE (TenantId, Capability)
 );

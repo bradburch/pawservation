@@ -47,6 +47,9 @@ export type EndUser = {
   Id: string;
   TenantId: string;
   Email: string;
+  Name: string | null;
+  Status: 'invited' | 'active';
+  InvitedAt: string | null;
 };
 
 export type BookingRow = {
@@ -59,6 +62,8 @@ export type BookingRow = {
   OptionKey: string | null;
   PetType: PetType | null;
   PetCount: number;
+  StartTime: string | null;
+  GCalEventId: string | null;
   EstCost: number | null;
   Status: 'pending' | 'confirmed' | 'cancelled';
   CreatedAt: string;
@@ -71,6 +76,14 @@ export type ProviderConnection = {
   Provider: string;
   Status: 'disconnected' | 'connected-stub';
   ConnectedAt: string | null;
+};
+
+/** Server-internal: includes encrypted OAuth token columns. NEVER serialize to a client. */
+export type ProviderConnectionWithTokens = ProviderConnection & {
+  AccessToken: string | null;
+  RefreshToken: string | null;
+  TokenExpiresAt: string | null;
+  CalendarId: string | null;
 };
 
 /** Hono generics: bindings come from worker-configuration.d.ts; per-request vars set by middleware. */

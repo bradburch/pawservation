@@ -23,7 +23,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, MaxBoardingPets, MaxHouseSitsPerDay, MaxStayNights, Timezone';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, EstCost, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, GCalEventId, Status, CreatedAt';
 
 export async function getTenantBySlug(db: D1Database, slug: string): Promise<Tenant | null> {
   return await db
@@ -86,7 +86,7 @@ export async function upsertEndUser(
   email: string,
 ): Promise<EndUser> {
   const existing = await db
-    .prepare('SELECT Id, TenantId, Email FROM EndUsers WHERE TenantId = ? AND Email = ?')
+    .prepare('SELECT Id, TenantId, Email, Name, Status, InvitedAt FROM EndUsers WHERE TenantId = ? AND Email = ?')
     .bind(tenantId, email)
     .first<EndUser>();
   if (existing) return existing;
@@ -95,7 +95,7 @@ export async function upsertEndUser(
     .prepare('INSERT INTO EndUsers (Id, TenantId, Email) VALUES (?, ?, ?)')
     .bind(id, tenantId, email)
     .run();
-  return { Id: id, TenantId: tenantId, Email: email };
+  return { Id: id, TenantId: tenantId, Email: email, Name: null, Status: 'active', InvitedAt: null };
 }
 
 export async function createLoginCode(
