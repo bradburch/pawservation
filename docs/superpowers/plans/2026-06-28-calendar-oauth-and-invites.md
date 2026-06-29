@@ -1027,12 +1027,17 @@ import type { AppEnv } from '../types';
 
 const NONCE_KEY = (nonce: string) => `gcal:nonce:${nonce}`;
 
-/** Tiny HTML page that signals the opener (admin dashboard) and closes the popup. */
+/**
+ * Script-free result page. This route is NOT under /embed, so index.ts applies the LOCKED_CSP
+ * (`default-src 'self'` with no script-src) — an inline <script> would be blocked. So the page is
+ * plain HTML and the admin dashboard (opener) detects the popup closing and refreshes itself.
+ */
 function resultPage(ok: boolean): Response {
-  const msg = ok ? 'pawbook:calendar-connected' : 'pawbook:calendar-error';
+  const body = ok
+    ? 'Google Calendar connected. You can close this window and return to Pawbook.'
+    : 'Connection failed. Please close this window and try again.';
   const html = `<!doctype html><meta charset="utf-8"><title>${ok ? 'Connected' : 'Error'}</title>
-<body style="font:14px system-ui;padding:2rem">${ok ? 'Google Calendar connected. You can close this window.' : 'Connection failed. Please try again.'}
-<script>try{window.opener&&window.opener.postMessage(${JSON.stringify(msg)},'*')}catch(e){}setTimeout(function(){window.close()},800)</script></body>`;
+<body style="font:14px system-ui;padding:2rem">${body}</body>`;
   return new Response(html, { status: ok ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
@@ -1318,18 +1323,18 @@ Append to `server/__tests__/booking-flow.test.ts` a test that with a connected c
 ```ts
   it('creates a calendar event when the tenant calendar is connected', async () => {
     const { env, raw } = createTestEnv();
-    // jess is a seeded active customer (see seed.sql), so gated identify succeeds.
-    await import('../db/repo').then(({ setProviderTokens }) =>
-      import('../lib/token-crypto').then(async ({ encryptToken }) => {
-        await setProviderTokens(env.PAWBOOK_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
-          access: await encryptToken('test-secret-0123456789', 'at'),
-          refresh: await encryptToken('test-secret-0123456789', 'rt'),
-          expiresAt: '2031-01-01T00:00:00Z', calendarId: 'primary',
-        });
-      }),
+    await setProviderTokens(env.PAWBOOK_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
+      access: await encryptToken(TEST_SECRET, 'at'),
+      refresh: await encryptToken(TEST_SECRET, 'rt'),
+      expiresAt: '2031-01-01T00:00:00Z',
+      calendarId: 'primary',
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'evt_book' }), { status: 200 }),
     );
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'evt_book' }), { status: 200 }));
 
+    // identify→verify→token. At this point in the plan identify is still open; after Task 10 it is
+    // gated but `jess@example.com` is a seeded active customer (Task 9), so this keeps passing.
     const token = await identify(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request('/api/sunny-paws/bookings', {
       method: 'POST',
@@ -1342,7 +1347,7 @@ Append to `server/__tests__/booking-flow.test.ts` a test that with a connected c
     expect(row.GCalEventId).toBe('evt_book');
   });
 ```
-> Add `import { vi } from 'vitest'` and `import { createTestEnv } from './helpers'` if not already present at the top of the file, and `afterEach(() => vi.restoreAllMocks())` inside the describe. (This test depends on Task 9 seeding `jess@example.com`; if running Task 7 before Task 9, temporarily insert the customer via `raw.exec`.)
+> At the top of `booking-flow.test.ts` ensure these imports exist: `import { afterEach, vi } from 'vitest'`, `import { createTestEnv, TEST_SECRET } from './helpers'`, `import { setProviderTokens } from '../db/repo'`, `import { encryptToken } from '../lib/token-crypto'`; and add `afterEach(() => vi.restoreAllMocks())` inside the describe. Note `jess@example.com` must be seeded (Task 9) — run Task 9 before this assertion is expected to pass under gating; before Task 9 it passes via open identify auto-create.
 
 - [ ] **Step 7: Run tests + typecheck + lint** — Run: `npm test && npm run typecheck && npm run lint` → PASS. (Booking-flow gating tests fully pass after Task 9.)
 
@@ -1368,7 +1373,7 @@ git commit -m "feat: create Google Calendar event on booking (best-effort)"
   - `deleteCustomer(db, tenantId, id): Promise<boolean>`
   - `countBookingsForUser(db, tenantId, endUserId): Promise<number>`
   - `promoteCustomerActive(db, tenantId, endUserId): Promise<void>`
-- Removes: `upsertEndUser` (replaced by `getEndUserByEmail` + `insertInvitedCustomer`).
+- Note: this task is purely ADDITIVE. `upsertEndUser` stays for now (its callers `auth.ts` and `isolation.test.ts` are migrated in Task 10, which removes it). Adding functions here keeps every task's typecheck green.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1417,7 +1422,7 @@ describe('customer repo', () => {
 
 - [ ] **Step 2: Run to verify it fails** — Run: `npm test -- customers-repo` → FAIL.
 
-- [ ] **Step 3: Implement** — in `server/db/repo.ts`, REMOVE `upsertEndUser` and add:
+- [ ] **Step 3: Implement** — in `server/db/repo.ts`, ADD the following (do NOT remove `upsertEndUser` yet — Task 10 removes it after migrating its callers):
 ```ts
 const ENDUSER_COLS = 'Id, TenantId, Email, Name, Status, InvitedAt';
 
@@ -1485,7 +1490,7 @@ export async function promoteCustomerActive(
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes** — Run: `npm test -- customers-repo` → PASS.
+- [ ] **Step 4: Run to verify it passes** — Run: `npm test -- customers-repo && npm run typecheck` → PASS (purely additive; `upsertEndUser` and all existing tests untouched).
 
 - [ ] **Step 5: Commit**
 ```bash
@@ -1669,13 +1674,21 @@ In `/verify`, after a successful `consumeLoginCode` (i.e., after the `if (!endUs
     await promoteCustomerActive(c.env.PAWBOOK_DB, tenant.Id, endUserId);
 ```
 
-- [ ] **Step 4: Run to verify it passes** — Run: `npm test -- invites` → PASS. Then run the full suite: `npm test` → all PASS (booking-flow/identify-email/isolation now use seeded `jess`).
+- [ ] **Step 4: Remove the now-unused `upsertEndUser`** from `server/db/repo.ts` (its only callers — `auth.ts` here and `isolation.test.ts` next — are being migrated this task). Delete the whole `export async function upsertEndUser(...) { ... }` block.
 
-> If `isolation.test.ts` or `booking-flow.test.ts` uses a tenant/email pair not seeded in Task 9, add the corresponding `EndUsers` seed row (active) rather than weakening the gate.
+- [ ] **Step 5: Migrate `server/__tests__/isolation.test.ts`** off `upsertEndUser`. Change the import on line 3:
+```ts
+import { insertBookingRequest, insertInvitedCustomer, listBookingsForUser } from '../db/repo';
+```
+Replace every `await upsertEndUser(env.PAWBOOK_DB, TENANT_A, 'jess@example.com')` with `await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jess@example.com', null)` and likewise for `TENANT_B`. The return shape (`{ Id, TenantId, Email, ... }`) is compatible; `jess` is seeded distinctly per tenant (Task 9) so the "same email under both tenants" test still gets two different `Id`s.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Run to verify it passes** — Run: `npm test && npm run typecheck` → all PASS (booking-flow/identify-email/isolation use seeded `jess`; gating works).
+
+> If any other existing test uses a tenant/email pair not seeded in Task 9, add the corresponding `EndUsers` seed row (active) rather than weakening the gate.
+
+- [ ] **Step 7: Commit**
 ```bash
-git add server/routes/auth.ts server/__tests__/invites.test.ts
+git add server/routes/auth.ts server/db/repo.ts server/__tests__/invites.test.ts server/__tests__/isolation.test.ts
 git commit -m "feat: gate identify to invited customers; promote on first verify"
 ```
 
@@ -1930,7 +1943,15 @@ Near the existing `connect` handler, add:
     setError('');
     try {
       const { url } = await adminApi.calendar.start(slug, token);
-      window.open(url, 'pawbook-gcal', 'width=520,height=640');
+      const popup = window.open(url, 'pawbook-gcal', 'width=520,height=640');
+      // The callback page is script-free (CSP), so detect the popup closing here and re-fetch
+      // settings to pick up the new connected status.
+      const timer = window.setInterval(() => {
+        if (!popup || popup.closed) {
+          window.clearInterval(timer);
+          void refresh();
+        }
+      }, 1000);
     } catch (e) {
       handle(e);
     }
@@ -1945,16 +1966,6 @@ Near the existing `connect` handler, add:
       handle(e);
     }
   };
-```
-Add an effect that refreshes when the OAuth popup signals success:
-```tsx
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (e.data === 'pawbook:calendar-connected') void refresh();
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [refresh]);
 ```
 > `slug`, `token`, `refresh`, `handle`, `setError` already exist in the authenticated dashboard component scope (same scope as `connect`). Place these alongside it.
 
