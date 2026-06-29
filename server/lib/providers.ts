@@ -19,7 +19,7 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = [
 ];
 
 export type ProviderView = CapabilityDescriptor & {
-  status: 'disconnected' | 'connected-stub';
+  status: 'disconnected' | 'connected-stub' | 'connected';
   connectedAt: string | null;
 };
 

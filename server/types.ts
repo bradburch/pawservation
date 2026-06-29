@@ -74,7 +74,7 @@ export type ProviderConnection = {
   TenantId: string;
   Capability: string;
   Provider: string;
-  Status: 'disconnected' | 'connected-stub';
+  Status: 'disconnected' | 'connected-stub' | 'connected';
   ConnectedAt: string | null;
 };
 
