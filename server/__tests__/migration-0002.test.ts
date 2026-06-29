@@ -3,7 +3,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 
-const MIGRATION_PATH = join(import.meta.dirname, '..', '..', 'migrations', '0002_tenant_config_limits.sql');
+const MIGRATION_PATH = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  'migrations',
+  '0002_tenant_config_limits.sql',
+);
 
 const OLD_TENANTS_DDL = `
 CREATE TABLE Tenants (

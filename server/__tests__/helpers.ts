@@ -11,8 +11,8 @@ import { mintAdminToken } from '../lib/token';
 
 const SQL_DIR = join(import.meta.dirname, '..', '..', 'sql');
 
-export const TENANT_A = 'tnt_sunnypaws'; // slug sunny-paws, max 2 boarding pets
-export const TENANT_B = 'tnt_happytails'; // slug happy-tails, max 4 boarding pets
+export const TENANT_A = 'tnt_sunnypaws'; // slug sunny-paws, seeded MaxBoardingPets=2 (demo config)
+export const TENANT_B = 'tnt_happytails'; // slug happy-tails, seeded MaxBoardingPets=4 (demo config)
 export const TEST_SECRET = 'test-secret-0123456789'; // ≥16 chars to pass the TOKEN_SECRET guard
 
 // Seeded sitter logins (password "demo1234"); see sql/seed.sql.

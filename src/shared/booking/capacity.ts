@@ -76,11 +76,11 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
 
 /** A day is unavailable when blocked, or a configured boarding/house-sit limit is met. */
 export function isUnavailableDate(capacity: DayCapacity, limits: CapacityLimits): boolean {
-  if (capacity.blocked >= 1) return true;
-  if (limits.maxHouseSitsPerDay !== null && capacity.houseSits >= limits.maxHouseSitsPerDay)
-    return true;
-  if (limits.maxBoardingPets !== null && capacity.boarding >= limits.maxBoardingPets) return true;
-  return false;
+  return (
+    capacity.blocked >= 1 ||
+    (limits.maxHouseSitsPerDay !== null && capacity.houseSits >= limits.maxHouseSitsPerDay) ||
+    (limits.maxBoardingPets !== null && capacity.boarding >= limits.maxBoardingPets)
+  );
 }
 
 /**

@@ -19,8 +19,9 @@ capacity rules, and pricing.
   `postMessage` channel; no third-party JS on the host page.
 - **Multi-tenant** — each provider is a tenant resolved from the URL, with isolated config,
   services, pricing, accepted pet types, and bookings.
-- **Capacity-aware availability** — per-day capacity and conflict rules (e.g. max boarding
-  pets per day, blocked dates) computed from a single source of truth.
+- **Capacity-aware availability** — per-tenant, per-day capacity and conflict rules (boarding
+  cap, house-sit cap, max stay length, and business timezone — each **nullable for
+  unlimited / instance-default**), plus blocked dates, computed from a single source of truth.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT
   sessions for the tenant admin dashboard.
 - **Zero runtime dependencies** in the booking/date/pricing core (pure TypeScript).
@@ -53,7 +54,7 @@ resolved from the slug; capacity and pricing rules live in `src/shared/` (pure f
 
 ```bash
 npm install
-npm run seed:local                                # schema + demo tenants (Sunny Paws, Happy Tails)
+npm run seed:local                                # schema + demo tenants (Sunny Paws, Happy Tails, Paws & Relax)
 printf 'TOKEN_SECRET=%s\nENVIRONMENT=development\n' "$(openssl rand -base64 32)" > .dev.vars
 npm run dev                                        # builds the widget + runs wrangler dev
 ```
@@ -71,6 +72,23 @@ npx wrangler secret put TOKEN_SECRET               # a strong random value (open
 npm run deploy
 npm run seed:remote                                # ⚠️ demo tenants/logins — do NOT run against a real prod DB
 ```
+
+### Database migrations
+
+`npm run deploy` ships **worker code only** — it does **not** touch the database. A fresh install
+gets the full, current schema from `sql/schema.sql` (via `seed:remote`). But when you upgrade an
+**already-provisioned** database, you must apply any new files in `migrations/` yourself, or the new
+code will query columns that don't exist yet and every `/api/:slug/*` route will 500.
+
+Apply pending migrations against the live DB (each file is idempotent-by-intent; run the ones added
+since your last deploy):
+
+```bash
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0002_tenant_config_limits.sql
+```
+
+Use `--local` instead of `--remote` for your dev database. (Fresh installs created from
+`sql/schema.sql` already include every column and do **not** need to replay migration files.)
 
 ### Email delivery (login codes)
 

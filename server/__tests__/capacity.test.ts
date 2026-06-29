@@ -57,7 +57,9 @@ describe('rangeHasConflict with CapacityLimits', () => {
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04')]);
     const oneSit: CapacityLimits = { maxBoardingPets: null, maxHouseSitsPerDay: 1 };
     expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, oneSit, 1)).toBe(true);
-    expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, UNLIMITED, 1)).toBe(false);
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, UNLIMITED, 1)).toBe(
+      false,
+    );
   });
 
   it('keeps the structural house-sit/boarding ≤1-day overlap rule regardless of limits', () => {
@@ -65,6 +67,8 @@ describe('rangeHasConflict with CapacityLimits', () => {
     // A house-sit overlapping 2 boarding days conflicts even with unlimited house-sits.
     expect(rangeHasConflict('2028-09-02', '2028-09-04', 'house-sit', cap, UNLIMITED, 1)).toBe(true);
     // Overlapping exactly 1 boarding day is allowed.
-    expect(rangeHasConflict('2028-09-01', '2028-09-02', 'house-sit', cap, UNLIMITED, 1)).toBe(false);
+    expect(rangeHasConflict('2028-09-01', '2028-09-02', 'house-sit', cap, UNLIMITED, 1)).toBe(
+      false,
+    );
   });
 });

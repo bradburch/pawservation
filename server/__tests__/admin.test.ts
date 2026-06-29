@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { providerViews, type CapabilityDescriptor } from '../lib/providers';
 import { mintToken } from '../lib/token';
-import { adminHeaders, adminToken, createTestEnv, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
+import {
+  adminHeaders,
+  adminToken,
+  createTestEnv,
+  TENANT_A,
+  TENANT_B,
+  TEST_SECRET,
+} from './helpers';
 
 /** Admin Bearer headers for a tenant, optionally with a JSON content type. */
 async function auth(tenantId: string, json = false): Promise<Record<string, string>> {

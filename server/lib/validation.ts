@@ -23,6 +23,17 @@ export function isValidPetCount(value: unknown): value is number {
   );
 }
 
+/**
+ * A nullable per-tenant limit: `null` (unlimited) or a positive integer within `max` — a
+ * defensive ceiling, NOT a business cap. Shared by the admin route's capacity/stay-length guards.
+ */
+export function isNullableLimit(value: unknown, max: number): value is number | null {
+  return (
+    value === null ||
+    (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max)
+  );
+}
+
 /** True only for a well-formed, real calendar date (rejects Feb 30, month 13, etc.). */
 export function isRealDate(value: string): boolean {
   if (!DATE_RE.test(value)) return false;

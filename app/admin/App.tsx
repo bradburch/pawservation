@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { DEFAULT_TIMEZONE } from '../../src/shared/index.js';
 import './admin.css';
 
 /**
@@ -10,6 +11,29 @@ import './admin.css';
 type Session = { token: string; slug: string; displayName: string };
 
 const TOKEN_KEY = 'pawbook-admin-token';
+
+/** A nullable capacity/limit input: blank ⇒ null (no limit), a number ⇒ that value. */
+function NullableNumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number | null;
+  onChange: (value: number | null) => void;
+}) {
+  return (
+    <label>
+      {label} <span className="ad-hint">(blank = no limit)</span>
+      <input
+        type="number"
+        min={1}
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+      />
+    </label>
+  );
+}
 
 function getStoredToken(): string | null {
   try {
@@ -322,53 +346,26 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             onChange={(e) => setSettings({ ...settings, accentColor: e.target.value })}
           />
         </label>
+        <NullableNumberField
+          label="Max boarding pets per day"
+          value={settings.maxBoardingPets}
+          onChange={(maxBoardingPets) => setSettings({ ...settings, maxBoardingPets })}
+        />
+        <NullableNumberField
+          label="Max house-sits per day"
+          value={settings.maxHouseSitsPerDay}
+          onChange={(maxHouseSitsPerDay) => setSettings({ ...settings, maxHouseSitsPerDay })}
+        />
+        <NullableNumberField
+          label="Max stay length (nights)"
+          value={settings.maxStayNights}
+          onChange={(maxStayNights) => setSettings({ ...settings, maxStayNights })}
+        />
         <label>
-          Max boarding pets per day <span className="ad-hint">(blank = no limit)</span>
-          <input
-            type="number"
-            min={1}
-            value={settings.maxBoardingPets ?? ''}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                maxBoardingPets: e.target.value === '' ? null : Number(e.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          Max house-sits per day <span className="ad-hint">(blank = no limit)</span>
-          <input
-            type="number"
-            min={1}
-            value={settings.maxHouseSitsPerDay ?? ''}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                maxHouseSitsPerDay: e.target.value === '' ? null : Number(e.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          Max stay length (nights) <span className="ad-hint">(blank = no limit)</span>
-          <input
-            type="number"
-            min={1}
-            value={settings.maxStayNights ?? ''}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                maxStayNights: e.target.value === '' ? null : Number(e.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          Business timezone <span className="ad-hint">(blank = America/Los_Angeles)</span>
+          Business timezone <span className="ad-hint">(blank = {DEFAULT_TIMEZONE})</span>
           <input
             type="text"
-            placeholder="America/Los_Angeles"
+            placeholder={DEFAULT_TIMEZONE}
             value={settings.timezone ?? ''}
             onChange={(e) =>
               setSettings({

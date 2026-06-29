@@ -26,11 +26,13 @@
 ### Task 1: Make the shared capacity engine config-aware
 
 **Files:**
+
 - Modify: `src/shared/booking/capacity.ts`
 - Modify: `src/shared/index.ts`
 - Test: `server/__tests__/capacity.test.ts` (new)
 
 **Interfaces:**
+
 - Produces:
   - `type CapacityLimits = { maxBoardingPets: number | null; maxHouseSitsPerDay: number | null }`
   - `dayBlocksRequest(capacity: DayCapacity, requestType: 'boarding' | 'house-sit', limits: CapacityLimits, requestPets?: number): boolean`
@@ -104,7 +106,9 @@ describe('rangeHasConflict with CapacityLimits', () => {
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04')]);
     const oneSit: CapacityLimits = { maxBoardingPets: null, maxHouseSitsPerDay: 1 };
     expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, oneSit, 1)).toBe(true);
-    expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, UNLIMITED, 1)).toBe(false);
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, UNLIMITED, 1)).toBe(
+      false,
+    );
   });
 
   it('keeps the structural house-sit/boarding ≤1-day overlap rule regardless of limits', () => {
@@ -112,7 +116,9 @@ describe('rangeHasConflict with CapacityLimits', () => {
     // A house-sit overlapping 2 boarding days conflicts even with unlimited house-sits.
     expect(rangeHasConflict('2028-09-02', '2028-09-04', 'house-sit', cap, UNLIMITED, 1)).toBe(true);
     // Overlapping exactly 1 boarding day is allowed.
-    expect(rangeHasConflict('2028-09-01', '2028-09-02', 'house-sit', cap, UNLIMITED, 1)).toBe(false);
+    expect(rangeHasConflict('2028-09-01', '2028-09-02', 'house-sit', cap, UNLIMITED, 1)).toBe(
+      false,
+    );
   });
 });
 ```
@@ -241,14 +247,14 @@ Update `findOpenings` (old lines 158-200): add `limits: CapacityLimits` to the `
 and the inner call becomes:
 
 ```ts
-        !rangeHasConflict(
-          start,
-          end,
-          opts.requestType as 'boarding' | 'house-sit',
-          capacity,
-          opts.limits,
-          opts.petCount,
-        )
+!rangeHasConflict(
+  start,
+  end,
+  opts.requestType as 'boarding' | 'house-sit',
+  capacity,
+  opts.limits,
+  opts.petCount,
+);
 ```
 
 In `src/shared/index.ts`, update the capacity export block to add `CapacityLimits`:
@@ -283,10 +289,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 2: Make business timezone configurable in the date helpers
 
 **Files:**
+
 - Modify: `src/shared/util/dates.ts`
 - Test: `server/__tests__/dates-timezone.test.ts` (new)
 
 **Interfaces:**
+
 - Produces:
   - `const DEFAULT_TIMEZONE = 'America/Los_Angeles'`
   - `getPacificDateStr(date?: Date, timezone?: string): string` (timezone defaults to `DEFAULT_TIMEZONE`)
@@ -346,7 +354,10 @@ export const PACIFIC = DEFAULT_TIMEZONE;
 Change `getPacificDateStr` (old lines 107-109) to:
 
 ```ts
-export function getPacificDateStr(date: Date = new Date(), timezone: string = DEFAULT_TIMEZONE): string {
+export function getPacificDateStr(
+  date: Date = new Date(),
+  timezone: string = DEFAULT_TIMEZONE,
+): string {
   return date.toLocaleDateString('en-CA', { timeZone: timezone });
 }
 ```
@@ -372,6 +383,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 3: Schema, migration, types, repo, and third demo tenant
 
 **Files:**
+
 - Modify: `sql/schema.sql`
 - Create: `migrations/0002_tenant_config_limits.sql`
 - Modify: `sql/seed.sql`
@@ -380,6 +392,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Test: `server/__tests__/tenant-config.test.ts` (new)
 
 **Interfaces:**
+
 - Produces:
   - `Tenant` type with `MaxBoardingPets: number | null`, `MaxHouseSitsPerDay: number | null`, `MaxStayNights: number | null`, `Timezone: string | null`
   - `updateTenantSettings(db, tenantId, settings)` where `settings: { displayName: string; accentColor: string; maxBoardingPets: number | null; maxHouseSitsPerDay: number | null; maxStayNights: number | null; timezone: string | null }`
@@ -605,10 +618,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 4: Unify server availability on the shared engine (delete the fork)
 
 **Files:**
+
 - Modify: `server/lib/availability.ts`
 - Modify: `server/__tests__/availability.test.ts`
 
 **Interfaces:**
+
 - Consumes: `rangeHasConflict`, `CapacityLimits`, `buildCapacity` (Task 1); `Tenant` with nullable fields (Task 3).
 - Produces:
   - `rowsToCapacityEvents(rows: BookingRow[]): CapacityEvent[]` now emits `'house-sit'` for housesitting rows.
@@ -656,48 +671,48 @@ Replace each `const tenant = { Id: TENANT_A, ... MaxBoardingPets: 2 };` literal 
 Update the `'house-sitting consumes a boarding slot ...'` test (old lines 330-358): rename it and adjust the comment to reflect the new model — a house-sit overlapping existing boarding on 2+ days conflicts via the structural overlap rule. The assertion (`available: false`) is unchanged. Use `MaxHouseSitsPerDay: null` (unlimited) so the conflict is proven to come from the overlap rule, not a house-sit cap:
 
 ```ts
-  it('house-sit conflicts when it overlaps existing boarding by more than a day', async () => {
-    const { env } = createTestEnv();
-    const t = tenant(); // MaxHouseSitsPerDay null = unlimited; conflict must come from overlap rule
-    const o = opt({
-      ServiceType: 'housesitting',
-      OptionKey: 'standard',
-      DurationMinutes: null,
-      Rate: 70,
-      RateUnit: 'night',
-    });
-    // Seed: 1 pet boarding Jun 20-25. A house-sit Jun 21-23 overlaps boarding on Jun 21 AND 22.
-    const res = await checkAvailability(env, t, 'housesitting', o, '2028-06-21', '2028-06-23', 2);
-    expect(res).toMatchObject({ available: false });
-    expect(SERVICE_CATALOG.housesitting.shape).toBe('range');
+it('house-sit conflicts when it overlaps existing boarding by more than a day', async () => {
+  const { env } = createTestEnv();
+  const t = tenant(); // MaxHouseSitsPerDay null = unlimited; conflict must come from overlap rule
+  const o = opt({
+    ServiceType: 'housesitting',
+    OptionKey: 'standard',
+    DurationMinutes: null,
+    Rate: 70,
+    RateUnit: 'night',
   });
+  // Seed: 1 pet boarding Jun 20-25. A house-sit Jun 21-23 overlaps boarding on Jun 21 AND 22.
+  const res = await checkAvailability(env, t, 'housesitting', o, '2028-06-21', '2028-06-23', 2);
+  expect(res).toMatchObject({ available: false });
+  expect(SERVICE_CATALOG.housesitting.shape).toBe('range');
+});
 ```
 
 Add a new test proving the unlimited demo tenant auto-passes a large overlapping boarding request:
 
 ```ts
-  it('unlimited tenant (paws-and-relax) accepts overlapping boardings', async () => {
-    const { env } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, 'tnt_pawsandrelax', {
-      endUserId: null,
-      serviceType: 'boarding',
-      startDate: '2028-05-01',
-      endDate: '2028-05-10',
-      optionKey: 'standard',
-      petType: null,
-      petCount: 8,
-      estCost: null,
-      status: 'confirmed',
-    });
-    const res = (await (
-      await app.request(
-        '/api/paws-and-relax/availability?type=boarding&start=2028-05-02&end=2028-05-06&pets=9',
-        {},
-        env,
-      )
-    ).json()) as { available: boolean };
-    expect(res.available).toBe(true);
+it('unlimited tenant (paws-and-relax) accepts overlapping boardings', async () => {
+  const { env } = createTestEnv();
+  await insertBookingRequest(env.PAWBOOK_DB, 'tnt_pawsandrelax', {
+    endUserId: null,
+    serviceType: 'boarding',
+    startDate: '2028-05-01',
+    endDate: '2028-05-10',
+    optionKey: 'standard',
+    petType: null,
+    petCount: 8,
+    estCost: null,
+    status: 'confirmed',
   });
+  const res = (await (
+    await app.request(
+      '/api/paws-and-relax/availability?type=boarding&start=2028-05-02&end=2028-05-06&pets=9',
+      {},
+      env,
+    )
+  ).json()) as { available: boolean };
+  expect(res.available).toBe(true);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -827,11 +842,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 5: Configurable max stay length + defensive rails in validation
 
 **Files:**
+
 - Modify: `server/lib/validation.ts`
 - Modify: `server/routes/public.ts`
 - Modify: `server/__tests__/validation.test.ts`
 
 **Interfaces:**
+
 - Consumes: `getPacificDateStr` timezone arg (Task 2); `Tenant` nullable fields (Task 3).
 - Produces:
   - `const DEFENSIVE_MAX_NIGHTS = 3650`, `const DEFENSIVE_MAX_PET_COUNT = 1000`
@@ -846,11 +863,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 First inspect existing references: `npx vitest run server/__tests__/validation.test.ts` and open the file. Replace any `MAX_RANGE_NIGHTS`/`MAX_PET_COUNT` references and add the cases below. Append this describe block to `server/__tests__/validation.test.ts`:
 
 ```ts
-import {
-  DEFENSIVE_MAX_NIGHTS,
-  isValidPetCount,
-  validateBoardingRange,
-} from '../lib/validation';
+import { DEFENSIVE_MAX_NIGHTS, isValidPetCount, validateBoardingRange } from '../lib/validation';
 
 describe('configurable stay length', () => {
   it('rejects a stay over the tenant max with the configured number', () => {
@@ -950,11 +963,16 @@ export function validateSingleDate(date: string, timezone?: string): DateRangeEr
 In `server/routes/public.ts`, pass the tenant's stay limit and timezone. In the `/:slug/availability` handler, change the two validation calls (old lines 65 and 69):
 
 ```ts
-      const rangeError = validateBoardingRange(start, end, tenant.MaxStayNights, tenant.Timezone ?? undefined);
+const rangeError = validateBoardingRange(
+  start,
+  end,
+  tenant.MaxStayNights,
+  tenant.Timezone ?? undefined,
+);
 ```
 
 ```ts
-    const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
+const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -976,11 +994,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 6: Admin settings + public config expose and validate the new fields
 
 **Files:**
+
 - Modify: `server/routes/admin.ts`
 - Modify: `server/routes/public.ts`
 - Modify: `server/__tests__/admin.test.ts`
 
 **Interfaces:**
+
 - Consumes: `updateTenantSettings` new shape (Task 3); `DEFENSIVE_MAX_NIGHTS`, `DEFENSIVE_MAX_PET_COUNT` (Task 5).
 - Produces: GET `/admin/settings` and GET `/config` responses include `maxBoardingPets`, `maxHouseSitsPerDay`, `maxStayNights`, `timezone` (nullable). PUT `/admin/settings` accepts and validates them (null clears to unlimited).
 
@@ -1077,7 +1097,10 @@ Add two validators after `const COLOR_RE` (line 24):
 ```ts
 /** A nullable limit: null (unlimited) or a positive integer within a defensive ceiling. */
 function isNullableLimit(value: unknown, max: number): value is number | null {
-  return value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max);
+  return (
+    value === null ||
+    (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max)
+  );
 }
 
 /** null/undefined (use default) or a timezone Intl accepts. */
@@ -1119,38 +1142,45 @@ In the GET `/admin/settings` response (after line 52 `maxBoardingPets: tenant.Ma
 In the PUT handler, replace the field-resolution + validation (old lines 85-92). A field present in the body is applied (including explicit `null` to clear); an absent field keeps the current value:
 
 ```ts
-    const maxBoardingPets =
-      'maxBoardingPets' in body ? body.maxBoardingPets! : tenant.MaxBoardingPets;
-    const maxHouseSitsPerDay =
-      'maxHouseSitsPerDay' in body ? body.maxHouseSitsPerDay! : tenant.MaxHouseSitsPerDay;
-    const maxStayNights = 'maxStayNights' in body ? body.maxStayNights! : tenant.MaxStayNights;
-    const timezone = 'timezone' in body ? body.timezone! : tenant.Timezone;
-    const petTypes = body.petTypes;
-    const services = body.services ?? [];
+const maxBoardingPets = 'maxBoardingPets' in body ? body.maxBoardingPets! : tenant.MaxBoardingPets;
+const maxHouseSitsPerDay =
+  'maxHouseSitsPerDay' in body ? body.maxHouseSitsPerDay! : tenant.MaxHouseSitsPerDay;
+const maxStayNights = 'maxStayNights' in body ? body.maxStayNights! : tenant.MaxStayNights;
+const timezone = 'timezone' in body ? body.timezone! : tenant.Timezone;
+const petTypes = body.petTypes;
+const services = body.services ?? [];
 
-    if (!displayName) return c.json({ error: 'Display name required.' }, 400);
-    if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
-    if (!isNullableLimit(maxBoardingPets, DEFENSIVE_MAX_PET_COUNT))
-      return c.json({ error: 'Boarding capacity must be a positive number, or blank for no limit.' }, 400);
-    if (!isNullableLimit(maxHouseSitsPerDay, DEFENSIVE_MAX_PET_COUNT))
-      return c.json({ error: 'House-sit capacity must be a positive number, or blank for no limit.' }, 400);
-    if (!isNullableLimit(maxStayNights, DEFENSIVE_MAX_NIGHTS))
-      return c.json({ error: 'Max stay nights must be a positive number, or blank for no limit.' }, 400);
-    if (!isValidTimezone(timezone))
-      return c.json({ error: 'Unknown timezone.' }, 400);
+if (!displayName) return c.json({ error: 'Display name required.' }, 400);
+if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
+if (!isNullableLimit(maxBoardingPets, DEFENSIVE_MAX_PET_COUNT))
+  return c.json(
+    { error: 'Boarding capacity must be a positive number, or blank for no limit.' },
+    400,
+  );
+if (!isNullableLimit(maxHouseSitsPerDay, DEFENSIVE_MAX_PET_COUNT))
+  return c.json(
+    { error: 'House-sit capacity must be a positive number, or blank for no limit.' },
+    400,
+  );
+if (!isNullableLimit(maxStayNights, DEFENSIVE_MAX_NIGHTS))
+  return c.json(
+    { error: 'Max stay nights must be a positive number, or blank for no limit.' },
+    400,
+  );
+if (!isValidTimezone(timezone)) return c.json({ error: 'Unknown timezone.' }, 400);
 ```
 
 Update the `updateTenantSettings` call (old lines 119-123) to pass all fields:
 
 ```ts
-    await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
-      displayName,
-      accentColor,
-      maxBoardingPets,
-      maxHouseSitsPerDay,
-      maxStayNights,
-      timezone: timezone ?? null,
-    });
+await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
+  displayName,
+  accentColor,
+  maxBoardingPets,
+  maxHouseSitsPerDay,
+  maxStayNights,
+  timezone: timezone ?? null,
+});
 ```
 
 In `server/routes/public.ts`, in the `/:slug/config` JSON (after line 21 `maxBoardingPets: tenant.MaxBoardingPets,`) add:
@@ -1181,10 +1211,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 7: Admin dashboard UI for the new settings
 
 **Files:**
+
 - Modify: `app/shared-ui/api.ts`
 - Modify: `app/admin/App.tsx`
 
 **Interfaces:**
+
 - Consumes: config/settings API shapes (Task 6).
 - Produces: admin form inputs for boarding cap (blank = unlimited), house-sit cap, max stay nights, timezone; `TenantConfig` type with nullable fields.
 
@@ -1213,10 +1245,10 @@ In `app/admin/App.tsx`:
 Update the settings type (around line 47) — change `maxBoardingPets: number;` to:
 
 ```ts
-  maxBoardingPets: number | null;
-  maxHouseSitsPerDay: number | null;
-  maxStayNights: number | null;
-  timezone: string | null;
+maxBoardingPets: number | null;
+maxHouseSitsPerDay: number | null;
+maxStayNights: number | null;
+timezone: string | null;
 ```
 
 Where the settings object is built from the GET response (around line 222 `maxBoardingPets: settings.maxBoardingPets,`), ensure the three new fields are carried through identically (add `maxHouseSitsPerDay`, `maxStayNights`, `timezone` alongside it in the same object literal).

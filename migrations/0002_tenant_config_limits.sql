@@ -4,6 +4,11 @@
 -- Run against already-provisioned DBs:
 --   npx wrangler d1 execute pawbook-db --local  --file ./migrations/0002_tenant_config_limits.sql
 --   npx wrangler d1 execute pawbook-db --remote --file ./migrations/0002_tenant_config_limits.sql
+--
+-- BEHAVIORAL NOTE: this ships alongside making house-sits FIRST-CLASS capacity events (they no
+-- longer consume a boarding slot). Existing tenants with housesitting bookings will see those
+-- bookings stop blocking boarding capacity; with MaxHouseSitsPerDay defaulting to NULL (unlimited)
+-- only the structural ≤1-day house-sit/boarding overlap rule applies. This is intended.
 PRAGMA foreign_keys=OFF;
 CREATE TABLE Tenants_new (
   Id TEXT PRIMARY KEY,

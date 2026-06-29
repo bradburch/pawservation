@@ -65,7 +65,12 @@ export const publicRoutes = new Hono<AppEnv>()
     if (!option) return c.json({ error: 'Unknown service option.' }, 400);
 
     if (SERVICE_CATALOG[type].shape === 'range') {
-      const rangeError = validateBoardingRange(start, end, tenant.MaxStayNights, tenant.Timezone ?? undefined);
+      const rangeError = validateBoardingRange(
+        start,
+        end,
+        tenant.MaxStayNights,
+        tenant.Timezone ?? undefined,
+      );
       if (rangeError) return c.json({ error: rangeError.error }, rangeError.status);
       return c.json(await checkAvailability(c.env, tenant, type, option, start, end, pets));
     }

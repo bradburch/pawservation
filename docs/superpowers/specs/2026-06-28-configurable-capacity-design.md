@@ -10,11 +10,11 @@ Several business values that belong to the individual pet sitter are hardcoded i
 the application instead of being per-tenant configuration:
 
 - **Boarding capacity is fixed at 2 pets/day** and **house-sits at 1/day** in the
-  shared engine (`src/shared/booking/capacity.ts`). The server keeps a *forked
-  copy* (`tenantRangeHasConflict`) that honors `tenant.MaxBoardingPets`, so there
+  shared engine (`src/shared/booking/capacity.ts`). The server keeps a _forked
+  copy_ (`tenantRangeHasConflict`) that honors `tenant.MaxBoardingPets`, so there
   are two parallel capacity engines and only one is config-aware. The code
   comments flag this as a deliberate "D-E deviation" with the graduation path:
-  *"add an optional `maxPets` param to the shared functions instead."*
+  _"add an optional `maxPets` param to the shared functions instead."_
 - **`MaxBoardingPets` has a forced default of 2 and a hard ceiling of 50**
   (`sql/schema.sql:9`, `server/routes/admin.ts:91`). There is no notion of
   "no limit."
@@ -35,7 +35,7 @@ that way.
 1. Boarding capacity, house-sit capacity, and max stay length are per-tenant
    settings where **unset (`NULL`) means unlimited — an auto pass-through**.
 2. Business timezone is a per-tenant setting; unset falls back to an instance
-   default (timezone needs *a* value — it can't be "unlimited").
+   default (timezone needs _a_ value — it can't be "unlimited").
 3. **One** capacity engine. Delete the server fork; the shared engine becomes
    config-aware via an explicit limits parameter.
 4. Defensive safety rails (CPU/overflow guards) remain as invisible bounds far
@@ -56,8 +56,8 @@ Introduce a limits type in the shared layer and thread it through the engine:
 
 ```ts
 export type CapacityLimits = {
-  maxBoardingPets: number | null;     // null = no boarding pet-count limit
-  maxHouseSitsPerDay: number | null;  // null = no house-sit count limit
+  maxBoardingPets: number | null; // null = no boarding pet-count limit
+  maxHouseSitsPerDay: number | null; // null = no house-sit count limit
 };
 ```
 
@@ -162,7 +162,7 @@ fields so the widget calendar's availability UX matches the server.
 1. Widget calls `GET /:slug/availability` (or builds its calendar from
    `GET /:slug/config` limits).
 2. Server loads tenant → builds `CapacityLimits { maxBoardingPets,
-   maxHouseSitsPerDay }` and reads `maxStayNights`, `timezone`.
+maxHouseSitsPerDay }` and reads `maxStayNights`, `timezone`.
 3. `validateBoardingRange` checks dates against `maxStayNights` (or unlimited) and
    the defensive rail, using the tenant timezone for the past check.
 4. `checkRange` builds capacity from DB rows and calls shared `rangeHasConflict`

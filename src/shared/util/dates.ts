@@ -107,7 +107,10 @@ export function addDays(dateStr: string, days: number): string {
  * rather than the runtime's local or UTC date, so a booking near midnight resolves to the
  * correct business day. Pass a tenant's configured timezone to honor a non-default sitter.
  */
-export function getPacificDateStr(date: Date = new Date(), timezone: string = DEFAULT_TIMEZONE): string {
+export function getPacificDateStr(
+  date: Date = new Date(),
+  timezone: string = DEFAULT_TIMEZONE,
+): string {
   return date.toLocaleDateString('en-CA', { timeZone: timezone });
 }
 
@@ -130,6 +133,11 @@ function pacificOffsetMinutes(at: Date): number {
   const mins = parseInt(m[2] ?? '0', 10);
   return -(hours * 60 + Math.sign(hours) * mins);
 }
+
+// NOTE: pacificDayStartUtcMs / hoursUntilStart are the cancellation-window helpers and are NOT
+// yet timezone-parameterized — they hardcode PACIFIC (the instance default). They have no live
+// callers today; thread a tenant `timezone` through them (like getPacificDateStr) when the
+// cancellation-policy feature lands, or a non-default sitter's fee windows will use Pacific.
 
 /** UTC milliseconds of the START of the Pacific calendar day `YYYY-MM-DD` (00:00 Pacific). */
 export function pacificDayStartUtcMs(dateStr: string): number {

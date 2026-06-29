@@ -21,6 +21,7 @@ import { invalidateTenantCache } from '../lib/tenant-resolve';
 import {
   DEFENSIVE_MAX_NIGHTS,
   DEFENSIVE_MAX_PET_COUNT,
+  isNullableLimit,
   isRealDate,
   isValidDuration,
   isValidRate,
@@ -28,11 +29,6 @@ import {
 import type { AppEnv } from '../types';
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-
-/** A nullable limit: null (unlimited) or a positive integer within a defensive ceiling. */
-function isNullableLimit(value: unknown, max: number): value is number | null {
-  return value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max);
-}
 
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
@@ -124,13 +120,23 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!displayName) return c.json({ error: 'Display name required.' }, 400);
     if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
     if (!isNullableLimit(maxBoardingPets, DEFENSIVE_MAX_PET_COUNT))
-      return c.json({ error: 'Boarding capacity must be a positive number, or blank for no limit.' }, 400);
+      return c.json(
+        { error: 'Boarding capacity must be a positive number, or blank for no limit.' },
+        400,
+      );
+    // DEFENSIVE_MAX_PET_COUNT is reused here purely as a generic "sane capacity integer" ceiling —
+    // a house-sit count isn't a pet count, but the same 1..1000 sanity bound is the right guard.
     if (!isNullableLimit(maxHouseSitsPerDay, DEFENSIVE_MAX_PET_COUNT))
-      return c.json({ error: 'House-sit capacity must be a positive number, or blank for no limit.' }, 400);
+      return c.json(
+        { error: 'House-sit capacity must be a positive number, or blank for no limit.' },
+        400,
+      );
     if (!isNullableLimit(maxStayNights, DEFENSIVE_MAX_NIGHTS))
-      return c.json({ error: 'Max stay nights must be a positive number, or blank for no limit.' }, 400);
-    if (!isValidTimezone(timezone))
-      return c.json({ error: 'Unknown timezone.' }, 400);
+      return c.json(
+        { error: 'Max stay nights must be a positive number, or blank for no limit.' },
+        400,
+      );
+    if (!isValidTimezone(timezone)) return c.json({ error: 'Unknown timezone.' }, 400);
     if (petTypes !== undefined) {
       if (!Array.isArray(petTypes) || !petTypes.every(isPetType))
         return c.json({ error: 'Unknown pet type.' }, 400);
