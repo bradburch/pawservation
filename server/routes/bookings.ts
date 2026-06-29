@@ -8,6 +8,7 @@ import {
   listServices,
 } from '../db/repo';
 import { checkAvailability, estimateCost } from '../lib/availability';
+import { syncBookingToCalendar } from '../lib/calendar-sync';
 import { SERVICE_CATALOG, isServiceType, isPetType } from '../lib/services';
 import type { PetType } from '../lib/services';
 import { endUserAuth } from '../lib/middleware';
@@ -109,6 +110,27 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (!check.available) {
       await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
       return c.json({ error: 'Sorry — those dates just filled up.' }, 409);
+    }
+
+    // Best-effort calendar sync — never blocks or fails the booking. Use waitUntil in production;
+    // in tests (no ExecutionContext) await it so behavior is deterministic.
+    const sync = syncBookingToCalendar(c.env, tenant, {
+      bookingId: id,
+      endUserId: c.get('endUserId'),
+      serviceType: type,
+      startDate: start,
+      endDate,
+      startTime: null, // no booking path collects a time yet (deferred); all events are all-day
+      durationMinutes: option.DurationMinutes,
+      petCount: pets,
+      estCost,
+    }).catch((err) => {
+      console.error('calendar sync failed', err);
+    });
+    try {
+      c.executionCtx.waitUntil(sync);
+    } catch {
+      await sync;
     }
 
     return c.json({ id, estCost, status: 'pending' }, 201);

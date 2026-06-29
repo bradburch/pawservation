@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { createTestEnv } from './helpers';
+import { createTestEnv, TEST_SECRET } from './helpers';
+import { setProviderTokens } from '../db/repo';
+import { encryptToken } from '../lib/token-crypto';
 
 /** UJ-1 end to end through the real app: identify → verify → book → my bookings. */
 describe('booking flow', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   async function identify(env: Env, slug: string, email: string): Promise<string> {
     const identifyRes = await app.request(
       `/api/${slug}/identify`,
@@ -259,5 +263,31 @@ describe('booking flow', () => {
     const api = await app.request('/api/sunny-paws/config', {}, env);
     expect(api.headers.get('X-Frame-Options')).toBe('DENY');
     expect(api.headers.get('Content-Security-Policy') ?? '').toContain("frame-ancestors 'none'");
+  });
+
+  it('creates a calendar event when the tenant calendar is connected', async () => {
+    const { env, raw } = createTestEnv();
+    await setProviderTokens(env.PAWBOOK_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
+      access: await encryptToken(TEST_SECRET, 'at'),
+      refresh: await encryptToken(TEST_SECRET, 'rt'),
+      expiresAt: '2031-01-01T00:00:00Z',
+      calendarId: 'primary',
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'evt_book' }), { status: 200 }),
+    );
+
+    // identify→verify→token. At this point in the plan identify is still open; after Task 10 it is
+    // gated but `jess@example.com` is a seeded active customer (Task 9), so this keeps passing.
+    const token = await identify(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request('/api/sunny-paws/bookings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ type: 'daycare', startDate: '2030-09-09', petCount: 1 }),
+    }, env);
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id=?`).get(id) as { GCalEventId: string };
+    expect(row.GCalEventId).toBe('evt_book');
   });
 });
