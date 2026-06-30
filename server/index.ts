@@ -72,4 +72,56 @@ app.get('/admin', page('admin.html')); // login landing — the dashboard learns
 app.get('/admin/:slug', page('admin.html')); // deep link still works; auth drives the rest
 app.get('/demo', page('demo.html'));
 
+/**
+ * Root landing page: a single button into the admin dashboard. Static, script-free HTML (served
+ * under LOCKED_CSP, so only inline styles are allowed — no <script>), so it needs no build step.
+ */
+const LANDING_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pawbook</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: system-ui, -apple-system, sans-serif;
+        color: #1f2937;
+        background: linear-gradient(160deg, #eef2ff 0%, #f6f3ee 100%);
+      }
+      main { text-align: center; padding: 32px; }
+      .logo { font-size: 2.5rem; line-height: 1; }
+      h1 { margin: 12px 0 4px; font-size: 1.8rem; letter-spacing: -0.01em; }
+      p { margin: 0 0 28px; color: #6b7280; }
+      a.cta {
+        display: inline-block;
+        padding: 12px 28px;
+        background: #4f46e5;
+        color: #fff;
+        text-decoration: none;
+        border-radius: 9999px;
+        font-weight: 600;
+        font-size: 1rem;
+        transition: background 0.15s ease;
+      }
+      a.cta:hover { background: #4338ca; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="logo">🐾</div>
+      <h1>Pawbook</h1>
+      <p>Multi-tenant booking for pet care providers.</p>
+      <a class="cta" href="/admin">Open the admin dashboard</a>
+    </main>
+  </body>
+</html>
+`;
+
+app.get('/', (c) => c.html(LANDING_HTML));
+
 export default app;
