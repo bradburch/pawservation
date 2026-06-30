@@ -25,7 +25,7 @@ function NullableNumberField({
 }) {
   return (
     <label>
-      {label} <span className="ad-hint">(blank = no limit)</span>
+      {label} <span className="pb-hint">(blank = no limit)</span>
       <input
         type="number"
         min={1}
@@ -143,7 +143,7 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   };
 
   return (
-    <div className="ad-wrap ad-login">
+    <div className="pb-wrap pb-login">
       <h1>Sitter sign in</h1>
       <label>
         Email
@@ -168,8 +168,8 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
       <button onClick={submit} disabled={busy}>
         {busy ? 'Signing in…' : 'Sign in'}
       </button>
-      {error && <p className="ad-error">{error}</p>}
-      <p className="ad-hint">
+      {error && <p className="pb-error">{error}</p>}
+      <p className="pb-hint">
         <small>Demo logins are in the app's DEMO_NOTES.md.</small>
       </p>
     </div>
@@ -396,13 +396,13 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     };
   }, [loadSettings, handle]);
 
-  if (!settings) return <p className="ad-wrap">Loading…</p>;
+  if (!settings) return <p className="pb-wrap">Loading…</p>;
 
   return (
-    <div className="ad-wrap">
-      <header className="ad-topbar">
+    <div className="pb-wrap">
+      <header className="pb-topbar">
         <h1>{settings.displayName} — admin</h1>
-        <button className="ad-signout" onClick={onSignOut}>
+        <button className="pb-signout" onClick={onSignOut}>
           Sign out
         </button>
       </header>
@@ -440,7 +440,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           onChange={(maxStayNights) => setSettings({ ...settings, maxStayNights })}
         />
         <label>
-          Business timezone <span className="ad-hint">(blank = {DEFAULT_TIMEZONE})</span>
+          Business timezone <span className="pb-hint">(blank = {DEFAULT_TIMEZONE})</span>
           <input
             type="text"
             placeholder={DEFAULT_TIMEZONE}
@@ -458,7 +458,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       <section>
         <h2>Pets you care for</h2>
         {settings.petTypes.map((p, i) => (
-          <label className="ad-inline" key={p.petType}>
+          <label className="pb-inline" key={p.petType}>
             <input
               type="checkbox"
               checked={p.enabled}
@@ -482,8 +482,8 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             setSettings({ ...settings, services });
           };
           return (
-            <div className="ad-service" key={s.type}>
-              <label className="ad-inline">
+            <div className="pb-service" key={s.type}>
+              <label className="pb-inline">
                 <input
                   type="checkbox"
                   checked={s.enabled}
@@ -492,7 +492,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
                 {s.label}
               </label>
               {!s.hasDuration ? (
-                <label className="ad-inline">
+                <label className="pb-inline">
                   $
                   <input
                     type="number"
@@ -514,9 +514,9 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
                   /{s.rateUnit}
                 </label>
               ) : (
-                <div className="ad-options">
+                <div className="pb-options">
                   {s.options.map((o, oi) => (
-                    <div className="ad-inline" key={oi}>
+                    <div className="pb-inline" key={oi}>
                       <input
                         type="number"
                         min={1}
@@ -573,11 +573,11 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         })}
       </section>
 
-      <button className="ad-save" onClick={save}>
+      <button className="pb-save" onClick={save}>
         Save settings
       </button>
-      {message && <p className="ad-ok">{message}</p>}
-      {error && <p className="ad-error">{error}</p>}
+      {message && <p className="pb-ok">{message}</p>}
+      {error && <p className="pb-error">{error}</p>}
 
       <section>
         <h2>Blocked days</h2>
@@ -589,7 +589,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             </li>
           ))}
         </ul>
-        <div className="ad-inline">
+        <div className="pb-inline">
           <input type="date" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} />
           <input type="date" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} />
           <button onClick={addBlock}>Block range</button>
@@ -603,7 +603,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             Only invited customers can request bookings. Adding one emails them an invite.
           </small>
         </p>
-        <div className="ad-row">
+        <div className="pb-row">
           <input
             type="email"
             placeholder="customer@email.com"
@@ -700,7 +700,7 @@ export default function App() {
     };
   }, []);
 
-  if (restoring) return <p className="ad-wrap">Loading…</p>;
+  if (restoring) return <p className="pb-wrap">Loading…</p>;
   if (!session) return <Login onLogin={setSession} />;
   return <Dashboard session={session} onSignOut={signOut} />;
 }

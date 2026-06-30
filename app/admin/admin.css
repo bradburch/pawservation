@@ -7,19 +7,19 @@ body {
   color: #1f2937;
 }
 
-.ad-wrap {
+.pb-wrap {
   max-width: 640px;
   margin: 0 auto;
   padding: 24px 16px;
 }
 
-.ad-wrap section {
+.pb-wrap section {
   border-top: 1px solid #e5e7eb;
   margin-top: 20px;
   padding-top: 12px;
 }
 
-.ad-wrap label {
+.pb-wrap label {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -27,71 +27,71 @@ body {
   font-size: 0.9rem;
 }
 
-.ad-wrap label.ad-inline,
-.ad-wrap .ad-inline {
+.pb-wrap label.pb-inline,
+.pb-wrap .pb-inline {
   flex-direction: row;
   align-items: center;
   gap: 8px;
 }
 
-.ad-wrap input,
-.ad-wrap button {
+.pb-wrap input,
+.pb-wrap button {
   padding: 8px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
   font-size: 0.95rem;
 }
 
-.ad-wrap button {
+.pb-wrap button {
   background: #111827;
   color: white;
   border: none;
   cursor: pointer;
 }
 
-.ad-save {
+.pb-save {
   margin-top: 12px;
 }
 
-.ad-error {
+.pb-error {
   color: #b91c1c;
 }
 
-.ad-ok {
+.pb-ok {
   color: #047857;
 }
 
-.ad-login {
+.pb-login {
   max-width: 360px;
 }
 
-.ad-login button {
+.pb-login button {
   width: 100%;
   margin-top: 4px;
 }
 
-.ad-hint {
+.pb-hint {
   color: #6b7280;
 }
 
-.ad-topbar {
+.pb-topbar {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
-.ad-signout {
+.pb-signout {
   background: none;
   color: #374151;
   border: 1px solid #d1d5db;
 }
 
-.ad-service {
+.pb-service {
   margin-bottom: 12px;
 }
 
-.ad-options {
+.pb-options {
   display: flex;
   flex-direction: column;
   gap: 6px;
