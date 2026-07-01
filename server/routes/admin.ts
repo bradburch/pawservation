@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
+  addEndUserPet,
   clearProviderConnection,
   countBookingsForUser,
   deleteBlockedRange,
@@ -10,10 +11,12 @@ import {
   insertInvitedCustomer,
   listBlockedRanges,
   listCustomers,
+  listEndUserPets,
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
   listServices,
+  removeEndUserPet,
   replaceServiceOptions,
   setPetTypeEnabled,
   setProviderStatus,
@@ -315,15 +318,21 @@ export const adminRoutes = new Hono<AppEnv>()
   .get('/:slug/admin/customers', async (c) => {
     const tenant = c.get('tenant');
     const customers = await listCustomers(c.env.PAWBOOK_DB, tenant.Id);
-    return c.json({
-      customers: customers.map((u) => ({
+    const withPets = await Promise.all(
+      customers.map(async (u) => ({
         id: u.Id,
         email: u.Email,
         name: u.Name,
         status: u.Status,
         invitedAt: u.InvitedAt,
+        pets: (await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, u.Id)).map((p) => ({
+          id: p.Id,
+          name: p.Name,
+          petType: p.PetType,
+        })),
       })),
-    });
+    );
+    return c.json({ customers: withPets });
   })
 
   .post('/:slug/admin/customers', async (c) => {
@@ -361,5 +370,28 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
     const deleted = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
     if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+  .post('/:slug/admin/customers/:id/pets', async (c) => {
+    const tenant = c.get('tenant');
+    const endUserId = c.req.param('id');
+    const body = await c.req
+      .json<{ name?: unknown; petType?: unknown }>()
+      .catch(() => ({}) as { name?: unknown; petType?: unknown });
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const petType = body.petType;
+    if (!name) return c.json({ error: 'Enter a pet name.' }, 400);
+    if (!isPetType(petType)) return c.json({ error: 'Unknown pet type.' }, 400);
+    const accepted = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
+      (pt) => pt.PetType === petType && pt.Enabled,
+    );
+    if (!accepted) return c.json({ error: 'That pet type is not accepted.' }, 400);
+    const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType);
+    return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType }, 201);
+  })
+  .delete('/:slug/admin/customers/:id/pets/:petId', async (c) => {
+    const tenant = c.get('tenant');
+    const removed = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
+    if (!removed) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   });
