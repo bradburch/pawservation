@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { createTestEnv, endUserToken } from './helpers';
+import { addEndUserPet } from '../db/repo';
 
 const req = (env: Env, path: string, init: RequestInit) => app.request(path, init, env);
 
@@ -48,6 +49,31 @@ describe('booking by petIds', () => {
         startDate: '2026-09-01',
         endDate: '2026-09-03',
         petIds: ['pet_ht_otis'],
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a pet whose species the tenant does not accept', async () => {
+    const { env } = createTestEnv();
+    // Insert a cat for the dogs-only Happy Tails customer directly (repo does not gate species).
+    const cat = await addEndUserPet(
+      env.PAWBOOK_DB,
+      'tnt_happytails',
+      'eu_ht_jess',
+      'Whiskers',
+      'cat',
+    );
+    const token = await endUserToken(env, 'happy-tails', 'jess@example.com');
+    const res = await req(env, '/api/happy-tails/bookings', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'boarding',
+        optionKey: 'standard',
+        startDate: '2026-09-01',
+        endDate: '2026-09-03',
+        petIds: [cat.Id],
       }),
     });
     expect(res.status).toBe(400);
