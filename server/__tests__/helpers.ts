@@ -94,3 +94,32 @@ export function adminToken(tenantId: string): Promise<string> {
 export const adminHeaders = async (tenantId: string): Promise<Record<string, string>> => ({
   Authorization: `Bearer ${await adminToken(tenantId)}`,
 });
+
+/** A valid end-user session token obtained by running the real identify→verify flow with the dev
+ *  prototypeCode. `slug` is the URL slug (e.g. 'sunny-paws'), not the tenant ID. */
+export async function endUserToken(env: Env, slug: string, email: string): Promise<string> {
+  const { default: app } = await import('../index');
+  const idRes = await app.request(
+    `/api/${slug}/identify`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    },
+    env,
+  );
+  const { codeId, prototypeCode } = (await idRes.json()) as {
+    codeId: string;
+    prototypeCode: string;
+  };
+  const vRes = await app.request(
+    `/api/${slug}/verify`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codeId, code: prototypeCode }),
+    },
+    env,
+  );
+  return ((await vRes.json()) as { token: string }).token;
+}

@@ -51,7 +51,7 @@ describe('booking flow', () => {
           type: 'boarding',
           startDate: '2028-08-10',
           endDate: '2028-08-15',
-          petCount: 1,
+          petIds: ['pet_sp_bella'],
         }),
       },
       env,
@@ -83,7 +83,7 @@ describe('booking flow', () => {
           type: 'boarding',
           startDate: '2028-06-21',
           endDate: '2028-06-24',
-          petCount: 2,
+          petIds: ['pet_sp_bella', 'pet_sp_mochi'],
         }),
       },
       env,
@@ -212,8 +212,7 @@ describe('booking flow', () => {
           type: 'walk',
           startDate: '2028-09-01',
           optionKey: 'd60',
-          petType: 'dog',
-          petCount: 1,
+          petIds: ['pet_sp_bella'],
         }),
       },
       env,
@@ -231,7 +230,7 @@ describe('booking flow', () => {
     expect(row?.ServiceType).toBe('walk');
   });
 
-  it('rejects a booking with a petType not accepted by the tenant (happy-tails, cat)', async () => {
+  it('books a dog walk at happy-tails (Otis is an accepted species)', async () => {
     const { env } = createTestEnv();
     const token = await identify(env, 'happy-tails', 'jess@example.com');
 
@@ -243,15 +242,12 @@ describe('booking flow', () => {
         body: JSON.stringify({
           type: 'walk',
           startDate: '2028-09-01',
-          petType: 'cat',
-          petCount: 1,
+          petIds: ['pet_ht_otis'],
         }),
       },
       env,
     );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('That pet type is not accepted.');
+    expect(res.status).toBe(201);
   });
 
   it('sets embeddable headers on /embed/* and locked headers elsewhere', async () => {
@@ -285,7 +281,11 @@ describe('booking flow', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ type: 'daycare', startDate: '2030-09-09', petCount: 1 }),
+        body: JSON.stringify({
+          type: 'daycare',
+          startDate: '2030-09-09',
+          petIds: ['pet_sp_bella'],
+        }),
       },
       env,
     );

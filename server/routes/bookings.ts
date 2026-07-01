@@ -1,24 +1,38 @@
 import { Hono } from 'hono';
 import {
+  addBookingPets,
   deleteBookingRequest,
+  getEndUserById,
   insertBookingRequest,
+  listBookingPetsForUser,
   listBookingsForUser,
+  listEndUserPets,
   listPetTypes,
   listServiceOptions,
   listServices,
 } from '../db/repo';
 import { checkAvailability, estimateCost } from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
-import { SERVICE_CATALOG, isServiceType, isPetType } from '../lib/services';
-import type { PetType } from '../lib/services';
+import { SERVICE_CATALOG, isServiceType } from '../lib/services';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
 import type { AppEnv } from '../types';
 
 export const bookingRoutes = new Hono<AppEnv>()
   // Scoped tightly to the booking paths so the merged middleware never guards public routes.
+  .use('/:slug/me', endUserAuth)
   .use('/:slug/bookings', endUserAuth)
   .use('/:slug/bookings/*', endUserAuth)
+
+  .get('/:slug/me', async (c) => {
+    const tenant = c.get('tenant');
+    const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    const pets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    return c.json({
+      name: user?.Name ?? null,
+      pets: pets.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType })),
+    });
+  })
 
   .post('/:slug/bookings', async (c) => {
     const tenant = c.get('tenant');
@@ -28,23 +42,30 @@ export const bookingRoutes = new Hono<AppEnv>()
         startDate?: string;
         endDate?: string;
         optionKey?: string;
-        petType?: string;
-        petCount?: number;
+        petIds?: unknown;
       }>()
       .catch(() => ({}) as Record<string, never>);
     const type = body.type;
     const start = typeof body.startDate === 'string' ? body.startDate : '';
     const end = typeof body.endDate === 'string' ? body.endDate : '';
-    const pets = body.petCount ?? 1;
+    const petIds = Array.isArray(body.petIds)
+      ? body.petIds.filter((x): x is string => typeof x === 'string')
+      : [];
 
     if (!isServiceType(type)) return c.json({ error: 'Unknown service type.' }, 400);
-    if (!isValidPetCount(pets)) return c.json({ error: 'Invalid pet count.' }, 400);
+    if (petIds.length === 0) return c.json({ error: 'Choose at least one pet.' }, 400);
 
-    // Validate petType against the known set first, then against tenant-accepted types.
-    if (body.petType !== undefined && !isPetType(body.petType)) {
-      return c.json({ error: 'Unknown pet type.' }, 400);
+    const myPets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    const chosen = petIds.map((id) => myPets.find((p) => p.Id === id));
+    if (chosen.some((p) => !p)) return c.json({ error: 'Unknown pet.' }, 400);
+    const pets = chosen.length;
+    if (!isValidPetCount(pets)) return c.json({ error: 'Too many pets.' }, 400);
+    const acceptedTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+    for (const p of chosen) {
+      if (!acceptedTypes.find((pt) => pt.PetType === p!.PetType && pt.Enabled))
+        return c.json({ error: 'That pet type is not accepted.' }, 400);
     }
-    const petType = (body.petType as PetType | undefined) ?? null;
+    const petType = chosen[0]!.PetType;
 
     const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
     const service = services.find((s) => s.ServiceType === type && s.Enabled);
@@ -60,13 +81,6 @@ export const bookingRoutes = new Hono<AppEnv>()
     } else {
       option = options.find((o) => o.ServiceType === type);
       if (!option) return c.json({ error: 'Service not configured.' }, 400);
-    }
-
-    // Validate petType against the species this tenant actually accepts.
-    if (petType !== null) {
-      const tenantPetTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
-      const accepted = tenantPetTypes.find((pt) => pt.PetType === petType && pt.Enabled);
-      if (!accepted) return c.json({ error: 'That pet type is not accepted.' }, 400);
     }
 
     // Re-validate dates at submit time with the same logic the widget used (PRD FR13).
@@ -112,6 +126,8 @@ export const bookingRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Sorry — those dates just filled up.' }, 409);
     }
 
+    await addBookingPets(c.env.PAWBOOK_DB, id, petIds);
+
     // Best-effort calendar sync — never blocks or fails the booking. Use waitUntil in production;
     // in tests (no ExecutionContext) await it so behavior is deterministic.
     const sync = syncBookingToCalendar(c.env, tenant, {
@@ -139,6 +155,13 @@ export const bookingRoutes = new Hono<AppEnv>()
   .get('/:slug/bookings/mine', async (c) => {
     const tenant = c.get('tenant');
     const rows = await listBookingsForUser(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    const petRows = await listBookingPetsForUser(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    const petsByBooking = new Map<string, string[]>();
+    for (const pr of petRows) {
+      const list = petsByBooking.get(pr.BookingRequestId) ?? [];
+      list.push(pr.Name);
+      petsByBooking.set(pr.BookingRequestId, list);
+    }
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,
@@ -146,6 +169,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         startDate: r.StartDate,
         endDate: r.EndDate,
         petCount: r.PetCount,
+        pets: petsByBooking.get(r.Id) ?? [],
         estCost: r.EstCost,
         status: r.Status,
       })),

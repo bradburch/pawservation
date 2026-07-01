@@ -57,7 +57,7 @@ describe('tenant isolation', () => {
           type: 'boarding',
           startDate: '2028-08-01',
           endDate: '2028-08-03',
-          petCount: 1,
+          petIds: ['pet_sp_bella'],
         }),
       },
       env,
