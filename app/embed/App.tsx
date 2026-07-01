@@ -68,7 +68,7 @@ function Identify({ onDone }: { onDone: () => void }) {
   if (state.step === 'email') {
     return (
       <div className="bp-identify">
-        <p>Enter your email to continue:</p>
+        <p>Enter your email to get started:</p>
         <input
           type="email"
           value={email}
@@ -201,7 +201,7 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
     }
   };
 
-  if (!service) return <p>No services offered yet.</p>;
+  if (!service) return <p>No services available yet.</p>;
 
   return (
     <div className="bp-book">
@@ -262,7 +262,7 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
             {pets === null ? (
               <p>Loading pets…</p>
             ) : pets.length === 0 ? (
-              <p className="bp-empty">No pets on file yet — ask your sitter to add them.</p>
+              <p className="bp-empty">No pets added yet — ask your sitter to add yours.</p>
             ) : (
               pets.map((p) => (
                 <label className="bp-pet" key={p.id}>
@@ -295,7 +295,7 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
                   Est. cost <strong>${result.estCost}</strong>
                 </p>
                 <button onClick={submit} disabled={submitting}>
-                  {submitting ? 'Sending…' : 'Confirm & request'}
+                  {submitting ? 'Sending…' : 'Send request'}
                 </button>
               </div>
             ) : (
@@ -375,7 +375,7 @@ function MineTab() {
   if (needIdentify) return <Identify onDone={reload} />;
   if (error) return <p className="bp-error">{error}</p>;
   if (!bookings) return <p>Loading…</p>;
-  if (bookings.length === 0) return <p>No bookings yet.</p>;
+  if (bookings.length === 0) return <p>No bookings yet — book one above!</p>;
 
   return (
     <ul className="bp-mine">

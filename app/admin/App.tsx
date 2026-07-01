@@ -3,6 +3,21 @@ import { DEFAULT_TIMEZONE } from '../../src/shared/index.js';
 import { adminApi, type Customer } from '../shared-ui/api.js';
 import './admin.css';
 
+const TIMEZONES: string[] =
+  typeof Intl.supportedValuesOf === 'function'
+    ? Intl.supportedValuesOf('timeZone')
+    : [
+        'America/Los_Angeles',
+        'America/Denver',
+        'America/Chicago',
+        'America/New_York',
+        'America/Anchorage',
+        'Pacific/Honolulu',
+        'Europe/London',
+        'Europe/Paris',
+        'Australia/Sydney',
+      ];
+
 /**
  * Sitter dashboard. Auth is email + password → an admin session token, held in localStorage
  * (this is a first-party page the sitter visits directly, not the cross-origin embed widget).
@@ -145,7 +160,7 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
 
   return (
     <div className="pb-wrap pb-login">
-      <h1>Sitter sign in</h1>
+      <h1>Welcome back</h1>
       <label>
         Email
         <input
@@ -350,7 +365,7 @@ function CalendarIdField({
   return (
     <div className="pb-inline">
       <label>
-        Pet-sitting calendar ID <span className="pb-hint">(blank = primary)</span>
+        Work Calendar <span className="pb-hint">(blank = primary)</span>
         <input
           type="text"
           placeholder="primary"
@@ -358,8 +373,10 @@ function CalendarIdField({
           onChange={(e) => setValue(e.target.value)}
         />
         <small className="pb-hint">
-          Find it in Google Calendar → Settings → your calendar → Integrate calendar → Calendar ID
-          (e.g. abc123@group.calendar.google.com). Blank uses your primary calendar.
+          Connect Google Calendar above, then paste the calendar you use for work — bookings sync
+          there and your busy days block automatically. Find the ID in Google Calendar → Settings →
+          your calendar → &quot;Integrate calendar&quot; → Calendar ID (like{' '}
+          <code>abc123@group.calendar.google.com</code>). Leave blank to use your main calendar.
         </small>
       </label>
       <button onClick={() => void save()} disabled={busy}>
@@ -427,7 +444,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           })),
         }),
       });
-      setMessage('Saved — the widget reflects this on next load.');
+      setMessage('Saved! Your widget updates on its next load.');
       setPreviewKey((k) => k + 1);
     } catch (e) {
       handle(e);
@@ -579,16 +596,16 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       </header>
 
       <section>
-        <h2>Branding &amp; capacity</h2>
+        <h2>Your business</h2>
         <label>
-          Display name
+          Business name
           <input
             value={settings.displayName}
             onChange={(e) => setSettings({ ...settings, displayName: e.target.value })}
           />
         </label>
         <label>
-          Accent color
+          Brand color
           <input
             type="color"
             value={settings.accentColor}
@@ -596,25 +613,23 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           />
         </label>
         <NullableNumberField
-          label="Max boarding pets per day"
+          label="Boarding spots per day"
           value={settings.maxBoardingPets}
           onChange={(maxBoardingPets) => setSettings({ ...settings, maxBoardingPets })}
         />
         <NullableNumberField
-          label="Max house-sits per day"
+          label="House-sits per day"
           value={settings.maxHouseSitsPerDay}
           onChange={(maxHouseSitsPerDay) => setSettings({ ...settings, maxHouseSitsPerDay })}
         />
         <NullableNumberField
-          label="Max stay length (nights)"
+          label="Longest stay (nights)"
           value={settings.maxStayNights}
           onChange={(maxStayNights) => setSettings({ ...settings, maxStayNights })}
         />
         <label>
-          Business timezone <span className="pb-hint">(blank = {DEFAULT_TIMEZONE})</span>
-          <input
-            type="text"
-            placeholder={DEFAULT_TIMEZONE}
+          Your time zone
+          <select
             value={settings.timezone ?? ''}
             onChange={(e) =>
               setSettings({
@@ -622,7 +637,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
                 timezone: e.target.value === '' ? null : e.target.value,
               })
             }
-          />
+          >
+            <option value="">Use {DEFAULT_TIMEZONE} (default)</option>
+            {TIMEZONES.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
         </label>
       </section>
 
@@ -751,7 +773,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       {error && <p className="pb-error">{error}</p>}
 
       <section>
-        <h2>Blocked days</h2>
+        <h2>Time off</h2>
         <ul>
           {settings.blocked.map((b) => (
             <li key={b.id}>
@@ -768,10 +790,10 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       </section>
 
       <section>
-        <h2>Customers (invite-only)</h2>
+        <h2>Your clients</h2>
         <p>
           <small>
-            Only invited customers can request bookings. Adding one emails them an invite.
+            Only clients you invite can book — adding one sends them an invite by email.
           </small>
         </p>
         <div className="pb-row">
@@ -816,7 +838,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       </section>
 
       <section>
-        <h2>Integrations</h2>
+        <h2>Connected apps</h2>
         <ul>
           {settings.providers.map((p) => (
             <li key={p.capability}>
@@ -846,12 +868,12 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           ))}
         </ul>
         <p>
-          <small>Google Calendar uses real OAuth; other integrations are prototype stubs.</small>
+          <small>Google Calendar is fully connected; the others are previews for now.</small>
         </p>
       </section>
 
       <section id="embed">
-        <h2>Embed on your website</h2>
+        <h2>Add to your website</h2>
         <p>
           <small>
             A live preview of your widget — exactly what customers see, with your saved branding.
