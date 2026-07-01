@@ -365,7 +365,7 @@ function CalendarIdField({
   return (
     <div className="pb-inline">
       <label>
-        Work Calendar <span className="pb-hint">(blank = primary)</span>
+        Pet-sitting calendar ID <span className="pb-hint">(blank = primary)</span>
         <input
           type="text"
           placeholder="primary"
@@ -373,9 +373,9 @@ function CalendarIdField({
           onChange={(e) => setValue(e.target.value)}
         />
         <small className="pb-hint">
-          Connect Google Calendar above, then paste the calendar you use for work — bookings sync
-          there and your busy days block automatically. Find the ID in Google Calendar → Settings →
-          your calendar → &quot;Integrate calendar&quot; → Calendar ID (like{' '}
+          Connect Google Calendar above, then paste the calendar you use for pet-sitting — bookings
+          sync there and your busy days block automatically. Find the ID in Google Calendar →
+          Settings → your calendar → &quot;Integrate calendar&quot; → Calendar ID (like{' '}
           <code>abc123@group.calendar.google.com</code>). Leave blank to use your main calendar.
         </small>
       </label>
