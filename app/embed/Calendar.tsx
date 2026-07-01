@@ -53,6 +53,7 @@ export function Calendar({
   onMonthChange,
   value,
   onChange,
+  reloadKey,
 }: {
   slug: string;
   token: string;
@@ -62,6 +63,7 @@ export function Calendar({
   onMonthChange: (m: string) => void;
   value: { start: string; end?: string };
   onChange: (v: { start: string; end?: string }) => void;
+  reloadKey?: number;
 }) {
   const [days, setDays] = useState<Map<string, MonthDay>>(new Map());
   const [today, setToday] = useState('');
@@ -84,7 +86,7 @@ export function Calendar({
     return () => {
       active = false;
     };
-  }, [slug, token, serviceType, month]);
+  }, [slug, token, serviceType, month, reloadKey]);
 
   const shiftMonth = (delta: number) => {
     let y = year;

@@ -419,3 +419,52 @@ body {
   color: var(--bp-soft);
   text-align: center;
 }
+
+/* ── Details panel (pets + options + cost) ────────────────────── */
+.bp-details {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+}
+.bp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--bp-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bp-soft);
+}
+.bp-pets {
+  border: 1px solid var(--bp-rule);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0;
+}
+.bp-pets legend {
+  font-family: var(--bp-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bp-soft);
+  padding: 0 4px;
+}
+.bp-pet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.95rem;
+}
+.bp-pet-type {
+  font-family: var(--bp-mono);
+  font-size: 0.7rem;
+  color: var(--bp-soft);
+  text-transform: uppercase;
+}
+.bp-empty {
+  color: var(--bp-soft);
+  font-size: 0.9rem;
+}

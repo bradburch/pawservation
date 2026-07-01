@@ -99,20 +99,29 @@ function Identify({ onDone }: { onDone: () => void }) {
   );
 }
 
-function BookTab({ config }: { config: TenantConfig }) {
+function BookTab({
+  config,
+  pets,
+  onBooked,
+}: {
+  config: TenantConfig;
+  pets: Pet[] | null;
+  onBooked?: () => void;
+}) {
   const [type, setType] = useState(config.services[0]?.type ?? 'boarding');
   const service = config.services.find((s) => s.type === type) ?? config.services[0];
   const [optionKey, setOptionKey] = useState(service?.options[0]?.optionKey ?? '');
-  const [petType, setPetType] = useState(config.petTypes[0] ?? '');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
-  const [pets, setPets] = useState(1);
+  const [selectedPets, setSelectedPets] = useState<string[]>([]);
+  const [calReloadKey, setCalReloadKey] = useState(0);
   const [result, setResult] = useState<Availability | null>(null);
-  const [needIdentify, setNeedIdentify] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const datesReady = !!start && (service?.shape !== 'range' || !!end);
 
   const resetCheck = () => {
     setResult(null);
@@ -130,12 +139,16 @@ function BookTab({ config }: { config: TenantConfig }) {
     setError('');
     setConfirmation('');
     setResult(null);
+    if (selectedPets.length === 0) {
+      setError('Choose at least one pet.');
+      return;
+    }
     try {
       const params: Record<string, string> = {
         type,
         option: optionKey,
         start,
-        pets: String(pets),
+        pets: String(selectedPets.length),
       };
       if (service?.shape === 'range') params.end = end;
       setResult(await api.availability(slug, params));
@@ -148,30 +161,26 @@ function BookTab({ config }: { config: TenantConfig }) {
     if (submitting) return;
     setError('');
     const token = getToken(slug);
-    if (!token) {
-      setNeedIdentify(true);
-      return;
-    }
+    if (!token) return;
     setSubmitting(true);
     try {
-      const body: {
-        type: string;
-        optionKey: string;
-        petType?: string;
-        startDate: string;
-        endDate?: string;
-        petCount: number;
-      } = { type, optionKey, startDate: start, petCount: pets };
-      if (petType) body.petType = petType;
-      if (service?.shape === 'range') body.endDate = end;
+      const body = {
+        type,
+        optionKey,
+        startDate: start,
+        petIds: selectedPets,
+        ...(service?.shape === 'range' ? { endDate: end } : {}),
+      };
       const res = await api.createBooking(slug, token, body);
       setConfirmation(`Request sent! Estimated cost $${res.estCost}. Status: ${res.status}.`);
       setResult(null);
+      setCalReloadKey((k) => k + 1);
+      onBooked?.();
       window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, '*');
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         setToken(slug, null);
-        setNeedIdentify(true);
+        setError('Your session expired — reload to sign in again.');
         return;
       }
       setError(errorMsg(e));
@@ -179,17 +188,6 @@ function BookTab({ config }: { config: TenantConfig }) {
       setSubmitting(false);
     }
   };
-
-  if (needIdentify) {
-    return (
-      <Identify
-        onDone={() => {
-          setNeedIdentify(false);
-          void submit();
-        }}
-      />
-    );
-  }
 
   if (!service) return <p>No services offered yet.</p>;
 
@@ -211,44 +209,6 @@ function BookTab({ config }: { config: TenantConfig }) {
         ))}
       </div>
 
-      {service.hasDuration && (
-        <label>
-          Duration
-          <select
-            value={optionKey}
-            onChange={(e) => {
-              setOptionKey(e.target.value);
-              resetCheck();
-            }}
-          >
-            {service.options.map((o) => (
-              <option key={o.optionKey} value={o.optionKey}>
-                {`${o.label} — $${o.rate}/${service.rateUnit}`}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      {config.petTypes.length > 0 && (
-        <label>
-          Pet
-          <select
-            value={petType}
-            onChange={(e) => {
-              setPetType(e.target.value);
-              resetCheck();
-            }}
-          >
-            {config.petTypes.map((p) => (
-              <option key={p} value={p}>
-                {p === 'dog' ? 'Dog' : 'Cat'}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
       <Calendar
         slug={slug}
         token={getToken(slug) ?? ''}
@@ -257,47 +217,84 @@ function BookTab({ config }: { config: TenantConfig }) {
         month={month}
         onMonthChange={setMonth}
         value={{ start, end: end || undefined }}
+        reloadKey={calReloadKey}
         onChange={(v) => {
           setStart(v.start);
           setEnd(v.end ?? '');
           resetCheck();
         }}
       />
-      <label>
-        Pets
-        <input
-          type="number"
-          min={1}
-          value={pets}
-          onChange={(e) => {
-            setPets(Number(e.target.value));
-            resetCheck();
-          }}
-        />
-      </label>
-      <button onClick={check}>Check availability</button>
 
-      {result &&
-        (result.available ? (
-          <div className="bp-result bp-ok">
-            <p>
-              Available!{' '}
-              {result.nights != null
-                ? `${result.nights} night${result.nights === 1 ? '' : 's'} · `
-                : ''}
-              Est. cost <strong>${result.estCost}</strong>
-            </p>
-            <button onClick={submit} disabled={submitting}>
-              {submitting ? 'Sending…' : 'Confirm & request'}
-            </button>
-          </div>
-        ) : (
-          <div className="bp-result bp-no">
-            <p>{result.reason}</p>
-          </div>
-        ))}
-      {confirmation && <p className="bp-confirm">{confirmation}</p>}
-      {error && <p className="bp-error">{error}</p>}
+      {datesReady && (
+        <div className="bp-details">
+          {service?.hasDuration && (
+            <label className="bp-field">
+              Duration
+              <select
+                value={optionKey}
+                onChange={(e) => {
+                  setOptionKey(e.target.value);
+                  resetCheck();
+                }}
+              >
+                {service.options.map((o) => (
+                  <option key={o.optionKey} value={o.optionKey}>
+                    {o.label} — ${o.rate}/{service.rateUnit}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <fieldset className="bp-pets">
+            <legend>Pets</legend>
+            {pets === null ? (
+              <p>Loading pets…</p>
+            ) : pets.length === 0 ? (
+              <p className="bp-empty">No pets on file yet — ask your sitter to add them.</p>
+            ) : (
+              pets.map((p) => (
+                <label className="bp-pet" key={p.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedPets.includes(p.id)}
+                    onChange={(e) => {
+                      setSelectedPets((cur) =>
+                        e.target.checked ? [...cur, p.id] : cur.filter((id) => id !== p.id),
+                      );
+                      resetCheck();
+                    }}
+                  />
+                  {p.name} <span className="bp-pet-type">{p.petType}</span>
+                </label>
+              ))
+            )}
+          </fieldset>
+          <button onClick={check} disabled={selectedPets.length === 0}>
+            Check availability
+          </button>
+          {result &&
+            (result.available ? (
+              <div className="bp-result bp-ok">
+                <p>
+                  Available!{' '}
+                  {result.nights != null
+                    ? `${result.nights} night${result.nights === 1 ? '' : 's'} · `
+                    : ''}
+                  Est. cost <strong>${result.estCost}</strong>
+                </p>
+                <button onClick={submit} disabled={submitting}>
+                  {submitting ? 'Sending…' : 'Confirm & request'}
+                </button>
+              </div>
+            ) : (
+              <div className="bp-result bp-no">
+                <p>{result.reason}</p>
+              </div>
+            ))}
+          {confirmation && <p className="bp-confirm">{confirmation}</p>}
+          {error && <p className="bp-error">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -373,8 +370,10 @@ function MineTab() {
       {bookings.map((b) => (
         <li key={b.id}>
           <strong>{b.type}</strong> {formatShortDate(b.startDate)}
-          {b.endDate ? ` → ${formatShortDate(b.endDate)}` : ''} · {b.petCount} pet
-          {b.petCount === 1 ? '' : 's'}
+          {b.endDate ? ` → ${formatShortDate(b.endDate)}` : ''} ·{' '}
+          {b.pets.length > 0
+            ? b.pets.join(', ')
+            : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`}
           {b.estCost != null ? ` · est. $${b.estCost}` : ''} · <em>{b.status}</em>
         </li>
       ))}
@@ -462,7 +461,7 @@ export default function App() {
       ) : (
         <>
           <h1 className="bp-greeting">How can I help, {firstName}?</h1>
-          <BookTab config={config} />
+          <BookTab config={config} pets={me?.pets ?? null} />
         </>
       )}
     </div>

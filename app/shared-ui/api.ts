@@ -106,10 +106,9 @@ export const api = {
     body: {
       type: string;
       optionKey: string;
-      petType?: string;
       startDate: string;
       endDate?: string;
-      petCount: number;
+      petIds: string[];
     },
   ) =>
     request<{ id: string; estCost: number; status: string }>(`/api/${slug}/bookings`, {
