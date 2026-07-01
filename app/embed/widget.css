@@ -13,6 +13,12 @@
   --bp-serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
   --bp-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   --bp-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --bp-round:
+    ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Quicksand, system-ui, sans-serif;
+  --bp-navy: #1c3a4a; /* headings/ink for the bradpaws look */
+  --bp-sage: #9db8a4; /* neutral chip/calendar accent */
+  --bp-sage-soft: #eef3ee; /* sage wash for chips/legends */
+  --bp-unavail: #c0463a; /* red for unavailable dates */
 }
 
 body {
@@ -226,4 +232,64 @@ body {
   font-size: 0.66rem;
   letter-spacing: 0.08em;
   color: var(--bp-accent);
+}
+
+/* ── bradpaws redesign — greeting, topline, service cards ─────── */
+.bp-greeting {
+  font-family: var(--bp-round);
+  font-weight: 700;
+  font-size: 1.7rem;
+  color: var(--bp-navy);
+  margin: 4px 0 16px;
+}
+.bp-topline {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+.bp-mine-link {
+  background: none;
+  border: none;
+  color: var(--bp-soft);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 4px;
+  font-family: var(--bp-sans);
+}
+.bp-service-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.bp-service-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px;
+  border: 1.5px solid var(--bp-rule);
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+.bp-service-card:hover {
+  border-color: var(--bp-sage);
+}
+.bp-service-card.bp-selected {
+  border-color: var(--bp-accent);
+  box-shadow: 0 0 0 1px var(--bp-accent);
+}
+.bp-service-emoji {
+  font-size: 1.6rem;
+}
+.bp-service-label {
+  font-weight: 600;
+  color: var(--bp-navy);
+  font-size: 0.95rem;
+}
+.bp-signin-lede {
+  color: var(--bp-soft);
+  margin: 0 0 12px;
 }

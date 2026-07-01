@@ -9,9 +9,11 @@ import {
   setToken,
   type Availability,
   type Booking,
+  type Pet,
   type TenantConfig,
 } from '../shared-ui/api';
 import './widget.css';
+import { SERVICE_EMOJI } from './services';
 
 /** Widget tenant comes from the iframe path: /embed/:slug — never from the host page. */
 const slug = window.location.pathname.split('/').filter(Boolean)[1] ?? '';
@@ -191,19 +193,21 @@ function BookTab({ config }: { config: TenantConfig }) {
 
   return (
     <div className="bp-book">
-      <label>
-        Service
-        <select value={type} onChange={(e) => onServiceChange(e.target.value)}>
-          {config.services.map((s) => {
-            const min = Math.min(...s.options.map((o) => o.rate));
-            return (
-              <option key={s.type} value={s.type}>
-                {`${s.label} — from $${min}/${s.rateUnit}`}
-              </option>
-            );
-          })}
-        </select>
-      </label>
+      <div className="bp-service-grid">
+        {config.services.map((s) => (
+          <button
+            key={s.type}
+            type="button"
+            className={`bp-service-card${type === s.type ? ' bp-selected' : ''}`}
+            onClick={() => onServiceChange(s.type)}
+          >
+            <span className="bp-service-emoji" aria-hidden="true">
+              {SERVICE_EMOJI[s.type] ?? '🐾'}
+            </span>
+            <span className="bp-service-label">{s.label}</span>
+          </button>
+        ))}
+      </div>
 
       {service.hasDuration && (
         <label>
@@ -407,8 +411,10 @@ function useResizeReporter() {
 
 export default function App() {
   const [config, setConfig] = useState<TenantConfig | null>(null);
-  const [tab, setTab] = useState<'book' | 'mine'>('book');
+  const [me, setMe] = useState<{ name: string | null; pets: Pet[] } | null>(null);
+  const [authed, setAuthed] = useState(() => !!getToken(slug));
   const [error, setError] = useState('');
+  const [showMine, setShowMine] = useState(false);
   useResizeReporter();
 
   useEffect(() => {
@@ -422,23 +428,51 @@ export default function App() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load.'));
   }, []);
 
+  useEffect(() => {
+    if (!authed) return;
+    const token = getToken(slug);
+    if (!token) return;
+    let active = true;
+    api
+      .me(slug, token)
+      .then((m) => active && setMe(m))
+      .catch(() => active && setMe({ name: null, pets: [] }));
+    return () => {
+      active = false;
+    };
+  }, [authed]);
+
   if (error) return <p className="bp-error">{error}</p>;
   if (!config) return <p>Loading…</p>;
 
+  if (!authed) {
+    return (
+      <div className="bp-widget">
+        <header>
+          <h1>{config.displayName}</h1>
+        </header>
+        <p className="bp-signin-lede">Sign in to book with {config.displayName}.</p>
+        <Identify onDone={() => setAuthed(true)} />
+      </div>
+    );
+  }
+
+  const firstName = (me?.name ?? '').trim().split(/\s+/)[0] || 'there';
   return (
-    <div className="bp-widget">
-      <header>
-        <h1>{config.displayName}</h1>
-        <nav>
-          <button className={tab === 'book' ? 'bp-active' : ''} onClick={() => setTab('book')}>
-            Book
-          </button>
-          <button className={tab === 'mine' ? 'bp-active' : ''} onClick={() => setTab('mine')}>
-            My bookings
-          </button>
-        </nav>
-      </header>
-      {tab === 'book' ? <BookTab config={config} /> : <MineTab />}
+    <div className="bp-widget bp-book-view">
+      <div className="bp-topline">
+        <button className="bp-mine-link" onClick={() => setShowMine((s) => !s)}>
+          {showMine ? '← Book' : 'My bookings'}
+        </button>
+      </div>
+      {showMine ? (
+        <MineTab />
+      ) : (
+        <>
+          <h1 className="bp-greeting">How can I help, {firstName}?</h1>
+          <BookTab config={config} />
+        </>
+      )}
     </div>
   );
 }
