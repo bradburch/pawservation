@@ -11,9 +11,9 @@ describe('admin customer pets', () => {
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
-    const body = (await res.json()) as { customers: any[] };
+    const body = (await res.json()) as { customers: { email: string; pets: { name: string }[] }[] };
     const jess = body.customers.find((c) => c.email === 'jess@example.com');
-    expect(jess.pets.map((p: any) => p.name).sort()).toEqual(['Bella', 'Mochi']);
+    expect(jess?.pets.map((p) => p.name).sort()).toEqual(['Bella', 'Mochi']);
   });
 
   it('adds and removes a pet; rejects a disabled species', async () => {

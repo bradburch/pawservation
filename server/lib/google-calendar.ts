@@ -113,6 +113,8 @@ export async function revokeToken(token: string): Promise<void> {
 
 export type CalendarBooking = {
   serviceLabel: string;
+  category: string;
+  bookingId: string;
   startDate: string;
   endDate: string | null;
   startTime: string | null;
@@ -128,6 +130,14 @@ type EventResource = {
   description: string;
   start: { date: string } | { dateTime: string; timeZone: string };
   end: { date: string } | { dateTime: string; timeZone: string };
+  extendedProperties?: { private: Record<string, string> };
+};
+
+export type CalendarEvent = {
+  summary: string;
+  start: string; // 'YYYY-MM-DD' (all-day) or the date part of a dateTime
+  end: string; // exclusive end date, same normalization
+  private: Record<string, string>; // extendedProperties.private, or {}
 };
 
 function addMinutesToLocal(date: string, time: string, minutes: number): string {
@@ -143,6 +153,15 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   const summary = `${b.serviceLabel} — ${who} (${b.petCount} pet${b.petCount === 1 ? '' : 's'})`;
   const description =
     `Service: ${b.serviceLabel}` + (b.estCost != null ? `\nEstimated cost: $${b.estCost}` : '');
+  const extendedProperties = {
+    private: {
+      pawbook: 'true',
+      category: b.category,
+      petCount: String(b.petCount),
+      customerEmail: b.customerEmail ?? '',
+      bookingId: b.bookingId,
+    },
+  };
 
   if (b.startTime) {
     const startDateTime = `${b.startDate}T${b.startTime}:00`;
@@ -152,8 +171,49 @@ export function buildEventResource(b: CalendarBooking): EventResource {
       description,
       start: { dateTime: startDateTime, timeZone: b.timezone },
       end: { dateTime: endDateTime, timeZone: b.timezone },
+      extendedProperties,
     };
   }
   const endDate = b.endDate ?? addDays(b.startDate, 1);
-  return { summary, description, start: { date: b.startDate }, end: { date: endDate } };
+  return {
+    summary,
+    description,
+    start: { date: b.startDate },
+    end: { date: endDate },
+    extendedProperties,
+  };
+}
+
+export async function listCalendarEvents(
+  accessToken: string,
+  calendarId: string,
+  timeMinISO: string,
+  timeMaxISO: string,
+): Promise<CalendarEvent[]> {
+  const params = new URLSearchParams({
+    timeMin: timeMinISO,
+    timeMax: timeMaxISO,
+    singleEvents: 'true',
+    maxResults: '2500',
+    orderBy: 'startTime',
+  });
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!res.ok) throw new Error(`Google listCalendarEvents failed (${res.status})`);
+  const j = (await res.json()) as {
+    items: Array<{
+      summary?: string;
+      start: { date?: string; dateTime?: string };
+      end: { date?: string; dateTime?: string };
+      extendedProperties?: { private?: Record<string, string> };
+    }>;
+  };
+  return (j.items ?? []).map((item) => ({
+    summary: item.summary ?? '',
+    start: item.start.date ?? item.start.dateTime?.slice(0, 10) ?? '',
+    end: item.end.date ?? item.end.dateTime?.slice(0, 10) ?? '',
+    private: item.extendedProperties?.private ?? {},
+  }));
 }
