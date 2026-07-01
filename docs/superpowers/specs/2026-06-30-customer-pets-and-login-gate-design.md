@@ -1,33 +1,38 @@
-# Customer pets & widget login gate — design
+# Customer pets, login gate & "bradpaws" widget redesign — design
 
 **Date:** 2026-06-30
 **Status:** Approved (design)
 
 ## Problem
 
-Two changes to the embed booking flow:
+Three linked changes to the embed booking experience:
 
-1. **"Pet" should mean the customer's actual animals**, not a species picker. Today the widget's
-   "Pet" dropdown lists the _species the sitter accepts_ (`TenantPetTypes`: dog/cat). Customers should
-   instead choose from their own named animals ("Bella", "Otis").
-2. **Login is required to book.** Today a visitor can fill the Book form and is only prompted to
-   identify at the final "Confirm & request". Booking should require authentication up front.
+1. **"Pet" means the customer's own animals** (sitter-managed), not a species picker.
+2. **Login is required** before the widget shows anything.
+3. **The widget is redesigned to the "bradpaws" look** the user provided: a personalized greeting,
+   service-type **cards** chosen first, and a rich **availability calendar** (not native date
+   inputs), on a single page with a soft rounded/sage/navy aesthetic.
 
-These are linked: a customer's pets belong to their account, so the booking form can only show pets
-after login.
+Scope of the restyle: **embed widget only.** The admin dashboard and landing page keep the existing
+"Keeper's Ledger" identity.
 
 ## Decisions (locked with the user)
 
-- **Pets are sitter-managed.** The sitter adds each customer's animals in the admin dashboard. The
-  customer picks from a fixed list; they cannot self-add.
-- **Multi-select at booking.** The customer checks which of their pets a booking is for.
-  `PetCount` = number selected. The manual "Pets" number field is **removed**.
-- **Whole-widget login gate.** A logged-out visitor sees only the sign-in step (email → code) — no
-  tabs, no service list, no prices — until authenticated.
+- Pets are **sitter-managed** (added per customer in the admin dashboard).
+- Booking uses **multi-select pets**; `PetCount` = number selected; the manual count field is gone.
+- **Whole-widget login gate**: logged-out visitors see only the sign-in step.
+- **Bradpaws layout** (single page): greeting → 2-col **service cards** (emoji + label; selected card
+  gets the tenant accent border) → **month calendar** for the selected service → a details panel
+  (pets + options + cost + Confirm) that appears once date(s) are chosen.
+- **Rich calendar states**, reflecting the currently-selected service:
+  - **Available** — open.
+  - **Partial** (e.g. "Boarding (1/2)") — some capacity used for the selected service that day.
+  - **My sits** — the signed-in customer has a booking that day.
+  - **Unavailable** — sitter-blocked or fully booked.
+  - **Selected** — the date(s) currently chosen.
+- **Restyle scope: embed widget only.**
 
 ## Data model (schema.sql + `migrations/0004_*` in lockstep)
-
-Two new tables. Both are tenant-scoped and follow the repo isolation rule (`WHERE TenantId = ?`).
 
 ```sql
 CREATE TABLE IF NOT EXISTS EndUserPets (
@@ -47,72 +52,87 @@ CREATE TABLE IF NOT EXISTS BookingRequestPets (
 );
 ```
 
-- `BookingRequests.PetCount` stays and continues to hold the pet count, so the shared **capacity**
-  logic (`src/shared/booking/capacity.ts`) is untouched.
-- `BookingRequests.PetType` stays as a representative species (the first selected pet's species) for
-  the existing accepted-species validation and calendar-summary back-compat.
-- `BookingRequestPets` is the source of truth for _which_ named pets a booking is for.
-
-**FK caveat (CLAUDE.md):** `node:sqlite` enforces FKs in tests; production D1 has them off. SQL must
-be correct under both — insert `EndUserPets`/`BookingRequestPets` rows only after their parents exist.
+`BookingRequests.PetCount` stays (= pet count, so shared capacity is untouched); `PetType` = first
+selected pet's species (validation/calendar back-compat). **FK caveat:** tests enforce FKs, prod D1
+doesn't — insert children after parents.
 
 ## Server
 
-**`server/db/repo.ts` (only module touching `PAWBOOK_DB`), all `tenantId`-first:**
+**Repo (`server/db/repo.ts`, only DB module, `tenantId`-first):**
+- `listEndUserPets`, `addEndUserPet`, `removeEndUserPet`.
+- `getEndUserById` already exists → used for the greeting name.
+- `addBookingPets(db, bookingId, petIds)`, `listBookingPetsForUser(db, tenantId, endUserId)`.
+- A month-window capacity read: reuse `listCapacityRows`-style query to fetch all boarding/house-sit
+  /blocked events overlapping `[monthStart, monthEnd)`, plus the caller's own bookings for "mine".
 
-- `listEndUserPets(db, tenantId, endUserId)` → pet rows.
-- `addEndUserPet(db, tenantId, endUserId, name, petType)` → inserts, returns the row.
-- `removeEndUserPet(db, tenantId, petId)` → scoped delete.
-- Booking create: after inserting the `BookingRequests` row, insert one `BookingRequestPets` row per
-  selected pet; set `PetCount` = count and `PetType` = first pet's species.
-- `listBookings` for a user: join `BookingRequestPets` → `EndUserPets` to return pet names per booking.
+**Routes:**
+- **Admin** (`routes/admin.ts`): customers list now includes `pets`; `POST`/`DELETE`
+  `/api/:slug/admin/customers/:id/pets` (species must be an enabled tenant type).
+- **Widget** (`routes/bookings.ts`, `endUserAuth`):
+  - `GET /api/:slug/me` → `{ name, pets }` (name for the greeting; pets for the picker).
+  - `GET /api/:slug/availability/month?type=<serviceType>&month=YYYY-MM` → per-date state for the
+    selected service. For each in-month date returns
+    `{ date, status: 'available'|'partial'|'unavailable', used, max, mine }`:
+    - Build the tenant's `DayCapacity` map (shared `buildCapacity`) over the month window.
+    - **boarding**: `used = day.boarding`, `max = maxBoardingPets`; `unavailable` if blocked or
+      `used >= max`, `partial` if `0 < used < max`, else `available`.
+    - **housesitting**: same against `maxHouseSitsPerDay`.
+    - **walk/daycare/checkin**: `available` unless blocked (`unavailable`); `used/max = null`.
+    - `mine` = the caller has a booking overlapping that date. Response also carries `today` so the
+      client greys past dates.
+  - Booking create accepts `petIds: string[]` (not `petType`/`petCount`); validates ownership +
+    accepted species; sets `PetCount = petIds.length`, `PetType = pets[0]`, writes join rows.
+  - `GET /api/:slug/bookings/mine` items gain `pets: string[]` (names).
 
-**Admin routes (`server/routes/admin.ts`):**
+## Widget UI (`app/embed/`) — the bradpaws redesign
 
-- Extend the customers list response so each customer includes its `pets: {id, name, petType}[]`.
-- `POST /api/:slug/admin/customers/:id/pets` — body `{name, petType}`; `petType` must be an enabled
-  tenant pet type.
-- `DELETE /api/:slug/admin/customers/:id/pets/:petId`.
+**Auth gate:** `App` reads the end-user token; no token → render only the sign-in step (`Identify`).
+After login, render the redesigned booking view; "My bookings" reachable via a quiet link/tab.
 
-**Widget routes (`server/routes/bookings.ts` / public):**
+**Booking view (single page, revealed top-to-bottom):**
+1. **Greeting** — "How can I help, {firstName}?" in a rounded display font (`ui-rounded` stack;
+    embed CSP blocks external fonts).
+2. **Service cards** — 2-col grid of the sitter's enabled services, each an emoji + label
+    (boarding 🛏️, housesitting 🏠, daycare ☀️, walk 🐕‍🦺, checkin 🐱). Selecting one sets the tenant
+    accent border. First enabled service selected by default.
+3. **Calendar** — "Booking Availability" with an ⓘ tooltip and helper text. Month grid: `‹ Month YYYY ›`
+    nav, SUN–SAT headers, each date a status dot per the legend (available / partial N/M / my sits /
+    unavailable / selected). Refetches `/availability/month` when service or month changes.
+    - **Single-day services** (walk/daycare/checkin): tap one available/partial date → Selected.
+    - **Range services** (boarding/housesitting): tap check-in then checkout (exclusive) → range
+      highlighted; the range must contain no unavailable date.
+    - Past + unavailable dates are not tappable.
+4. **Details panel** (appears once date(s) chosen):
+    - **Pets** — checkboxes of the customer's pets (multi-select). Empty → "No pets on file yet —
+      ask your sitter to add them."
+    - **Duration** — for walk/checkin with multiple options, a select.
+    - **Estimated cost** (from `/availability`) + **Confirm & request**.
+5. On confirm → `createBooking({ type, optionKey, startDate, endDate?, petIds })`; success message;
+    calendar refetches so the new booking shows as **My sits**.
 
-- `GET /api/:slug/me/pets` — authenticated by the end-user token → that customer's own pets.
-- Booking create accepts `petIds: string[]` **instead of** `petType` + `petCount`. Validation:
-  - every `petId` belongs to the authenticated end-user **and** this tenant (else 400/403);
-  - every pet's species is an enabled tenant pet type;
-  - `petIds` is non-empty; count is checked against capacity as today.
-
-## UI
-
-**Admin dashboard (`app/admin/App.tsx`)** — in "Customers (invite-only)", each customer row gains a
-pets sub-list: existing pets with a Remove ghost button, plus an add row (name text + species
-`<select>` limited to the tenant's enabled pet types). Reuses existing `.pb-*` ledger styles.
-
-**Embed widget (`app/embed/App.tsx`):**
-
-- `App` gates on the end-user token: **no token → render `Identify` only** (no `<nav>` tabs, no
-  config-driven prices). After login, render the Book / My bookings tabs.
-- **BookTab**: replace the species "Pet" dropdown **and** the "Pets" number input with a checkbox
-  group of the customer's pets (fetched from `/me/pets` on mount — login is now guaranteed). Empty
-  state: "No pets on file yet — ask your sitter to add them." Submit sends `petIds`.
-- Remove the now-dead mid-form `needIdentify`/identify-at-submit path.
-- **MineTab**: show pet names per booking (e.g. "Bella, Otis").
+**Visual system (embed only):** rounded display font for headings; navy ink (`--bp-ink`), soft
+**sage** neutral for the calendar chip/headers, white surface; the **tenant accent** (`--bp-accent`)
+drives selected-card border, Selected date, and the Confirm button. New CSS lives in `widget.css`;
+the calendar is its own component/file.
 
 ## Known ripple effects (accepted)
 
-- The **admin embed preview** (this branch) and the **`/demo`** page now show the widget's sign-in
-  screen, since a sitter/visitor isn't a logged-in customer. Honest preview of the gated widget.
-- Seed data (`sql/seed.sql`) gains a few `EndUserPets` rows for the demo customers so the demo flow
-  still has pets to pick after signing in.
+- The admin **embed preview** and **`/demo`** page now show the widget's sign-in screen (sitter/
+  visitor isn't a logged-in customer).
+- `sql/seed.sql` gains demo `EndUserPets` so the flow has pets after signing in.
+- The widget's old species dropdown + "Pets" number field + native date inputs are removed.
 
 ## Testing
 
-- Repo: pets CRUD + tenant scoping; booking create writes `BookingRequestPets` and correct
-  `PetCount`/`PetType`; `listBookings` returns names.
-- Routes: admin add/remove pet (species must be enabled); `me/pets` returns only the caller's pets;
-  booking create with `petIds` — ownership, cross-tenant rejection, disabled-species rejection,
-  capacity.
-- All under the existing in-memory-SQLite harness (`createTestEnv`), FK-safe.
+- Repo: pets CRUD + scoping; booking writes `BookingRequestPets` + correct `PetCount`/`PetType`;
+  `listBookingPetsForUser`.
+- Routes: admin add/remove pet (species gate); `me` returns name + only caller's pets; booking by
+  `petIds` (ownership, cross-tenant, disabled species, capacity); **month availability** — a blocked
+  day is `unavailable`, a 1-of-2 boarding day is `partial` with `used/max`, an unlimited service day
+  is `available`, the caller's own booking day is `mine`.
+- Calendar state derivation is covered by the endpoint tests (server owns the truth); the widget
+  renders what the endpoint returns.
+- All under the in-memory-SQLite harness (`createTestEnv`), FK-safe.
 
 ## Verification gate (CLAUDE.md)
 
