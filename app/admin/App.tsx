@@ -278,6 +278,42 @@ function WidgetPreview({ slug, reloadKey }: { slug: string; reloadKey: number })
   );
 }
 
+function PetAdder({
+  customer,
+  enabledPetTypes,
+  onAdd,
+}: {
+  customer: Customer;
+  enabledPetTypes: string[];
+  onAdd: (endUserId: string, name: string, petType: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [petType, setPetType] = useState(enabledPetTypes[0] ?? 'dog');
+  if (enabledPetTypes.length === 0) return null;
+  return (
+    <div className="pb-row pb-add-pet">
+      <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
+      <select value={petType} onChange={(e) => setPetType(e.target.value)}>
+        {enabledPetTypes.map((pt) => (
+          <option key={pt} value={pt}>
+            {pt === 'dog' ? 'Dog' : 'Cat'}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={() => {
+          if (name.trim()) {
+            onAdd(customer.id, name.trim(), petType);
+            setName('');
+          }
+        }}
+      >
+        Add pet
+      </button>
+    </div>
+  );
+}
+
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
   const { token, slug } = session;
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -458,6 +494,25 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     }
   };
 
+  const addPet = async (endUserId: string, name: string, petType: string) => {
+    setError('');
+    try {
+      await adminApi.customers.addPet(slug, token, endUserId, name, petType);
+      setCustomers(await loadCustomers());
+    } catch (e) {
+      handle(e);
+    }
+  };
+  const removePet = async (endUserId: string, petId: string) => {
+    setError('');
+    try {
+      await adminApi.customers.removePet(slug, token, endUserId, petId);
+      setCustomers(await loadCustomers());
+    } catch (e) {
+      handle(e);
+    }
+  };
+
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
     let active = true;
@@ -470,6 +525,8 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   }, [loadSettings, handle]);
 
   if (!settings) return <p className="pb-wrap">Loading…</p>;
+
+  const enabledPetTypes = settings.petTypes.filter((p) => p.enabled).map((p) => p.petType);
 
   return (
     <div className="pb-wrap">
@@ -693,10 +750,23 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         </div>
         <ul>
           {customers.map((cust) => (
-            <li key={cust.id}>
-              {cust.email}
-              {cust.name ? ` (${cust.name})` : ''} — <em>{cust.status}</em>{' '}
-              <button onClick={() => void removeCustomer(cust.id)}>Remove</button>
+            <li key={cust.id} className="pb-customer">
+              <div className="pb-row">
+                <span>
+                  {cust.email}
+                  {cust.name ? ` (${cust.name})` : ''} — <em>{cust.status}</em>
+                </span>
+                <button onClick={() => void removeCustomer(cust.id)}>Remove</button>
+              </div>
+              <ul className="pb-pets">
+                {cust.pets.map((p) => (
+                  <li key={p.id}>
+                    {p.name} <em>{p.petType}</em>
+                    <button onClick={() => void removePet(cust.id, p.id)}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+              <PetAdder customer={cust} enabledPetTypes={enabledPetTypes} onAdd={addPet} />
             </li>
           ))}
         </ul>

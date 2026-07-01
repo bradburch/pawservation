@@ -340,6 +340,20 @@ body {
   outline-offset: 2px;
 }
 
+.pb-pets {
+  margin: 6px 0 6px 18px;
+}
+.pb-pets li {
+  border-bottom: none;
+  padding: 4px 0;
+  gap: 8px;
+  justify-content: flex-start;
+}
+.pb-add-pet {
+  margin-left: 18px;
+  margin-top: 4px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pb-wrap button {
     transition: none;
