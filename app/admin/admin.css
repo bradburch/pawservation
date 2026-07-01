@@ -187,6 +187,7 @@ body {
   gap: 12px;
   padding-bottom: 14px;
   border-bottom: 2px solid var(--ink);
+  flex-wrap: wrap;
 }
 
 /* ── Data lists — ruled ledger rows, monospace data ────────────── */
@@ -361,5 +362,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .pb-wrap button {
     transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .pb-wrap input,
+  .pb-wrap textarea,
+  .pb-wrap select {
+    font-size: 16px;
   }
 }

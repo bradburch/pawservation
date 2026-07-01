@@ -28,9 +28,12 @@ function Identify({ onDone }: { onDone: () => void }) {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const submitEmail = async () => {
+    if (busy) return;
     setError('');
+    setBusy(true);
     try {
       const res = await api.identify(slug, email);
       setState({
@@ -41,18 +44,24 @@ function Identify({ onDone }: { onDone: () => void }) {
       });
     } catch (e) {
       setError(errorMsg(e));
+    } finally {
+      setBusy(false);
     }
   };
 
   const submitCode = async () => {
     if (state.step !== 'code') return;
+    if (busy) return;
     setError('');
+    setBusy(true);
     try {
       const res = await api.verify(slug, state.codeId, code);
       setToken(slug, res.token);
       onDone();
     } catch (e) {
       setError(errorMsg(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -66,7 +75,9 @@ function Identify({ onDone }: { onDone: () => void }) {
           placeholder="you@example.com"
           onChange={(e) => setEmail(e.target.value)}
         />
-        <button onClick={submitEmail}>Send code</button>
+        <button onClick={submitEmail} disabled={busy}>
+          {busy ? 'Sending…' : 'Send code'}
+        </button>
         {error && <p className="bp-error">{error}</p>}
       </div>
     );
@@ -93,7 +104,9 @@ function Identify({ onDone }: { onDone: () => void }) {
         placeholder="6-digit code"
         onChange={(e) => setCode(e.target.value)}
       />
-      <button onClick={submitCode}>Verify</button>
+      <button onClick={submitCode} disabled={busy}>
+        {busy ? 'Verifying…' : 'Verify'}
+      </button>
       {error && <p className="bp-error">{error}</p>}
     </div>
   );
@@ -124,6 +137,9 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
     setType(next);
     const svc = config.services.find((s) => s.type === next);
     setOptionKey(svc?.options[0]?.optionKey ?? '');
+    setStart('');
+    setEnd('');
+    setSelectedPets([]);
     resetCheck();
   };
 
@@ -164,7 +180,12 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
         ...(service?.shape === 'range' ? { endDate: end } : {}),
       };
       const res = await api.createBooking(slug, token, body);
-      setConfirmation(`Request sent! Estimated cost $${res.estCost}. Status: ${res.status}.`);
+      setConfirmation(
+        `Request sent! Estimated cost $${res.estCost}. Track it under "My bookings".`,
+      );
+      setStart('');
+      setEnd('');
+      setSelectedPets([]);
       setResult(null);
       setCalReloadKey((k) => k + 1);
       window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, '*');

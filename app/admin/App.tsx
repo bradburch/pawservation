@@ -357,6 +357,10 @@ function CalendarIdField({
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
+        <small className="pb-hint">
+          Find it in Google Calendar → Settings → your calendar → Integrate calendar → Calendar ID
+          (e.g. abc123@group.calendar.google.com). Blank uses your primary calendar.
+        </small>
       </label>
       <button onClick={() => void save()} disabled={busy}>
         {busy ? 'Saving…' : 'Save'}

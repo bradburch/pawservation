@@ -38,8 +38,22 @@ export function Calendar({
   onChange: (v: { start: string; end?: string }) => void;
   reloadKey?: number;
 }) {
-  const [days, setDays] = useState<Map<string, MonthDay>>(new Map());
-  const [today, setToday] = useState('');
+  // Combine fetch result into one object keyed by deps so loading/error can be derived without
+  // calling setState synchronously inside the effect body (react-hooks/set-state-in-effect rule).
+  const depsKey = `${slug}|${token}|${serviceType}|${month}|${reloadKey ?? ''}`;
+  const [fetchState, setFetchState] = useState<{
+    fetchedKey: string;
+    days: Map<string, MonthDay>;
+    today: string;
+    error: boolean;
+  }>({ fetchedKey: '', days: new Map(), today: '', error: false });
+
+  // Derive display state from whether the current deps match the last completed fetch.
+  const loading = fetchState.fetchedKey !== depsKey;
+  const loadError = !loading && fetchState.error;
+  const days = loading ? new Map<string, MonthDay>() : fetchState.days;
+  const today = loading ? '' : fetchState.today;
+
   const parts = month.split('-');
   const year = Number(parts[0]);
   const mon = Number(parts[1]);
@@ -50,16 +64,21 @@ export function Calendar({
       .monthAvailability(slug, token, serviceType, month)
       .then((r) => {
         if (!active) return;
-        setDays(new Map(r.days.map((d) => [d.date, d])));
-        setToday(r.today);
+        setFetchState({
+          fetchedKey: depsKey,
+          days: new Map(r.days.map((d) => [d.date, d])),
+          today: r.today,
+          error: false,
+        });
       })
       .catch(() => {
-        if (active) setDays(new Map());
+        if (!active) return;
+        setFetchState({ fetchedKey: depsKey, days: new Map(), today: '', error: true });
       });
     return () => {
       active = false;
     };
-  }, [slug, token, serviceType, month, reloadKey]);
+  }, [depsKey, slug, token, serviceType, month]);
 
   const shiftMonth = (delta: number) => {
     let y = year;
@@ -81,7 +100,7 @@ export function Calendar({
       return;
     }
     // range: first tap = start; second tap = end (must be after start)
-    if (!value.start || value.end || date < value.start) {
+    if (!value.start || value.end || date <= value.start) {
       onChange({ start: date });
     } else {
       onChange({ start: value.start, end: date });
@@ -148,6 +167,7 @@ export function Calendar({
               key={i}
               className={cls.join(' ')}
               disabled={past || d?.status === 'unavailable'}
+              aria-label={`${date}${past ? ', past' : d ? ', ' + d.status : ''}${d?.mine ? ', your booking' : ''}`}
               onClick={() => pick(date, d)}
             >
               {Number(date.slice(-2))}
@@ -167,7 +187,13 @@ export function Calendar({
         <li className="bp-lg-unavail">Unavailable</li>
         <li className="bp-lg-sel">Selected</li>
       </ul>
-      <p className="bp-cal-hint">{hint}</p>
+      {loading ? (
+        <p className="bp-cal-hint">Loading availability…</p>
+      ) : loadError ? (
+        <p className="bp-error">Couldn&apos;t load availability — please reload.</p>
+      ) : (
+        <p className="bp-cal-hint">{hint}</p>
+      )}
     </div>
   );
 }

@@ -253,7 +253,8 @@ body {
   color: var(--bp-soft);
   font-size: 0.85rem;
   cursor: pointer;
-  padding: 4px;
+  padding: 10px;
+  min-height: 44px;
   font-family: var(--bp-sans);
 }
 .bp-service-grid {
@@ -315,6 +316,8 @@ body {
   padding: 4px 10px;
   font-weight: 400;
   border-radius: 4px;
+  min-height: 44px;
+  min-width: 44px;
 }
 .bp-book .bp-cal-nav button:hover {
   background: var(--bp-sage-soft);
@@ -468,6 +471,8 @@ body {
   font-family: var(--bp-sans);
   font-size: 0.95rem;
   color: var(--bp-ink);
+  min-height: 44px;
+  padding: 8px 0;
 }
 .bp-pet-type {
   font-family: var(--bp-mono);
