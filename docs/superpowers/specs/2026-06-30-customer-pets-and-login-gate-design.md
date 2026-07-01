@@ -160,11 +160,13 @@ type), `petCount`, `customerEmail`, `bookingId`. So the availability process can
 events precisely.
 
 **Categorize every event on the calendar for the month:**
+
 - Our `pawbook` metadata present → a **booking** of `category`, covering its date span, for `customerEmail`.
 - Else summary (trimmed, case-insensitive) is **"Unavailable"** → a **block**.
 - Else → **ignored** (not a block, not a booking).
 
 **Per-day status for the selected service (purely from those events):**
+
 - **Unavailable** = a block event covers that day, OR capacity full.
 - **Partial** = `0 < used < max`, where `used` = Σ `petCount` of that day's booking events whose
   category is the capacity dimension of the selected service (boarding events for `boarding`;
