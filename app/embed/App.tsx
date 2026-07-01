@@ -231,7 +231,7 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
         value={{ start, end: end || undefined }}
         reloadKey={calReloadKey}
         onChange={(v) => {
-          setStart(v.start);
+          setStart(v.start ?? '');
           setEnd(v.end ?? '');
           resetCheck();
         }}

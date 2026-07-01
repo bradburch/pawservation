@@ -16,3 +16,10 @@ export {
   type DayCapacity,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
+export {
+  monthGrid,
+  shiftMonth,
+  nextRangeSelection,
+  isDateSelected,
+  type RangeValue,
+} from './booking/calendar-ui.js';

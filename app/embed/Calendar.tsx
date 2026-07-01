@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api, type MonthDay } from '../shared-ui/api';
+import {
+  monthGrid,
+  shiftMonth as shiftMonthFn,
+  nextRangeSelection,
+  isDateSelected,
+  type RangeValue,
+} from '../../src/shared/index.js';
 
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const MONTHS = [
@@ -34,8 +41,8 @@ export function Calendar({
   shape: 'range' | 'single';
   month: string;
   onMonthChange: (m: string) => void;
-  value: { start: string; end?: string };
-  onChange: (v: { start: string; end?: string }) => void;
+  value: RangeValue;
+  onChange: (v: RangeValue) => void;
   reloadKey?: number;
 }) {
   // Combine fetch result into one object keyed by deps so loading/error can be derived without
@@ -80,48 +87,12 @@ export function Calendar({
     };
   }, [depsKey, slug, token, serviceType, month]);
 
-  const shiftMonth = (delta: number) => {
-    let y = year;
-    let m = mon + delta;
-    if (m < 1) {
-      m = 12;
-      y--;
-    } else if (m > 12) {
-      m = 1;
-      y++;
-    }
-    onMonthChange(`${y}-${String(m).padStart(2, '0')}`);
-  };
-
   const pick = (date: string, d: MonthDay | undefined) => {
     if (!d || d.status === 'unavailable' || (today && date < today)) return;
-    if (shape === 'single') {
-      onChange({ start: date });
-      return;
-    }
-    // range: first tap = start; second tap = end (must be after start)
-    if (!value.start || value.end || date <= value.start) {
-      onChange({ start: date });
-    } else {
-      onChange({ start: value.start, end: date });
-    }
+    onChange(nextRangeSelection(value, date, shape));
   };
 
-  const cells: (string | null)[] = [];
-  const lead = new Date(year, mon - 1, 1).getDay();
-  const totalDays = new Date(year, mon, 0).getDate();
-  for (let i = 0; i < lead; i++) cells.push(null);
-  for (let day = 1; day <= totalDays; day++) {
-    cells.push(`${month}-${String(day).padStart(2, '0')}`);
-  }
-
-  const isSelected = (date: string): boolean => {
-    if (shape === 'single') return value.start === date;
-    return !!(
-      value.start &&
-      (date === value.start || (value.end !== undefined && date > value.start && date <= value.end))
-    );
-  };
+  const cells = monthGrid(month);
 
   const hint =
     shape === 'range'
@@ -133,13 +104,21 @@ export function Calendar({
   return (
     <div className="bp-cal">
       <div className="bp-cal-nav">
-        <button type="button" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
+        <button
+          type="button"
+          aria-label="Previous month"
+          onClick={() => onMonthChange(shiftMonthFn(month, -1))}
+        >
           ‹
         </button>
         <span className="bp-cal-title">
           {MONTHS[mon - 1]} {year}
         </span>
-        <button type="button" aria-label="Next month" onClick={() => shiftMonth(1)}>
+        <button
+          type="button"
+          aria-label="Next month"
+          onClick={() => onMonthChange(shiftMonthFn(month, 1))}
+        >
           ›
         </button>
       </div>
@@ -160,7 +139,7 @@ export function Calendar({
           else if (d?.status === 'unavailable') cls.push('bp-unavail');
           else if (d?.status === 'partial') cls.push('bp-partial');
           if (d?.mine) cls.push('bp-mine');
-          if (isSelected(date)) cls.push('bp-sel');
+          if (isDateSelected(value, date, shape)) cls.push('bp-sel');
           return (
             <button
               type="button"
