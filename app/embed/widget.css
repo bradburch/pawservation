@@ -262,7 +262,7 @@ body {
   gap: 12px;
   margin-bottom: 20px;
 }
-.bp-service-card {
+.bp-book .bp-service-card {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -271,13 +271,14 @@ body {
   border: 1.5px solid var(--bp-rule);
   border-radius: 14px;
   background: #fff;
+  color: var(--bp-ink);
   cursor: pointer;
   transition: border-color 0.12s ease;
 }
-.bp-service-card:hover {
+.bp-book .bp-service-card:hover {
   border-color: var(--bp-sage);
 }
-.bp-service-card.bp-selected {
+.bp-book .bp-service-card.bp-selected {
   border-color: var(--bp-accent);
   box-shadow: 0 0 0 1px var(--bp-accent);
 }
