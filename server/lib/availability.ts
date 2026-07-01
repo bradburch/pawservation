@@ -3,6 +3,7 @@ import {
   billableUnits,
   buildCapacity,
   DEFAULT_TIMEZONE,
+  getPacificDateStr,
   nightsBetween,
   rangeHasConflict,
   walkHasConflict,
@@ -11,7 +12,7 @@ import {
 } from '../../src/shared/index.js';
 import { getProviderConnection, listCapacityRows } from '../db/repo';
 import { getCalendarAccessToken } from './calendar-sync';
-import { listCalendarEvents } from './google-calendar';
+import { categorizeCalendarEvent, listCalendarEvents } from './google-calendar';
 import { SERVICE_CATALOG, type ServiceType } from '../lib/services';
 import type { BookingRow, Tenant, TenantServiceOption } from '../types';
 
@@ -60,6 +61,10 @@ export function estimateCost(
   return option.Rate * billableUnits(nightsBetween(startDate, endDateExclusive), 'night');
 }
 
+function serviceTypeToCapacityType(t: string): 'boarding' | 'house-sit' {
+  return t === 'housesitting' ? 'house-sit' : 'boarding';
+}
+
 async function checkRange(
   env: Env,
   tenant: Tenant,
@@ -70,7 +75,7 @@ async function checkRange(
   petCount: number,
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
-  const requestType = serviceType === 'housesitting' ? 'house-sit' : 'boarding';
+  const requestType = serviceTypeToCapacityType(serviceType);
   const limits = tenantLimits(tenant);
   // The engine (rangeHasConflict) already rejects an over-cap boarding request on its own. This
   // fast path is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the
@@ -148,7 +153,7 @@ export function checkAvailability(
     : checkSingle(env, tenant, serviceType, option, startDate, excludeBookingId);
 }
 
-type MonthDay = {
+export type MonthDay = {
   date: string;
   status: 'available' | 'partial' | 'unavailable';
   used: number | null;
@@ -168,9 +173,7 @@ export async function monthAvailability(
   month: string, // YYYY-MM
   callerEmail: string,
 ): Promise<{ today: string; days: MonthDay[] }> {
-  const today = new Date().toLocaleDateString('en-CA', {
-    timeZone: tenant.Timezone ?? DEFAULT_TIMEZONE,
-  });
+  const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
 
   const monthStart = `${month}-01`;
   // new Date(year, month, 0) — month is 1-based here, day 0 = last day of prior month = last day of `month`
@@ -196,30 +199,30 @@ export async function monthAvailability(
         timeMax,
       );
 
-      for (const event of events) {
-        const { summary, start, end, private: priv } = event;
-
-        if (priv.pawbook === 'true') {
-          const category = priv.category;
-          const petCount = Number(priv.petCount) || 1;
-          const email = priv.customerEmail;
-
+      for (const ev of events) {
+        const result = categorizeCalendarEvent(ev);
+        if (result.kind === 'booking') {
+          const { category, petCount, email } = result;
           if (category === 'boarding') {
-            capacityEvents.push({ start_date: start, end_date: end, type: 'boarding', petCount });
+            capacityEvents.push({
+              start_date: ev.start,
+              end_date: ev.end,
+              type: 'boarding',
+              petCount,
+            });
           } else if (category === 'housesitting') {
-            capacityEvents.push({ start_date: start, end_date: end, type: 'house-sit' });
+            capacityEvents.push({ start_date: ev.start, end_date: ev.end, type: 'house-sit' });
           }
           // walk/daycare/checkin: no capacity event
-
           if (email === callerEmail) {
-            for (let d = start; d < end; d = addDays(d, 1)) {
+            for (let d = ev.start; d < ev.end; d = addDays(d, 1)) {
               mineDays.add(d);
             }
           }
-        } else if (summary.trim().toLowerCase() === 'unavailable') {
-          capacityEvents.push({ start_date: start, end_date: end, type: 'blocked' });
+        } else if (result.kind === 'block') {
+          capacityEvents.push({ start_date: ev.start, end_date: ev.end, type: 'blocked' });
         }
-        // else: ignore unrecognized events
+        // kind === 'ignore': skip
       }
     }
   } catch {
@@ -229,7 +232,9 @@ export async function monthAvailability(
 
   const cap = buildCapacity(capacityEvents);
   const requestType: 'boarding' | 'house-sit' | null =
-    serviceType === 'housesitting' ? 'house-sit' : serviceType === 'boarding' ? 'boarding' : null;
+    serviceType === 'housesitting' || serviceType === 'boarding'
+      ? serviceTypeToCapacityType(serviceType)
+      : null;
 
   const days: MonthDay[] = [];
   for (let i = 0; i < daysInMonth; i++) {

@@ -99,15 +99,7 @@ function Identify({ onDone }: { onDone: () => void }) {
   );
 }
 
-function BookTab({
-  config,
-  pets,
-  onBooked,
-}: {
-  config: TenantConfig;
-  pets: Pet[] | null;
-  onBooked?: () => void;
-}) {
+function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null }) {
   const [type, setType] = useState(config.services[0]?.type ?? 'boarding');
   const service = config.services.find((s) => s.type === type) ?? config.services[0];
   const [optionKey, setOptionKey] = useState(service?.options[0]?.optionKey ?? '');
@@ -175,7 +167,6 @@ function BookTab({
       setConfirmation(`Request sent! Estimated cost $${res.estCost}. Status: ${res.status}.`);
       setResult(null);
       setCalReloadKey((k) => k + 1);
-      onBooked?.();
       window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, '*');
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {

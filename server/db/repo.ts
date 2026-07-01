@@ -573,6 +573,20 @@ export async function setProviderStatus(
     .run();
 }
 
+export async function listAllEndUserPetsByTenant(
+  db: D1Database,
+  tenantId: string,
+): Promise<EndUserPet[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, EndUserId, Name, PetType, CreatedAt
+       FROM EndUserPets WHERE TenantId = ? ORDER BY EndUserId, Name`,
+    )
+    .bind(tenantId)
+    .all<EndUserPet>();
+  return results;
+}
+
 export async function listEndUserPets(
   db: D1Database,
   tenantId: string,
@@ -636,12 +650,14 @@ export async function addBookingPets(
   bookingId: string,
   petIds: string[],
 ): Promise<void> {
-  for (const petId of petIds) {
-    await db
-      .prepare('INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES (?, ?)')
-      .bind(bookingId, petId)
-      .run();
-  }
+  if (petIds.length === 0) return;
+  await db.batch(
+    petIds.map((petId) =>
+      db
+        .prepare('INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES (?, ?)')
+        .bind(bookingId, petId),
+    ),
+  );
 }
 
 export async function listBookingPetsForUser(

@@ -10,9 +10,9 @@ import {
   getProviderConnection,
   insertBookingRequest,
   insertInvitedCustomer,
+  listAllEndUserPetsByTenant,
   listBlockedRanges,
   listCustomers,
-  listEndUserPets,
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
@@ -339,21 +339,24 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get('/:slug/admin/customers', async (c) => {
     const tenant = c.get('tenant');
-    const customers = await listCustomers(c.env.PAWBOOK_DB, tenant.Id);
-    const withPets = await Promise.all(
-      customers.map(async (u) => ({
-        id: u.Id,
-        email: u.Email,
-        name: u.Name,
-        status: u.Status,
-        invitedAt: u.InvitedAt,
-        pets: (await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, u.Id)).map((p) => ({
-          id: p.Id,
-          name: p.Name,
-          petType: p.PetType,
-        })),
-      })),
-    );
+    const [customers, allPets] = await Promise.all([
+      listCustomers(c.env.PAWBOOK_DB, tenant.Id),
+      listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id),
+    ]);
+    const byUser = new Map<string, { id: string; name: string; petType: string }[]>();
+    for (const p of allPets) {
+      const list = byUser.get(p.EndUserId) ?? [];
+      list.push({ id: p.Id, name: p.Name, petType: p.PetType });
+      byUser.set(p.EndUserId, list);
+    }
+    const withPets = customers.map((u) => ({
+      id: u.Id,
+      email: u.Email,
+      name: u.Name,
+      status: u.Status,
+      invitedAt: u.InvitedAt,
+      pets: byUser.get(u.Id) ?? [],
+    }));
     return c.json({ customers: withPets });
   })
 

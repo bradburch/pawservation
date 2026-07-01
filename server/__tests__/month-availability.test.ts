@@ -3,6 +3,7 @@ import app from '../index';
 import { createTestEnv, TEST_SECRET, endUserToken } from './helpers';
 import { setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
+import type { MonthDay } from '../lib/availability';
 
 const BOARDING_EVENT = {
   summary: 'Boarding: Bella',
@@ -38,14 +39,6 @@ function mockCalendarFetch(...items: object[]) {
     new Response(JSON.stringify({ items }), { status: 200 }),
   );
 }
-
-type MonthDay = {
-  date: string;
-  status: 'available' | 'partial' | 'unavailable';
-  used: number | null;
-  max: number | null;
-  mine: boolean;
-};
 
 describe('GET /api/:slug/availability/month', () => {
   afterEach(() => vi.restoreAllMocks());

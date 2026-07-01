@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { createTestEnv, TEST_SECRET } from './helpers';
+import { createTestEnv, TEST_SECRET, endUserToken } from './helpers';
 import { setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 
@@ -8,39 +8,9 @@ import { encryptToken } from '../lib/token-crypto';
 describe('booking flow', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  async function identify(env: Env, slug: string, email: string): Promise<string> {
-    const identifyRes = await app.request(
-      `/api/${slug}/identify`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      },
-      env,
-    );
-    expect(identifyRes.status).toBe(200);
-    const { codeId, prototypeCode } = (await identifyRes.json()) as {
-      codeId: string;
-      prototypeCode: string;
-    };
-    expect(prototypeCode).toMatch(/^\d{6}$/);
-
-    const verifyRes = await app.request(
-      `/api/${slug}/verify`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codeId, code: prototypeCode }),
-      },
-      env,
-    );
-    expect(verifyRes.status).toBe(200);
-    return ((await verifyRes.json()) as { token: string }).token;
-  }
-
   it('completes identify → book → mine', async () => {
     const { env } = createTestEnv();
-    const token = await identify(env, 'sunny-paws', 'jess@example.com');
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
 
     const bookRes = await app.request(
       '/api/sunny-paws/bookings',
@@ -72,7 +42,7 @@ describe('booking flow', () => {
 
   it('rejects a conflicting submit with 409 (server-side re-validation)', async () => {
     const { env } = createTestEnv();
-    const token = await identify(env, 'sunny-paws', 'jess@example.com');
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     // Seed leaves only 1 boarding slot at Sunny Paws over Jun 20-25; ask for 2 pets.
     const res = await app.request(
       '/api/sunny-paws/bookings',
@@ -201,7 +171,7 @@ describe('booking flow', () => {
 
   it('books a walk with optionKey d60 and petType dog, persists both fields', async () => {
     const { env, raw } = createTestEnv();
-    const token = await identify(env, 'sunny-paws', 'jess@example.com');
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
 
     const bookRes = await app.request(
       '/api/sunny-paws/bookings',
@@ -232,7 +202,7 @@ describe('booking flow', () => {
 
   it('books a dog walk at happy-tails (Otis is an accepted species)', async () => {
     const { env } = createTestEnv();
-    const token = await identify(env, 'happy-tails', 'jess@example.com');
+    const token = await endUserToken(env, 'happy-tails', 'jess@example.com');
 
     const res = await app.request(
       '/api/happy-tails/bookings',
@@ -275,7 +245,7 @@ describe('booking flow', () => {
 
     // identify→verify→token. At this point in the plan identify is still open; after Task 10 it is
     // gated but `jess@example.com` is a seeded active customer (Task 9), so this keeps passing.
-    const token = await identify(env, 'sunny-paws', 'jess@example.com');
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
       '/api/sunny-paws/bookings',
       {

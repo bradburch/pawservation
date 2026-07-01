@@ -196,7 +196,7 @@ body {
   padding: 0;
 }
 
-li.pb-customer {
+.pb-wrap li.pb-customer {
   display: block;
 }
 

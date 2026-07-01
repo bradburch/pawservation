@@ -289,8 +289,7 @@ function PetAdder({
   onAdd: (endUserId: string, name: string, petType: string) => void;
 }) {
   const [name, setName] = useState('');
-  const [petType, setPetType] = useState(enabledPetTypes[0] ?? 'dog');
-  if (enabledPetTypes.length === 0) return null;
+  const [petType, setPetType] = useState(enabledPetTypes[0]);
   return (
     <div className="pb-row pb-add-pet">
       <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -524,46 +523,32 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     };
   }, [loadCustomers, handle]);
 
-  const addCustomer = async () => {
+  const withCustomerRefresh = async (fn: () => Promise<unknown>) => {
     setError('');
     try {
+      await fn();
+      setCustomers(await loadCustomers());
+    } catch (e) {
+      handle(e);
+    }
+  };
+
+  const addCustomer = async () => {
+    await withCustomerRefresh(async () => {
       await adminApi.customers.add(slug, token, custEmail.trim().toLowerCase(), custName.trim());
       setCustEmail('');
       setCustName('');
-      setCustomers(await loadCustomers());
-    } catch (e) {
-      handle(e);
-    }
+    });
   };
 
-  const removeCustomer = async (id: string) => {
-    setError('');
-    try {
-      await adminApi.customers.remove(slug, token, id);
-      setCustomers(await loadCustomers());
-    } catch (e) {
-      handle(e);
-    }
-  };
+  const removeCustomer = (id: string) =>
+    withCustomerRefresh(() => adminApi.customers.remove(slug, token, id));
 
-  const addPet = async (endUserId: string, name: string, petType: string) => {
-    setError('');
-    try {
-      await adminApi.customers.addPet(slug, token, endUserId, name, petType);
-      setCustomers(await loadCustomers());
-    } catch (e) {
-      handle(e);
-    }
-  };
-  const removePet = async (endUserId: string, petId: string) => {
-    setError('');
-    try {
-      await adminApi.customers.removePet(slug, token, endUserId, petId);
-      setCustomers(await loadCustomers());
-    } catch (e) {
-      handle(e);
-    }
-  };
+  const addPet = (endUserId: string, name: string, petType: string) =>
+    withCustomerRefresh(() => adminApi.customers.addPet(slug, token, endUserId, name, petType));
+
+  const removePet = (endUserId: string, petId: string) =>
+    withCustomerRefresh(() => adminApi.customers.removePet(slug, token, endUserId, petId));
 
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
@@ -818,7 +803,9 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
                   </li>
                 ))}
               </ul>
-              <PetAdder customer={cust} enabledPetTypes={enabledPetTypes} onAdd={addPet} />
+              {enabledPetTypes.length > 0 && (
+                <PetAdder customer={cust} enabledPetTypes={enabledPetTypes} onAdd={addPet} />
+              )}
             </li>
           ))}
         </ul>

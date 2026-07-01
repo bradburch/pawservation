@@ -17,33 +17,6 @@ const MONTHS = [
   'December',
 ];
 
-function daysInMonth(year: number, month1: number): number {
-  return [
-    31,
-    (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ][month1 - 1];
-}
-
-/** Weekday index (0=Sun) for the 1st of the given month. Pure arithmetic, no Date.now(). */
-function firstWeekday(year: number, month1: number): number {
-  // days elapsed since 2000-01-01 (a Saturday, index 6)
-  let days = 0;
-  for (let y = 2000; y < year; y++)
-    days += (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 366 : 365;
-  for (let m = 1; m < month1; m++) days += daysInMonth(year, m);
-  return (6 + days) % 7;
-}
-
 export function Calendar({
   slug,
   token,
@@ -116,9 +89,10 @@ export function Calendar({
   };
 
   const cells: (string | null)[] = [];
-  const lead = firstWeekday(year, mon);
+  const lead = new Date(year, mon - 1, 1).getDay();
+  const totalDays = new Date(year, mon, 0).getDate();
   for (let i = 0; i < lead; i++) cells.push(null);
-  for (let day = 1; day <= daysInMonth(year, mon); day++) {
+  for (let day = 1; day <= totalDays; day++) {
     cells.push(`${month}-${String(day).padStart(2, '0')}`);
   }
 
