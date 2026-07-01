@@ -5,3 +5,4 @@ dist/
 worker-configuration.d.ts
 *.tsbuildinfo
 .superpowers/
+client_secret*

@@ -1,122 +1,229 @@
+/*
+ * Embed widget — "Keeper's Ledger" identity, restrained for a guest on any host page.
+ * The tenant's chosen colour drives every ACTION via --bp-accent (set at runtime in App.tsx);
+ * Pawbook only owns the neutral bones: warm paper surface, ruled dividers, a serif wordmark,
+ * and monospace for all booking data (dates, prices, statuses) — like entries in a ledger.
+ */
 :root {
-  --bp-accent: #4f46e5;
+  --bp-accent: #c77d0a; /* marigold fallback; the tenant overrides this per widget */
+  --bp-paper: #fbfaf6;
+  --bp-ink: #26312e;
+  --bp-soft: #5e675f;
+  --bp-rule: #e3dccb;
+  --bp-serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+  --bp-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --bp-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 body {
   margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
-  color: #1f2937;
+  font-family: var(--bp-sans);
+  color: var(--bp-ink);
+  line-height: 1.45;
 }
 
 .bp-widget {
   max-width: 420px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 20px;
+  background: var(--bp-paper);
+  border: 1px solid var(--bp-rule);
+  border-radius: 10px;
+  box-shadow: 0 14px 34px -26px rgba(38, 49, 46, 0.65);
 }
 
+/* ── Header + tabs ─────────────────────────────────────────────── */
 .bp-widget header h1 {
-  font-size: 1.25rem;
-  margin: 0 0 8px;
-  color: var(--bp-accent);
+  font-family: var(--bp-serif);
+  font-weight: 700;
+  font-size: 1.4rem;
+  letter-spacing: -0.015em;
+  margin: 0 0 10px;
+  color: var(--bp-ink);
 }
 
 .bp-widget nav {
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--bp-rule);
 }
 
+/* Tabs read like index tabs in a book: a marigold/accent underline, not a filled pill. */
 .bp-widget nav button {
   background: none;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: -1px;
+  padding: 6px 2px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--bp-soft);
   cursor: pointer;
 }
 
 .bp-widget nav button.bp-active {
-  background: var(--bp-accent);
-  border-color: var(--bp-accent);
-  color: white;
+  color: var(--bp-ink);
+  font-weight: 600;
+  border-bottom-color: var(--bp-accent);
 }
 
 .bp-book,
 .bp-identify {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
+/* Field labels as small mono eyebrows — the ledger's column headings. */
 .bp-book label {
   display: flex;
   flex-direction: column;
-  font-size: 0.85rem;
-  gap: 4px;
+  gap: 5px;
+  font-family: var(--bp-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bp-soft);
+}
+
+.bp-identify p {
+  margin: 0;
 }
 
 .bp-book input,
 .bp-book select,
 .bp-identify input {
-  padding: 8px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--bp-rule);
+  border-radius: 8px;
+  font-family: var(--bp-sans);
   font-size: 1rem;
+  color: var(--bp-ink);
+}
+
+.bp-book input:focus,
+.bp-book select:focus,
+.bp-identify input:focus {
+  outline: none;
+  border-color: var(--bp-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bp-accent) 22%, transparent);
 }
 
 .bp-book button,
 .bp-identify button,
 .bp-result button {
   background: var(--bp-accent);
-  color: white;
+  color: #fff;
   border: none;
-  border-radius: 6px;
-  padding: 10px;
+  border-radius: 8px;
+  padding: 11px 14px;
+  font-family: var(--bp-sans);
   font-size: 1rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: filter 0.12s ease;
 }
 
+.bp-book button:hover,
+.bp-identify button:hover,
+.bp-result button:hover {
+  filter: brightness(0.93);
+}
+
+.bp-book button:disabled {
+  filter: saturate(0.4) brightness(1.05);
+  cursor: default;
+}
+
+/* ── Availability result — a stamped receipt with an accent margin ── */
 .bp-result {
-  border-radius: 6px;
-  padding: 12px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--bp-rule);
+  background: #fff;
+}
+
+.bp-result p {
+  margin: 0 0 8px;
+}
+
+.bp-result strong {
+  font-family: var(--bp-mono);
+  font-weight: 700;
 }
 
 .bp-result.bp-ok {
-  background: #ecfdf5;
+  border-left-color: #1f6b57;
+  background: #f0f6f1;
 }
 
 .bp-result.bp-no {
-  background: #fef2f2;
+  border-left-color: #9e3b4e;
+  background: #f9f0f1;
 }
 
 .bp-error {
-  color: #b91c1c;
+  margin: 0;
+  color: #9e3b4e;
+  font-size: 0.9rem;
 }
 
 .bp-confirm {
-  color: #047857;
+  margin: 0;
+  color: #1f6b57;
   font-weight: 600;
 }
 
+/* Dev-mode login code: a taped-in note. */
 .bp-proto-code {
-  background: #fffbeb;
-  border: 1px dashed #d97706;
-  border-radius: 6px;
-  padding: 8px;
+  background: #fdf6e3;
+  border: 1px dashed var(--bp-accent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
 }
 
+.bp-proto-code strong {
+  font-family: var(--bp-mono);
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+}
+
+/* ── "My bookings" — the ledger itself ─────────────────────────── */
 .bp-mine {
   list-style: none;
   padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 .bp-mine li {
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 8px;
+  border: none;
+  border-bottom: 1px solid var(--bp-rule);
+  border-radius: 0;
+  padding: 11px 0;
+  font-family: var(--bp-mono);
+  font-size: 0.82rem;
+  color: var(--bp-soft);
+}
+
+.bp-mine li:last-child {
+  border-bottom: none;
+}
+
+.bp-mine li strong {
+  font-weight: 700;
+  color: var(--bp-ink);
+}
+
+.bp-mine li em {
+  font-style: normal;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  color: var(--bp-accent);
 }
