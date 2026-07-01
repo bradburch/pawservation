@@ -4,6 +4,7 @@ import {
   shiftMonth,
   nextRangeSelection,
   isDateSelected,
+  rangePosition,
 } from '../../src/shared/index.js';
 
 // ---------------------------------------------------------------------------
@@ -180,5 +181,34 @@ describe('isDateSelected (single)', () => {
 
   it('with empty value: nothing is selected', () => {
     expect(isDateSelected({}, start, 'single')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rangePosition — where a date sits in the selection, for range-band rendering
+// ---------------------------------------------------------------------------
+describe('rangePosition', () => {
+  it('returns none when nothing selected', () => {
+    expect(rangePosition({}, '2026-07-06', 'range')).toBe('none');
+  });
+
+  it('single shape: selected date is only, others none', () => {
+    expect(rangePosition({ start: '2026-07-06' }, '2026-07-06', 'single')).toBe('only');
+    expect(rangePosition({ start: '2026-07-06' }, '2026-07-07', 'single')).toBe('none');
+  });
+
+  it('range with only a start: start date is only', () => {
+    expect(rangePosition({ start: '2026-07-06' }, '2026-07-06', 'range')).toBe('only');
+    expect(rangePosition({ start: '2026-07-06' }, '2026-07-07', 'range')).toBe('none');
+  });
+
+  it('full range: start/middle/end, none outside', () => {
+    const v = { start: '2026-07-06', end: '2026-07-09' };
+    expect(rangePosition(v, '2026-07-06', 'range')).toBe('start');
+    expect(rangePosition(v, '2026-07-07', 'range')).toBe('middle');
+    expect(rangePosition(v, '2026-07-08', 'range')).toBe('middle');
+    expect(rangePosition(v, '2026-07-09', 'range')).toBe('end');
+    expect(rangePosition(v, '2026-07-05', 'range')).toBe('none');
+    expect(rangePosition(v, '2026-07-10', 'range')).toBe('none');
   });
 });

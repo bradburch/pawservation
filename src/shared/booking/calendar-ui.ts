@@ -80,3 +80,18 @@ export function isDateSelected(
   if (value.end !== undefined && date > value.start && date <= value.end) return true;
   return false;
 }
+
+export type RangePosition = 'none' | 'only' | 'start' | 'middle' | 'end';
+
+/** Where `date` sits inside the current selection, for range-band rendering. */
+export function rangePosition(
+  value: RangeValue,
+  date: string,
+  shape: 'single' | 'range',
+): RangePosition {
+  if (!isDateSelected(value, date, shape)) return 'none';
+  if (shape === 'single' || !value.end) return 'only';
+  if (date === value.start) return 'start';
+  if (date === value.end) return 'end';
+  return 'middle';
+}

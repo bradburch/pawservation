@@ -21,5 +21,7 @@ export {
   shiftMonth,
   nextRangeSelection,
   isDateSelected,
+  rangePosition,
+  type RangePosition,
   type RangeValue,
 } from './booking/calendar-ui.js';
