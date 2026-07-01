@@ -70,6 +70,12 @@ INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES
   ('eu_ht_jess', 'tnt_happytails', 'jess@example.com', 'Jess Demo', 'active'),
   ('eu_pr_jess', 'tnt_pawsandrelax', 'jess@example.com', 'Jess Demo', 'active');
 
+-- Demo pets (sitter-managed). Jess has two at Sunny Paws (dogs+cats), one at Happy Tails (dogs only).
+INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES
+  ('pet_sp_bella', 'tnt_sunnypaws', 'eu_sp_jess', 'Bella', 'dog'),
+  ('pet_sp_mochi', 'tnt_sunnypaws', 'eu_sp_jess', 'Mochi', 'cat'),
+  ('pet_ht_otis',  'tnt_happytails', 'eu_ht_jess', 'Otis', 'dog');
+
 -- Existing bookings so availability looks real.
 -- Sunny Paws (max 2 pets): June 20-25 already has 1 pet boarding -> 1 slot left.
 -- Happy Tails (max 4 pets): June 20-25 has 2 pets boarding -> 2 slots left.

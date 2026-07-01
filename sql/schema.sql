@@ -98,6 +98,23 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_Dates ON BookingRequests (TenantId, StartDate);
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_User ON BookingRequests (TenantId, EndUserId);
 
+CREATE TABLE IF NOT EXISTS EndUserPets (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
+  Name TEXT NOT NULL,
+  PetType TEXT NOT NULL CHECK (PetType IN ('dog', 'cat')),
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_EndUserPets_Tenant_User ON EndUserPets (TenantId, EndUserId);
+
+-- Which of the customer's pets each booking is for. Tenant scope flows through EndUserPets/BookingRequests.
+CREATE TABLE IF NOT EXISTS BookingRequestPets (
+  BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
+  PetId TEXT NOT NULL REFERENCES EndUserPets(Id),
+  PRIMARY KEY (BookingRequestId, PetId)
+);
+
 CREATE TABLE IF NOT EXISTS ProviderConnections (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
