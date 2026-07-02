@@ -14,7 +14,8 @@ import {
   type TenantConfig,
 } from '../shared-ui/api';
 import './widget.css';
-import { SERVICE_EMOJI } from './services';
+import { SERVICE_ICONS } from './services';
+import { IconPaw } from '../shared-ui/icons';
 
 /** Widget tenant comes from the iframe path: /embed/:slug — never from the host page. */
 const slug = window.location.pathname.split('/').filter(Boolean)[1] ?? '';
@@ -206,19 +207,22 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
   return (
     <div className="bp-book">
       <div className="bp-service-grid">
-        {config.services.map((s) => (
-          <button
-            key={s.type}
-            type="button"
-            className={`bp-service-card${type === s.type ? ' bp-selected' : ''}`}
-            onClick={() => onServiceChange(s.type)}
-          >
-            <span className="bp-service-emoji" aria-hidden="true">
-              {SERVICE_EMOJI[s.type] ?? '🐾'}
-            </span>
-            <span className="bp-service-label">{s.label}</span>
-          </button>
-        ))}
+        {config.services.map((s) => {
+          const Icon = SERVICE_ICONS[s.type] ?? IconPaw;
+          return (
+            <button
+              key={s.type}
+              type="button"
+              className={`bp-service-card${type === s.type ? ' bp-selected' : ''}`}
+              onClick={() => onServiceChange(s.type)}
+            >
+              <span className="bp-service-emoji" aria-hidden="true">
+                <Icon />
+              </span>
+              <span className="bp-service-label">{s.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <Calendar
