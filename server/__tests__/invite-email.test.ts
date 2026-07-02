@@ -21,4 +21,14 @@ describe('sendInvite', () => {
   it('throws when email is not configured', async () => {
     await expect(sendInvite({} as Env, 'a@b.c', 'X', 'https://w')).rejects.toThrow();
   });
+
+  it('HTML-escapes the display name so it cannot inject markup into the email', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    await sendInvite(env, 'guest@example.com', '<img src=x onerror=alert(1)>', 'https://w/embed/x');
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.html).not.toContain('<img');
+    expect(body.html).toContain('&lt;img');
+  });
 });

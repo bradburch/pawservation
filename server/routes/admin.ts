@@ -5,6 +5,7 @@ import {
   clearProviderConnection,
   countBookingPetRefs,
   countBookingsForUser,
+  getEndUserById,
   deleteBlockedRange,
   deleteCustomer,
   getProviderConnection,
@@ -407,6 +408,10 @@ export const adminRoutes = new Hono<AppEnv>()
     const petType = body.petType;
     if (!name) return c.json({ error: 'Enter a pet name.' }, 400);
     if (!isPetType(petType)) return c.json({ error: 'Unknown pet type.' }, 400);
+    // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
+    // under it (production D1 has foreign keys OFF, so nothing else stops a cross-tenant orphan).
+    if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
+      return c.json({ error: 'Not found.' }, 404);
     const accepted = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
       (pt) => pt.PetType === petType && pt.Enabled,
     );
@@ -416,7 +421,7 @@ export const adminRoutes = new Hono<AppEnv>()
   })
   .delete('/:slug/admin/customers/:id/pets/:petId', async (c) => {
     const tenant = c.get('tenant');
-    const refs = await countBookingPetRefs(c.env.PAWBOOK_DB, c.req.param('petId'));
+    const refs = await countBookingPetRefs(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
     if (refs > 0) return c.json({ error: 'Pet has bookings; cannot remove.' }, 409);
     const removed = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
     if (!removed) return c.json({ error: 'Not found.' }, 404);

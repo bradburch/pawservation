@@ -41,6 +41,8 @@ app.use('*', async (c, next) => {
 
 app.use('*', async (c, next) => {
   await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', EMBEDDABLE_CSP);
   } else {
@@ -324,5 +326,13 @@ const LANDING_HTML = `<!doctype html>
 `;
 
 app.get('/', (c) => c.html(LANDING_HTML));
+
+// Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
+// through to Hono's plain-text default and break the { error } contract every client parses.
+// Internal detail is logged, never returned.
+app.onError((err, c) => {
+  console.error('unhandled error', err);
+  return c.json({ error: 'Something went wrong.' }, 500);
+});
 
 export default app;

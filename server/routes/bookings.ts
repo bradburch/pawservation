@@ -131,7 +131,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
         return c.json({ error: 'Sorry — those dates just filled up.' }, 409);
       }
-      await addBookingPets(c.env.PAWBOOK_DB, id, petIds);
+      await addBookingPets(c.env.PAWBOOK_DB, tenant.Id, id, petIds);
     } catch (err) {
       // The optimistic row is already persisted; if the capacity check or pet insert fails,
       // don't leave it orphaned (a pending row counts against capacity and never expires).

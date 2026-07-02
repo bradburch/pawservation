@@ -12,6 +12,15 @@ export function isEmailConfigured(env: Env): boolean {
   return Boolean(env.RESEND_API_KEY && env.RESEND_FROM);
 }
 
+/** Escape a value for interpolation into an HTML email body (tenant-controlled text is untrusted). */
+function htmlEscape(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 async function resendPost(env: Env, body: Record<string, unknown>): Promise<void> {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -43,10 +52,13 @@ export async function sendInvite(
   widgetUrl: string,
 ): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // displayName is tenant-controlled; escape it before it reaches the HTML body. widgetUrl is
+  // server-built, but escape it for the attribute context as defense-in-depth. Subject and text
+  // are plain-text fields in Resend's JSON API (not raw headers / not HTML), so they need no escaping.
   await resendPost(env, {
     to,
     subject: `You're invited to book with ${displayName}`,
     text: `${displayName} has invited you to book online. Get started here: ${widgetUrl}`,
-    html: `<p>${displayName} has invited you to book online.</p><p><a href="${widgetUrl}">Book now</a></p>`,
+    html: `<p>${htmlEscape(displayName)} has invited you to book online.</p><p><a href="${htmlEscape(widgetUrl)}">Book now</a></p>`,
   });
 }
