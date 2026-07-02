@@ -327,10 +327,12 @@ function BookTab({ config, pets }: { config: TenantConfig; pets: Pet[] | null })
                 <p>{result.reason}</p>
               </div>
             ))}
-          {confirmation && <p className="bp-confirm">{confirmation}</p>}
           {error && <p className="bp-error">{error}</p>}
         </div>
       )}
+      {/* Rendered outside the details panel: submitting resets the dates, which unmounts
+          the panel — a confirmation inside it would vanish before it was ever seen. */}
+      {confirmation && <p className="bp-confirm">{confirmation}</p>}
     </div>
   );
 }

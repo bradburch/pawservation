@@ -555,8 +555,12 @@ body {
 
 .bp-confirm {
   margin: 0;
+  padding: 12px 16px;
   color: var(--bp-ok);
   font-weight: 600;
+  background: var(--bp-ok-wash);
+  border: 1px solid color-mix(in srgb, var(--bp-ok) 25%, transparent);
+  border-radius: 12px;
 }
 
 /* Dev-mode login code: a small taped-in note. */
