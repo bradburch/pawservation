@@ -25,3 +25,11 @@ export {
   type RangePosition,
   type RangeValue,
 } from './booking/calendar-ui.js';
+export {
+  validateAnswer,
+  validateAnswers,
+  validateServiceConstraints,
+  type ServiceQuestion,
+  type ServiceConstraints,
+  type QuestionType,
+} from './booking/service-rules.js';
