@@ -216,7 +216,9 @@ body {
   gap: 2px;
   flex: 0 0 190px;
   position: sticky;
-  top: 78px;
+  /* --topbar-h is measured in App.tsx — the topbar's height isn't fixed, it wraps to two
+     lines for a long business name on a narrow viewport. 78px is the fallback before JS runs. */
+  top: var(--topbar-h, 78px);
   z-index: 15;
 }
 

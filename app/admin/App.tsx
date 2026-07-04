@@ -152,6 +152,22 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const dirty = settings !== null && JSON.stringify(settings) !== savedSnapshot;
 
+  // The sticky sidebar nav docks just below the topbar, but the topbar's height isn't fixed —
+  // it wraps to two lines for a long business name on a narrow viewport. Measure it instead of
+  // guessing, so the sidebar never overlaps it. A callback ref (not useRef + an empty-deps
+  // effect) because the header doesn't exist yet on the first render — this component returns
+  // the "Loading…" paragraph below until `settings` arrives.
+  const [topbarEl, setTopbarEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!topbarEl) return;
+    const setHeight = () =>
+      document.documentElement.style.setProperty('--topbar-h', `${topbarEl.offsetHeight}px`);
+    setHeight();
+    const observer = new ResizeObserver(setHeight);
+    observer.observe(topbarEl);
+    return () => observer.disconnect();
+  }, [topbarEl]);
+
   // Keeps the active section in sync with browser back/forward through the hash history
   // entries that switching sections now creates.
   useEffect(() => {
@@ -337,7 +353,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   return (
     <div className="pb-wrap pb-dash">
-      <header className="pb-topbar">
+      <header className="pb-topbar" ref={setTopbarEl}>
         <div className="pb-topbar-row">
           <h1>{settings.displayName}</h1>
           <button className="pb-signout" onClick={onSignOut}>
