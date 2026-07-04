@@ -80,16 +80,11 @@ body {
 
 /* ── Section cards ─────────────────────────────────────────────── */
 .pb-card {
-  margin-top: 20px;
   padding: 20px 24px 24px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 10px 24px -22px rgba(28, 58, 74, 0.45);
-}
-
-.pb-panel.pb-card {
-  margin-top: 0;
 }
 
 .pb-wrap h2 {

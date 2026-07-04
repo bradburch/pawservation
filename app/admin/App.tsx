@@ -128,6 +128,13 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'embed', label: 'Embed', icon: IconCode },
 ];
 
+/** Reads the initial section from the URL hash (e.g. `/admin#clients`) so deep links and page
+ * refreshes land on the right section, same as the old anchor-nav did. */
+function sectionFromHash(): SectionKey {
+  const hash = window.location.hash.slice(1);
+  return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'business';
+}
+
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
   const { token, slug } = session;
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -141,9 +148,17 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const [error, setError] = useState('');
   // Bumped after a successful save so the embed preview remounts and pulls the fresh config.
   const [previewKey, setPreviewKey] = useState(0);
-  const [activeSection, setActiveSection] = useState<SectionKey>('business');
+  const [activeSection, setActiveSection] = useState<SectionKey>(sectionFromHash);
 
   const dirty = settings !== null && JSON.stringify(settings) !== savedSnapshot;
+
+  // Keeps the active section in sync with browser back/forward through the hash history
+  // entries that switching sections now creates.
+  useEffect(() => {
+    const onHashChange = () => setActiveSection(sectionFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   // The saved confirmation is transient; errors stay until resolved.
   useEffect(() => {
@@ -338,7 +353,10 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
               key={key}
               className={key === activeSection ? 'pb-sidenav-active' : ''}
               aria-current={key === activeSection ? 'page' : undefined}
-              onClick={() => setActiveSection(key)}
+              onClick={() => {
+                setActiveSection(key);
+                window.location.hash = key;
+              }}
             >
               <Icon size={16} /> {label}
             </button>
