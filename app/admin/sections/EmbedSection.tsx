@@ -66,9 +66,12 @@ function WidgetPreview({
   //
   // This section stays mounted even while its tab isn't active (`display: none`), where the body
   // has no rendered box and reads a 0 height. `active` in the deps restarts the polling window
-  // fresh whenever the tab is switched to, so it gets a real measurement instead of relying on the
-  // ResizeObserver to catch a resize it may have missed while hidden.
+  // fresh whenever the tab is switched TO, so it gets a real measurement instead of relying on the
+  // ResizeObserver to catch a resize it may have missed while hidden. Guarded to only run while
+  // active — otherwise leaving the tab would also restart it, and its first measure() would read
+  // the now-hidden body's 0 height and squash the previously-correct one down to the 320px floor.
   useEffect(() => {
+    if (!active) return;
     const frame = frameRef.current;
     if (!frame) return;
     let observer: ResizeObserver | null = null;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { adminApi, isAuthExpired, type Customer } from '../shared-ui/api.js';
 import {
   IconCalendar,
@@ -352,6 +352,52 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const enabledPetTypes = settings.petTypes.filter((p) => p.enabled).map((p) => p.petType);
 
+  const panels: Record<SectionKey, ReactNode> = {
+    business: <BusinessSection settings={settings} setSettings={setSettings} />,
+    pets: <PetsSection settings={settings} setSettings={setSettings} />,
+    services: <ServicesSection settings={settings} setSettings={setSettings} />,
+    timeoff: (
+      <TimeOffSection
+        blocked={settings.blocked}
+        blockStart={blockStart}
+        blockEnd={blockEnd}
+        setBlockStart={setBlockStart}
+        setBlockEnd={setBlockEnd}
+        addBlock={addBlock}
+        removeBlock={removeBlock}
+      />
+    ),
+    clients: (
+      <ClientsSection
+        customers={customers}
+        custEmail={custEmail}
+        custName={custName}
+        setCustEmail={setCustEmail}
+        setCustName={setCustName}
+        addCustomer={addCustomer}
+        removeCustomer={removeCustomer}
+        addPet={addPet}
+        removePet={removePet}
+        enabledPetTypes={enabledPetTypes}
+      />
+    ),
+    apps: (
+      <AppsSection
+        providers={settings.providers}
+        slug={slug}
+        token={token}
+        connect={connect}
+        connectCalendar={connectCalendar}
+        disconnectCalendar={disconnectCalendar}
+        onCalendarSaved={() => void refresh()}
+        handleError={handle}
+      />
+    ),
+    embed: (
+      <EmbedSection session={session} previewKey={previewKey} active={activeSection === 'embed'} />
+    ),
+  };
+
   return (
     <div className="pb-wrap pb-dash">
       <header className="pb-topbar" ref={setTopbarEl}>
@@ -378,61 +424,15 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         </nav>
 
         {/* Every section stays mounted (just hidden) so in-progress edits — e.g. a typed-but-
-            unsaved Google Calendar ID — and the embed preview iframe survive switching tabs. */}
+            unsaved Google Calendar ID — and the embed preview iframe survive switching tabs.
+            Rendered from SECTIONS (not a hand-listed div per key) so a section can't end up in
+            the nav with no matching panel, or vice versa. */}
         <div className="pb-panel pb-card">
-          <div hidden={activeSection !== 'business'}>
-            <BusinessSection settings={settings} setSettings={setSettings} />
-          </div>
-          <div hidden={activeSection !== 'pets'}>
-            <PetsSection settings={settings} setSettings={setSettings} />
-          </div>
-          <div hidden={activeSection !== 'services'}>
-            <ServicesSection settings={settings} setSettings={setSettings} />
-          </div>
-          <div hidden={activeSection !== 'timeoff'}>
-            <TimeOffSection
-              blocked={settings.blocked}
-              blockStart={blockStart}
-              blockEnd={blockEnd}
-              setBlockStart={setBlockStart}
-              setBlockEnd={setBlockEnd}
-              addBlock={addBlock}
-              removeBlock={removeBlock}
-            />
-          </div>
-          <div hidden={activeSection !== 'clients'}>
-            <ClientsSection
-              customers={customers}
-              custEmail={custEmail}
-              custName={custName}
-              setCustEmail={setCustEmail}
-              setCustName={setCustName}
-              addCustomer={addCustomer}
-              removeCustomer={removeCustomer}
-              addPet={addPet}
-              removePet={removePet}
-              enabledPetTypes={enabledPetTypes}
-            />
-          </div>
-          <div hidden={activeSection !== 'apps'}>
-            <AppsSection
-              providers={settings.providers}
-              slug={slug}
-              token={token}
-              connect={connect}
-              connectCalendar={connectCalendar}
-              disconnectCalendar={disconnectCalendar}
-              onCalendarSaved={() => void refresh()}
-              handleError={handle}
-            />
-          </div>
-          <div hidden={activeSection !== 'embed'}>
-            <EmbedSection
-              session={session}
-              previewKey={previewKey}
-              active={activeSection === 'embed'}
-            />
-          </div>
+          {SECTIONS.map(({ key }) => (
+            <div key={key} hidden={activeSection !== key}>
+              {panels[key]}
+            </div>
+          ))}
         </div>
       </div>
 
