@@ -518,11 +518,119 @@ describe('tenant admin', () => {
     );
     expect(badPattern.status).toBe(400);
 
+    const catastrophicPattern = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              questions: [
+                { label: 'Nested quantifier', type: 'text', required: false, pattern: '(a+)+' },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(catastrophicPattern.status).toBe(400);
+
+    const nonNumericMinMax = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              questions: [
+                { label: 'Bad bound', type: 'number', required: false, min: 'not-a-number' },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(nonNumericMinMax.status).toBe(400);
+
     // Nothing above should have persisted — boarding rate is still the seeded 50.
     const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
       services: { type: string; options: { rate: number }[] }[];
     };
     expect(config.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(50);
+  });
+
+  it('preserves existing questions and constraints when a PUT omits them for a service (patch semantics)', async () => {
+    const { env } = createTestEnv();
+    await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              questions: [{ label: 'Is your dog crate-trained?', type: 'yesno', required: true }],
+              minNights: 2,
+              maxNights: 14,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+
+    // A caller PUTs the same service with ONLY `type`/`enabled` — questions/constraints omitted.
+    const partial = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 55 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(partial.status).toBe(204);
+
+    const settings = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as {
+      services: {
+        type: string;
+        questions: { label: string }[];
+        minNights: number | null;
+        maxNights: number | null;
+        options: { rate: number }[];
+      }[];
+    };
+    const boarding = settings.services.find((s) => s.type === 'boarding')!;
+    // The rate change from the partial PUT took effect...
+    expect(boarding.options[0].rate).toBe(55);
+    // ...but questions/constraints, which the partial PUT never mentioned, survived untouched.
+    expect(boarding.questions).toHaveLength(1);
+    expect(boarding.questions[0].label).toBe('Is your dog crate-trained?');
+    expect(boarding.minNights).toBe(2);
+    expect(boarding.maxNights).toBe(14);
   });
 });
 

@@ -11,7 +11,10 @@ const QUESTION_TYPE_LABELS: Record<QuestionForm['type'], string> = {
 };
 
 function emptyQuestion(): QuestionForm {
-  return { label: '', type: 'text', required: false };
+  // A client-assigned id (kept as-is by the server on save) gives new, unsaved questions a stable
+  // React key — without it, reordering before the first save swaps DOM nodes by array index and
+  // can jump focus to the wrong row.
+  return { id: crypto.randomUUID(), label: '', type: 'text', required: false };
 }
 
 function QuestionRow({
@@ -223,7 +226,7 @@ export function ServicesSection({ settings, setSettings }: SettingsSectionProps)
               <h3>Questions</h3>
               {s.questions.map((q, qi) => (
                 <QuestionRow
-                  key={q.id ?? qi}
+                  key={q.id}
                   question={q}
                   onChange={(next) => {
                     const questions = [...s.questions];

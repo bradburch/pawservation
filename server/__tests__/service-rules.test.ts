@@ -59,6 +59,12 @@ describe('validateAnswer', () => {
     expect(validateAnswer(q, '94103')).toBeNull();
     expect(validateAnswer(q, 'abcde')).toBe('Zip code is not in the expected format.');
   });
+
+  it('rejects an overlong answer against a pattern before running the regex (ReDoS safety rail)', () => {
+    const q = question({ pattern: '^[0-9]{5}$', label: 'Zip code' });
+    const overlong = '9'.repeat(101);
+    expect(validateAnswer(q, overlong)).toBe('Zip code is too long.');
+  });
 });
 
 describe('validateAnswers', () => {

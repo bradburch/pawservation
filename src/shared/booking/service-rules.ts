@@ -21,6 +21,10 @@ export type ServiceConstraints = {
   maxPetCount: number | null;
 };
 
+/** Safety rail (NOT a business rule): bounds regex-evaluation cost against a pathological
+ * pattern that slipped past admin-time validation. Intake answers are short by nature. */
+const MAX_PATTERN_INPUT_LENGTH = 100;
+
 /** Validates one answer against its question. Returns an error message, or null if valid. */
 export function validateAnswer(
   question: ServiceQuestion,
@@ -49,8 +53,11 @@ export function validateAnswer(
       return null;
     case 'text':
     default:
-      if (question.pattern && !new RegExp(question.pattern).test(trimmed))
-        return `${question.label} is not in the expected format.`;
+      if (question.pattern) {
+        if (trimmed.length > MAX_PATTERN_INPUT_LENGTH) return `${question.label} is too long.`;
+        if (!new RegExp(question.pattern).test(trimmed))
+          return `${question.label} is not in the expected format.`;
+      }
       return null;
   }
 }

@@ -77,14 +77,31 @@ type QuestionBody = {
 
 const QUESTION_TYPES = ['text', 'yesno', 'number', 'select'] as const;
 
+/**
+ * Heuristic reject for classic catastrophic-backtracking shapes: a quantified group whose body
+ * is itself quantified, e.g. `(a+)+` or `([a-zA-Z]+)+`. Not exhaustive — a determined admin could
+ * still craft a pathological pattern this misses — but it blocks the textbook ReDoS shapes without
+ * requiring a linear-time regex engine. Paired with a runtime input-length cap in
+ * src/shared/booking/service-rules.ts as a second safety rail.
+ */
+function looksCatastrophic(pattern: string): boolean {
+  return /\([^()]*[+*][^()]*\)[+*]/.test(pattern);
+}
+
 /** Validates a question's DEFINITION (not an answer) — shape/type/options/pattern sanity. */
 function validateQuestionBody(q: QuestionBody): string | null {
   const label = q.label?.trim();
   if (!label) return 'Every question needs a label.';
   if (!QUESTION_TYPES.includes(q.type as (typeof QUESTION_TYPES)[number]))
     return `Unknown question type for "${label}".`;
-  if (q.type === 'number' && q.min !== undefined && q.max !== undefined && q.min > q.max)
-    return `"${label}": min cannot exceed max.`;
+  if (q.type === 'number') {
+    if (q.min !== undefined && (typeof q.min !== 'number' || !Number.isFinite(q.min)))
+      return `"${label}": min must be a number.`;
+    if (q.max !== undefined && (typeof q.max !== 'number' || !Number.isFinite(q.max)))
+      return `"${label}": max must be a number.`;
+    if (q.min !== undefined && q.max !== undefined && q.min > q.max)
+      return `"${label}": min cannot exceed max.`;
+  }
   if (q.type === 'select' && (!Array.isArray(q.options) || q.options.length === 0))
     return `"${label}" needs at least one option.`;
   if (q.type === 'text' && q.pattern) {
@@ -93,6 +110,8 @@ function validateQuestionBody(q: QuestionBody): string | null {
     } catch {
       return `"${label}" has an invalid pattern.`;
     }
+    if (looksCatastrophic(q.pattern))
+      return `"${label}": that pattern could hang on certain input — try a simpler one.`;
   }
   return null;
 }
@@ -212,6 +231,12 @@ export const adminRoutes = new Hono<AppEnv>()
     const timezone = patchNullable<string>(body, 'timezone', tenant.Timezone);
     const petTypes = body.petTypes;
     const services = body.services ?? [];
+    // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
+    // included in a service's body ⇒ take it; absent ⇒ keep that service's current value. Without
+    // this, a caller that PUTs `{type, enabled}` alone (omitting questions/constraints) would
+    // silently wipe them back to empty/unlimited.
+    const currentServices =
+      services.length > 0 ? await listServices(c.env.PAWBOOK_DB, tenant.Id) : [];
 
     if (!displayName) return c.json({ error: 'Display name required.' }, 400);
     if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
@@ -295,23 +320,29 @@ export const adminRoutes = new Hono<AppEnv>()
     for (const svc of services) {
       const svcType = svc.type as keyof typeof SERVICE_CATALOG;
       const meta = SERVICE_CATALOG[svcType];
-      const questions: ServiceQuestion[] = (svc.questions ?? []).map((q) => ({
-        id: q.id ?? crypto.randomUUID(),
-        label: q.label!.trim(),
-        type: q.type as ServiceQuestion['type'],
-        required: q.required ?? false,
-        ...(q.type === 'number' && q.min !== undefined ? { min: q.min } : {}),
-        ...(q.type === 'number' && q.max !== undefined ? { max: q.max } : {}),
-        ...(q.type === 'text' && q.pattern ? { pattern: q.pattern } : {}),
-        ...(q.type === 'select' ? { options: q.options } : {}),
-      }));
+      const current = currentServices.find((s) => s.ServiceType === svcType);
+      const questions: ServiceQuestion[] =
+        svc.questions !== undefined
+          ? svc.questions.map((q) => ({
+              id: q.id ?? crypto.randomUUID(),
+              label: q.label!.trim(),
+              type: q.type as ServiceQuestion['type'],
+              required: q.required ?? false,
+              ...(q.type === 'number' && q.min !== undefined ? { min: q.min } : {}),
+              ...(q.type === 'number' && q.max !== undefined ? { max: q.max } : {}),
+              ...(q.type === 'text' && q.pattern ? { pattern: q.pattern } : {}),
+              ...(q.type === 'select' ? { options: q.options } : {}),
+            }))
+          : (current?.Questions ?? []);
       await setServiceConfig(c.env.PAWBOOK_DB, tenant.Id, svcType, {
         enabled: svc.enabled ?? false,
         questions,
-        minNights: svc.minNights ?? null,
-        maxNights: svc.maxNights ?? null,
-        minPetCount: svc.minPetCount ?? null,
-        maxPetCount: svc.maxPetCount ?? null,
+        minNights: 'minNights' in svc ? (svc.minNights ?? null) : (current?.MinNights ?? null),
+        maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : (current?.MaxNights ?? null),
+        minPetCount:
+          'minPetCount' in svc ? (svc.minPetCount ?? null) : (current?.MinPetCount ?? null),
+        maxPetCount:
+          'maxPetCount' in svc ? (svc.maxPetCount ?? null) : (current?.MaxPetCount ?? null),
       });
       await replaceServiceOptions(
         c.env.PAWBOOK_DB,
