@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   ServiceType TEXT NOT NULL CHECK (ServiceType IN ('boarding', 'housesitting', 'daycare', 'walk', 'checkin')),
   Enabled INTEGER NOT NULL DEFAULT 1,
+  -- Per-service intake questions (JSON array of ServiceQuestion, see src/shared/booking/service-rules.ts)
+  -- + optional booking-level limits. NULL limit = unlimited, matching the Tenants Max* convention.
+  Questions TEXT NOT NULL DEFAULT '[]',
+  MinNights INTEGER,
+  MaxNights INTEGER,
+  MinPetCount INTEGER,
+  MaxPetCount INTEGER,
   UNIQUE (TenantId, ServiceType)
 );
 
@@ -91,6 +98,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   StartTime TEXT, -- 'HH:MM' wall-clock for timed bookings (walk/check-in); NULL = all-day event
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
   EstCost INTEGER,
+  Answers TEXT NOT NULL DEFAULT '{}', -- JSON {questionId: answer}; questions defined on TenantServices
   Status TEXT NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending', 'confirmed', 'cancelled')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
