@@ -6,6 +6,16 @@ export type ServiceOption = {
   durationMinutes: number | null;
   rate: number;
 };
+export type ServiceQuestion = {
+  id: string;
+  label: string;
+  type: 'text' | 'yesno' | 'number' | 'select';
+  required: boolean;
+  min?: number;
+  max?: number;
+  pattern?: string;
+  options?: string[];
+};
 export type ServiceConfig = {
   type: string;
   label: string;
@@ -13,6 +23,11 @@ export type ServiceConfig = {
   rateUnit: 'night' | 'day' | 'visit';
   hasDuration: boolean;
   options: ServiceOption[];
+  questions: ServiceQuestion[];
+  minNights: number | null;
+  maxNights: number | null;
+  minPetCount: number | null;
+  maxPetCount: number | null;
 };
 export type TenantConfig = {
   slug: string;
@@ -114,6 +129,7 @@ export const api = {
       startDate: string;
       endDate?: string;
       petIds: string[];
+      answers: Record<string, string>;
     },
   ) =>
     request<{ id: string; estCost: number; status: string }>(`/api/${slug}/bookings`, {

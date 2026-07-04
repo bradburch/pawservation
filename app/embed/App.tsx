@@ -1,8 +1,62 @@
-import { formatShortDate } from '../../src/shared/index.js';
+import {
+  formatShortDate,
+  nightsBetween,
+  validateAnswers,
+  validateServiceConstraints,
+} from '../../src/shared/index.js';
 import { useCallback, useEffect, useState } from 'react';
 import { Calendar } from './Calendar';
 
 const errorMsg = (e: unknown): string => (e instanceof Error ? e.message : 'Try again.');
+
+function QuestionField({
+  question,
+  value,
+  onChange,
+}: {
+  question: ServiceQuestion;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const label = `${question.label}${question.required ? ' *' : ''}`;
+  if (question.type === 'yesno') {
+    return (
+      <label className="bp-field">
+        {label}
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Choose…</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+    );
+  }
+  if (question.type === 'select') {
+    return (
+      <label className="bp-field">
+        {label}
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Choose…</option>
+          {(question.options ?? []).map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+  return (
+    <label className="bp-field">
+      {label}
+      <input
+        type={question.type === 'number' ? 'number' : 'text'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
 import {
   api,
   getToken,
@@ -11,6 +65,7 @@ import {
   type Availability,
   type Booking,
   type Pet,
+  type ServiceQuestion,
   type TenantConfig,
 } from '../shared-ui/api';
 import './widget.css';
@@ -137,11 +192,26 @@ function BookTab({
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [selectedPets, setSelectedPets] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [calReloadKey, setCalReloadKey] = useState(0);
   const [result, setResult] = useState<Availability | null>(null);
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const questionsError = service ? validateAnswers(service.questions, answers) : null;
+  const nights = service?.shape === 'range' && start && end ? nightsBetween(start, end) : null;
+  const constraintsError = service
+    ? validateServiceConstraints(
+        {
+          minNights: service.minNights,
+          maxNights: service.maxNights,
+          minPetCount: service.minPetCount,
+          maxPetCount: service.maxPetCount,
+        },
+        { nights, petCount: selectedPets.length },
+      )
+    : null;
 
   const datesReady = !!start && (service?.shape !== 'range' || !!end);
 
@@ -157,6 +227,7 @@ function BookTab({
     setStart('');
     setEnd('');
     setSelectedPets([]);
+    setAnswers({});
     resetCheck();
   };
 
@@ -194,6 +265,7 @@ function BookTab({
         optionKey,
         startDate: start,
         petIds: selectedPets,
+        answers,
         ...(service?.shape === 'range' ? { endDate: end } : {}),
       };
       const res = await api.createBooking(slug, token, body);
@@ -203,6 +275,7 @@ function BookTab({
       setStart('');
       setEnd('');
       setSelectedPets([]);
+      setAnswers({});
       setResult(null);
       setCalReloadKey((k) => k + 1);
       window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, '*');
@@ -310,6 +383,19 @@ function BookTab({
               </div>
             )}
           </fieldset>
+          {service && service.questions.length > 0 && (
+            <fieldset className="bp-questions">
+              <legend>A few questions</legend>
+              {service.questions.map((q) => (
+                <QuestionField
+                  key={q.id}
+                  question={q}
+                  value={answers[q.id] ?? ''}
+                  onChange={(value) => setAnswers((cur) => ({ ...cur, [q.id]: value }))}
+                />
+              ))}
+            </fieldset>
+          )}
           <button onClick={check} disabled={selectedPets.length === 0}>
             Check availability
           </button>
@@ -326,9 +412,15 @@ function BookTab({
                 <p className="bp-summary-cost">
                   Estimated cost <strong>${result.estCost}</strong>
                 </p>
-                <button onClick={submit} disabled={submitting}>
+                <button
+                  onClick={submit}
+                  disabled={submitting || !!questionsError || !!constraintsError}
+                >
                   {submitting ? 'Sending…' : 'Send request'}
                 </button>
+                {(questionsError || constraintsError) && (
+                  <p className="bp-error">{questionsError ?? constraintsError}</p>
+                )}
               </div>
             ) : (
               <div className="bp-result bp-no">
