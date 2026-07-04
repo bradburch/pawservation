@@ -498,6 +498,26 @@ describe('tenant admin', () => {
     );
     expect(badRange.status).toBe(400);
 
+    const badPattern = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              questions: [{ label: 'Bad pattern', type: 'text', required: false, pattern: '(' }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(badPattern.status).toBe(400);
+
     // Nothing above should have persisted — boarding rate is still the seeded 50.
     const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
       services: { type: string; options: { rate: number }[] }[];
