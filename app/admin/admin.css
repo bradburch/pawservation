@@ -53,13 +53,13 @@ body {
   margin: 0;
 }
 
-/* ── Sticky topbar with section nav ────────────────────────────── */
+/* ── Sticky topbar ─────────────────────────────────────────────── */
 .pb-topbar {
   position: sticky;
   top: 0;
   z-index: 20;
   margin: 0 -20px;
-  padding: 14px 20px 0;
+  padding: 14px 20px;
   background: color-mix(in srgb, var(--page) 88%, transparent);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
@@ -73,28 +73,9 @@ body {
   flex-wrap: wrap;
 }
 
-.pb-nav {
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  padding: 6px 0 0;
-}
-
-.pb-nav a {
-  padding: 8px 10px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--soft);
-  text-decoration: none;
-  border-radius: 8px 8px 0 0;
-  border-bottom: 2px solid transparent;
-  white-space: nowrap;
-}
-
-.pb-nav a:hover {
-  color: var(--ink);
-  background: var(--sage-wash);
-  border-bottom-color: var(--sage);
+/* Dashboard is wider than the login/loading pages to fit the sidebar. */
+.pb-dash {
+  max-width: 1040px;
 }
 
 /* ── Section cards ─────────────────────────────────────────────── */
@@ -105,7 +86,10 @@ body {
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 10px 24px -22px rgba(28, 58, 74, 0.45);
-  scroll-margin-top: 108px;
+}
+
+.pb-panel.pb-card {
+  margin-top: 0;
 }
 
 .pb-wrap h2 {
@@ -221,6 +205,79 @@ body {
 .pb-wrap button:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* ── Settings-style layout: section nav + single active panel ──── */
+.pb-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-top: 20px;
+}
+
+.pb-sidenav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 190px;
+  position: sticky;
+  top: 78px;
+}
+
+.pb-wrap .pb-sidenav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  min-height: unset;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.pb-wrap .pb-sidenav button:hover {
+  filter: none;
+  color: var(--ink);
+  background: var(--sage-wash);
+}
+
+.pb-wrap .pb-sidenav button.pb-sidenav-active {
+  color: var(--ink);
+  background: var(--sage-wash);
+  border-color: var(--sage);
+  font-weight: 600;
+}
+
+.pb-sidenav svg {
+  color: var(--gold);
+  flex: none;
+}
+
+.pb-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .pb-layout {
+    flex-direction: column;
+  }
+
+  .pb-sidenav {
+    flex-direction: row;
+    overflow-x: auto;
+    position: static;
+    width: 100%;
+  }
+
+  .pb-wrap .pb-sidenav button {
+    flex: none;
+    white-space: nowrap;
+  }
 }
 
 /* Row-level actions (Remove, Disconnect, Add duration) are quiet ghosts. */
