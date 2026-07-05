@@ -1,6 +1,11 @@
 import { NullableNumberField } from './BusinessSection.js';
 import { IconTag } from '../../shared-ui/icons';
-import type { QuestionForm, ServiceForm, SettingsSectionProps } from '../shared.js';
+import type {
+  QuestionForm,
+  ServiceForm,
+  ServiceOptionForm,
+  SettingsSectionProps,
+} from '../shared.js';
 
 const QUESTION_TYPES: QuestionForm['type'][] = ['text', 'yesno', 'number', 'select'];
 const QUESTION_TYPE_LABELS: Record<QuestionForm['type'], string> = {
@@ -15,6 +20,17 @@ function emptyQuestion(): QuestionForm {
   // React key — without it, reordering before the first save swaps DOM nodes by array index and
   // can jump focus to the wrong row.
   return { id: crypto.randomUUID(), label: '', type: 'text', required: false };
+}
+
+function emptyOption(): ServiceOptionForm {
+  return {
+    label: 'Standard',
+    durationMinutes: null,
+    rate: 0,
+    startTime: null,
+    endTime: null,
+    capacity: null,
+  };
 }
 
 function QuestionRow({
@@ -145,7 +161,17 @@ export function ServicesSection({ settings, setSettings }: SettingsSectionProps)
               {s.label}
             </label>
             {!s.hasDuration ? (
-              <label className="pb-inline">
+              <div className="pb-inline">
+                <input
+                  placeholder="Label"
+                  value={s.options[0]?.label ?? 'Standard'}
+                  onChange={(e) =>
+                    setService({
+                      ...s,
+                      options: [{ ...(s.options[0] ?? emptyOption()), label: e.target.value }],
+                    })
+                  }
+                />
                 $
                 <input
                   type="number"
@@ -155,65 +181,93 @@ export function ServicesSection({ settings, setSettings }: SettingsSectionProps)
                     setService({
                       ...s,
                       options: [
-                        {
-                          label: 'Standard',
-                          durationMinutes: null,
-                          rate: Number(e.target.value),
-                        },
+                        { ...(s.options[0] ?? emptyOption()), rate: Number(e.target.value) },
                       ],
                     })
                   }
                 />
                 /{s.rateUnit}
-              </label>
+              </div>
             ) : (
               <div className="pb-options">
-                {s.options.map((o, oi) => (
-                  <div className="pb-inline" key={oi}>
-                    <input
-                      type="number"
-                      min={1}
-                      placeholder="min"
-                      value={o.durationMinutes ?? 0}
-                      onChange={(e) => {
-                        const options = [...s.options];
-                        options[oi] = {
-                          ...o,
-                          durationMinutes: Number(e.target.value),
-                          label: `${e.target.value} min`,
-                        };
-                        setService({ ...s, options });
-                      }}
-                    />
-                    min · $
-                    <input
-                      type="number"
-                      min={1}
-                      value={o.rate}
-                      onChange={(e) => {
-                        const options = [...s.options];
-                        options[oi] = { ...o, rate: Number(e.target.value) };
-                        setService({ ...s, options });
-                      }}
-                    />
-                    /{s.rateUnit}
-                    <button
-                      onClick={() =>
-                        setService({
-                          ...s,
-                          options: s.options.filter((_, k) => k !== oi),
-                        })
-                      }
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                {s.options.map((o, oi) => {
+                  const windowed = o.startTime !== null && o.endTime !== null;
+                  const setOption = (patch: Partial<ServiceOptionForm>) => {
+                    const options = [...s.options];
+                    options[oi] = { ...o, ...patch };
+                    setService({ ...s, options });
+                  };
+                  return (
+                    <div key={oi}>
+                      <div className="pb-inline">
+                        <input
+                          placeholder="Label"
+                          value={o.label}
+                          onChange={(e) => setOption({ label: e.target.value })}
+                        />
+                        {!windowed && (
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="min"
+                            value={o.durationMinutes ?? 0}
+                            onChange={(e) => setOption({ durationMinutes: Number(e.target.value) })}
+                          />
+                        )}
+                        {!windowed ? 'min · $' : '$'}
+                        <input
+                          type="number"
+                          min={1}
+                          value={o.rate}
+                          onChange={(e) => setOption({ rate: Number(e.target.value) })}
+                        />
+                        /{s.rateUnit}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setService({ ...s, options: s.options.filter((_, k) => k !== oi) })
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="pb-inline">
+                        Window (optional)
+                        <input
+                          type="time"
+                          value={o.startTime ?? ''}
+                          onChange={(e) => setOption({ startTime: e.target.value || null })}
+                        />
+                        <input
+                          type="time"
+                          value={o.endTime ?? ''}
+                          onChange={(e) => setOption({ endTime: e.target.value || null })}
+                        />
+                        <NullableNumberField
+                          label="Capacity"
+                          value={o.capacity}
+                          onChange={(capacity) => setOption({ capacity })}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
                 <button
+                  type="button"
                   onClick={() =>
                     setService({
                       ...s,
-                      options: [...s.options, { label: '30 min', durationMinutes: 30, rate: 20 }],
+                      options: [
+                        ...s.options,
+                        {
+                          label: '30 min',
+                          durationMinutes: 30,
+                          rate: 20,
+                          startTime: null,
+                          endTime: null,
+                          capacity: null,
+                        },
+                      ],
                     })
                   }
                 >
