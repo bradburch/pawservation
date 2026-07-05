@@ -34,10 +34,16 @@ export const bookingRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const type = c.req.query('type');
     const month = c.req.query('month') ?? '';
+    const optionKey = c.req.query('option');
     if (!isServiceType(type)) return c.json({ error: 'Unknown service type.' }, 400);
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: 'Bad month.' }, 400);
     const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
-    const result = await monthAvailability(c.env, tenant, type, month, user?.Email ?? '');
+    const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
+    const serviceOptions = options.filter((o) => o.ServiceType === type);
+    const option = optionKey
+      ? (serviceOptions.find((o) => o.OptionKey === optionKey) ?? null)
+      : (serviceOptions[0] ?? null);
+    const result = await monthAvailability(c.env, tenant, type, month, user?.Email ?? '', option);
     return c.json(result);
   })
 
@@ -151,6 +157,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       optionKey: option.OptionKey,
       petType,
       petCount: pets,
+      startTime: option.StartTime,
       estCost,
       status: 'pending',
       answers,
@@ -180,7 +187,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       serviceType: type,
       startDate: start,
       endDate,
-      startTime: null, // no booking path collects a time yet (deferred); all events are all-day
+      startTime: option.StartTime,
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       estCost,
