@@ -43,6 +43,9 @@ export const publicRoutes = new Hono<AppEnv>()
               label: o.Label,
               durationMinutes: o.DurationMinutes,
               rate: o.Rate,
+              startTime: o.StartTime,
+              endTime: o.EndTime,
+              capacity: o.Capacity,
             })),
         };
       }),
