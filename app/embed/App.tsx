@@ -317,6 +317,7 @@ function BookTab({
         slug={slug}
         token={getToken(slug) ?? ''}
         serviceType={type}
+        optionKey={optionKey}
         shape={service.shape === 'range' ? 'range' : 'single'}
         month={month}
         onMonthChange={setMonth}
@@ -344,7 +345,9 @@ function BookTab({
               >
                 {service.options.map((o) => (
                   <option key={o.optionKey} value={o.optionKey}>
-                    {o.label} — ${o.rate}/{service.rateUnit}
+                    {o.label}
+                    {o.startTime && o.endTime ? ` · ${o.startTime}–${o.endTime}` : ''} — ${o.rate}/
+                    {service.rateUnit}
                   </option>
                 ))}
               </select>
