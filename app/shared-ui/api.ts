@@ -1,25 +1,12 @@
 /** Tiny same-origin API client for the widget + admin pages. */
 
-export type ServiceOption = {
-  optionKey: string;
-  label: string;
-  durationMinutes: number | null;
-  rate: number;
-  startTime: string | null;
-  endTime: string | null;
-  capacity: number | null;
-};
-export type ServiceQuestion = {
-  id: string;
-  label: string;
-  type: 'text' | 'yesno' | 'number' | 'select';
-  required: boolean;
-  min?: number;
-  max?: number;
-  pattern?: string;
-  options?: string[];
-};
-export type ServiceConfig = {
+import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
+
+// Re-exported as-is: the widget/admin config wire format is field-for-field the shared shape —
+// see src/shared/booking/service-rules.ts for the single definition.
+export type { ServiceOption, ServiceQuestion };
+
+export type ServiceConfig = ServiceConstraints & {
   type: string;
   label: string;
   shape: 'range' | 'single';
@@ -27,10 +14,6 @@ export type ServiceConfig = {
   hasDuration: boolean;
   options: ServiceOption[];
   questions: ServiceQuestion[];
-  minNights: number | null;
-  maxNights: number | null;
-  minPetCount: number | null;
-  maxPetCount: number | null;
 };
 export type TenantConfig = {
   slug: string;

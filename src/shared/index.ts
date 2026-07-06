@@ -31,5 +31,6 @@ export {
   validateServiceConstraints,
   type ServiceQuestion,
   type ServiceConstraints,
+  type ServiceOption,
   type QuestionType,
 } from './booking/service-rules.js';

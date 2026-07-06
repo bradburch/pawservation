@@ -18,7 +18,14 @@ import { EmbedSection } from './sections/EmbedSection';
 import { PetsSection } from './sections/PetsSection';
 import { ServicesSection } from './sections/ServicesSection';
 import { TimeOffSection } from './sections/TimeOffSection';
-import { adminFetch, type Session, type Settings } from './shared.js';
+import {
+  adminFetch,
+  type ServiceOptionForm,
+  type ServicePayload,
+  type Session,
+  type Settings,
+  type SettingsPayload,
+} from './shared.js';
 import './admin.css';
 
 /**
@@ -232,35 +239,44 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     run(async () => {
       if (!settings) return;
       setMessage('');
-      await adminFetch(token, `/api/${slug}/admin/settings`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          displayName: settings.displayName,
-          accentColor: settings.accentColor,
-          maxBoardingPets: settings.maxBoardingPets,
-          maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
-          maxStayNights: settings.maxStayNights,
-          timezone: settings.timezone,
-          petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
-          services: settings.services.map((s) => ({
+      // Explicit per-field object literals (rather than spreading `s`/`o`) checked against
+      // `ServicePayload`/`ServiceOptionForm` — annotated so a field added to the shared
+      // option/question/constraint shapes fails to compile here instead of quietly not
+      // reaching the wire (see e.g. the startTime/endTime/capacity fields).
+      const payload: SettingsPayload = {
+        displayName: settings.displayName,
+        accentColor: settings.accentColor,
+        maxBoardingPets: settings.maxBoardingPets,
+        maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
+        maxStayNights: settings.maxStayNights,
+        timezone: settings.timezone,
+        petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
+        services: settings.services.map(
+          (s): ServicePayload => ({
             type: s.type,
             enabled: s.enabled,
-            options: s.options.map((o) => ({
-              optionKey: o.optionKey,
-              label: o.label,
-              durationMinutes: s.hasDuration ? o.durationMinutes : null,
-              rate: o.rate,
-              startTime: o.startTime,
-              endTime: o.endTime,
-              capacity: o.capacity,
-            })),
+            options: s.options.map(
+              (o): ServiceOptionForm => ({
+                optionKey: o.optionKey,
+                label: o.label,
+                durationMinutes: s.hasDuration ? o.durationMinutes : null,
+                rate: o.rate,
+                startTime: o.startTime,
+                endTime: o.endTime,
+                capacity: o.capacity,
+              }),
+            ),
             questions: s.questions,
             minNights: s.minNights,
             maxNights: s.maxNights,
             minPetCount: s.minPetCount,
             maxPetCount: s.maxPetCount,
-          })),
-        }),
+          }),
+        ),
+      };
+      await adminFetch(token, `/api/${slug}/admin/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
       });
       setMessage('Saved! Your widget updates on its next load.');
       setSavedSnapshot(JSON.stringify(settings));
