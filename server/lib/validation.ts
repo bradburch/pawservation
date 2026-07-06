@@ -91,3 +91,16 @@ export function isValidRate(value: unknown): value is number {
 export function isValidDuration(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
+
+/** True for a valid 'HH:MM' 24-hour wall-clock string (00:00–23:59). */
+export function isValidTimeString(value: unknown): value is string {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+/** Whole minutes from `start` to `end`, both 'HH:MM' on the same day. Callers validate
+ * `end > start` before calling — this does no ordering check itself. */
+export function minutesBetweenTimes(start: string, end: string): number {
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  return eh * 60 + em - (sh * 60 + sm);
+}

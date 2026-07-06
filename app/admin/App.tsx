@@ -235,9 +235,13 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             type: s.type,
             enabled: s.enabled,
             options: s.options.map((o) => ({
+              optionKey: o.optionKey,
               label: o.label,
               durationMinutes: s.hasDuration ? o.durationMinutes : null,
               rate: o.rate,
+              startTime: o.startTime,
+              endTime: o.endTime,
+              capacity: o.capacity,
             })),
             questions: s.questions,
             minNights: s.minNights,

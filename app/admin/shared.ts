@@ -7,6 +7,9 @@ export type ServiceOptionForm = {
   label: string;
   durationMinutes: number | null;
   rate: number;
+  startTime: string | null;
+  endTime: string | null;
+  capacity: number | null;
 };
 export type QuestionForm = {
   id?: string;

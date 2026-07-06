@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { createTestEnv, TEST_SECRET, endUserToken } from './helpers';
-import { setProviderTokens } from '../db/repo';
+import { insertBookingRequest, setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import type { MonthDay } from '../lib/availability';
 
@@ -140,5 +140,99 @@ describe('GET /api/:slug/availability/month', () => {
       String(url).includes('googleapis.com/calendar'),
     );
     expect(calendarCalls).toHaveLength(0);
+  });
+
+  it('walk with a capacity-limited option: full day is unavailable, independent of calendar connection', async () => {
+    const { env, raw } = createTestEnv();
+    // No calendar connected — proves the slot-capacity path doesn't depend on Google Calendar.
+    raw
+      .prepare(
+        `INSERT INTO TenantServiceOptions
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'opt_test_morning',
+        'tnt_sunnypaws',
+        'walk',
+        'morning-walk',
+        'Morning Walk',
+        180,
+        25,
+        'visit',
+        '11:00',
+        '14:00',
+        1,
+      );
+    await insertBookingRequest(env.PAWBOOK_DB, 'tnt_sunnypaws', {
+      endUserId: null,
+      serviceType: 'walk',
+      startDate: '2026-10-05',
+      endDate: null,
+      optionKey: 'morning-walk',
+      petType: null,
+      petCount: 1,
+      startTime: '11:00',
+      estCost: null,
+      status: 'confirmed',
+    });
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/availability/month?type=walk&month=2026-10&option=morning-walk',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: MonthDay[] };
+    const d5 = body.days.find((d) => d.date === '2026-10-05')!;
+    expect(d5.status).toBe('unavailable');
+    expect(d5.used).toBeNull(); // customers never see raw counts
+    expect(d5.max).toBeNull();
+
+    const d6 = body.days.find((d) => d.date === '2026-10-06')!;
+    expect(d6.status).toBe('available');
+  });
+
+  it('rejects an unmatched ?option= instead of silently dropping the capacity filter', async () => {
+    const { env } = createTestEnv();
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/availability/month?type=walk&month=2026-10&option=does-not-exist',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('marks a same-day timed booking (windowed walk) as "mine"', async () => {
+    const { env } = createTestEnv();
+    await seedConnectedCalendar(env);
+    mockCalendarFetch({
+      summary: 'Walk — jess@example.com (1 pet)',
+      start: { dateTime: '2026-10-15T11:00:00-07:00' },
+      end: { dateTime: '2026-10-15T14:00:00-07:00' },
+      extendedProperties: {
+        private: {
+          pawbook: 'true',
+          category: 'walk',
+          petCount: '1',
+          customerEmail: 'jess@example.com',
+        },
+      },
+    });
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/availability/month?type=walk&month=2026-10',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: MonthDay[] };
+    const d15 = body.days.find((d) => d.date === '2026-10-15')!;
+    expect(d15.mine).toBe(true);
   });
 });

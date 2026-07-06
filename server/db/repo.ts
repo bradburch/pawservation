@@ -70,7 +70,7 @@ export async function listServiceOptions(
 ): Promise<TenantServiceOption[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit
+      `SELECT Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity
        FROM TenantServiceOptions WHERE TenantId = ? ORDER BY ServiceType, DurationMinutes`,
     )
     .bind(tenantId)
@@ -165,6 +165,55 @@ export async function listCapacityRows(
   return results;
 }
 
+/**
+ * Count non-cancelled bookings against one option on one date — enforces a windowed option's
+ * Capacity. `excludeId` lets the post-insert race check ask "do I still fit, ignoring myself?",
+ * matching the pattern `listCapacityRows` already uses for boarding/house-sit.
+ */
+export async function countSlotBookings(
+  db: D1Database,
+  tenantId: string,
+  serviceType: ServiceType,
+  optionKey: string,
+  date: string,
+  excludeId?: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND StartDate = ?
+         AND Status IN ('pending', 'confirmed') AND (? IS NULL OR Id != ?)`,
+    )
+    .bind(tenantId, serviceType, optionKey, date, excludeId ?? null, excludeId ?? null)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * Per-date booking counts against one option over [fromDate, toDateExclusive) — ONE query for
+ * a whole month grid, so `monthAvailability` never issues one DB round-trip per day (the
+ * "build the map once" pattern `buildCapacity` already uses for boarding/house-sit).
+ */
+export async function listSlotBookingCounts(
+  db: D1Database,
+  tenantId: string,
+  serviceType: ServiceType,
+  optionKey: string,
+  fromDate: string,
+  toDateExclusive: string,
+): Promise<Map<string, number>> {
+  const { results } = await db
+    .prepare(
+      `SELECT StartDate, COUNT(*) AS n FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ?
+         AND StartDate >= ? AND StartDate < ? AND Status IN ('pending', 'confirmed')
+       GROUP BY StartDate`,
+    )
+    .bind(tenantId, serviceType, optionKey, fromDate, toDateExclusive)
+    .all<{ StartDate: string; n: number }>();
+  return new Map(results.map((r) => [r.StartDate, r.n]));
+}
+
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -176,6 +225,7 @@ export async function insertBookingRequest(
     optionKey: string | null;
     petType: PetType | null;
     petCount: number;
+    startTime?: string | null;
     estCost: number | null;
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
@@ -185,8 +235,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, EstCost, Answers, Status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -198,6 +248,7 @@ export async function insertBookingRequest(
       row.optionKey,
       row.petType,
       row.petCount,
+      row.startTime ?? null,
       row.estCost,
       JSON.stringify(row.answers ?? {}),
       row.status,
@@ -333,14 +384,17 @@ export async function replaceServiceOptions(
     durationMinutes: number | null;
     rate: number;
     rateUnit: 'night' | 'day' | 'visit';
+    startTime: string | null;
+    endTime: string | null;
+    capacity: number | null;
   }[],
 ): Promise<void> {
   // DELETE-then-INSERT as ONE atomic, single-round-trip batch: a mid-write failure can no longer
   // leave the service's options half-wiped, and N options cost one trip instead of N+1.
   const insert = db.prepare(
     `INSERT INTO TenantServiceOptions
-       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   await db.batch([
     db
@@ -356,6 +410,9 @@ export async function replaceServiceOptions(
         o.durationMinutes,
         o.rate,
         o.rateUnit,
+        o.startTime,
+        o.endTime,
+        o.capacity,
       ),
     ),
   ]);

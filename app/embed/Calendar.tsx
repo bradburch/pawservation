@@ -29,6 +29,7 @@ export function Calendar({
   slug,
   token,
   serviceType,
+  optionKey,
   shape,
   month,
   onMonthChange,
@@ -40,6 +41,7 @@ export function Calendar({
   slug: string;
   token: string;
   serviceType: string;
+  optionKey?: string;
   shape: 'range' | 'single';
   month: string;
   onMonthChange: (m: string) => void;
@@ -51,7 +53,7 @@ export function Calendar({
 }) {
   // Combine fetch result into one object keyed by deps so loading/error can be derived without
   // calling setState synchronously inside the effect body (react-hooks/set-state-in-effect rule).
-  const depsKey = `${slug}|${token}|${serviceType}|${month}|${reloadKey ?? ''}`;
+  const depsKey = `${slug}|${token}|${serviceType}|${optionKey ?? ''}|${month}|${reloadKey ?? ''}`;
   const [fetchState, setFetchState] = useState<{
     fetchedKey: string;
     days: Map<string, MonthDay>;
@@ -72,7 +74,7 @@ export function Calendar({
   useEffect(() => {
     let active = true;
     api
-      .monthAvailability(slug, token, serviceType, month)
+      .monthAvailability(slug, token, serviceType, month, optionKey)
       .then((r) => {
         if (!active) return;
         setFetchState({
@@ -98,7 +100,7 @@ export function Calendar({
     // onAuthExpired is deliberately not a dep: parents pass a fresh closure each render,
     // and re-running this fetch when it changes would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depsKey, slug, token, serviceType, month]);
+  }, [depsKey, slug, token, serviceType, optionKey, month]);
 
   const pick = (date: string, d: MonthDay | undefined) => {
     if (!d || d.status === 'unavailable' || (today && date < today)) return;

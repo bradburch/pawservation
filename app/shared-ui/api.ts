@@ -5,6 +5,9 @@ export type ServiceOption = {
   label: string;
   durationMinutes: number | null;
   rate: number;
+  startTime: string | null;
+  endTime: string | null;
+  capacity: number | null;
 };
 export type ServiceQuestion = {
   id: string;
@@ -143,9 +146,16 @@ export const api = {
       headers: authHeaders(token),
     }),
 
-  monthAvailability: (slug: string, token: string, type: string, month: string) =>
+  monthAvailability: (
+    slug: string,
+    token: string,
+    type: string,
+    month: string,
+    optionKey?: string,
+  ) =>
     request<{ today: string; days: MonthDay[] }>(
-      `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}`,
+      `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}` +
+        (optionKey ? `&option=${encodeURIComponent(optionKey)}` : ''),
       { headers: authHeaders(token) },
     ),
 

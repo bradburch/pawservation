@@ -313,10 +313,36 @@ function BookTab({
         })}
       </div>
 
+      {service?.hasDuration && (
+        <label className="bp-field">
+          Duration
+          <select
+            value={optionKey}
+            onChange={(e) => {
+              setOptionKey(e.target.value);
+              // The calendar's availability grid is keyed by option (capacity varies per
+              // option), so a date picked under the old option may not apply to the new one.
+              setStart('');
+              setEnd('');
+              resetCheck();
+            }}
+          >
+            {service.options.map((o) => (
+              <option key={o.optionKey} value={o.optionKey}>
+                {o.label}
+                {o.startTime && o.endTime ? ` · ${o.startTime}–${o.endTime}` : ''} — ${o.rate}/
+                {service.rateUnit}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <Calendar
         slug={slug}
         token={getToken(slug) ?? ''}
         serviceType={type}
+        optionKey={optionKey}
         shape={service.shape === 'range' ? 'range' : 'single'}
         month={month}
         onMonthChange={setMonth}
@@ -332,24 +358,6 @@ function BookTab({
 
       {datesReady && (
         <div className="bp-details">
-          {service?.hasDuration && (
-            <label className="bp-field">
-              Duration
-              <select
-                value={optionKey}
-                onChange={(e) => {
-                  setOptionKey(e.target.value);
-                  resetCheck();
-                }}
-              >
-                {service.options.map((o) => (
-                  <option key={o.optionKey} value={o.optionKey}>
-                    {o.label} — ${o.rate}/{service.rateUnit}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           <fieldset className="bp-pets">
             <legend>Who&apos;s coming?</legend>
             {pets === null ? (

@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   DurationMinutes INTEGER,
   Rate INTEGER NOT NULL,
   RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
+  -- A fixed clock window (both set together, or both NULL). Windowed options derive
+  -- DurationMinutes from this window server-side (see server/routes/admin.ts); Capacity caps
+  -- concurrent bookings against this option on one date. NULL = unlimited, matching the
+  -- null-is-unlimited convention used throughout this schema.
+  StartTime TEXT,
+  EndTime TEXT,
+  Capacity INTEGER,
   UNIQUE (TenantId, ServiceType, OptionKey)
 );
 

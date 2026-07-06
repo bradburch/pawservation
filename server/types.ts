@@ -41,6 +41,9 @@ export type TenantServiceOption = {
   DurationMinutes: number | null;
   Rate: number;
   RateUnit: RateUnit;
+  StartTime: string | null; // 'HH:MM'; NULL = no fixed window
+  EndTime: string | null; // 'HH:MM'; NULL = no fixed window
+  Capacity: number | null; // max concurrent bookings/date; NULL = unlimited
 };
 
 export type TenantPetTypeRow = {
