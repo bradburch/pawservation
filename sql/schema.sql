@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
   PetType TEXT, -- booked species ('dog'|'cat'); NULL for blocked. No pricing/capacity effect.
-  PetCount INTEGER NOT NULL DEFAULT 1,
+  PetCount INTEGER NOT NULL DEFAULT 1 CHECK (PetCount >= 1), -- fresh-install only; existing DBs enforce this in app code (validation.ts)
   StartTime TEXT, -- 'HH:MM' wall-clock for timed bookings (walk/check-in); NULL = all-day event
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
   EstCost INTEGER,
@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_Dates ON BookingRequests (TenantId, StartDate);
+CREATE INDEX IF NOT EXISTS idx_BookingRequests_Slot
+  ON BookingRequests (TenantId, ServiceType, OptionKey, StartDate);
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_User ON BookingRequests (TenantId, EndUserId);
 
 CREATE TABLE IF NOT EXISTS EndUserPets (

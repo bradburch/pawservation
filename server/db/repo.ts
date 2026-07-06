@@ -98,14 +98,20 @@ export async function createLoginCode(
   endUserId: string,
   code: string,
   expiresAtIso: string,
+  nowIso: string = new Date().toISOString(),
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await db
-    .prepare(
-      'INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt) VALUES (?, ?, ?, ?, ?)',
-    )
-    .bind(id, tenantId, endUserId, code, expiresAtIso)
-    .run();
+  // ponytail: opportunistic prune on each new code — a cron is overkill at this scale
+  await db.batch([
+    db
+      .prepare('DELETE FROM LoginCodes WHERE TenantId = ? AND ExpiresAt < ?')
+      .bind(tenantId, nowIso),
+    db
+      .prepare(
+        'INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind(id, tenantId, endUserId, code, expiresAtIso),
+  ]);
   return id;
 }
 
