@@ -1,18 +1,41 @@
 import { useState } from 'react';
 import type { Customer } from '../../shared-ui/api.js';
+import { adminApi } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
 
 function PetAdder({
   customer,
   enabledPetTypes,
-  onAdd,
+  slug,
+  token,
+  onAdded,
+  onError,
 }: {
   customer: Customer;
   enabledPetTypes: string[];
-  onAdd: (endUserId: string, name: string, petType: string) => void;
+  slug: string;
+  token: string;
+  onAdded: () => void;
+  onError: (e: unknown) => void;
 }) {
   const [name, setName] = useState('');
   const [petType, setPetType] = useState(enabledPetTypes[0]);
+  const [busy, setBusy] = useState(false);
+
+  const add = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try {
+      await adminApi.customers.addPet(slug, token, customer.id, name.trim(), petType);
+      setName('');
+      onAdded();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="pb-row pb-add-pet">
       <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -23,15 +46,8 @@ function PetAdder({
           </option>
         ))}
       </select>
-      <button
-        onClick={() => {
-          if (name.trim()) {
-            onAdd(customer.id, name.trim(), petType);
-            setName('');
-          }
-        }}
-      >
-        Add pet
+      <button onClick={() => void add()} disabled={busy || !name.trim()}>
+        {busy ? 'Adding…' : 'Add pet'}
       </button>
     </div>
   );
@@ -39,27 +55,51 @@ function PetAdder({
 
 export function ClientsSection({
   customers,
-  custEmail,
-  custName,
-  setCustEmail,
-  setCustName,
-  addCustomer,
-  removeCustomer,
-  addPet,
-  removePet,
   enabledPetTypes,
+  slug,
+  token,
+  onCustomersChanged,
+  handleError,
 }: {
   customers: Customer[];
-  custEmail: string;
-  custName: string;
-  setCustEmail: (value: string) => void;
-  setCustName: (value: string) => void;
-  addCustomer: () => Promise<void>;
-  removeCustomer: (id: string) => Promise<void>;
-  addPet: (endUserId: string, name: string, petType: string) => Promise<void>;
-  removePet: (endUserId: string, petId: string) => Promise<void>;
   enabledPetTypes: string[];
+  slug: string;
+  token: string;
+  onCustomersChanged: () => void;
+  handleError: (e: unknown) => void;
 }) {
+  const [custEmail, setCustEmail] = useState('');
+  const [custName, setCustName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const addCustomer = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await adminApi.customers.add(slug, token, custEmail.trim().toLowerCase(), custName.trim());
+      setCustEmail('');
+      setCustName('');
+      onCustomersChanged();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeCustomer = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await adminApi.customers.remove(slug, token, id);
+      onCustomersChanged();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <h2>
@@ -81,7 +121,9 @@ export function ClientsSection({
           value={custName}
           onChange={(e) => setCustName(e.target.value)}
         />
-        <button onClick={() => void addCustomer()}>Add customer</button>
+        <button onClick={() => void addCustomer()} disabled={busy}>
+          {busy ? 'Adding…' : 'Add customer'}
+        </button>
       </div>
       <ul>
         {customers.map((cust) => (
@@ -96,18 +138,43 @@ export function ClientsSection({
                   {cust.status.charAt(0).toUpperCase() + cust.status.slice(1)}
                 </span>
               </span>
-              <button onClick={() => void removeCustomer(cust.id)}>Remove</button>
+              <button onClick={() => void removeCustomer(cust.id)} disabled={busy}>
+                Remove
+              </button>
             </div>
             <ul className="pb-pets">
               {cust.pets.map((p) => (
                 <li key={p.id}>
                   {p.name} <em>{p.petType}</em>
-                  <button onClick={() => void removePet(cust.id, p.id)}>Remove</button>
+                  <button
+                    onClick={() => void (async () => {
+                      if (busy) return;
+                      setBusy(true);
+                      try {
+                        await adminApi.customers.removePet(slug, token, cust.id, p.id);
+                        onCustomersChanged();
+                      } catch (e) {
+                        handleError(e);
+                      } finally {
+                        setBusy(false);
+                      }
+                    })()}
+                    disabled={busy}
+                  >
+                    Remove
+                  </button>
                 </li>
               ))}
             </ul>
             {enabledPetTypes.length > 0 && (
-              <PetAdder customer={cust} enabledPetTypes={enabledPetTypes} onAdd={addPet} />
+              <PetAdder
+                customer={cust}
+                enabledPetTypes={enabledPetTypes}
+                slug={slug}
+                token={token}
+                onAdded={onCustomersChanged}
+                onError={handleError}
+              />
             )}
           </li>
         ))}

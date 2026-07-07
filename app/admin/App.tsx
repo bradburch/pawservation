@@ -161,8 +161,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // decide whether the sticky save bar shows. Only the settings PUT is deferred — the
   // other sections apply immediately and refresh both state and snapshot together.
   const [savedSnapshot, setSavedSnapshot] = useState('');
-  const [blockStart, setBlockStart] = useState('');
-  const [blockEnd, setBlockEnd] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   // Bumped after a successful save so the embed preview remounts and pulls the fresh config.
@@ -284,22 +282,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       setPreviewKey((k) => k + 1);
     });
 
-  const addBlock = () =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/blocked`, {
-        method: 'POST',
-        body: JSON.stringify({ startDate: blockStart, endDate: blockEnd }),
-      });
-      setBlockStart('');
-      setBlockEnd('');
-      await refresh();
-    });
-
-  const removeBlock = (id: string) =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/blocked/${id}`, { method: 'DELETE' });
-      await refresh();
-    });
 
   const connectCalendar = () =>
     run(async () => {
@@ -321,9 +303,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       await refresh();
     });
 
-  const [custEmail, setCustEmail] = useState('');
-  const [custName, setCustName] = useState('');
-
   const loadCustomers = useCallback(async (): Promise<Customer[]> => {
     try {
       const { customers: list } = await adminApi.customers.list(slug, token);
@@ -337,28 +316,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   }, [slug, token, handle]);
 
   const { data: customers, reload: reloadCustomers } = useAsync(loadCustomers);
-
-  const withCustomerRefresh = (fn: () => Promise<unknown>) =>
-    run(async () => {
-      await fn();
-      reloadCustomers();
-    });
-
-  const addCustomer = () =>
-    withCustomerRefresh(async () => {
-      await adminApi.customers.add(slug, token, custEmail.trim().toLowerCase(), custName.trim());
-      setCustEmail('');
-      setCustName('');
-    });
-
-  const removeCustomer = (id: string) =>
-    withCustomerRefresh(() => adminApi.customers.remove(slug, token, id));
-
-  const addPet = (endUserId: string, name: string, petType: string) =>
-    withCustomerRefresh(() => adminApi.customers.addPet(slug, token, endUserId, name, petType));
-
-  const removePet = (endUserId: string, petId: string) =>
-    withCustomerRefresh(() => adminApi.customers.removePet(slug, token, endUserId, petId));
 
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
@@ -383,26 +340,20 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     timeoff: (
       <TimeOffSection
         blocked={settings.blocked}
-        blockStart={blockStart}
-        blockEnd={blockEnd}
-        setBlockStart={setBlockStart}
-        setBlockEnd={setBlockEnd}
-        addBlock={addBlock}
-        removeBlock={removeBlock}
+        slug={slug}
+        token={token}
+        onChanged={refresh}
+        handleError={handle}
       />
     ),
     clients: (
       <ClientsSection
         customers={customers ?? []}
-        custEmail={custEmail}
-        custName={custName}
-        setCustEmail={setCustEmail}
-        setCustName={setCustName}
-        addCustomer={addCustomer}
-        removeCustomer={removeCustomer}
-        addPet={addPet}
-        removePet={removePet}
         enabledPetTypes={enabledPetTypes}
+        slug={slug}
+        token={token}
+        onCustomersChanged={reloadCustomers}
+        handleError={handle}
       />
     ),
     apps: (

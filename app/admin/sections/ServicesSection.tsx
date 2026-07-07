@@ -1,4 +1,4 @@
-import { NullableNumberField } from './BusinessSection.js';
+import { NullableNumberField } from './fields.js';
 import { IconTag } from '../../shared-ui/icons';
 import type {
   QuestionForm,
