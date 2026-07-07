@@ -17,7 +17,7 @@ import {
 import { SERVICE_ICONS } from './services';
 import { IconCheck, IconPaw } from '../shared-ui/icons';
 import { QuestionField } from './QuestionField';
-import { errorMsg, slug } from './shared';
+import { errorMsg, slug, parentOrigin } from './shared';
 
 export function BookTab({
   config,
@@ -126,7 +126,7 @@ export function BookTab({
       setAnswers({});
       setResult(null);
       setCalReloadKey((k) => k + 1);
-      window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, '*');
+      window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, parentOrigin);
     } catch (e) {
       if (isAuthExpired(e)) {
         onAuthExpired();

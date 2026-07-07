@@ -12,7 +12,7 @@ import './widget.css';
 import { Identify } from './Identify';
 import { BookTab } from './BookTab';
 import { MineTab } from './MineTab';
-import { slug } from './shared';
+import { slug, parentOrigin } from './shared';
 
 export default function App() {
   const [config, setConfig] = useState<TenantConfig | null>(null);
@@ -29,7 +29,7 @@ export default function App() {
           type: 'pawbook:resize',
           height: document.documentElement.scrollHeight,
         },
-        '*',
+        parentOrigin,
       );
     report();
     const observer = new ResizeObserver(report);
