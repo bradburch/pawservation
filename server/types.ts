@@ -92,7 +92,7 @@ export type ProviderConnection = {
   TenantId: string;
   Capability: string;
   Provider: string;
-  Status: 'disconnected' | 'connected-stub' | 'connected';
+  Status: 'disconnected' | 'connected-stub' | 'connected'; // 'connected-stub' is a legacy value from the removed stub-provider flow; no code path writes it anymore
   ConnectedAt: string | null;
   CalendarId: string | null;
 };

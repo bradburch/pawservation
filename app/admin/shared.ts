@@ -1,27 +1,13 @@
+import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
 import { request } from '../shared-ui/api.js';
 
 export type Session = { token: string; slug: string; displayName: string };
 
-export type ServiceOptionForm = {
-  optionKey?: string;
-  label: string;
-  durationMinutes: number | null;
-  rate: number;
-  startTime: string | null;
-  endTime: string | null;
-  capacity: number | null;
-};
-export type QuestionForm = {
-  id?: string;
-  label: string;
-  type: 'text' | 'yesno' | 'number' | 'select';
-  required: boolean;
-  min?: number;
-  max?: number;
-  pattern?: string;
-  options?: string[];
-};
-export type ServiceForm = {
+// `optionKey`/`id` are omitted-until-first-save on the client (the server derives/assigns them),
+// so both forms widen that one field to optional relative to the shared, field-complete shape.
+export type ServiceOptionForm = Omit<ServiceOption, 'optionKey'> & { optionKey?: string };
+export type QuestionForm = Omit<ServiceQuestion, 'id'> & { id?: string };
+export type ServiceForm = ServiceConstraints & {
   type: string;
   label: string;
   hasDuration: boolean;
@@ -30,10 +16,6 @@ export type ServiceForm = {
   enabled: boolean;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
-  minNights: number | null;
-  maxNights: number | null;
-  minPetCount: number | null;
-  maxPetCount: number | null;
 };
 export type Settings = {
   displayName: string;
@@ -45,21 +27,41 @@ export type Settings = {
   petTypes: { petType: string; enabled: boolean }[];
   services: ServiceForm[];
   blocked: { id: string; startDate: string; endDate: string | null }[];
-  providers: {
-    capability: string;
-    provider: string;
-    label: string;
-    authMode: 'oauth' | 'stub';
+  calendar: {
     status: string;
     connectedAt: string | null;
-    calendarId?: string | null;
-  }[];
+    calendarId: string | null;
+  };
 };
 
 /** Shared prop shape for sections that edit the staged, save-button-gated `settings` draft. */
 export type SettingsSectionProps = {
   settings: Settings;
   setSettings: (settings: Settings) => void;
+};
+
+/**
+ * The PUT `/admin/settings` request body (mirrors `SettingsBody`/`ServiceBody` in
+ * server/routes/admin.ts). Built from the same shared/derived field types as `Settings` so that
+ * a field added to `ServiceOption`/`ServiceQuestion`/`ServiceConstraints` — or dropped by a hand
+ * mapping in `save()` — surfaces as a compile error there instead of silently going missing on
+ * the wire.
+ */
+export type ServicePayload = ServiceConstraints & {
+  type: string;
+  enabled: boolean;
+  options: ServiceOptionForm[];
+  questions: QuestionForm[];
+};
+export type SettingsPayload = {
+  displayName: string;
+  accentColor: string;
+  maxBoardingPets: number | null;
+  maxHouseSitsPerDay: number | null;
+  maxStayNights: number | null;
+  timezone: string | null;
+  petTypes: string[];
+  services: ServicePayload[];
 };
 
 export function adminFetch<T>(token: string, path: string, init?: RequestInit): Promise<T> {

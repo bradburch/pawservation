@@ -37,7 +37,6 @@ export const bookingRoutes = new Hono<AppEnv>()
     const optionKey = c.req.query('option');
     if (!isServiceType(type)) return c.json({ error: 'Unknown service type.' }, 400);
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: 'Bad month.' }, 400);
-    const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
     const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
     const serviceOptions = options.filter((o) => o.ServiceType === type);
     let option = serviceOptions[0] ?? null;
@@ -49,7 +48,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       if (!found) return c.json({ error: 'Unknown service option.' }, 400);
       option = found;
     }
-    const result = await monthAvailability(c.env, tenant, type, month, user?.Email ?? '', option);
+    const result = await monthAvailability(c.env, tenant, type, month, c.get('endUserId'), option);
     return c.json(result);
   })
 

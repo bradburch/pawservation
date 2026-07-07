@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IconCode } from '../../shared-ui/icons';
 import { adminFetch, type Session } from '../shared.js';
 
@@ -40,66 +40,11 @@ function Snippets({ session }: { session: Session }) {
  * after a save to remount the frame with fresh config. The widget always fetches config
  * server-side, so this never exposes anything the customer can't already see.
  *
- * Sizing: the production loader auto-resizes off the widget's `pawbook:resize` postMessage because
- * it frames the widget CROSS-origin and can't read its document. This preview is SAME-origin, so it
- * measures `contentDocument` directly and watches the inner <body> — more reliable than the
- * widget's single ping, which fires before its date inputs and fonts settle.
+ * Displays at a fixed height (640px / 70vh) with internal scrolling — simpler than the production
+ * loader which auto-resizes off the widget's `pawbook:resize` postMessage (it must resize
+ * cross-origin, lacking access to contentDocument).
  */
-function WidgetPreview({
-  slug,
-  reloadKey,
-  active,
-}: {
-  slug: string;
-  reloadKey: number;
-  active: boolean;
-}) {
-  const [height, setHeight] = useState(520);
-  const frameRef = useRef<HTMLIFrameElement>(null);
-
-  // `reloadKey` remounts the iframe (fresh config after a save). Sizing off the iframe `load` event
-  // is fragile — cache and StrictMode double-mount can drop it — so we briefly poll instead. Each
-  // tick re-observes whenever the iframe's <body> changes (the about:blank → /embed navigation
-  // swaps it); a ResizeObserver then tracks later changes (e.g. switching widget tabs). We measure
-  // the BODY's height, not documentElement.scrollHeight — the latter is floored at the iframe's own
-  // height, so it reads a stale 520 while the widget is still loading.
-  //
-  // This section stays mounted even while its tab isn't active (`display: none`), where the body
-  // has no rendered box and reads a 0 height. `active` in the deps restarts the polling window
-  // fresh whenever the tab is switched TO, so it gets a real measurement instead of relying on the
-  // ResizeObserver to catch a resize it may have missed while hidden. Guarded to only run while
-  // active — otherwise leaving the tab would also restart it, and its first measure() would read
-  // the now-hidden body's 0 height and squash the previously-correct one down to the 320px floor.
-  useEffect(() => {
-    if (!active) return;
-    const frame = frameRef.current;
-    if (!frame) return;
-    let observer: ResizeObserver | null = null;
-    let observed: HTMLElement | null = null;
-    let ticks = 0;
-    const measure = () => {
-      const body = frame.contentDocument?.body;
-      if (body) setHeight(Math.max(320, body.scrollHeight));
-    };
-    const tick = () => {
-      const body = frame.contentDocument?.body; // same-origin first-party path — always readable.
-      if (body && body !== observed) {
-        observer?.disconnect();
-        observer = new ResizeObserver(measure);
-        observer.observe(body);
-        observed = body;
-      }
-      measure();
-      if (++ticks > 25) window.clearInterval(timer); // ~5s; the ResizeObserver carries on after.
-    };
-    const timer = window.setInterval(tick, 200);
-    tick();
-    return () => {
-      window.clearInterval(timer);
-      observer?.disconnect();
-    };
-  }, [reloadKey, active]);
-
+function WidgetPreview({ slug, reloadKey }: { slug: string; reloadKey: number }) {
   return (
     <div className="pb-preview">
       <div className="pb-preview-bar" aria-hidden="true">
@@ -110,11 +55,10 @@ function WidgetPreview({
       </div>
       <iframe
         key={reloadKey}
-        ref={frameRef}
         className="pb-preview-frame"
         title="Live preview of your booking widget"
         src={`/embed/${encodeURIComponent(slug)}`}
-        style={{ height }}
+        style={{ height: '640px', maxHeight: '70vh' }}
       />
     </div>
   );
@@ -147,7 +91,7 @@ export function EmbedSection({
       </p>
       {everActive && (
         <>
-          <WidgetPreview slug={session.slug} reloadKey={previewKey} active={active} />
+          <WidgetPreview slug={session.slug} reloadKey={previewKey} />
           <Snippets session={session} />
         </>
       )}

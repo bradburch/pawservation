@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { providerViews, type CapabilityDescriptor } from '../lib/providers';
 import { mintToken } from '../lib/token';
 import {
   adminHeaders,
@@ -229,46 +228,14 @@ describe('tenant admin', () => {
     expect(walkAfter.available).toBe(true);
   });
 
-  it('connecting a provider flips status to connected-stub, per tenant', async () => {
+  it('GET /admin/settings reports the calendar connection as disconnected by default', async () => {
     const { env } = createTestEnv();
-    await app.request(
-      '/api/sunny-paws/admin/providers/calendar/connect',
-      { method: 'POST', headers: await auth(TENANT_A) },
-      env,
-    );
-    const a = (await (
+    const res = (await (
       await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
-    ).json()) as { providers: { capability: string; status: string }[] };
-    const b = (await (
-      await app.request('/api/happy-tails/admin/settings', { headers: await auth(TENANT_B) }, env)
-    ).json()) as { providers: { capability: string; status: string }[] };
-    expect(a.providers.find((p) => p.capability === 'calendar')?.status).toBe('connected-stub');
-    expect(b.providers.find((p) => p.capability === 'calendar')?.status).toBe('disconnected');
-
-    const unknown = await app.request(
-      '/api/sunny-paws/admin/providers/teleportation/connect',
-      { method: 'POST', headers: await auth(TENANT_A) },
-      env,
-    );
-    expect(unknown.status).toBe(404);
-  });
-
-  it('adding a capability is a registry entry, not a schema change (FR18)', () => {
-    const extended: CapabilityDescriptor[] = [
-      { capability: 'payments', provider: 'stripe', label: 'Stripe', authMode: 'stub' },
-    ];
-    const views = providerViews([], extended);
-    expect(views).toEqual([
-      {
-        capability: 'payments',
-        provider: 'stripe',
-        label: 'Stripe',
-        authMode: 'stub',
-        status: 'disconnected',
-        connectedAt: null,
-        calendarId: null,
-      },
-    ]);
+    ).json()) as {
+      calendar: { status: string; connectedAt: string | null; calendarId: string | null };
+    };
+    expect(res.calendar).toEqual({ status: 'disconnected', connectedAt: null, calendarId: null });
   });
 
   it('saves pet types and free-typed service options, reflected in config', async () => {

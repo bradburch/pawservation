@@ -1,3 +1,6 @@
+-- WARNING: DATA-DESTRUCTIVE ON RE-RUN against a live DB — it rebuilds Tenants keeping only 6
+-- columns, wiping MaxHouseSitsPerDay/MaxStayNights/Timezone. Do not run this directly against
+-- an already-provisioned DB; see the baselining procedure in migrations/README.md first.
 -- Make MaxBoardingPets nullable (NULL = unlimited) and add the new optional config columns.
 -- SQLite cannot ALTER away a NOT NULL/DEFAULT, so rebuild Tenants preserving existing rows and
 -- their MaxBoardingPets values (existing sitters keep their cap; only new tenants default to NULL).

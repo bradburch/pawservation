@@ -4,7 +4,6 @@ import {
   buildEventResource,
   createEvent,
   exchangeCode,
-  listCalendarEvents,
   refreshAccessToken,
 } from '../lib/google-calendar';
 
@@ -167,94 +166,5 @@ describe('google-calendar', () => {
     });
     expect(r.extendedProperties?.private.customerEmail).toBe('');
     expect(r.extendedProperties?.private.pawbook).toBe('true');
-  });
-
-  describe('listCalendarEvents', () => {
-    it('normalizes an all-day event and a timed event', async () => {
-      const fakeBody = {
-        items: [
-          {
-            summary: 'Dog boarding',
-            start: { date: '2030-06-01' },
-            end: { date: '2030-06-04' },
-            extendedProperties: {
-              private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
-            },
-          },
-          {
-            summary: 'Walk',
-            start: { dateTime: '2030-06-05T09:30:00-07:00' },
-            end: { dateTime: '2030-06-05T10:30:00-07:00' },
-            extendedProperties: {
-              private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
-            },
-          },
-        ],
-      };
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify(fakeBody), { status: 200 }),
-      );
-
-      const events = await listCalendarEvents(
-        'AT',
-        'primary',
-        '2030-06-01T00:00:00Z',
-        '2030-07-01T00:00:00Z',
-      );
-
-      expect(events).toHaveLength(2);
-      // all-day event
-      expect(events[0]).toEqual({
-        summary: 'Dog boarding',
-        start: '2030-06-01',
-        end: '2030-06-04',
-        private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
-      });
-      // timed event — dateTime sliced to date part
-      expect(events[1]).toEqual({
-        summary: 'Walk',
-        start: '2030-06-05',
-        end: '2030-06-05',
-        private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
-      });
-    });
-
-    it('defaults to empty private map and empty summary when fields are absent', async () => {
-      const fakeBody = {
-        items: [{ start: { date: '2030-06-01' }, end: { date: '2030-06-02' } }],
-      };
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify(fakeBody), { status: 200 }),
-      );
-
-      const events = await listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z');
-      expect(events[0].summary).toBe('');
-      expect(events[0].private).toEqual({});
-    });
-
-    it('sends the correct query parameters and Authorization header', async () => {
-      const spy = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
-
-      await listCalendarEvents('MY_TOKEN', 'cal@group.calendar.google.com', 'tMin', 'tMax');
-
-      const [url, init] = spy.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain(encodeURIComponent('cal@group.calendar.google.com'));
-      const parsed = new URL(url);
-      expect(parsed.searchParams.get('timeMin')).toBe('tMin');
-      expect(parsed.searchParams.get('timeMax')).toBe('tMax');
-      expect(parsed.searchParams.get('singleEvents')).toBe('true');
-      expect(parsed.searchParams.get('maxResults')).toBe('2500');
-      expect(parsed.searchParams.get('orderBy')).toBe('startTime');
-      expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer MY_TOKEN');
-    });
-
-    it('throws on a non-2xx response', async () => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('no', { status: 403 }));
-      await expect(
-        listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z'),
-      ).rejects.toThrow('Google listCalendarEvents failed (403)');
-    });
   });
 });

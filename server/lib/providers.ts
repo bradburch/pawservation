@@ -1,51 +1,22 @@
 import type { ProviderConnection } from '../types';
 
 /**
- * Capability→adapter registry (mirrors the shelved Plan 4 shape): adding a provider is a
- * registry entry, never a schema migration. All adapters are STUBS in the prototype — the
- * connect flow flips persisted status only; real OAuth is a graduation task (PRD FR18).
+ * Google Calendar is the only real integration — it connects via the OAuth routes in
+ * server/routes/admin.ts (start/disconnect/calendar-id), not a generic registry.
  */
 
-export type CapabilityDescriptor = {
-  capability: string;
-  provider: string;
-  label: string;
-  authMode: 'oauth' | 'stub';
-};
-
-export const CAPABILITIES: readonly CapabilityDescriptor[] = [
-  {
-    capability: 'calendar',
-    provider: 'google-calendar',
-    label: 'Google Calendar',
-    authMode: 'oauth',
-  },
-  { capability: 'crm', provider: 'notion', label: 'Notion', authMode: 'stub' },
-  { capability: 'email', provider: 'gmail', label: 'Gmail', authMode: 'stub' },
-];
-
-export type ProviderView = CapabilityDescriptor & {
+export type CalendarView = {
   status: 'disconnected' | 'connected-stub' | 'connected';
   connectedAt: string | null;
   calendarId: string | null;
 };
 
-/** Merge the static registry with a tenant's persisted connection rows. */
-export function providerViews(
-  connections: ProviderConnection[],
-  registry: readonly CapabilityDescriptor[] = CAPABILITIES,
-): ProviderView[] {
-  return registry.map((descriptor) => {
-    const row = connections.find((c) => c.Capability === descriptor.capability);
-    return {
-      ...descriptor,
-      status: row?.Status ?? 'disconnected',
-      connectedAt: row?.ConnectedAt ?? null,
-      calendarId: row?.CalendarId ?? null,
-    };
-  });
-}
-
-export function findCapability(capability: string): CapabilityDescriptor | undefined {
-  return CAPABILITIES.find((c) => c.capability === capability);
+/** Project a tenant's persisted connection rows down to the calendar connection's view. */
+export function calendarView(connections: ProviderConnection[]): CalendarView {
+  const row = connections.find((c) => c.Capability === 'calendar');
+  return {
+    status: row?.Status ?? 'disconnected',
+    connectedAt: row?.ConnectedAt ?? null,
+    calendarId: row?.CalendarId ?? null,
+  };
 }

@@ -13,6 +13,7 @@ import {
   insertInvitedCustomer,
   listAllEndUserPetsByTenant,
   listBlockedRanges,
+  listBookingsForTenant,
   listCustomers,
   listPetTypes,
   listProviderConnections,
@@ -22,15 +23,15 @@ import {
   replaceServiceOptions,
   setProviderCalendarId,
   setPetTypeEnabled,
-  setProviderStatus,
   setServiceConfig,
+  updateBookingStatus,
   updateTenantSettings,
 } from '../db/repo';
 import { isEmailConfigured, sendInvite } from '../lib/email';
 import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
-import { findCapability, providerViews } from '../lib/providers';
+import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import { isPetType, isServiceType, PET_TYPES, SERVICE_CATALOG } from '../lib/services';
 import { decryptToken } from '../lib/token-crypto';
@@ -316,17 +317,7 @@ export const adminRoutes = new Hono<AppEnv>()
         };
       }),
       blocked: blocked.map((b) => ({ id: b.Id, startDate: b.StartDate, endDate: b.EndDate })),
-      providers: providerViews(connections).map(
-        ({ capability, provider, label, authMode, status, connectedAt, calendarId }) => ({
-          capability,
-          provider,
-          label,
-          authMode,
-          status,
-          connectedAt,
-          calendarId,
-        }),
-      ),
+      calendar: calendarView(connections),
     });
   })
 
@@ -525,20 +516,6 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json(embedSnippets(new URL(c.req.url).origin, tenant.Slug));
   })
 
-  .post('/:slug/admin/providers/:capability/connect', async (c) => {
-    const tenant = c.get('tenant');
-    const descriptor = findCapability(c.req.param('capability'));
-    if (!descriptor) return c.json({ error: 'Unknown capability.' }, 404);
-    await setProviderStatus(
-      c.env.PAWBOOK_DB,
-      tenant.Id,
-      descriptor.capability,
-      descriptor.provider,
-      'connected-stub',
-    );
-    return c.json({ status: 'connected-stub' });
-  })
-
   .get('/:slug/admin/providers/calendar/oauth/start', async (c) => {
     const tenant = c.get('tenant');
     if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
@@ -675,4 +652,42 @@ export const adminRoutes = new Hono<AppEnv>()
     const removed = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
     if (!removed) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
+  })
+
+  .get('/:slug/admin/bookings', async (c) => {
+    const tenant = c.get('tenant');
+    const rows = await listBookingsForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    return c.json({
+      bookings: rows.map((r) => ({
+        id: r.Id,
+        customerEmail: r.Email,
+        customerName: r.Name,
+        type: r.ServiceType,
+        startDate: r.StartDate,
+        endDate: r.EndDate,
+        startTime: r.StartTime,
+        optionKey: r.OptionKey,
+        petCount: r.PetCount,
+        estCost: r.EstCost,
+        status: r.Status,
+        createdAt: r.CreatedAt,
+      })),
+    });
+  })
+
+  .post('/:slug/admin/bookings/:id/status', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req.json<{ status?: unknown }>().catch(() => ({}) as { status?: unknown });
+    const status = body.status;
+    if (status !== 'confirmed' && status !== 'cancelled')
+      return c.json({ error: "Status must be 'confirmed' or 'cancelled'." }, 400);
+    // ponytail: cancel leaves any synced GCal event in place; delete via GCalEventId if sitters complain
+    const updated = await updateBookingStatus(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      status,
+    );
+    if (!updated) return c.json({ error: 'Not found.' }, 404);
+    return c.json({ status });
   });

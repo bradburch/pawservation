@@ -21,6 +21,19 @@ export type ServiceConstraints = {
   maxPetCount: number | null;
 };
 
+/** A priced, bookable slot within a service (e.g. a duration tier or a fixed time window).
+ * Field-level shape shared by the widget config, the admin form, and the admin settings wire
+ * format — see app/shared-ui/api.ts and app/admin/shared.ts for how each extends this. */
+export type ServiceOption = {
+  optionKey: string;
+  label: string;
+  durationMinutes: number | null;
+  rate: number;
+  startTime: string | null; // 'HH:MM'; null = no fixed window
+  endTime: string | null; // 'HH:MM'; null = no fixed window
+  capacity: number | null; // max concurrent bookings/date; null = unlimited
+};
+
 /** Safety rail (NOT a business rule): bounds regex-evaluation cost against a pathological
  * pattern that slipped past admin-time validation. Intake answers are short by nature. */
 const MAX_PATTERN_INPUT_LENGTH = 100;

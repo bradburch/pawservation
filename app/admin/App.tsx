@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useState } fro
 import { adminApi, isAuthExpired, type Customer } from '../shared-ui/api.js';
 import {
   IconCalendar,
+  IconClipboardCheck,
   IconCode,
   IconPaw,
   IconPlug,
@@ -10,14 +11,23 @@ import {
   IconUsers,
 } from '../shared-ui/icons';
 import { AppsSection } from './sections/AppsSection';
+import { BookingsSection } from './sections/BookingsSection';
 import { BusinessSection } from './sections/BusinessSection';
 import { ClientsSection } from './sections/ClientsSection';
 import { EmbedSection } from './sections/EmbedSection';
 import { PetsSection } from './sections/PetsSection';
 import { ServicesSection } from './sections/ServicesSection';
 import { TimeOffSection } from './sections/TimeOffSection';
-import { adminFetch, type Session, type Settings } from './shared.js';
+import {
+  adminFetch,
+  type ServiceOptionForm,
+  type ServicePayload,
+  type Session,
+  type Settings,
+  type SettingsPayload,
+} from './shared.js';
 import './admin.css';
+import { useAsync } from '../shared-ui/useAsync';
 
 /**
  * Sitter dashboard. Auth is email + password → an admin session token, held in localStorage
@@ -116,9 +126,11 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   );
 }
 
-type SectionKey = 'business' | 'pets' | 'services' | 'timeoff' | 'clients' | 'apps' | 'embed';
+type SectionKey =
+  'bookings' | 'business' | 'pets' | 'services' | 'timeoff' | 'clients' | 'apps' | 'embed';
 
 const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
+  { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck },
   { key: 'business', label: 'Business', icon: IconStore },
   { key: 'pets', label: 'Pets', icon: IconPaw },
   { key: 'services', label: 'Services & rates', icon: IconTag },
@@ -142,8 +154,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // decide whether the sticky save bar shows. Only the settings PUT is deferred — the
   // other sections apply immediately and refresh both state and snapshot together.
   const [savedSnapshot, setSavedSnapshot] = useState('');
-  const [blockStart, setBlockStart] = useState('');
-  const [blockEnd, setBlockEnd] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   // Bumped after a successful save so the embed preview remounts and pulls the fresh config.
@@ -221,70 +231,47 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     run(async () => {
       if (!settings) return;
       setMessage('');
+      // Explicit per-field object literals (rather than spreading `s`/`o`) checked against
+      // `ServicePayload`/`ServiceOptionForm` — annotated so a field added to the shared
+      // option/question/constraint shapes fails to compile here instead of quietly not
+      // reaching the wire (see e.g. the startTime/endTime/capacity fields).
+      const payload: SettingsPayload = {
+        displayName: settings.displayName,
+        accentColor: settings.accentColor,
+        maxBoardingPets: settings.maxBoardingPets,
+        maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
+        maxStayNights: settings.maxStayNights,
+        timezone: settings.timezone,
+        petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
+        services: settings.services.map((s): ServicePayload => ({
+          type: s.type,
+          enabled: s.enabled,
+          options: s.options.map((o): ServiceOptionForm => ({
+            optionKey: o.optionKey,
+            label: o.label,
+            durationMinutes: s.hasDuration ? o.durationMinutes : null,
+            rate: o.rate,
+            startTime: o.startTime,
+            endTime: o.endTime,
+            capacity: o.capacity,
+          })),
+          questions: s.questions,
+          minNights: s.minNights,
+          maxNights: s.maxNights,
+          minPetCount: s.minPetCount,
+          maxPetCount: s.maxPetCount,
+        })),
+      };
       await adminFetch(token, `/api/${slug}/admin/settings`, {
         method: 'PUT',
-        body: JSON.stringify({
-          displayName: settings.displayName,
-          accentColor: settings.accentColor,
-          maxBoardingPets: settings.maxBoardingPets,
-          maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
-          maxStayNights: settings.maxStayNights,
-          timezone: settings.timezone,
-          petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
-          services: settings.services.map((s) => ({
-            type: s.type,
-            enabled: s.enabled,
-            options: s.options.map((o) => ({
-              optionKey: o.optionKey,
-              label: o.label,
-              durationMinutes: s.hasDuration ? o.durationMinutes : null,
-              rate: o.rate,
-              startTime: o.startTime,
-              endTime: o.endTime,
-              capacity: o.capacity,
-            })),
-            questions: s.questions,
-            minNights: s.minNights,
-            maxNights: s.maxNights,
-            minPetCount: s.minPetCount,
-            maxPetCount: s.maxPetCount,
-          })),
-        }),
+        body: JSON.stringify(payload),
       });
       setMessage('Saved! Your widget updates on its next load.');
       setSavedSnapshot(JSON.stringify(settings));
       setPreviewKey((k) => k + 1);
     });
 
-  const addBlock = () =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/blocked`, {
-        method: 'POST',
-        body: JSON.stringify({ startDate: blockStart, endDate: blockEnd }),
-      });
-      setBlockStart('');
-      setBlockEnd('');
-      await refresh();
-    });
-
-  const removeBlock = (id: string) =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/blocked/${id}`, { method: 'DELETE' });
-      await refresh();
-    });
-
-  const connect = (capability: string) =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/providers/${capability}/connect`, {
-        method: 'POST',
-      });
-      await refresh();
-    });
-
   const connectCalendar = () =>
-    // NOTE: The route and this client call are still calendar-specific because there is exactly one
-    // OAuth provider. When a second is added, generalize adminApi.calendar + the
-    // /providers/calendar/... routes to accept a `capability` param. Deliberate YAGNI boundary.
     run(async () => {
       const { url } = await adminApi.calendar.start(slug, token);
       const popup = window.open(url, 'pawbook-gcal', 'width=520,height=640');
@@ -304,50 +291,19 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       await refresh();
     });
 
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [custEmail, setCustEmail] = useState('');
-  const [custName, setCustName] = useState('');
+  const loadCustomers = useCallback(async (): Promise<Customer[]> => {
+    try {
+      const { customers: list } = await adminApi.customers.list(slug, token);
+      return list;
+    } catch (e) {
+      // Route through the shared handler (error banner / sign-out on expired auth), but still
+      // reject so useAsync keeps the last-known list instead of blanking it under the banner.
+      handle(e);
+      throw e;
+    }
+  }, [slug, token, handle]);
 
-  const loadCustomers = useCallback(
-    () => adminApi.customers.list(slug, token).then(({ customers: list }) => list),
-    [slug, token],
-  );
-
-  useEffect(() => {
-    let active = true;
-    loadCustomers()
-      .then((list) => {
-        if (active) setCustomers(list);
-      })
-      .catch((e) => {
-        if (active) handle(e);
-      });
-    return () => {
-      active = false;
-    };
-  }, [loadCustomers, handle]);
-
-  const withCustomerRefresh = (fn: () => Promise<unknown>) =>
-    run(async () => {
-      await fn();
-      setCustomers(await loadCustomers());
-    });
-
-  const addCustomer = () =>
-    withCustomerRefresh(async () => {
-      await adminApi.customers.add(slug, token, custEmail.trim().toLowerCase(), custName.trim());
-      setCustEmail('');
-      setCustName('');
-    });
-
-  const removeCustomer = (id: string) =>
-    withCustomerRefresh(() => adminApi.customers.remove(slug, token, id));
-
-  const addPet = (endUserId: string, name: string, petType: string) =>
-    withCustomerRefresh(() => adminApi.customers.addPet(slug, token, endUserId, name, petType));
-
-  const removePet = (endUserId: string, petId: string) =>
-    withCustomerRefresh(() => adminApi.customers.removePet(slug, token, endUserId, petId));
+  const { data: customers, reload: reloadCustomers } = useAsync(loadCustomers);
 
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
@@ -365,40 +321,38 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const enabledPetTypes = settings.petTypes.filter((p) => p.enabled).map((p) => p.petType);
 
   const panels: Record<SectionKey, ReactNode> = {
+    bookings: (
+      <BookingsSection session={session} handleError={handle} clearError={() => setError('')} />
+    ),
     business: <BusinessSection settings={settings} setSettings={setSettings} />,
     pets: <PetsSection settings={settings} setSettings={setSettings} />,
     services: <ServicesSection settings={settings} setSettings={setSettings} />,
     timeoff: (
       <TimeOffSection
         blocked={settings.blocked}
-        blockStart={blockStart}
-        blockEnd={blockEnd}
-        setBlockStart={setBlockStart}
-        setBlockEnd={setBlockEnd}
-        addBlock={addBlock}
-        removeBlock={removeBlock}
+        slug={slug}
+        token={token}
+        onChanged={refresh}
+        handleError={handle}
+        clearError={() => setError('')}
       />
     ),
     clients: (
       <ClientsSection
-        customers={customers}
-        custEmail={custEmail}
-        custName={custName}
-        setCustEmail={setCustEmail}
-        setCustName={setCustName}
-        addCustomer={addCustomer}
-        removeCustomer={removeCustomer}
-        addPet={addPet}
-        removePet={removePet}
+        customers={customers ?? []}
         enabledPetTypes={enabledPetTypes}
+        slug={slug}
+        token={token}
+        onCustomersChanged={reloadCustomers}
+        handleError={handle}
+        clearError={() => setError('')}
       />
     ),
     apps: (
       <AppsSection
-        providers={settings.providers}
+        calendar={settings.calendar}
         slug={slug}
         token={token}
-        connect={connect}
         connectCalendar={connectCalendar}
         disconnectCalendar={disconnectCalendar}
         onCalendarSaved={() => void refresh()}

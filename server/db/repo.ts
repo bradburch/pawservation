@@ -28,6 +28,12 @@ const TENANT_COLS =
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, GCalEventId, Status, CreatedAt';
 
+/** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
+ * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
+const BOOKING_COLS_QUALIFIED = BOOKING_COLS.split(', ')
+  .map((col) => `BookingRequests.${col}`)
+  .join(', ');
+
 export async function getTenantBySlug(db: D1Database, slug: string): Promise<Tenant | null> {
   return await db
     .prepare(`SELECT ${TENANT_COLS} FROM Tenants WHERE Slug = ?`)
@@ -92,14 +98,20 @@ export async function createLoginCode(
   endUserId: string,
   code: string,
   expiresAtIso: string,
+  nowIso: string = new Date().toISOString(),
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await db
-    .prepare(
-      'INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt) VALUES (?, ?, ?, ?, ?)',
-    )
-    .bind(id, tenantId, endUserId, code, expiresAtIso)
-    .run();
+  // ponytail: opportunistic prune on each new code — a cron is overkill at this scale
+  await db.batch([
+    db
+      .prepare('DELETE FROM LoginCodes WHERE TenantId = ? AND ExpiresAt < ?')
+      .bind(tenantId, nowIso),
+    db
+      .prepare(
+        'INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind(id, tenantId, endUserId, code, expiresAtIso),
+  ]);
   return id;
 }
 
@@ -162,6 +174,29 @@ export async function listCapacityRows(
     )
     .bind(tenantId, toDateExclusive, fromDate, excludeId ?? null, excludeId ?? null)
     .all<BookingRow>();
+  return results;
+}
+
+/**
+ * One end user's own pending/confirmed booking date ranges overlapping [from, to) — across
+ * EVERY service type (unlike listCapacityRows, which is boarding/house-sit/blocked only).
+ * Feeds the month grid's "mine" flag, so a walk/daycare/check-in booking still highlights.
+ */
+export async function listUserBookingDatesInRange(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  fromDate: string,
+  toDateExclusive: string,
+): Promise<{ StartDate: string; EndDate: string | null }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT StartDate, EndDate FROM BookingRequests
+       WHERE TenantId = ? AND EndUserId = ? AND Status IN ('pending', 'confirmed')
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
+    )
+    .bind(tenantId, endUserId, toDateExclusive, fromDate)
+    .all<{ StartDate: string; EndDate: string | null }>();
   return results;
 }
 
@@ -284,6 +319,51 @@ export async function listBookingsForUser(
     .bind(tenantId, endUserId)
     .all<BookingRow>();
   return results;
+}
+
+/**
+ * All non-blocked bookings for the sitter's admin list, newest-first, with the customer's
+ * Email/Name joined in (NULL for a booking whose customer was later removed — EndUserId only
+ * ever points at a row in the SAME tenant, enforced by how bookings are created).
+ */
+export async function listBookingsForTenant(
+  db: D1Database,
+  tenantId: string,
+): Promise<(BookingRow & { Email: string | null; Name: string | null })[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name
+       FROM BookingRequests
+       LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
+         AND EndUsers.TenantId = BookingRequests.TenantId
+       WHERE BookingRequests.TenantId = ? AND BookingRequests.ServiceType != 'blocked'
+       ORDER BY BookingRequests.StartDate DESC, BookingRequests.CreatedAt DESC`,
+    )
+    .bind(tenantId)
+    .all<BookingRow & { Email: string | null; Name: string | null }>();
+  return results;
+}
+
+/**
+ * Sitter-driven lifecycle transition. The guard is entirely in SQL so it's atomic with the write:
+ * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' is
+ * terminal — once cancelled, no further transition matches. Confirming an already-confirmed row
+ * still matches (harmless no-op). Returns whether a row actually changed.
+ */
+export async function updateBookingStatus(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+  status: 'confirmed' | 'cancelled',
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE BookingRequests SET Status = ?
+       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+    )
+    .bind(status, tenantId, id)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 export async function listProviderConnections(
@@ -633,25 +713,6 @@ export async function promoteCustomerActive(
   await db
     .prepare("UPDATE EndUsers SET Status = 'active' WHERE TenantId = ? AND Id = ?")
     .bind(tenantId, endUserId)
-    .run();
-}
-
-export async function setProviderStatus(
-  db: D1Database,
-  tenantId: string,
-  capability: string,
-  provider: string,
-  status: 'connected-stub',
-): Promise<void> {
-  const connectedAt = new Date().toISOString();
-  await db
-    .prepare(
-      `INSERT INTO ProviderConnections (Id, TenantId, Capability, Provider, Status, ConnectedAt)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (TenantId, Capability)
-       DO UPDATE SET Provider = excluded.Provider, Status = excluded.Status, ConnectedAt = excluded.ConnectedAt`,
-    )
-    .bind(crypto.randomUUID(), tenantId, capability, provider, status, connectedAt)
     .run();
 }
 
