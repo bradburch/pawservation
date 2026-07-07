@@ -44,15 +44,7 @@ function Snippets({ session }: { session: Session }) {
  * loader which auto-resizes off the widget's `pawbook:resize` postMessage (it must resize
  * cross-origin, lacking access to contentDocument).
  */
-function WidgetPreview({
-  slug,
-  reloadKey,
-  _active,
-}: {
-  slug: string;
-  reloadKey: number;
-  _active: boolean;
-}) {
+function WidgetPreview({ slug, reloadKey }: { slug: string; reloadKey: number }) {
   return (
     <div className="pb-preview">
       <div className="pb-preview-bar" aria-hidden="true">
@@ -99,7 +91,7 @@ export function EmbedSection({
       </p>
       {everActive && (
         <>
-          <WidgetPreview slug={session.slug} reloadKey={previewKey} _active={active} />
+          <WidgetPreview slug={session.slug} reloadKey={previewKey} />
           <Snippets session={session} />
         </>
       )}
