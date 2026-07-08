@@ -19,6 +19,7 @@ export type ServiceQuestion = {
 export type ServiceConfig = {
   type: string;
   label: string;
+  icon: string; // widget icon key: bed|home|sun|paw|clipboard
   shape: 'range' | 'single';
   rateUnit: 'night' | 'day' | 'visit';
   hasDuration: boolean;

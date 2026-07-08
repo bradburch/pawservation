@@ -21,19 +21,27 @@ INSERT OR REPLACE INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES
   ('tu_dana', 'tnt_happytails', 'dana@happytails.test', 'pbkdf2$600000$03503c998c342f5f3704921e532a3e35$deac9874ed916391151ee6ce3b3aecb3a55c44123349729ae220d4762e911d07'),
   ('tu_pawsandrelax', 'tnt_pawsandrelax', 'admin@pawsandrelax.example', 'pbkdf2$600000$4f4aa1b2f29635a386a62fbce18336ae$8eaa4c479048f11664af6dd8a6118996921474eb6c72ba6c4b6caf66155fc6ae');
 
--- Which services each tenant offers (on/off only; prices live in TenantServiceOptions).
-INSERT OR REPLACE INTO TenantServices (TenantId, ServiceType, Enabled) VALUES
-  ('tnt_sunnypaws', 'boarding', 1),
-  ('tnt_sunnypaws', 'housesitting', 1),
-  ('tnt_sunnypaws', 'daycare', 1),
-  ('tnt_sunnypaws', 'walk', 1),
-  ('tnt_sunnypaws', 'checkin', 1),
-  ('tnt_happytails', 'boarding', 1),
-  ('tnt_happytails', 'daycare', 1),
-  ('tnt_happytails', 'walk', 1),
-  ('tnt_pawsandrelax', 'boarding', 1),
-  ('tnt_pawsandrelax', 'housesitting', 1),
-  ('tnt_pawsandrelax', 'walk', 1);
+-- Which services each tenant offers. Every tenant gets a row per built-in template (rows, not
+-- code, are the service list); Enabled mirrors what each demo sitter actually offers. Sunny Paws
+-- also has a CUSTOM service ('morning-walk', cloned from the walk template) to demo custom services.
+INSERT OR REPLACE INTO TenantServices
+  (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder) VALUES
+  ('tnt_sunnypaws', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0),
+  ('tnt_sunnypaws', 'housesitting', 1, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1),
+  ('tnt_sunnypaws', 'daycare', 1, 'Day care', 'sun', 'single', 'day', 0, 'none', 2),
+  ('tnt_sunnypaws', 'walk', 1, 'Walks', 'paw', 'single', 'visit', 1, 'none', 3),
+  ('tnt_sunnypaws', 'checkin', 1, 'Check-ins', 'clipboard', 'single', 'visit', 1, 'none', 4),
+  ('tnt_sunnypaws', 'morning-walk', 1, 'Morning walk', 'paw', 'single', 'visit', 1, 'none', 5),
+  ('tnt_happytails', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0),
+  ('tnt_happytails', 'housesitting', 0, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1),
+  ('tnt_happytails', 'daycare', 1, 'Day care', 'sun', 'single', 'day', 0, 'none', 2),
+  ('tnt_happytails', 'walk', 1, 'Walks', 'paw', 'single', 'visit', 1, 'none', 3),
+  ('tnt_happytails', 'checkin', 0, 'Check-ins', 'clipboard', 'single', 'visit', 1, 'none', 4),
+  ('tnt_pawsandrelax', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0),
+  ('tnt_pawsandrelax', 'housesitting', 1, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1),
+  ('tnt_pawsandrelax', 'daycare', 0, 'Day care', 'sun', 'single', 'day', 0, 'none', 2),
+  ('tnt_pawsandrelax', 'walk', 1, 'Walks', 'paw', 'single', 'visit', 1, 'none', 3),
+  ('tnt_pawsandrelax', 'checkin', 0, 'Check-ins', 'clipboard', 'single', 'visit', 1, 'none', 4);
 
 -- Priced options. Non-duration services = single 'standard' option, DurationMinutes NULL.
 -- Walks/check-ins = sitter-defined (duration, price) rows; prices are free-typed (note the sitter's
@@ -47,6 +55,7 @@ INSERT OR REPLACE INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKe
   ('opt_sp_walk90', 'tnt_sunnypaws', 'walk', 'd90', '90 minutes', 90, 30, 'visit'),
   ('opt_sp_chk15', 'tnt_sunnypaws', 'checkin', 'd15', '15 minutes', 15, 12, 'visit'),
   ('opt_sp_chk30', 'tnt_sunnypaws', 'checkin', 'd30', '30 minutes', 30, 18, 'visit'),
+  ('opt_sp_mw30', 'tnt_sunnypaws', 'morning-walk', 'd30', '30 minutes', 30, 18, 'visit'),
   ('opt_ht_board', 'tnt_happytails', 'boarding', 'standard', 'Standard', NULL, 40, 'night'),
   ('opt_ht_day', 'tnt_happytails', 'daycare', 'standard', 'Standard', NULL, 35, 'day'),
   ('opt_ht_walk30', 'tnt_happytails', 'walk', 'd30', '30 minutes', 30, 25, 'visit'),

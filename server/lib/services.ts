@@ -1,39 +1,94 @@
 /**
- * Single source of truth for the service set and pet species. Every layer (schema CHECK lists,
- * validation, availability branching, widget rendering) derives from these constants instead of
- * repeating service-type string literals. `shape` decides availability + date inputs; `rateUnit`
- * decides cost display and the billable-units multiplier.
+ * Service TEMPLATES and pet species. Services themselves are per-tenant TenantServices rows —
+ * every row carries its own behavior (`Shape` decides availability + date inputs, `RateUnit`
+ * decides cost display, `CapacityKind` names the capacity POOL it draws from). Templates exist
+ * only to (a) seed new tenants' defaults and (b) back the admin "Add service" picker: creating
+ * a service clones a template's behavior permanently, so sitters never mix arbitrary combos.
  */
 
 export type ServiceShape = 'range' | 'single';
 export type RateUnit = 'night' | 'day' | 'visit';
+/** 'boarding' = pet-counted vs MaxBoardingPets; 'housesit' = day-counted vs MaxHouseSitsPerDay;
+ * 'none' = unlimited (blocked days only). Pool names, not service names. */
+export type CapacityKind = 'boarding' | 'housesit' | 'none';
 
-type CatalogEntry = {
+/** Service identifiers are per-tenant slugs now — validated against TenantServices rows, not an enum. */
+export type ServiceType = string;
+
+export type ServiceTemplate = {
   label: string;
+  icon: string;
   shape: ServiceShape;
   rateUnit: RateUnit;
   hasDuration: boolean;
+  capacityKind: CapacityKind;
 };
 
-export const SERVICE_CATALOG = {
-  boarding: { label: 'Boarding', shape: 'range', rateUnit: 'night', hasDuration: false },
-  housesitting: { label: 'House sitting', shape: 'range', rateUnit: 'night', hasDuration: false },
-  daycare: { label: 'Day care', shape: 'single', rateUnit: 'day', hasDuration: false },
-  walk: { label: 'Walks', shape: 'single', rateUnit: 'visit', hasDuration: true },
-  checkin: { label: 'Check-ins', shape: 'single', rateUnit: 'visit', hasDuration: true },
-} as const satisfies Record<string, CatalogEntry>;
-
-export type ServiceType = keyof typeof SERVICE_CATALOG;
-
 // Order is intentional (admin/widget render order); keep boarding first to match prior default.
-export const SERVICE_TYPES = Object.keys(SERVICE_CATALOG) as ServiceType[];
+export const SERVICE_TEMPLATES = {
+  boarding: {
+    label: 'Boarding',
+    icon: 'bed',
+    shape: 'range',
+    rateUnit: 'night',
+    hasDuration: false,
+    capacityKind: 'boarding',
+  },
+  housesitting: {
+    label: 'House sitting',
+    icon: 'home',
+    shape: 'range',
+    rateUnit: 'night',
+    hasDuration: false,
+    capacityKind: 'housesit',
+  },
+  daycare: {
+    label: 'Day care',
+    icon: 'sun',
+    shape: 'single',
+    rateUnit: 'day',
+    hasDuration: false,
+    capacityKind: 'none',
+  },
+  walk: {
+    label: 'Walks',
+    icon: 'paw',
+    shape: 'single',
+    rateUnit: 'visit',
+    hasDuration: true,
+    capacityKind: 'none',
+  },
+  checkin: {
+    label: 'Check-ins',
+    icon: 'clipboard',
+    shape: 'single',
+    rateUnit: 'visit',
+    hasDuration: true,
+    capacityKind: 'none',
+  },
+} as const satisfies Record<string, ServiceTemplate>;
+
+export type TemplateId = keyof typeof SERVICE_TEMPLATES;
+
+export const TEMPLATE_IDS = Object.keys(SERVICE_TEMPLATES) as TemplateId[];
+
+export function isTemplateId(value: unknown): value is TemplateId {
+  return typeof value === 'string' && value in SERVICE_TEMPLATES;
+}
+
+/** 'blocked' is a BookingRequests sentinel (admin time-off), never a bookable service slug. */
+export const RESERVED_SERVICE_SLUGS = ['blocked'];
+
+/** "Morning Walk!" → 'morning-walk'. Empty result = label has no derivable identity (reject it). */
+export function slugifyServiceLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 export const PET_TYPES = ['dog', 'cat'] as const;
 export type PetType = (typeof PET_TYPES)[number];
-
-export function isServiceType(value: unknown): value is ServiceType {
-  return typeof value === 'string' && value in SERVICE_CATALOG;
-}
 
 export function isPetType(value: unknown): value is PetType {
   return typeof value === 'string' && (PET_TYPES as readonly string[]).includes(value);

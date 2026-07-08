@@ -13,7 +13,6 @@ import {
 } from '../db/repo';
 import { checkAvailability, estimateCost, monthAvailability } from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
-import { SERVICE_CATALOG, isServiceType } from '../lib/services';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
 import {
@@ -34,10 +33,19 @@ export const bookingRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const type = c.req.query('type');
     const month = c.req.query('month') ?? '';
-    if (!isServiceType(type)) return c.json({ error: 'Unknown service type.' }, 400);
+    const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    const service = services.find((s) => s.ServiceType === type);
+    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: 'Bad month.' }, 400);
     const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
-    const result = await monthAvailability(c.env, tenant, type, month, user?.Email ?? '');
+    const result = await monthAvailability(
+      c.env,
+      tenant,
+      service,
+      services,
+      month,
+      user?.Email ?? '',
+    );
     return c.json(result);
   })
 
@@ -80,7 +88,9 @@ export const bookingRoutes = new Hono<AppEnv>()
           )
         : {};
 
-    if (!isServiceType(type)) return c.json({ error: 'Unknown service type.' }, 400);
+    const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    const service = services.find((s) => s.ServiceType === type);
+    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
     if (petIds.length === 0) return c.json({ error: 'Choose at least one pet.' }, 400);
 
     const myPets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
@@ -95,9 +105,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     }
     const petType = chosen[0]!.PetType;
 
-    const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
-    const service = services.find((s) => s.ServiceType === type && s.Enabled);
-    if (!service) return c.json({ error: 'Service not offered.' }, 400);
+    if (!service.Enabled) return c.json({ error: 'Service not offered.' }, 400);
 
     const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
 
@@ -112,7 +120,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     }
 
     // Re-validate dates at submit time with the same logic the widget used (PRD FR13).
-    const shape = SERVICE_CATALOG[type].shape;
+    const shape = service.Shape;
     const dateError =
       shape === 'range'
         ? validateBoardingRange(start, end, tenant.MaxStayNights, tenant.Timezone ?? undefined)
@@ -137,7 +145,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (constraintsError) return c.json({ error: constraintsError }, 400);
 
     // Price is computed server-side (never trusted from the client) and is pure — no DB read.
-    const estCost = estimateCost(type, option, start, end);
+    const estCost = estimateCost(service, option, start, end);
 
     // Optimistic insert, then a single capacity check that excludes our own just-inserted row.
     // The check covers both "those dates were already full" and the check-then-insert race (a
@@ -145,7 +153,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     // racers may both roll back — fail-safe, never an overbooking. This is the ONLY capacity read.
     const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
       endUserId: c.get('endUserId'),
-      serviceType: type,
+      serviceType: service.ServiceType,
       startDate: start,
       endDate,
       optionKey: option.OptionKey,
@@ -158,7 +166,7 @@ export const bookingRoutes = new Hono<AppEnv>()
 
     let check;
     try {
-      check = await checkAvailability(c.env, tenant, type, option, start, end, pets, id);
+      check = await checkAvailability(c.env, tenant, service, option, start, end, pets, id);
       if (!check.available) {
         await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
         return c.json({ error: 'Sorry — those dates just filled up.' }, 409);
@@ -177,7 +185,8 @@ export const bookingRoutes = new Hono<AppEnv>()
     const sync = syncBookingToCalendar(c.env, tenant, {
       bookingId: id,
       endUserId: c.get('endUserId'),
-      serviceType: type,
+      serviceType: service.ServiceType,
+      serviceLabel: service.Label,
       startDate: start,
       endDate,
       startTime: null, // no booking path collects a time yet (deferred); all events are all-day

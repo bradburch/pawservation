@@ -296,7 +296,7 @@ function BookTab({
     <div className="bp-book">
       <div className="bp-service-grid">
         {config.services.map((s) => {
-          const Icon = SERVICE_ICONS[s.type] ?? IconPaw;
+          const Icon = SERVICE_ICONS[s.icon] ?? IconPaw;
           return (
             <button
               key={s.type}

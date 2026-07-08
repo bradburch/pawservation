@@ -10,11 +10,10 @@ import {
   type CapacityEvent,
   type CapacityLimits,
 } from '../../src/shared/index.js';
-import { getProviderConnection, listCapacityRows } from '../db/repo';
+import { getProviderConnection, listCapacityRows, type CapacityRow } from '../db/repo';
 import { getCalendarAccessToken } from './calendar-sync';
 import { categorizeCalendarEvent, listCalendarEvents } from './google-calendar';
-import { SERVICE_CATALOG, type ServiceType } from '../lib/services';
-import type { BookingRow, Tenant, TenantServiceOption } from '../types';
+import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /**
  * Per-tenant availability built on the shared capacity engine. The tenant's nullable config
@@ -27,14 +26,14 @@ function tenantLimits(tenant: Tenant): CapacityLimits {
   };
 }
 
-export function rowsToCapacityEvents(rows: BookingRow[]): CapacityEvent[] {
+export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
   return rows.map((row) => ({
     start_date: row.StartDate,
     end_date: row.EndDate ?? undefined,
     type:
       row.ServiceType === 'blocked'
         ? 'blocked'
-        : row.ServiceType === 'housesitting'
+        : row.CapacityKind === 'housesit'
           ? 'house-sit'
           : 'boarding',
     petCount: row.PetCount,
@@ -52,30 +51,31 @@ export type AvailabilityResult =
  * already know the dates can price a booking without a capacity read.
  */
 export function estimateCost(
-  serviceType: ServiceType,
+  service: TenantService,
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
 ): number {
-  if (SERVICE_CATALOG[serviceType].shape !== 'range') return option.Rate;
+  if (service.Shape !== 'range') return option.Rate;
   return option.Rate * billableUnits(nightsBetween(startDate, endDateExclusive), 'night');
 }
 
-function serviceTypeToCapacityType(t: string): 'boarding' | 'house-sit' {
-  return t === 'housesitting' ? 'house-sit' : 'boarding';
+/** Range services always draw from a pool (templates pin range ⇒ boarding|housesit). */
+function capacityKindToRequestType(kind: TenantService['CapacityKind']): 'boarding' | 'house-sit' {
+  return kind === 'housesit' ? 'house-sit' : 'boarding';
 }
 
 async function checkRange(
   env: Env,
   tenant: Tenant,
-  serviceType: ServiceType,
+  service: TenantService,
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
   petCount: number,
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
-  const requestType = serviceTypeToCapacityType(serviceType);
+  const requestType = capacityKindToRequestType(service.CapacityKind);
   const limits = tenantLimits(tenant);
   // The engine (rangeHasConflict) already rejects an over-cap boarding request on its own. This
   // fast path is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the
@@ -102,7 +102,7 @@ async function checkRange(
   }
   return {
     available: true,
-    estCost: estimateCost(serviceType, option, startDate, endDateExclusive),
+    estCost: estimateCost(service, option, startDate, endDateExclusive),
     nights: nightsBetween(startDate, endDateExclusive),
   };
 }
@@ -110,7 +110,7 @@ async function checkRange(
 async function checkSingle(
   env: Env,
   tenant: Tenant,
-  serviceType: ServiceType,
+  service: TenantService,
   option: TenantServiceOption,
   date: string,
   excludeBookingId?: string,
@@ -126,31 +126,31 @@ async function checkSingle(
   if (walkHasConflict(date, capacity)) {
     return { available: false, reason: 'That day is blocked off.' };
   }
-  return { available: true, estCost: estimateCost(serviceType, option, date, date) };
+  return { available: true, estCost: estimateCost(service, option, date, date) };
 }
 
 export function checkAvailability(
   env: Env,
   tenant: Tenant,
-  serviceType: ServiceType,
+  service: TenantService,
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
   petCount = 1,
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
-  return SERVICE_CATALOG[serviceType].shape === 'range'
+  return service.Shape === 'range'
     ? checkRange(
         env,
         tenant,
-        serviceType,
+        service,
         option,
         startDate,
         endDateExclusive,
         petCount,
         excludeBookingId,
       )
-    : checkSingle(env, tenant, serviceType, option, startDate, excludeBookingId);
+    : checkSingle(env, tenant, service, option, startDate, excludeBookingId);
 }
 
 export type MonthDay = {
@@ -164,12 +164,14 @@ export type MonthDay = {
 /**
  * Per-day availability for a calendar month, sourced exclusively from the tenant's Google Calendar.
  * Boarding/Unavailable events are categorized via extendedProperties metadata and summary parsing,
- * then fed through the shared capacity engine to produce each day's status.
+ * then fed through the shared capacity engine to produce each day's status. `services` (the
+ * tenant's full row list) maps each event's category slug to its capacity pool.
  */
 export async function monthAvailability(
   env: Env,
   tenant: Tenant,
-  serviceType: ServiceType,
+  service: TenantService,
+  services: TenantService[],
   month: string, // YYYY-MM
   callerEmail: string,
 ): Promise<{ today: string; days: MonthDay[] }> {
@@ -199,21 +201,25 @@ export async function monthAvailability(
         timeMax,
       );
 
+      // Event categories are service slugs; a slug's row says which capacity pool it draws from.
+      // Unknown/legacy slugs get no capacity event — same as pool-less services (walks etc.).
+      const kindBySlug = new Map(services.map((s) => [s.ServiceType, s.CapacityKind]));
+
       for (const ev of events) {
         const result = categorizeCalendarEvent(ev);
         if (result.kind === 'booking') {
           const { category, petCount, email } = result;
-          if (category === 'boarding') {
+          const poolKind = kindBySlug.get(category);
+          if (poolKind === 'boarding') {
             capacityEvents.push({
               start_date: ev.start,
               end_date: ev.end,
               type: 'boarding',
               petCount,
             });
-          } else if (category === 'housesitting') {
+          } else if (poolKind === 'housesit') {
             capacityEvents.push({ start_date: ev.start, end_date: ev.end, type: 'house-sit' });
           }
-          // walk/daycare/checkin: no capacity event
           if (email === callerEmail) {
             for (let d = ev.start; d < ev.end; d = addDays(d, 1)) {
               mineDays.add(d);
@@ -232,9 +238,7 @@ export async function monthAvailability(
 
   const cap = buildCapacity(capacityEvents);
   const requestType: 'boarding' | 'house-sit' | null =
-    serviceType === 'housesitting' || serviceType === 'boarding'
-      ? serviceTypeToCapacityType(serviceType)
-      : null;
+    service.CapacityKind === 'none' ? null : capacityKindToRequestType(service.CapacityKind);
 
   const days: MonthDay[] = [];
   for (let i = 0; i < daysInMonth; i++) {

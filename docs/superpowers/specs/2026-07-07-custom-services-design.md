@@ -14,7 +14,7 @@ capacity semantics) lives in code keyed by that enum. A sitter cannot offer
 
 The 2026-07-04 time-windowed-services spec worked around this by putting
 windows on `TenantServiceOptions`, explicitly rejecting per-slot service types
-*because* `ServiceType` was a closed enum. This design removes that
+_because_ `ServiceType` was a closed enum. This design removes that
 limitation: services become per-tenant data rows, and the five built-ins
 become **templates**. (The window/capacity option columns from that spec can
 still layer on top later; nothing here conflicts with it.)

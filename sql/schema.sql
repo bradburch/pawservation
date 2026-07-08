@@ -24,10 +24,23 @@ CREATE TABLE IF NOT EXISTS TenantUsers (
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- The authoritative, agnostic Service store: one row per service a tenant offers, each carrying
+-- its own behavior. ServiceType is a per-tenant SLUG (built-ins: boarding/housesitting/daycare/
+-- walk/checkin; sitters add custom ones like 'morning-walk' from templates — SERVICE_TEMPLATES
+-- in server/lib/services.ts). 'blocked' is reserved (see BookingRequests).
 CREATE TABLE IF NOT EXISTS TenantServices (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
-  ServiceType TEXT NOT NULL CHECK (ServiceType IN ('boarding', 'housesitting', 'daycare', 'walk', 'checkin')),
+  ServiceType TEXT NOT NULL,
   Enabled INTEGER NOT NULL DEFAULT 1,
+  Label TEXT NOT NULL,
+  Icon TEXT NOT NULL DEFAULT 'paw', -- widget icon key: bed|home|sun|paw|clipboard
+  Shape TEXT NOT NULL CHECK (Shape IN ('range', 'single')),
+  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
+  HasDuration INTEGER NOT NULL DEFAULT 0, -- options priced per duration (walk/check-in style)?
+  -- Which capacity POOL the service draws from (not the service's name): 'boarding' = pet-counted
+  -- vs Tenants.MaxBoardingPets, 'housesit' = day-counted vs MaxHouseSitsPerDay, 'none' = unlimited.
+  CapacityKind TEXT NOT NULL DEFAULT 'none' CHECK (CapacityKind IN ('boarding', 'housesit', 'none')),
+  SortOrder INTEGER NOT NULL DEFAULT 0,
   -- Per-service intake questions (JSON array of ServiceQuestion, see src/shared/booking/service-rules.ts)
   -- + optional booking-level limits. NULL limit = unlimited, matching the Tenants Max* convention.
   Questions TEXT NOT NULL DEFAULT '[]',
@@ -38,13 +51,13 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   UNIQUE (TenantId, ServiceType)
 );
 
--- One row per priced option. Non-duration services (boarding/housesitting/daycare) have a single
--- option with DurationMinutes NULL; walks/check-ins have one row per sitter-defined duration.
+-- One row per priced option. Non-duration services have a single option with DurationMinutes
+-- NULL; HasDuration services (walk/check-in style) have one row per sitter-defined duration.
 -- Rate is free-typed whole dollars with NO relationship to duration.
 CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
-  ServiceType TEXT NOT NULL CHECK (ServiceType IN ('boarding', 'housesitting', 'daycare', 'walk', 'checkin')),
+  ServiceType TEXT NOT NULL,
   OptionKey TEXT NOT NULL,
   Label TEXT NOT NULL,
   DurationMinutes INTEGER,
@@ -89,7 +102,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   EndUserId TEXT REFERENCES EndUsers(Id),
-  ServiceType TEXT NOT NULL CHECK (ServiceType IN ('boarding', 'housesitting', 'daycare', 'walk', 'checkin', 'blocked')),
+  ServiceType TEXT NOT NULL, -- tenant service slug, or the reserved 'blocked'
   StartDate TEXT NOT NULL,
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked

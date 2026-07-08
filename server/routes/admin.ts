@@ -4,10 +4,13 @@ import {
   addEndUserPet,
   clearProviderConnection,
   countBookingPetRefs,
+  countBookingsForService,
   countBookingsForUser,
+  createService,
   getEndUserById,
   deleteBlockedRange,
   deleteCustomer,
+  deleteService,
   getProviderConnection,
   insertBookingRequest,
   insertInvitedCustomer,
@@ -32,7 +35,15 @@ import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
 import { findCapability, providerViews } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
-import { isPetType, isServiceType, PET_TYPES, SERVICE_CATALOG } from '../lib/services';
+import {
+  isPetType,
+  isTemplateId,
+  PET_TYPES,
+  RESERVED_SERVICE_SLUGS,
+  SERVICE_TEMPLATES,
+  slugifyServiceLabel,
+  TEMPLATE_IDS,
+} from '../lib/services';
 import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
 import { NONCE_KEY } from './oauth';
@@ -162,7 +173,6 @@ export const adminRoutes = new Hono<AppEnv>()
       listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
       listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
     ]);
-    const enabledByType = new Map(services.map((s) => [s.ServiceType, Boolean(s.Enabled)]));
     return c.json({
       displayName: tenant.DisplayName,
       accentColor: tenant.AccentColor,
@@ -174,30 +184,31 @@ export const adminRoutes = new Hono<AppEnv>()
         petType: pt,
         enabled: petTypes.some((p) => p.PetType === pt && p.Enabled),
       })),
-      services: Object.entries(SERVICE_CATALOG).map(([type, meta]) => {
-        const svc = services.find((s) => s.ServiceType === type);
-        return {
-          type,
-          label: meta.label,
-          hasDuration: meta.hasDuration,
-          rateUnit: meta.rateUnit,
-          shape: meta.shape,
-          enabled: enabledByType.get(type as keyof typeof SERVICE_CATALOG) ?? false,
-          questions: svc?.Questions ?? [],
-          minNights: svc?.MinNights ?? null,
-          maxNights: svc?.MaxNights ?? null,
-          minPetCount: svc?.MinPetCount ?? null,
-          maxPetCount: svc?.MaxPetCount ?? null,
-          options: options
-            .filter((o) => o.ServiceType === type)
-            .map((o) => ({
-              optionKey: o.OptionKey,
-              label: o.Label,
-              durationMinutes: o.DurationMinutes,
-              rate: o.Rate,
-            })),
-        };
-      }),
+      services: services.map((svc) => ({
+        type: svc.ServiceType,
+        label: svc.Label,
+        icon: svc.Icon,
+        hasDuration: Boolean(svc.HasDuration),
+        rateUnit: svc.RateUnit,
+        shape: svc.Shape,
+        custom: !(svc.ServiceType in SERVICE_TEMPLATES),
+        enabled: Boolean(svc.Enabled),
+        questions: svc.Questions,
+        minNights: svc.MinNights,
+        maxNights: svc.MaxNights,
+        minPetCount: svc.MinPetCount,
+        maxPetCount: svc.MaxPetCount,
+        options: options
+          .filter((o) => o.ServiceType === svc.ServiceType)
+          .map((o) => ({
+            optionKey: o.OptionKey,
+            label: o.Label,
+            durationMinutes: o.DurationMinutes,
+            rate: o.Rate,
+          })),
+      })),
+      // "Add service" picker: template id + display label of each built-in behavior archetype.
+      templates: TEMPLATE_IDS.map((id) => ({ id, label: SERVICE_TEMPLATES[id].label })),
       blocked: blocked.map((b) => ({ id: b.Id, startDate: b.StartDate, endDate: b.EndDate })),
       providers: providerViews(connections).map(
         ({ capability, provider, label, authMode, status, connectedAt, calendarId }) => ({
@@ -263,21 +274,22 @@ export const adminRoutes = new Hono<AppEnv>()
         return c.json({ error: 'Unknown pet type.' }, 400);
     }
     for (const svc of services) {
-      if (!isServiceType(svc.type)) return c.json({ error: 'Unknown service type.' }, 400);
-      const meta = SERVICE_CATALOG[svc.type];
+      const meta = currentServices.find((s) => s.ServiceType === svc.type);
+      if (!meta) return c.json({ error: 'Unknown service type.' }, 400);
+      const hasDuration = Boolean(meta.HasDuration);
       const opts = svc.options ?? [];
       if (svc.enabled && opts.length === 0)
-        return c.json({ error: `${meta.label} needs at least one price option.` }, 400);
+        return c.json({ error: `${meta.Label} needs at least one price option.` }, 400);
       // Non-duration services derive every optionKey as 'standard', so more than one would collide
       // on the (TenantId, ServiceType, OptionKey) UNIQUE constraint mid-write. Reject up front.
-      if (!meta.hasDuration && opts.length > 1)
-        return c.json({ error: `${meta.label} takes a single price.` }, 400);
+      if (!hasDuration && opts.length > 1)
+        return c.json({ error: `${meta.Label} takes a single price.` }, 400);
       for (const o of opts) {
         if (!isValidRate(o.rate)) return c.json({ error: 'Rates must be whole dollars ≥ 1.' }, 400);
-        if (meta.hasDuration && !isValidDuration(o.durationMinutes))
+        if (hasDuration && !isValidDuration(o.durationMinutes))
           return c.json({ error: 'Durations must be whole minutes ≥ 1.' }, 400);
       }
-      if (meta.hasDuration) {
+      if (hasDuration) {
         const mins = opts.map((o) => o.durationMinutes);
         if (new Set(mins).size !== mins.length)
           return c.json({ error: 'Duplicate durations for one service.' }, 400);
@@ -290,19 +302,19 @@ export const adminRoutes = new Hono<AppEnv>()
         !isNullableLimit(svc.minNights ?? null, DEFENSIVE_MAX_NIGHTS) ||
         !isNullableLimit(svc.maxNights ?? null, DEFENSIVE_MAX_NIGHTS)
       )
-        return c.json({ error: `${meta.label}: nights must be a positive number, or blank.` }, 400);
+        return c.json({ error: `${meta.Label}: nights must be a positive number, or blank.` }, 400);
       if (svc.minNights != null && svc.maxNights != null && svc.minNights > svc.maxNights)
-        return c.json({ error: `${meta.label}: min nights cannot exceed max nights.` }, 400);
+        return c.json({ error: `${meta.Label}: min nights cannot exceed max nights.` }, 400);
       if (
         !isNullableLimit(svc.minPetCount ?? null, DEFENSIVE_MAX_PET_COUNT) ||
         !isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT)
       )
         return c.json(
-          { error: `${meta.label}: pet count must be a positive number, or blank.` },
+          { error: `${meta.Label}: pet count must be a positive number, or blank.` },
           400,
         );
       if (svc.minPetCount != null && svc.maxPetCount != null && svc.minPetCount > svc.maxPetCount)
-        return c.json({ error: `${meta.label}: min pets cannot exceed max pets.` }, 400);
+        return c.json({ error: `${meta.Label}: min pets cannot exceed max pets.` }, 400);
     }
 
     await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
@@ -318,9 +330,10 @@ export const adminRoutes = new Hono<AppEnv>()
         await setPetTypeEnabled(c.env.PAWBOOK_DB, tenant.Id, pt, petTypes.includes(pt));
     }
     for (const svc of services) {
-      const svcType = svc.type as keyof typeof SERVICE_CATALOG;
-      const meta = SERVICE_CATALOG[svcType];
-      const current = currentServices.find((s) => s.ServiceType === svcType);
+      const svcType = svc.type as string;
+      // Validation above guarantees a matching row exists.
+      const current = currentServices.find((s) => s.ServiceType === svcType)!;
+      const hasDuration = Boolean(current.HasDuration);
       const questions: ServiceQuestion[] =
         svc.questions !== undefined
           ? svc.questions.map((q) => ({
@@ -333,32 +346,81 @@ export const adminRoutes = new Hono<AppEnv>()
               ...(q.type === 'text' && q.pattern ? { pattern: q.pattern } : {}),
               ...(q.type === 'select' ? { options: q.options } : {}),
             }))
-          : (current?.Questions ?? []);
+          : current.Questions;
       await setServiceConfig(c.env.PAWBOOK_DB, tenant.Id, svcType, {
         enabled: svc.enabled ?? false,
         questions,
-        minNights: 'minNights' in svc ? (svc.minNights ?? null) : (current?.MinNights ?? null),
-        maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : (current?.MaxNights ?? null),
-        minPetCount:
-          'minPetCount' in svc ? (svc.minPetCount ?? null) : (current?.MinPetCount ?? null),
-        maxPetCount:
-          'maxPetCount' in svc ? (svc.maxPetCount ?? null) : (current?.MaxPetCount ?? null),
+        minNights: 'minNights' in svc ? (svc.minNights ?? null) : current.MinNights,
+        maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,
+        minPetCount: 'minPetCount' in svc ? (svc.minPetCount ?? null) : current.MinPetCount,
+        maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
       });
       await replaceServiceOptions(
         c.env.PAWBOOK_DB,
         tenant.Id,
         svcType,
         (svc.options ?? []).map((o) => ({
-          optionKey: meta.hasDuration ? `d${o.durationMinutes}` : 'standard',
-          label: o.label?.trim() || (meta.hasDuration ? `${o.durationMinutes} min` : 'Standard'),
-          durationMinutes: meta.hasDuration ? (o.durationMinutes as number) : null,
+          optionKey: hasDuration ? `d${o.durationMinutes}` : 'standard',
+          label: o.label?.trim() || (hasDuration ? `${o.durationMinutes} min` : 'Standard'),
+          durationMinutes: hasDuration ? (o.durationMinutes as number) : null,
           rate: o.rate as number,
-          rateUnit: meta.rateUnit,
+          rateUnit: current.RateUnit,
         })),
       );
     }
 
     // The widget reads tenant config through the KV-cached resolution seam (PRD FR19).
+    await invalidateTenantCache(tenant.Slug, c.env);
+    return c.body(null, 204);
+  })
+
+  // Create a custom service from a template. The template permanently fixes behavior (shape,
+  // rate unit, duration, capacity pool); the sitter picks only the name. Created disabled with
+  // no options — priced and enabled through the normal settings PUT, same as any service.
+  .post('/:slug/admin/services', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ template?: string; label?: string }>()
+      .catch(() => ({}) as Record<string, never>);
+    if (!isTemplateId(body.template)) return c.json({ error: 'Unknown template.' }, 400);
+    const label = typeof body.label === 'string' ? body.label.trim() : '';
+    if (!label) return c.json({ error: 'Service name required.' }, 400);
+    const slug = slugifyServiceLabel(label);
+    if (!slug || RESERVED_SERVICE_SLUGS.includes(slug))
+      return c.json({ error: 'Pick a different service name.' }, 400);
+
+    const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    if (existing.some((s) => s.ServiceType === slug))
+      return c.json({ error: 'A service with that name already exists.' }, 400);
+
+    const tpl = SERVICE_TEMPLATES[body.template];
+    await createService(c.env.PAWBOOK_DB, tenant.Id, {
+      serviceType: slug,
+      label,
+      icon: tpl.icon,
+      shape: tpl.shape,
+      rateUnit: tpl.rateUnit,
+      hasDuration: tpl.hasDuration,
+      capacityKind: tpl.capacityKind,
+      sortOrder: Math.max(0, ...existing.map((s) => s.SortOrder)) + 1,
+    });
+    await invalidateTenantCache(tenant.Slug, c.env);
+    return c.json({ type: slug, label, template: body.template }, 201);
+  })
+
+  // Delete a CUSTOM service. Built-ins are disabled, never deleted; a slug any booking row
+  // references (any status — history included) can't be removed.
+  .delete('/:slug/admin/services/:type', async (c) => {
+    const tenant = c.get('tenant');
+    const type = c.req.param('type');
+    const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    const service = existing.find((s) => s.ServiceType === type);
+    if (!service) return c.json({ error: 'Unknown service type.' }, 404);
+    if (type in SERVICE_TEMPLATES)
+      return c.json({ error: 'Built-in services can be disabled, not deleted.' }, 400);
+    if ((await countBookingsForService(c.env.PAWBOOK_DB, tenant.Id, type)) > 0)
+      return c.json({ error: 'That service has bookings — disable it instead.' }, 409);
+    await deleteService(c.env.PAWBOOK_DB, tenant.Id, type);
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.body(null, 204);
   })

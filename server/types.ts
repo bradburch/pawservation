@@ -1,7 +1,7 @@
-import type { PetType, RateUnit, ServiceType } from './lib/services';
+import type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType } from './lib/services';
 import type { ServiceQuestion } from '../src/shared/index.js';
 
-export type { PetType, RateUnit, ServiceType };
+export type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType };
 
 export type Tenant = {
   Id: string;
@@ -23,8 +23,15 @@ export type TenantUser = {
 
 export type TenantService = {
   TenantId: string;
-  ServiceType: ServiceType;
+  ServiceType: ServiceType; // per-tenant slug
   Enabled: number;
+  Label: string;
+  Icon: string;
+  Shape: ServiceShape;
+  RateUnit: RateUnit;
+  HasDuration: number;
+  CapacityKind: CapacityKind;
+  SortOrder: number;
   Questions: ServiceQuestion[];
   MinNights: number | null;
   MaxNights: number | null;

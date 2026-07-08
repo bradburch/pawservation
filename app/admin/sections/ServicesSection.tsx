@@ -1,6 +1,27 @@
+import { useState } from 'react';
 import { NullableNumberField } from './BusinessSection.js';
-import { IconTag } from '../../shared-ui/icons';
-import type { QuestionForm, ServiceForm, SettingsSectionProps } from '../shared.js';
+import {
+  IconBed,
+  IconClipboardCheck,
+  IconHome,
+  IconPaw,
+  IconSun,
+  IconTag,
+} from '../../shared-ui/icons';
+import type { QuestionForm, ServiceForm, Settings, SettingsSectionProps } from '../shared.js';
+
+const SERVICE_ICONS: Record<string, typeof IconPaw> = {
+  bed: IconBed,
+  home: IconHome,
+  sun: IconSun,
+  clipboard: IconClipboardCheck,
+  paw: IconPaw,
+};
+
+function ServiceIcon({ icon }: { icon: string }) {
+  const Icon = SERVICE_ICONS[icon] ?? IconPaw;
+  return <Icon size={16} />;
+}
 
 const QUESTION_TYPES: QuestionForm['type'][] = ['text', 'yesno', 'number', 'select'];
 const QUESTION_TYPE_LABELS: Record<QuestionForm['type'], string> = {
@@ -122,7 +143,59 @@ function QuestionRow({
   );
 }
 
-export function ServicesSection({ settings, setSettings }: SettingsSectionProps) {
+function AddServiceForm({
+  templates,
+  addService,
+}: {
+  templates: Settings['templates'];
+  addService: (template: string, label: string) => Promise<void>;
+}) {
+  const [template, setTemplate] = useState(templates[0]?.id ?? '');
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (busy || !label.trim() || !template) return;
+    setBusy(true);
+    try {
+      await addService(template, label.trim());
+      setLabel('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pb-inline">
+      <select value={template} onChange={(e) => setTemplate(e.target.value)}>
+        {templates.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      <input
+        type="text"
+        placeholder="Service name"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+      />
+      <button type="button" onClick={() => void submit()} disabled={busy}>
+        {busy ? 'Adding…' : 'Add service'}
+      </button>
+    </div>
+  );
+}
+
+export function ServicesSection({
+  settings,
+  setSettings,
+  addService,
+  removeService,
+}: SettingsSectionProps & {
+  addService: (template: string, label: string) => Promise<void>;
+  removeService: (type: string) => Promise<void>;
+}) {
   return (
     <>
       <h2>
@@ -142,8 +215,13 @@ export function ServicesSection({ settings, setSettings }: SettingsSectionProps)
                 checked={s.enabled}
                 onChange={(e) => setService({ ...s, enabled: e.target.checked })}
               />
-              {s.label}
+              <ServiceIcon icon={s.icon} /> {s.label}
             </label>
+            {s.custom && (
+              <button type="button" onClick={() => void removeService(s.type)}>
+                Delete
+              </button>
+            )}
             {!s.hasDuration ? (
               <label className="pb-inline">
                 $
@@ -294,6 +372,10 @@ export function ServicesSection({ settings, setSettings }: SettingsSectionProps)
           </div>
         );
       })}
+      <div className="pb-service">
+        <h3>Add service</h3>
+        <AddServiceForm templates={settings.templates} addService={addService} />
+      </div>
     </>
   );
 }

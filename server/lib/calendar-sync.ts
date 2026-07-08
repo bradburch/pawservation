@@ -6,7 +6,6 @@ import {
   setProviderTokens,
 } from '../db/repo';
 import { buildEventResource, createEvent, refreshAccessToken } from './google-calendar';
-import { SERVICE_CATALOG } from './services';
 import type { ServiceType } from './services';
 import { decryptToken, encryptToken } from './token-crypto';
 import type { Tenant, ProviderConnectionWithTokens } from '../types';
@@ -14,7 +13,8 @@ import type { Tenant, ProviderConnectionWithTokens } from '../types';
 export type SyncInput = {
   bookingId: string;
   endUserId: string | null;
-  serviceType: ServiceType;
+  serviceType: ServiceType; // tenant service slug — stored as the event's category
+  serviceLabel: string;
   startDate: string;
   endDate: string | null;
   startTime: string | null;
@@ -61,7 +61,7 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
     : null;
 
   const resource = buildEventResource({
-    serviceLabel: SERVICE_CATALOG[b.serviceType].label,
+    serviceLabel: b.serviceLabel,
     category: b.serviceType,
     bookingId: b.bookingId,
     startDate: b.startDate,

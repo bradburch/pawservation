@@ -2,9 +2,32 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { insertBookingRequest } from '../db/repo';
 import { checkAvailability, rowsToCapacityEvents } from '../lib/availability';
-import { SERVICE_CATALOG } from '../lib/services';
-import type { Tenant, TenantServiceOption } from '../types';
+import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
+import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import { createTestEnv, TENANT_A } from './helpers';
+
+/** A TenantService row cloned from a built-in template, as the migration/seed produces. */
+function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService {
+  const tpl = SERVICE_TEMPLATES[type];
+  return {
+    TenantId: TENANT_A,
+    ServiceType: type,
+    Enabled: 1,
+    Label: tpl.label,
+    Icon: tpl.icon,
+    Shape: tpl.shape,
+    RateUnit: tpl.rateUnit,
+    HasDuration: tpl.hasDuration ? 1 : 0,
+    CapacityKind: tpl.capacityKind,
+    SortOrder: 0,
+    Questions: [],
+    MinNights: null,
+    MaxNights: null,
+    MinPetCount: null,
+    MaxPetCount: null,
+    ...over,
+  };
+}
 
 function tenant(over: Partial<Tenant> = {}): Tenant {
   return {
@@ -165,6 +188,7 @@ describe('rowsToCapacityEvents', () => {
         EstCost: null,
         Status: 'confirmed',
         CreatedAt: '',
+        CapacityKind: null,
       },
       {
         Id: '2',
@@ -181,6 +205,7 @@ describe('rowsToCapacityEvents', () => {
         EstCost: 100,
         Status: 'pending',
         CreatedAt: '',
+        CapacityKind: 'boarding',
       },
     ]);
     expect(events[0]).toMatchObject({
@@ -249,7 +274,7 @@ describe('checkAvailability', () => {
   it('single-visit cost is the picked option price (no nights math)', async () => {
     const { env } = createTestEnv();
     const t = tenant();
-    const res = await checkAvailability(env, t, 'walk', opt({ Rate: 35 }), '2028-08-01', '');
+    const res = await checkAvailability(env, t, svc('walk'), opt({ Rate: 35 }), '2028-08-01', '');
     expect(res).toMatchObject({ available: true, estCost: 35 });
   });
 
@@ -263,7 +288,7 @@ describe('checkAvailability', () => {
       Rate: 50,
       RateUnit: 'night',
     });
-    const res = await checkAvailability(env, t, 'boarding', o, '2028-08-10', '2028-08-13', 1);
+    const res = await checkAvailability(env, t, svc('boarding'), o, '2028-08-10', '2028-08-13', 1);
     expect(res).toMatchObject({ available: true, estCost: 150, nights: 3 });
   });
 
@@ -278,9 +303,17 @@ describe('checkAvailability', () => {
       RateUnit: 'night',
     });
     // Seed: 1 pet boarding Jun 20-25. A house-sit Jun 21-23 overlaps boarding on Jun 21 AND 22.
-    const res = await checkAvailability(env, t, 'housesitting', o, '2028-06-21', '2028-06-23', 2);
+    const res = await checkAvailability(
+      env,
+      t,
+      svc('housesitting'),
+      o,
+      '2028-06-21',
+      '2028-06-23',
+      2,
+    );
     expect(res).toMatchObject({ available: false });
-    expect(SERVICE_CATALOG.housesitting.shape).toBe('range');
+    expect(SERVICE_TEMPLATES.housesitting.shape).toBe('range');
   });
 
   it('unlimited tenant (paws-and-relax) accepts overlapping boardings', async () => {

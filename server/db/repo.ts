@@ -56,12 +56,77 @@ export async function getTenantUserByEmail(
 export async function listServices(db: D1Database, tenantId: string): Promise<TenantService[]> {
   const { results } = await db
     .prepare(
-      `SELECT TenantId, ServiceType, Enabled, Questions, MinNights, MaxNights, MinPetCount, MaxPetCount
-       FROM TenantServices WHERE TenantId = ?`,
+      `SELECT TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind,
+              SortOrder, Questions, MinNights, MaxNights, MinPetCount, MaxPetCount
+       FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
     .all<Omit<TenantService, 'Questions'> & { Questions: string }>();
   return results.map((r) => ({ ...r, Questions: JSON.parse(r.Questions) as ServiceQuestion[] }));
+}
+
+/** Create a service from template-derived behavior. Callers validate slug/template beforehand. */
+export async function createService(
+  db: D1Database,
+  tenantId: string,
+  svc: {
+    serviceType: string;
+    label: string;
+    icon: string;
+    shape: 'range' | 'single';
+    rateUnit: 'night' | 'day' | 'visit';
+    hasDuration: boolean;
+    capacityKind: 'boarding' | 'housesit' | 'none';
+    sortOrder: number;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO TenantServices
+         (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      tenantId,
+      svc.serviceType,
+      svc.label,
+      svc.icon,
+      svc.shape,
+      svc.rateUnit,
+      svc.hasDuration ? 1 : 0,
+      svc.capacityKind,
+      svc.sortOrder,
+    )
+    .run();
+}
+
+/** Delete a service and its options in one atomic batch. Callers enforce the no-bookings guard. */
+export async function deleteService(
+  db: D1Database,
+  tenantId: string,
+  serviceType: string,
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+    db
+      .prepare('DELETE FROM TenantServices WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+  ]);
+}
+
+/** Bookings of ANY status referencing the slug — history included, so deletion never orphans it. */
+export async function countBookingsForService(
+  db: D1Database,
+  tenantId: string,
+  serviceType: string,
+): Promise<number> {
+  const row = await db
+    .prepare('SELECT COUNT(*) AS n FROM BookingRequests WHERE TenantId = ? AND ServiceType = ?')
+    .bind(tenantId, serviceType)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 export async function listServiceOptions(
@@ -139,10 +204,14 @@ export async function consumeLoginCode(
   return row.EndUserId;
 }
 
+/** A booking row joined with its service's capacity pool (null for 'blocked' sentinel rows). */
+export type CapacityRow = BookingRow & { CapacityKind: 'boarding' | 'housesit' | null };
+
 /**
- * Rows that feed the capacity map: boarding + house-sitting + blocked, pending or confirmed,
- * overlapping [from, to). `excludeId` omits one row — used by the post-insert race check so a
- * just-created booking re-asks "do I still fit, ignoring myself?" against everyone else.
+ * Rows that feed the capacity map: bookings whose service draws from a capacity pool
+ * (CapacityKind boarding/housesit — custom services included) + blocked ranges, pending or
+ * confirmed, overlapping [from, to). `excludeId` omits one row — used by the post-insert race
+ * check so a just-created booking re-asks "do I still fit, ignoring myself?" against everyone else.
  */
 export async function listCapacityRows(
   db: D1Database,
@@ -150,18 +219,22 @@ export async function listCapacityRows(
   fromDate: string,
   toDateExclusive: string,
   excludeId?: string,
-): Promise<BookingRow[]> {
+): Promise<CapacityRow[]> {
+  const cols = BOOKING_COLS.split(', ')
+    .map((c) => `b.${c}`)
+    .join(', ');
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS}
-       FROM BookingRequests
-       WHERE TenantId = ? AND Status IN ('pending', 'confirmed')
-         AND ServiceType IN ('boarding', 'housesitting', 'blocked')
-         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?
-         AND (? IS NULL OR Id != ?)`,
+      `SELECT ${cols}, s.CapacityKind
+       FROM BookingRequests b
+       LEFT JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
+       WHERE b.TenantId = ? AND b.Status IN ('pending', 'confirmed')
+         AND (b.ServiceType = 'blocked' OR s.CapacityKind IN ('boarding', 'housesit'))
+         AND b.StartDate < ? AND COALESCE(b.EndDate, b.StartDate) >= ?
+         AND (? IS NULL OR b.Id != ?)`,
     )
     .bind(tenantId, toDateExclusive, fromDate, excludeId ?? null, excludeId ?? null)
-    .all<BookingRow>();
+    .all<CapacityRow>();
   return results;
 }
 
@@ -289,6 +362,7 @@ export async function updateTenantSettings(
     .run();
 }
 
+/** UPDATE-only: service rows are created explicitly (createService / seed / migration backfill). */
 export async function setServiceConfig(
   db: D1Database,
   tenantId: string,
@@ -304,21 +378,19 @@ export async function setServiceConfig(
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO TenantServices (TenantId, ServiceType, Enabled, Questions, MinNights, MaxNights, MinPetCount, MaxPetCount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (TenantId, ServiceType) DO UPDATE SET
-         Enabled = excluded.Enabled, Questions = excluded.Questions, MinNights = excluded.MinNights,
-         MaxNights = excluded.MaxNights, MinPetCount = excluded.MinPetCount, MaxPetCount = excluded.MaxPetCount`,
+      `UPDATE TenantServices SET
+         Enabled = ?, Questions = ?, MinNights = ?, MaxNights = ?, MinPetCount = ?, MaxPetCount = ?
+       WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
-      tenantId,
-      serviceType,
       config.enabled ? 1 : 0,
       JSON.stringify(config.questions),
       config.minNights,
       config.maxNights,
       config.minPetCount,
       config.maxPetCount,
+      tenantId,
+      serviceType,
     )
     .run();
 }

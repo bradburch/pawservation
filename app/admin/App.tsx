@@ -269,6 +269,21 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       await refresh();
     });
 
+  const addService = (template: string, label: string) =>
+    run(async () => {
+      await adminFetch(token, `/api/${slug}/admin/services`, {
+        method: 'POST',
+        body: JSON.stringify({ template, label }),
+      });
+      await refresh();
+    });
+
+  const removeService = (type: string) =>
+    run(async () => {
+      await adminFetch(token, `/api/${slug}/admin/services/${type}`, { method: 'DELETE' });
+      await refresh();
+    });
+
   const connect = (capability: string) =>
     run(async () => {
       await adminFetch(token, `/api/${slug}/admin/providers/${capability}/connect`, {
@@ -363,7 +378,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const panels: Record<SectionKey, ReactNode> = {
     business: <BusinessSection settings={settings} setSettings={setSettings} />,
     pets: <PetsSection settings={settings} setSettings={setSettings} />,
-    services: <ServicesSection settings={settings} setSettings={setSettings} />,
+    services: (
+      <ServicesSection
+        settings={settings}
+        setSettings={setSettings}
+        addService={addService}
+        removeService={removeService}
+      />
+    ),
     timeoff: (
       <TimeOffSection
         blocked={settings.blocked}
