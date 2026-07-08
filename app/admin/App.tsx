@@ -119,9 +119,6 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
         {busy ? 'Signing in…' : 'Sign in'}
       </button>
       {error && <p className="pb-error">{error}</p>}
-      <p className="pb-hint">
-        <small>Demo logins are in the app's DEMO_NOTES.md.</small>
-      </p>
     </div>
   );
 }
@@ -132,19 +129,21 @@ type SectionKey =
 const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck },
   { key: 'business', label: 'Business', icon: IconStore },
-  { key: 'pets', label: 'Pets', icon: IconPaw },
+  { key: 'pets', label: 'Pet types', icon: IconPaw },
   { key: 'services', label: 'Services & rates', icon: IconTag },
   { key: 'timeoff', label: 'Time off', icon: IconCalendar },
   { key: 'clients', label: 'Clients', icon: IconUsers },
   { key: 'apps', label: 'Connected apps', icon: IconPlug },
-  { key: 'embed', label: 'Embed', icon: IconCode },
+  { key: 'embed', label: 'Your website', icon: IconCode },
 ];
 
 /** Reads the initial section from the URL hash (e.g. `/admin#clients`) so deep links and page
  * refreshes land on the right section, same as the old anchor-nav did. */
 function sectionFromHash(): SectionKey {
   const hash = window.location.hash.slice(1);
-  return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'business';
+  // Default to Bookings — the sitter's morning question is "what needs my reply?",
+  // not their own settings.
+  return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'bookings';
 }
 
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
@@ -185,7 +184,12 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // Keeps the active section in sync with browser back/forward through the hash history
   // entries that switching sections now creates.
   useEffect(() => {
-    const onHashChange = () => setActiveSection(sectionFromHash());
+    const onHashChange = () => {
+      setActiveSection(sectionFromHash());
+      // An error banner describes the action just attempted; carrying it into another
+      // section reads as a live, unexplained failure there.
+      setError('');
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
@@ -193,7 +197,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // The saved confirmation is transient; errors stay until resolved.
   useEffect(() => {
     if (!message) return;
-    const timer = window.setTimeout(() => setMessage(''), 4000);
+    const timer = window.setTimeout(() => setMessage(''), 10000);
     return () => window.clearTimeout(timer);
   }, [message]);
 
@@ -242,6 +246,8 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
         maxStayNights: settings.maxStayNights,
         timezone: settings.timezone,
+        contactEmail: settings.contactEmail,
+        contactPhone: settings.contactPhone,
         petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
         services: settings.services.map((s): ServicePayload => ({
           type: s.type,

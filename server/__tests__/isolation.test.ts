@@ -27,7 +27,14 @@ describe('tenant isolation', () => {
 
   it('READ: a booking created under tenant A never appears in tenant B queries', async () => {
     const { env } = createTestEnv();
-    const userA = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jess@example.com', null);
+    // A fresh email — 'jess@example.com' is the seeded demo customer and now comes with
+    // seeded bookings under BOTH tenants.
+    const userA = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'iso-read@example.com',
+      null,
+    );
     await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: userA.Id,
       serviceType: 'boarding',
@@ -68,8 +75,18 @@ describe('tenant isolation', () => {
 
   it('LIST: my-bookings under the other tenant is empty for the same email', async () => {
     const { env } = createTestEnv();
-    const userA = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jess@example.com', null);
-    const userB = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_B, 'jess@example.com', null);
+    const userA = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'iso-list@example.com',
+      null,
+    );
+    const userB = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_B,
+      'iso-list@example.com',
+      null,
+    );
     await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: userA.Id,
       serviceType: 'walk',

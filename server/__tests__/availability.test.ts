@@ -16,6 +16,8 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     MaxHouseSitsPerDay: null,
     MaxStayNights: null,
     Timezone: null,
+    ContactEmail: null,
+    ContactPhone: null,
     ...over,
   };
 }

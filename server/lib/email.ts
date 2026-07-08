@@ -44,6 +44,26 @@ export async function sendLoginCode(env: Env, to: string, code: string): Promise
   });
 }
 
+/**
+ * Tell the customer their request was confirmed/declined or their booking cancelled.
+ * Throws if email is not configured or Resend rejects the request.
+ */
+export async function sendBookingStatusEmail(
+  env: Env,
+  to: string,
+  displayName: string,
+  statusWord: 'confirmed' | 'declined' | 'cancelled',
+  whenText: string,
+): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  await resendPost(env, {
+    to,
+    subject: `Your booking with ${displayName} was ${statusWord}`,
+    text: `${displayName} has ${statusWord} your booking (${whenText}).`,
+    html: `<p>${htmlEscape(displayName)} has <strong>${statusWord}</strong> your booking (${htmlEscape(whenText)}).</p>`,
+  });
+}
+
 /** Send a booking invite. Throws if email is not configured or Resend rejects the request. */
 export async function sendInvite(
   env: Env,

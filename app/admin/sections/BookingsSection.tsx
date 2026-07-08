@@ -9,6 +9,15 @@ function formatWhen(b: AdminBooking): string {
   return b.startTime ? `${range} at ${b.startTime}` : range;
 }
 
+const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
+
+function chipClass(status: string): string {
+  if (status === 'confirmed') return ' pb-chip-ok';
+  if (status === 'cancelled') return ' pb-chip-bad';
+  if (status === 'declined') return ' pb-chip-warn';
+  return '';
+}
+
 export function BookingsSection({
   session,
   handleError,
@@ -20,6 +29,7 @@ export function BookingsSection({
 }) {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
 
   const load = () =>
     adminApi.bookings.list(session.slug, session.token).then(({ bookings: list }) => list);
@@ -35,12 +45,34 @@ export function BookingsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  const setStatus = async (id: string, status: 'confirmed' | 'cancelled') => {
+  const setStatus = async (b: AdminBooking, status: 'confirmed' | 'declined' | 'cancelled') => {
     if (busyId) return;
+    if (
+      status === 'cancelled' &&
+      !window.confirm(
+        `Cancel ${b.customerName || b.customerEmail || 'this client'}'s ${b.type} booking (${formatWhen(b)})? This can't be undone.`,
+      )
+    )
+      return;
     clearError();
-    setBusyId(id);
+    setMessage('');
+    setBusyId(b.id);
     try {
-      await adminApi.bookings.setStatus(session.slug, session.token, id, status);
+      const { notified } = await adminApi.bookings.setStatus(
+        session.slug,
+        session.token,
+        b.id,
+        status,
+      );
+      const who = b.customerName || b.customerEmail || 'the client';
+      const verb =
+        status === 'confirmed' ? 'Confirmed' : status === 'declined' ? 'Declined' : 'Cancelled';
+      setMessage(
+        `${verb} ${who}'s ${b.type} ${status === 'cancelled' ? 'booking' : 'request'}. ` +
+          (notified
+            ? `We emailed ${who} the update.`
+            : `${who} couldn't be emailed automatically (email sending isn't set up), so let them know directly.`),
+      );
       setBookings(await load());
     } catch (e) {
       handleError(e);
@@ -49,66 +81,74 @@ export function BookingsSection({
     }
   };
 
+  const actionsFor = (b: AdminBooking) => (
+    <span>
+      {b.status === 'pending' && (
+        <>
+          <button disabled={busyId === b.id} onClick={() => void setStatus(b, 'confirmed')}>
+            Confirm
+          </button>
+          <button disabled={busyId === b.id} onClick={() => void setStatus(b, 'declined')}>
+            Decline
+          </button>
+        </>
+      )}
+      {b.status === 'confirmed' && (
+        <button disabled={busyId === b.id} onClick={() => void setStatus(b, 'cancelled')}>
+          Cancel
+        </button>
+      )}
+    </span>
+  );
+
+  const row = (b: AdminBooking) => (
+    <li key={b.id}>
+      <span>
+        {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
+        <br />
+        {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
+        {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
+        <span className={`pb-chip${chipClass(b.status)}`}>{b.status}</span>
+      </span>
+      {actionsFor(b)}
+    </li>
+  );
+
+  const pending = (bookings ?? []).filter((b) => b.status === 'pending').sort(byStartDate);
+  const rest = (bookings ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);
+
   return (
     <>
       <h2>
         <IconClipboardCheck size={18} /> Bookings
       </h2>
-      <p className="pb-applies">Confirm or decline requests as they come in.</p>
+      {/* Fixed to the viewport bottom (reusing the save bar's styling) so it can't scroll out
+          of view or slide under the sticky header — it carries the "was the client told?" info. */}
+      {message && (
+        <div className="pb-savebar" role="status">
+          <p className="pb-savebar-saved">{message}</p>
+          <button onClick={() => setMessage('')}>OK</button>
+        </div>
+      )}
       {bookings === null ? (
         <p>Loading…</p>
       ) : bookings.length === 0 ? (
         <p className="pb-hint">No bookings yet.</p>
       ) : (
-        <ul>
-          {bookings.map((b) => (
-            <li key={b.id}>
-              <span>
-                {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
-                <br />
-                {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
-                {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
-                <span
-                  className={`pb-chip${
-                    b.status === 'confirmed'
-                      ? ' pb-chip-ok'
-                      : b.status === 'cancelled'
-                        ? ' pb-chip-warn'
-                        : ''
-                  }`}
-                >
-                  {b.status}
-                </span>
-              </span>
-              <span>
-                {b.status === 'pending' && (
-                  <>
-                    <button
-                      disabled={busyId === b.id}
-                      onClick={() => void setStatus(b.id, 'confirmed')}
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      disabled={busyId === b.id}
-                      onClick={() => void setStatus(b.id, 'cancelled')}
-                    >
-                      Decline
-                    </button>
-                  </>
-                )}
-                {b.status === 'confirmed' && (
-                  <button
-                    disabled={busyId === b.id}
-                    onClick={() => void setStatus(b.id, 'cancelled')}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <h3>
+            {pending.length === 0
+              ? 'No requests waiting for a reply'
+              : `Needs your reply (${pending.length})`}
+          </h3>
+          {pending.length > 0 && <ul>{pending.map(row)}</ul>}
+          {rest.length > 0 && (
+            <>
+              <h3>Everything else</h3>
+              <ul>{rest.map(row)}</ul>
+            </>
+          )}
+        </>
       )}
     </>
   );
