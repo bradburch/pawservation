@@ -39,6 +39,25 @@ export function BusinessSection({ settings, setSettings }: SettingsSectionProps)
           onChange={(e) => setSettings({ ...settings, accentColor: e.target.value })}
         />
       </label>
+      <label>
+        Contact email
+        <input
+          type="email"
+          placeholder="you@example.com"
+          value={settings.contactEmail ?? ''}
+          onChange={(e) => setSettings({ ...settings, contactEmail: e.target.value || null })}
+        />
+      </label>
+      <label>
+        Contact phone
+        <input
+          type="tel"
+          placeholder="(555) 555-0123"
+          value={settings.contactPhone ?? ''}
+          onChange={(e) => setSettings({ ...settings, contactPhone: e.target.value || null })}
+        />
+      </label>
+      <p className="pb-hint">Shown to your clients on the booking page so they can reach you.</p>
       <NullableNumberField
         label="Boarding spots per day"
         value={settings.maxBoardingPets}

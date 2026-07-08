@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { formatBlockRange } from '../../../src/shared/index.js';
+import { addDays, formatBlockRange } from '../../../src/shared/index.js';
 import { IconCalendar } from '../../shared-ui/icons';
 import type { Settings } from '../shared.js';
 import { adminFetch } from '../shared.js';
@@ -23,14 +23,18 @@ export function TimeOffSection({
   const [blockEnd, setBlockEnd] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // The sitter types the FIRST and LAST day off (inclusive — how humans say "Aug 10–17");
+  // the API/DB convention is an exclusive end, so convert at this boundary.
+  const rangeValid = blockStart !== '' && blockEnd !== '' && blockEnd >= blockStart;
+
   const addBlock = async () => {
-    if (busy) return;
+    if (busy || !rangeValid) return;
     clearError();
     setBusy(true);
     try {
       await adminFetch(token, `/api/${slug}/admin/blocked`, {
         method: 'POST',
-        body: JSON.stringify({ startDate: blockStart, endDate: blockEnd }),
+        body: JSON.stringify({ startDate: blockStart, endDate: addDays(blockEnd, 1) }),
       });
       setBlockStart('');
       setBlockEnd('');
@@ -71,12 +75,24 @@ export function TimeOffSection({
         ))}
       </ul>
       <div className="pb-inline">
-        <input type="date" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} />
-        <input type="date" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} />
-        <button onClick={() => void addBlock()} disabled={busy}>
-          {busy ? 'Saving…' : 'Block range'}
+        <label className="pb-inline">
+          First day off
+          <input type="date" value={blockStart} onChange={(e) => setBlockStart(e.target.value)} />
+        </label>
+        <label className="pb-inline">
+          Last day off
+          <input type="date" value={blockEnd} onChange={(e) => setBlockEnd(e.target.value)} />
+        </label>
+        <button onClick={() => void addBlock()} disabled={busy || !rangeValid}>
+          {busy ? 'Saving…' : 'Block these days'}
         </button>
       </div>
+      <p className="pb-hint">
+        Both days are included — for one day off, pick the same day twice.
+        {blockStart && blockEnd && blockEnd < blockStart
+          ? ' The last day must be on or after the first day.'
+          : ''}
+      </p>
     </>
   );
 }

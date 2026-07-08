@@ -22,6 +22,8 @@ export const publicRoutes = new Hono<AppEnv>()
       maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
       maxStayNights: tenant.MaxStayNights,
       timezone: tenant.Timezone,
+      contactEmail: tenant.ContactEmail,
+      contactPhone: tenant.ContactPhone,
       petTypes: petTypes.filter((p) => p.Enabled).map((p) => p.PetType),
       services: [...enabled].map((type) => {
         const svc = services.find((s) => s.ServiceType === type)!;

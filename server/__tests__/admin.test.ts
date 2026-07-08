@@ -286,7 +286,38 @@ describe('tenant admin', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects duplicate durations within one service', async () => {
+  it('accepts two options sharing a duration but not a name, with distinct keys', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'checkin',
+              enabled: true,
+              options: [
+                { label: '30 minutes', durationMinutes: 30, rate: 18 },
+                { label: 'Puppy Check-in', durationMinutes: 30, rate: 22 },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
+    const settings = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as { services: { type: string; options: { optionKey: string; label: string }[] }[] };
+    const checkin = settings.services.find((s) => s.type === 'checkin')!;
+    expect(checkin.options.map((o) => o.label).sort()).toEqual(['30 minutes', 'Puppy Check-in']);
+    expect(new Set(checkin.options.map((o) => o.optionKey)).size).toBe(2);
+  });
+
+  it('rejects two options with the same name within one service', async () => {
     const { env } = createTestEnv();
     const res = await app.request(
       '/api/sunny-paws/admin/settings',
@@ -300,7 +331,7 @@ describe('tenant admin', () => {
               enabled: true,
               options: [
                 { label: '30 min', durationMinutes: 30, rate: 20 },
-                { label: 'also 30', durationMinutes: 30, rate: 25 },
+                { label: '30 min', durationMinutes: 30, rate: 25 },
               ],
             },
           ],

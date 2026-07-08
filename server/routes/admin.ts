@@ -5,6 +5,7 @@ import {
   clearProviderConnection,
   countBookingPetRefs,
   countBookingsForUser,
+  getBookingWithCustomer,
   getEndUserById,
   deleteBlockedRange,
   deleteCustomer,
@@ -27,7 +28,7 @@ import {
   updateBookingStatus,
   updateTenantSettings,
 } from '../db/repo';
-import { isEmailConfigured, sendInvite } from '../lib/email';
+import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
@@ -141,9 +142,23 @@ function resolveServiceOptions(
   existingKeys: Set<string>,
 ): { error: string } | { resolved: ResolvedOption[] } {
   const resolved: ResolvedOption[] = [];
+  // Duplicate names are the only collision a sitter should ever have to fix by hand — keys are
+  // derived plumbing and are de-duped automatically below (two same-duration options are fine).
+  const seenLabels = new Set<string>();
+  // Keys already claimed in this payload: preserved keys up front (order-independent), fresh
+  // derivations as they're assigned.
+  const usedKeys = new Set(
+    opts.map((o) => o.optionKey).filter((k): k is string => k !== undefined && existingKeys.has(k)),
+  );
   for (const o of opts) {
     const label = o.label?.trim();
-    if (!label) return { error: `${serviceLabel}: every option needs a label.` };
+    if (!label) return { error: `${serviceLabel}: every option needs a name.` };
+    const labelKey = label.toLowerCase();
+    if (seenLabels.has(labelKey))
+      return {
+        error: `${serviceLabel}: two options are both named “${label}” — give each option a different name.`,
+      };
+    seenLabels.add(labelKey);
     if (!isValidRate(o.rate)) return { error: 'Rates must be whole dollars ≥ 1.' };
 
     const hasStart = o.startTime !== undefined && o.startTime !== null;
@@ -176,12 +191,18 @@ function resolveServiceOptions(
         ? `d${durationMinutes}`
         : 'standard';
     const preserveExisting = o.optionKey !== undefined && existingKeys.has(o.optionKey);
-    const optionKey = preserveExisting ? (o.optionKey as string) : derivedKey;
     // A label that's entirely punctuation/whitespace after the non-empty check above still
     // slugifies to '' (e.g. "---") — treat that the same as no usable label. Only relevant when
     // a fresh key is actually being derived; a preserved key is already known-valid.
     if (windowed && !preserveExisting && derivedKey === '')
-      return { error: `${serviceLabel}: that label has no usable letters or numbers.` };
+      return { error: `${serviceLabel}: that name has no usable letters or numbers.` };
+    let optionKey = preserveExisting ? (o.optionKey as string) : derivedKey;
+    if (!preserveExisting) {
+      // Two options may legitimately derive the same key (e.g. two 30-minute check-ins with
+      // different names/rates) — suffix until unique instead of bouncing the save back.
+      for (let n = 2; usedKeys.has(optionKey); n++) optionKey = `${derivedKey}-${n}`;
+      usedKeys.add(optionKey);
+    }
 
     resolved.push({
       optionKey,
@@ -193,13 +214,13 @@ function resolveServiceOptions(
       capacity: o.capacity ?? null,
     });
   }
-  if (meta.hasDuration) {
-    const keys = resolved.map((o) => o.optionKey);
-    if (new Set(keys).size !== keys.length)
-      return {
-        error: `${serviceLabel}: two options have the same name — use distinct labels for each service option.`,
-      };
-  }
+  // Backstop only: fresh keys are de-duped above, so this can fire only when two options in the
+  // payload name the SAME saved optionKey (a stale/duplicated client state).
+  const keys = resolved.map((o) => o.optionKey);
+  if (new Set(keys).size !== keys.length)
+    return {
+      error: `${serviceLabel}: two options point at the same saved option — reload the page and try again.`,
+    };
   return { resolved };
 }
 
@@ -248,6 +269,8 @@ type SettingsBody = {
   maxHouseSitsPerDay?: number | null;
   maxStayNights?: number | null;
   timezone?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
   petTypes?: string[];
   services?: ServiceBody[];
 };
@@ -259,7 +282,13 @@ type SettingsBody = {
  */
 function patchNullable<T extends number | string>(
   body: SettingsBody,
-  key: 'maxBoardingPets' | 'maxHouseSitsPerDay' | 'maxStayNights' | 'timezone',
+  key:
+    | 'maxBoardingPets'
+    | 'maxHouseSitsPerDay'
+    | 'maxStayNights'
+    | 'timezone'
+    | 'contactEmail'
+    | 'contactPhone',
   current: T | null,
 ): T | null {
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
@@ -285,6 +314,8 @@ export const adminRoutes = new Hono<AppEnv>()
       maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
       maxStayNights: tenant.MaxStayNights,
       timezone: tenant.Timezone,
+      contactEmail: tenant.ContactEmail,
+      contactPhone: tenant.ContactPhone,
       petTypes: PET_TYPES.map((pt) => ({
         petType: pt,
         enabled: petTypes.some((p) => p.PetType === pt && p.Enabled),
@@ -337,6 +368,11 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     const maxStayNights = patchNullable<number>(body, 'maxStayNights', tenant.MaxStayNights);
     const timezone = patchNullable<string>(body, 'timezone', tenant.Timezone);
+    // Whitespace-only contact fields mean "cleared" — store NULL, not ''.
+    const rawContactEmail = patchNullable<string>(body, 'contactEmail', tenant.ContactEmail);
+    const contactEmail = rawContactEmail?.trim() || null;
+    const rawContactPhone = patchNullable<string>(body, 'contactPhone', tenant.ContactPhone);
+    const contactPhone = rawContactPhone?.trim() || null;
     const petTypes = body.petTypes;
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
@@ -374,6 +410,10 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
     if (!isValidTimezone(timezone)) return c.json({ error: 'Unknown timezone.' }, 400);
+    if (contactEmail !== null && !EMAIL_RE.test(contactEmail))
+      return c.json({ error: 'Contact email must be a valid email address.' }, 400);
+    if (contactPhone !== null && contactPhone.length > 40)
+      return c.json({ error: 'Contact phone is too long.' }, 400);
     if (petTypes !== undefined) {
       if (!Array.isArray(petTypes) || !petTypes.every(isPetType))
         return c.json({ error: 'Unknown pet type.' }, 400);
@@ -427,6 +467,8 @@ export const adminRoutes = new Hono<AppEnv>()
       maxHouseSitsPerDay,
       maxStayNights,
       timezone,
+      contactEmail,
+      contactPhone,
     });
     if (petTypes !== undefined) {
       for (const pt of PET_TYPES)
@@ -489,7 +531,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const start = typeof body.startDate === 'string' ? body.startDate : '';
     const end = typeof body.endDate === 'string' ? body.endDate : '';
     if (!isRealDate(start) || !isRealDate(end) || end <= start)
-      return c.json({ error: 'Provide a valid range (end is exclusive).' }, 400);
+      return c.json({ error: 'Provide a valid date range.' }, 400);
     const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
       endUserId: null,
       serviceType: 'blocked',
@@ -570,16 +612,20 @@ export const adminRoutes = new Hono<AppEnv>()
       listCustomers(c.env.PAWBOOK_DB, tenant.Id),
       listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id),
     ]);
-    const byUser = new Map<string, { id: string; name: string; petType: string }[]>();
+    const byUser = new Map<
+      string,
+      { id: string; name: string; petType: string; notes: string | null }[]
+    >();
     for (const p of allPets) {
       const list = byUser.get(p.EndUserId) ?? [];
-      list.push({ id: p.Id, name: p.Name, petType: p.PetType });
+      list.push({ id: p.Id, name: p.Name, petType: p.PetType, notes: p.Notes });
       byUser.set(p.EndUserId, list);
     }
     const withPets = customers.map((u) => ({
       id: u.Id,
       email: u.Email,
       name: u.Name,
+      phone: u.Phone,
       status: u.Status,
       invitedAt: u.InvitedAt,
       pets: byUser.get(u.Id) ?? [],
@@ -590,14 +636,17 @@ export const adminRoutes = new Hono<AppEnv>()
   .post('/:slug/admin/customers', async (c) => {
     const tenant = c.get('tenant');
     const body = await c.req
-      .json<{ email?: unknown; name?: unknown }>()
-      .catch(() => ({}) as { email?: unknown; name?: unknown });
+      .json<{ email?: unknown; name?: unknown; phone?: unknown }>()
+      .catch(() => ({}) as { email?: unknown; name?: unknown; phone?: unknown });
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const rawName = typeof body.name === 'string' ? body.name.trim() : '';
     const name = rawName || null;
+    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
+    const phone = rawPhone || null;
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
+    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
 
-    const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name);
+    const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name, phone);
 
     // Only send the invite for a freshly-invited customer — skip if the customer is already active
     // (a re-POST of an existing active customer must not send a confusing "you're invited" email).
@@ -610,7 +659,13 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json(
-      { id: customer.Id, email: customer.Email, name: customer.Name, status: customer.Status },
+      {
+        id: customer.Id,
+        email: customer.Email,
+        name: customer.Name,
+        phone: customer.Phone,
+        status: customer.Status,
+      },
       201,
     );
   })
@@ -628,12 +683,15 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const endUserId = c.req.param('id');
     const body = await c.req
-      .json<{ name?: unknown; petType?: unknown }>()
-      .catch(() => ({}) as { name?: unknown; petType?: unknown });
+      .json<{ name?: unknown; petType?: unknown; notes?: unknown }>()
+      .catch(() => ({}) as { name?: unknown; petType?: unknown; notes?: unknown });
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const petType = body.petType;
+    const rawNotes = typeof body.notes === 'string' ? body.notes.trim() : '';
+    const notes = rawNotes || null;
     if (!name) return c.json({ error: 'Enter a pet name.' }, 400);
     if (!isPetType(petType)) return c.json({ error: 'Unknown pet type.' }, 400);
+    if (notes !== null && notes.length > 2000) return c.json({ error: 'Notes are too long.' }, 400);
     // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
     // under it (production D1 has foreign keys OFF, so nothing else stops a cross-tenant orphan).
     if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
@@ -642,8 +700,8 @@ export const adminRoutes = new Hono<AppEnv>()
       (pt) => pt.PetType === petType && pt.Enabled,
     );
     if (!accepted) return c.json({ error: 'That pet type is not accepted.' }, 400);
-    const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType);
-    return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType }, 201);
+    const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType, notes);
+    return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType, notes: pet.Notes }, 201);
   })
   .delete('/:slug/admin/customers/:id/pets/:petId', async (c) => {
     const tenant = c.get('tenant');
@@ -669,7 +727,7 @@ export const adminRoutes = new Hono<AppEnv>()
         optionKey: r.OptionKey,
         petCount: r.PetCount,
         estCost: r.EstCost,
-        status: r.Status,
+        status: r.Declined ? 'declined' : r.Status,
         createdAt: r.CreatedAt,
       })),
     });
@@ -679,8 +737,8 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const body = await c.req.json<{ status?: unknown }>().catch(() => ({}) as { status?: unknown });
     const status = body.status;
-    if (status !== 'confirmed' && status !== 'cancelled')
-      return c.json({ error: "Status must be 'confirmed' or 'cancelled'." }, 400);
+    if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
+      return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
     // ponytail: cancel leaves any synced GCal event in place; delete via GCalEventId if sitters complain
     const updated = await updateBookingStatus(
       c.env.PAWBOOK_DB,
@@ -689,5 +747,23 @@ export const adminRoutes = new Hono<AppEnv>()
       status,
     );
     if (!updated) return c.json({ error: 'Not found.' }, 404);
-    return c.json({ status });
+
+    // Best-effort customer notification; `notified` lets the dashboard tell the sitter honestly
+    // whether the client heard about it (false when email isn't configured or the send failed).
+    let notified = false;
+    if (isEmailConfigured(c.env)) {
+      const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+      if (booking?.Email) {
+        const whenText = booking.EndDate
+          ? `${booking.StartDate} – ${booking.EndDate}`
+          : booking.StartDate;
+        try {
+          await sendBookingStatusEmail(c.env, booking.Email, tenant.DisplayName, status, whenText);
+          notified = true;
+        } catch {
+          /* status change stands; the dashboard reports the client was not emailed */
+        }
+      }
+    }
+    return c.json({ status, notified });
   });

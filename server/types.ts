@@ -12,6 +12,8 @@ export type Tenant = {
   MaxHouseSitsPerDay: number | null; // null = unlimited
   MaxStayNights: number | null; // null = unlimited
   Timezone: string | null; // null = DEFAULT_TIMEZONE
+  ContactEmail: string | null; // shown to clients in the booking widget
+  ContactPhone: string | null; // shown to clients in the booking widget
 };
 
 export type TenantUser = {
@@ -57,6 +59,7 @@ export type EndUser = {
   TenantId: string;
   Email: string;
   Name: string | null;
+  Phone: string | null;
   Status: 'invited' | 'active';
   InvitedAt: string | null;
 };
@@ -67,6 +70,7 @@ export type EndUserPet = {
   EndUserId: string;
   Name: string;
   PetType: 'dog' | 'cat';
+  Notes: string | null; // sitter's care notes (feeding, meds, temperament)
   CreatedAt: string;
 };
 
@@ -84,6 +88,9 @@ export type BookingRow = {
   GCalEventId: string | null;
   EstCost: number | null;
   Status: 'pending' | 'confirmed' | 'cancelled';
+  // 1 = the cancellation was the sitter declining a pending request. Optional because only the
+  // booking-list queries select it; capacity/availability queries never need it.
+  Declined?: number;
   CreatedAt: string;
 };
 

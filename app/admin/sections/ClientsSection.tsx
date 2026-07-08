@@ -22,6 +22,7 @@ function PetAdder({
 }) {
   const [name, setName] = useState('');
   const [petType, setPetType] = useState(enabledPetTypes[0]);
+  const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
 
   const add = async () => {
@@ -29,8 +30,9 @@ function PetAdder({
     clearError();
     setBusy(true);
     try {
-      await adminApi.customers.addPet(slug, token, customer.id, name.trim(), petType);
+      await adminApi.customers.addPet(slug, token, customer.id, name.trim(), petType, notes.trim());
       setName('');
+      setNotes('');
       onAdded();
     } catch (e) {
       onError(e);
@@ -49,6 +51,11 @@ function PetAdder({
           </option>
         ))}
       </select>
+      <input
+        placeholder="Care notes (feeding, meds, quirks — optional)"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+      />
       <button onClick={() => void add()} disabled={busy || !name.trim()}>
         {busy ? 'Adding…' : 'Add pet'}
       </button>
@@ -75,6 +82,7 @@ export function ClientsSection({
 }) {
   const [custEmail, setCustEmail] = useState('');
   const [custName, setCustName] = useState('');
+  const [custPhone, setCustPhone] = useState('');
   const [busy, setBusy] = useState(false);
 
   /** Matches the old Dashboard run() semantics: clear the error banner at the START of each
@@ -96,9 +104,16 @@ export function ClientsSection({
 
   const addCustomer = () =>
     mutate(async () => {
-      await adminApi.customers.add(slug, token, custEmail.trim().toLowerCase(), custName.trim());
+      await adminApi.customers.add(
+        slug,
+        token,
+        custEmail.trim().toLowerCase(),
+        custName.trim(),
+        custPhone.trim(),
+      );
       setCustEmail('');
       setCustName('');
+      setCustPhone('');
     });
 
   const removeCustomer = (id: string) => mutate(() => adminApi.customers.remove(slug, token, id));
@@ -127,6 +142,12 @@ export function ClientsSection({
           value={custName}
           onChange={(e) => setCustName(e.target.value)}
         />
+        <input
+          type="tel"
+          placeholder="Phone (optional)"
+          value={custPhone}
+          onChange={(e) => setCustPhone(e.target.value)}
+        />
         <button onClick={() => void addCustomer()} disabled={busy}>
           {busy ? 'Adding…' : 'Add customer'}
         </button>
@@ -137,7 +158,8 @@ export function ClientsSection({
             <div className="pb-row">
               <span>
                 {cust.email}
-                {cust.name ? ` (${cust.name})` : ''}{' '}
+                {cust.name ? ` (${cust.name})` : ''}
+                {cust.phone ? ` · ${cust.phone}` : ''}{' '}
                 <span
                   className={`pb-chip${cust.status === 'active' ? ' pb-chip-ok' : ' pb-chip-warn'}`}
                 >
@@ -152,6 +174,7 @@ export function ClientsSection({
               {cust.pets.map((p) => (
                 <li key={p.id}>
                   {p.name} <em>{p.petType}</em>
+                  {p.notes ? <span className="pb-hint"> — {p.notes}</span> : null}
                   <button onClick={() => void removePet(cust.id, p.id)} disabled={busy}>
                     Remove
                   </button>

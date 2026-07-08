@@ -65,26 +65,33 @@ INSERT OR REPLACE INTO TenantPetTypes (TenantId, PetType, Enabled) VALUES
 
 -- Demo customers. Invite-only gating means /identify only succeeds for known customers, so the
 -- demo widget (and the existing identify/booking tests) need a seeded, already-active customer.
-INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES
-  ('eu_sp_jess', 'tnt_sunnypaws', 'jess@example.com', 'Jess Demo', 'active'),
-  ('eu_ht_jess', 'tnt_happytails', 'jess@example.com', 'Jess Demo', 'active'),
-  ('eu_pr_jess', 'tnt_pawsandrelax', 'jess@example.com', 'Jess Demo', 'active');
+INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUES
+  ('eu_sp_jess', 'tnt_sunnypaws', 'jess@example.com', 'Jess Demo', '(555) 555-0142', 'active'),
+  ('eu_ht_jess', 'tnt_happytails', 'jess@example.com', 'Jess Demo', '(555) 555-0142', 'active'),
+  ('eu_pr_jess', 'tnt_pawsandrelax', 'jess@example.com', 'Jess Demo', NULL, 'active');
 
 -- Demo pets (sitter-managed). Jess has two at Sunny Paws (dogs+cats), one at Happy Tails (dogs only).
-INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES
-  ('pet_sp_bella', 'tnt_sunnypaws', 'eu_sp_jess', 'Bella', 'dog'),
-  ('pet_sp_mochi', 'tnt_sunnypaws', 'eu_sp_jess', 'Mochi', 'cat'),
-  ('pet_ht_otis',  'tnt_happytails', 'eu_ht_jess', 'Otis', 'dog');
+INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Notes) VALUES
+  ('pet_sp_bella', 'tnt_sunnypaws', 'eu_sp_jess', 'Bella', 'dog', 'Allergic to chicken — no chicken treats. Pulls on the leash near squirrels.'),
+  ('pet_sp_mochi', 'tnt_sunnypaws', 'eu_sp_jess', 'Mochi', 'cat', NULL),
+  ('pet_ht_otis',  'tnt_happytails', 'eu_ht_jess', 'Otis', 'dog', 'Deaf in one ear; approach from the front.');
 
--- Existing bookings so availability looks real.
+-- Existing bookings so availability looks real, tied to the demo customer so the admin list
+-- never shows an anonymous "Unknown customer" row.
 -- Sunny Paws (max 2 pets): June 20-25 already has 1 pet boarding -> 1 slot left.
 -- Happy Tails (max 4 pets): June 20-25 has 2 pets boarding -> 2 slots left.
 -- Both tenants blocked July 3-5 (exclusive end: blocked days are Jul 3 and Jul 4).
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, PetCount, EstCost, Status) VALUES
-  ('seed_sp_board1', 'tnt_sunnypaws', NULL, 'boarding', '2028-06-20', '2028-06-25', 1, 250, 'confirmed'),
+  ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', '2028-06-20', '2028-06-25', 1, 250, 'confirmed'),
   ('seed_sp_block1', 'tnt_sunnypaws', NULL, 'blocked', '2028-07-03', '2028-07-05', 1, NULL, 'confirmed'),
-  ('seed_ht_board1', 'tnt_happytails', NULL, 'boarding', '2028-06-20', '2028-06-25', 2, 400, 'confirmed'),
+  ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', '2028-06-20', '2028-06-25', 2, 400, 'confirmed'),
   ('seed_ht_block1', 'tnt_happytails', NULL, 'blocked', '2028-07-03', '2028-07-05', 1, NULL, 'confirmed');
+
+-- Pending requests so the admin "Needs your reply" list has real work in it on a fresh seed.
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Status) VALUES
+  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', '2026-07-10', NULL, 'd30', 'dog', 1, '09:00', 20, 'pending'),
+  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', '2026-07-20', '2026-07-23', NULL, 'dog', 1, NULL, 150, 'pending'),
+  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', '2026-07-12', NULL, 'd60', 'dog', 1, '15:00', 40, 'pending');
 
 INSERT OR REPLACE INTO ProviderConnections (Id, TenantId, Capability, Provider, Status) VALUES
   ('seed_sp_cal', 'tnt_sunnypaws', 'calendar', 'google-calendar', 'disconnected'),

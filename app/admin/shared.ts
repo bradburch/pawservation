@@ -24,6 +24,8 @@ export type Settings = {
   maxHouseSitsPerDay: number | null;
   maxStayNights: number | null;
   timezone: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
   petTypes: { petType: string; enabled: boolean }[];
   services: ServiceForm[];
   blocked: { id: string; startDate: string; endDate: string | null }[];
@@ -60,6 +62,8 @@ export type SettingsPayload = {
   maxHouseSitsPerDay: number | null;
   maxStayNights: number | null;
   timezone: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
   petTypes: string[];
   services: ServicePayload[];
 };

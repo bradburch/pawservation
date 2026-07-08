@@ -62,7 +62,7 @@ describe('admin booking lifecycle', () => {
       env,
     );
     expect(confirm.status).toBe(200);
-    expect(await confirm.json()).toEqual({ status: 'confirmed' });
+    expect(await confirm.json()).toEqual({ status: 'confirmed', notified: false });
 
     const list = (await (
       await app.request(
@@ -72,6 +72,36 @@ describe('admin booking lifecycle', () => {
       )
     ).json()) as { bookings: { id: string; status: string }[] };
     expect(list.bookings.find((b) => b.id === created.id)?.status).toBe('confirmed');
+  });
+
+  it('POST decline is pending-only, listed as declined, and distinct from cancelled', async () => {
+    const { env } = createTestEnv();
+    const created = (await (await bookBoarding(env, '2028-11-01', '2028-11-03')).json()) as {
+      id: string;
+    };
+    const auth = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const setStatus = (status: string) =>
+      app.request(
+        `/api/sunny-paws/admin/bookings/${created.id}/status`,
+        { method: 'POST', headers: auth, body: JSON.stringify({ status }) },
+        env,
+      );
+
+    const decline = await setStatus('declined');
+    expect(decline.status).toBe(200);
+    expect(await decline.json()).toEqual({ status: 'declined', notified: false });
+
+    const list = (await (
+      await app.request(
+        '/api/sunny-paws/admin/bookings',
+        { headers: await adminHeaders(TENANT_A) },
+        env,
+      )
+    ).json()) as { bookings: { id: string; status: string }[] };
+    expect(list.bookings.find((b) => b.id === created.id)?.status).toBe('declined');
+
+    // Declining a non-pending row never matches: it's already terminal here.
+    expect((await setStatus('declined')).status).toBe(404);
   });
 
   it('POST cancel on a confirmed booking cancels it; further status changes 404 (terminal)', async () => {
@@ -90,7 +120,7 @@ describe('admin booking lifecycle', () => {
     expect((await setStatus('confirmed')).status).toBe(200);
     const cancel = await setStatus('cancelled');
     expect(cancel.status).toBe(200);
-    expect(await cancel.json()).toEqual({ status: 'cancelled' });
+    expect(await cancel.json()).toEqual({ status: 'cancelled', notified: false });
 
     // Cancelled is terminal: even re-confirming the same row is rejected.
     const again = await setStatus('confirmed');

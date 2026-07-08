@@ -23,11 +23,13 @@ export type TenantConfig = {
   maxHouseSitsPerDay: number | null;
   maxStayNights: number | null;
   timezone: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
   petTypes: string[];
   services: ServiceConfig[];
 };
 
-export type Pet = { id: string; name: string; petType: 'dog' | 'cat' };
+export type Pet = { id: string; name: string; petType: 'dog' | 'cat'; notes?: string | null };
 export type MonthDay = {
   date: string;
   status: 'available' | 'partial' | 'unavailable';
@@ -54,6 +56,7 @@ export type Customer = {
   id: string;
   email: string;
   name: string | null;
+  phone: string | null;
   status: 'invited' | 'active';
   invitedAt?: string | null;
   pets: Pet[];
@@ -168,24 +171,31 @@ export const adminApi = {
       request<{ customers: Customer[] }>(`/api/${slug}/admin/customers`, {
         headers: authHeaders(token),
       }),
-    add: (slug: string, token: string, email: string, name: string) =>
+    add: (slug: string, token: string, email: string, name: string, phone: string) =>
       request<{ id: string; status: string }>(`/api/${slug}/admin/customers`, {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
-        body: JSON.stringify({ email, name }),
+        body: JSON.stringify({ email, name, phone }),
       }),
     remove: (slug: string, token: string, id: string) =>
       request<unknown>(`/api/${slug}/admin/customers/${id}`, {
         method: 'DELETE',
         headers: authHeaders(token),
       }),
-    addPet: (slug: string, token: string, endUserId: string, name: string, petType: string) =>
+    addPet: (
+      slug: string,
+      token: string,
+      endUserId: string,
+      name: string,
+      petType: string,
+      notes: string,
+    ) =>
       request<{ id: string; name: string; petType: string }>(
         `/api/${slug}/admin/customers/${endUserId}/pets`,
         {
           method: 'POST',
           headers: { ...jsonHeaders, ...authHeaders(token) },
-          body: JSON.stringify({ name, petType }),
+          body: JSON.stringify({ name, petType, notes }),
         },
       ),
     removePet: (slug: string, token: string, endUserId: string, petId: string) =>
@@ -199,8 +209,13 @@ export const adminApi = {
       request<{ bookings: AdminBooking[] }>(`/api/${slug}/admin/bookings`, {
         headers: authHeaders(token),
       }),
-    setStatus: (slug: string, token: string, id: string, status: 'confirmed' | 'cancelled') =>
-      request<{ status: string }>(`/api/${slug}/admin/bookings/${id}/status`, {
+    setStatus: (
+      slug: string,
+      token: string,
+      id: string,
+      status: 'confirmed' | 'declined' | 'cancelled',
+    ) =>
+      request<{ status: string; notified: boolean }>(`/api/${slug}/admin/bookings/${id}/status`, {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ status }),

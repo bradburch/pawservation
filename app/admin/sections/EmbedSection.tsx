@@ -2,6 +2,27 @@ import { useEffect, useState } from 'react';
 import { IconCode } from '../../shared-ui/icons';
 import { adminFetch, type Session } from '../shared.js';
 
+function CopyableSnippet({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 5000);
+    } catch {
+      /* clipboard denied — the textarea still selects on focus for manual copy */
+    }
+  };
+  return (
+    <div>
+      <textarea readOnly rows={3} value={value} onFocus={(e) => e.target.select()} />
+      <button type="button" onClick={() => void copy()}>
+        {copied ? 'Copied!' : 'Copy the code'}
+      </button>
+    </div>
+  );
+}
+
 function Snippets({ session }: { session: Session }) {
   const [snippets, setSnippets] = useState<{
     script: string;
@@ -21,15 +42,28 @@ function Snippets({ session }: { session: Session }) {
   return (
     <div>
       <p>
-        <strong>Squarespace</strong> (Code Block, Core plan or higher) and most sites — paste this
-        auto-resizing snippet:
+        You don&apos;t need to understand the code below — just copy it and paste it into your
+        website builder. Ask whoever manages your website to help if you get stuck.
       </p>
-      <textarea readOnly rows={3} value={snippets.script} onFocus={(e) => e.target.select()} />
       <p>
-        <strong>Wix</strong> ("Embed a site") and script-stripping hosts — use the plain iframe
-        (fixed height, scrolls internally):
+        <strong>Squarespace and most other website builders:</strong>
       </p>
-      <textarea readOnly rows={3} value={snippets.iframe} onFocus={(e) => e.target.select()} />
+      <ol>
+        <li>Click &ldquo;Copy the code&rdquo; below.</li>
+        <li>In Squarespace, edit the page where you want bookings to appear.</li>
+        <li>
+          Click a &ldquo;+&rdquo; to add a content block and choose <strong>Code</strong> (on some
+          Squarespace plans the Code block is not available — use the Wix/iframe code below with an
+          <strong> Embed</strong> block instead).
+        </li>
+        <li>Paste the code and save the page. Your booking form appears right there.</li>
+      </ol>
+      <CopyableSnippet value={snippets.script} />
+      <p>
+        <strong>Wix</strong> (choose &ldquo;Embed a site&rdquo;) <strong>and other builders</strong>{' '}
+        where the code above doesn&apos;t work — use this one instead:
+      </p>
+      <CopyableSnippet value={snippets.iframe} />
     </div>
   );
 }

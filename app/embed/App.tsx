@@ -78,6 +78,25 @@ export default function App() {
   if (error) return <p className="bp-error">{error}</p>;
   if (!config) return <p>Loading…</p>;
 
+  const contact =
+    config.contactEmail || config.contactPhone ? (
+      <p className="bp-signin-lede">
+        Questions?{' '}
+        {config.contactPhone ? (
+          <>
+            Call <a href={`tel:${config.contactPhone}`}>{config.contactPhone}</a>
+          </>
+        ) : null}
+        {config.contactPhone && config.contactEmail ? ' or ' : null}
+        {config.contactEmail ? (
+          <>
+            email <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
+          </>
+        ) : null}
+        .
+      </p>
+    ) : null;
+
   if (!authed) {
     return (
       <div className="bp-widget">
@@ -86,6 +105,7 @@ export default function App() {
           Enter the email your sitter has on file and we&apos;ll send you a sign-in code.
         </p>
         <Identify onDone={() => setAuthed(true)} />
+        {contact}
       </div>
     );
   }
@@ -109,6 +129,7 @@ export default function App() {
           <BookTab config={config} pets={me?.pets ?? null} onAuthExpired={onAuthExpired} />
         </>
       )}
+      {contact}
     </div>
   );
 }
