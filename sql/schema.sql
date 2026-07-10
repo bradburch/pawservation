@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   EstCost INTEGER,
   Answers TEXT NOT NULL DEFAULT '{}', -- JSON {questionId: answer}; questions defined on TenantServices
   Status TEXT NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending', 'confirmed', 'cancelled')),
+  Declined INTEGER NOT NULL DEFAULT 0,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

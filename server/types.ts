@@ -88,6 +88,7 @@ export type BookingRow = {
   GCalEventId: string | null;
   EstCost: number | null;
   Status: 'pending' | 'confirmed' | 'cancelled';
+  Declined: number;
   CreatedAt: string;
 };
 

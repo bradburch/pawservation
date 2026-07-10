@@ -26,7 +26,14 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, MaxBoardingPets, MaxHouseSitsPerDay, MaxStayNights, Timezone';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, GCalEventId, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, GCalEventId, Status, Declined, CreatedAt';
+
+// Same columns, each prefixed with the table name — needed once a query JOINs BookingRequests
+// with another table that also has an `Id` column (e.g. EndUsers), which makes the unqualified
+// `Id` ambiguous.
+const BOOKING_COLS_QUALIFIED = BOOKING_COLS.split(', ')
+  .map((c) => `BookingRequests.${c}`)
+  .join(', ');
 
 export async function getTenantBySlug(db: D1Database, slug: string): Promise<Tenant | null> {
   return await db
@@ -306,6 +313,77 @@ export async function listBookingsForUser(
     .bind(tenantId, endUserId)
     .all<BookingRow>();
   return results;
+}
+
+export async function listBookingsForTenant(
+  db: D1Database,
+  tenantId: string,
+): Promise<(BookingRow & { Email: string | null; Name: string | null })[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name
+       FROM BookingRequests
+       LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
+         AND EndUsers.TenantId = BookingRequests.TenantId
+       WHERE BookingRequests.TenantId = ? AND BookingRequests.ServiceType != 'blocked'
+       ORDER BY BookingRequests.StartDate DESC, BookingRequests.CreatedAt DESC`,
+    )
+    .bind(tenantId)
+    .all<BookingRow & { Email: string | null; Name: string | null }>();
+  return results;
+}
+
+/**
+ * Sitter-driven lifecycle transition. The guard is entirely in SQL so it's atomic with the write:
+ * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' is
+ * terminal — once cancelled, no further transition matches. Confirming an already-confirmed row
+ * still matches (harmless no-op). Returns whether a row actually changed.
+ *
+ * 'declined' is a sitter's "no" to a still-pending request: stored as Status 'cancelled' with the
+ * Declined flag set (the Status CHECK can't grow a value without a table rebuild), and only valid
+ * from 'pending' — a confirmed booking is cancelled, never declined.
+ */
+export async function updateBookingStatus(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+  status: 'confirmed' | 'cancelled' | 'declined',
+): Promise<boolean> {
+  const result =
+    status === 'declined'
+      ? await db
+          .prepare(
+            `UPDATE BookingRequests SET Status = 'cancelled', Declined = 1
+             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'pending'`,
+          )
+          .bind(tenantId, id)
+          .run()
+      : await db
+          .prepare(
+            `UPDATE BookingRequests SET Status = ?
+             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+          )
+          .bind(status, tenantId, id)
+          .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/** One booking joined with its customer's contact details — for status-change notifications. */
+export async function getBookingWithCustomer(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<(BookingRow & { Email: string | null; Name: string | null }) | null> {
+  return await db
+    .prepare(
+      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name
+       FROM BookingRequests
+       LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
+         AND EndUsers.TenantId = BookingRequests.TenantId
+       WHERE BookingRequests.TenantId = ? AND BookingRequests.Id = ?`,
+    )
+    .bind(tenantId, id)
+    .first<BookingRow & { Email: string | null; Name: string | null }>();
 }
 
 export async function listProviderConnections(
