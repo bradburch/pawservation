@@ -361,6 +361,13 @@ body {
   border-color: color-mix(in srgb, var(--warn) 25%, transparent);
 }
 
+/* Cancelled (a real booking, killed) reads stronger than declined (never accepted). */
+.pb-chip-bad {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  border-color: color-mix(in srgb, var(--bad) 25%, transparent);
+}
+
 /* Add-a-customer / block-a-range input rows. */
 .pb-row {
   display: flex;
