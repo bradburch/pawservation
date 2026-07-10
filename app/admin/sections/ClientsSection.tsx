@@ -66,6 +66,7 @@ export function ClientsSection({
   const [sendInvites, setSendInvites] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   const runImport = async () => {
     if (!csvFile || importing) return;
@@ -73,7 +74,11 @@ export function ClientsSection({
     try {
       const csv = await csvFile.text();
       const result = await importCsv(csv, sendInvites);
-      if (result) setImportResult(result);
+      if (result) {
+        setImportResult(result);
+        setCsvFile(null);
+        setFileInputKey((k) => k + 1);
+      }
     } finally {
       setImporting(false);
     }
@@ -104,6 +109,7 @@ export function ClientsSection({
       </div>
       <div className="pb-row">
         <input
+          key={fileInputKey}
           type="file"
           accept=".csv"
           onChange={(e) => {
