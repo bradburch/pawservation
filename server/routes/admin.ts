@@ -7,6 +7,7 @@ import {
   countBookingsForService,
   countBookingsForUser,
   createService,
+  getBookingWithCustomer,
   getEndUserById,
   deleteBlockedRange,
   deleteCustomer,
@@ -16,6 +17,7 @@ import {
   insertInvitedCustomer,
   listAllEndUserPetsByTenant,
   listBlockedRanges,
+  listBookingsForTenant,
   listCustomers,
   listPetTypes,
   listProviderConnections,
@@ -27,9 +29,10 @@ import {
   setPetTypeEnabled,
   setProviderStatus,
   setServiceConfig,
+  updateBookingStatus,
   updateTenantSettings,
 } from '../db/repo';
-import { isEmailConfigured, sendInvite } from '../lib/email';
+import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
@@ -610,4 +613,62 @@ export const adminRoutes = new Hono<AppEnv>()
     const removed = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
     if (!removed) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
+  })
+
+  .get('/:slug/admin/bookings', async (c) => {
+    const tenant = c.get('tenant');
+    const rows = await listBookingsForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    return c.json({
+      bookings: rows.map((r) => ({
+        id: r.Id,
+        customerEmail: r.Email,
+        customerName: r.Name,
+        type: r.ServiceType,
+        startDate: r.StartDate,
+        endDate: r.EndDate,
+        startTime: r.StartTime,
+        optionKey: r.OptionKey,
+        petCount: r.PetCount,
+        estCost: r.EstCost,
+        status: r.Declined ? 'declined' : r.Status,
+        createdAt: r.CreatedAt,
+      })),
+    });
+  })
+
+  .post('/:slug/admin/bookings/:id/status', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ status?: unknown }>()
+      .catch(() => ({}) as { status?: unknown });
+    const status = body.status;
+    if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
+      return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
+    // ponytail: cancel leaves any synced GCal event in place; delete via GCalEventId if sitters complain
+    const updated = await updateBookingStatus(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      status,
+    );
+    if (!updated) return c.json({ error: 'Not found.' }, 404);
+
+    // Best-effort customer notification; `notified` lets the dashboard tell the sitter honestly
+    // whether the client heard about it (false when email isn't configured or the send failed).
+    let notified = false;
+    if (isEmailConfigured(c.env)) {
+      const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+      if (booking?.Email) {
+        const whenText = booking.EndDate
+          ? `${booking.StartDate} – ${booking.EndDate}`
+          : booking.StartDate;
+        try {
+          await sendBookingStatusEmail(c.env, booking.Email, tenant.DisplayName, status, whenText);
+          notified = true;
+        } catch {
+          /* status change stands; the dashboard reports the client was not emailed */
+        }
+      }
+    }
+    return c.json({ status, notified });
   });
