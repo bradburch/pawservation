@@ -180,9 +180,7 @@ describe('reconcileIfStale', () => {
   it('writes the TTL marker even when reconciliation fails, throttling retries during an outage', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('', { status: 500 })); // Calendar API failure
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 })); // Calendar API failure
     await reconcileIfStale(env, tenant);
     expect(spy).toHaveBeenCalledTimes(1);
     await reconcileIfStale(env, tenant);

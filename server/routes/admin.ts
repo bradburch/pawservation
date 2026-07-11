@@ -640,9 +640,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .post('/:slug/admin/bookings/:id/status', async (c) => {
     const tenant = c.get('tenant');
-    const body = await c.req
-      .json<{ status?: unknown }>()
-      .catch(() => ({}) as { status?: unknown });
+    const body = await c.req.json<{ status?: unknown }>().catch(() => ({}) as { status?: unknown });
     const status = body.status;
     if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
       return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);

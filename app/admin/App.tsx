@@ -119,7 +119,14 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
 }
 
 type SectionKey =
-  'bookings' | 'business' | 'pets' | 'services' | 'timeoff' | 'clients' | 'apps' | 'embed';
+  | 'bookings'
+  | 'business'
+  | 'pets'
+  | 'services'
+  | 'timeoff'
+  | 'clients'
+  | 'apps'
+  | 'embed';
 
 const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck },
