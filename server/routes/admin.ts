@@ -655,7 +655,7 @@ export const adminRoutes = new Hono<AppEnv>()
     let invitesSent = 0;
     let invitesFailed = 0;
     const skippedRows: { row: number; reason: string }[] = [];
-    const freshCustomers: { email: string; endUserId: string }[] = [];
+    const freshCustomers: string[] = [];
 
     for (const [i, cells] of rows.entries()) {
       const row = i + 2; // 1-indexed against the sitter's file; +1 since the header was sliced off
@@ -675,9 +675,9 @@ export const adminRoutes = new Hono<AppEnv>()
         const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
         const name = rawName.trim() || null;
         const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name);
-        if (!existing && !freshCustomers.some((f) => f.endUserId === customer.Id)) {
+        if (!existing) {
           importedCustomers++;
-          freshCustomers.push({ email, endUserId: customer.Id });
+          freshCustomers.push(email);
         }
 
         const petName = rawPetName.trim();
@@ -711,7 +711,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     if (sendInvites && isEmailConfigured(c.env)) {
       const widgetUrl = new URL(`/embed/${tenant.Slug}`, c.req.url).toString();
-      for (const { email } of freshCustomers) {
+      for (const email of freshCustomers) {
         try {
           await sendInvite(c.env, email, tenant.DisplayName, widgetUrl);
           invitesSent++;
