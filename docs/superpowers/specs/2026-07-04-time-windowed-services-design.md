@@ -110,8 +110,8 @@ plain duration option, would collide under that scheme. Fix: **windowed
 options derive `OptionKey` from a slug of their label instead**
 (e.g. "Morning Walk" → `morning-walk`); non-windowed options keep the existing
 `d${durationMinutes}` scheme unchanged. The existing per-service duplicate
-check (`admin.ts:280-284`) is generalized to check the *final derived
-`OptionKey` set* for the service rather than just `DurationMinutes` — this
+check (`admin.ts:280-284`) is generalized to check the _final derived
+`OptionKey` set_ for the service rather than just `DurationMinutes` — this
 covers collisions from either derivation scheme in one check, and matches the
 real invariant that actually matters: the DB's `UNIQUE (TenantId, ServiceType,
 OptionKey)` constraint (`schema.sql:53`).
@@ -121,7 +121,7 @@ OptionKey)` constraint (`schema.sql:53`).
 - `listServiceOptions` SELECT expands to include the three new columns.
 - New function, sibling to `listCapacityRows` (`repo.ts:147-166`), which today
   explicitly excludes `walk`/`checkin` (`ServiceType IN ('boarding',
-  'housesitting', 'blocked')`):
+'housesitting', 'blocked')`):
 
   ```ts
   countSlotBookings(
@@ -139,9 +139,10 @@ OptionKey)` constraint (`schema.sql:53`).
 
   Same status filter already used by `listCapacityRows` (pending+confirmed
   count toward capacity; cancelled doesn't).
+
 - `insertBookingRequest`'s INSERT (`repo.ts:186-190`) currently writes `Id,
-  TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType,
-  PetCount, EstCost, Answers, Status` — `StartTime` is **not** in that column
+TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType,
+PetCount, EstCost, Answers, Status` — `StartTime` is **not** in that column
   list today even though the column exists and is already read back via
   `BOOKING_COLS`. The function signature and INSERT both need a `startTime`
   param/column added. The call site in `bookings.ts:146-157` passes
@@ -186,7 +187,7 @@ itself — it already branches into a timed `dateTime` event when `startTime`
 is present, computing the event's end via `durationMinutes`
 (`addMinutesToLocal`). This path has simply never been exercised because
 nothing upstream set `startTime` until now. Because Section 2 makes
-`DurationMinutes` *derived* from `EndTime - StartTime` for windowed options
+`DurationMinutes` _derived_ from `EndTime - StartTime` for windowed options
 (not independently settable), passing `option.StartTime` and
 `option.DurationMinutes` through as today's sync payload already does
 (`bookings.ts:183-184`) is sufficient — no separate `EndTime` plumbing into
@@ -199,7 +200,7 @@ answers.
 ### 7. Admin route (`server/routes/admin.ts`)
 
 - `OptionBody` type gains `startTime?: string | null`, `endTime?: string |
-  null`, `capacity?: number | null`.
+null`, `capacity?: number | null`.
 - Validation, added to the existing per-option loop (`admin.ts:275-284`):
   - `startTime`/`endTime` must both be present or both absent — reject one
     without the other.

@@ -45,7 +45,7 @@ is a near-verbatim port, not a rewrite.
   `// ponytail:` comment on the status route) — carried forward unchanged
   here; revisit if sitters complain about stale calendar entries.
 - Reconciling in the other direction in more detail than "event exists /
-  doesn't exist" — e.g. detecting a *time change* on the calendar event and
+  doesn't exist" — e.g. detecting a _time change_ on the calendar event and
   reflecting it back onto `BookingRequests.StartDate`/`StartTime`. Out of
   scope; a missing event is the only signal this pass acts on.
 - A manual "sync now" button. The cache TTL (Goal 3) is short enough that a
@@ -118,7 +118,7 @@ admin route already uses):
 
 - `GET /:slug/admin/bookings` — calls the KV-cached reconciliation (Section 5)
   first, then `listBookingsForTenant`, mapping `Declined ? 'declined' :
-  Status` into the response `status` field (main's derived-status pattern).
+Status` into the response `status` field (main's derived-status pattern).
 - `POST /:slug/admin/bookings/:id/status` — validates `status` is one of
   `confirmed`/`declined`/`cancelled`, calls `updateBookingStatus`, 404s if no
   row changed. On success, best-effort emails the customer via
@@ -139,12 +139,12 @@ other best-effort email in this codebase).
 New function:
 
 ```ts
-export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): Promise<void>
+export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): Promise<void>;
 ```
 
 - No-ops immediately if there's no connected calendar provider
   (`getProviderConnection(..., 'calendar')` missing or `Status !==
-  'connected'`) — matches the existing guard at the top of
+'connected'`) — matches the existing guard at the top of
   `syncBookingToCalendar`.
 - Lists events via the already-existing `listCalendarEvents` (already reads
   back `extendedProperties.private.bookingId`, since `buildEventResource`
@@ -183,7 +183,7 @@ export async function reconcileIfStale(env: Env, tenant: Tenant): Promise<void> 
 }
 ```
 
-The cache key is written *after* the attempt (success or failure) so a
+The cache key is written _after_ the attempt (success or failure) so a
 transient failure doesn't cause every subsequent load in the TTL window to
 retry — it backs off for the full TTL either way, same as any other
 best-effort background reconciliation. `GET /:slug/admin/bookings`

@@ -149,10 +149,9 @@ describe('POST /:slug/admin/customers/import', () => {
       (raw.prepare('SELECT COUNT(*) AS n FROM EndUsers').get() as { n: number }).n;
     const before = countEndUsers();
     const header = 'Client Email,Client Name,Pet Name,Pet Type';
-    const rows = Array.from(
-      { length: 501 },
-      (_, n) => `over${n}@example.com,Over ${n},,`,
-    ).join('\n');
+    const rows = Array.from({ length: 501 }, (_, n) => `over${n}@example.com,Over ${n},,`).join(
+      '\n',
+    );
     const token = await adminToken(TENANT_A);
     const res = await app.request(
       '/api/sunny-paws/admin/customers/import',
