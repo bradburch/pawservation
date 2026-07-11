@@ -256,5 +256,14 @@ describe('google-calendar', () => {
         listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z'),
       ).rejects.toThrow('Google listCalendarEvents failed (403)');
     });
+
+    it('throws when the response is truncated (nextPageToken present)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
+      );
+      await expect(
+        listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z'),
+      ).rejects.toThrow('result truncated');
+    });
   });
 });

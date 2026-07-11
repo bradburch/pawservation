@@ -231,7 +231,14 @@ export async function listCalendarEvents(
       end: { date?: string; dateTime?: string };
       extendedProperties?: { private?: Record<string, string> };
     }>;
+    nextPageToken?: string;
   };
+  // We don't paginate (see module comment / caller docs) — a truncated result must never be
+  // treated as "these events don't exist," since callers use absence to infer deletion. Fail
+  // loudly instead so callers' existing best-effort error handling skips the operation.
+  if (j.nextPageToken) {
+    throw new Error('Google listCalendarEvents: result truncated (more than 2500 events in range)');
+  }
   return (j.items ?? []).map((item) => ({
     summary: item.summary ?? '',
     start: item.start.date ?? item.start.dateTime?.slice(0, 10) ?? '',
