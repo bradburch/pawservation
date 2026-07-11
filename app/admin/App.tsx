@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { adminApi, isAuthExpired, type Customer } from '../shared-ui/api.js';
+import { adminApi, isAuthExpired, type Customer, type ImportResult } from '../shared-ui/api.js';
 import {
   IconCalendar,
   IconClipboardCheck,
@@ -371,6 +371,18 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const removePet = (endUserId: string, petId: string) =>
     withCustomerRefresh(() => adminApi.customers.removePet(slug, token, endUserId, petId));
 
+  const importCsv = async (csv: string, sendInvites: boolean): Promise<ImportResult | null> => {
+    setError('');
+    try {
+      const result = await adminApi.customers.import(slug, token, csv, sendInvites);
+      setCustomers(await loadCustomers());
+      return result;
+    } catch (e) {
+      handle(e);
+      return null;
+    }
+  };
+
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
     let active = true;
@@ -423,6 +435,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         addPet={addPet}
         removePet={removePet}
         enabledPetTypes={enabledPetTypes}
+        importCsv={importCsv}
       />
     ),
     apps: (

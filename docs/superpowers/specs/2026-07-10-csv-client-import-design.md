@@ -32,7 +32,7 @@ existing clients and their pets in one action.
 
 - Editing or removing existing clients/pets via CSV — this is additive only
   (create-or-reuse), matching `insertInvitedCustomer`'s existing semantics.
-  A follow-up CSV *export* or *update* flow is out of scope.
+  A follow-up CSV _export_ or _update_ flow is out of scope.
 - A preview-then-confirm step before committing the import. Because the
   import is already non-destructive and idempotent (Goal 2), there's nothing
   to undo — the sitter gets the full result report (what was created, what
@@ -92,7 +92,7 @@ team@example.com,Team Co,,
   `dog` or `cat` (case-insensitive) **and** enabled for that tenant (same
   two-part check the single-add pet route already applies —
   `isPetType` + `listPetTypes(...).Enabled`, `server/routes/admin.ts:594,
-  599-602`).
+599-602`).
 
 An example file matching this exact format is committed to the repo at
 `docs/examples/clients-import-example.csv` and served as a static download
@@ -106,12 +106,11 @@ containing a comma, e.g. `"Doe, Jane"`, exported from Excel/Sheets with
 quotes). One function:
 
 ```ts
-export function parseCsvRows(text: string): string[][]
+export function parseCsvRows(text: string): string[][];
 ```
 
 Splits on newlines (tolerating `\r\n`), splits each line on commas outside
-quotes, and un-escapes `""` → `"` inside a quoted field. The caller (Section
-3) treats row 1 as the header and ignores it (column order is fixed, not
+quotes, and un-escapes `""` → `"` inside a quoted field. The caller (Section 3) treats row 1 as the header and ignores it (column order is fixed, not
 name-matched — matching the fixed 4-column format above; a header with
 different labels or order is not supported in this pass).
 
@@ -132,7 +131,7 @@ For each parsed row (1-indexed against the sitter's actual file, header = row 1)
 3. If `Pet Name`/`Pet Type` are both blank, row is done (client-only row).
    If exactly one of the two is present, skip just the pet with a reason
    (`'Pet type given without a pet name'` / `'Pet name given without a pet
-   type'`) — the client from step 2 is still kept.
+type'`) — the client from step 2 is still kept.
 4. If both are present: validate `Pet Type` (same two checks as the
    single-add route). Invalid → skip just the pet, record the reason (client
    from step 2 is still kept).
@@ -143,7 +142,7 @@ For each parsed row (1-indexed against the sitter's actual file, header = row 1)
    `server/db/repo.ts` — reused to build the seed map rather than querying
    per row) and updated as pets are added during this same run. A name
    already in the set → skip, record `{ row, reason: 'Pet already exists for
-   this client' }`. This one check is what makes both "duplicate row within
+this client' }`. This one check is what makes both "duplicate row within
    this file" and "re-uploading the same file later" safe — both look
    identical to it.
 6. Otherwise `addEndUserPet(db, tenant.Id, endUserId, name, petType)` and add

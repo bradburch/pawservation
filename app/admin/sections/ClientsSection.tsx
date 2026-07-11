@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Customer } from '../../shared-ui/api.js';
+import type { Customer, ImportResult } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
 
 function PetAdder({
@@ -48,6 +48,7 @@ export function ClientsSection({
   addPet,
   removePet,
   enabledPetTypes,
+  importCsv,
 }: {
   customers: Customer[];
   custEmail: string;
@@ -59,7 +60,30 @@ export function ClientsSection({
   addPet: (endUserId: string, name: string, petType: string) => Promise<void>;
   removePet: (endUserId: string, petId: string) => Promise<void>;
   enabledPetTypes: string[];
+  importCsv: (csv: string, sendInvites: boolean) => Promise<ImportResult | null>;
 }) {
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [sendInvites, setSendInvites] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [fileInputKey, setFileInputKey] = useState(0);
+
+  const runImport = async () => {
+    if (!csvFile || importing) return;
+    setImporting(true);
+    try {
+      const csv = await csvFile.text();
+      const result = await importCsv(csv, sendInvites);
+      if (result) {
+        setImportResult(result);
+        setCsvFile(null);
+        setFileInputKey((k) => k + 1);
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <>
       <h2>
@@ -83,6 +107,53 @@ export function ClientsSection({
         />
         <button onClick={() => void addCustomer()}>Add customer</button>
       </div>
+      <div className="pb-row">
+        <input
+          key={fileInputKey}
+          type="file"
+          accept=".csv"
+          onChange={(e) => {
+            setCsvFile(e.target.files?.[0] ?? null);
+            setImportResult(null);
+          }}
+        />
+        <label>
+          <input
+            type="checkbox"
+            checked={sendInvites}
+            onChange={(e) => setSendInvites(e.target.checked)}
+          />{' '}
+          Send invite emails to new clients
+        </label>
+        <button onClick={() => void runImport()} disabled={!csvFile || importing}>
+          {importing ? 'Importing…' : 'Import'}
+        </button>
+        <a href="/clients-import-example.csv" download>
+          Download example CSV
+        </a>
+      </div>
+      {importResult && (
+        <div className="pb-row">
+          <p>
+            Imported {importResult.importedCustomers} client
+            {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
+            {importResult.importedPets === 1 ? '' : 's'}.
+            {importResult.invitesSent > 0 ? ` Sent ${importResult.invitesSent} invite(s).` : ''}
+            {importResult.invitesFailed > 0
+              ? ` ${importResult.invitesFailed} invite(s) failed to send.`
+              : ''}
+          </p>
+          {importResult.skippedRows.length > 0 && (
+            <ul>
+              {importResult.skippedRows.map((r) => (
+                <li key={r.row}>
+                  Row {r.row}: {r.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <ul>
         {customers.map((cust) => (
           <li key={cust.id} className="pb-customer">
