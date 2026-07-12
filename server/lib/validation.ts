@@ -92,7 +92,12 @@ export function isValidDuration(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
 
-/** How a sitter collected money. Mirrors the SQL CHECK on Payments.Method — keep in lockstep. */
+/**
+ * How a sitter collected money. Mirrors the SQL CHECK on Payments.Method — keep in lockstep.
+ * Adding/removing a method here requires updating sql/schema.sql's CHECK constraint too (SQLite
+ * can't ALTER a CHECK, so that's a table-rebuild migration, not a plain column add), plus this
+ * list's frontend copy in app/shared-ui/api.ts.
+ */
 export const PAYMENT_METHODS = [
   'cash',
   'venmo',

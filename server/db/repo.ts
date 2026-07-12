@@ -484,16 +484,22 @@ export async function getAnalytics(
     months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
   }
   const windowStart = `${months[0]}-01`;
+  // Exclusive upper bound: first day of the month AFTER today's month. Without it, a future-dated
+  // payment (post-dated deposit, clock skew) would be summed into `Total` by SQL then discarded by
+  // the zero-fill map below since its month key isn't in `months` — silently dropping real revenue
+  // from the response instead of excluding it up front.
+  const nextMonth = new Date(Date.UTC(y, m, 1));
+  const windowEnd = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}-01`;
 
   const [monthlyRes, byServiceRes, topClientsRes, outstandingRes] = await Promise.all([
     db
       .prepare(
         `SELECT substr(PaidDate, 1, 7) AS Month, SUM(Amount) AS Total
-         FROM Payments WHERE TenantId = ? AND PaidDate >= ?
+         FROM Payments WHERE TenantId = ? AND PaidDate >= ? AND PaidDate < ?
          GROUP BY Month`,
       )
-      .bind(tenantId, windowStart)
-      .all<{ Month: string; Total: number }>(),
+      .bind(tenantId, windowStart, windowEnd)
+      .all<AnalyticsData['monthly'][number]>(),
     db
       .prepare(
         `SELECT b.ServiceType AS ServiceType, COALESCE(s.Label, b.ServiceType) AS Label,
@@ -506,7 +512,7 @@ export async function getAnalytics(
          ORDER BY Total DESC`,
       )
       .bind(tenantId)
-      .all<{ ServiceType: string; Label: string; Total: number }>(),
+      .all<AnalyticsData['byService'][number]>(),
     db
       .prepare(
         `SELECT b.EndUserId AS EndUserId, u.Name AS Name, u.Email AS Email,

@@ -137,6 +137,25 @@ describe('admin payment routes', () => {
     expect(body.payments[0]).toMatchObject({ amount: 40, method: 'venmo' });
   });
 
+  it('404s listing payments for a nonexistent booking', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings/nope/payments',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('records a payment with an empty note as null', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A);
+    const res = await postPayment(env, bookingId, { ...goodBody, note: '' });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { payment: { note: string | null } };
+    expect(body.payment.note).toBeNull();
+  });
+
   it('deletes a payment (204), 404s on repeat and on a booking/payment mismatch', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);

@@ -814,7 +814,8 @@ export const adminRoutes = new Hono<AppEnv>()
     // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
     const payments = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
-    const created = payments.find((p) => p.Id === paymentId)!;
+    const created = payments.find((p) => p.Id === paymentId);
+    if (!created) return c.json({ error: 'Not found.' }, 404);
     return c.json(
       {
         payment: {
@@ -832,7 +833,12 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get('/:slug/admin/bookings/:id/payments', async (c) => {
     const tenant = c.get('tenant');
-    const rows = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    const bookingId = c.req.param('id');
+    // Same existence guard as POST/DELETE: foreign booking or the 'blocked' sentinel 404s. Unlike
+    // POST, a cancelled booking is still viewable here — DELETE is the correction mechanism for it.
+    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
+    const rows = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
     return c.json({
       payments: rows.map((p) => ({
         id: p.Id,
@@ -860,6 +866,7 @@ export const adminRoutes = new Hono<AppEnv>()
   // here in JS from the aggregates — no extra queries, no KV caching (prototype-scale D1).
   .get('/:slug/admin/analytics', async (c) => {
     const tenant = c.get('tenant');
+    await reconcileIfStale(c.env, tenant);
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
     const outstanding = data.outstanding.map((o) => ({
