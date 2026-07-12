@@ -4,6 +4,8 @@ import { IconChartBar } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
 import type { Session } from '../shared.js';
 
+const NO_PAYMENTS = 'No payments recorded yet.';
+
 const MONTH_NAMES = [
   'Jan',
   'Feb',
@@ -44,7 +46,7 @@ function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
         const x = i * (barW + gap);
         return (
           <g key={m.month}>
-            {m.total > 0 && (
+            {m.total > 0 && m.total < 10000 && (
               <text x={x + barW / 2} y={chartH - h - 3} textAnchor="middle" fontSize="7">
                 ${m.total}
               </text>
@@ -149,12 +151,12 @@ export function EarningsSection({
       {hasPayments ? (
         <MonthlyChart monthly={data.monthly} />
       ) : (
-        <p className="pb-hint">No payments recorded yet.</p>
+        <p className="pb-hint">{NO_PAYMENTS}</p>
       )}
 
       <h3>By service (all-time)</h3>
       {data.byService.length === 0 ? (
-        <p className="pb-hint">No payments recorded yet.</p>
+        <p className="pb-hint">{NO_PAYMENTS}</p>
       ) : (
         <ul className="pb-hbars">
           {data.byService.map((s) => (
@@ -174,12 +176,14 @@ export function EarningsSection({
 
       <h3>Top clients (all-time)</h3>
       {data.topClients.length === 0 ? (
-        <p className="pb-hint">No payments recorded yet.</p>
+        <p className="pb-hint">{NO_PAYMENTS}</p>
       ) : (
         <ul>
           {data.topClients.map((t) => (
             <li key={t.endUserId}>
-              <span>{t.name || t.email || 'Unknown client'}</span>
+              <span className="pb-truncate" title={t.name || t.email || 'Unknown client'}>
+                {t.name || t.email || 'Unknown client'}
+              </span>
               <span>
                 ${t.total} · {t.bookings} booking{t.bookings === 1 ? '' : 's'}
               </span>
@@ -190,13 +194,13 @@ export function EarningsSection({
 
       <h3>Outstanding balances</h3>
       {data.outstanding.length === 0 ? (
-        <p className="pb-hint">Every confirmed booking is fully paid.</p>
+        <p className="pb-hint">No outstanding balances.</p>
       ) : (
         <ul>
           {data.outstanding.map((o) => (
             <li key={o.bookingId}>
-              <span>
-                {o.name || o.email || 'Unknown client'} — {o.serviceType} ({o.startDate})
+              <span className="pb-truncate-block" title={o.name || o.email || 'Unknown client'}>
+                <span className="pb-truncate">{o.name || o.email || 'Unknown client'}</span> — {o.serviceType} ({o.startDate})
                 <br />
                 owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost})
               </span>
