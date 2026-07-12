@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
+import { PaymentsPanel } from '../PaymentsPanel';
 import type { Session } from '../shared.js';
 
 /** Renders the dates for one row: single date (+ time, for timed services) or a range. */
@@ -18,6 +19,14 @@ function chipClass(status: string): string {
   return '';
 }
 
+/** Payment state for a live row; null for cancelled/declined (money display would mislead) and
+ * for unpaid estimate-less rows. 'paid in full' covers overpayment/tips (paidTotal > estCost). */
+function paidText(b: AdminBooking): string | null {
+  if (b.status === 'cancelled' || b.status === 'declined') return null;
+  if (b.estCost == null) return b.paidTotal > 0 ? `paid $${b.paidTotal}` : null;
+  return b.paidTotal >= b.estCost ? 'paid in full' : `paid $${b.paidTotal} of $${b.estCost}`;
+}
+
 export function BookingsSection({
   session,
   handleError,
@@ -29,6 +38,7 @@ export function BookingsSection({
 }) {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
   const load = () =>
@@ -98,21 +108,38 @@ export function BookingsSection({
           Cancel
         </button>
       )}
+      {b.status !== 'cancelled' && b.status !== 'declined' && (
+        <button onClick={() => setOpenId(openId === b.id ? null : b.id)}>
+          {openId === b.id ? 'Close' : 'Payments'}
+        </button>
+      )}
     </span>
   );
 
-  const row = (b: AdminBooking) => (
-    <li key={b.id}>
-      <span>
-        {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
-        <br />
-        {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
-        {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
-        <span className={`pb-chip${chipClass(b.status)}`}>{b.status}</span>
-      </span>
-      {actionsFor(b)}
-    </li>
-  );
+  const row = (b: AdminBooking) => {
+    const paid = paidText(b);
+    return (
+      <li key={b.id}>
+        <span>
+          {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
+          <br />
+          {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
+          {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
+          <span className={`pb-chip${chipClass(b.status)}`}>{b.status}</span>
+          {paid && <> · {paid}</>}
+        </span>
+        {actionsFor(b)}
+        {openId === b.id && (
+          <PaymentsPanel
+            session={session}
+            bookingId={b.id}
+            onChanged={async () => setBookings(await load())}
+            handleError={handleError}
+          />
+        )}
+      </li>
+    );
+  };
 
   const pending = (bookings ?? []).filter((b) => b.status === 'pending').sort(byStartDate);
   const rest = (bookings ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);
