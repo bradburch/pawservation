@@ -3,11 +3,7 @@ import app from '../index';
 import { insertBookingRequest, insertPayment, updateBookingStatus } from '../db/repo';
 import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
-const makeBooking = (
-  env: Env,
-  tenantId: string,
-  status: 'pending' | 'confirmed' = 'confirmed',
-) =>
+const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed' = 'confirmed') =>
   insertBookingRequest(env.PAWBOOK_DB, tenantId, {
     endUserId: null,
     serviceType: 'boarding',
@@ -47,7 +43,13 @@ describe('admin payment routes', () => {
     const res = await postPayment(env, bookingId, goodBody);
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
-      payment: { id: string; amount: number; method: string; paidDate: string; note: string | null };
+      payment: {
+        id: string;
+        amount: number;
+        method: string;
+        paidDate: string;
+        note: string | null;
+      };
       paidTotal: number;
     };
     expect(body.payment).toMatchObject({
@@ -120,7 +122,7 @@ describe('admin payment routes', () => {
     expect((await postPayment(env, foreignId, goodBody)).status).toBe(404);
   });
 
-  it('lists a booking\'s payments', async () => {
+  it("lists a booking's payments", async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
     await postPayment(env, bookingId, goodBody);

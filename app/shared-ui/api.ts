@@ -52,8 +52,7 @@ export type MonthDay = {
 };
 
 export type Availability =
-  | { available: true; estCost: number; nights?: number }
-  | { available: false; reason: string };
+  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
 
 export type Booking = {
   id: string;

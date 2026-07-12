@@ -41,8 +41,7 @@ export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
 }
 
 export type AvailabilityResult =
-  | { available: true; estCost: number; nights?: number }
-  | { available: false; reason: string };
+  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability

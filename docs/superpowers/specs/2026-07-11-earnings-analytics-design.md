@@ -8,7 +8,7 @@
 
 Sitters have no view of the money side of their business. The only
 money-shaped data in the schema is `BookingRequests.EstCost` (an INTEGER
-whole-dollar *estimate* computed at booking time) and per-option `Rate` on
+whole-dollar _estimate_ computed at booking time) and per-option `Rate` on
 `TenantServiceOptions`. There is no record of what was actually paid, no
 paid/unpaid state, no payment processor, and no reporting of any kind — the
 admin app (`app/admin/App.tsx`) has sections for bookings, clients, services,
@@ -51,7 +51,7 @@ recorded so far.
 - **Invoicing/receipts.** No PDFs, no emails to clients about payments.
 - **Refunds / cancel-after-payment netting.** Revenue aggregates count
   payments regardless of the booking's later status — cash already received
-  is real revenue (only the *outstanding* query filters to confirmed).
+  is real revenue (only the _outstanding_ query filters to confirmed).
   There are no negative amounts (`CHECK (Amount > 0)`); deleting the
   payment record is the only correction mechanism, which is why
   `deletePayment` has no booking-status guard. Revisit if real refund
@@ -116,7 +116,7 @@ New functions, all tenant-scoped like every existing query:
   — inserts iff the booking exists for this tenant, is not `ServiceType='blocked'`,
   and is not cancelled. A plain `INSERT` has no `WHERE`, so this is an
   `INSERT INTO Payments (...) SELECT ... FROM BookingRequests WHERE
-  TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`
+TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`
   — a new idiom for `repo.ts` (no existing guarded insert to copy), atomic
   like `updateBookingStatus`'s `UPDATE ... WHERE` guard. Returns whether a
   row was inserted (`meta.changes`). `pending` bookings are **deliberately
@@ -162,7 +162,7 @@ stack as every other `/:slug/admin/*` route):
 - `GET /:slug/admin/analytics` — returns `getAnalytics` payload verbatim.
 - `GET /:slug/admin/bookings` (existing) — its response-mapping object
   (`server/routes/admin.ts:~746`, the `status: r.Declined ? 'declined' :
-  r.Status` block) gains `paidTotal: r.PaidTotal ?? 0` so the repo-layer
+r.Status` block) gains `paidTotal: r.PaidTotal ?? 0` so the repo-layer
   join actually reaches the client.
 - `POST /:slug/admin/bookings/:id/payments` — body
   `{ amount, method, paidDate, note? }`. Validates: amount via the existing
@@ -234,7 +234,7 @@ Per-concern test files, mirroring the existing convention:
 
 - `server/__tests__/payments-repo.test.ts` — `insertPayment` guards
   (cancelled booking refused, blocked row refused, cross-tenant refused,
-  pending booking *allowed*, happy path), `deletePayment` tenant scoping
+  pending booking _allowed_, happy path), `deletePayment` tenant scoping
   and booking/payment-mismatch refusal (and that it works on a cancelled
   booking), `listPaymentsForBooking`, paid-total aggregation on
   `listBookingsForTenant`.
