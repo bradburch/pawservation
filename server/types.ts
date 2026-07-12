@@ -1,4 +1,5 @@
 import type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType } from './lib/services';
+import type { PaymentMethod } from './lib/validation';
 import type { ServiceQuestion } from '../src/shared/index.js';
 
 export type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType };
@@ -89,6 +90,17 @@ export type BookingRow = {
   EstCost: number | null;
   Status: 'pending' | 'confirmed' | 'cancelled';
   Declined: number;
+  CreatedAt: string;
+};
+
+export type PaymentRow = {
+  Id: string;
+  TenantId: string;
+  BookingRequestId: string;
+  Amount: number;
+  Method: PaymentMethod;
+  PaidDate: string;
+  Note: string | null;
   CreatedAt: string;
 };
 

@@ -2,6 +2,7 @@ import type {
   BookingRow,
   EndUser,
   EndUserPet,
+  PaymentRow,
   PetType,
   ProviderConnection,
   ProviderConnectionWithTokens,
@@ -12,6 +13,7 @@ import type {
   TenantUser,
 } from '../types';
 import type { ServiceType } from '../lib/services';
+import type { PaymentMethod } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
 
@@ -311,18 +313,23 @@ export async function listBookingsForUser(
 export async function listBookingsForTenant(
   db: D1Database,
   tenantId: string,
-): Promise<(BookingRow & { Email: string | null; Name: string | null })[]> {
+): Promise<(BookingRow & { Email: string | null; Name: string | null; PaidTotal: number })[]> {
   const { results } = await db
     .prepare(
-      `SELECT BookingRequests.*, EndUsers.Email AS Email, EndUsers.Name AS Name
+      `SELECT BookingRequests.*, EndUsers.Email AS Email, EndUsers.Name AS Name,
+              COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
        LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
          AND EndUsers.TenantId = BookingRequests.TenantId
+       LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+       ) paid ON paid.BookingRequestId = BookingRequests.Id
        WHERE BookingRequests.TenantId = ? AND BookingRequests.ServiceType != 'blocked'
        ORDER BY BookingRequests.StartDate DESC, BookingRequests.CreatedAt DESC`,
     )
-    .bind(tenantId)
-    .all<BookingRow & { Email: string | null; Name: string | null }>();
+    .bind(tenantId, tenantId)
+    .all<BookingRow & { Email: string | null; Name: string | null; PaidTotal: number }>();
   return results;
 }
 
@@ -377,6 +384,82 @@ export async function getBookingWithCustomer(
     )
     .bind(tenantId, id)
     .first<BookingRow & { Email: string | null; Name: string | null }>();
+}
+
+/**
+ * Record a payment iff the booking exists for THIS tenant, is not a 'blocked' sentinel, and is
+ * not cancelled — the guard lives in the SQL (INSERT ... SELECT ... WHERE) so it is atomic with
+ * the write, like updateBookingStatus's guarded UPDATE. 'pending' is deliberately allowed:
+ * deposits are commonly collected before a booking is confirmed. Returns the new payment id, or
+ * null when the guard refused (route 404s on null, the existing idiom).
+ */
+export async function insertPayment(
+  db: D1Database,
+  tenantId: string,
+  payment: {
+    bookingRequestId: string;
+    amount: number;
+    method: PaymentMethod;
+    paidDate: string;
+    note: string | null;
+  },
+): Promise<string | null> {
+  const id = crypto.randomUUID();
+  const result = await db
+    .prepare(
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       FROM BookingRequests
+       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+    )
+    .bind(
+      id,
+      tenantId,
+      payment.bookingRequestId,
+      payment.amount,
+      payment.method,
+      payment.paidDate,
+      payment.note,
+      tenantId,
+      payment.bookingRequestId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Delete one payment. The WHERE includes BookingRequestId so a payment id paired with the wrong
+ * booking id in the URL reports false (route 404s) instead of silently deleting. Deliberately NO
+ * booking-status guard — deleting the record is the only correction mechanism for refunds, so it
+ * must work on cancelled bookings too (see the design's Non-goals).
+ */
+export async function deletePayment(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+  paymentId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM Payments WHERE TenantId = ? AND BookingRequestId = ? AND Id = ?')
+    .bind(tenantId, bookingRequestId, paymentId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+export async function listPaymentsForBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+): Promise<PaymentRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, CreatedAt
+       FROM Payments WHERE TenantId = ? AND BookingRequestId = ?
+       ORDER BY PaidDate DESC, CreatedAt DESC`,
+    )
+    .bind(tenantId, bookingRequestId)
+    .all<PaymentRow>();
+  return results;
 }
 
 export async function listProviderConnections(

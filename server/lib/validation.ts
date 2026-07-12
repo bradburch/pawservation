@@ -91,3 +91,20 @@ export function isValidRate(value: unknown): value is number {
 export function isValidDuration(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
+
+/** How a sitter collected money. Mirrors the SQL CHECK on Payments.Method — keep in lockstep. */
+export const PAYMENT_METHODS = [
+  'cash',
+  'venmo',
+  'zelle',
+  'paypal',
+  'check',
+  'card',
+  'other',
+] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return typeof value === 'string' && (PAYMENT_METHODS as readonly string[]).includes(value);
+}
