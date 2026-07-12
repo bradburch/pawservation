@@ -12,6 +12,10 @@ function formatWhen(b: AdminBooking): string {
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
 
+/** True for bookings that aren't cancelled/declined — the payments ledger is fully editable for
+ * these; cancelled/declined rows show a read-only ledger only when they have payments to show. */
+const isActive = (b: AdminBooking) => b.status !== 'cancelled' && b.status !== 'declined';
+
 function chipClass(status: string): string {
   if (status === 'confirmed') return ' pb-chip-ok';
   if (status === 'cancelled') return ' pb-chip-bad';
@@ -19,12 +23,12 @@ function chipClass(status: string): string {
   return '';
 }
 
-/** Payment state for a live row; null for cancelled/declined (money display would mislead) and
- * for unpaid estimate-less rows. 'paid in full' covers overpayment/tips (paidTotal > estCost). */
+/** Payment state for a row; null for unpaid rows. 'paid in full' covers overpayment/tips
+ * (paidTotal > estCost). Shown for cancelled/declined rows too, so a sitter reviewing a refund
+ * case can still see the amount. */
 function paidText(b: AdminBooking): string | null {
-  if (b.status === 'cancelled' || b.status === 'declined') return null;
   if (b.paidTotal === 0) return null;
-  if (b.estCost == null) return b.paidTotal > 0 ? `paid $${b.paidTotal}` : null;
+  if (b.estCost == null) return `paid $${b.paidTotal}`;
   return b.paidTotal >= b.estCost ? 'paid in full' : `paid $${b.paidTotal} of $${b.estCost}`;
 }
 
@@ -109,7 +113,7 @@ export function BookingsSection({
           Cancel
         </button>
       )}
-      {b.status !== 'cancelled' && b.status !== 'declined' && (
+      {(isActive(b) || b.paidTotal > 0) && (
         <button onClick={() => setOpenId(openId === b.id ? null : b.id)}>
           {openId === b.id ? 'Close' : 'Payments'}
         </button>
@@ -130,12 +134,13 @@ export function BookingsSection({
           {paid && <> · {paid}</>}
         </span>
         {actionsFor(b)}
-        {b.status !== 'cancelled' && b.status !== 'declined' && openId === b.id && (
+        {(isActive(b) || b.paidTotal > 0) && openId === b.id && (
           <PaymentsPanel
             session={session}
             bookingId={b.id}
             onChanged={async () => setBookings(await load())}
             handleError={handleError}
+            allowRecord={isActive(b)}
           />
         )}
       </li>

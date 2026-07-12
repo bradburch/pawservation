@@ -18,18 +18,23 @@ export function PaymentsPanel({
   bookingId,
   onChanged,
   handleError,
+  allowRecord = true,
 }: {
   session: Session;
   bookingId: string;
   onChanged: () => void | Promise<void>;
   handleError: (e: unknown) => void;
+  /** False for cancelled/declined bookings: the ledger is read-only (delete is the refund-
+   * correction mechanism), so the record-payment form is hidden. */
+  allowRecord?: boolean;
 }) {
   const [payments, setPayments] = useState<Payment[] | null>(null);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<string>('cash');
   const [paidDate, setPaidDate] = useState(todayStr);
   const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const RECORDING = '__record__';
 
   const amountNum = Number(amount);
   const canSubmit = Number.isInteger(amountNum) && amountNum >= 1 && paidDate.trim() !== '';
@@ -51,11 +56,11 @@ export function PaymentsPanel({
   }, [bookingId, session]);
 
   const record = async () => {
-    if (busy) return;
-    setBusy(true);
+    if (busyId) return;
+    setBusyId(RECORDING);
     try {
       await adminApi.payments.record(session.slug, session.token, bookingId, {
-        amount: Number(amount),
+        amount: amountNum,
         method,
         paidDate,
         ...(note.trim() ? { note: note.trim() } : {}),
@@ -68,13 +73,13 @@ export function PaymentsPanel({
     } catch (e) {
       handleError(e);
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   };
 
   const remove = async (paymentId: string) => {
-    if (busy) return;
-    setBusy(true);
+    if (busyId) return;
+    setBusyId(paymentId);
     try {
       await adminApi.payments.remove(session.slug, session.token, bookingId, paymentId);
       setPayments(await load());
@@ -82,16 +87,18 @@ export function PaymentsPanel({
     } catch (e) {
       handleError(e);
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   };
+
+  if (!allowRecord && payments !== null && payments.length === 0) return null;
 
   return (
     <div className="pb-payments">
       {payments === null ? (
         <p>Loading…</p>
       ) : payments.length === 0 ? (
-        <p className="pb-hint">No payments recorded yet.</p>
+        allowRecord && <p className="pb-hint">No payments recorded yet.</p>
       ) : (
         <ul>
           {payments.map((p) => (
@@ -100,46 +107,48 @@ export function PaymentsPanel({
                 ${p.amount} · {p.method} · {p.paidDate}
                 {p.note ? ` — ${p.note}` : ''}
               </span>
-              <button disabled={busy} onClick={() => void remove(p.id)}>
+              <button disabled={busyId === p.id} onClick={() => void remove(p.id)}>
                 Delete
               </button>
             </li>
           ))}
         </ul>
       )}
-      <div className="pb-row">
-        <label className="pb-inline">
-          Amount ($)
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-        </label>
-        <label className="pb-inline">
-          Method
-          <select value={method} onChange={(e) => setMethod(e.target.value)}>
-            {PAYMENT_METHODS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="pb-inline">
-          Date
-          <input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} />
-        </label>
-        <label className="pb-inline">
-          Note
-          <input value={note} onChange={(e) => setNote(e.target.value)} />
-        </label>
-        <button disabled={busy || !canSubmit} onClick={() => void record()}>
-          Record payment
-        </button>
-      </div>
+      {allowRecord && (
+        <div className="pb-row">
+          <label className="pb-inline">
+            Amount ($)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </label>
+          <label className="pb-inline">
+            Method
+            <select value={method} onChange={(e) => setMethod(e.target.value)}>
+              {PAYMENT_METHODS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="pb-inline">
+            Date
+            <input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} />
+          </label>
+          <label className="pb-inline">
+            Note
+            <input value={note} onChange={(e) => setNote(e.target.value)} />
+          </label>
+          <button disabled={busyId === RECORDING || !canSubmit} onClick={() => void record()}>
+            Record payment
+          </button>
+        </div>
+      )}
     </div>
   );
 }
