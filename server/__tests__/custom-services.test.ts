@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { insertBookingRequest } from '../db/repo';
+import { createService, insertBookingRequest, setServiceConfig } from '../db/repo';
 import { adminToken, createTestEnv, TENANT_A } from './helpers';
 
 /** Admin Bearer headers for a tenant, optionally with a JSON content type. */
@@ -61,6 +61,48 @@ describe('custom services — creation', () => {
     // 'morning-walk' is seeded for Sunny Paws; 'walk' collides with the built-in row.
     expect((await createSvc(env, { template: 'walk', label: 'Morning Walk' })).status).toBe(400);
     expect((await createSvc(env, { template: 'walk', label: 'Walk' })).status).toBe(400);
+  });
+
+  it('rejects a template id that only matches via the JS `in` operator prototype chain', async () => {
+    const { env } = createTestEnv();
+    expect((await createSvc(env, { template: 'constructor', label: 'x' })).status).toBe(400);
+  });
+
+  it('a custom service whose slug collides with an Object.prototype key is still custom and deletable', async () => {
+    const { env } = createTestEnv();
+    const { status, json } = await createSvc(env, { template: 'walk', label: 'Constructor' });
+    expect(status).toBe(201);
+    expect(json.type).toBe('constructor');
+
+    const settings = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as { services: { type: string; custom: boolean }[] };
+    expect(settings.services.find((s) => s.type === 'constructor')).toMatchObject({ custom: true });
+
+    const del = await app.request(
+      '/api/sunny-paws/admin/services/constructor',
+      { method: 'DELETE', headers: await auth(TENANT_A) },
+      env,
+    );
+    expect(del.status).toBe(204);
+  });
+
+  it('createService rejects a duplicate (TenantId, ServiceType) at the DB level', async () => {
+    const { env } = createTestEnv();
+    const svc = {
+      serviceType: 'race-walk',
+      label: 'Race Walk',
+      icon: 'paw',
+      shape: 'single' as const,
+      rateUnit: 'visit' as const,
+      hasDuration: true,
+      capacityKind: 'none' as const,
+      sortOrder: 99,
+    };
+    await createService(env.PAWBOOK_DB, TENANT_A, svc);
+    await expect(createService(env.PAWBOOK_DB, TENANT_A, svc)).rejects.toThrow(
+      /UNIQUE constraint failed/,
+    );
   });
 });
 
@@ -172,5 +214,18 @@ describe('custom services — deletion', () => {
       env,
     );
     expect(withBookings.status).toBe(409);
+  });
+
+  it('setServiceConfig reports no-op instead of silently succeeding when the row is gone', async () => {
+    const { env } = createTestEnv();
+    const updated = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'no-such-service', {
+      enabled: true,
+      questions: [],
+      minNights: null,
+      maxNights: null,
+      minPetCount: null,
+      maxPetCount: null,
+    });
+    expect(updated).toBe(false);
   });
 });

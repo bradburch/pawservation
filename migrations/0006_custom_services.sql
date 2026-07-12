@@ -10,7 +10,29 @@
 -- is its supported escape hatch — FKs are re-checked at COMMIT, when the renamed tables are back.
 PRAGMA defer_foreign_keys = true;
 
--- 1) Rebuild TenantServices with behavior columns, backfilled from the old catalog values.
+-- 0) Canonical template behavior — one definition, used to both backfill existing rows (1) and
+--    seed missing ones (2), instead of two independently hand-typed encodings that could drift.
+CREATE TEMP TABLE _service_templates (
+  ServiceType TEXT PRIMARY KEY,
+  Label TEXT NOT NULL,
+  Icon TEXT NOT NULL,
+  Shape TEXT NOT NULL,
+  RateUnit TEXT NOT NULL,
+  HasDuration INTEGER NOT NULL,
+  CapacityKind TEXT NOT NULL,
+  SortOrder INTEGER NOT NULL
+);
+INSERT INTO _service_templates
+  (ServiceType, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder)
+VALUES
+  ('boarding', 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0),
+  ('housesitting', 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1),
+  ('daycare', 'Day care', 'sun', 'single', 'day', 0, 'none', 2),
+  ('walk', 'Walks', 'paw', 'single', 'visit', 1, 'none', 3),
+  ('checkin', 'Check-ins', 'clipboard', 'single', 'visit', 1, 'none', 4);
+
+-- 1) Rebuild TenantServices with behavior columns, backfilled from _service_templates. The old
+--    ServiceType CHECK constrained every existing row to these 5 slugs, so the JOIN is exhaustive.
 CREATE TABLE TenantServices_new (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   ServiceType TEXT NOT NULL,
@@ -36,35 +58,11 @@ INSERT INTO TenantServices_new
   (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder,
    Questions, MinNights, MaxNights, MinPetCount, MaxPetCount)
 SELECT
-  TenantId, ServiceType, Enabled,
-  CASE ServiceType
-    WHEN 'boarding' THEN 'Boarding'
-    WHEN 'housesitting' THEN 'House sitting'
-    WHEN 'daycare' THEN 'Day care'
-    WHEN 'walk' THEN 'Walks'
-    ELSE 'Check-ins' END,
-  CASE ServiceType
-    WHEN 'boarding' THEN 'bed'
-    WHEN 'housesitting' THEN 'home'
-    WHEN 'daycare' THEN 'sun'
-    WHEN 'walk' THEN 'paw'
-    ELSE 'clipboard' END,
-  CASE ServiceType WHEN 'boarding' THEN 'range' WHEN 'housesitting' THEN 'range' ELSE 'single' END,
-  CASE ServiceType
-    WHEN 'boarding' THEN 'night'
-    WHEN 'housesitting' THEN 'night'
-    WHEN 'daycare' THEN 'day'
-    ELSE 'visit' END,
-  CASE WHEN ServiceType IN ('walk', 'checkin') THEN 1 ELSE 0 END,
-  CASE ServiceType WHEN 'boarding' THEN 'boarding' WHEN 'housesitting' THEN 'housesit' ELSE 'none' END,
-  CASE ServiceType
-    WHEN 'boarding' THEN 0
-    WHEN 'housesitting' THEN 1
-    WHEN 'daycare' THEN 2
-    WHEN 'walk' THEN 3
-    ELSE 4 END,
-  Questions, MinNights, MaxNights, MinPetCount, MaxPetCount
-FROM TenantServices;
+  ts.TenantId, ts.ServiceType, ts.Enabled, tpl.Label, tpl.Icon, tpl.Shape, tpl.RateUnit,
+  tpl.HasDuration, tpl.CapacityKind, tpl.SortOrder,
+  ts.Questions, ts.MinNights, ts.MaxNights, ts.MinPetCount, ts.MaxPetCount
+FROM TenantServices ts
+JOIN _service_templates tpl ON tpl.ServiceType = ts.ServiceType;
 
 DROP TABLE TenantServices;
 ALTER TABLE TenantServices_new RENAME TO TenantServices;
@@ -75,13 +73,9 @@ INSERT OR IGNORE INTO TenantServices
   (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder)
 SELECT t.Id, tpl.ServiceType, 0, tpl.Label, tpl.Icon, tpl.Shape, tpl.RateUnit, tpl.HasDuration, tpl.CapacityKind, tpl.SortOrder
 FROM Tenants t
-CROSS JOIN (
-  SELECT 'boarding' AS ServiceType, 'Boarding' AS Label, 'bed' AS Icon, 'range' AS Shape, 'night' AS RateUnit, 0 AS HasDuration, 'boarding' AS CapacityKind, 0 AS SortOrder
-  UNION ALL SELECT 'housesitting', 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1
-  UNION ALL SELECT 'daycare', 'Day care', 'sun', 'single', 'day', 0, 'none', 2
-  UNION ALL SELECT 'walk', 'Walks', 'paw', 'single', 'visit', 1, 'none', 3
-  UNION ALL SELECT 'checkin', 'Check-ins', 'clipboard', 'single', 'visit', 1, 'none', 4
-) tpl;
+CROSS JOIN _service_templates tpl;
+
+DROP TABLE _service_templates;
 
 -- 3) Rebuild TenantServiceOptions without the ServiceType CHECK (RateUnit CHECK kept).
 CREATE TABLE TenantServiceOptions_new (

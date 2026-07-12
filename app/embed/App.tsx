@@ -18,8 +18,7 @@ import {
   type TenantConfig,
 } from '../shared-ui/api';
 import './widget.css';
-import { SERVICE_ICONS } from './services';
-import { IconCheck, IconPaw } from '../shared-ui/icons';
+import { IconCheck, IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 
 const errorMsg = (e: unknown): string => (e instanceof Error ? e.message : 'Try again.');
 

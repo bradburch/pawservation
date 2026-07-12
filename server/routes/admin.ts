@@ -211,7 +211,7 @@ export const adminRoutes = new Hono<AppEnv>()
         hasDuration: Boolean(svc.HasDuration),
         rateUnit: svc.RateUnit,
         shape: svc.Shape,
-        custom: !(svc.ServiceType in SERVICE_TEMPLATES),
+        custom: !isTemplateId(svc.ServiceType),
         enabled: Boolean(svc.Enabled),
         questions: svc.Questions,
         minNights: svc.MinNights,
@@ -367,7 +367,7 @@ export const adminRoutes = new Hono<AppEnv>()
               ...(q.type === 'select' ? { options: q.options } : {}),
             }))
           : current.Questions;
-      await setServiceConfig(c.env.PAWBOOK_DB, tenant.Id, svcType, {
+      const updated = await setServiceConfig(c.env.PAWBOOK_DB, tenant.Id, svcType, {
         enabled: svc.enabled ?? false,
         questions,
         minNights: 'minNights' in svc ? (svc.minNights ?? null) : current.MinNights,
@@ -375,6 +375,10 @@ export const adminRoutes = new Hono<AppEnv>()
         minPetCount: 'minPetCount' in svc ? (svc.minPetCount ?? null) : current.MinPetCount,
         maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
       });
+      // The service existed when validated above but was deleted by a concurrent request since —
+      // stop before writing options for a slug that no longer exists.
+      if (!updated)
+        return c.json({ error: `${current.Label} was deleted. Refresh and retry.` }, 409);
       await replaceServiceOptions(
         c.env.PAWBOOK_DB,
         tenant.Id,
@@ -414,16 +418,24 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'A service with that name already exists.' }, 400);
 
     const tpl = SERVICE_TEMPLATES[body.template];
-    await createService(c.env.PAWBOOK_DB, tenant.Id, {
-      serviceType: slug,
-      label,
-      icon: tpl.icon,
-      shape: tpl.shape,
-      rateUnit: tpl.rateUnit,
-      hasDuration: tpl.hasDuration,
-      capacityKind: tpl.capacityKind,
-      sortOrder: Math.max(0, ...existing.map((s) => s.SortOrder)) + 1,
-    });
+    try {
+      await createService(c.env.PAWBOOK_DB, tenant.Id, {
+        serviceType: slug,
+        label,
+        icon: tpl.icon,
+        shape: tpl.shape,
+        rateUnit: tpl.rateUnit,
+        hasDuration: tpl.hasDuration,
+        capacityKind: tpl.capacityKind,
+        sortOrder: Math.max(0, ...existing.map((s) => s.SortOrder)) + 1,
+      });
+    } catch (err) {
+      // The listServices check above can't see a concurrent insert of the same slug — fall back
+      // to the DB's UNIQUE(TenantId, ServiceType) constraint as the source of truth.
+      if (err instanceof Error && err.message.includes('UNIQUE constraint failed'))
+        return c.json({ error: 'A service with that name already exists.' }, 400);
+      throw err;
+    }
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.json({ type: slug, label, template: body.template }, 201);
   })
@@ -436,7 +448,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
     const service = existing.find((s) => s.ServiceType === type);
     if (!service) return c.json({ error: 'Unknown service type.' }, 404);
-    if (type in SERVICE_TEMPLATES)
+    if (isTemplateId(type))
       return c.json({ error: 'Built-in services can be disabled, not deleted.' }, 400);
     if ((await countBookingsForService(c.env.PAWBOOK_DB, tenant.Id, type)) > 0)
       return c.json({ error: 'That service has bookings — disable it instead.' }, 409);

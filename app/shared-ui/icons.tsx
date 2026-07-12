@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 
 /**
  * Pawbook's icon set: small inline SVGs on one consistent system — 24px grid,
@@ -181,3 +181,12 @@ export function IconCheck({ size }: IconProps) {
     </Svg>
   );
 }
+
+/** Service display icons, keyed by a service's `icon` field. Shared by the widget and admin UI. */
+export const SERVICE_ICONS: Record<string, ComponentType<IconProps>> = {
+  bed: IconBed,
+  home: IconHome,
+  sun: IconSun,
+  paw: IconPaw,
+  clipboard: IconClipboardCheck,
+};

@@ -73,7 +73,7 @@ export type TemplateId = keyof typeof SERVICE_TEMPLATES;
 export const TEMPLATE_IDS = Object.keys(SERVICE_TEMPLATES) as TemplateId[];
 
 export function isTemplateId(value: unknown): value is TemplateId {
-  return typeof value === 'string' && value in SERVICE_TEMPLATES;
+  return typeof value === 'string' && Object.hasOwn(SERVICE_TEMPLATES, value);
 }
 
 /** 'blocked' is a BookingRequests sentinel (admin time-off), never a bookable service slug. */

@@ -1,22 +1,7 @@
 import { useState } from 'react';
 import { NullableNumberField } from './BusinessSection.js';
-import {
-  IconBed,
-  IconClipboardCheck,
-  IconHome,
-  IconPaw,
-  IconSun,
-  IconTag,
-} from '../../shared-ui/icons';
+import { IconPaw, IconTag, SERVICE_ICONS } from '../../shared-ui/icons';
 import type { QuestionForm, ServiceForm, Settings, SettingsSectionProps } from '../shared.js';
-
-const SERVICE_ICONS: Record<string, typeof IconPaw> = {
-  bed: IconBed,
-  home: IconHome,
-  sun: IconSun,
-  clipboard: IconClipboardCheck,
-  paw: IconPaw,
-};
 
 function ServiceIcon({ icon }: { icon: string }) {
   const Icon = SERVICE_ICONS[icon] ?? IconPaw;

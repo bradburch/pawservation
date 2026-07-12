@@ -1,5 +1,7 @@
 /** Tiny same-origin API client for the widget + admin pages. */
 
+export { PAYMENT_METHODS } from '../../src/shared/index.js';
+
 export type ServiceOption = {
   optionKey: string;
   label: string;
@@ -105,17 +107,6 @@ export type Payment = {
   paidDate: string;
   note: string | null;
 };
-
-/** Frontend copy of the server's whitelist (server/lib/validation.ts) — keep in lockstep. */
-export const PAYMENT_METHODS = [
-  'cash',
-  'venmo',
-  'zelle',
-  'paypal',
-  'check',
-  'card',
-  'other',
-] as const;
 
 export type AnalyticsPayload = {
   tiles: {

@@ -13,7 +13,7 @@ import type {
   TenantServiceOption,
   TenantUser,
 } from '../types';
-import type { ServiceType } from '../lib/services';
+import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
@@ -76,10 +76,10 @@ export async function createService(
     serviceType: string;
     label: string;
     icon: string;
-    shape: 'range' | 'single';
-    rateUnit: 'night' | 'day' | 'visit';
+    shape: ServiceShape;
+    rateUnit: RateUnit;
     hasDuration: boolean;
-    capacityKind: 'boarding' | 'housesit' | 'none';
+    capacityKind: CapacityKind;
     sortOrder: number;
   },
 ): Promise<void> {
@@ -208,7 +208,7 @@ export async function consumeLoginCode(
 }
 
 /** A booking row joined with its service's capacity pool (null for 'blocked' sentinel rows). */
-export type CapacityRow = BookingRow & { CapacityKind: 'boarding' | 'housesit' | null };
+export type CapacityRow = BookingRow & { CapacityKind: Exclude<CapacityKind, 'none'> | null };
 
 /**
  * Rows that feed the capacity map: bookings whose service draws from a capacity pool
@@ -609,7 +609,11 @@ export async function updateTenantSettings(
     .run();
 }
 
-/** UPDATE-only: service rows are created explicitly (createService / seed / migration backfill). */
+/**
+ * UPDATE-only: service rows are created explicitly (createService / seed / migration backfill).
+ * Returns false if no row matched (e.g. the service was deleted concurrently) — callers must not
+ * treat that as success, since a matching TenantServiceOptions write right after would orphan.
+ */
 export async function setServiceConfig(
   db: D1Database,
   tenantId: string,
@@ -622,8 +626,8 @@ export async function setServiceConfig(
     minPetCount: number | null;
     maxPetCount: number | null;
   },
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const result = await db
     .prepare(
       `UPDATE TenantServices SET
          Enabled = ?, Questions = ?, MinNights = ?, MaxNights = ?, MinPetCount = ?, MaxPetCount = ?
@@ -640,6 +644,7 @@ export async function setServiceConfig(
       serviceType,
     )
     .run();
+  return result.meta.changes > 0;
 }
 
 export async function replaceServiceOptions(
