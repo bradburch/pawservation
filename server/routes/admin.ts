@@ -12,14 +12,17 @@ import {
   getEndUserByEmail,
   deleteBlockedRange,
   deleteCustomer,
+  deletePayment,
   deleteService,
   getProviderConnection,
   insertBookingRequest,
   insertInvitedCustomer,
+  insertPayment,
   listAllEndUserPetsByTenant,
   listBlockedRanges,
   listBookingsForTenant,
   listCustomers,
+  listPaymentsForBooking,
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
@@ -58,6 +61,7 @@ import {
   DEFENSIVE_MAX_PET_COUNT,
   EMAIL_RE,
   isNullableLimit,
+  isPaymentMethod,
   isRealDate,
   isValidDuration,
   isValidRate,
@@ -744,6 +748,7 @@ export const adminRoutes = new Hono<AppEnv>()
         optionKey: r.OptionKey,
         petCount: r.PetCount,
         estCost: r.EstCost,
+        paidTotal: r.PaidTotal ?? 0,
         status: r.Declined ? 'declined' : r.Status,
         createdAt: r.CreatedAt,
       })),
@@ -783,4 +788,68 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ status, notified });
+  })
+
+  .post('/:slug/admin/bookings/:id/payments', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    const body = await c.req
+      .json<{ amount?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    if (!isValidRate(body.amount))
+      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
+    if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
+      return c.json({ error: 'Invalid payment date.' }, 400);
+    const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
+    const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
+      bookingRequestId: bookingId,
+      amount: body.amount,
+      method: body.method,
+      paidDate: body.paidDate,
+      note,
+    });
+    // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
+    if (!paymentId) return c.json({ error: 'Not found.' }, 404);
+    const payments = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const created = payments.find((p) => p.Id === paymentId)!;
+    return c.json(
+      {
+        payment: {
+          id: created.Id,
+          amount: created.Amount,
+          method: created.Method,
+          paidDate: created.PaidDate,
+          note: created.Note,
+        },
+        paidTotal: payments.reduce((sum, p) => sum + p.Amount, 0),
+      },
+      201,
+    );
+  })
+
+  .get('/:slug/admin/bookings/:id/payments', async (c) => {
+    const tenant = c.get('tenant');
+    const rows = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    return c.json({
+      payments: rows.map((p) => ({
+        id: p.Id,
+        amount: p.Amount,
+        method: p.Method,
+        paidDate: p.PaidDate,
+        note: p.Note,
+      })),
+    });
+  })
+
+  .delete('/:slug/admin/bookings/:id/payments/:paymentId', async (c) => {
+    const tenant = c.get('tenant');
+    const deleted = await deletePayment(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      c.req.param('paymentId'),
+    );
+    if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
   });
