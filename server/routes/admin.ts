@@ -7,6 +7,7 @@ import {
   countBookingsForService,
   countBookingsForUser,
   createService,
+  getAnalytics,
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
@@ -68,6 +69,7 @@ import {
 } from '../lib/validation';
 import type { AppEnv } from '../types';
 import type { ServiceQuestion } from '../../src/shared/index.js';
+import { getPacificDateStr } from '../../src/shared/index.js';
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -852,4 +854,44 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
+  })
+
+  // Earnings dashboard payload. All aggregation is SQL (getAnalytics); the tiles are derived
+  // here in JS from the aggregates — no extra queries, no KV caching (prototype-scale D1).
+  .get('/:slug/admin/analytics', async (c) => {
+    const tenant = c.get('tenant');
+    const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
+    const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
+    const outstanding = data.outstanding.map((o) => ({
+      bookingId: o.BookingId,
+      name: o.Name,
+      email: o.Email,
+      serviceType: o.ServiceType,
+      startDate: o.StartDate,
+      estCost: o.EstCost,
+      paidTotal: o.PaidTotal,
+      balance: o.EstCost - o.PaidTotal,
+    }));
+    return c.json({
+      tiles: {
+        thisMonth: data.monthly.at(-1)?.Total ?? 0,
+        lastMonth: data.monthly.at(-2)?.Total ?? 0,
+        outstandingTotal: outstanding.reduce((sum, o) => sum + o.balance, 0),
+        outstandingCount: outstanding.length,
+      },
+      monthly: data.monthly.map((m) => ({ month: m.Month, total: m.Total })),
+      byService: data.byService.map((s) => ({
+        serviceType: s.ServiceType,
+        label: s.Label,
+        total: s.Total,
+      })),
+      topClients: data.topClients.map((t) => ({
+        endUserId: t.EndUserId,
+        name: t.Name,
+        email: t.Email,
+        total: t.Total,
+        bookings: t.Bookings,
+      })),
+      outstanding,
+    });
   });

@@ -7,6 +7,9 @@ import {
   updateBookingStatus,
 } from '../db/repo';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
+import app from '../index';
+import { getPacificDateStr } from '../../src/shared/index.js';
+import { adminHeaders } from './helpers';
 
 // Seeded clean-slate tenant (sql/seed.sql): has customers but NO bookings, so outstanding
 // assertions can be exact. TENANT_A/B each carry a seeded confirmed unpaid booking.
@@ -157,5 +160,88 @@ describe('getAnalytics (repo)', () => {
     // TENANT_B's view contains only its own seeded unpaid booking (seed_ht_board1), never C's.
     const other = await getAnalytics(env.PAWBOOK_DB, TENANT_B, TODAY);
     expect(other.outstanding.map((o) => o.BookingId)).toEqual(['seed_ht_board1']);
+  });
+});
+
+describe('GET /:slug/admin/analytics (route)', () => {
+  // paws-and-relax has no seeded bookings and a NULL Timezone, so the route's "today"
+  // (getPacificDateStr default) matches what these tests compute.
+  const SLUG_C = 'paws-and-relax';
+
+  const getAnalyticsRoute = async (env: Env) =>
+    app.request(`/api/${SLUG_C}/admin/analytics`, { headers: await adminHeaders(TENANT_C) }, env);
+
+  it('401s without a token', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(`/api/${SLUG_C}/admin/analytics`, {}, env);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns an all-zero payload for a tenant with no payments', async () => {
+    const { env } = createTestEnv();
+    const res = await getAnalyticsRoute(env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tiles: { thisMonth: number; lastMonth: number; outstandingTotal: number; outstandingCount: number };
+      monthly: { month: string; total: number }[];
+      byService: unknown[];
+      topClients: unknown[];
+      outstanding: unknown[];
+    };
+    expect(body.tiles).toEqual({
+      thisMonth: 0,
+      lastMonth: 0,
+      outstandingTotal: 0,
+      outstandingCount: 0,
+    });
+    expect(body.monthly).toHaveLength(12);
+    expect(body.monthly.every((m) => m.total === 0)).toBe(true);
+    expect(body.monthly[11].month).toBe(getPacificDateStr().slice(0, 7));
+    expect(body.byService).toEqual([]);
+    expect(body.topClients).toEqual([]);
+    expect(body.outstanding).toEqual([]);
+  });
+
+  it('derives tiles in JS and maps every aggregate to camelCase', async () => {
+    const { env } = createTestEnv();
+    const jess = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jess@example.com', 'Jess');
+    const bookingId = await makeBooking(env, TENANT_C, { endUserId: jess.Id, estCost: 300 });
+    const today = getPacificDateStr();
+    await pay(env, TENANT_C, bookingId, 100, today);
+    // A payment dated inside LAST month, for the lastMonth tile.
+    const [ty, tm] = today.split('-').map(Number);
+    const prev = new Date(Date.UTC(ty, tm - 2, 15));
+    const lastMonthDate = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}-15`;
+    await pay(env, TENANT_C, bookingId, 60, lastMonthDate);
+    const body = (await (await getAnalyticsRoute(env)).json()) as {
+      tiles: { thisMonth: number; lastMonth: number; outstandingTotal: number; outstandingCount: number };
+      monthly: { month: string; total: number }[];
+      byService: { serviceType: string; label: string; total: number }[];
+      topClients: { endUserId: string; name: string | null; email: string | null; total: number; bookings: number }[];
+      outstanding: { bookingId: string; estCost: number; paidTotal: number; balance: number }[];
+    };
+    expect(body.tiles).toEqual({
+      thisMonth: 100,
+      lastMonth: 60,
+      outstandingTotal: 140, // 300 est - 160 paid
+      outstandingCount: 1,
+    });
+    expect(body.monthly[11]).toEqual({ month: today.slice(0, 7), total: 100 });
+    expect(body.byService).toEqual([{ serviceType: 'boarding', label: 'Boarding', total: 160 }]);
+    expect(body.topClients).toEqual([
+      { endUserId: jess.Id, name: jess.Name, email: 'jess@example.com', total: 160, bookings: 1 },
+    ]);
+    expect(body.outstanding).toEqual([
+      {
+        bookingId,
+        name: jess.Name,
+        email: 'jess@example.com',
+        serviceType: 'boarding',
+        startDate: '2030-01-01',
+        estCost: 300,
+        paidTotal: 160,
+        balance: 140,
+      },
+    ]);
   });
 });
