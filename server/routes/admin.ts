@@ -7,19 +7,23 @@ import {
   countBookingsForService,
   countBookingsForUser,
   createService,
+  getAnalytics,
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
   deleteBlockedRange,
   deleteCustomer,
+  deletePayment,
   deleteService,
   getProviderConnection,
   insertBookingRequest,
   insertInvitedCustomer,
+  insertPayment,
   listAllEndUserPetsByTenant,
   listBlockedRanges,
   listBookingsForTenant,
   listCustomers,
+  listPaymentsForBooking,
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
@@ -58,12 +62,14 @@ import {
   DEFENSIVE_MAX_PET_COUNT,
   EMAIL_RE,
   isNullableLimit,
+  isPaymentMethod,
   isRealDate,
   isValidDuration,
   isValidRate,
 } from '../lib/validation';
 import type { AppEnv } from '../types';
 import type { ServiceQuestion } from '../../src/shared/index.js';
+import { getPacificDateStr } from '../../src/shared/index.js';
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -744,6 +750,7 @@ export const adminRoutes = new Hono<AppEnv>()
         optionKey: r.OptionKey,
         petCount: r.PetCount,
         estCost: r.EstCost,
+        paidTotal: r.PaidTotal ?? 0,
         status: r.Declined ? 'declined' : r.Status,
         createdAt: r.CreatedAt,
       })),
@@ -783,4 +790,115 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ status, notified });
+  })
+
+  .post('/:slug/admin/bookings/:id/payments', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    const body = await c.req
+      .json<{ amount?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    if (!isValidRate(body.amount))
+      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
+    if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
+      return c.json({ error: 'Invalid payment date.' }, 400);
+    const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
+    const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
+      bookingRequestId: bookingId,
+      amount: body.amount,
+      method: body.method,
+      paidDate: body.paidDate,
+      note,
+    });
+    // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
+    if (!paymentId) return c.json({ error: 'Not found.' }, 404);
+    const payments = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const created = payments.find((p) => p.Id === paymentId);
+    if (!created) return c.json({ error: 'Not found.' }, 404);
+    return c.json(
+      {
+        payment: {
+          id: created.Id,
+          amount: created.Amount,
+          method: created.Method,
+          paidDate: created.PaidDate,
+          note: created.Note,
+        },
+        paidTotal: payments.reduce((sum, p) => sum + p.Amount, 0),
+      },
+      201,
+    );
+  })
+
+  .get('/:slug/admin/bookings/:id/payments', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    // Same existence guard as POST/DELETE: foreign booking or the 'blocked' sentinel 404s. Unlike
+    // POST, a cancelled booking is still viewable here — DELETE is the correction mechanism for it.
+    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
+    const rows = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    return c.json({
+      payments: rows.map((p) => ({
+        id: p.Id,
+        amount: p.Amount,
+        method: p.Method,
+        paidDate: p.PaidDate,
+        note: p.Note,
+      })),
+    });
+  })
+
+  .delete('/:slug/admin/bookings/:id/payments/:paymentId', async (c) => {
+    const tenant = c.get('tenant');
+    const deleted = await deletePayment(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      c.req.param('paymentId'),
+    );
+    if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+
+  // Earnings dashboard payload. All aggregation is SQL (getAnalytics); the tiles are derived
+  // here in JS from the aggregates — no extra queries, no KV caching (prototype-scale D1).
+  .get('/:slug/admin/analytics', async (c) => {
+    const tenant = c.get('tenant');
+    await reconcileIfStale(c.env, tenant);
+    const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
+    const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
+    const outstanding = data.outstanding.map((o) => ({
+      bookingId: o.BookingId,
+      name: o.Name,
+      email: o.Email,
+      serviceType: o.ServiceType,
+      startDate: o.StartDate,
+      estCost: o.EstCost,
+      paidTotal: o.PaidTotal,
+      balance: o.EstCost - o.PaidTotal,
+    }));
+    return c.json({
+      tiles: {
+        thisMonth: data.monthly.at(-1)?.Total ?? 0,
+        lastMonth: data.monthly.at(-2)?.Total ?? 0,
+        outstandingTotal: outstanding.reduce((sum, o) => sum + o.balance, 0),
+        outstandingCount: outstanding.length,
+      },
+      monthly: data.monthly.map((m) => ({ month: m.Month, total: m.Total })),
+      byService: data.byService.map((s) => ({
+        serviceType: s.ServiceType,
+        label: s.Label,
+        total: s.Total,
+      })),
+      topClients: data.topClients.map((t) => ({
+        endUserId: t.EndUserId,
+        name: t.Name,
+        email: t.Email,
+        total: t.Total,
+        bookings: t.Bookings,
+      })),
+      outstanding,
+    });
   });

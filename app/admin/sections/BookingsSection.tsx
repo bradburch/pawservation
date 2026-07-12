@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
+import { PaymentsPanel } from '../PaymentsPanel';
 import type { Session } from '../shared.js';
 
 /** Renders the dates for one row: single date (+ time, for timed services) or a range. */
@@ -11,11 +12,24 @@ function formatWhen(b: AdminBooking): string {
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
 
+/** True for bookings that aren't cancelled/declined — the payments ledger is fully editable for
+ * these; cancelled/declined rows show a read-only ledger only when they have payments to show. */
+const isActive = (b: AdminBooking) => b.status !== 'cancelled' && b.status !== 'declined';
+
 function chipClass(status: string): string {
   if (status === 'confirmed') return ' pb-chip-ok';
   if (status === 'cancelled') return ' pb-chip-bad';
   if (status === 'declined') return ' pb-chip-warn';
   return '';
+}
+
+/** Payment state for a row; null for unpaid rows. 'paid in full' covers overpayment/tips
+ * (paidTotal > estCost). Shown for cancelled/declined rows too, so a sitter reviewing a refund
+ * case can still see the amount. */
+function paidText(b: AdminBooking): string | null {
+  if (b.paidTotal === 0) return null;
+  if (b.estCost == null) return `paid $${b.paidTotal}`;
+  return b.paidTotal >= b.estCost ? 'paid in full' : `paid $${b.paidTotal} of $${b.estCost}`;
 }
 
 export function BookingsSection({
@@ -29,6 +43,7 @@ export function BookingsSection({
 }) {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
   const load = () =>
@@ -98,21 +113,39 @@ export function BookingsSection({
           Cancel
         </button>
       )}
+      {(isActive(b) || b.paidTotal > 0) && (
+        <button onClick={() => setOpenId(openId === b.id ? null : b.id)}>
+          {openId === b.id ? 'Close' : 'Payments'}
+        </button>
+      )}
     </span>
   );
 
-  const row = (b: AdminBooking) => (
-    <li key={b.id}>
-      <span>
-        {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
-        <br />
-        {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
-        {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
-        <span className={`pb-chip${chipClass(b.status)}`}>{b.status}</span>
-      </span>
-      {actionsFor(b)}
-    </li>
-  );
+  const row = (b: AdminBooking) => {
+    const paid = paidText(b);
+    return (
+      <li key={b.id}>
+        <span>
+          {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
+          <br />
+          {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
+          {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
+          <span className={`pb-chip${chipClass(b.status)}`}>{b.status}</span>
+          {paid && <> · {paid}</>}
+        </span>
+        {actionsFor(b)}
+        {(isActive(b) || b.paidTotal > 0) && openId === b.id && (
+          <PaymentsPanel
+            session={session}
+            bookingId={b.id}
+            onChanged={async () => setBookings(await load())}
+            handleError={handleError}
+            allowRecord={isActive(b)}
+          />
+        )}
+      </li>
+    );
+  };
 
   const pending = (bookings ?? []).filter((b) => b.status === 'pending').sort(byStartDate);
   const rest = (bookings ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);

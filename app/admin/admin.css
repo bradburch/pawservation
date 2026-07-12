@@ -538,6 +538,18 @@ body {
   margin-top: 4px;
 }
 
+/* ── Payments panel (shared by Bookings rows + Earnings outstanding table) ── */
+.pb-payments {
+  width: 100%;
+  border-top: 1px dashed var(--line);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.pb-payments .pb-row {
+  align-items: flex-end;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pb-wrap button {
     transition: none;
@@ -550,4 +562,85 @@ body {
   .pb-wrap select {
     font-size: 16px; /* prevents iOS zoom-on-focus */
   }
+}
+
+/* ── Earnings section ──────────────────────────────────────────── */
+.pb-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.pb-tile {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pb-tile strong {
+  font-size: 1.4rem;
+  color: var(--ink);
+}
+
+.pb-tile span {
+  color: var(--soft);
+  font-size: 0.85rem;
+}
+
+.pb-earnings-chart {
+  width: 100%;
+  max-width: 480px;
+  display: block;
+}
+
+.pb-earnings-chart rect {
+  fill: var(--sage);
+}
+
+.pb-earnings-chart text {
+  fill: var(--soft);
+}
+
+.pb-hbars li {
+  display: grid;
+  grid-template-columns: 140px 1fr 60px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pb-hbars li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pb-hbar {
+  background: var(--sage-wash);
+  border-radius: 4px;
+  height: 12px;
+}
+
+.pb-hbar-fill {
+  background: var(--sage);
+  border-radius: 4px;
+  height: 100%;
+  min-width: 2px;
+}
+
+.pb-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  min-width: 0;
+}
+
+.pb-truncate-block {
+  display: block;
+  min-width: 0;
 }

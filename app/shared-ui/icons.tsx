@@ -147,6 +147,17 @@ export function IconStore({ size }: IconProps) {
   );
 }
 
+export function IconChartBar({ size }: IconProps) {
+  return (
+    <Svg size={size}>
+      <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+      <path d="M7 16v-3" />
+      <path d="M12 16v-6" />
+      <path d="M17 16v-9" />
+    </Svg>
+  );
+}
+
 export function IconChevronLeft({ size }: IconProps) {
   return (
     <Svg size={size}>

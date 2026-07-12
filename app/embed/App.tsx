@@ -76,8 +76,7 @@ function QuestionField({
 const slug = window.location.pathname.split('/').filter(Boolean)[1] ?? '';
 
 type IdentifyState =
-  | { step: 'email' }
-  | { step: 'code'; codeId: string; prototypeCode?: string; email: string };
+  { step: 'email' } | { step: 'code'; codeId: string; prototypeCode?: string; email: string };
 
 function Identify({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<IdentifyState>({ step: 'email' });

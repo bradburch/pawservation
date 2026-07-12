@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useState } fro
 import { adminApi, isAuthExpired, type Customer, type ImportResult } from '../shared-ui/api.js';
 import {
   IconCalendar,
+  IconChartBar,
   IconClipboardCheck,
   IconCode,
   IconPaw,
@@ -14,6 +15,7 @@ import { AppsSection } from './sections/AppsSection';
 import { BookingsSection } from './sections/BookingsSection';
 import { BusinessSection } from './sections/BusinessSection';
 import { ClientsSection } from './sections/ClientsSection';
+import { EarningsSection } from './sections/EarningsSection';
 import { EmbedSection } from './sections/EmbedSection';
 import { PetsSection } from './sections/PetsSection';
 import { ServicesSection } from './sections/ServicesSection';
@@ -120,6 +122,7 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
 
 type SectionKey =
   | 'bookings'
+  | 'earnings'
   | 'business'
   | 'pets'
   | 'services'
@@ -130,6 +133,7 @@ type SectionKey =
 
 const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck },
+  { key: 'earnings', label: 'Earnings', icon: IconChartBar },
   { key: 'business', label: 'Business', icon: IconStore },
   { key: 'pets', label: 'Pets', icon: IconPaw },
   { key: 'services', label: 'Services & rates', icon: IconTag },
@@ -401,6 +405,9 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const panels: Record<SectionKey, ReactNode> = {
     bookings: (
       <BookingsSection session={session} handleError={handle} clearError={() => setError('')} />
+    ),
+    earnings: (
+      <EarningsSection session={session} handleError={handle} clearError={() => setError('')} />
     ),
     business: <BusinessSection settings={settings} setSettings={setSettings} />,
     pets: <PetsSection settings={settings} setSettings={setSettings} />,

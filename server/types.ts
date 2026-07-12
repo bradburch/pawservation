@@ -1,4 +1,5 @@
 import type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType } from './lib/services';
+import type { PaymentMethod } from './lib/validation';
 import type { ServiceQuestion } from '../src/shared/index.js';
 
 export type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType };
@@ -90,6 +91,40 @@ export type BookingRow = {
   Status: 'pending' | 'confirmed' | 'cancelled';
   Declined: number;
   CreatedAt: string;
+};
+
+export type PaymentRow = {
+  Id: string;
+  TenantId: string;
+  BookingRequestId: string;
+  Amount: number;
+  Method: PaymentMethod;
+  PaidDate: string;
+  Note: string | null;
+  CreatedAt: string;
+};
+
+/** getAnalytics result: raw PascalCase aggregate rows. monthly is exactly 12 entries, oldest
+ * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS. */
+export type AnalyticsData = {
+  monthly: { Month: string; Total: number }[];
+  byService: { ServiceType: string; Label: string; Total: number }[];
+  topClients: {
+    EndUserId: string;
+    Name: string | null;
+    Email: string | null;
+    Total: number;
+    Bookings: number;
+  }[];
+  outstanding: {
+    BookingId: string;
+    Name: string | null;
+    Email: string | null;
+    ServiceType: string;
+    StartDate: string;
+    EstCost: number;
+    PaidTotal: number;
+  }[];
 };
 
 export type ProviderConnection = {

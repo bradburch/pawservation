@@ -137,6 +137,21 @@ CREATE TABLE IF NOT EXISTS BookingRequestPets (
   PRIMARY KEY (BookingRequestId, PetId)
 );
 
+-- Recorded payments against bookings (earnings analytics). Multiple rows per booking
+-- (deposits/partials); whole dollars matching EstCost/Rate. PaidDate is sitter-entered.
+CREATE TABLE IF NOT EXISTS Payments (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
+  Amount INTEGER NOT NULL CHECK (Amount > 0), -- whole dollars, matching EstCost/Rate
+  Method TEXT NOT NULL CHECK (Method IN ('cash', 'venmo', 'zelle', 'paypal', 'check', 'card', 'other')),
+  PaidDate TEXT NOT NULL, -- 'YYYY-MM-DD', sitter-entered (defaults to today in the UI)
+  Note TEXT,
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Date ON Payments (TenantId, PaidDate);
+CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Booking ON Payments (TenantId, BookingRequestId);
+
 CREATE TABLE IF NOT EXISTS ProviderConnections (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),

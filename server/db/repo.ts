@@ -1,7 +1,9 @@
 import type {
+  AnalyticsData,
   BookingRow,
   EndUser,
   EndUserPet,
+  PaymentRow,
   PetType,
   ProviderConnection,
   ProviderConnectionWithTokens,
@@ -12,6 +14,7 @@ import type {
   TenantUser,
 } from '../types';
 import type { ServiceType } from '../lib/services';
+import type { PaymentMethod } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
 
@@ -311,18 +314,23 @@ export async function listBookingsForUser(
 export async function listBookingsForTenant(
   db: D1Database,
   tenantId: string,
-): Promise<(BookingRow & { Email: string | null; Name: string | null })[]> {
+): Promise<(BookingRow & { Email: string | null; Name: string | null; PaidTotal: number })[]> {
   const { results } = await db
     .prepare(
-      `SELECT BookingRequests.*, EndUsers.Email AS Email, EndUsers.Name AS Name
+      `SELECT BookingRequests.*, EndUsers.Email AS Email, EndUsers.Name AS Name,
+              COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
        LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
          AND EndUsers.TenantId = BookingRequests.TenantId
+       LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+       ) paid ON paid.BookingRequestId = BookingRequests.Id
        WHERE BookingRequests.TenantId = ? AND BookingRequests.ServiceType != 'blocked'
        ORDER BY BookingRequests.StartDate DESC, BookingRequests.CreatedAt DESC`,
     )
-    .bind(tenantId)
-    .all<BookingRow & { Email: string | null; Name: string | null }>();
+    .bind(tenantId, tenantId)
+    .all<BookingRow & { Email: string | null; Name: string | null; PaidTotal: number }>();
   return results;
 }
 
@@ -377,6 +385,174 @@ export async function getBookingWithCustomer(
     )
     .bind(tenantId, id)
     .first<BookingRow & { Email: string | null; Name: string | null }>();
+}
+
+/**
+ * Record a payment iff the booking exists for THIS tenant, is not a 'blocked' sentinel, and is
+ * not cancelled — the guard lives in the SQL (INSERT ... SELECT ... WHERE) so it is atomic with
+ * the write, like updateBookingStatus's guarded UPDATE. 'pending' is deliberately allowed:
+ * deposits are commonly collected before a booking is confirmed. Returns the new payment id, or
+ * null when the guard refused (route 404s on null, the existing idiom).
+ */
+export async function insertPayment(
+  db: D1Database,
+  tenantId: string,
+  payment: {
+    bookingRequestId: string;
+    amount: number;
+    method: PaymentMethod;
+    paidDate: string;
+    note: string | null;
+  },
+): Promise<string | null> {
+  const id = crypto.randomUUID();
+  const result = await db
+    .prepare(
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       FROM BookingRequests
+       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+    )
+    .bind(
+      id,
+      tenantId,
+      payment.bookingRequestId,
+      payment.amount,
+      payment.method,
+      payment.paidDate,
+      payment.note,
+      tenantId,
+      payment.bookingRequestId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Delete one payment. The WHERE includes BookingRequestId so a payment id paired with the wrong
+ * booking id in the URL reports false (route 404s) instead of silently deleting. Deliberately NO
+ * booking-status guard — deleting the record is the only correction mechanism for refunds, so it
+ * must work on cancelled bookings too (see the design's Non-goals).
+ */
+export async function deletePayment(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+  paymentId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM Payments WHERE TenantId = ? AND BookingRequestId = ? AND Id = ?')
+    .bind(tenantId, bookingRequestId, paymentId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+export async function listPaymentsForBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+): Promise<PaymentRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, CreatedAt
+       FROM Payments WHERE TenantId = ? AND BookingRequestId = ?
+       ORDER BY PaidDate DESC, CreatedAt DESC`,
+    )
+    .bind(tenantId, bookingRequestId)
+    .all<PaymentRow>();
+  return results;
+}
+
+/**
+ * The four earnings aggregates in one round trip (Promise.all over indexed SELECTs — no KV
+ * caching; revisit only if it measurably drags). `today` ('YYYY-MM-DD', tenant-timezone at the
+ * route) anchors the 12-month window; months with no payments are zero-filled here in JS.
+ * Revenue queries count payments regardless of the booking's later status — cash already
+ * received is real revenue; only `outstanding` filters to confirmed (and skips EstCost IS NULL:
+ * a booking with no estimate has no computable balance).
+ */
+export async function getAnalytics(
+  db: D1Database,
+  tenantId: string,
+  today: string,
+): Promise<AnalyticsData> {
+  // Last 12 calendar months ending with today's month, oldest first (e.g. '2025-08'..'2026-07').
+  const [y, m] = today.split('-').map(Number);
+  const months: string[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+  }
+  const windowStart = `${months[0]}-01`;
+  // Exclusive upper bound: first day of the month AFTER today's month. Without it, a future-dated
+  // payment (post-dated deposit, clock skew) would be summed into `Total` by SQL then discarded by
+  // the zero-fill map below since its month key isn't in `months` — silently dropping real revenue
+  // from the response instead of excluding it up front.
+  const nextMonth = new Date(Date.UTC(y, m, 1));
+  const windowEnd = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}-01`;
+
+  const [monthlyRes, byServiceRes, topClientsRes, outstandingRes] = await Promise.all([
+    db
+      .prepare(
+        `SELECT substr(PaidDate, 1, 7) AS Month, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? AND PaidDate >= ? AND PaidDate < ?
+         GROUP BY Month`,
+      )
+      .bind(tenantId, windowStart, windowEnd)
+      .all<AnalyticsData['monthly'][number]>(),
+    db
+      .prepare(
+        `SELECT b.ServiceType AS ServiceType, COALESCE(s.Label, b.ServiceType) AS Label,
+                SUM(p.Amount) AS Total
+         FROM Payments p
+         JOIN BookingRequests b ON b.Id = p.BookingRequestId AND b.TenantId = p.TenantId
+         LEFT JOIN TenantServices s ON s.TenantId = p.TenantId AND s.ServiceType = b.ServiceType
+         WHERE p.TenantId = ?
+         GROUP BY b.ServiceType
+         ORDER BY Total DESC`,
+      )
+      .bind(tenantId)
+      .all<AnalyticsData['byService'][number]>(),
+    db
+      .prepare(
+        `SELECT b.EndUserId AS EndUserId, u.Name AS Name, u.Email AS Email,
+                SUM(p.Amount) AS Total, COUNT(DISTINCT p.BookingRequestId) AS Bookings
+         FROM Payments p
+         JOIN BookingRequests b ON b.Id = p.BookingRequestId AND b.TenantId = p.TenantId
+         LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
+         WHERE p.TenantId = ? AND b.EndUserId IS NOT NULL
+         GROUP BY b.EndUserId
+         ORDER BY Total DESC
+         LIMIT 10`,
+      )
+      .bind(tenantId)
+      .all<AnalyticsData['topClients'][number]>(),
+    db
+      .prepare(
+        `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
+                b.ServiceType AS ServiceType, b.StartDate AS StartDate,
+                b.EstCost AS EstCost, COALESCE(paid.Total, 0) AS PaidTotal
+         FROM BookingRequests b
+         LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
+         LEFT JOIN (
+           SELECT BookingRequestId, SUM(Amount) AS Total
+           FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+         ) paid ON paid.BookingRequestId = b.Id
+         WHERE b.TenantId = ? AND b.Status = 'confirmed' AND b.ServiceType != 'blocked'
+           AND b.EstCost IS NOT NULL AND COALESCE(paid.Total, 0) < b.EstCost
+         ORDER BY b.EstCost - COALESCE(paid.Total, 0) DESC`,
+      )
+      .bind(tenantId, tenantId)
+      .all<AnalyticsData['outstanding'][number]>(),
+  ]);
+
+  const byMonth = new Map(monthlyRes.results.map((r) => [r.Month, r.Total]));
+  return {
+    monthly: months.map((month) => ({ Month: month, Total: byMonth.get(month) ?? 0 })),
+    byService: byServiceRes.results,
+    topClients: topClientsRes.results,
+    outstanding: outstandingRes.results,
+  };
 }
 
 export async function listProviderConnections(

@@ -52,8 +52,7 @@ export type MonthDay = {
 };
 
 export type Availability =
-  | { available: true; estCost: number; nights?: number }
-  | { available: false; reason: string };
+  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
 
 export type Booking = {
   id: string;
@@ -94,8 +93,56 @@ export type AdminBooking = {
   optionKey: string | null;
   petCount: number;
   estCost: number | null;
+  paidTotal: number;
   status: string;
   createdAt: string;
+};
+
+export type Payment = {
+  id: string;
+  amount: number;
+  method: string;
+  paidDate: string;
+  note: string | null;
+};
+
+/** Frontend copy of the server's whitelist (server/lib/validation.ts) — keep in lockstep. */
+export const PAYMENT_METHODS = [
+  'cash',
+  'venmo',
+  'zelle',
+  'paypal',
+  'check',
+  'card',
+  'other',
+] as const;
+
+export type AnalyticsPayload = {
+  tiles: {
+    thisMonth: number;
+    lastMonth: number;
+    outstandingTotal: number;
+    outstandingCount: number;
+  };
+  monthly: { month: string; total: number }[];
+  byService: { serviceType: string; label: string; total: number }[];
+  topClients: {
+    endUserId: string;
+    name: string | null;
+    email: string | null;
+    total: number;
+    bookings: number;
+  }[];
+  outstanding: {
+    bookingId: string;
+    name: string | null;
+    email: string | null;
+    serviceType: string;
+    startDate: string;
+    estCost: number;
+    paidTotal: number;
+    balance: number;
+  }[];
 };
 
 export class ApiError extends Error {
@@ -233,6 +280,35 @@ export const adminApi = {
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ status }),
       }),
+  },
+  payments: {
+    list: (slug: string, token: string, bookingId: string) =>
+      request<{ payments: Payment[] }>(`/api/${slug}/admin/bookings/${bookingId}/payments`, {
+        headers: authHeaders(token),
+      }),
+    record: (
+      slug: string,
+      token: string,
+      bookingId: string,
+      body: { amount: number; method: string; paidDate: string; note?: string },
+    ) =>
+      request<{ payment: Payment; paidTotal: number }>(
+        `/api/${slug}/admin/bookings/${bookingId}/payments`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(body),
+        },
+      ),
+    remove: (slug: string, token: string, bookingId: string, paymentId: string) =>
+      request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+      }),
+  },
+  analytics: {
+    get: (slug: string, token: string) =>
+      request<AnalyticsPayload>(`/api/${slug}/admin/analytics`, { headers: authHeaders(token) }),
   },
   calendar: {
     start: (slug: string, token: string) =>
