@@ -104,6 +104,29 @@ export type PaymentRow = {
   CreatedAt: string;
 };
 
+/** getAnalytics result: raw PascalCase aggregate rows. monthly is exactly 12 entries, oldest
+ * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS. */
+export type AnalyticsData = {
+  monthly: { Month: string; Total: number }[];
+  byService: { ServiceType: string; Label: string; Total: number }[];
+  topClients: {
+    EndUserId: string;
+    Name: string | null;
+    Email: string | null;
+    Total: number;
+    Bookings: number;
+  }[];
+  outstanding: {
+    BookingId: string;
+    Name: string | null;
+    Email: string | null;
+    ServiceType: string;
+    StartDate: string;
+    EstCost: number;
+    PaidTotal: number;
+  }[];
+};
+
 export type ProviderConnection = {
   Id: string;
   TenantId: string;

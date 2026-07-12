@@ -1,4 +1,5 @@
 import type {
+  AnalyticsData,
   BookingRow,
   EndUser,
   EndUserPet,
@@ -460,6 +461,92 @@ export async function listPaymentsForBooking(
     .bind(tenantId, bookingRequestId)
     .all<PaymentRow>();
   return results;
+}
+
+/**
+ * The four earnings aggregates in one round trip (Promise.all over indexed SELECTs — no KV
+ * caching; revisit only if it measurably drags). `today` ('YYYY-MM-DD', tenant-timezone at the
+ * route) anchors the 12-month window; months with no payments are zero-filled here in JS.
+ * Revenue queries count payments regardless of the booking's later status — cash already
+ * received is real revenue; only `outstanding` filters to confirmed (and skips EstCost IS NULL:
+ * a booking with no estimate has no computable balance).
+ */
+export async function getAnalytics(
+  db: D1Database,
+  tenantId: string,
+  today: string,
+): Promise<AnalyticsData> {
+  // Last 12 calendar months ending with today's month, oldest first (e.g. '2025-08'..'2026-07').
+  const [y, m] = today.split('-').map(Number);
+  const months: string[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+  }
+  const windowStart = `${months[0]}-01`;
+
+  const [monthlyRes, byServiceRes, topClientsRes, outstandingRes] = await Promise.all([
+    db
+      .prepare(
+        `SELECT substr(PaidDate, 1, 7) AS Month, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? AND PaidDate >= ?
+         GROUP BY Month`,
+      )
+      .bind(tenantId, windowStart)
+      .all<{ Month: string; Total: number }>(),
+    db
+      .prepare(
+        `SELECT b.ServiceType AS ServiceType, COALESCE(s.Label, b.ServiceType) AS Label,
+                SUM(p.Amount) AS Total
+         FROM Payments p
+         JOIN BookingRequests b ON b.Id = p.BookingRequestId AND b.TenantId = p.TenantId
+         LEFT JOIN TenantServices s ON s.TenantId = p.TenantId AND s.ServiceType = b.ServiceType
+         WHERE p.TenantId = ?
+         GROUP BY b.ServiceType
+         ORDER BY Total DESC`,
+      )
+      .bind(tenantId)
+      .all<{ ServiceType: string; Label: string; Total: number }>(),
+    db
+      .prepare(
+        `SELECT b.EndUserId AS EndUserId, u.Name AS Name, u.Email AS Email,
+                SUM(p.Amount) AS Total, COUNT(DISTINCT p.BookingRequestId) AS Bookings
+         FROM Payments p
+         JOIN BookingRequests b ON b.Id = p.BookingRequestId AND b.TenantId = p.TenantId
+         LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
+         WHERE p.TenantId = ? AND b.EndUserId IS NOT NULL
+         GROUP BY b.EndUserId
+         ORDER BY Total DESC
+         LIMIT 10`,
+      )
+      .bind(tenantId)
+      .all<AnalyticsData['topClients'][number]>(),
+    db
+      .prepare(
+        `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
+                b.ServiceType AS ServiceType, b.StartDate AS StartDate,
+                b.EstCost AS EstCost, COALESCE(paid.Total, 0) AS PaidTotal
+         FROM BookingRequests b
+         LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
+         LEFT JOIN (
+           SELECT BookingRequestId, SUM(Amount) AS Total
+           FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+         ) paid ON paid.BookingRequestId = b.Id
+         WHERE b.TenantId = ? AND b.Status = 'confirmed' AND b.ServiceType != 'blocked'
+           AND b.EstCost IS NOT NULL AND COALESCE(paid.Total, 0) < b.EstCost
+         ORDER BY b.EstCost - COALESCE(paid.Total, 0) DESC`,
+      )
+      .bind(tenantId, tenantId)
+      .all<AnalyticsData['outstanding'][number]>(),
+  ]);
+
+  const byMonth = new Map(monthlyRes.results.map((r) => [r.Month, r.Total]));
+  return {
+    monthly: months.map((month) => ({ Month: month, Total: byMonth.get(month) ?? 0 })),
+    byService: byServiceRes.results,
+    topClients: topClientsRes.results,
+    outstanding: outstandingRes.results,
+  };
 }
 
 export async function listProviderConnections(
