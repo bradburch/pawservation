@@ -1,18 +1,46 @@
 import { useState } from 'react';
 import type { Customer, ImportResult } from '../../shared-ui/api.js';
+import { adminApi } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
 
 function PetAdder({
   customer,
   enabledPetTypes,
-  onAdd,
+  slug,
+  token,
+  onAdded,
+  onError,
+  clearError,
 }: {
   customer: Customer;
   enabledPetTypes: string[];
-  onAdd: (endUserId: string, name: string, petType: string) => void;
+  slug: string;
+  token: string;
+  onAdded: () => void;
+  onError: (e: unknown) => void;
+  clearError: () => void;
 }) {
   const [name, setName] = useState('');
   const [petType, setPetType] = useState(enabledPetTypes[0]);
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const add = async () => {
+    if (!name.trim() || busy) return;
+    clearError();
+    setBusy(true);
+    try {
+      await adminApi.customers.addPet(slug, token, customer.id, name.trim(), petType, notes.trim());
+      setName('');
+      setNotes('');
+      onAdded();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="pb-row pb-add-pet">
       <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -23,15 +51,13 @@ function PetAdder({
           </option>
         ))}
       </select>
-      <button
-        onClick={() => {
-          if (name.trim()) {
-            onAdd(customer.id, name.trim(), petType);
-            setName('');
-          }
-        }}
-      >
-        Add pet
+      <input
+        placeholder="Care notes (feeding, meds, quirks — optional)"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+      />
+      <button onClick={() => void add()} disabled={busy || !name.trim()}>
+        {busy ? 'Adding…' : 'Add pet'}
       </button>
     </div>
   );
@@ -39,46 +65,80 @@ function PetAdder({
 
 export function ClientsSection({
   customers,
-  custEmail,
-  custName,
-  setCustEmail,
-  setCustName,
-  addCustomer,
-  removeCustomer,
-  addPet,
-  removePet,
   enabledPetTypes,
-  importCsv,
+  slug,
+  token,
+  onCustomersChanged,
+  handleError,
+  clearError,
 }: {
   customers: Customer[];
-  custEmail: string;
-  custName: string;
-  setCustEmail: (value: string) => void;
-  setCustName: (value: string) => void;
-  addCustomer: () => Promise<void>;
-  removeCustomer: (id: string) => Promise<void>;
-  addPet: (endUserId: string, name: string, petType: string) => Promise<void>;
-  removePet: (endUserId: string, petId: string) => Promise<void>;
   enabledPetTypes: string[];
-  importCsv: (csv: string, sendInvites: boolean) => Promise<ImportResult | null>;
+  slug: string;
+  token: string;
+  onCustomersChanged: () => void;
+  handleError: (e: unknown) => void;
+  clearError: () => void;
 }) {
+  const [custEmail, setCustEmail] = useState('');
+  const [custName, setCustName] = useState('');
+  const [custPhone, setCustPhone] = useState('');
+  const [busy, setBusy] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [sendInvites, setSendInvites] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
 
+  /** Matches the old Dashboard run() semantics: clear the error banner at the START of each
+   * action (so a stale error from an earlier failure doesn't outlive a later action), run the
+   * mutation, refresh the list on success, and route failures through the shared handler. */
+  const mutate = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    clearError();
+    setBusy(true);
+    try {
+      await fn();
+      onCustomersChanged();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addCustomer = () =>
+    mutate(async () => {
+      await adminApi.customers.add(
+        slug,
+        token,
+        custEmail.trim().toLowerCase(),
+        custName.trim(),
+        custPhone.trim(),
+      );
+      setCustEmail('');
+      setCustName('');
+      setCustPhone('');
+    });
+
+  const removeCustomer = (id: string) => mutate(() => adminApi.customers.remove(slug, token, id));
+
+  const removePet = (endUserId: string, petId: string) =>
+    mutate(() => adminApi.customers.removePet(slug, token, endUserId, petId));
+
   const runImport = async () => {
     if (!csvFile || importing) return;
+    clearError();
     setImporting(true);
     try {
       const csv = await csvFile.text();
-      const result = await importCsv(csv, sendInvites);
-      if (result) {
-        setImportResult(result);
-        setCsvFile(null);
-        setFileInputKey((k) => k + 1);
-      }
+      const result = await adminApi.customers.import(slug, token, csv, sendInvites);
+      setImportResult(result);
+      setCsvFile(null);
+      setFileInputKey((k) => k + 1);
+      onCustomersChanged();
+    } catch (e) {
+      handleError(e);
     } finally {
       setImporting(false);
     }
@@ -105,7 +165,15 @@ export function ClientsSection({
           value={custName}
           onChange={(e) => setCustName(e.target.value)}
         />
-        <button onClick={() => void addCustomer()}>Add customer</button>
+        <input
+          type="tel"
+          placeholder="Phone (optional)"
+          value={custPhone}
+          onChange={(e) => setCustPhone(e.target.value)}
+        />
+        <button onClick={() => void addCustomer()} disabled={busy}>
+          {busy ? 'Adding…' : 'Add customer'}
+        </button>
       </div>
       <div className="pb-row">
         <input
@@ -160,25 +228,39 @@ export function ClientsSection({
             <div className="pb-row">
               <span>
                 {cust.email}
-                {cust.name ? ` (${cust.name})` : ''}{' '}
+                {cust.name ? ` (${cust.name})` : ''}
+                {cust.phone ? ` · ${cust.phone}` : ''}{' '}
                 <span
                   className={`pb-chip${cust.status === 'active' ? ' pb-chip-ok' : ' pb-chip-warn'}`}
                 >
                   {cust.status.charAt(0).toUpperCase() + cust.status.slice(1)}
                 </span>
               </span>
-              <button onClick={() => void removeCustomer(cust.id)}>Remove</button>
+              <button onClick={() => void removeCustomer(cust.id)} disabled={busy}>
+                Remove
+              </button>
             </div>
             <ul className="pb-pets">
               {cust.pets.map((p) => (
                 <li key={p.id}>
                   {p.name} <em>{p.petType}</em>
-                  <button onClick={() => void removePet(cust.id, p.id)}>Remove</button>
+                  {p.notes ? <span className="pb-hint"> — {p.notes}</span> : null}
+                  <button onClick={() => void removePet(cust.id, p.id)} disabled={busy}>
+                    Remove
+                  </button>
                 </li>
               ))}
             </ul>
             {enabledPetTypes.length > 0 && (
-              <PetAdder customer={cust} enabledPetTypes={enabledPetTypes} onAdd={addPet} />
+              <PetAdder
+                customer={cust}
+                enabledPetTypes={enabledPetTypes}
+                slug={slug}
+                token={token}
+                onAdded={onCustomersChanged}
+                onError={handleError}
+                clearError={clearError}
+              />
             )}
           </li>
         ))}

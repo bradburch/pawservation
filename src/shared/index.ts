@@ -31,6 +31,7 @@ export {
   validateServiceConstraints,
   type ServiceQuestion,
   type ServiceConstraints,
+  type ServiceOption,
   type QuestionType,
 } from './booking/service-rules.js';
 export { PAYMENT_METHODS, isPaymentMethod, type PaymentMethod } from './payment-methods.js';

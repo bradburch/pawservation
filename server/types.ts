@@ -13,6 +13,8 @@ export type Tenant = {
   MaxHouseSitsPerDay: number | null; // null = unlimited
   MaxStayNights: number | null; // null = unlimited
   Timezone: string | null; // null = DEFAULT_TIMEZONE
+  ContactEmail: string | null; // shown to clients in the booking widget
+  ContactPhone: string | null; // shown to clients in the booking widget
 };
 
 export type TenantUser = {
@@ -49,6 +51,9 @@ export type TenantServiceOption = {
   DurationMinutes: number | null;
   Rate: number;
   RateUnit: RateUnit;
+  StartTime: string | null; // 'HH:MM'; NULL = no fixed window
+  EndTime: string | null; // 'HH:MM'; NULL = no fixed window
+  Capacity: number | null; // max concurrent bookings/date; NULL = unlimited
 };
 
 export type TenantPetTypeRow = {
@@ -62,6 +67,7 @@ export type EndUser = {
   TenantId: string;
   Email: string;
   Name: string | null;
+  Phone: string | null;
   Status: 'invited' | 'active';
   InvitedAt: string | null;
 };
@@ -72,6 +78,7 @@ export type EndUserPet = {
   EndUserId: string;
   Name: string;
   PetType: 'dog' | 'cat';
+  Notes: string | null; // sitter's care notes (feeding, meds, temperament)
   CreatedAt: string;
 };
 
@@ -89,7 +96,9 @@ export type BookingRow = {
   GCalEventId: string | null;
   EstCost: number | null;
   Status: 'pending' | 'confirmed' | 'cancelled';
-  Declined: number;
+  // 1 = the cancellation was the sitter declining a pending request. Optional because only the
+  // booking-list queries select it; capacity/availability queries never need it.
+  Declined?: number;
   CreatedAt: string;
 };
 
@@ -132,7 +141,7 @@ export type ProviderConnection = {
   TenantId: string;
   Capability: string;
   Provider: string;
-  Status: 'disconnected' | 'connected-stub' | 'connected';
+  Status: 'disconnected' | 'connected-stub' | 'connected'; // 'connected-stub' is a legacy value from the removed stub-provider flow; no code path writes it anymore
   ConnectedAt: string | null;
   CalendarId: string | null;
 };

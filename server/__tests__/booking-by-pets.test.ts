@@ -27,14 +27,16 @@ describe('booking by petIds', () => {
       }),
     });
     expect(book.status).toBe(201);
+    const { id: bookedId } = (await book.json()) as { id: string };
 
     const mine = (await (
       await req(env, '/api/sunny-paws/bookings/mine', {
         headers: { Authorization: `Bearer ${token}` },
       })
     ).json()) as { bookings: { id: string; petCount: number; pets: string[] }[] };
-    expect(mine.bookings[0].petCount).toBe(2);
-    expect(mine.bookings[0].pets.sort()).toEqual(['Bella', 'Mochi']);
+    const created = mine.bookings.find((b) => b.id === bookedId)!;
+    expect(created.petCount).toBe(2);
+    expect(created.pets.sort()).toEqual(['Bella', 'Mochi']);
   });
 
   it('dedupes duplicate petIds in a booking', async () => {
@@ -52,14 +54,16 @@ describe('booking by petIds', () => {
       }),
     });
     expect(book.status).toBe(201);
+    const { id: bookedId } = (await book.json()) as { id: string };
 
     const mine = (await (
       await req(env, '/api/sunny-paws/bookings/mine', {
         headers: { Authorization: `Bearer ${token}` },
       })
     ).json()) as { bookings: { id: string; petCount: number; pets: string[] }[] };
-    expect(mine.bookings[0].petCount).toBe(1);
-    expect(mine.bookings[0].pets).toEqual(['Bella']);
+    const created = mine.bookings.find((b) => b.id === bookedId)!;
+    expect(created.petCount).toBe(1);
+    expect(created.pets).toEqual(['Bella']);
   });
 
   it("rejects a pet the caller doesn't own", async () => {

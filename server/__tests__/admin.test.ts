@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { providerViews, type CapabilityDescriptor } from '../lib/providers';
 import { mintToken } from '../lib/token';
 import {
   adminHeaders,
   adminToken,
   createTestEnv,
+  endUserToken,
   TENANT_A,
   TENANT_B,
   TEST_SECRET,
@@ -228,46 +228,14 @@ describe('tenant admin', () => {
     expect(walkAfter.available).toBe(true);
   });
 
-  it('connecting a provider flips status to connected-stub, per tenant', async () => {
+  it('GET /admin/settings reports the calendar connection as disconnected by default', async () => {
     const { env } = createTestEnv();
-    await app.request(
-      '/api/sunny-paws/admin/providers/calendar/connect',
-      { method: 'POST', headers: await auth(TENANT_A) },
-      env,
-    );
-    const a = (await (
+    const res = (await (
       await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
-    ).json()) as { providers: { capability: string; status: string }[] };
-    const b = (await (
-      await app.request('/api/happy-tails/admin/settings', { headers: await auth(TENANT_B) }, env)
-    ).json()) as { providers: { capability: string; status: string }[] };
-    expect(a.providers.find((p) => p.capability === 'calendar')?.status).toBe('connected-stub');
-    expect(b.providers.find((p) => p.capability === 'calendar')?.status).toBe('disconnected');
-
-    const unknown = await app.request(
-      '/api/sunny-paws/admin/providers/teleportation/connect',
-      { method: 'POST', headers: await auth(TENANT_A) },
-      env,
-    );
-    expect(unknown.status).toBe(404);
-  });
-
-  it('adding a capability is a registry entry, not a schema change (FR18)', () => {
-    const extended: CapabilityDescriptor[] = [
-      { capability: 'payments', provider: 'stripe', label: 'Stripe', authMode: 'stub' },
-    ];
-    const views = providerViews([], extended);
-    expect(views).toEqual([
-      {
-        capability: 'payments',
-        provider: 'stripe',
-        label: 'Stripe',
-        authMode: 'stub',
-        status: 'disconnected',
-        connectedAt: null,
-        calendarId: null,
-      },
-    ]);
+    ).json()) as {
+      calendar: { status: string; connectedAt: string | null; calendarId: string | null };
+    };
+    expect(res.calendar).toEqual({ status: 'disconnected', connectedAt: null, calendarId: null });
   });
 
   it('saves pet types and free-typed service options, reflected in config', async () => {
@@ -318,7 +286,38 @@ describe('tenant admin', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects duplicate durations within one service', async () => {
+  it('accepts two options sharing a duration but not a name, with distinct keys', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'checkin',
+              enabled: true,
+              options: [
+                { label: '30 minutes', durationMinutes: 30, rate: 18 },
+                { label: 'Puppy Check-in', durationMinutes: 30, rate: 22 },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
+    const settings = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as { services: { type: string; options: { optionKey: string; label: string }[] }[] };
+    const checkin = settings.services.find((s) => s.type === 'checkin')!;
+    expect(checkin.options.map((o) => o.label).sort()).toEqual(['30 minutes', 'Puppy Check-in']);
+    expect(new Set(checkin.options.map((o) => o.optionKey)).size).toBe(2);
+  });
+
+  it('rejects two options with the same name within one service', async () => {
     const { env } = createTestEnv();
     const res = await app.request(
       '/api/sunny-paws/admin/settings',
@@ -332,7 +331,7 @@ describe('tenant admin', () => {
               enabled: true,
               options: [
                 { label: '30 min', durationMinutes: 30, rate: 20 },
-                { label: 'also 30', durationMinutes: 30, rate: 25 },
+                { label: '30 min', durationMinutes: 30, rate: 25 },
               ],
             },
           ],
@@ -373,6 +372,224 @@ describe('tenant admin', () => {
     const boarding = cfg.services.find((s) => s.type === 'boarding')!;
     expect(boarding.options).toHaveLength(1);
     expect(boarding.options[0].rate).toBe(50);
+  });
+
+  it('saves a windowed option, deriving duration from the window and ignoring a bogus client duration', async () => {
+    const { env } = createTestEnv();
+    const put = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                {
+                  label: 'Morning Walk',
+                  durationMinutes: 999, // bogus — server must override from the window
+                  rate: 25,
+                  startTime: '11:00',
+                  endTime: '14:00',
+                  capacity: 4,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(put.status).toBe(204);
+
+    const adminSettings = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as {
+      services: {
+        type: string;
+        options: {
+          optionKey: string;
+          durationMinutes: number | null;
+          startTime: string | null;
+          endTime: string | null;
+          capacity: number | null;
+        }[];
+      }[];
+    };
+    const adminWalk = adminSettings.services.find((s) => s.type === 'walk')!;
+    expect(adminWalk.options).toHaveLength(1);
+    expect(adminWalk.options[0]).toMatchObject({
+      optionKey: 'morning-walk',
+      durationMinutes: 180, // 11:00–14:00, not the bogus 999
+      startTime: '11:00',
+      endTime: '14:00',
+      capacity: 4,
+    });
+
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      services: {
+        type: string;
+        options: {
+          optionKey: string;
+          startTime: string | null;
+          endTime: string | null;
+          capacity: number | null;
+        }[];
+      }[];
+    };
+    const cfgWalk = cfg.services.find((s) => s.type === 'walk')!;
+    expect(cfgWalk.options[0]).toMatchObject({
+      optionKey: 'morning-walk',
+      startTime: '11:00',
+      endTime: '14:00',
+      capacity: 4,
+    });
+  });
+
+  it('rejects a one-sided time window', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                { label: 'Morning Walk', durationMinutes: 60, rate: 25, startTime: '11:00' },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a window whose end is not after its start', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                {
+                  label: 'Morning Walk',
+                  durationMinutes: 60,
+                  rate: 25,
+                  startTime: '14:00',
+                  endTime: '11:00',
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a non-positive capacity', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                {
+                  label: 'Morning Walk',
+                  durationMinutes: 60,
+                  rate: 25,
+                  startTime: '11:00',
+                  endTime: '14:00',
+                  capacity: 0,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects two windowed options with the same label (OptionKey collision)', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                {
+                  label: 'Group Walk',
+                  durationMinutes: 60,
+                  rate: 25,
+                  startTime: '11:00',
+                  endTime: '12:00',
+                },
+                {
+                  label: 'Group Walk',
+                  durationMinutes: 60,
+                  rate: 30,
+                  startTime: '15:00',
+                  endTime: '16:00',
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a blank option label', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [{ label: '  ', durationMinutes: 30, rate: 20 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
   });
 
   it('persists per-service questions and constraints, round-tripping through GET and the public config', async () => {
@@ -631,6 +848,120 @@ describe('tenant admin', () => {
     expect(boarding.questions[0].label).toBe('Is your dog crate-trained?');
     expect(boarding.minNights).toBe(2);
     expect(boarding.maxNights).toBe(14);
+  });
+
+  it('rejects a time window on a non-per-visit (range-shaped) service', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', rate: 50, startTime: '11:00', endTime: '14:00' }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("preserves a windowed option's OptionKey across a label rename, so existing bookings stay capacity-tracked", async () => {
+    const { env } = createTestEnv();
+    const create = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                {
+                  label: 'Morning Walk',
+                  durationMinutes: 60,
+                  rate: 25,
+                  startTime: '11:00',
+                  endTime: '14:00',
+                  capacity: 2,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(create.status).toBe(204);
+
+    const book = async () => {
+      const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+      return app.request(
+        '/api/sunny-paws/bookings',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            type: 'walk',
+            optionKey: 'morning-walk',
+            startDate: '2028-11-01',
+            petIds: ['pet_sp_bella'],
+          }),
+        },
+        env,
+      );
+    };
+    expect((await book()).status).toBe(201);
+    expect((await book()).status).toBe(201);
+
+    // Rename the option, sending back the optionKey the GET response gave us for it.
+    const rename = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [
+                {
+                  optionKey: 'morning-walk',
+                  label: 'AM Walk',
+                  durationMinutes: 60,
+                  rate: 25,
+                  startTime: '11:00',
+                  endTime: '14:00',
+                  capacity: 2,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(rename.status).toBe(204);
+
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      services: { type: string; options: { optionKey: string; label: string }[] }[];
+    };
+    const walk = cfg.services.find((s) => s.type === 'walk')!;
+    expect(walk.options[0]).toMatchObject({ optionKey: 'morning-walk', label: 'AM Walk' });
+
+    // Capacity 2, already booked twice under 'morning-walk' — a third booking against that
+    // same (preserved) key must still be rejected, proving the rename didn't orphan the count.
+    const third = await book();
+    expect(third.status).toBe(409);
   });
 });
 

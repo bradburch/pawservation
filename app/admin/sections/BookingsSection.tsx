@@ -155,12 +155,13 @@ export function BookingsSection({
       <h2>
         <IconClipboardCheck size={18} /> Bookings
       </h2>
-      {/* In-flow, not the fixed .pb-savebar — this section is the only one with a per-action
-          message, and a second fixed bar would overlap the app-level one when both are active. */}
+      {/* Fixed to the viewport bottom (reusing the save bar's styling) so it can't scroll out
+          of view or slide under the sticky header — it carries the "was the client told?" info. */}
       {message && (
-        <p className="pb-hint" role="status">
-          {message} <button onClick={() => setMessage('')}>OK</button>
-        </p>
+        <div className="pb-savebar" role="status">
+          <p className="pb-savebar-saved">{message}</p>
+          <button onClick={() => setMessage('')}>OK</button>
+        </div>
       )}
       {bookings === null ? (
         <p>Loading…</p>

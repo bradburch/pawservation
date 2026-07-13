@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { adminApi, isAuthExpired, type Customer, type ImportResult } from '../shared-ui/api.js';
+import { adminApi, isAuthExpired, type Customer } from '../shared-ui/api.js';
 import {
   IconCalendar,
   IconChartBar,
@@ -20,8 +20,16 @@ import { EmbedSection } from './sections/EmbedSection';
 import { PetsSection } from './sections/PetsSection';
 import { ServicesSection } from './sections/ServicesSection';
 import { TimeOffSection } from './sections/TimeOffSection';
-import { adminFetch, type Session, type Settings } from './shared.js';
+import {
+  adminFetch,
+  type ServiceOptionForm,
+  type ServicePayload,
+  type Session,
+  type Settings,
+  type SettingsPayload,
+} from './shared.js';
 import './admin.css';
+import { useAsync } from '../shared-ui/useAsync';
 
 /**
  * Sitter dashboard. Auth is email + password → an admin session token, held in localStorage
@@ -113,9 +121,6 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
         {busy ? 'Signing in…' : 'Sign in'}
       </button>
       {error && <p className="pb-error">{error}</p>}
-      <p className="pb-hint">
-        <small>Demo logins are in the app's DEMO_NOTES.md.</small>
-      </p>
     </div>
   );
 }
@@ -135,19 +140,21 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck },
   { key: 'earnings', label: 'Earnings', icon: IconChartBar },
   { key: 'business', label: 'Business', icon: IconStore },
-  { key: 'pets', label: 'Pets', icon: IconPaw },
+  { key: 'pets', label: 'Pet types', icon: IconPaw },
   { key: 'services', label: 'Services & rates', icon: IconTag },
   { key: 'timeoff', label: 'Time off', icon: IconCalendar },
   { key: 'clients', label: 'Clients', icon: IconUsers },
   { key: 'apps', label: 'Connected apps', icon: IconPlug },
-  { key: 'embed', label: 'Embed', icon: IconCode },
+  { key: 'embed', label: 'Your website', icon: IconCode },
 ];
 
 /** Reads the initial section from the URL hash (e.g. `/admin#clients`) so deep links and page
  * refreshes land on the right section, same as the old anchor-nav did. */
 function sectionFromHash(): SectionKey {
   const hash = window.location.hash.slice(1);
-  return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'business';
+  // Default to Bookings — the sitter's morning question is "what needs my reply?",
+  // not their own settings.
+  return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'bookings';
 }
 
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
@@ -157,8 +164,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // decide whether the sticky save bar shows. Only the settings PUT is deferred — the
   // other sections apply immediately and refresh both state and snapshot together.
   const [savedSnapshot, setSavedSnapshot] = useState('');
-  const [blockStart, setBlockStart] = useState('');
-  const [blockEnd, setBlockEnd] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   // Bumped after a successful save so the embed preview remounts and pulls the fresh config.
@@ -190,7 +195,12 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // Keeps the active section in sync with browser back/forward through the hash history
   // entries that switching sections now creates.
   useEffect(() => {
-    const onHashChange = () => setActiveSection(sectionFromHash());
+    const onHashChange = () => {
+      setActiveSection(sectionFromHash());
+      // An error banner describes the action just attempted; carrying it into another
+      // section reads as a live, unexplained failure there.
+      setError('');
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
@@ -198,7 +208,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // The saved confirmation is transient; errors stay until resolved.
   useEffect(() => {
     if (!message) return;
-    const timer = window.setTimeout(() => setMessage(''), 4000);
+    const timer = window.setTimeout(() => setMessage(''), 10000);
     return () => window.clearTimeout(timer);
   }, [message]);
 
@@ -236,52 +246,50 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     run(async () => {
       if (!settings) return;
       setMessage('');
-      await adminFetch(token, `/api/${slug}/admin/settings`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          displayName: settings.displayName,
-          accentColor: settings.accentColor,
-          maxBoardingPets: settings.maxBoardingPets,
-          maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
-          maxStayNights: settings.maxStayNights,
-          timezone: settings.timezone,
-          petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
-          services: settings.services.map((s) => ({
+      // Explicit per-field object literals (rather than spreading `s`/`o`) checked against
+      // `ServicePayload`/`ServiceOptionForm` — annotated so a field added to the shared
+      // option/question/constraint shapes fails to compile here instead of quietly not
+      // reaching the wire (see e.g. the startTime/endTime/capacity fields).
+      const payload: SettingsPayload = {
+        displayName: settings.displayName,
+        accentColor: settings.accentColor,
+        maxBoardingPets: settings.maxBoardingPets,
+        maxHouseSitsPerDay: settings.maxHouseSitsPerDay,
+        maxStayNights: settings.maxStayNights,
+        timezone: settings.timezone,
+        contactEmail: settings.contactEmail,
+        contactPhone: settings.contactPhone,
+        petTypes: settings.petTypes.filter((p) => p.enabled).map((p) => p.petType),
+        services: settings.services.map(
+          (s): ServicePayload => ({
             type: s.type,
             enabled: s.enabled,
-            options: s.options.map((o) => ({
-              label: o.label,
-              durationMinutes: s.hasDuration ? o.durationMinutes : null,
-              rate: o.rate,
-            })),
+            options: s.options.map(
+              (o): ServiceOptionForm => ({
+                optionKey: o.optionKey,
+                label: o.label,
+                durationMinutes: s.hasDuration ? o.durationMinutes : null,
+                rate: o.rate,
+                startTime: o.startTime,
+                endTime: o.endTime,
+                capacity: o.capacity,
+              }),
+            ),
             questions: s.questions,
             minNights: s.minNights,
             maxNights: s.maxNights,
             minPetCount: s.minPetCount,
             maxPetCount: s.maxPetCount,
-          })),
-        }),
+          }),
+        ),
+      };
+      await adminFetch(token, `/api/${slug}/admin/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
       });
       setMessage('Saved! Your widget updates on its next load.');
       setSavedSnapshot(JSON.stringify(settings));
       setPreviewKey((k) => k + 1);
-    });
-
-  const addBlock = () =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/blocked`, {
-        method: 'POST',
-        body: JSON.stringify({ startDate: blockStart, endDate: blockEnd }),
-      });
-      setBlockStart('');
-      setBlockEnd('');
-      await refresh();
-    });
-
-  const removeBlock = (id: string) =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/blocked/${id}`, { method: 'DELETE' });
-      await refresh();
     });
 
   const addService = (template: string, label: string) =>
@@ -299,18 +307,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       await refresh();
     });
 
-  const connect = (capability: string) =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/providers/${capability}/connect`, {
-        method: 'POST',
-      });
-      await refresh();
-    });
-
   const connectCalendar = () =>
-    // NOTE: The route and this client call are still calendar-specific because there is exactly one
-    // OAuth provider. When a second is added, generalize adminApi.calendar + the
-    // /providers/calendar/... routes to accept a `capability` param. Deliberate YAGNI boundary.
     run(async () => {
       const { url } = await adminApi.calendar.start(slug, token);
       const popup = window.open(url, 'pawbook-gcal', 'width=520,height=640');
@@ -330,62 +327,19 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       await refresh();
     });
 
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [custEmail, setCustEmail] = useState('');
-  const [custName, setCustName] = useState('');
-
-  const loadCustomers = useCallback(
-    () => adminApi.customers.list(slug, token).then(({ customers: list }) => list),
-    [slug, token],
-  );
-
-  useEffect(() => {
-    let active = true;
-    loadCustomers()
-      .then((list) => {
-        if (active) setCustomers(list);
-      })
-      .catch((e) => {
-        if (active) handle(e);
-      });
-    return () => {
-      active = false;
-    };
-  }, [loadCustomers, handle]);
-
-  const withCustomerRefresh = (fn: () => Promise<unknown>) =>
-    run(async () => {
-      await fn();
-      setCustomers(await loadCustomers());
-    });
-
-  const addCustomer = () =>
-    withCustomerRefresh(async () => {
-      await adminApi.customers.add(slug, token, custEmail.trim().toLowerCase(), custName.trim());
-      setCustEmail('');
-      setCustName('');
-    });
-
-  const removeCustomer = (id: string) =>
-    withCustomerRefresh(() => adminApi.customers.remove(slug, token, id));
-
-  const addPet = (endUserId: string, name: string, petType: string) =>
-    withCustomerRefresh(() => adminApi.customers.addPet(slug, token, endUserId, name, petType));
-
-  const removePet = (endUserId: string, petId: string) =>
-    withCustomerRefresh(() => adminApi.customers.removePet(slug, token, endUserId, petId));
-
-  const importCsv = async (csv: string, sendInvites: boolean): Promise<ImportResult | null> => {
-    setError('');
+  const loadCustomers = useCallback(async (): Promise<Customer[]> => {
     try {
-      const result = await adminApi.customers.import(slug, token, csv, sendInvites);
-      setCustomers(await loadCustomers());
-      return result;
+      const { customers: list } = await adminApi.customers.list(slug, token);
+      return list;
     } catch (e) {
+      // Route through the shared handler (error banner / sign-out on expired auth), but still
+      // reject so useAsync keeps the last-known list instead of blanking it under the banner.
       handle(e);
-      return null;
+      throw e;
     }
-  };
+  }, [slug, token, handle]);
+
+  const { data: customers, reload: reloadCustomers } = useAsync(loadCustomers);
 
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
@@ -422,35 +376,29 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     timeoff: (
       <TimeOffSection
         blocked={settings.blocked}
-        blockStart={blockStart}
-        blockEnd={blockEnd}
-        setBlockStart={setBlockStart}
-        setBlockEnd={setBlockEnd}
-        addBlock={addBlock}
-        removeBlock={removeBlock}
+        slug={slug}
+        token={token}
+        onChanged={refresh}
+        handleError={handle}
+        clearError={() => setError('')}
       />
     ),
     clients: (
       <ClientsSection
-        customers={customers}
-        custEmail={custEmail}
-        custName={custName}
-        setCustEmail={setCustEmail}
-        setCustName={setCustName}
-        addCustomer={addCustomer}
-        removeCustomer={removeCustomer}
-        addPet={addPet}
-        removePet={removePet}
+        customers={customers ?? []}
         enabledPetTypes={enabledPetTypes}
-        importCsv={importCsv}
+        slug={slug}
+        token={token}
+        onCustomersChanged={reloadCustomers}
+        handleError={handle}
+        clearError={() => setError('')}
       />
     ),
     apps: (
       <AppsSection
-        providers={settings.providers}
+        calendar={settings.calendar}
         slug={slug}
         token={token}
-        connect={connect}
         connectCalendar={connectCalendar}
         disconnectCalendar={disconnectCalendar}
         onCalendarSaved={() => void refresh()}

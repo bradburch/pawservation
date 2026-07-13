@@ -20,6 +20,8 @@ export const publicRoutes = new Hono<AppEnv>()
       maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
       maxStayNights: tenant.MaxStayNights,
       timezone: tenant.Timezone,
+      contactEmail: tenant.ContactEmail,
+      contactPhone: tenant.ContactPhone,
       petTypes: petTypes.filter((p) => p.Enabled).map((p) => p.PetType),
       services: services
         .filter((s) => s.Enabled)
@@ -42,6 +44,9 @@ export const publicRoutes = new Hono<AppEnv>()
               label: o.Label,
               durationMinutes: o.DurationMinutes,
               rate: o.Rate,
+              startTime: o.StartTime,
+              endTime: o.EndTime,
+              capacity: o.Capacity,
             })),
         })),
     });

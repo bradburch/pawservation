@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { api, isAuthExpired, type MonthDay } from '../shared-ui/api';
 import {
   monthGrid,
@@ -8,6 +8,7 @@ import {
   type RangeValue,
 } from '../../src/shared/index.js';
 import { IconChevronLeft, IconChevronRight } from '../shared-ui/icons';
+import { useAsync } from '../shared-ui/useAsync';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = [
@@ -29,6 +30,7 @@ export function Calendar({
   slug,
   token,
   serviceType,
+  optionKey,
   shape,
   month,
   onMonthChange,
@@ -40,6 +42,7 @@ export function Calendar({
   slug: string;
   token: string;
   serviceType: string;
+  optionKey?: string;
   shape: 'range' | 'single';
   month: string;
   onMonthChange: (m: string) => void;
@@ -49,56 +52,49 @@ export function Calendar({
   /** Called when the month fetch is rejected as unauthenticated (expired token). */
   onAuthExpired?: () => void;
 }) {
-  // Combine fetch result into one object keyed by deps so loading/error can be derived without
-  // calling setState synchronously inside the effect body (react-hooks/set-state-in-effect rule).
-  const depsKey = `${slug}|${token}|${serviceType}|${month}|${reloadKey ?? ''}`;
-  const [fetchState, setFetchState] = useState<{
-    fetchedKey: string;
-    days: Map<string, MonthDay>;
-    today: string;
-    error: boolean;
-  }>({ fetchedKey: '', days: new Map(), today: '', error: false });
+  // Held in a ref (not a fetchMonth dep) so a parent that passes a fresh closure every render
+  // doesn't give fetchMonth a new identity each time — that would make useAsync refetch, which
+  // triggers a render, which makes a new closure, looping forever. Assigned in an effect (not
+  // during render — React forbids mutating a ref's `current` synchronously in the render body)
+  // so the ref is current before any later event/effect reads it.
+  const onAuthExpiredRef = useRef(onAuthExpired);
+  useEffect(() => {
+    onAuthExpiredRef.current = onAuthExpired;
+  });
 
-  // Derive display state from whether the current deps match the last completed fetch.
-  const loading = fetchState.fetchedKey !== depsKey;
-  const loadError = !loading && fetchState.error;
-  const days = loading ? new Map<string, MonthDay>() : fetchState.days;
-  const today = loading ? '' : fetchState.today;
+  const fetchMonth = useCallback(async () => {
+    // reloadKey doesn't change what's fetched — referencing it is what forces a fresh
+    // fetchMonth identity (and therefore a refetch) after a booking submission bumps it.
+    void reloadKey;
+    try {
+      const r = await api.monthAvailability(slug, token, serviceType, month, optionKey);
+      return { days: new Map(r.days.map((d) => [d.date, d])), today: r.today };
+    } catch (e) {
+      // An expired/invalid token must degrade to re-identify (see server/lib/token.ts) —
+      // otherwise the calendar renders with no availability and silently ignores taps.
+      if (isAuthExpired(e)) {
+        onAuthExpiredRef.current?.();
+        // Never resolve: the parent unmounts this component right after onAuthExpired()
+        // flips auth state, so this just leaves `loading` true until then (matching the old
+        // behavior of never updating fetch state once the token is known to be dead).
+        return new Promise<{ days: Map<string, MonthDay>; today: string }>(() => {});
+      }
+      throw e;
+    }
+  }, [slug, token, serviceType, month, optionKey, reloadKey]);
+
+  const { data, error, loading } = useAsync(fetchMonth);
+  const loadError = !loading && !!error;
+  // Gate on loadError as well as loading: useAsync retains the last successful data on a
+  // failed fetch, but this grid should render blank + the error message (the pre-hook
+  // behavior), not a stale month's availability.
+  const showData = !loading && !loadError;
+  const days = showData ? (data?.days ?? new Map<string, MonthDay>()) : new Map<string, MonthDay>();
+  const today = showData ? (data?.today ?? '') : '';
 
   const parts = month.split('-');
   const year = Number(parts[0]);
   const mon = Number(parts[1]);
-
-  useEffect(() => {
-    let active = true;
-    api
-      .monthAvailability(slug, token, serviceType, month)
-      .then((r) => {
-        if (!active) return;
-        setFetchState({
-          fetchedKey: depsKey,
-          days: new Map(r.days.map((d) => [d.date, d])),
-          today: r.today,
-          error: false,
-        });
-      })
-      .catch((e: unknown) => {
-        if (!active) return;
-        // An expired/invalid token must degrade to re-identify (see server/lib/token.ts) —
-        // otherwise the calendar renders with no availability and silently ignores taps.
-        if (isAuthExpired(e)) {
-          onAuthExpired?.();
-          return;
-        }
-        setFetchState({ fetchedKey: depsKey, days: new Map(), today: '', error: true });
-      });
-    return () => {
-      active = false;
-    };
-    // onAuthExpired is deliberately not a dep: parents pass a fresh closure each render,
-    // and re-running this fetch when it changes would loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depsKey, slug, token, serviceType, month]);
 
   const pick = (date: string, d: MonthDay | undefined) => {
     if (!d || d.status === 'unavailable' || (today && date < today)) return;

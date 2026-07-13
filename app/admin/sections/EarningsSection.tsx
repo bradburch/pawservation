@@ -200,7 +200,8 @@ export function EarningsSection({
           {data.outstanding.map((o) => (
             <li key={o.bookingId}>
               <span className="pb-truncate-block" title={o.name || o.email || 'Unknown client'}>
-                <span className="pb-truncate">{o.name || o.email || 'Unknown client'}</span> — {o.serviceType} ({o.startDate})
+                <span className="pb-truncate">{o.name || o.email || 'Unknown client'}</span> —{' '}
+                {o.serviceType} ({o.startDate})
                 <br />
                 owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost})
               </span>

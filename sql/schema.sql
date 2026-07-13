@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS Tenants (
   MaxHouseSitsPerDay INTEGER,
   MaxStayNights INTEGER,
   Timezone TEXT,
+  -- Optional contact details shown to clients in the booking widget.
+  ContactEmail TEXT,
+  ContactPhone TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -63,6 +66,13 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   DurationMinutes INTEGER,
   Rate INTEGER NOT NULL,
   RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
+  -- A fixed clock window (both set together, or both NULL). Windowed options derive
+  -- DurationMinutes from this window server-side (see server/routes/admin.ts); Capacity caps
+  -- concurrent bookings against this option on one date. NULL = unlimited, matching the
+  -- null-is-unlimited convention used throughout this schema.
+  StartTime TEXT,
+  EndTime TEXT,
+  Capacity INTEGER,
   UNIQUE (TenantId, ServiceType, OptionKey)
 );
 
@@ -79,6 +89,7 @@ CREATE TABLE IF NOT EXISTS EndUsers (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   Email TEXT NOT NULL,
   Name TEXT,
+  Phone TEXT,
   InvitedAt TEXT,
   Status TEXT NOT NULL DEFAULT 'active' CHECK (Status IN ('invited', 'active')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -107,17 +118,21 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
   PetType TEXT, -- booked species ('dog'|'cat'); NULL for blocked. No pricing/capacity effect.
-  PetCount INTEGER NOT NULL DEFAULT 1,
+  PetCount INTEGER NOT NULL DEFAULT 1 CHECK (PetCount >= 1), -- fresh-install only; existing DBs enforce this in app code (validation.ts)
   StartTime TEXT, -- 'HH:MM' wall-clock for timed bookings (walk/check-in); NULL = all-day event
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
   EstCost INTEGER,
   Answers TEXT NOT NULL DEFAULT '{}', -- JSON {questionId: answer}; questions defined on TenantServices
   Status TEXT NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending', 'confirmed', 'cancelled')),
+  -- 1 when a pending request was declined by the sitter (stored as Status 'cancelled' + this
+  -- flag; widening the CHECK above would require a table rebuild on existing databases).
   Declined INTEGER NOT NULL DEFAULT 0,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_Dates ON BookingRequests (TenantId, StartDate);
+CREATE INDEX IF NOT EXISTS idx_BookingRequests_Slot
+  ON BookingRequests (TenantId, ServiceType, OptionKey, StartDate);
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_User ON BookingRequests (TenantId, EndUserId);
 
 CREATE TABLE IF NOT EXISTS EndUserPets (
@@ -126,6 +141,7 @@ CREATE TABLE IF NOT EXISTS EndUserPets (
   EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
   Name TEXT NOT NULL,
   PetType TEXT NOT NULL CHECK (PetType IN ('dog', 'cat')),
+  Notes TEXT, -- care notes the sitter keeps (feeding, meds, temperament)
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_EndUserPets_Tenant_User ON EndUserPets (TenantId, EndUserId);

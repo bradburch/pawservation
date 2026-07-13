@@ -33,18 +33,29 @@ export const bookingRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const type = c.req.query('type');
     const month = c.req.query('month') ?? '';
+    const optionKey = c.req.query('option');
     const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
     const service = services.find((s) => s.ServiceType === type);
     if (!service) return c.json({ error: 'Unknown service type.' }, 400);
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: 'Bad month.' }, 400);
-    const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
+    const serviceOptions = options.filter((o) => o.ServiceType === type);
+    let option = serviceOptions[0] ?? null;
+    if (optionKey) {
+      // An unmatched key must error, not silently drop the capacity filter — a stale key (e.g.
+      // a customer's widget holding one from before the sitter renamed the option) would
+      // otherwise show every day as available, ignoring the option's real capacity.
+      const found = serviceOptions.find((o) => o.OptionKey === optionKey);
+      if (!found) return c.json({ error: 'Unknown service option.' }, 400);
+      option = found;
+    }
     const result = await monthAvailability(
       c.env,
       tenant,
       service,
-      services,
       month,
-      user?.Email ?? '',
+      c.get('endUserId'),
+      option,
     );
     return c.json(result);
   })
@@ -159,6 +170,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       optionKey: option.OptionKey,
       petType,
       petCount: pets,
+      startTime: option.StartTime,
       estCost,
       status: 'pending',
       answers,
@@ -189,7 +201,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       serviceLabel: service.Label,
       startDate: start,
       endDate,
-      startTime: null, // no booking path collects a time yet (deferred); all events are all-day
+      startTime: option.StartTime,
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       estCost,
@@ -224,7 +236,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         petCount: r.PetCount,
         pets: petsByBooking.get(r.Id) ?? [],
         estCost: r.EstCost,
-        status: r.Status,
+        status: r.Declined ? 'declined' : r.Status,
       })),
     });
   });

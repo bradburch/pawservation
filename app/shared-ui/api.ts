@@ -1,24 +1,13 @@
 /** Tiny same-origin API client for the widget + admin pages. */
 
 export { PAYMENT_METHODS } from '../../src/shared/index.js';
+import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
 
-export type ServiceOption = {
-  optionKey: string;
-  label: string;
-  durationMinutes: number | null;
-  rate: number;
-};
-export type ServiceQuestion = {
-  id: string;
-  label: string;
-  type: 'text' | 'yesno' | 'number' | 'select';
-  required: boolean;
-  min?: number;
-  max?: number;
-  pattern?: string;
-  options?: string[];
-};
-export type ServiceConfig = {
+// Re-exported as-is: the widget/admin config wire format is field-for-field the shared shape —
+// see src/shared/booking/service-rules.ts for the single definition.
+export type { ServiceOption, ServiceQuestion };
+
+export type ServiceConfig = ServiceConstraints & {
   type: string;
   label: string;
   icon: string; // widget icon key: bed|home|sun|paw|clipboard
@@ -27,10 +16,6 @@ export type ServiceConfig = {
   hasDuration: boolean;
   options: ServiceOption[];
   questions: ServiceQuestion[];
-  minNights: number | null;
-  maxNights: number | null;
-  minPetCount: number | null;
-  maxPetCount: number | null;
 };
 export type TenantConfig = {
   slug: string;
@@ -40,11 +25,13 @@ export type TenantConfig = {
   maxHouseSitsPerDay: number | null;
   maxStayNights: number | null;
   timezone: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
   petTypes: string[];
   services: ServiceConfig[];
 };
 
-export type Pet = { id: string; name: string; petType: 'dog' | 'cat' };
+export type Pet = { id: string; name: string; petType: 'dog' | 'cat'; notes?: string | null };
 export type MonthDay = {
   date: string;
   status: 'available' | 'partial' | 'unavailable';
@@ -54,7 +41,8 @@ export type MonthDay = {
 };
 
 export type Availability =
-  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
+  | { available: true; estCost: number; nights?: number }
+  | { available: false; reason: string };
 
 export type Booking = {
   id: string;
@@ -71,6 +59,7 @@ export type Customer = {
   id: string;
   email: string;
   name: string | null;
+  phone: string | null;
   status: 'invited' | 'active';
   invitedAt?: string | null;
   pets: Pet[];
@@ -205,9 +194,16 @@ export const api = {
       headers: authHeaders(token),
     }),
 
-  monthAvailability: (slug: string, token: string, type: string, month: string) =>
+  monthAvailability: (
+    slug: string,
+    token: string,
+    type: string,
+    month: string,
+    optionKey?: string,
+  ) =>
     request<{ today: string; days: MonthDay[] }>(
-      `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}`,
+      `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}` +
+        (optionKey ? `&option=${encodeURIComponent(optionKey)}` : ''),
       { headers: authHeaders(token) },
     ),
 
@@ -223,24 +219,31 @@ export const adminApi = {
       request<{ customers: Customer[] }>(`/api/${slug}/admin/customers`, {
         headers: authHeaders(token),
       }),
-    add: (slug: string, token: string, email: string, name: string) =>
+    add: (slug: string, token: string, email: string, name: string, phone: string) =>
       request<{ id: string; status: string }>(`/api/${slug}/admin/customers`, {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
-        body: JSON.stringify({ email, name }),
+        body: JSON.stringify({ email, name, phone }),
       }),
     remove: (slug: string, token: string, id: string) =>
       request<unknown>(`/api/${slug}/admin/customers/${id}`, {
         method: 'DELETE',
         headers: authHeaders(token),
       }),
-    addPet: (slug: string, token: string, endUserId: string, name: string, petType: string) =>
+    addPet: (
+      slug: string,
+      token: string,
+      endUserId: string,
+      name: string,
+      petType: string,
+      notes: string,
+    ) =>
       request<{ id: string; name: string; petType: string }>(
         `/api/${slug}/admin/customers/${endUserId}/pets`,
         {
           method: 'POST',
           headers: { ...jsonHeaders, ...authHeaders(token) },
-          body: JSON.stringify({ name, petType }),
+          body: JSON.stringify({ name, petType, notes }),
         },
       ),
     removePet: (slug: string, token: string, endUserId: string, petId: string) =>
@@ -253,23 +256,6 @@ export const adminApi = {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, sendInvites }),
-      }),
-  },
-  bookings: {
-    list: (slug: string, token: string) =>
-      request<{ bookings: AdminBooking[] }>(`/api/${slug}/admin/bookings`, {
-        headers: authHeaders(token),
-      }),
-    setStatus: (
-      slug: string,
-      token: string,
-      id: string,
-      status: 'confirmed' | 'declined' | 'cancelled',
-    ) =>
-      request<{ status: string; notified: boolean }>(`/api/${slug}/admin/bookings/${id}/status`, {
-        method: 'POST',
-        headers: { ...jsonHeaders, ...authHeaders(token) },
-        body: JSON.stringify({ status }),
       }),
   },
   payments: {
@@ -300,6 +286,23 @@ export const adminApi = {
   analytics: {
     get: (slug: string, token: string) =>
       request<AnalyticsPayload>(`/api/${slug}/admin/analytics`, { headers: authHeaders(token) }),
+  },
+  bookings: {
+    list: (slug: string, token: string) =>
+      request<{ bookings: AdminBooking[] }>(`/api/${slug}/admin/bookings`, {
+        headers: authHeaders(token),
+      }),
+    setStatus: (
+      slug: string,
+      token: string,
+      id: string,
+      status: 'confirmed' | 'declined' | 'cancelled',
+    ) =>
+      request<{ status: string; notified: boolean }>(`/api/${slug}/admin/bookings/${id}/status`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ status }),
+      }),
   },
   calendar: {
     start: (slug: string, token: string) =>

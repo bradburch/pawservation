@@ -61,63 +61,50 @@ function CalendarIdField({
 }
 
 export function AppsSection({
-  providers,
+  calendar,
   slug,
   token,
-  connect,
   connectCalendar,
   disconnectCalendar,
   onCalendarSaved,
   handleError,
 }: {
-  providers: Settings['providers'];
+  calendar: Settings['calendar'];
   slug: string;
   token: string;
-  connect: (capability: string) => Promise<void>;
   connectCalendar: () => Promise<void>;
   disconnectCalendar: () => Promise<void>;
   onCalendarSaved: () => void;
   handleError: (e: unknown) => void;
 }) {
+  const connected = calendar.status === 'connected';
   return (
     <>
       <h2>
         <IconPlug size={18} /> Connected apps
       </h2>
       <ul>
-        {providers.map((p) => (
-          <li key={p.capability}>
-            {p.label}{' '}
-            <span className={`pb-chip${p.status === 'connected' ? ' pb-chip-ok' : ''}`}>
-              {p.status === 'connected' ? 'Connected' : 'Not connected'}
-            </span>{' '}
-            {p.authMode === 'oauth' ? (
-              p.status === 'connected' ? (
-                <>
-                  <button onClick={() => void disconnectCalendar()}>Disconnect</button>
-                  <CalendarIdField
-                    key={p.capability}
-                    slug={slug}
-                    token={token}
-                    initialValue={p.calendarId}
-                    onSave={onCalendarSaved}
-                    onError={handleError}
-                  />
-                </>
-              ) : (
-                <button onClick={() => void connectCalendar()}>Connect Google Calendar</button>
-              )
-            ) : (
-              p.status === 'disconnected' && (
-                <button onClick={() => void connect(p.capability)}>Connect (stub)</button>
-              )
-            )}
-          </li>
-        ))}
+        <li>
+          Google Calendar{' '}
+          <span className={`pb-chip${connected ? ' pb-chip-ok' : ''}`}>
+            {connected ? 'Connected' : 'Not connected'}
+          </span>{' '}
+          {connected ? (
+            <>
+              <button onClick={() => void disconnectCalendar()}>Disconnect</button>
+              <CalendarIdField
+                slug={slug}
+                token={token}
+                initialValue={calendar.calendarId}
+                onSave={onCalendarSaved}
+                onError={handleError}
+              />
+            </>
+          ) : (
+            <button onClick={() => void connectCalendar()}>Connect Google Calendar</button>
+          )}
+        </li>
       </ul>
-      <p>
-        <small>Google Calendar is fully connected; the others are previews for now.</small>
-      </p>
     </>
   );
 }

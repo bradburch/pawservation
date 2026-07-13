@@ -10,9 +10,13 @@ import {
   type CapacityEvent,
   type CapacityLimits,
 } from '../../src/shared/index.js';
-import { getProviderConnection, listCapacityRows, type CapacityRow } from '../db/repo';
-import { getCalendarAccessToken } from './calendar-sync';
-import { categorizeCalendarEvent, listCalendarEvents } from './google-calendar';
+import {
+  listCapacityRows,
+  countSlotBookings,
+  listSlotBookingCounts,
+  listUserBookingDatesInRange,
+  type CapacityRow,
+} from '../db/repo';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /**
@@ -41,7 +45,8 @@ export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
 }
 
 export type AvailabilityResult =
-  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
+  | { available: true; estCost: number; nights?: number }
+  | { available: false; reason: string };
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
@@ -125,6 +130,19 @@ async function checkSingle(
   if (walkHasConflict(date, capacity)) {
     return { available: false, reason: 'That day is blocked off.' };
   }
+  if (option.Capacity !== null) {
+    const count = await countSlotBookings(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      service.ServiceType,
+      option.OptionKey,
+      date,
+      excludeBookingId,
+    );
+    if (count >= option.Capacity) {
+      return { available: false, reason: 'That session is full.' };
+    }
+  }
   return { available: true, estCost: estimateCost(service, option, date, date) };
 }
 
@@ -161,18 +179,18 @@ export type MonthDay = {
 };
 
 /**
- * Per-day availability for a calendar month, sourced exclusively from the tenant's Google Calendar.
- * Boarding/Unavailable events are categorized via extendedProperties metadata and summary parsing,
- * then fed through the shared capacity engine to produce each day's status. `services` (the
- * tenant's full row list) maps each event's category slug to its capacity pool.
+ * Per-day availability for a calendar month, sourced from D1 — the same authoritative store
+ * `checkAvailability` reads via `listCapacityRows`, so the month grid can never show a day as
+ * open that the booking check would then reject (or vice versa). Google Calendar is a one-way
+ * sync TARGET only (`calendar-sync.ts`); it is never read back here.
  */
 export async function monthAvailability(
   env: Env,
   tenant: Tenant,
   service: TenantService,
-  services: TenantService[],
   month: string, // YYYY-MM
-  callerEmail: string,
+  callerEndUserId: string,
+  option: TenantServiceOption | null = null,
 ): Promise<{ today: string; days: MonthDay[] }> {
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
 
@@ -182,62 +200,48 @@ export async function monthAvailability(
   const daysInMonth = new Date(Number(yearStr), Number(monStr), 0).getDate();
   const lastDay = addDays(monthStart, daysInMonth - 1);
   const monthEndExclusive = addDays(lastDay, 1);
-  const timeMin = `${addDays(monthStart, -1)}T00:00:00Z`;
-  const timeMax = `${addDays(monthEndExclusive, 1)}T00:00:00Z`;
 
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
-
-  const capacityEvents: CapacityEvent[] = [];
-  const mineDays = new Set<string>();
-
-  try {
-    if (conn && conn.Status === 'connected' && conn.AccessToken && conn.RefreshToken) {
-      const accessToken = await getCalendarAccessToken(env, tenant, conn);
-      const events = await listCalendarEvents(
-        accessToken,
-        conn.CalendarId ?? 'primary',
-        timeMin,
-        timeMax,
-      );
-
-      // Event categories are service slugs; a slug's row says which capacity pool it draws from.
-      // Unknown/legacy slugs get no capacity event — same as pool-less services (walks etc.).
-      const kindBySlug = new Map(services.map((s) => [s.ServiceType, s.CapacityKind]));
-
-      for (const ev of events) {
-        const result = categorizeCalendarEvent(ev);
-        if (result.kind === 'booking') {
-          const { category, petCount, email } = result;
-          const poolKind = kindBySlug.get(category);
-          if (poolKind === 'boarding') {
-            capacityEvents.push({
-              start_date: ev.start,
-              end_date: ev.end,
-              type: 'boarding',
-              petCount,
-            });
-          } else if (poolKind === 'housesit') {
-            capacityEvents.push({ start_date: ev.start, end_date: ev.end, type: 'house-sit' });
-          }
-          if (email === callerEmail) {
-            for (let d = ev.start; d < ev.end; d = addDays(d, 1)) {
-              mineDays.add(d);
-            }
-          }
-        } else if (result.kind === 'block') {
-          capacityEvents.push({ start_date: ev.start, end_date: ev.end, type: 'blocked' });
-        }
-        // kind === 'ignore': skip
-      }
-    }
-  } catch {
-    // Calendar read failed (e.g. Google 5xx, token refresh error). Fail open: treat as if
-    // no calendar is connected so the widget stays usable. All days will appear available.
-  }
-
-  const cap = buildCapacity(capacityEvents);
   const requestType: 'boarding' | 'house-sit' | null =
     service.CapacityKind === 'none' ? null : capacityKindToRequestType(service.CapacityKind);
+
+  // Slot capacity is fetched ONCE for the whole grid (not per day), matching buildCapacity's
+  // "build the map once" pattern, and run concurrently with the other D1 reads since none of
+  // them depend on each other's result.
+  const capacityLimit = requestType === null ? (option?.Capacity ?? null) : null;
+  const slotCountsPromise =
+    capacityLimit !== null
+      ? listSlotBookingCounts(
+          env.PAWBOOK_DB,
+          tenant.Id,
+          service.ServiceType,
+          option!.OptionKey,
+          monthStart,
+          monthEndExclusive,
+        )
+      : Promise.resolve(null);
+
+  const [capacityRows, slotCounts, mineRows] = await Promise.all([
+    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive),
+    slotCountsPromise,
+    listUserBookingDatesInRange(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      callerEndUserId,
+      monthStart,
+      monthEndExclusive,
+    ),
+  ]);
+
+  const mineDays = new Set<string>();
+  for (const row of mineRows) {
+    // Single-day bookings (walk/daycare/check-in) store EndDate = null; treat as a one-day span.
+    const end = row.EndDate ?? addDays(row.StartDate, 1);
+    for (let d = row.StartDate; d < end; d = addDays(d, 1)) {
+      mineDays.add(d);
+    }
+  }
+
+  const cap = buildCapacity(rowsToCapacityEvents(capacityRows));
 
   const days: MonthDay[] = [];
   for (let i = 0; i < daysInMonth; i++) {
@@ -257,8 +261,11 @@ export async function monthAvailability(
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';
       used = max != null ? rawUsed : null;
     } else {
-      // Single-day unlimited service (walk / daycare / check-in): block-only
-      status = walkHasConflict(date, cap) ? 'unavailable' : 'available';
+      // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
+      // capacity check when the option has one. Customers never see raw counts — only status.
+      const blocked = walkHasConflict(date, cap);
+      const full = capacityLimit !== null && (slotCounts!.get(date) ?? 0) >= capacityLimit;
+      status = blocked || full ? 'unavailable' : 'available';
       used = null;
       max = null;
     }

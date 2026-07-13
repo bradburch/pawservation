@@ -93,10 +93,7 @@ describe('POST /:slug/admin/providers/calendar/calendar-id (route)', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      providers: { capability: string; calendarId: string | null }[];
-    };
-    const calendarProvider = body.providers.find((p) => p.capability === 'calendar');
-    expect(calendarProvider?.calendarId).toBe(CAL_ID);
+    const body = (await res.json()) as { calendar: { calendarId: string | null } };
+    expect(body.calendar.calendarId).toBe(CAL_ID);
   });
 });

@@ -377,4 +377,107 @@ describe('booking flow', () => {
     };
     expect(row.GCalEventId).toBe('evt_book');
   });
+
+  it('rejects the third booking into a capacity-2 windowed slot', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `INSERT INTO TenantServiceOptions
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'opt_sp_morning',
+        'tnt_sunnypaws',
+        'walk',
+        'morning-walk',
+        'Morning Walk',
+        180,
+        25,
+        'visit',
+        '11:00',
+        '14:00',
+        2,
+      );
+
+    const book = async () => {
+      const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+      return app.request(
+        '/api/sunny-paws/bookings',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            type: 'walk',
+            optionKey: 'morning-walk',
+            startDate: '2028-10-01',
+            petIds: ['pet_sp_bella'],
+          }),
+        },
+        env,
+      );
+    };
+
+    const first = await book();
+    const second = await book();
+    const third = await book();
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(third.status).toBe(409);
+  });
+
+  it('a windowed booking creates a timed (not all-day) calendar event matching its window', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `INSERT INTO TenantServiceOptions
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'opt_sp_evening',
+        'tnt_sunnypaws',
+        'walk',
+        'evening-walk',
+        'Evening Walk',
+        120,
+        30,
+        'visit',
+        '17:00',
+        '19:00',
+        null,
+      );
+    await setProviderTokens(env.PAWBOOK_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
+      access: await encryptToken(TEST_SECRET, 'at'),
+      refresh: await encryptToken(TEST_SECRET, 'rt'),
+      expiresAt: '2031-01-01T00:00:00Z',
+      calendarId: 'primary',
+    });
+    let sentBody: { start?: { dateTime?: string }; end?: { dateTime?: string } } = {};
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      sentBody = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ id: 'evt_window' }), { status: 200 });
+    });
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: 'walk',
+          optionKey: 'evening-walk',
+          startDate: '2028-10-02',
+          petIds: ['pet_sp_bella'],
+        }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(201);
+    expect(sentBody.start?.dateTime).toBe('2028-10-02T17:00:00');
+    expect(sentBody.end?.dateTime).toBe('2028-10-02T19:00:00');
+  });
 });

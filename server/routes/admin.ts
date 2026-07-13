@@ -32,7 +32,6 @@ import {
   replaceServiceOptions,
   setProviderCalendarId,
   setPetTypeEnabled,
-  setProviderStatus,
   setServiceConfig,
   updateBookingStatus,
   updateTenantSettings,
@@ -43,7 +42,7 @@ import { reconcileIfStale } from '../lib/calendar-sync';
 import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
-import { findCapability, providerViews } from '../lib/providers';
+import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
   isPetType,
@@ -66,6 +65,8 @@ import {
   isRealDate,
   isValidDuration,
   isValidRate,
+  isValidTimeString,
+  minutesBetweenTimes,
 } from '../lib/validation';
 import type { AppEnv } from '../types';
 import type { ServiceQuestion } from '../../src/shared/index.js';
@@ -93,7 +94,15 @@ function isValidTimezone(value: unknown): value is string | null | undefined {
   }
 }
 
-type OptionBody = { label?: string; durationMinutes?: number | null; rate?: number };
+type OptionBody = {
+  optionKey?: string;
+  label?: string;
+  durationMinutes?: number | null;
+  rate?: number;
+  startTime?: string | null;
+  endTime?: string | null;
+  capacity?: number | null;
+};
 
 type QuestionBody = {
   id?: string;
@@ -117,6 +126,130 @@ const QUESTION_TYPES = ['text', 'yesno', 'number', 'select'] as const;
  */
 function looksCatastrophic(pattern: string): boolean {
   return /\([^()]*[+*][^()]*\)[+*]/.test(pattern);
+}
+
+/** Derives a stable OptionKey from a windowed option's label: lowercase, non-alphanumeric runs
+ * collapsed to '-', leading/trailing '-' trimmed. "Morning Walk!" -> "morning-walk". */
+function slugifyLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+type ResolvedOption = {
+  optionKey: string;
+  label: string;
+  durationMinutes: number | null;
+  rate: number;
+  startTime: string | null;
+  endTime: string | null;
+  capacity: number | null;
+};
+
+/**
+ * Validates and derives one service's option rows in one pass: label, time window, capacity,
+ * duration (overridden from the window when present — never trusted from the client, matching
+ * how EstCost is never taken from the request body), and the OptionKey each option is saved
+ * under. Non-windowed options keep today's `d${durationMinutes}` / `standard` scheme; windowed
+ * options derive OptionKey from a slug of their label instead (their duration is no longer a
+ * stable, unique-enough key — two different windows can share a length).
+ *
+ * `existingKeys` are this service's current OptionKeys (from the DB, before this save). An
+ * option that names one of them via `optionKey` keeps that key rather than getting a freshly
+ * derived one — otherwise renaming a windowed option (whose key is label-derived) would sever
+ * it from bookings already made against the old key, silently letting the slot oversell past
+ * its capacity. Only a genuinely new option (no matching existing key) gets a fresh one.
+ *
+ * Returns an error message, or the resolved rows ready to persist.
+ */
+function resolveServiceOptions(
+  meta: { hasDuration: boolean },
+  serviceLabel: string,
+  opts: OptionBody[],
+  existingKeys: Set<string>,
+): { error: string } | { resolved: ResolvedOption[] } {
+  const resolved: ResolvedOption[] = [];
+  // Duplicate names are the only collision a sitter should ever have to fix by hand — keys are
+  // derived plumbing and are de-duped automatically below (two same-duration options are fine).
+  const seenLabels = new Set<string>();
+  // Keys already claimed in this payload: preserved keys up front (order-independent), fresh
+  // derivations as they're assigned.
+  const usedKeys = new Set(
+    opts.map((o) => o.optionKey).filter((k): k is string => k !== undefined && existingKeys.has(k)),
+  );
+  for (const o of opts) {
+    const label = o.label?.trim();
+    if (!label) return { error: `${serviceLabel}: every option needs a name.` };
+    const labelKey = label.toLowerCase();
+    if (seenLabels.has(labelKey))
+      return {
+        error: `${serviceLabel}: two options are both named “${label}” — give each option a different name.`,
+      };
+    seenLabels.add(labelKey);
+    if (!isValidRate(o.rate)) return { error: 'Rates must be whole dollars ≥ 1.' };
+
+    const hasStart = o.startTime !== undefined && o.startTime !== null;
+    const hasEnd = o.endTime !== undefined && o.endTime !== null;
+    if (hasStart !== hasEnd)
+      return { error: `${serviceLabel}: a time window needs both a start and an end time.` };
+    if (hasStart && !meta.hasDuration)
+      return { error: `${serviceLabel}: only per-visit services can have a time window.` };
+    if (hasStart && (!isValidTimeString(o.startTime) || !isValidTimeString(o.endTime)))
+      return { error: `${serviceLabel}: times must be in HH:MM format.` };
+    if (hasStart && (o.endTime as string) <= (o.startTime as string))
+      return { error: `${serviceLabel}: the window's end time must be after its start time.` };
+    if (!isNullableLimit(o.capacity ?? null, DEFENSIVE_MAX_PET_COUNT))
+      return {
+        error: `${serviceLabel}: capacity must be a positive number, or blank for no limit.`,
+      };
+
+    const windowed = hasStart;
+    const durationMinutes = windowed
+      ? minutesBetweenTimes(o.startTime as string, o.endTime as string)
+      : meta.hasDuration
+        ? (o.durationMinutes ?? null)
+        : null;
+    if (meta.hasDuration && !isValidDuration(durationMinutes))
+      return { error: `${serviceLabel}: durations must be whole minutes ≥ 1.` };
+
+    const derivedKey = windowed
+      ? slugifyLabel(label)
+      : meta.hasDuration
+        ? `d${durationMinutes}`
+        : 'standard';
+    const preserveExisting = o.optionKey !== undefined && existingKeys.has(o.optionKey);
+    // A label that's entirely punctuation/whitespace after the non-empty check above still
+    // slugifies to '' (e.g. "---") — treat that the same as no usable label. Only relevant when
+    // a fresh key is actually being derived; a preserved key is already known-valid.
+    if (windowed && !preserveExisting && derivedKey === '')
+      return { error: `${serviceLabel}: that name has no usable letters or numbers.` };
+    let optionKey = preserveExisting ? (o.optionKey as string) : derivedKey;
+    if (!preserveExisting) {
+      // Two options may legitimately derive the same key (e.g. two 30-minute check-ins with
+      // different names/rates) — suffix until unique instead of bouncing the save back.
+      for (let n = 2; usedKeys.has(optionKey); n++) optionKey = `${derivedKey}-${n}`;
+      usedKeys.add(optionKey);
+    }
+
+    resolved.push({
+      optionKey,
+      label,
+      durationMinutes,
+      rate: o.rate as number,
+      startTime: windowed ? (o.startTime as string) : null,
+      endTime: windowed ? (o.endTime as string) : null,
+      capacity: o.capacity ?? null,
+    });
+  }
+  // Backstop only: fresh keys are de-duped above, so this can fire only when two options in the
+  // payload name the SAME saved optionKey (a stale/duplicated client state).
+  const keys = resolved.map((o) => o.optionKey);
+  if (new Set(keys).size !== keys.length)
+    return {
+      error: `${serviceLabel}: two options point at the same saved option — reload the page and try again.`,
+    };
+  return { resolved };
 }
 
 /** Validates a question's DEFINITION (not an answer) — shape/type/options/pattern sanity. */
@@ -164,6 +297,8 @@ type SettingsBody = {
   maxHouseSitsPerDay?: number | null;
   maxStayNights?: number | null;
   timezone?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
   petTypes?: string[];
   services?: ServiceBody[];
 };
@@ -175,7 +310,13 @@ type SettingsBody = {
  */
 function patchNullable<T extends number | string>(
   body: SettingsBody,
-  key: 'maxBoardingPets' | 'maxHouseSitsPerDay' | 'maxStayNights' | 'timezone',
+  key:
+    | 'maxBoardingPets'
+    | 'maxHouseSitsPerDay'
+    | 'maxStayNights'
+    | 'timezone'
+    | 'contactEmail'
+    | 'contactPhone',
   current: T | null,
 ): T | null {
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
@@ -200,6 +341,8 @@ export const adminRoutes = new Hono<AppEnv>()
       maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
       maxStayNights: tenant.MaxStayNights,
       timezone: tenant.Timezone,
+      contactEmail: tenant.ContactEmail,
+      contactPhone: tenant.ContactPhone,
       petTypes: PET_TYPES.map((pt) => ({
         petType: pt,
         enabled: petTypes.some((p) => p.PetType === pt && p.Enabled),
@@ -225,22 +368,15 @@ export const adminRoutes = new Hono<AppEnv>()
             label: o.Label,
             durationMinutes: o.DurationMinutes,
             rate: o.Rate,
-          })),
+            startTime: o.StartTime,
+            endTime: o.EndTime,
+            capacity: o.Capacity,
+          })), // optionKey round-trips back on save so resolveServiceOptions can preserve identity
       })),
       // "Add service" picker: template id + display label of each built-in behavior archetype.
       templates: TEMPLATE_IDS.map((id) => ({ id, label: SERVICE_TEMPLATES[id].label })),
       blocked: blocked.map((b) => ({ id: b.Id, startDate: b.StartDate, endDate: b.EndDate })),
-      providers: providerViews(connections).map(
-        ({ capability, provider, label, authMode, status, connectedAt, calendarId }) => ({
-          capability,
-          provider,
-          label,
-          authMode,
-          status,
-          connectedAt,
-          calendarId,
-        }),
-      ),
+      calendar: calendarView(connections),
     });
   })
 
@@ -260,6 +396,11 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     const maxStayNights = patchNullable<number>(body, 'maxStayNights', tenant.MaxStayNights);
     const timezone = patchNullable<string>(body, 'timezone', tenant.Timezone);
+    // Whitespace-only contact fields mean "cleared" — store NULL, not ''.
+    const rawContactEmail = patchNullable<string>(body, 'contactEmail', tenant.ContactEmail);
+    const contactEmail = rawContactEmail?.trim() || null;
+    const rawContactPhone = patchNullable<string>(body, 'contactPhone', tenant.ContactPhone);
+    const contactPhone = rawContactPhone?.trim() || null;
     const petTypes = body.petTypes;
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
@@ -268,6 +409,14 @@ export const adminRoutes = new Hono<AppEnv>()
     // silently wipe them back to empty/unlimited.
     const currentServices =
       services.length > 0 ? await listServices(c.env.PAWBOOK_DB, tenant.Id) : [];
+    const currentOptions =
+      services.length > 0 ? await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id) : [];
+    const existingKeysByType = new Map<string, Set<string>>();
+    for (const o of currentOptions) {
+      const keys = existingKeysByType.get(o.ServiceType) ?? new Set<string>();
+      keys.add(o.OptionKey);
+      existingKeysByType.set(o.ServiceType, keys);
+    }
 
     if (!displayName) return c.json({ error: 'Display name required.' }, 400);
     if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
@@ -289,10 +438,15 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
     if (!isValidTimezone(timezone)) return c.json({ error: 'Unknown timezone.' }, 400);
+    if (contactEmail !== null && !EMAIL_RE.test(contactEmail))
+      return c.json({ error: 'Contact email must be a valid email address.' }, 400);
+    if (contactPhone !== null && contactPhone.length > 40)
+      return c.json({ error: 'Contact phone is too long.' }, 400);
     if (petTypes !== undefined) {
       if (!Array.isArray(petTypes) || !petTypes.every(isPetType))
         return c.json({ error: 'Unknown pet type.' }, 400);
     }
+    const resolvedOptionsByType = new Map<string, ResolvedOption[]>();
     for (const svc of services) {
       const meta = currentServices.find((s) => s.ServiceType === svc.type);
       if (!meta) return c.json({ error: 'Unknown service type.' }, 400);
@@ -304,16 +458,14 @@ export const adminRoutes = new Hono<AppEnv>()
       // on the (TenantId, ServiceType, OptionKey) UNIQUE constraint mid-write. Reject up front.
       if (!hasDuration && opts.length > 1)
         return c.json({ error: `${meta.Label} takes a single price.` }, 400);
-      for (const o of opts) {
-        if (!isValidRate(o.rate)) return c.json({ error: 'Rates must be whole dollars ≥ 1.' }, 400);
-        if (hasDuration && !isValidDuration(o.durationMinutes))
-          return c.json({ error: 'Durations must be whole minutes ≥ 1.' }, 400);
-      }
-      if (hasDuration) {
-        const mins = opts.map((o) => o.durationMinutes);
-        if (new Set(mins).size !== mins.length)
-          return c.json({ error: 'Duplicate durations for one service.' }, 400);
-      }
+      const resolvedOptions = resolveServiceOptions(
+        { hasDuration },
+        meta.Label,
+        opts,
+        existingKeysByType.get(svc.type as string) ?? new Set(),
+      );
+      if ('error' in resolvedOptions) return c.json({ error: resolvedOptions.error }, 400);
+      resolvedOptionsByType.set(svc.type as string, resolvedOptions.resolved);
       for (const q of svc.questions ?? []) {
         const qError = validateQuestionBody(q);
         if (qError) return c.json({ error: qError }, 400);
@@ -344,6 +496,8 @@ export const adminRoutes = new Hono<AppEnv>()
       maxHouseSitsPerDay,
       maxStayNights,
       timezone,
+      contactEmail,
+      contactPhone,
     });
     if (petTypes !== undefined) {
       for (const pt of PET_TYPES)
@@ -353,7 +507,6 @@ export const adminRoutes = new Hono<AppEnv>()
       const svcType = svc.type as string;
       // Validation above guarantees a matching row exists.
       const current = currentServices.find((s) => s.ServiceType === svcType)!;
-      const hasDuration = Boolean(current.HasDuration);
       const questions: ServiceQuestion[] =
         svc.questions !== undefined
           ? svc.questions.map((q) => ({
@@ -383,12 +536,15 @@ export const adminRoutes = new Hono<AppEnv>()
         c.env.PAWBOOK_DB,
         tenant.Id,
         svcType,
-        (svc.options ?? []).map((o) => ({
-          optionKey: hasDuration ? `d${o.durationMinutes}` : 'standard',
-          label: o.label?.trim() || (hasDuration ? `${o.durationMinutes} min` : 'Standard'),
-          durationMinutes: hasDuration ? (o.durationMinutes as number) : null,
-          rate: o.rate as number,
+        (resolvedOptionsByType.get(svcType) ?? []).map((o) => ({
+          optionKey: o.optionKey,
+          label: o.label,
+          durationMinutes: o.durationMinutes,
+          rate: o.rate,
           rateUnit: current.RateUnit,
+          startTime: o.startTime,
+          endTime: o.endTime,
+          capacity: o.capacity,
         })),
       );
     }
@@ -465,7 +621,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const start = typeof body.startDate === 'string' ? body.startDate : '';
     const end = typeof body.endDate === 'string' ? body.endDate : '';
     if (!isRealDate(start) || !isRealDate(end) || end <= start)
-      return c.json({ error: 'Provide a valid range (end is exclusive).' }, 400);
+      return c.json({ error: 'Provide a valid date range.' }, 400);
     const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
       endUserId: null,
       serviceType: 'blocked',
@@ -490,20 +646,6 @@ export const adminRoutes = new Hono<AppEnv>()
   .get('/:slug/admin/snippet', (c) => {
     const tenant = c.get('tenant');
     return c.json(embedSnippets(new URL(c.req.url).origin, tenant.Slug));
-  })
-
-  .post('/:slug/admin/providers/:capability/connect', async (c) => {
-    const tenant = c.get('tenant');
-    const descriptor = findCapability(c.req.param('capability'));
-    if (!descriptor) return c.json({ error: 'Unknown capability.' }, 404);
-    await setProviderStatus(
-      c.env.PAWBOOK_DB,
-      tenant.Id,
-      descriptor.capability,
-      descriptor.provider,
-      'connected-stub',
-    );
-    return c.json({ status: 'connected-stub' });
   })
 
   .get('/:slug/admin/providers/calendar/oauth/start', async (c) => {
@@ -560,16 +702,20 @@ export const adminRoutes = new Hono<AppEnv>()
       listCustomers(c.env.PAWBOOK_DB, tenant.Id),
       listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id),
     ]);
-    const byUser = new Map<string, { id: string; name: string; petType: string }[]>();
+    const byUser = new Map<
+      string,
+      { id: string; name: string; petType: string; notes: string | null }[]
+    >();
     for (const p of allPets) {
       const list = byUser.get(p.EndUserId) ?? [];
-      list.push({ id: p.Id, name: p.Name, petType: p.PetType });
+      list.push({ id: p.Id, name: p.Name, petType: p.PetType, notes: p.Notes });
       byUser.set(p.EndUserId, list);
     }
     const withPets = customers.map((u) => ({
       id: u.Id,
       email: u.Email,
       name: u.Name,
+      phone: u.Phone,
       status: u.Status,
       invitedAt: u.InvitedAt,
       pets: byUser.get(u.Id) ?? [],
@@ -580,14 +726,17 @@ export const adminRoutes = new Hono<AppEnv>()
   .post('/:slug/admin/customers', async (c) => {
     const tenant = c.get('tenant');
     const body = await c.req
-      .json<{ email?: unknown; name?: unknown }>()
-      .catch(() => ({}) as { email?: unknown; name?: unknown });
+      .json<{ email?: unknown; name?: unknown; phone?: unknown }>()
+      .catch(() => ({}) as { email?: unknown; name?: unknown; phone?: unknown });
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const rawName = typeof body.name === 'string' ? body.name.trim() : '';
     const name = rawName || null;
+    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
+    const phone = rawPhone || null;
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
+    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
 
-    const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name);
+    const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name, phone);
 
     // Only send the invite for a freshly-invited customer — skip if the customer is already active
     // (a re-POST of an existing active customer must not send a confusing "you're invited" email).
@@ -600,7 +749,13 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json(
-      { id: customer.Id, email: customer.Email, name: customer.Name, status: customer.Status },
+      {
+        id: customer.Id,
+        email: customer.Email,
+        name: customer.Name,
+        phone: customer.Phone,
+        status: customer.Status,
+      },
       201,
     );
   })
@@ -618,12 +773,15 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const endUserId = c.req.param('id');
     const body = await c.req
-      .json<{ name?: unknown; petType?: unknown }>()
-      .catch(() => ({}) as { name?: unknown; petType?: unknown });
+      .json<{ name?: unknown; petType?: unknown; notes?: unknown }>()
+      .catch(() => ({}) as { name?: unknown; petType?: unknown; notes?: unknown });
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const petType = body.petType;
+    const rawNotes = typeof body.notes === 'string' ? body.notes.trim() : '';
+    const notes = rawNotes || null;
     if (!name) return c.json({ error: 'Enter a pet name.' }, 400);
     if (!isPetType(petType)) return c.json({ error: 'Unknown pet type.' }, 400);
+    if (notes !== null && notes.length > 2000) return c.json({ error: 'Notes are too long.' }, 400);
     // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
     // under it (production D1 has foreign keys OFF, so nothing else stops a cross-tenant orphan).
     if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
@@ -632,8 +790,8 @@ export const adminRoutes = new Hono<AppEnv>()
       (pt) => pt.PetType === petType && pt.Enabled,
     );
     if (!accepted) return c.json({ error: 'That pet type is not accepted.' }, 400);
-    const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType);
-    return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType }, 201);
+    const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType, notes);
+    return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType, notes: pet.Notes }, 201);
   })
   .delete('/:slug/admin/customers/:id/pets/:petId', async (c) => {
     const tenant = c.get('tenant');

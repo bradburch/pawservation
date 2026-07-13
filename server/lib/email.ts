@@ -44,7 +44,10 @@ export async function sendLoginCode(env: Env, to: string, code: string): Promise
   });
 }
 
-/** Notify a customer their booking status changed. Throws if email is not configured or Resend rejects the request. */
+/**
+ * Tell the customer their request was confirmed/declined or their booking cancelled.
+ * Throws if email is not configured or Resend rejects the request.
+ */
 export async function sendBookingStatusEmail(
   env: Env,
   to: string,

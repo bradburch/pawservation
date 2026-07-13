@@ -26,10 +26,16 @@ import { constantTimeEqual } from '../lib/timing';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, MaxBoardingPets, MaxHouseSitsPerDay, MaxStayNights, Timezone';
+  'Id, Slug, DisplayName, AccentColor, MaxBoardingPets, MaxHouseSitsPerDay, MaxStayNights, Timezone, ContactEmail, ContactPhone';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, GCalEventId, Status, Declined, CreatedAt';
+
+/** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
+ * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
+const BOOKING_COLS_QUALIFIED = BOOKING_COLS.split(', ')
+  .map((col) => `BookingRequests.${col}`)
+  .join(', ');
 
 export async function getTenantBySlug(db: D1Database, slug: string): Promise<Tenant | null> {
   return await db
@@ -138,7 +144,7 @@ export async function listServiceOptions(
 ): Promise<TenantServiceOption[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit
+      `SELECT Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity
        FROM TenantServiceOptions WHERE TenantId = ? ORDER BY ServiceType, DurationMinutes`,
     )
     .bind(tenantId)
@@ -160,14 +166,20 @@ export async function createLoginCode(
   endUserId: string,
   code: string,
   expiresAtIso: string,
+  nowIso: string = new Date().toISOString(),
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await db
-    .prepare(
-      'INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt) VALUES (?, ?, ?, ?, ?)',
-    )
-    .bind(id, tenantId, endUserId, code, expiresAtIso)
-    .run();
+  // ponytail: opportunistic prune on each new code — a cron is overkill at this scale
+  await db.batch([
+    db
+      .prepare('DELETE FROM LoginCodes WHERE TenantId = ? AND ExpiresAt < ?')
+      .bind(tenantId, nowIso),
+    db
+      .prepare(
+        'INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind(id, tenantId, endUserId, code, expiresAtIso),
+  ]);
   return id;
 }
 
@@ -241,6 +253,78 @@ export async function listCapacityRows(
   return results;
 }
 
+/**
+ * One end user's own pending/confirmed booking date ranges overlapping [from, to) — across
+ * EVERY service type (unlike listCapacityRows, which is boarding/house-sit/blocked only).
+ * Feeds the month grid's "mine" flag, so a walk/daycare/check-in booking still highlights.
+ */
+export async function listUserBookingDatesInRange(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  fromDate: string,
+  toDateExclusive: string,
+): Promise<{ StartDate: string; EndDate: string | null }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT StartDate, EndDate FROM BookingRequests
+       WHERE TenantId = ? AND EndUserId = ? AND Status IN ('pending', 'confirmed')
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
+    )
+    .bind(tenantId, endUserId, toDateExclusive, fromDate)
+    .all<{ StartDate: string; EndDate: string | null }>();
+  return results;
+}
+
+/**
+ * Count non-cancelled bookings against one option on one date — enforces a windowed option's
+ * Capacity. `excludeId` lets the post-insert race check ask "do I still fit, ignoring myself?",
+ * matching the pattern `listCapacityRows` already uses for boarding/house-sit.
+ */
+export async function countSlotBookings(
+  db: D1Database,
+  tenantId: string,
+  serviceType: ServiceType,
+  optionKey: string,
+  date: string,
+  excludeId?: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND StartDate = ?
+         AND Status IN ('pending', 'confirmed') AND (? IS NULL OR Id != ?)`,
+    )
+    .bind(tenantId, serviceType, optionKey, date, excludeId ?? null, excludeId ?? null)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * Per-date booking counts against one option over [fromDate, toDateExclusive) — ONE query for
+ * a whole month grid, so `monthAvailability` never issues one DB round-trip per day (the
+ * "build the map once" pattern `buildCapacity` already uses for boarding/house-sit).
+ */
+export async function listSlotBookingCounts(
+  db: D1Database,
+  tenantId: string,
+  serviceType: ServiceType,
+  optionKey: string,
+  fromDate: string,
+  toDateExclusive: string,
+): Promise<Map<string, number>> {
+  const { results } = await db
+    .prepare(
+      `SELECT StartDate, COUNT(*) AS n FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ?
+         AND StartDate >= ? AND StartDate < ? AND Status IN ('pending', 'confirmed')
+       GROUP BY StartDate`,
+    )
+    .bind(tenantId, serviceType, optionKey, fromDate, toDateExclusive)
+    .all<{ StartDate: string; n: number }>();
+  return new Map(results.map((r) => [r.StartDate, r.n]));
+}
+
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -252,6 +336,7 @@ export async function insertBookingRequest(
     optionKey: string | null;
     petType: PetType | null;
     petCount: number;
+    startTime?: string | null;
     estCost: number | null;
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
@@ -261,8 +346,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, EstCost, Answers, Status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -274,6 +359,7 @@ export async function insertBookingRequest(
       row.optionKey,
       row.petType,
       row.petCount,
+      row.startTime ?? null,
       row.estCost,
       JSON.stringify(row.answers ?? {}),
       row.status,
@@ -301,7 +387,7 @@ export async function listBookingsForUser(
 ): Promise<BookingRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS}
+      `SELECT ${BOOKING_COLS}, Declined
        FROM BookingRequests
        WHERE TenantId = ? AND EndUserId = ?
        ORDER BY StartDate DESC`,
@@ -311,13 +397,19 @@ export async function listBookingsForUser(
   return results;
 }
 
+/**
+ * All non-blocked bookings for the sitter's admin list, newest-first, with the customer's
+ * Email/Name joined in (NULL for a booking whose customer was later removed — EndUserId only
+ * ever points at a row in the SAME tenant, enforced by how bookings are created), plus the
+ * total paid so far (0 for bookings with no payments).
+ */
 export async function listBookingsForTenant(
   db: D1Database,
   tenantId: string,
 ): Promise<(BookingRow & { Email: string | null; Name: string | null; PaidTotal: number })[]> {
   const { results } = await db
     .prepare(
-      `SELECT BookingRequests.*, EndUsers.Email AS Email, EndUsers.Name AS Name,
+      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
        LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
@@ -377,7 +469,7 @@ export async function getBookingWithCustomer(
 ): Promise<(BookingRow & { Email: string | null; Name: string | null }) | null> {
   return await db
     .prepare(
-      `SELECT BookingRequests.*, EndUsers.Email AS Email, EndUsers.Name AS Name
+      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name
        FROM BookingRequests
        LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
          AND EndUsers.TenantId = BookingRequests.TenantId
@@ -590,12 +682,15 @@ export async function updateTenantSettings(
     maxHouseSitsPerDay: number | null;
     maxStayNights: number | null;
     timezone: string | null;
+    contactEmail?: string | null;
+    contactPhone?: string | null;
   },
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, MaxBoardingPets = ?,
-         MaxHouseSitsPerDay = ?, MaxStayNights = ?, Timezone = ? WHERE Id = ?`,
+         MaxHouseSitsPerDay = ?, MaxStayNights = ?, Timezone = ?,
+         ContactEmail = ?, ContactPhone = ? WHERE Id = ?`,
     )
     .bind(
       settings.displayName,
@@ -604,6 +699,8 @@ export async function updateTenantSettings(
       settings.maxHouseSitsPerDay,
       settings.maxStayNights,
       settings.timezone,
+      settings.contactEmail ?? null,
+      settings.contactPhone ?? null,
       tenantId,
     )
     .run();
@@ -657,14 +754,17 @@ export async function replaceServiceOptions(
     durationMinutes: number | null;
     rate: number;
     rateUnit: 'night' | 'day' | 'visit';
+    startTime: string | null;
+    endTime: string | null;
+    capacity: number | null;
   }[],
 ): Promise<void> {
   // DELETE-then-INSERT as ONE atomic, single-round-trip batch: a mid-write failure can no longer
   // leave the service's options half-wiped, and N options cost one trip instead of N+1.
   const insert = db.prepare(
     `INSERT INTO TenantServiceOptions
-       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   await db.batch([
     db
@@ -680,6 +780,9 @@ export async function replaceServiceOptions(
         o.durationMinutes,
         o.rate,
         o.rateUnit,
+        o.startTime,
+        o.endTime,
+        o.capacity,
       ),
     ),
   ]);
@@ -837,7 +940,7 @@ export async function getEndUserById(
     .first<EndUser>();
 }
 
-const ENDUSER_COLS = 'Id, TenantId, Email, Name, Status, InvitedAt';
+const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
 
 export async function getEndUserByEmail(
   db: D1Database,
@@ -855,6 +958,7 @@ export async function insertInvitedCustomer(
   tenantId: string,
   email: string,
   name: string | null,
+  phone: string | null = null,
 ): Promise<EndUser> {
   const existing = await getEndUserByEmail(db, tenantId, email);
   if (existing) return existing; // idempotent — never downgrade an active customer to invited
@@ -862,16 +966,17 @@ export async function insertInvitedCustomer(
   const invitedAt = new Date().toISOString();
   await db
     .prepare(
-      `INSERT INTO EndUsers (Id, TenantId, Email, Name, Status, InvitedAt)
-       VALUES (?, ?, ?, ?, 'invited', ?)`,
+      `INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status, InvitedAt)
+       VALUES (?, ?, ?, ?, ?, 'invited', ?)`,
     )
-    .bind(id, tenantId, email, name, invitedAt)
+    .bind(id, tenantId, email, name, phone, invitedAt)
     .run();
   return {
     Id: id,
     TenantId: tenantId,
     Email: email,
     Name: name,
+    Phone: phone,
     Status: 'invited',
     InvitedAt: invitedAt,
   };
@@ -926,32 +1031,13 @@ export async function promoteCustomerActive(
     .run();
 }
 
-export async function setProviderStatus(
-  db: D1Database,
-  tenantId: string,
-  capability: string,
-  provider: string,
-  status: 'connected-stub',
-): Promise<void> {
-  const connectedAt = new Date().toISOString();
-  await db
-    .prepare(
-      `INSERT INTO ProviderConnections (Id, TenantId, Capability, Provider, Status, ConnectedAt)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (TenantId, Capability)
-       DO UPDATE SET Provider = excluded.Provider, Status = excluded.Status, ConnectedAt = excluded.ConnectedAt`,
-    )
-    .bind(crypto.randomUUID(), tenantId, capability, provider, status, connectedAt)
-    .run();
-}
-
 export async function listAllEndUserPetsByTenant(
   db: D1Database,
   tenantId: string,
 ): Promise<EndUserPet[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, CreatedAt
+      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, CreatedAt
        FROM EndUserPets WHERE TenantId = ? ORDER BY EndUserId, Name`,
     )
     .bind(tenantId)
@@ -966,7 +1052,7 @@ export async function listEndUserPets(
 ): Promise<EndUserPet[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, CreatedAt
+      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, CreatedAt
        FROM EndUserPets WHERE TenantId = ? AND EndUserId = ? ORDER BY Name`,
     )
     .bind(tenantId, endUserId)
@@ -980,17 +1066,18 @@ export async function addEndUserPet(
   endUserId: string,
   name: string,
   petType: PetType,
+  notes: string | null = null,
 ): Promise<EndUserPet> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Notes) VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .bind(id, tenantId, endUserId, name, petType)
+    .bind(id, tenantId, endUserId, name, petType, notes)
     .run();
   const row = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, CreatedAt FROM EndUserPets WHERE TenantId = ? AND Id = ?`,
+      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, CreatedAt FROM EndUserPets WHERE TenantId = ? AND Id = ?`,
     )
     .bind(tenantId, id)
     .first<EndUserPet>();

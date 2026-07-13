@@ -183,29 +183,6 @@ export function buildEventResource(b: CalendarBooking): EventResource {
     extendedProperties,
   };
 }
-
-export const BLOCK_EVENT_SUMMARY = 'unavailable';
-
-export function categorizeCalendarEvent(
-  event: CalendarEvent,
-):
-  | { kind: 'booking'; category: string; petCount: number; email: string }
-  | { kind: 'block' }
-  | { kind: 'ignore' } {
-  if (event.private.pawbook === 'true') {
-    return {
-      kind: 'booking',
-      category: event.private.category,
-      petCount: Number(event.private.petCount) || 1,
-      email: event.private.customerEmail ?? '',
-    };
-  }
-  if (event.summary.trim().toLowerCase() === BLOCK_EVENT_SUMMARY) {
-    return { kind: 'block' };
-  }
-  return { kind: 'ignore' };
-}
-
 export async function listCalendarEvents(
   accessToken: string,
   calendarId: string,
