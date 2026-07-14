@@ -297,64 +297,140 @@ const LANDING_HTML = `<!doctype html>
         padding-top: 22px;
         border-top: 2px solid var(--ink);
       }
-      .section-title {
-        margin: 6px 0 6px;
-        font-family: var(--serif);
-        font-weight: 700;
-        font-size: clamp(1.7rem, 6vw, 2.2rem);
-        line-height: 1.06;
-        letter-spacing: -0.01em;
+      /* ── Running heads: a book's pages announce themselves, verso & recto ── */
+      .runhead {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 8px 16px;
+        margin-bottom: 26px;
       }
-      .section-note {
-        margin: 0 0 8px;
-        max-width: 54ch;
-        color: var(--soft);
-      }
-
-      /* ── The day's work: a numbered run down the book ───────────── */
-      .steps { margin: 22px 0 0; }
-      .step {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 4px 20px;
-        padding: 20px 0;
-        border-bottom: 1px solid var(--rule);
-      }
-      .step:last-child { border-bottom: 0; }
-      .step .folio {
-        grid-row: 1 / span 2;
-        font-family: var(--mono);
-        font-size: 0.72rem;
-        letter-spacing: 0.14em;
-        color: var(--accent);
-        padding-top: 0.35em;
-        white-space: nowrap;
-      }
-      .step h3 {
+      .runhead h2 {
         margin: 0;
         font-family: var(--serif);
         font-weight: 700;
-        font-size: 1.28rem;
-        line-height: 1.2;
+        font-size: clamp(1.7rem, 6vw, 2.3rem);
+        line-height: 1.02;
+        letter-spacing: -0.01em;
       }
-      .step p {
-        margin: 6px 0 0;
-        color: var(--soft);
-        max-width: 56ch;
+      .runhead .rule {
+        flex: 1 1 40px;
+        height: 0;
+        align-self: center;
+        border-top: 1px solid var(--rule);
       }
-      .step .fine {
-        display: block;
-        margin-top: 6px;
+      .runhead .tab {
         font-family: var(--mono);
-        font-size: 0.74rem;
-        letter-spacing: 0.02em;
+        font-size: 0.66rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--soft);
+      }
+
+      /* ── What it does: one opening entry, then a book of accounts ── */
+      .cap {
+        display: grid;
+        gap: 34px 46px;
+      }
+      .cap-lead {
+        border-left: 3px solid var(--accent);
+        padding-left: 20px;
+      }
+      .cap-lead .kicker {
+        margin: 0 0 12px;
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      .cap-lead h3 {
+        margin: 0 0 12px;
+        font-family: var(--serif);
+        font-weight: 700;
+        font-size: clamp(1.5rem, 5vw, 1.95rem);
+        line-height: 1.12;
+        letter-spacing: -0.01em;
+      }
+      .cap-lead p {
+        margin: 0 0 14px;
+        font-size: 1.04rem;
+        line-height: 1.5;
+        max-width: 36ch;
+      }
+      .cap-lead .fine {
+        display: block;
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 0.73rem;
+        line-height: 1.5;
+        color: var(--soft);
+      }
+      .book-group + .book-group { margin-top: 24px; }
+      .book-group h4 {
+        margin: 0;
+        padding-bottom: 7px;
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--soft);
+        border-bottom: 2px solid var(--ink);
+      }
+      .book-group dl { margin: 0; }
+      .line {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1px 16px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--rule);
+      }
+      .line:last-child { border-bottom: 0; }
+      .line dt {
+        font-family: var(--mono);
+        font-size: 0.73rem;
+        letter-spacing: 0.01em;
+        font-weight: 700;
         color: var(--ink);
-        opacity: 0.75;
+      }
+      .line dd {
+        margin: 0;
+        color: var(--soft);
+        font-size: 0.92rem;
+        line-height: 1.42;
+      }
+      @media (min-width: 520px) {
+        .line { grid-template-columns: 8.5rem 1fr; align-items: baseline; }
+      }
+      @media (min-width: 760px) {
+        .cap { grid-template-columns: 0.92fr 1.08fr; align-items: start; }
+      }
+
+      /* ── Drop it in: words to the left, the receipt to the right ── */
+      .embed-grid {
+        display: grid;
+        gap: 22px 46px;
+        align-items: start;
+      }
+      .embed-say h2 {
+        margin: 0 0 12px;
+        font-family: var(--serif);
+        font-weight: 700;
+        font-size: clamp(1.6rem, 5.5vw, 2.1rem);
+        line-height: 1.08;
+        letter-spacing: -0.01em;
+      }
+      .embed-say p {
+        margin: 0;
+        color: var(--soft);
+        max-width: 34ch;
+      }
+      @media (min-width: 720px) {
+        .embed-grid { grid-template-columns: 0.82fr 1.18fr; }
       }
 
       /* ── Embed slip ─────────────────────────────────────────────── */
       .slip {
-        margin-top: 22px;
         background: var(--paper-2);
         border: 1px solid var(--rule);
         border-radius: 4px;
@@ -388,42 +464,40 @@ const LANDING_HTML = `<!doctype html>
         color: var(--soft);
       }
 
-      /* ── FAQ: entries you can lift the flap on ──────────────────── */
-      .faq { margin-top: 22px; }
-      .faq details {
-        border-bottom: 1px solid var(--rule);
+      /* ── The fine print: answers laid open in two columns, no toggles ── */
+      .qa {
+        display: grid;
+        gap: 0 46px;
       }
-      .faq details[open] summary { color: var(--ink); }
-      .faq summary {
-        list-style: none;
-        cursor: pointer;
-        padding: 16px 34px 16px 0;
-        position: relative;
+      .qa-item {
+        padding: 18px 0;
+        border-top: 1px solid var(--rule);
+      }
+      .qa-item h3 {
+        margin: 0 0 6px;
         font-family: var(--serif);
-        font-size: 1.14rem;
+        font-size: 1.12rem;
         font-weight: 700;
+        line-height: 1.2;
         color: var(--ink);
       }
-      .faq summary::-webkit-details-marker { display: none; }
-      .faq summary::after {
-        content: "+";
-        position: absolute;
-        right: 4px;
-        top: 50%;
-        transform: translateY(-50%);
-        font-family: var(--mono);
-        font-weight: 400;
-        font-size: 1.3rem;
-        color: var(--accent);
-      }
-      .faq details[open] summary::after { content: "\\2212"; }
-      .faq .answer {
+      .qa-item p {
         margin: 0;
-        padding: 0 0 18px;
         color: var(--soft);
-        max-width: 60ch;
+        font-size: 0.92rem;
+        line-height: 1.5;
+        max-width: 42ch;
       }
-      .faq .answer strong { color: var(--ink); font-weight: 700; }
+      .qa-item p strong { color: var(--ink); font-weight: 700; }
+      .qa-item a {
+        color: var(--ink);
+        text-decoration: underline;
+        text-decoration-color: var(--accent);
+        text-underline-offset: 2px;
+      }
+      @media (min-width: 640px) {
+        .qa { grid-template-columns: 1fr 1fr; }
+      }
 
       /* ── Footer ─────────────────────────────────────────────────── */
       .foot {
@@ -456,9 +530,6 @@ const LANDING_HTML = `<!doctype html>
       @media (prefers-reduced-motion: reduce) {
         a.cta { transition: none; }
         a.cta:hover { transform: none; }
-      }
-      @media (min-width: 620px) {
-        .step { grid-template-columns: 5.5rem 1fr; }
       }
     </style>
   </head>
@@ -519,119 +590,104 @@ const LANDING_HTML = `<!doctype html>
       </header>
 
       <section class="section" aria-labelledby="work">
-        <p class="eyebrow">What it does</p>
-        <h2 class="section-title" id="work">One day book, start to finish</h2>
-        <p class="section-note">
-          The same five moves, every booking &mdash; from the moment a client asks to the moment the money&rsquo;s down on the page.
-        </p>
-        <div class="steps">
-          <div class="step">
-            <span class="folio">No. 1</span>
-            <h3>Take bookings on your own site</h3>
+        <div class="runhead">
+          <h2 id="work">What the book does</h2>
+          <span class="rule" aria-hidden="true"></span>
+          <span class="tab">the whole job</span>
+        </div>
+        <div class="cap">
+          <div class="cap-lead">
+            <p class="kicker">Start here</p>
+            <h3>It lives on your site, not ours.</h3>
             <p>
-              One line of HTML drops a live booking widget onto your site &mdash; Squarespace, Wix, a hand-built page, it doesn&rsquo;t care. It sizes itself to fit, so there&rsquo;s nothing to lay out and no theme to fight.
-              <span class="fine">A plain-iframe version stands in for hosts that strip scripts.</span>
+              One line of HTML drops a live booking widget onto your own page &mdash; Squarespace, Wix, or hand-built. It resizes itself to fit, and clients book without ever leaving your site.
             </p>
+            <span class="fine">A plain-iframe version stands in for hosts that strip scripts.</span>
           </div>
-          <div class="step">
-            <span class="folio">No. 2</span>
-            <h3>Set your own services and rules</h3>
-            <p>
-              Boarding, house sitting, day care, walks, check-ins &mdash; you choose what you offer, what it costs, and how long it runs. Add timed walk windows (Morning walk, 8&ndash;9am) with their own capacity, per-service intake questions, and min/max nights or pet counts.
-            </p>
-          </div>
-          <div class="step">
-            <span class="folio">No. 3</span>
-            <h3>Let the book keep the day honest</h3>
-            <p>
-              A daily boarding cap, a house-sits-per-day cap, a longest-stay limit, blocked time-off dates, and your business timezone. One booking can&rsquo;t oversell the day &mdash; if you&rsquo;re full, the widget won&rsquo;t offer it.
-            </p>
-          </div>
-          <div class="step">
-            <span class="folio">No. 4</span>
-            <h3>Confirm or decline every request</h3>
-            <p>
-              Nothing books itself. Each request waits for your yes; you can confirm, decline, or later cancel. Clients get status emails automatically &mdash; and if an email didn&rsquo;t actually send, the dashboard says so instead of pretending.
-            </p>
-          </div>
-          <div class="step">
-            <span class="folio">No. 5</span>
-            <h3>Keep the clients, the pets, and the money</h3>
-            <p>
-              Invite clients by email (one at a time, or a CSV up to 500 rows). Keep pet profiles and care notes. Log every payment &mdash; cash, Venmo, Zelle, PayPal, check &mdash; and read the earnings dashboard: this month against last, what&rsquo;s outstanding, a year of revenue, your top clients. Confirmed bookings push to your Google Calendar.
-            </p>
+          <div class="book">
+            <div class="book-group">
+              <h4>Your rules</h4>
+              <dl>
+                <div class="line"><dt>Services &amp; rates</dt><dd>Boarding, house-sitting, day care, walks, check-ins &mdash; each with your price and length.</dd></div>
+                <div class="line"><dt>Walk windows</dt><dd>Timed slots like 8&ndash;9am, each with its own capacity.</dd></div>
+                <div class="line"><dt>Limits &amp; intake</dt><dd>Min/max nights, pet counts, and your own questions per service.</dd></div>
+                <div class="line"><dt>Daily caps</dt><dd>Boarding cap, house-sits cap, longest stay, time off, timezone. A full day won&rsquo;t be offered.</dd></div>
+              </dl>
+            </div>
+            <div class="book-group">
+              <h4>Every request</h4>
+              <dl>
+                <div class="line"><dt>You decide</dt><dd>Confirm, decline, or cancel. Nothing books itself.</dd></div>
+                <div class="line"><dt>Clients hear back</dt><dd>Status emails send automatically &mdash; and the dashboard flags any that didn&rsquo;t.</dd></div>
+                <div class="line"><dt>On your calendar</dt><dd>Confirmed bookings push to your Google Calendar.</dd></div>
+              </dl>
+            </div>
+            <div class="book-group">
+              <h4>The money</h4>
+              <dl>
+                <div class="line"><dt>Clients &amp; pets</dt><dd>Invite by email or CSV up to 500. Keep profiles and care notes.</dd></div>
+                <div class="line"><dt>Payments</dt><dd>Cash, Venmo, Zelle, PayPal, check &mdash; deposits and partials too.</dd></div>
+                <div class="line"><dt>Earnings</dt><dd>This month against last, what&rsquo;s outstanding, a year of revenue, your top clients.</dd></div>
+              </dl>
+            </div>
           </div>
         </div>
       </section>
 
       <section class="section" aria-labelledby="embed">
-        <p class="eyebrow">Drop it into your site</p>
-        <h2 class="section-title" id="embed">One line, where you want it</h2>
-        <p class="section-note">
-          Paste this where the widget should appear and change the slug to yours. No code editing beyond that, no plugins.
-        </p>
-        <div class="slip">
-          <div class="slip-cap">
-            <span class="eyebrow">embed &middot; your-page.html</span>
-            <span class="eyebrow">paste &amp; save</span>
+        <div class="embed-grid">
+          <div class="embed-say">
+            <h2 id="embed">Paste one line where you want it.</h2>
+            <p>Change the slug to yours and save. No plugins, no theme surgery, nothing to lay out.</p>
           </div>
-          <div class="code-scroll">
+          <div class="slip">
+            <div class="slip-cap">
+              <span class="eyebrow">embed &middot; your-page.html</span>
+              <span class="eyebrow">paste &amp; save</span>
+            </div>
+            <div class="code-scroll">
 <pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;https://your-site/embed.js&quot;
         <span class="attr">data-pawbook-tenant</span>=&quot;your-slug&quot;
         <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
+            </div>
+            <p class="slip-foot">
+              On a host that strips scripts? Paste the plain-iframe version instead &mdash; same widget, no JavaScript needed. Works on Squarespace, Wix, or a page you wrote by hand.
+            </p>
           </div>
-          <p class="slip-foot">
-            On a host that strips scripts? Paste the plain-iframe version instead &mdash; same widget, no JavaScript needed. Works on Squarespace, Wix, or a page you wrote by hand.
-          </p>
         </div>
       </section>
 
       <section class="section" aria-labelledby="faq">
-        <p class="eyebrow">Before you commit</p>
-        <h2 class="section-title" id="faq">Straight answers</h2>
-        <div class="faq">
-          <details open>
-            <summary>Do customers pay through Pawbook?</summary>
-            <p class="answer">
-              <strong>No &mdash; Pawbook doesn&rsquo;t process card payments.</strong> A booking comes in as a request with an estimated cost; you collect the money the way you already do (cash, Venmo, Zelle, PayPal, check) and log it so the earnings dashboard stays accurate. It&rsquo;s bookkeeping, not a checkout.
-            </p>
-          </details>
-          <details>
-            <summary>Does it sync with my Google Calendar?</summary>
-            <p class="answer">
-              <strong>One way only.</strong> Confirmed bookings push to your Google Calendar as events. It does <strong>not</strong> read your other calendar entries, so being busy elsewhere won&rsquo;t block a request on its own &mdash; mark those days as time off if you want them held.
-            </p>
-          </details>
-          <details>
-            <summary>Can I charge more for a second pet?</summary>
-            <p class="answer">
-              <strong>No &mdash; rates are flat per service (and per option).</strong> A second dog doesn&rsquo;t cost more; it just uses a slot of your daily capacity. If you need per-pet pricing, Pawbook won&rsquo;t do it today.
-            </p>
-          </details>
-          <details>
-            <summary>Can strangers book me from the widget?</summary>
-            <p class="answer">
-              <strong>No &mdash; clients are invite-only, on purpose.</strong> You add a client&rsquo;s email before they can book (one at a time, or by CSV import). You can&rsquo;t publish the widget and take walk-in strangers.
-            </p>
-          </details>
-          <details>
-            <summary>Does it handle cats, or other animals?</summary>
-            <p class="answer">
-              <strong>Dogs and cats only.</strong> Pet profiles are typed as dog or cat, with care notes. Other animals aren&rsquo;t supported.
-            </p>
-          </details>
-          <details>
-            <summary>Do I need to know how to code?</summary>
-            <p class="answer">
-              To run the widget, no &mdash; you paste one line (or the iframe) and you&rsquo;re done. Standing up your <em>own</em> Pawbook instance is a developer job today (see the next answer), but the day-to-day dashboard needs no code.
-            </p>
-          </details>
-          <details open>
-            <summary>How do I sign up? Is it free?</summary>
-            <p class="answer">
-              <strong>There&rsquo;s no signup button yet.</strong> Pawbook is open source (MIT) and you run your own copy on Cloudflare Workers &mdash; free to use, you provide the hosting. You (or a developer) deploy an instance and provision your business. Self-serve, hosted signup is on the roadmap; for now, start from the <a class="quiet" href="https://github.com/bradburch/pawbook">GitHub repo</a>.
-            </p>
-          </details>
+        <div class="runhead mirror">
+          <span class="tab">Straight answers</span>
+          <span class="rule" aria-hidden="true"></span>
+          <h2 id="faq">The fine print, no asterisks.</h2>
+        </div>
+        <div class="qa">
+          <div class="qa-item">
+            <h3>Will it work on my Squarespace or Wix site?</h3>
+            <p>Yes. Paste one line &mdash; or the iframe version &mdash; into a page and the widget shows up, sized to fit. Plain HTML works too.</p>
+          </div>
+          <div class="qa-item">
+            <h3>Do customers pay by card here?</h3>
+            <p><strong>No &mdash; Pawbook tracks money, it doesn&rsquo;t take it.</strong> A booking arrives with an estimated cost; you collect it off-platform (cash, Venmo, Zelle, check) and log it so your earnings stay accurate.</p>
+          </div>
+          <div class="qa-item">
+            <h3>Can it double-book me?</h3>
+            <p><strong>No.</strong> Your caps and time-off hold the day, and a full day isn&rsquo;t offered. One caveat: Google Calendar sync is one-way &mdash; being busy elsewhere won&rsquo;t block a request unless you enter it as time off.</p>
+          </div>
+          <div class="qa-item">
+            <h3>Can anyone book, or just my clients?</h3>
+            <p><strong>Invite-only, on purpose.</strong> You add each client&rsquo;s email (or import a CSV) before they can book. No walk-in strangers &mdash; and dogs and cats only.</p>
+          </div>
+          <div class="qa-item">
+            <h3>Can I charge more for a second dog?</h3>
+            <p><strong>No.</strong> Rates are flat per service. A second pet uses a slot of your capacity, not extra money.</p>
+          </div>
+          <div class="qa-item">
+            <h3>How do I sign up? Is it free?</h3>
+            <p><strong>There&rsquo;s no signup yet.</strong> Pawbook is open source (MIT); you (or a developer) deploy your own copy on Cloudflare Workers. Free to run &mdash; you host it. Hosted signup is on the <a href="https://github.com/bradburch/pawbook">roadmap</a>.</p>
+          </div>
         </div>
       </section>
 
