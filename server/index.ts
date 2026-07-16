@@ -315,11 +315,11 @@ const LANDING_HTML = `<!doctype html>
       </p>
 
       <div class="actions">
-        <a class="cta" href="/admin">Open the dashboard &rarr;</a>
+        <a class="cta" href="/admin">Sitter log in &rarr;</a>
         <a class="demo" href="/demo">See two sitters&rsquo; widgets, live &rarr;</a>
       </div>
 
-      <div class="foot">Open source &middot; Runs on Cloudflare Workers</div>
+      <div class="foot">Self-hosted &middot; Runs on Cloudflare Workers</div>
     </main>
   </body>
 </html>
