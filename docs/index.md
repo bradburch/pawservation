@@ -24,7 +24,7 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
 - **Edge-native architecture** — Cloudflare Workers (Hono) + D1 (SQLite) + KV, chosen for
   low-latency global delivery of a widget that lives on third-party sites.
 - **Embeds anywhere, safely** — a single `<script>` tag injects an auto-resizing iframe;
-  every `postMessage` is validated by origin *and* source, so the widget can't be hijacked
+  every `postMessage` is validated by origin _and_ source, so the widget can't be hijacked
   by the host page or vice versa.
 - **Zero-dependency core** — the booking, date, and pricing logic in `src/shared/` is pure
   TypeScript with no runtime dependencies, so the rules that decide what a customer can
