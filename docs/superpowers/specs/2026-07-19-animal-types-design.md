@@ -58,6 +58,7 @@ AcceptedPetTypes TEXT  -- JSON array of pet-type slugs; NULL = accepts all enabl
 ```
 
 **JSON column, not a junction table.** Weighed both:
+
 - Consistency: `Questions` on the same table set the precedent for
   per-service JSON config; the settings PUT's field-level PATCH semantics
   (`'questions' in svc ? … : current`) extend to it verbatim.
@@ -96,11 +97,11 @@ installs only see `schema.sql`.
 (`tnt_sunnypaws`, `rabbit`, `Rabbits`) so a fresh local run demos the feature
 end-to-end (tests asserting exact type lists are updated alongside).
 
-**New-tenant provisioning**: `createTenantFromSignup` currently seeds *no*
+**New-tenant provisioning**: `createTenantFromSignup` currently seeds _no_
 pet-type rows (finding F1). Its atomic batch gains two inserts — `dog`/`Dogs`
 and `cat`/`Cats`, `Enabled = 1` — so new tenants still default to dog+cat.
 Deliberate small behavior change: today a fresh signup tenant shows both
-toggles *off* (enum-synthesized); seeding them on removes the "sitter skips
+toggles _off_ (enum-synthesized); seeding them on removes the "sitter skips
 the wizard and no pet can ever book" foot-gun. Wizard toggles still let the
 sitter turn either off.
 
@@ -112,6 +113,7 @@ against rows, not an enum"). Validation everywhere becomes membership in the
 tenant's `TenantPetTypes` rows.
 
 **`server/db/repo.ts`** (sole `PAWBOOK_DB` toucher, `tenantId` first arg):
+
 - `listPetTypes` returns `Label` too, `ORDER BY PetType`.
 - New: `createPetType(db, tenantId, slug, label)`,
   `renamePetType(db, tenantId, slug, label)`,
@@ -124,6 +126,7 @@ tenant's `TenantPetTypes` rows.
 
 **Type CRUD endpoints** (admin-auth'd, mirroring the services split —
 enable/disable rides the settings draft, structural changes are immediate):
+
 - `POST /api/:slug/admin/pet-types` `{ label }` → slugify, reject empty slug
   or duplicate (409). Created enabled.
 - `PUT /api/:slug/admin/pet-types/:petType` `{ label }` → rename label only.
@@ -190,6 +193,7 @@ The pet-chip species tag shows the label instead of the raw slug.
 ### 5. Admin UI
 
 **Pets section** (`PetsSection.tsx`) — the management home:
+
 - One row per type: enable checkbox (staged draft + save bar, as today, now
   labeled from `p.label`), inline rename, and delete for any type
   (immediate PUT/DELETE like services' add/delete; delete
@@ -231,7 +235,7 @@ wizard — the hint points at the Pets section.
 
 - **F1 — fresh tenants have no `TenantPetTypes` rows.** The settings GET
   fabricates the dog/cat list from the code enum; seeded tenants only have
-  rows for enabled types. Rows-as-source-of-truth therefore *requires* both
+  rows for enabled types. Rows-as-source-of-truth therefore _requires_ both
   the migration backfill (step 3) and signup-batch seeding — neither was in
   the original directive. Includes the deliberate new-tenant
   default-enabled change argued above.

@@ -37,7 +37,7 @@ below) now answers that same question, plus "what does my month look like?",
 in one view. This is the only change to section-selection logic — explicit
 hash deep links (`#clients`, `#bookings`, etc.) still resolve normally, and
 the `hashchange` listener that keeps `activeSection` in sync with
-back/forward is untouched; only the *no-hash* fallback moves. The
+back/forward is untouched; only the _no-hash_ fallback moves. The
 zero-enabled-services auto-open wizard (`SetupWizard`, gated on `wizardOpen`
 in `Dashboard`) is unaffected by any of this: it is already rendered
 independently of `activeSection`, as an overlay on top of whichever section
@@ -128,7 +128,7 @@ instances — each with its own `busyId` / `openId` / local `message` state —
 but both read the one shared `bookings` array and call the one shared
 `reload`, so confirming or declining from either place updates both.
 
-This reuses the *component*, not the deep-link below. The grid's chip
+This reuses the _component_, not the deep-link below. The grid's chip
 click-through exists because a chip is a compact stand-in for a row that
 lives elsewhere, so clicking it has to navigate to where that row is; the
 pending list has no such gap to close — it already **is** the full,
