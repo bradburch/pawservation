@@ -143,7 +143,7 @@ nonce, then branch on `kind`:
    precedent; the test shim's batch is transactional):
    `INSERT Tenants` → `INSERT TenantUsers` (PBKDF2 via `hashPassword`) →
    `UPDATE AllowedSitters SET ClaimedAt = ?, TenantId = ? WHERE Email = ? AND
-   ClaimedAt IS NULL`. A replay that beat the nonce race dies on
+ClaimedAt IS NULL`. A replay that beat the nonce race dies on
    `TenantUsers.Email UNIQUE`, aborting the whole batch → `409` ("already set
    up — sign in instead"). New tenants get `DisplayName = businessName` and
    all-NULL limits (null = unlimited/instance-default, per invariant); no
@@ -204,7 +204,7 @@ server-rendered form** — completing setup must put the admin token into
 `localStorage` (`pawbook-admin-token`) for the dashboard handoff, which a
 script-free page can only do by leaking the token through a URL, and the repo
 already has the exact multi-input Vite pattern to extend. `LOCKED_CSP` allows
-same-origin bundles (the admin app already runs under it); only *inline*
+same-origin bundles (the admin app already runs under it); only _inline_
 script is barred, so the landing-page "script-free" rule does not apply here.
 
 Wiring: `vite.config.ts` input `setup`, `app.get('/setup', page('setup.html'))`
@@ -256,7 +256,7 @@ only in `repo.ts`:
   join), `addAllowedSitter(db, email)`,
   `deleteUnclaimedAllowedSitter(db, email)` (guarded `WHERE ClaimedAt IS NULL`)
 - `createTenantFromSignup(db, { tenantId, slug, displayName, userId, email,
-  passwordHash })` — the three-statement atomic batch above.
+passwordHash })` — the three-statement atomic batch above.
 
 ## Security summary
 
