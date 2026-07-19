@@ -185,15 +185,20 @@ describe('owner console allowlist CRUD', () => {
 
   it('surfaces a claimed row whose tenant no longer exists as orphaned, without crashing', async () => {
     // Display-level tolerance: nothing deletes Tenants rows out from under a claim in normal
-    // operation, but AllowedSitters.TenantId has no ON DELETE CASCADE (D1 FKs are off in
-    // production too), so a claimed row can end up pointing at a tenant that's gone. The list
-    // must still render — and flag it — rather than 500 or silently look "unclaimed".
+    // operation, but AllowedSitters.TenantId has no ON DELETE CASCADE, so a claimed row can end
+    // up pointing at a tenant that's gone — reachable in production only via manual `d1 execute`
+    // or a migration that runs with `PRAGMA defer_foreign_keys` (D1 enforces FKs by default and
+    // can't disable them outright; see migrations/0006_custom_services.sql). The list must still
+    // render — and flag it — rather than 500 or silently look "unclaimed". FKs are ON for the
+    // rest of the suite, so toggle them off just for this fixture insert.
     const { env, raw } = createTestEnv();
+    raw.exec('PRAGMA foreign_keys = OFF');
     raw
       .prepare(
         "INSERT INTO AllowedSitters (Email, ClaimedAt, TenantId) VALUES ('ghost@x.test', '2026-01-01T00:00:00Z', 'tnt_doesnotexist')",
       )
       .run();
+    raw.exec('PRAGMA foreign_keys = ON');
     const res = await app.request('/api/owner/allowlist', { headers: await ownerHeaders() }, env);
     expect(res.status).toBe(200);
     const { entries } = (await res.json()) as {

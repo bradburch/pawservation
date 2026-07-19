@@ -78,10 +78,10 @@ function makeKV(): KVNamespace {
 }
 
 export function createTestEnv(): { env: Env; raw: DatabaseSync } {
-  // FK enforcement off, matching production D1 (which never enforces FKs) — otherwise
-  // node:sqlite's newer default-ON behavior would reject states D1 allows in practice, e.g. an
-  // AllowedSitters row whose TenantId outlives its Tenant (no ON DELETE CASCADE either place).
-  const raw = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false });
+  // FK enforcement stays ON (node:sqlite's default) to match production: Cloudflare D1 enforces
+  // FK constraints by default and — unlike SQLite generally — cannot disable them, only defer
+  // them within a transaction (see migrations/0006_custom_services.sql's defer_foreign_keys use).
+  const raw = new DatabaseSync(':memory:');
   raw.exec(readFileSync(join(SQL_DIR, 'schema.sql'), 'utf8'));
   raw.exec(readFileSync(join(SQL_DIR, 'seed.sql'), 'utf8'));
   const env = {

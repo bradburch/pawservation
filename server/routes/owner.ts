@@ -34,8 +34,9 @@ export const ownerRoutes = new Hono<AppEnv>()
         addedAt: r.AddedAt,
         claimedAt: r.ClaimedAt,
         tenantSlug: r.TenantSlug,
-        // Display-level tolerance: a claimed row can outlive its Tenant (no ON DELETE CASCADE,
-        // and D1 doesn't enforce the FK either) — flag it rather than let it read as unclaimed.
+        // Display-level tolerance: a claimed row can outlive its Tenant (no ON DELETE CASCADE;
+        // D1 enforces the FK by default, so this is only reachable via manual `d1 execute` or a
+        // migration run with deferred FKs) — flag it rather than let it read as unclaimed.
         orphaned: r.ClaimedAt != null && r.TenantSlug == null,
       })),
     });
