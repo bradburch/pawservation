@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
@@ -32,33 +32,30 @@ function paidText(b: AdminBooking): string | null {
   return b.paidTotal >= b.estCost ? 'paid in full' : `paid $${b.paidTotal} of $${b.estCost}`;
 }
 
-export function BookingsSection({
-  session,
-  handleError,
-  clearError,
-}: {
+type ListProps = {
   session: Session;
+  /** Reloads the ONE shared bookings array held by Dashboard — a status change made through any
+   * mounted list refreshes every consumer (Bookings and, from Task 3 on, Calendar). */
+  reloadBookings: () => void;
   handleError: (e: unknown) => void;
   clearError: () => void;
-}) {
-  const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
+};
+
+/**
+ * The stateful row machinery, one instance per rendered list: rows with status chips,
+ * Confirm/Decline/Cancel actions, and the PaymentsPanel toggle. `busyId`/`openId`/`message`
+ * are deliberately per-instance (spec: each mounted copy runs independently).
+ */
+function BookingList({
+  items,
+  session,
+  reloadBookings,
+  handleError,
+  clearError,
+}: ListProps & { items: AdminBooking[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
-
-  const load = () =>
-    adminApi.bookings.list(session.slug, session.token).then(({ bookings: list }) => list);
-
-  useEffect(() => {
-    let active = true;
-    load()
-      .then((list) => active && setBookings(list))
-      .catch((e) => active && handleError(e));
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
 
   const setStatus = async (b: AdminBooking, status: 'confirmed' | 'declined' | 'cancelled') => {
     if (busyId) return;
@@ -88,7 +85,7 @@ export function BookingsSection({
             ? `We emailed ${who} the update.`
             : `${who} couldn't be emailed automatically (email sending isn't set up), so let them know directly.`),
       );
-      setBookings(await load());
+      reloadBookings();
     } catch (e) {
       handleError(e);
     } finally {
@@ -124,7 +121,7 @@ export function BookingsSection({
   const row = (b: AdminBooking) => {
     const paid = paidText(b);
     return (
-      <li key={b.id}>
+      <li key={b.id} data-booking-id={b.id}>
         <span>
           {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
           <br />
@@ -141,7 +138,7 @@ export function BookingsSection({
           <PaymentsPanel
             session={session}
             bookingId={b.id}
-            onChanged={async () => setBookings(await load())}
+            onChanged={async () => reloadBookings()}
             handleError={handleError}
             allowRecord={isActive(b)}
           />
@@ -150,14 +147,8 @@ export function BookingsSection({
     );
   };
 
-  const pending = (bookings ?? []).filter((b) => b.status === 'pending').sort(byStartDate);
-  const rest = (bookings ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);
-
   return (
     <>
-      <h2>
-        <IconClipboardCheck size={18} /> Bookings
-      </h2>
       {/* Fixed to the viewport bottom (reusing the save bar's styling) so it can't scroll out
           of view or slide under the sticky header — it carries the "was the client told?" info. */}
       {message && (
@@ -166,22 +157,81 @@ export function BookingsSection({
           <button onClick={() => setMessage('')}>OK</button>
         </div>
       )}
+      <ul>{items.map(row)}</ul>
+    </>
+  );
+}
+
+/**
+ * "Needs your reply" — the full pending-request rows (customer, dates, pet count, cost, status
+ * chip, Confirm/Decline, PaymentsPanel), shared by BookingsSection and CalendarSection as the
+ * same component rather than a re-derived summary. Filters and sorts to pending itself.
+ */
+export function PendingRequestsList({
+  bookings,
+  session,
+  reloadBookings,
+  handleError,
+  clearError,
+}: ListProps & { bookings: AdminBooking[] }) {
+  const pending = bookings.filter((b) => b.status === 'pending').sort(byStartDate);
+  return (
+    <>
+      <h3>
+        {pending.length === 0
+          ? 'No requests waiting for a reply'
+          : `Needs your reply (${pending.length})`}
+      </h3>
+      {pending.length > 0 && (
+        <BookingList
+          items={pending}
+          session={session}
+          reloadBookings={reloadBookings}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+    </>
+  );
+}
+
+export function BookingsSection({
+  session,
+  bookings,
+  reloadBookings,
+  handleError,
+  clearError,
+}: ListProps & { bookings: AdminBooking[] | null }) {
+  const rest = (bookings ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);
+
+  return (
+    <>
+      <h2>
+        <IconClipboardCheck size={18} /> Bookings
+      </h2>
       {bookings === null ? (
         <p>Loading…</p>
       ) : bookings.length === 0 ? (
         <p className="pb-hint">No bookings yet.</p>
       ) : (
         <>
-          <h3>
-            {pending.length === 0
-              ? 'No requests waiting for a reply'
-              : `Needs your reply (${pending.length})`}
-          </h3>
-          {pending.length > 0 && <ul>{pending.map(row)}</ul>}
+          <PendingRequestsList
+            bookings={bookings}
+            session={session}
+            reloadBookings={reloadBookings}
+            handleError={handleError}
+            clearError={clearError}
+          />
           {rest.length > 0 && (
             <>
               <h3>Everything else</h3>
-              <ul>{rest.map(row)}</ul>
+              <BookingList
+                items={rest}
+                session={session}
+                reloadBookings={reloadBookings}
+                handleError={handleError}
+                clearError={clearError}
+              />
             </>
           )}
         </>

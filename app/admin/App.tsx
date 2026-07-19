@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { adminApi, isAuthExpired, type Customer } from '../shared-ui/api.js';
+import { adminApi, isAuthExpired, type AdminBooking, type Customer } from '../shared-ui/api.js';
 import {
   IconCalendar,
   IconChartBar,
@@ -422,6 +422,22 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const { data: customers, reload: reloadCustomers } = useAsync(loadCustomers);
 
+  // Bookings live here (not in BookingsSection) so BookingsSection and CalendarSection read the
+  // ONE shared array and a status change made from either refreshes both. The list endpoint runs
+  // Google-deletion reconciliation server-side (reconcileIfStale), so whichever section mounts
+  // first inherits freshness — with Calendar as the landing view, that's right after login.
+  const loadBookings = useCallback(async (): Promise<AdminBooking[]> => {
+    try {
+      const { bookings: list } = await adminApi.bookings.list(slug, token);
+      return list;
+    } catch (e) {
+      handle(e);
+      throw e;
+    }
+  }, [slug, token, handle]);
+
+  const { data: bookings, reload: reloadBookings } = useAsync(loadBookings);
+
   // Initial settings load: setState only inside the promise callback (react-hooks rule).
   useEffect(() => {
     let active = true;
@@ -446,7 +462,13 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const panels: Record<SectionKey, ReactNode> = {
     bookings: (
-      <BookingsSection session={session} handleError={handle} clearError={() => setError('')} />
+      <BookingsSection
+        session={session}
+        bookings={bookings}
+        reloadBookings={reloadBookings}
+        handleError={handle}
+        clearError={() => setError('')}
+      />
     ),
     earnings: (
       <EarningsSection session={session} handleError={handle} clearError={() => setError('')} />
