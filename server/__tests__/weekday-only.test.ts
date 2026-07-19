@@ -117,6 +117,71 @@ async function bookWalk(env: Env, optionKey: string, startDate: string): Promise
   );
 }
 
+/** PUT the (already-seeded, non-windowed) boarding option for Sunny Paws and return the response. */
+async function putBoardingOption(env: Env, option: Record<string, unknown>): Promise<Response> {
+  return app.request(
+    '/api/sunny-paws/admin/settings',
+    {
+      method: 'PUT',
+      headers: await auth(TENANT_A, true),
+      body: JSON.stringify({
+        services: [{ type: 'boarding', enabled: true, options: [option] }],
+      }),
+    },
+    env,
+  );
+}
+
+/** Book Sunny Paws' boarding service (range shape) as the seeded customer. */
+async function bookBoarding(env: Env, startDate: string, endDate: string): Promise<Response> {
+  const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+  return app.request(
+    '/api/sunny-paws/bookings',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'boarding',
+        optionKey: 'standard',
+        startDate,
+        endDate,
+        petIds: ['pet_sp_bella'],
+        answers: {},
+      }),
+    },
+    env,
+  );
+}
+
+describe('weekday-only — range-shaped option (spec: reject a weekend ANYWHERE in the span)', () => {
+  it('rejects a Thu→Wed boarding span that starts and ends on weekdays but crosses a weekend', async () => {
+    const { env } = createTestEnv();
+    expect(
+      (
+        await putBoardingOption(env, { label: 'Standard', rate: 50, weekdaysOnly: true })
+      ).status,
+    ).toBe(204);
+
+    // 2028-07-20 = Thu, checkout 2028-07-26 = Wed. Occupied nights: Thu Fri Sat Sun Mon Tue —
+    // includes the weekend even though the submitted start/end are both weekdays.
+    const res = await bookBoarding(env, '2028-07-20', '2028-07-26');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/weekday/i);
+  });
+
+  it('accepts a boarding span entirely Mon–Fri for the same weekday-only option', async () => {
+    const { env } = createTestEnv();
+    await putBoardingOption(env, { label: 'Standard', rate: 50, weekdaysOnly: true });
+
+    // 2028-07-24 = Mon, checkout 2028-07-28 = Fri. Occupied nights: Mon Tue Wed Thu — no weekend.
+    const res = await bookBoarding(env, '2028-07-24', '2028-07-28');
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { estCost: number; status: string };
+    expect(body).toMatchObject({ estCost: 200, status: 'pending' });
+  });
+});
+
 describe('weekday-only — booking enforcement (real schema, real routes)', () => {
   it('rejects a Saturday and a Sunday booking for a weekday-only option', async () => {
     const { env } = createTestEnv();

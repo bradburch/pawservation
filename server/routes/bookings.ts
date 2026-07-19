@@ -16,6 +16,7 @@ import { syncBookingToCalendar } from '../lib/calendar-sync';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
 import {
+  addDays,
   isWeekend,
   nightsBetween,
   validateAnswers,
@@ -139,13 +140,21 @@ export const bookingRoutes = new Hono<AppEnv>()
         : validateSingleDate(start, tenant.Timezone ?? undefined);
     if (dateError) return c.json({ error: dateError.error }, dateError.status);
 
-    // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. Only the
-    // start date matters: the flag is only settable on windowed per-visit (single-day) options.
-    if (option.WeekdaysOnly && isWeekend(start))
-      return c.json(
-        { error: 'That option is only available on weekdays — pick a Monday–Friday date.' },
-        400,
-      );
+    // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. The flag is
+    // settable on ANY option, including range-shaped services (boarding/housesitting) — a stay
+    // can start and end on weekdays yet still cross a weekend in between — so every date in the
+    // span must be checked, not just the start. Ranges are already bounded by max-stay
+    // validation above, so a plain day-by-day loop is fine.
+    if (option.WeekdaysOnly) {
+      const spanNights = shape === 'range' ? nightsBetween(start, end) : 1;
+      for (let i = 0; i < spanNights; i++) {
+        if (isWeekend(addDays(start, i)))
+          return c.json(
+            { error: 'That option is only available on weekdays — pick a Monday–Friday date.' },
+            400,
+          );
+      }
+    }
     const endDate = shape === 'range' ? end : null;
 
     const nights = shape === 'range' ? nightsBetween(start, end) : null;
