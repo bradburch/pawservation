@@ -139,7 +139,7 @@ export function SetupWizard({
               })}
             </div>
             <div className="pb-wizard-nav">
-              <button type="button" className="pb-wizard-skip" onClick={onClose}>
+              <button type="button" className="pb-wizard-skip" disabled={applying} onClick={onClose}>
                 Skip for now
               </button>
               <button type="button" disabled={selected.length === 0} onClick={() => setStep(2)}>
@@ -183,7 +183,7 @@ export function SetupWizard({
             ))}
             {error && <p className="pb-error">{error}</p>}
             <div className="pb-wizard-nav">
-              <button type="button" className="pb-wizard-skip" onClick={onClose}>
+              <button type="button" className="pb-wizard-skip" disabled={applying} onClick={onClose}>
                 Skip for now
               </button>
               <button type="button" disabled={applying} onClick={() => setStep(1)}>
