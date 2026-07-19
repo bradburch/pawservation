@@ -584,6 +584,11 @@ body {
   .pb-wrap button {
     transition: none;
   }
+
+  .pb-wrap input[type='checkbox'].pb-svc-switch,
+  .pb-wrap input[type='checkbox'].pb-svc-switch::before {
+    transition: none;
+  }
 }
 
 @media (max-width: 640px) {
@@ -841,4 +846,154 @@ body {
   color: var(--bad);
   border-color: var(--bad);
   background: var(--bad-wash);
+}
+
+/* ── Services & rates: summary card grid ───────────────────────── */
+.pb-svc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+/* The card div composes .pb-tile-btn; padding moves to the expand button so
+   the whole face (minus the switch) is tappable. */
+.pb-wrap .pb-svc-card {
+  position: relative;
+  padding: 0;
+}
+
+.pb-wrap .pb-svc-card:hover {
+  border-color: var(--sage);
+}
+
+/* The expand button IS the card body — reset against `.pb-wrap button`. */
+.pb-wrap .pb-svc-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 52px 12px 12px; /* right inset clears the switch */
+  background: none;
+  border: none;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--body);
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.pb-wrap .pb-svc-open:hover {
+  filter: none;
+}
+
+/* Disabled service: content dims; everything stays operable (no disabled attrs). */
+.pb-wrap .pb-svc-card:not(.pb-on) .pb-svc-open {
+  opacity: 0.65;
+}
+
+.pb-svc-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  color: var(--ink);
+}
+
+.pb-svc-title svg {
+  color: var(--gold);
+  flex: none;
+}
+
+.pb-svc-price {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pb-svc-price-soft {
+  color: var(--soft);
+  font-weight: 400;
+}
+
+/* Enable switch — semantics stay input[type=checkbox]; visual is a small pill.
+   (Attribute+class outranks the global 17px checkbox rule.) */
+.pb-wrap input[type='checkbox'].pb-svc-switch {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  accent-color: var(--ink);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.pb-wrap input[type='checkbox'].pb-svc-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--soft);
+  transition:
+    translate 0.12s ease,
+    background 0.12s ease;
+}
+
+.pb-wrap input[type='checkbox'].pb-svc-switch:checked {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.pb-wrap input[type='checkbox'].pb-svc-switch:checked::before {
+  translate: 14px 0;
+  background: #fff;
+}
+
+/* Expanded card: sage border + a notch pointing at the full-width editor below.
+   background: inherit picks up white or the sage wash automatically. */
+.pb-wrap .pb-svc-card.pb-svc-expanded {
+  border-color: var(--sage);
+}
+
+.pb-svc-card.pb-svc-expanded::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border-right: 1px solid var(--sage);
+  border-bottom: 1px solid var(--sage);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* Editor entry motion — only outside prefers-reduced-motion (spec). */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-svc-editor {
+    transition:
+      opacity 0.18s ease,
+      translate 0.18s ease;
+  }
+
+  @starting-style {
+    .pb-svc-editor {
+      opacity: 0;
+      translate: 0 -6px;
+    }
+  }
 }

@@ -1,12 +1,8 @@
-import { useState } from 'react';
-import { IconPaw, IconTag, SERVICE_ICONS } from '../../shared-ui/icons';
+import { Fragment, useRef, useState } from 'react';
+import { IconTag } from '../../shared-ui/icons';
+import { ServiceCard } from './ServiceCard.js';
 import { ServiceEditor } from './ServiceEditor.js';
 import type { ServiceForm, Settings, SettingsSectionProps } from '../shared.js';
-
-function ServiceIcon({ icon }: { icon: string }) {
-  const Icon = SERVICE_ICONS[icon] ?? IconPaw;
-  return <Icon size={16} />;
-}
 
 function AddServiceForm({
   templates,
@@ -63,6 +59,20 @@ export function ServicesSection({
   removeService: (type: string) => Promise<void>;
   openWizard: () => void;
 }) {
+  // Which editor is open: a service type, or null. One at a time — expanding
+  // another collapses the first. Collapsing never loses edits: all field state
+  // lives in the staged settings draft; the save bar is the single source of
+  // truth for unsaved changes. Local state, unaddressed by the #services hash.
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // Done returns focus to the tapped card's expand button.
+  const openRefs = useRef(new Map<string, HTMLButtonElement | null>());
+
+  const toggle = (key: string) => setExpanded((cur) => (cur === key ? null : key));
+  const collapse = (key: string) => {
+    setExpanded(null);
+    openRefs.current.get(key)?.focus();
+  };
+
   return (
     <>
       <h2>
@@ -77,41 +87,52 @@ export function ServicesSection({
         </span>
       </p>
       <p className="pb-applies">
-        Tick the services you offer. To create a new offering clients can book (say, a 30-minute
-        &ldquo;Puppy Check-in&rdquo;), add it as an option under Walks or Check-ins with its own
-        name, length, and price.
+        Tap a card to edit pricing, questions, and limits; the switch turns a service on or off. To
+        create a new offering clients can book (say, a 30-minute &ldquo;Puppy Check-in&rdquo;), add
+        it as an option under Walks or Check-ins with its own name, length, and price.
       </p>
-      {settings.services.map((s, si) => {
-        const setService = (next: ServiceForm) => {
-          const services = [...settings.services];
-          services[si] = next;
-          setSettings({ ...settings, services });
-        };
-        return (
-          <div className="pb-service" key={s.type}>
-            <label className="pb-inline">
-              <input
-                type="checkbox"
-                checked={s.enabled}
-                onChange={(e) => setService({ ...s, enabled: e.target.checked })}
+      <div className="pb-svc-grid">
+        {settings.services.map((s, si) => {
+          const setService = (next: ServiceForm) => {
+            const services = [...settings.services];
+            services[si] = next;
+            setSettings({ ...settings, services });
+          };
+          const editorId = `pb-svc-editor-${s.type}`;
+          const titleId = `pb-svc-title-${s.type}`;
+          return (
+            <Fragment key={s.type}>
+              <ServiceCard
+                service={s}
+                expanded={expanded === s.type}
+                editorId={editorId}
+                titleId={titleId}
+                onToggleEnabled={(enabled) => setService({ ...s, enabled })}
+                onToggleExpanded={() => toggle(s.type)}
+                openRef={(el) => openRefs.current.set(s.type, el)}
               />
-              <ServiceIcon icon={s.icon} /> {s.label}
-            </label>
-            <ServiceEditor
-              service={s}
-              setService={setService}
-              onDelete={
-                s.custom
-                  ? () => {
-                      if (window.confirm(`Delete "${s.label}"? This removes it immediately.`))
-                        void removeService(s.type);
-                    }
-                  : undefined
-              }
-            />
-          </div>
-        );
-      })}
+              {expanded === s.type && (
+                <ServiceEditor
+                  service={s}
+                  setService={setService}
+                  id={editorId}
+                  labelledBy={titleId}
+                  onDone={() => collapse(s.type)}
+                  onDelete={
+                    s.custom
+                      ? () => {
+                          if (!window.confirm(`Delete "${s.label}"? This removes it immediately.`))
+                            return;
+                          void removeService(s.type).then(() => setExpanded(null));
+                        }
+                      : undefined
+                  }
+                />
+              )}
+            </Fragment>
+          );
+        })}
+      </div>
       <div className="pb-service">
         <h3>Add service</h3>
         <AddServiceForm templates={settings.templates} addService={addService} />
