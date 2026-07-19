@@ -36,8 +36,8 @@ bar in `App.tsx`) are untouched.
    away the card language sitters just learned in the wizard, and a row list
    is barely better than today at showing prices/facts at a glance. Rejected.
 
-**Rationale for 1:** it is the only option that delivers glance-ability *and*
-onboarding continuity *and* leaves the save-bar model structurally alone — the
+**Rationale for 1:** it is the only option that delivers glance-ability _and_
+onboarding continuity _and_ leaves the save-bar model structurally alone — the
 expanded editor is ordinary in-page content editing the same staged `settings`
 draft, so nothing about dirtiness, saving, or the `#services` deep link
 changes.
@@ -113,7 +113,7 @@ Card content lines:
 1. **Icon + label** — `SERVICE_ICONS[icon]`, display face, `.pb-truncate`.
    Custom services additionally get a small `.pb-chip` "Custom".
 2. **Price line** (ink, semibold): `$55/night` for one option; `from
-   $20/visit` when options have differing rates; `$20/visit · 2 options` when
+$20/visit` when options have differing rates; `$20/visit · 2 options` when
    equal; `No pricing yet` (soft) when the service has zero options.
 3. **Facts line** (`.pb-hint`), at most two fragments joined by " · ", chosen
    by fixed priority so summaries are deterministic:
