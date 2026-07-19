@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   StartTime TEXT,
   EndTime TEXT,
   Capacity INTEGER,
+  -- Int-bool: 1 = this option is bookable Mon-Fri only (server rejects Sat/Sun at booking
+  -- validation; the embed widget greys weekends). 0 = any day.
+  WeekdaysOnly INTEGER NOT NULL DEFAULT 0,
   UNIQUE (TenantId, ServiceType, OptionKey)
 );
 

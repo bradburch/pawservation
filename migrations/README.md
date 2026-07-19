@@ -28,10 +28,10 @@ State as of this merge:
 
 - **Local dev DB**: has `0001`–`0008` applied (custom-services numbering — `0006_custom_services.sql`
   through `0008_payments.sql`). Needs `0009_service_slots.sql`, `0010_slot_index.sql`,
-  `0011_contact_and_notes.sql` applied next, in that order.
-- **Remote DB**: has `0001`–`0005` applied. Needs the full `0006`–`0011` run, in order, at next
+  `0011_contact_and_notes.sql`, `0012_weekday_only.sql` applied next, in that order.
+- **Remote DB**: has `0001`–`0005` applied. Needs the full `0006`–`0012` run, in order, at next
   deploy — none of the custom-services, booking-lifecycle, payments, service-slots, slot-index,
-  or contact/notes migrations have reached it yet.
+  contact/notes, or weekday-only migrations have reached it yet.
 
 Apply with, e.g.:
 
