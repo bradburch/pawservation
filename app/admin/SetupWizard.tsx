@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { SERVICE_PRESETS, type ServicePreset } from './presets.js';
 import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
@@ -39,6 +39,16 @@ export function SetupWizard({
   const [error, setError] = useState('');
   // Presets fully applied in THIS wizard run — an in-place Retry after a failure skips them.
   const [applied, setApplied] = useState<string[]>([]);
+
+  // Escape closes the dialog (same as Skip for now), except mid-apply — matching the
+  // Skip button, which is also disabled while a run is in flight.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !applying) onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [applying, onClose]);
 
   const states: PresetState[] = SERVICE_PRESETS.map((preset) => {
     const existing = settings.services.find((s) => preset.matchTypes.includes(s.type));
@@ -196,7 +206,12 @@ export function SetupWizard({
               >
                 Skip for now
               </button>
-              <button type="button" disabled={applying} onClick={() => setStep(1)}>
+              <button
+                type="button"
+                className="pb-wizard-back"
+                disabled={applying}
+                onClick={() => setStep(1)}
+              >
                 Back
               </button>
               <button

@@ -103,6 +103,16 @@ body {
   flex: none;
 }
 
+/* Sub-heads inside a section (Questions, Booking limits, Revenue over time…):
+   same display voice as h2, stepped down so they never outweigh the section title. */
+.pb-wrap h3 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--ink);
+  margin: 18px 0 10px;
+}
+
 /* Notes under a heading: what this section does / when changes apply. */
 .pb-applies {
   margin: -8px 0 14px;
@@ -282,10 +292,15 @@ body {
   }
 }
 
-/* Row-level actions (Remove, Disconnect, Add duration) are quiet ghosts. */
+/* Row-level / secondary actions (Remove, Delete, Sign out, Add question, the wizard's
+   Back) are quiet ghosts. Every selector is prefixed with .pb-wrap so it outranks the
+   `.pb-wrap button` primary style above. */
 .pb-wrap li button,
 .pb-wrap .pb-options button,
-.pb-signout {
+.pb-wrap .pb-questions button,
+.pb-wrap .pb-service > button,
+.pb-wrap .pb-wizard-back,
+.pb-wrap .pb-signout {
   background: none;
   color: var(--soft);
   border: 1px solid var(--line);
@@ -295,7 +310,10 @@ body {
 
 .pb-wrap li button:hover,
 .pb-wrap .pb-options button:hover,
-.pb-signout:hover {
+.pb-wrap .pb-questions button:hover,
+.pb-wrap .pb-service > button:hover,
+.pb-wrap .pb-wizard-back:hover,
+.pb-wrap .pb-signout:hover {
   filter: none;
   color: var(--ink);
   border-color: var(--sage);
@@ -376,7 +394,9 @@ body {
   align-items: center;
 }
 
-.pb-row input {
+/* Direct children only: a checkbox or field nested inside an inline label must not
+   inherit the stretchy text-input basis (it wraps the label onto two lines). */
+.pb-row > input {
   flex: 1 1 12rem;
 }
 
@@ -414,6 +434,16 @@ body {
   color: var(--soft);
   font-size: 0.82rem;
   font-weight: 400;
+}
+
+/* Content links (Download example CSV, the wizard's "Your website") — ink with the
+   marigold underline, instead of browser-default blue/purple. Nav links style themselves. */
+.pb-panel a,
+.pb-wizard a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--gold);
+  text-underline-offset: 2px;
 }
 
 /* ── Sticky save bar (appears only when settings are dirty) ────── */
@@ -638,6 +668,9 @@ body {
   white-space: nowrap;
   display: inline-block;
   min-width: 0;
+  /* inline-block + overflow:hidden moves the baseline to the box bottom, floating the
+     name above the surrounding text — pin the box to the line instead. */
+  vertical-align: bottom;
 }
 
 .pb-truncate-block {
@@ -668,7 +701,9 @@ body {
   gap: 10px;
   margin: 12px 0;
 }
-.pb-wizard-cardbtn {
+/* Prefixed with .pb-wrap (like the ghost buttons above) to outrank the
+   `.pb-wrap button` primary style — without it these render as filled navy buttons. */
+.pb-wrap .pb-wizard-cardbtn {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -682,15 +717,21 @@ body {
   color: var(--body);
   font: inherit;
 }
-.pb-wizard-cardbtn.pb-on {
+.pb-wrap .pb-wizard-cardbtn:hover {
+  filter: none;
+}
+.pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {
+  border-color: var(--sage);
+}
+.pb-wrap .pb-wizard-cardbtn.pb-on {
   border-color: var(--sage);
   background: var(--sage-wash);
 }
-.pb-wizard-cardbtn:disabled {
+.pb-wrap .pb-wizard-cardbtn:disabled {
   cursor: default;
   opacity: 0.75;
 }
-.pb-wizard-cardbtn span {
+.pb-wrap .pb-wizard-cardbtn span {
   color: var(--soft);
   font-size: 0.85em;
 }
