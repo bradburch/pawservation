@@ -2,10 +2,17 @@ import { useEffect, useState } from 'react';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { SERVICE_PRESETS, type ServicePreset } from './presets.js';
 import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
+import {
+  makeProfileDraft,
+  profilePutBody,
+  WizardProfileStep,
+  type ProfileDraft,
+} from './WizardProfileStep.js';
 
 /**
- * 3-step quick-setup wizard (spec: docs/superpowers/specs/2026-07-18-onboarding-wizard-design.md).
- * Frontend-only, over the same endpoints Services & rates uses. Additive semantics: it never
+ * 4-step quick-setup wizard (specs: docs/superpowers/specs/2026-07-18-onboarding-wizard-design.md
+ * + 2026-07-18-onboarding-wizard-v2-design.md — profile step + opt-in customization).
+ * Frontend-only, over the same endpoints the dashboard sections use. Additive semantics: it never
  * disables a service and never overwrites an existing service's options or prices.
  */
 
@@ -32,7 +39,13 @@ export function SetupWizard({
   /** Reloads the dashboard's settings after the wizard writes (same as addService's refresh). */
   onApplied: () => Promise<void>;
 }) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => makeProfileDraft(settings));
+  // Snapshot the profile PUT diffs against; advanced to the saved draft after each successful
+  // save so Back-then-Next doesn't resend fields (resending is harmless, just noisy).
+  const [profileInitial, setProfileInitial] = useState<ProfileDraft>(() =>
+    makeProfileDraft(settings),
+  );
   const [selected, setSelected] = useState<string[]>([]);
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState(false);
@@ -64,10 +77,46 @@ export function SetupWizard({
   const toggle = (id: string) =>
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
+  // Step navigation clears any stale error so e.g. a step-1 validation message can't linger
+  // over the price step.
+  const goTo = (next: 1 | 2 | 3 | 4) => {
+    setError('');
+    setStep(next);
+  };
+
   const priceValid = (ps: PresetState): boolean => {
     if (ps.alreadyPriced) return true; // keeps its current pricing — no input to validate
     const n = Number(prices[ps.preset.id]);
     return Number.isInteger(n) && n >= 1;
+  };
+
+  // Step 1 → 2: PUT only the changed profile fields — nothing changed means no request at all
+  // (spec) — so a server validation error ("Unknown timezone.", "Display name required.") lands
+  // while the sitter is still on the step.
+  const saveProfile = async () => {
+    if (applying) return;
+    setError('');
+    const body = profilePutBody(profileInitial, profileDraft);
+    if (!body) {
+      setStep(2);
+      return;
+    }
+    setApplying(true);
+    try {
+      await adminFetch(token, `/api/${slug}/admin/settings`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      // Sync the dashboard (topbar name, Business/Pets sections) — otherwise its stale draft
+      // would revert this write on the sitter's next "Save settings". Same refresh apply() uses.
+      await onApplied();
+      setProfileInitial(profileDraft);
+      setStep(2);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+    } finally {
+      setApplying(false);
+    }
   };
 
   const apply = async () => {
@@ -113,7 +162,7 @@ export function SetupWizard({
         setApplied((cur) => [...cur, preset.id]);
       }
       await onApplied();
-      setStep(3);
+      setStep(4);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
     } finally {
@@ -125,6 +174,26 @@ export function SetupWizard({
     <div className="pb-wizard-overlay" role="dialog" aria-modal="true" aria-label="Quick setup">
       <div className="pb-wizard pb-card">
         {step === 1 && (
+          <>
+            <WizardProfileStep draft={profileDraft} setDraft={setProfileDraft} />
+            {error && <p className="pb-error">{error}</p>}
+            <div className="pb-wizard-nav">
+              <button
+                type="button"
+                className="pb-wizard-skip"
+                disabled={applying}
+                onClick={onClose}
+              >
+                Skip for now
+              </button>
+              <button type="button" disabled={applying} onClick={() => void saveProfile()}>
+                {applying ? 'Saving…' : 'Next'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
           <>
             <h2>What do you offer?</h2>
             <p className="pb-hint">Tap everything you offer — you can fine-tune it all later.</p>
@@ -157,14 +226,22 @@ export function SetupWizard({
               >
                 Skip for now
               </button>
-              <button type="button" disabled={selected.length === 0} onClick={() => setStep(2)}>
+              <button
+                type="button"
+                className="pb-wizard-back"
+                disabled={applying}
+                onClick={() => goTo(1)}
+              >
+                Back
+              </button>
+              <button type="button" disabled={selected.length === 0} onClick={() => goTo(3)}>
                 Next
               </button>
             </div>
           </>
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <>
             <h2>Set your prices</h2>
             <p className="pb-hint">
@@ -210,7 +287,7 @@ export function SetupWizard({
                 type="button"
                 className="pb-wizard-back"
                 disabled={applying}
-                onClick={() => setStep(1)}
+                onClick={() => goTo(2)}
               >
                 Back
               </button>
@@ -225,7 +302,7 @@ export function SetupWizard({
           </>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <>
             <h2>You&rsquo;re bookable!</h2>
             <p>Fine-tune options, capacities, and questions anytime in Services &amp; rates.</p>

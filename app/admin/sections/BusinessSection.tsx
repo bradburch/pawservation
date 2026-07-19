@@ -2,21 +2,7 @@ import { DEFAULT_TIMEZONE } from '../../../src/shared/index.js';
 import { IconStore } from '../../shared-ui/icons';
 import type { SettingsSectionProps } from '../shared.js';
 import { NullableNumberField } from './fields.js';
-
-const TIMEZONES: string[] =
-  typeof Intl.supportedValuesOf === 'function'
-    ? Intl.supportedValuesOf('timeZone')
-    : [
-        'America/Los_Angeles',
-        'America/Denver',
-        'America/Chicago',
-        'America/New_York',
-        'America/Anchorage',
-        'Pacific/Honolulu',
-        'Europe/London',
-        'Europe/Paris',
-        'Australia/Sydney',
-      ];
+import { TIMEZONES } from '../timezones.js';
 
 export function BusinessSection({ settings, setSettings }: SettingsSectionProps) {
   return (
