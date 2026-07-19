@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { mintAdminToken, mintToken, TOKEN_TTL_SECONDS, verifyToken } from '../lib/token';
+import {
+  mintAdminToken,
+  mintOwnerToken,
+  mintToken,
+  TOKEN_TTL_SECONDS,
+  verifyAdminToken,
+  verifyOwnerToken,
+  verifyToken,
+} from '../lib/token';
 import { adminToken, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 
 describe('widget token', () => {
@@ -86,4 +94,33 @@ describe('TOKEN_SECRET guard', () => {
       expect(res.status).toBe(503);
     },
   );
+});
+
+describe('owner tokens', () => {
+  const SECRET = 'test-secret-0123456789';
+
+  it('round-trips owner claims with email as sub and no tid', async () => {
+    const token = await mintOwnerToken('owner@pawbook.test', SECRET);
+    const claims = await verifyOwnerToken(token, SECRET);
+    expect(claims?.sub).toBe('owner@pawbook.test');
+    expect(claims?.role).toBe('owner');
+    expect(claims && 'tid' in claims).toBe(false);
+  });
+
+  it('is rejected by the widget and admin verifiers (and rejects theirs)', async () => {
+    const owner = await mintOwnerToken('owner@pawbook.test', SECRET);
+    expect(await verifyToken(owner, SECRET)).toBeNull(); // widget verifier rejects any role
+    expect(await verifyAdminToken(owner, SECRET)).toBeNull(); // requires role 'admin' + tid
+    const admin = await mintAdminToken('tu_1', 'tnt_1', SECRET);
+    expect(await verifyOwnerToken(admin, SECRET)).toBeNull(); // requires role 'owner'
+    const widget = await mintToken('eu_1', 'tnt_1', SECRET);
+    expect(await verifyOwnerToken(widget, SECRET)).toBeNull(); // no role at all
+  });
+
+  it('expires with the admin TTL (8h)', async () => {
+    const token = await mintOwnerToken('owner@pawbook.test', SECRET, 1_000);
+    // exp = 1_000 + 8h; hono/jwt checks exp against real time, so a token minted in the
+    // deep past is already expired.
+    expect(await verifyOwnerToken(token, SECRET)).toBeNull();
+  });
 });

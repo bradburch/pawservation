@@ -1249,6 +1249,13 @@ export async function deleteUnclaimedAllowedSitter(
  * nonce race dies on TenantUsers.Email UNIQUE, aborting the WHOLE batch — no orphan tenant.
  * The new tenant carries only Id/Slug/DisplayName: every limit stays NULL (unlimited /
  * instance-default) and NO services are seeded — the onboarding wizard owns that.
+ *
+ * The claim UPDATE's `WHERE ... AND ClaimedAt IS NULL` guard can match ZERO rows (invite
+ * revoked, or its row deleted, between the caller's checks and this batch) without D1
+ * treating that as a failure — a batch only aborts on a THROWN statement, not a no-op UPDATE.
+ * A batch can't gate one statement's execution on another's row count, so the Tenants/
+ * TenantUsers inserts land regardless. Returns false in that case so the caller can compensate
+ * (see rollbackUnclaimedTenant) — a tenant must never stand without a valid claim.
  */
 export async function createTenantFromSignup(
   db: D1Database,
@@ -1261,9 +1268,9 @@ export async function createTenantFromSignup(
     passwordHash: string;
     claimedAtIso?: string;
   },
-): Promise<void> {
+): Promise<boolean> {
   const claimedAt = args.claimedAtIso ?? new Date().toISOString();
-  await db.batch([
+  const results = await db.batch([
     db
       .prepare('INSERT INTO Tenants (Id, Slug, DisplayName) VALUES (?, ?, ?)')
       .bind(args.tenantId, args.slug, args.displayName),
@@ -1275,5 +1282,22 @@ export async function createTenantFromSignup(
         'UPDATE AllowedSitters SET ClaimedAt = ?, TenantId = ? WHERE Email = ? AND ClaimedAt IS NULL',
       )
       .bind(claimedAt, args.tenantId, args.email),
+  ]);
+  const claimResult = results[2] as { meta: { changes?: number } };
+  return (claimResult.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Best-effort compensation for createTenantFromSignup returning false: removes the tenant/
+ * login rows it just inserted so an unclaimed invite can never leave a tenant standing.
+ */
+export async function rollbackUnclaimedTenant(
+  db: D1Database,
+  tenantId: string,
+  userId: string,
+): Promise<void> {
+  await db.batch([
+    db.prepare('DELETE FROM TenantUsers WHERE Id = ?').bind(userId),
+    db.prepare('DELETE FROM Tenants WHERE Id = ?').bind(tenantId),
   ]);
 }
