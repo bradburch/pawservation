@@ -22,10 +22,27 @@ adds the in-dashboard calendar.
 
 ## Design
 
-### New "Calendar" section
+### New "Calendar" section — the landing view
 
-A new sidebar entry (`calendar`, label "Calendar", `IconCalendar`), placed
-directly after Bookings. Default section stays `bookings`. The panel is a new
+A new sidebar entry (`calendar`, label "Calendar", `IconCalendar`) becomes the
+**first** entry in `SECTIONS`, ahead of Bookings — the sidebar order becomes
+Calendar, Bookings, Earnings, Business, Pet types, Services & rates, Time
+off, Clients, Connected apps, Your website. Calendar is also the **default**
+section. Today, in `app/admin/App.tsx`, `sectionFromHash()` falls back to
+`'bookings'` whenever the URL has no `#hash` matching a `SECTIONS` key, with
+a comment reasoning that a sitter's morning question is "what needs my
+reply?", not their own settings — that fallback becomes `'calendar'`, and the
+comment's reasoning moves with it: the Calendar section (grid + pending list,
+below) now answers that same question, plus "what does my month look like?",
+in one view. This is the only change to section-selection logic — explicit
+hash deep links (`#clients`, `#bookings`, etc.) still resolve normally, and
+the `hashchange` listener that keeps `activeSection` in sync with
+back/forward is untouched; only the *no-hash* fallback moves. The
+zero-enabled-services auto-open wizard (`SetupWizard`, gated on `wizardOpen`
+in `Dashboard`) is unaffected by any of this: it is already rendered
+independently of `activeSection`, as an overlay on top of whichever section
+is mounted, so it now overlays the Calendar landing view exactly as it
+previously overlaid Bookings — no code path there changes. The panel is a new
 `app/admin/sections/CalendarSection.tsx` — its **own** `pb-`-classed
 month-grid component built on the shared pure helpers `monthGrid` /
 `shiftMonth` (`src/shared/booking/calendar-ui.ts`). The embed `Calendar.tsx`
@@ -37,13 +54,18 @@ range selection, so it is not reused.
 No new endpoint. Verified against `app/shared-ui/api.ts`: the
 `adminApi.bookings.list` payload (`AdminBooking`) already carries everything
 a month cell needs — `id`, `customerName`/`customerEmail`, `type`,
-`startDate`, `endDate`, `startTime`, `status`. Service *labels* come from
+`startDate`, `endDate`, `startTime`, `status`. Service _labels_ come from
 `settings.services` (the list payload's `type` is the slug); time off comes
 from `settings.blocked`. The list endpoint also already runs Google-deletion
 reconciliation server-side (`reconcileIfStale`, TTL-limited), so the calendar
 inherits freshness for free. Booking volumes for a solo sitter are small, so
 the unfiltered list is fine; if that ever changes, add date-window query
-params to the existing endpoint — not a new one.
+params to the existing endpoint — not a new one. Because Calendar is now the
+default landing section, this reconciliation runs on the very first bookings
+fetch after login/session-restore rather than only once a sitter navigates to
+Bookings — the trigger itself is unchanged (it's still the one shared
+bookings fetch), it just fires from whichever of the two sections happens to
+mount first, which in the common case is now sooner.
 
 **Bookings state lifts to `Dashboard`** (in `app/admin/App.tsx`) via the
 existing `useAsync` pattern used for customers: one load function around
@@ -78,12 +100,41 @@ never needs it) builds `Map<date, entries>` for the viewed month:
   "+N more", which navigates to the Bookings section.
 - **Weekends** get a distinct cell background; **today** gets a highlighted
   ring. "Today" is computed with the shared `getPacificDateStr(new Date(),
-  settings.timezone ?? DEFAULT_TIMEZONE)` so it matches the tenant's zone,
+settings.timezone ?? DEFAULT_TIMEZONE)` so it matches the tenant's zone,
   not the browser's.
 - **Mobile:** the grid stays 7 columns with `minmax(0, 1fr)` tracks — no
   horizontal scroll ever. Below a narrow breakpoint, chips shrink to
   single-line truncated text at a smaller size and cells get a fixed
   min-height so the month stays scannable on a phone.
+
+### "Needs your reply" — the pending list, shared not duplicated
+
+Directly beneath the grid, the Calendar section renders the same
+pending-requests block Bookings shows under its own "Needs your reply"
+heading: full rows (customer, dates, pet count, cost, status chip) with the
+same Confirm/Decline buttons and PaymentsPanel toggle — not a re-derived
+summary, not another chip style. Today that block is inlined in
+`BookingsSection.tsx` (the `row` / `actionsFor` / `chipClass` / `paidText`
+helpers, the `pending` filter/sort, and the "Needs your reply (N)" / "No
+requests waiting for a reply" heading); it is extracted into an exported
+`PendingRequestsList` component in that same file, taking the shared
+`bookings` array (filtering and sorting to pending itself, exactly as today)
+plus `session`, `handleError`, and `clearError`. `BookingsSection` renders it
+for its own pending block in place of its former inline copy (no behavior
+change — same markup, same handlers, just factored out), and
+`CalendarSection` renders the identical component beneath its grid. Both
+mounted copies (every section stays mounted) run as independent component
+instances — each with its own `busyId` / `openId` / local `message` state —
+but both read the one shared `bookings` array and call the one shared
+`reload`, so confirming or declining from either place updates both.
+
+This reuses the *component*, not the deep-link below. The grid's chip
+click-through exists because a chip is a compact stand-in for a row that
+lives elsewhere, so clicking it has to navigate to where that row is; the
+pending list has no such gap to close — it already **is** the full,
+actionable row, in both places it appears — so nothing about it deep-links
+or changes section. These are two deliberately different reuse mechanisms
+for two different kinds of duplication, and both stand as described.
 
 ### Entry click → the existing Bookings row (deep link)
 
@@ -160,7 +211,10 @@ and the status response is unchanged; confirm makes no Google call.
 
 The calendar grid is client-only over already-tested endpoints and pure
 helpers — manual Playwright verification via the `running-pawbook` flow:
-month prev/today/next, chip styles per status, multi-day spans and month-edge
-clipping, "+N more", entry click landing on the highlighted Bookings row,
-legend/empty state, Google status line in both connection states, and a
-phone-width viewport with no horizontal scroll.
+login lands on Calendar with the grid and, beneath it, the populated "Needs
+your reply" pending list; month prev/today/next; chip styles per status;
+multi-day spans and month-edge clipping; "+N more"; entry click landing on
+the highlighted Bookings row; confirming or declining from the Calendar's
+pending list is reflected in the Bookings section's copy too; legend/empty
+state; Google status line in both connection states; and a phone-width
+viewport with no horizontal scroll.
