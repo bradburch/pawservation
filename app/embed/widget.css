@@ -410,19 +410,26 @@ body {
   margin-top: 6px;
 }
 
-.bp-pets {
+.bp-pets,
+.bp-questions {
   border: none;
   padding: 0;
   margin: 0;
 }
 
-.bp-pets legend {
+.bp-pets legend,
+.bp-questions legend {
   font-family: var(--bp-sans);
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--bp-soft);
   padding: 0;
   margin-bottom: 8px;
+}
+
+/* Question fields stack with the same rhythm as the rest of the form. */
+.bp-questions .bp-field + .bp-field {
+  margin-top: 12px;
 }
 
 .bp-pet-chips {
