@@ -77,6 +77,7 @@ app.get('/embed/:slug', page('embed.html'));
 app.get('/admin', page('admin.html')); // login landing — the dashboard learns its slug from the session
 app.get('/admin/:slug', page('admin.html')); // deep link still works; auth drives the rest
 app.get('/demo', page('demo.html'));
+app.get('/setup', page('setup.html')); // create-password page for emailed signup links
 
 /**
  * Root landing page: a self-contained capability page for prospective sitters. Static and
