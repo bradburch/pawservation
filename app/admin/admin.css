@@ -701,9 +701,12 @@ body {
   gap: 10px;
   margin: 12px 0;
 }
-/* Prefixed with .pb-wrap (like the ghost buttons above) to outrank the
-   `.pb-wrap button` primary style — without it these render as filled navy buttons. */
-.pb-wrap .pb-wizard-cardbtn {
+/* Shared tile base — the wizard's card language, composed by both the wizard's
+   .pb-wizard-cardbtn and Services & rates' .pb-svc-card/.pb-svc-add so the two
+   cannot drift (spec 2026-07-19-services-rates-redesign). Prefixed with
+   .pb-wrap (like the ghost buttons above) to outrank the `.pb-wrap button`
+   primary style — without it button tiles render as filled navy buttons. */
+.pb-wrap .pb-tile-btn {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -713,19 +716,22 @@ body {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
-  cursor: pointer;
   color: var(--body);
   font: inherit;
 }
-.pb-wrap .pb-wizard-cardbtn:hover {
+.pb-wrap button.pb-tile-btn {
+  cursor: pointer;
+}
+.pb-wrap button.pb-tile-btn:hover {
   filter: none;
 }
-.pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {
-  border-color: var(--sage);
-}
-.pb-wrap .pb-wizard-cardbtn.pb-on {
+.pb-wrap .pb-tile-btn.pb-on {
   border-color: var(--sage);
   background: var(--sage-wash);
+}
+/* Wizard-only extras on top of the tile base. */
+.pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {
+  border-color: var(--sage);
 }
 .pb-wrap .pb-wizard-cardbtn:disabled {
   cursor: default;

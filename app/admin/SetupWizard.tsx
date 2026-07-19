@@ -264,7 +264,7 @@ export function SetupWizard({
                   <button
                     key={preset.id}
                     type="button"
-                    className={`pb-wizard-cardbtn${on ? ' pb-on' : ''}`}
+                    className={`pb-tile-btn pb-wizard-cardbtn${on ? ' pb-on' : ''}`}
                     disabled={alreadyOn}
                     aria-pressed={on}
                     onClick={() => toggle(preset.id)}
