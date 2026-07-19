@@ -1,52 +1,12 @@
 import { Fragment, useRef, useState } from 'react';
 import { IconTag } from '../../shared-ui/icons';
+import { AddServiceTile } from './AddServiceTile.js';
 import { ServiceCard } from './ServiceCard.js';
 import { ServiceEditor } from './ServiceEditor.js';
-import type { ServiceForm, Settings, SettingsSectionProps } from '../shared.js';
+import type { ServiceForm, SettingsSectionProps } from '../shared.js';
 
-function AddServiceForm({
-  templates,
-  addService,
-}: {
-  templates: Settings['templates'];
-  addService: (template: string, label: string) => Promise<void>;
-}) {
-  const [template, setTemplate] = useState(templates[0]?.id ?? '');
-  const [label, setLabel] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    if (busy || !label.trim() || !template) return;
-    setBusy(true);
-    try {
-      await addService(template, label.trim());
-      setLabel('');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="pb-inline">
-      <select value={template} onChange={(e) => setTemplate(e.target.value)}>
-        {templates.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.label}
-          </option>
-        ))}
-      </select>
-      <input
-        type="text"
-        placeholder="Service name"
-        value={label}
-        onChange={(e) => setLabel(e.target.value)}
-      />
-      <button type="button" onClick={() => void submit()} disabled={busy}>
-        {busy ? 'Adding…' : 'Add service'}
-      </button>
-    </div>
-  );
-}
+/** Grid expansion key for the add tile ('__' cannot collide with service type slugs). */
+const ADD_KEY = '__add';
 
 export function ServicesSection({
   settings,
@@ -59,10 +19,10 @@ export function ServicesSection({
   removeService: (type: string) => Promise<void>;
   openWizard: () => void;
 }) {
-  // Which editor is open: a service type, or null. One at a time — expanding
-  // another collapses the first. Collapsing never loses edits: all field state
-  // lives in the staged settings draft; the save bar is the single source of
-  // truth for unsaved changes. Local state, unaddressed by the #services hash.
+  // Which editor is open: a service type, ADD_KEY, or null. One at a time —
+  // expanding another collapses the first. Collapsing never loses edits: all
+  // field state lives in the staged settings draft; the save bar is the single
+  // source of truth for unsaved changes. Local state, unaddressed by #services.
   const [expanded, setExpanded] = useState<string | null>(null);
   // Done returns focus to the tapped card's expand button.
   const openRefs = useRef(new Map<string, HTMLButtonElement | null>());
@@ -132,10 +92,18 @@ export function ServicesSection({
             </Fragment>
           );
         })}
-      </div>
-      <div className="pb-service">
-        <h3>Add service</h3>
-        <AddServiceForm templates={settings.templates} addService={addService} />
+        {settings.services.length === 0 && (
+          <div className="pb-tile-btn pb-svc-empty">
+            No services yet — run Quick setup or add one below.
+          </div>
+        )}
+        <AddServiceTile
+          templates={settings.templates}
+          addService={addService}
+          expanded={expanded === ADD_KEY}
+          onToggleExpanded={() => toggle(ADD_KEY)}
+          openRef={(el) => openRefs.current.set(ADD_KEY, el)}
+        />
       </div>
     </>
   );

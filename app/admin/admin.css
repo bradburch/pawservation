@@ -997,3 +997,34 @@ body {
     }
   }
 }
+
+/* Dashed add tile + card-sized empty-state invitation. */
+.pb-wrap .pb-svc-add {
+  justify-content: center;
+  align-items: center;
+  min-height: 96px;
+  background: none;
+  border-style: dashed;
+  color: var(--soft);
+  font-family: var(--display);
+  font-weight: 600;
+}
+
+.pb-wrap .pb-svc-add:hover {
+  border-color: var(--sage);
+  color: var(--ink);
+  background: var(--sage-wash);
+}
+
+.pb-wrap .pb-svc-add.pb-svc-expanded {
+  border-style: solid;
+  border-color: var(--sage);
+}
+
+.pb-wrap .pb-svc-empty {
+  justify-content: center;
+  align-items: center;
+  min-height: 96px;
+  color: var(--soft);
+  text-align: center;
+}
