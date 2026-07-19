@@ -1,8 +1,10 @@
 import type {
+  AllowedSitterRow,
   AnalyticsData,
   BookingRow,
   EndUser,
   EndUserPet,
+  OwnerUser,
   PaymentRow,
   PetType,
   ProviderConnection,
@@ -1161,4 +1163,117 @@ export async function listBookingPetsForUser(
     .bind(tenantId, endUserId)
     .all<{ BookingRequestId: string; PetId: string; Name: string; PetType: 'dog' | 'cat' }>();
   return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OWNER SCOPE — instance-level tables (OwnerUsers, AllowedSitters).
+// These are the ONLY functions exempt from the tenantId-first rule: both tables
+// gate entry INTO the tenancy model (platform-owner accounts and the signup
+// allowlist), so they cannot themselves be tenant rows. D1 access still lives
+// only in this module. See migrations/0013_invite_signup_owner_console.sql.
+// Callers normalize emails (trim + lowercase) before every read/write.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getOwnerUserByEmail(
+  db: D1Database,
+  email: string,
+): Promise<OwnerUser | null> {
+  return await db
+    .prepare('SELECT Id, Email, PasswordHash, CreatedAt FROM OwnerUsers WHERE Email = ?')
+    .bind(email)
+    .first<OwnerUser>();
+}
+
+/** Throws on OwnerUsers.Email UNIQUE — the caller maps that to 409 (replay that beat the nonce). */
+export async function insertOwnerUser(
+  db: D1Database,
+  id: string,
+  email: string,
+  passwordHash: string,
+): Promise<void> {
+  await db
+    .prepare('INSERT INTO OwnerUsers (Id, Email, PasswordHash) VALUES (?, ?, ?)')
+    .bind(id, email, passwordHash)
+    .run();
+}
+
+export async function getAllowedSitter(
+  db: D1Database,
+  email: string,
+): Promise<AllowedSitterRow | null> {
+  return await db
+    .prepare('SELECT Email, AddedAt, ClaimedAt, TenantId FROM AllowedSitters WHERE Email = ?')
+    .bind(email)
+    .first<AllowedSitterRow>();
+}
+
+/** With the claimed tenant's slug joined in (NULL until claimed). Newest first. */
+export async function listAllowedSitters(
+  db: D1Database,
+): Promise<(AllowedSitterRow & { TenantSlug: string | null })[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT a.Email, a.AddedAt, a.ClaimedAt, a.TenantId, t.Slug AS TenantSlug
+       FROM AllowedSitters a
+       LEFT JOIN Tenants t ON t.Id = a.TenantId
+       ORDER BY a.AddedAt DESC, a.Email`,
+    )
+    .all<AllowedSitterRow & { TenantSlug: string | null }>();
+  return results;
+}
+
+/** Idempotent: re-adding returns the existing row untouched (customer-invite precedent). */
+export async function addAllowedSitter(db: D1Database, email: string): Promise<AllowedSitterRow> {
+  await db
+    .prepare('INSERT INTO AllowedSitters (Email) VALUES (?) ON CONFLICT (Email) DO NOTHING')
+    .bind(email)
+    .run();
+  return (await getAllowedSitter(db, email))!;
+}
+
+/** Guarded delete: unclaimed rows only, so a claimed sitter can never be silently removed. */
+export async function deleteUnclaimedAllowedSitter(
+  db: D1Database,
+  email: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM AllowedSitters WHERE Email = ? AND ClaimedAt IS NULL')
+    .bind(email)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Signup provisioning as ONE atomic batch (deleteService precedent; the test shim's batch is
+ * transactional): Tenants → TenantUsers → claim the allowlist row. A replay that beat the
+ * nonce race dies on TenantUsers.Email UNIQUE, aborting the WHOLE batch — no orphan tenant.
+ * The new tenant carries only Id/Slug/DisplayName: every limit stays NULL (unlimited /
+ * instance-default) and NO services are seeded — the onboarding wizard owns that.
+ */
+export async function createTenantFromSignup(
+  db: D1Database,
+  args: {
+    tenantId: string;
+    slug: string;
+    displayName: string;
+    userId: string;
+    email: string;
+    passwordHash: string;
+    claimedAtIso?: string;
+  },
+): Promise<void> {
+  const claimedAt = args.claimedAtIso ?? new Date().toISOString();
+  await db.batch([
+    db
+      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName) VALUES (?, ?, ?)')
+      .bind(args.tenantId, args.slug, args.displayName),
+    db
+      .prepare('INSERT INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES (?, ?, ?, ?)')
+      .bind(args.userId, args.tenantId, args.email, args.passwordHash),
+    db
+      .prepare(
+        'UPDATE AllowedSitters SET ClaimedAt = ?, TenantId = ? WHERE Email = ? AND ClaimedAt IS NULL',
+      )
+      .bind(claimedAt, args.tenantId, args.email),
+  ]);
 }

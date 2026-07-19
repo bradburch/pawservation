@@ -24,6 +24,22 @@ export type TenantUser = {
   PasswordHash: string;
 };
 
+/** Instance-level platform-owner login row (see the owner-scope section of db/repo.ts). */
+export type OwnerUser = {
+  Id: string;
+  Email: string;
+  PasswordHash: string;
+  CreatedAt: string;
+};
+
+/** Instance-level signup-allowlist row. ClaimedAt/TenantId stay NULL until setup completes. */
+export type AllowedSitterRow = {
+  Email: string;
+  AddedAt: string;
+  ClaimedAt: string | null;
+  TenantId: string | null;
+};
+
 export type TenantService = {
   TenantId: string;
   ServiceType: ServiceType; // per-tenant slug
