@@ -78,7 +78,10 @@ function makeKV(): KVNamespace {
 }
 
 export function createTestEnv(): { env: Env; raw: DatabaseSync } {
-  const raw = new DatabaseSync(':memory:');
+  // FK enforcement off, matching production D1 (which never enforces FKs) — otherwise
+  // node:sqlite's newer default-ON behavior would reject states D1 allows in practice, e.g. an
+  // AllowedSitters row whose TenantId outlives its Tenant (no ON DELETE CASCADE either place).
+  const raw = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false });
   raw.exec(readFileSync(join(SQL_DIR, 'schema.sql'), 'utf8'));
   raw.exec(readFileSync(join(SQL_DIR, 'seed.sql'), 'utf8'));
   const env = {

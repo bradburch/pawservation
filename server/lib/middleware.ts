@@ -1,6 +1,6 @@
 import { createMiddleware } from 'hono/factory';
 import { resolveTenant } from './tenant-resolve';
-import { extractBearer, verifyAdminToken, verifyToken } from './token';
+import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
 
 /**
@@ -43,5 +43,17 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in.' }, 401);
   if (claims.tid !== c.get('tenant').Id) return c.json({ error: 'Wrong account.' }, 403);
+  await next();
+});
+
+/**
+ * Platform-owner auth: a Bearer owner session token (role 'owner', no tid). Owner, admin,
+ * and widget tokens are mutually unacceptable by claim shape (see lib/token.ts).
+ */
+export const ownerAuth = createMiddleware<AppEnv>(async (c, next) => {
+  const token = extractBearer(c.req.header('Authorization'));
+  const claims = token ? await verifyOwnerToken(token, c.env.TOKEN_SECRET) : null;
+  if (!claims) return c.json({ error: 'Please sign in.' }, 401);
+  c.set('ownerEmail', claims.sub);
   await next();
 });

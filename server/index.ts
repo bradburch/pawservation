@@ -5,6 +5,7 @@ import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
 import { bookingRoutes } from './routes/bookings';
 import { oauthRoutes } from './routes/oauth';
+import { ownerRoutes } from './routes/owner';
 import { publicRoutes } from './routes/public';
 import { signupRoutes } from './routes/signup';
 import type { AppEnv } from './types';
@@ -62,6 +63,7 @@ app.route('/api', authRoutes);
 app.route('/api', bookingRoutes);
 app.route('/api', adminRoutes);
 app.route('/api', signupRoutes); // /api/signup/* — no slug ('signup' is a reserved slug)
+app.route('/api', ownerRoutes); // /api/owner/* — owner-token-gated ('owner' is a reserved slug)
 app.route('/', oauthRoutes); // global OAuth callback — no slug, no tenant middleware
 
 /** Serve a built Vite page for a worker-routed path, with mutable headers. */

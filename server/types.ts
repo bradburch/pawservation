@@ -177,5 +177,7 @@ export type AppEnv = {
   Variables: {
     tenant: Tenant;
     endUserId: string;
+    /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
+    ownerEmail: string;
   };
 };
