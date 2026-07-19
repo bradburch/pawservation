@@ -87,7 +87,7 @@ const LANDING_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawbook — booking, kept like a ledger</title>
+    <title>Pawbook — booking for pet sitters</title>
     <style>
       :root {
         color-scheme: light;
@@ -572,36 +572,36 @@ const LANDING_HTML = `<!doctype html>
         </div>
 
         <h1 class="brand">Pawbook</h1>
-        <p class="lede">Booking, kept like a ledger &mdash; for the people who keep other people&rsquo;s pets.</p>
+        <p class="lede">A booking widget for your pet-sitting business.</p>
         <p class="sub">
-          A booking page you drop onto your own site, with your services, your rates, and your rules.
-          Every request waits for your yes, and the book keeps count of what you&rsquo;re owed.
+          It goes on your own site, with your services and rates. Clients request bookings,
+          you confirm or decline, and Pawbook keeps track of what you&rsquo;re owed.
         </p>
 
         <div class="actions">
-          <a class="cta" href="/demo">See two sitters&rsquo; widgets, live &rarr;</a>
+          <a class="cta" href="/demo">Try the demo &rarr;</a>
           <div class="links">
-            <a class="quiet" href="/admin">Already set up? Sign in &rarr;</a>
+            <a class="quiet" href="/admin">Sitter sign in &rarr;</a>
             <a class="quiet" href="https://github.com/bradburch/pawbook">View source / self-host &rarr;</a>
           </div>
           <p class="deploy-note">
-            Open source and self-hosted &mdash; today you (or a developer) deploy your own copy on Cloudflare Workers. Hosted signup is on the roadmap.
+            Pawbook is invite-only right now &mdash; sign in if you have an account. It&rsquo;s also open source, so you can deploy your own copy on Cloudflare Workers.
           </p>
         </div>
       </header>
 
       <section class="section" aria-labelledby="work">
         <div class="runhead">
-          <h2 id="work">What the book does</h2>
+          <h2 id="work">What it does</h2>
           <span class="rule" aria-hidden="true"></span>
-          <span class="tab">the whole job</span>
+          <span class="tab">overview</span>
         </div>
         <div class="cap">
           <div class="cap-lead">
             <p class="kicker">Start here</p>
             <h3>It lives on your site, not ours.</h3>
             <p>
-              One line of HTML drops a live booking widget onto your own page &mdash; Squarespace, Wix, or hand-built. It resizes itself to fit, and clients book without ever leaving your site.
+              One line of HTML puts the booking widget on your own page (Squarespace, Wix, or hand-built). It resizes to fit, and clients book without leaving your site.
             </p>
             <span class="fine">A plain-iframe version stands in for hosts that strip scripts.</span>
           </div>
@@ -609,7 +609,7 @@ const LANDING_HTML = `<!doctype html>
             <div class="book-group">
               <h4>Your rules</h4>
               <dl>
-                <div class="line"><dt>Services &amp; rates</dt><dd>Boarding, house-sitting, day care, walks, check-ins &mdash; or a service you invent &mdash; each with your price and length.</dd></div>
+                <div class="line"><dt>Services &amp; rates</dt><dd>Boarding, house-sitting, day care, walks, check-ins, or a custom service, each with its own price and length.</dd></div>
                 <div class="line"><dt>Walk windows</dt><dd>Timed slots like 8&ndash;9am, each with its own capacity.</dd></div>
                 <div class="line"><dt>Limits &amp; intake</dt><dd>Min/max nights, pet counts, and your own questions per service.</dd></div>
                 <div class="line"><dt>Daily caps</dt><dd>Boarding cap, house-sits cap, longest stay, time off, timezone. A full day won&rsquo;t be offered.</dd></div>
@@ -619,7 +619,7 @@ const LANDING_HTML = `<!doctype html>
               <h4>Every request</h4>
               <dl>
                 <div class="line"><dt>You decide</dt><dd>Confirm, decline, or cancel. Nothing books itself.</dd></div>
-                <div class="line"><dt>Clients hear back</dt><dd>Status emails send automatically &mdash; and the dashboard flags any that didn&rsquo;t.</dd></div>
+                <div class="line"><dt>Clients hear back</dt><dd>Status emails send automatically; the dashboard flags any that failed.</dd></div>
                 <div class="line"><dt>On your calendar</dt><dd>Confirmed bookings push to your Google Calendar.</dd></div>
               </dl>
             </div>
@@ -639,7 +639,7 @@ const LANDING_HTML = `<!doctype html>
         <div class="embed-grid">
           <div class="embed-say">
             <h2 id="embed">Paste one line where you want it.</h2>
-            <p>Change the slug to yours and save. No plugins, no theme surgery, nothing to lay out.</p>
+            <p>Change the slug to yours and save. No plugins or theme changes needed.</p>
           </div>
           <div class="slip">
             <div class="slip-cap">
@@ -652,7 +652,7 @@ const LANDING_HTML = `<!doctype html>
         <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
             </div>
             <p class="slip-foot">
-              On a host that strips scripts? Paste the plain-iframe version instead &mdash; same widget, no JavaScript needed. Works on Squarespace, Wix, or a page you wrote by hand.
+              If your host strips scripts, paste the plain-iframe version instead. Same widget, no JavaScript needed.
             </p>
           </div>
         </div>
@@ -660,34 +660,34 @@ const LANDING_HTML = `<!doctype html>
 
       <section class="section" aria-labelledby="faq">
         <div class="runhead mirror">
-          <span class="tab">Straight answers</span>
+          <span class="tab">details</span>
           <span class="rule" aria-hidden="true"></span>
-          <h2 id="faq">The fine print, no asterisks.</h2>
+          <h2 id="faq">Common questions</h2>
         </div>
         <div class="qa">
           <div class="qa-item">
             <h3>Will it work on my Squarespace or Wix site?</h3>
-            <p>Yes. Paste one line &mdash; or the iframe version &mdash; into a page and the widget shows up, sized to fit. Plain HTML works too.</p>
+            <p>Yes. Paste the script line or the iframe version into a page and the widget shows up, sized to fit. Plain HTML sites work too.</p>
           </div>
           <div class="qa-item">
             <h3>Do customers pay by card here?</h3>
-            <p><strong>No &mdash; Pawbook tracks money, it doesn&rsquo;t take it.</strong> A booking arrives with an estimated cost; you collect it off-platform (cash, Venmo, Zelle, check) and log it so your earnings stay accurate.</p>
+            <p><strong>No.</strong> Pawbook tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate.</p>
           </div>
           <div class="qa-item">
             <h3>Can it double-book me?</h3>
-            <p><strong>No.</strong> Your caps and time-off hold the day, and a full day isn&rsquo;t offered. One caveat: Google Calendar sync is one-way &mdash; being busy elsewhere won&rsquo;t block a request unless you enter it as time off.</p>
+            <p><strong>No.</strong> Your caps and time off hold the day, and a full day isn&rsquo;t offered. One caveat: Google Calendar sync is one-way, so being busy elsewhere won&rsquo;t block a request unless you enter it as time off.</p>
           </div>
           <div class="qa-item">
             <h3>Can anyone book, or just my clients?</h3>
-            <p><strong>Invite-only, on purpose.</strong> You add each client&rsquo;s email (or import a CSV) before they can book. No walk-in strangers &mdash; and dogs and cats only.</p>
+            <p><strong>Just your clients.</strong> You add each client&rsquo;s email (or import a CSV) before they can book. Dogs and cats only.</p>
           </div>
           <div class="qa-item">
             <h3>Can I charge more for a second dog?</h3>
             <p><strong>No.</strong> Rates are flat per service. A second pet uses a slot of your capacity, not extra money.</p>
           </div>
           <div class="qa-item">
-            <h3>How do I sign up? Is it free?</h3>
-            <p><strong>There&rsquo;s no signup yet.</strong> Pawbook is open source (MIT); you (or a developer) deploy your own copy on Cloudflare Workers. Free to run &mdash; you host it. Hosted signup is on the <a href="https://github.com/bradburch/pawbook">roadmap</a>.</p>
+            <h3>How do I get an account?</h3>
+            <p><strong>Pawbook is invite-only right now.</strong> <a href="/admin">Sign in</a> if you have an account. It&rsquo;s also open source (MIT), so you can <a href="https://github.com/bradburch/pawbook">deploy your own copy</a> on Cloudflare Workers.</p>
           </div>
         </div>
       </section>
