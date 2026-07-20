@@ -47,7 +47,11 @@ function Snippets({ session }: { session: Session }) {
         website builder. Ask whoever manages your website to help if you get stuck.
       </p>
       <p>
-        <strong>Squarespace and most other website builders:</strong>
+        <strong>Squarespace and most other website builders:</strong>{' '}
+        <Hint label="the embed codes">
+          Both codes show the same booking page. Try the first; if your website builder refuses it,
+          the second works everywhere.
+        </Hint>
       </p>
       <ol>
         <li>Click &ldquo;Copy the code&rdquo; below.</li>

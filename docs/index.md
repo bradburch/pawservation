@@ -50,4 +50,5 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
 
 - Widget demo: `/demo` (two sample tenants side by side)
 - Admin dashboard: `/admin`
+- In-app help: the dashboard's Help section covers setup, bookings, getting paid, and embedding.
 - Source: see the main [README](../README.md) for local setup and architecture.

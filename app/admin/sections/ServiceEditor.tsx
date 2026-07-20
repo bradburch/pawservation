@@ -1,5 +1,6 @@
 import { NullableNumberField } from './fields.js';
 import type { QuestionForm, ServiceForm, ServiceOptionForm } from '../shared.js';
+import { Hint } from '../Hint';
 
 const QUESTION_TYPES: QuestionForm['type'][] = ['text', 'yesno', 'number', 'select'];
 const QUESTION_TYPE_LABELS: Record<QuestionForm['type'], string> = {
@@ -261,15 +262,25 @@ export function ServiceEditor({
                     value={o.capacity}
                     onChange={(capacity) => setOption({ capacity })}
                   />
+                  <Hint label="Capacity">
+                    How many pets this option can take at once — a full slot stops being offered.
+                    Blank means no limit.
+                  </Hint>
                   {windowed && (
-                    <label className="pb-inline">
-                      <input
-                        type="checkbox"
-                        checked={o.weekdaysOnly}
-                        onChange={(e) => setOption({ weekdaysOnly: e.target.checked })}
-                      />
-                      Weekdays only
-                    </label>
+                    <>
+                      <label className="pb-inline">
+                        <input
+                          type="checkbox"
+                          checked={o.weekdaysOnly}
+                          onChange={(e) => setOption({ weekdaysOnly: e.target.checked })}
+                        />
+                        Weekdays only
+                      </label>
+                      <Hint label="Weekdays only">
+                        Clients will only see this option on Mondays through Fridays. It appears
+                        once the option has a time window.
+                      </Hint>
+                    </>
                   )}
                 </div>
               </div>
@@ -335,18 +346,30 @@ export function ServiceEditor({
       <div className="pb-limits">
         <h3>Booking limits</h3>
         {s.capacityKind === 'boarding' && (
-          <NullableNumberField
-            label="Boarding spots per day (pets)"
-            value={s.maxConcurrentPets}
-            onChange={(maxConcurrentPets) => setService({ ...s, maxConcurrentPets })}
-          />
+          <div className="pb-cap-row">
+            <NullableNumberField
+              label="Boarding spots per day (pets)"
+              value={s.maxConcurrentPets}
+              onChange={(maxConcurrentPets) => setService({ ...s, maxConcurrentPets })}
+            />
+            <Hint label="Boarding spots per day">
+              Blank means no limit. Set a number and Pawbook stops offering new bookings once that
+              day is full.
+            </Hint>
+          </div>
         )}
         {s.capacityKind === 'housesit' && (
-          <NullableNumberField
-            label="House-sits per day"
-            value={s.maxPerDay}
-            onChange={(maxPerDay) => setService({ ...s, maxPerDay })}
-          />
+          <div className="pb-cap-row">
+            <NullableNumberField
+              label="House-sits per day"
+              value={s.maxPerDay}
+              onChange={(maxPerDay) => setService({ ...s, maxPerDay })}
+            />
+            <Hint label="House-sits per day">
+              Blank means no limit. Set a number and Pawbook stops offering new house-sit bookings
+              once that many are already booked for the day.
+            </Hint>
+          </div>
         )}
         {s.shape === 'range' && (
           <>

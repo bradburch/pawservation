@@ -1313,3 +1313,16 @@ body {
     opacity: 0;
   }
 }
+
+/* Field + hint side by side (ServiceEditor's Booking limits caps); the row
+   takes over the label's usual bottom margin. */
+.pb-cap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.pb-cap-row > label {
+  margin-bottom: 0;
+}

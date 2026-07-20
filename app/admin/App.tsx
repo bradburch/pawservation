@@ -5,6 +5,7 @@ import {
   IconChartBar,
   IconClipboardCheck,
   IconCode,
+  IconHelp,
   IconPaw,
   IconPlug,
   IconStore,
@@ -18,6 +19,7 @@ import { CalendarSection } from './sections/CalendarSection';
 import { ClientsSection } from './sections/ClientsSection';
 import { EarningsSection } from './sections/EarningsSection';
 import { EmbedSection } from './sections/EmbedSection';
+import { HelpSection } from './sections/HelpSection';
 import { PetsSection } from './sections/PetsSection';
 import { ServicesSection } from './sections/ServicesSection';
 import { SetupWizard } from './SetupWizard';
@@ -217,7 +219,8 @@ type SectionKey =
   | 'timeoff'
   | 'clients'
   | 'apps'
-  | 'embed';
+  | 'embed'
+  | 'help';
 
 const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'calendar', label: 'Calendar', icon: IconCalendar },
@@ -230,6 +233,7 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
   { key: 'clients', label: 'Clients', icon: IconUsers },
   { key: 'apps', label: 'Connected apps', icon: IconPlug },
   { key: 'embed', label: 'Your website', icon: IconCode },
+  { key: 'help', label: 'Help', icon: IconHelp },
 ];
 
 /** Reads the initial section from the URL hash (e.g. `/admin#clients`) so deep links and page
@@ -584,6 +588,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     embed: (
       <EmbedSection session={session} previewKey={previewKey} active={activeSection === 'embed'} />
     ),
+    help: <HelpSection />,
   };
 
   return (

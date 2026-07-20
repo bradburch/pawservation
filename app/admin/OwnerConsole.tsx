@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { isAuthExpired } from '../shared-ui/api.js';
 import { useAsync } from '../shared-ui/useAsync';
 import { adminFetch, type OwnerSession } from './shared.js';
+import { Hint } from './Hint';
 
 /**
  * Platform-owner console: who may join Pawbook. Deliberately non-technical copy — the owner
@@ -120,7 +121,14 @@ export function OwnerConsole({
             <thead>
               <tr>
                 <th>Email</th>
-                <th>Status</th>
+                <th>
+                  Status{' '}
+                  <Hint label="Status">
+                    &ldquo;Waiting to join&rdquo; means they haven&rsquo;t signed up yet and can
+                    still be removed. Once they&rsquo;ve joined, their business exists and
+                    can&rsquo;t be removed here.
+                  </Hint>
+                </th>
                 <th aria-label="Actions" />
               </tr>
             </thead>
