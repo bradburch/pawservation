@@ -3,6 +3,7 @@ import { addDays, formatBlockRange } from '../../../src/shared/index.js';
 import { IconCalendar } from '../../shared-ui/icons';
 import type { Settings } from '../shared.js';
 import { adminFetch } from '../shared.js';
+import { Hint } from '../Hint';
 
 export function TimeOffSection({
   blocked,
@@ -64,6 +65,10 @@ export function TimeOffSection({
     <>
       <h2>
         <IconCalendar size={18} /> Time off
+        <Hint label="Time off">
+          Days you don&rsquo;t want bookings. Blocked days disappear from clients&rsquo; calendars
+          immediately — no save needed.
+        </Hint>
       </h2>
       <p className="pb-applies">Changes here apply immediately.</p>
       <ul>

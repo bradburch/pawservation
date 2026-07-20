@@ -71,4 +71,73 @@ describe('customer repo', () => {
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
     expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, 'missing')).toBe(false);
   });
+
+  it('deleteCustomer cascades EndUserPets and LoginCodes (no FK violation, no orphans)', async () => {
+    const { env, raw } = createTestEnv();
+    const c = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'haspet@example.com', null);
+    raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+              VALUES ('pet1','${TENANT_A}','${c.Id}','Fido','dog')`);
+    raw.exec(`INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt)
+              VALUES ('lc1','${TENANT_A}','${c.Id}','123456','2030-01-01T00:00:00.000Z')`);
+
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(true);
+
+    expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
+    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet1')).toBeUndefined();
+    expect(raw.prepare('SELECT * FROM LoginCodes WHERE Id = ?').get('lc1')).toBeUndefined();
+  });
+
+  it("deleteCustomer cascades BookingRequestPets referencing the deleted customer's pets", async () => {
+    const { env, raw } = createTestEnv();
+    const c = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'haspetbooked@example.com',
+      null,
+    );
+    const other = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'other@example.com', null);
+    raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+              VALUES ('pet2','${TENANT_A}','${c.Id}','Rex','dog')`);
+    // A booking owned by a DIFFERENT customer that references this customer's pet (the app's
+    // addBookingPets only checks tenant match, not pet ownership vs. booking owner).
+    raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
+              VALUES ('bk3','${TENANT_A}','${other.Id}','daycare','2030-04-01',1,'pending')`);
+    raw.exec(`INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk3','pet2')`);
+
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(true);
+
+    expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
+    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet2')).toBeUndefined();
+    expect(
+      raw.prepare('SELECT * FROM BookingRequestPets WHERE PetId = ?').get('pet2'),
+    ).toBeUndefined();
+    // The other customer's booking itself is untouched.
+    expect(raw.prepare('SELECT * FROM BookingRequests WHERE Id = ?').get('bk3')).toBeDefined();
+  });
+
+  it('deleteCustomer guard still refuses (leaving pets/login codes intact) when the customer has bookings', async () => {
+    const { env, raw } = createTestEnv();
+    const c = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'withbookingandpet@example.com',
+      null,
+    );
+    raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+              VALUES ('pet3','${TENANT_A}','${c.Id}','Milo','dog')`);
+    raw.exec(`INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt)
+              VALUES ('lc3','${TENANT_A}','${c.Id}','654321','2030-01-01T00:00:00.000Z')`);
+    raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
+              VALUES ('bk4','${TENANT_A}','${c.Id}','daycare','2030-04-01',1,'pending')`);
+    raw.exec(`INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk4','pet3')`);
+
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(false);
+
+    expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
+    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet3')).toBeDefined();
+    expect(raw.prepare('SELECT * FROM LoginCodes WHERE Id = ?').get('lc3')).toBeDefined();
+    expect(
+      raw.prepare('SELECT * FROM BookingRequestPets WHERE PetId = ?').get('pet3'),
+    ).toBeDefined();
+  });
 });

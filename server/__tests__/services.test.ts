@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PET_TYPES,
   SERVICE_TEMPLATES,
   TEMPLATE_IDS,
-  isPetType,
   isTemplateId,
   slugifyServiceLabel,
 } from '../lib/services';
@@ -27,12 +25,6 @@ describe('service templates', () => {
   it('guards membership', () => {
     expect(isTemplateId('walk')).toBe(true);
     expect(isTemplateId('teleport')).toBe(false);
-    expect(isPetType('dog')).toBe(true);
-    expect(isPetType('dragon')).toBe(false);
-  });
-
-  it('exposes exactly dog and cat as pet types', () => {
-    expect(PET_TYPES).toEqual(['dog', 'cat']);
   });
 });
 

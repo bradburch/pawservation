@@ -60,8 +60,6 @@ describe('tenant admin', () => {
         body: JSON.stringify({
           displayName: 'Sunny Paws Deluxe',
           accentColor: '#10b981',
-          maxBoardingPets: 3,
-          petTypes: ['dog', 'cat'],
           services: [
             {
               type: 'boarding',
@@ -79,12 +77,10 @@ describe('tenant admin', () => {
     const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
       displayName: string;
       accentColor: string;
-      maxBoardingPets: number;
       services: { type: string; options: { rate: number }[] }[];
     };
     expect(config.displayName).toBe('Sunny Paws Deluxe');
     expect(config.accentColor).toBe('#10b981');
-    expect(config.maxBoardingPets).toBe(3);
     expect(config.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(75);
 
     // …and the OTHER tenant is untouched.
@@ -129,7 +125,7 @@ describe('tenant admin', () => {
     expect(config.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(50);
   });
 
-  it('capacity edits change availability outcomes (per-tenant max)', async () => {
+  it('capacity edits change availability outcomes (per-service cap)', async () => {
     const { env } = createTestEnv();
     // Seed: Jun 21-24 at Sunny Paws has 1 pet, max 2 -> a 2-pet request conflicts.
     const before = (await (
@@ -146,7 +142,16 @@ describe('tenant admin', () => {
       {
         method: 'PUT',
         headers: await auth(TENANT_A, true),
-        body: JSON.stringify({ maxBoardingPets: 5 }),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              maxConcurrentPets: 5,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+            },
+          ],
+        }),
       },
       env,
     );
@@ -160,11 +165,11 @@ describe('tenant admin', () => {
     ).json()) as { available: boolean };
     expect(after.available).toBe(true);
 
-    // The OTHER tenant's capacity is untouched by Sunny Paws' change.
-    const otherConfig = (await (await app.request('/api/happy-tails/config', {}, env)).json()) as {
-      maxBoardingPets: number;
-    };
-    expect(otherConfig.maxBoardingPets).toBe(4);
+    // The OTHER tenant's service cap is untouched by Sunny Paws' change.
+    const otherSettings = (await (
+      await app.request('/api/happy-tails/admin/settings', { headers: await auth(TENANT_B) }, env)
+    ).json()) as { services: { type: string; maxConcurrentPets: number | null }[] };
+    expect(otherSettings.services.find((s) => s.type === 'boarding')?.maxConcurrentPets).toBe(4);
   });
 
   it('disabling a service hides it from config and rejects bookings for it', async () => {
@@ -238,7 +243,7 @@ describe('tenant admin', () => {
     expect(res.calendar).toEqual({ status: 'disconnected', connectedAt: null, calendarId: null });
   });
 
-  it('saves pet types and free-typed service options, reflected in config', async () => {
+  it('saves free-typed service options, reflected in config (top-level petTypes is ignored)', async () => {
     const { env } = createTestEnv();
     const put = await app.request(
       '/api/sunny-paws/admin/settings',
@@ -246,7 +251,7 @@ describe('tenant admin', () => {
         method: 'PUT',
         headers: await auth(TENANT_A, true),
         body: JSON.stringify({
-          petTypes: ['cat'],
+          petTypes: ['cat'], // stale client payload — the registry no longer takes this field
           services: [
             {
               type: 'walk',
@@ -263,16 +268,21 @@ describe('tenant admin', () => {
     );
     expect(put.status).toBe(204);
     const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
-      petTypes: string[];
+      petTypes: { slug: string; label: string }[];
       services: { type: string; options: { durationMinutes: number | null; rate: number }[] }[];
     };
-    expect(cfg.petTypes).toEqual(['cat']);
+    // The registry is untouched by the stale petTypes field — full seeded registry stays.
+    expect(cfg.petTypes).toEqual([
+      { slug: 'cat', label: 'Cats' },
+      { slug: 'dog', label: 'Dogs' },
+      { slug: 'rabbit', label: 'Rabbits' },
+    ]);
     const walk = cfg.services.find((s) => s.type === 'walk')!;
     expect(walk.options).toHaveLength(2);
     expect(walk.options.find((o) => o.durationMinutes === 40)?.rate).toBe(19);
   });
 
-  it('rejects an unknown pet type without persisting', async () => {
+  it('an unknown top-level pet type is silently ignored, not rejected', async () => {
     const { env } = createTestEnv();
     const res = await app.request(
       '/api/sunny-paws/admin/settings',
@@ -283,7 +293,7 @@ describe('tenant admin', () => {
       },
       env,
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(204);
   });
 
   it('accepts two options sharing a duration but not a name, with distinct keys', async () => {
@@ -965,61 +975,148 @@ describe('tenant admin', () => {
   });
 });
 
-describe('configurable limits via admin settings', () => {
-  it('persists null (unlimited) and new limit fields, surfaced in config', async () => {
-    const { env } = createTestEnv();
-    const put = await app.request(
+describe('configurable limits via admin settings (service-level, 0015)', () => {
+  const boardingOpts = [{ label: 'Standard', durationMinutes: null, rate: 50 }];
+  const houseOpts = [{ label: 'Standard', durationMinutes: null, rate: 70 }];
+  const putSettings = async (env: Env, body: unknown) =>
+    app.request(
       '/api/sunny-paws/admin/settings',
       {
         method: 'PUT',
         headers: { ...(await adminHeaders(TENANT_A)), 'content-type': 'application/json' },
-        body: JSON.stringify({
-          maxBoardingPets: null,
-          maxHouseSitsPerDay: 1,
-          maxStayNights: 14,
-          timezone: 'America/New_York',
-        }),
+        body: JSON.stringify(body),
       },
       env,
     );
-    expect(put.status).toBe(204);
-    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
-      maxBoardingPets: number | null;
-      maxHouseSitsPerDay: number | null;
-      maxStayNights: number | null;
-      timezone: string | null;
-    };
-    expect(cfg.maxBoardingPets).toBeNull();
-    expect(cfg.maxHouseSitsPerDay).toBe(1);
-    expect(cfg.maxStayNights).toBe(14);
-    expect(cfg.timezone).toBe('America/New_York');
+  type SettingsCaps = {
+    services: {
+      type: string;
+      capacityKind: 'boarding' | 'housesit' | 'none';
+      maxConcurrentPets: number | null;
+      maxPerDay: number | null;
+      maxNights: number | null;
+    }[];
+  };
+  const getSettings = async (env: Env) =>
+    (await (
+      await app.request(
+        '/api/sunny-paws/admin/settings',
+        { headers: await adminHeaders(TENANT_A) },
+        env,
+      )
+    ).json()) as SettingsCaps & Record<string, unknown>;
+
+  it('PUT service caps round-trip through GET, which also exposes capacityKind (F5)', async () => {
+    const { env } = createTestEnv();
+    const res = await putSettings(env, {
+      services: [
+        { type: 'boarding', enabled: true, maxConcurrentPets: 5, options: boardingOpts },
+        { type: 'housesitting', enabled: true, maxPerDay: 2, options: houseOpts },
+      ],
+    });
+    expect(res.status).toBe(204);
+    const settings = await getSettings(env);
+    const boarding = settings.services.find((s) => s.type === 'boarding')!;
+    expect(boarding).toMatchObject({
+      capacityKind: 'boarding',
+      maxConcurrentPets: 5,
+      maxPerDay: null,
+    });
+    expect(settings.services.find((s) => s.type === 'housesitting')).toMatchObject({
+      capacityKind: 'housesit',
+      maxPerDay: 2,
+    });
+    expect(settings.services.find((s) => s.type === 'walk')).toMatchObject({
+      capacityKind: 'none',
+      maxConcurrentPets: null,
+      maxPerDay: null,
+    });
+  });
+
+  it('a cap on the wrong service kind is rejected, not silently ignored', async () => {
+    const { env } = createTestEnv();
+    const wrongPerDay = await putSettings(env, {
+      services: [{ type: 'boarding', enabled: true, maxPerDay: 3, options: boardingOpts }],
+    });
+    expect(wrongPerDay.status).toBe(400);
+    expect(((await wrongPerDay.json()) as { error: string }).error).toBe(
+      "Boarding: that capacity doesn't apply to this service.",
+    );
+    const wrongConcurrent = await putSettings(env, {
+      services: [
+        {
+          type: 'walk',
+          enabled: true,
+          maxConcurrentPets: 3,
+          options: [{ label: '30 min', durationMinutes: 30, rate: 20 }],
+        },
+      ],
+    });
+    expect(wrongConcurrent.status).toBe(400);
+  });
+
+  it('PATCH semantics: an absent cap field keeps the current value; explicit null clears', async () => {
+    const { env } = createTestEnv();
+    await putSettings(env, {
+      services: [{ type: 'boarding', enabled: true, maxConcurrentPets: 5, options: boardingOpts }],
+    });
+    // Absent -> keep 5.
+    await putSettings(env, {
+      services: [{ type: 'boarding', enabled: true, options: boardingOpts }],
+    });
+    let settings = await getSettings(env);
+    expect(settings.services.find((s) => s.type === 'boarding')?.maxConcurrentPets).toBe(5);
+    // Explicit null -> unlimited.
+    await putSettings(env, {
+      services: [
+        { type: 'boarding', enabled: true, maxConcurrentPets: null, options: boardingOpts },
+      ],
+    });
+    settings = await getSettings(env);
+    expect(settings.services.find((s) => s.type === 'boarding')?.maxConcurrentPets).toBeNull();
+  });
+
+  it('accepts a boarding cap above the old ceiling of 50; rejects one over the 1000 rail', async () => {
+    const { env } = createTestEnv();
+    expect(
+      (
+        await putSettings(env, {
+          services: [
+            { type: 'boarding', enabled: true, maxConcurrentPets: 80, options: boardingOpts },
+          ],
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await putSettings(env, {
+          services: [
+            { type: 'boarding', enabled: true, maxConcurrentPets: 2000, options: boardingOpts },
+          ],
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('the removed tenant fields no longer round-trip: absent from GET, ignored on PUT', async () => {
+    const { env } = createTestEnv();
+    const settings = await getSettings(env);
+    expect('maxBoardingPets' in settings).toBe(false);
+    expect('maxHouseSitsPerDay' in settings).toBe(false);
+    expect('maxStayNights' in settings).toBe(false);
+    // Old clients may still send them — harmlessly ignored, never written.
+    expect((await putSettings(env, { maxBoardingPets: 1 })).status).toBe(204);
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as Record<
+      string,
+      unknown
+    >;
+    expect('maxBoardingPets' in cfg).toBe(false);
+    expect('maxStayNights' in cfg).toBe(false);
   });
 
   it('rejects an invalid timezone', async () => {
     const { env } = createTestEnv();
-    const res = await app.request(
-      '/api/sunny-paws/admin/settings',
-      {
-        method: 'PUT',
-        headers: { ...(await adminHeaders(TENANT_A)), 'content-type': 'application/json' },
-        body: JSON.stringify({ timezone: 'Mars/Phobos' }),
-      },
-      env,
-    );
+    const res = await putSettings(env, { timezone: 'Mars/Phobos' });
     expect(res.status).toBe(400);
-  });
-
-  it('accepts a boarding cap above the old ceiling of 50', async () => {
-    const { env } = createTestEnv();
-    const res = await app.request(
-      '/api/sunny-paws/admin/settings',
-      {
-        method: 'PUT',
-        headers: { ...(await adminHeaders(TENANT_A)), 'content-type': 'application/json' },
-        body: JSON.stringify({ maxBoardingPets: 80 }),
-      },
-      env,
-    );
-    expect(res.status).toBe(204);
   });
 });

@@ -1,13 +1,14 @@
 import { createMiddleware } from 'hono/factory';
 import { resolveTenant } from './tenant-resolve';
-import { extractBearer, verifyAdminToken, verifyToken } from './token';
+import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
 
 /**
- * Reserved first-segment words under /api that are NOT tenant slugs (e.g. /api/admin/login,
- * the non-slug-scoped sitter-login routes). Tenants can never claim these as slugs.
+ * Reserved first-segment words under /api that are NOT tenant slugs: /api/admin/* (sitter
+ * login), /api/signup/* (invite signup), /api/owner/* (owner console). Tenants can never claim
+ * these as slugs — enforced again at signup-time slug generation (routes/signup.ts).
  */
-const RESERVED_SLUGS = new Set(['admin']);
+export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner']);
 
 /** Resolves the :slug param to a tenant (404 on unknown) and stores it on the context. */
 export const tenantMiddleware = createMiddleware<AppEnv>(async (c, next) => {
@@ -42,5 +43,17 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in.' }, 401);
   if (claims.tid !== c.get('tenant').Id) return c.json({ error: 'Wrong account.' }, 403);
+  await next();
+});
+
+/**
+ * Platform-owner auth: a Bearer owner session token (role 'owner', no tid). Owner, admin,
+ * and widget tokens are mutually unacceptable by claim shape (see lib/token.ts).
+ */
+export const ownerAuth = createMiddleware<AppEnv>(async (c, next) => {
+  const token = extractBearer(c.req.header('Authorization'));
+  const claims = token ? await verifyOwnerToken(token, c.env.TOKEN_SECRET) : null;
+  if (!claims) return c.json({ error: 'Please sign in.' }, 401);
+  c.set('ownerEmail', claims.sub);
   await next();
 });

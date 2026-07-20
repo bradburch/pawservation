@@ -16,8 +16,11 @@ import { syncBookingToCalendar } from '../lib/calendar-sync';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
 import {
+  addDays,
+  isWeekend,
   nightsBetween,
   validateAnswers,
+  validatePetTypeAcceptance,
   validateServiceConstraints,
 } from '../../src/shared/index.js';
 import type { AppEnv } from '../types';
@@ -110,11 +113,26 @@ export const bookingRoutes = new Hono<AppEnv>()
     const pets = chosen.length;
     if (!isValidPetCount(pets)) return c.json({ error: 'Too many pets.' }, 400);
     const acceptedTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+    // Registry membership: a pet whose slug isn't a TenantPetTypes row at all is corrupt data.
+    // The BEHAVIORAL gate is the per-service acceptance check below (0015 — the tenant-level
+    // enabled switch is retired).
     for (const p of chosen) {
-      if (!acceptedTypes.find((pt) => pt.PetType === p!.PetType && pt.Enabled))
+      if (!acceptedTypes.find((pt) => pt.PetType === p!.PetType))
         return c.json({ error: 'That pet type is not accepted.' }, 400);
     }
     const petType = chosen[0]!.PetType;
+
+    // The service's OWN restriction — the single behavioral gate. A type is bookable iff some
+    // enabled service accepts it, enforced per booking by that service's list (NULL = accepts
+    // every registry type). Checks EVERY selected pet, not the denormalized single PetType.
+    const labelBySlug = new Map(acceptedTypes.map((r) => [r.PetType, r.Label]));
+    const acceptanceError = validatePetTypeAcceptance(
+      service.AcceptedPetTypes,
+      service.Label,
+      chosen.map((p) => ({ name: p!.Name, petType: p!.PetType })),
+      (petSlug) => labelBySlug.get(petSlug) ?? petSlug,
+    );
+    if (acceptanceError) return c.json({ error: acceptanceError }, 400);
 
     if (!service.Enabled) return c.json({ error: 'Service not offered.' }, 400);
 
@@ -134,9 +152,25 @@ export const bookingRoutes = new Hono<AppEnv>()
     const shape = service.Shape;
     const dateError =
       shape === 'range'
-        ? validateBoardingRange(start, end, tenant.MaxStayNights, tenant.Timezone ?? undefined)
+        ? validateBoardingRange(start, end, service.MaxNights, tenant.Timezone ?? undefined)
         : validateSingleDate(start, tenant.Timezone ?? undefined);
     if (dateError) return c.json({ error: dateError.error }, dateError.status);
+
+    // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. The flag is
+    // settable on ANY option, including range-shaped services (boarding/housesitting) — a stay
+    // can start and end on weekdays yet still cross a weekend in between — so every date in the
+    // span must be checked, not just the start. Ranges are already bounded by max-stay
+    // validation above, so a plain day-by-day loop is fine.
+    if (option.WeekdaysOnly) {
+      const spanNights = shape === 'range' ? nightsBetween(start, end) : 1;
+      for (let i = 0; i < spanNights; i++) {
+        if (isWeekend(addDays(start, i)))
+          return c.json(
+            { error: 'That option is only available on weekdays — pick a Monday–Friday date.' },
+            400,
+          );
+      }
+    }
     const endDate = shape === 'range' ? end : null;
 
     const nights = shape === 'range' ? nightsBetween(start, end) : null;

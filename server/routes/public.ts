@@ -16,13 +16,10 @@ export const publicRoutes = new Hono<AppEnv>()
       slug: tenant.Slug,
       displayName: tenant.DisplayName,
       accentColor: tenant.AccentColor,
-      maxBoardingPets: tenant.MaxBoardingPets,
-      maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
-      maxStayNights: tenant.MaxStayNights,
       timezone: tenant.Timezone,
       contactEmail: tenant.ContactEmail,
       contactPhone: tenant.ContactPhone,
-      petTypes: petTypes.filter((p) => p.Enabled).map((p) => p.PetType),
+      petTypes: petTypes.map((p) => ({ slug: p.PetType, label: p.Label })),
       services: services
         .filter((s) => s.Enabled)
         .map((svc) => ({
@@ -37,6 +34,7 @@ export const publicRoutes = new Hono<AppEnv>()
           maxNights: svc.MaxNights,
           minPetCount: svc.MinPetCount,
           maxPetCount: svc.MaxPetCount,
+          acceptedPetTypes: svc.AcceptedPetTypes,
           options: options
             .filter((o) => o.ServiceType === svc.ServiceType)
             .map((o) => ({
@@ -47,6 +45,7 @@ export const publicRoutes = new Hono<AppEnv>()
               startTime: o.StartTime,
               endTime: o.EndTime,
               capacity: o.Capacity,
+              weekdaysOnly: Boolean(o.WeekdaysOnly),
             })),
         })),
     });
@@ -80,7 +79,7 @@ export const publicRoutes = new Hono<AppEnv>()
       const rangeError = validateBoardingRange(
         start,
         end,
-        tenant.MaxStayNights,
+        service.MaxNights,
         tenant.Timezone ?? undefined,
       );
       if (rangeError) return c.json({ error: rangeError.error }, rangeError.status);

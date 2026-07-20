@@ -1,25 +1,26 @@
 /*
- * Sitter dashboard — Pawbook's warm modern identity, first-party.
- * Cream page, white section cards with icon headers, pine-navy actions.
- * Marigold appears only as highlight (focus rings, section icons); the serif
- * and mono-uppercase ledger look is gone. Mono survives only in embed snippets.
+ * Sitter dashboard — Pawbook's forest identity, first-party.
+ * Cream-parchment page, white section cards with icon headers, deep-pine actions.
+ * Leaf green appears only as highlight (focus rings, section icons); moss/sage
+ * mid-tones carry washes and quiet borders, bark-warm neutrals rule the lines.
+ * Mono survives only in embed snippets.
  */
 :root {
-  --page: #faf8f3;
+  --page: #f6f4ea;
   --card: #ffffff;
-  --ink: #1c3a4a;
-  --body: #26312e;
-  --soft: #5c6b66;
-  --line: #e7e0d2;
-  --sage: #9db8a4;
-  --sage-wash: #eef3ee;
-  --gold: #c77d0a;
-  --ok: #1f6b57;
-  --ok-wash: #eef6f0;
-  --warn: #8a5a00;
-  --warn-wash: #fdf3e0;
-  --bad: #b3403a;
-  --bad-wash: #faf0ef;
+  --ink: #22422e;
+  --body: #2a352c;
+  --soft: #59695b;
+  --line: #ddd8c5;
+  --sage: #94ae9a;
+  --sage-wash: #ebf1e7;
+  --leaf: #4a7d3c;
+  --ok: #23684a;
+  --ok-wash: #e7f2e8;
+  --warn: #7c530f;
+  --warn-wash: #f8efdb;
+  --bad: #b23a30;
+  --bad-wash: #f8ebe8;
   --display:
     ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Quicksand, system-ui, sans-serif;
   --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
@@ -84,7 +85,7 @@ body {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 10px 24px -22px rgba(28, 58, 74, 0.45);
+  box-shadow: 0 10px 24px -22px rgba(23, 42, 29, 0.45);
 }
 
 .pb-wrap h2 {
@@ -99,8 +100,18 @@ body {
 }
 
 .pb-wrap h2 svg {
-  color: var(--gold);
+  color: var(--leaf);
   flex: none;
+}
+
+/* Sub-heads inside a section (Questions, Booking limits, Revenue over time…):
+   same display voice as h2, stepped down so they never outweigh the section title. */
+.pb-wrap h3 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--ink);
+  margin: 18px 0 10px;
 }
 
 /* Notes under a heading: what this section does / when changes apply. */
@@ -142,6 +153,11 @@ body {
   font-family: var(--sans);
   font-size: 0.95rem;
   color: var(--body);
+  /* Flex/grid items default to a content-based min-width, so a long select option list
+     (timezones) or a native file-input control (large intrinsic min-content) can force
+     their flex container wider than the viewport at narrow widths. Let them shrink. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .pb-wrap input[type='number'] {
@@ -165,8 +181,8 @@ body {
 .pb-wrap textarea:focus,
 .pb-wrap select:focus {
   outline: none;
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 22%, transparent);
+  border-color: var(--leaf);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--leaf) 22%, transparent);
 }
 
 .pb-wrap textarea {
@@ -175,21 +191,24 @@ body {
   font-size: 0.8rem;
   line-height: 1.5;
   resize: vertical;
-  background: #fbfaf6;
+  background: #faf9f1;
 }
 
-/* ── Buttons ───────────────────────────────────────────────────── */
+/* ── Buttons ───────────────────────────────────────────────────────
+   Two sizes only. Default (this rule): form-level actions — Save, Add,
+   wizard Next. Compact (further down): row-level actions repeated per
+   list item, whose visual weight multiplies with the list. */
 .pb-wrap button {
-  padding: 10px 16px;
+  padding: 8px 14px;
   border-radius: 10px;
   border: 1px solid var(--ink);
   background: var(--ink);
   color: #fff;
   font-family: var(--display);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  min-height: 40px;
+  min-height: 36px;
   transition: filter 0.12s ease;
 }
 
@@ -249,7 +268,7 @@ body {
 }
 
 .pb-sidenav svg {
-  color: var(--gold);
+  color: var(--leaf);
   flex: none;
 }
 
@@ -280,12 +299,28 @@ body {
     flex: none;
     white-space: nowrap;
   }
+
+  /* .pb-layout's align-items: flex-start (desktop-only concern: keeps the sticky sidenav from
+     stretching to the panel's height) also applies on the cross axis once flex-direction flips
+     to column here — without a width, that sizes the panel to fit its widest content (e.g. a
+     long timezone <select> or a native file input's intrinsic min-content) instead of the
+     viewport, overflowing narrow screens. Stretch it back to the full row width. */
+  .pb-panel {
+    width: 100%;
+  }
 }
 
-/* Row-level actions (Remove, Disconnect, Add duration) are quiet ghosts. */
-.pb-wrap li button,
-.pb-wrap .pb-options button,
-.pb-signout {
+/* Row-level / secondary actions (Remove, Delete, Sign out, Add question, the wizard's
+   Back, calendar month nav, owner-console table actions) are quiet ghosts. Every
+   selector is prefixed with .pb-wrap so it outranks the `.pb-wrap button` primary
+   style above. Hint `?` buttons opt out — they have their own circle treatment. */
+.pb-wrap li button:not(:where(.pb-hint-btn)),
+.pb-wrap td button,
+.pb-wrap .pb-options button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-questions button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-cal-nav button,
+.pb-wrap .pb-wizard-back,
+.pb-wrap .pb-signout {
   background: none;
   color: var(--soft);
   border: 1px solid var(--line);
@@ -293,13 +328,46 @@ body {
   font-weight: 500;
 }
 
-.pb-wrap li button:hover,
-.pb-wrap .pb-options button:hover,
-.pb-signout:hover {
+.pb-wrap li button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap td button:hover,
+.pb-wrap .pb-options button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap .pb-questions button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap .pb-cal-nav button:hover,
+.pb-wrap .pb-wizard-back:hover,
+.pb-wrap .pb-signout:hover {
   filter: none;
   color: var(--ink);
   border-color: var(--sage);
   background: var(--sage-wash);
+}
+
+/* Compact scale for actions that repeat per row (Confirm/Decline/Payments, Remove,
+   Move up/down) plus small chrome (month nav, Sign out): they should read as quiet
+   controls next to the row text, not as form buttons. 28px keeps a comfortable
+   ≥24px touch target. */
+.pb-wrap li button:not(:where(.pb-hint-btn)),
+.pb-wrap td button,
+.pb-wrap .pb-options button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-questions button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-cal-nav button,
+.pb-wrap .pb-signout {
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
+/* The month-nav chevrons hold icons; keep them square-ish and centered. */
+.pb-wrap .pb-cal-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* "Add an option" is a direct child of the options flex column — without this it
+   stretches into a full-width bar. */
+.pb-wrap .pb-options > button {
+  align-self: flex-start;
 }
 
 /* ── Data lists ────────────────────────────────────────────────── */
@@ -376,20 +444,10 @@ body {
   align-items: center;
 }
 
-.pb-row input {
+/* Direct children only: a checkbox or field nested inside an inline label must not
+   inherit the stretchy text-input basis (it wraps the label onto two lines). */
+.pb-row > input {
   flex: 1 1 12rem;
-}
-
-.pb-service {
-  margin-bottom: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px dashed var(--line);
-}
-
-.pb-service:last-of-type {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
 }
 
 .pb-options {
@@ -416,6 +474,17 @@ body {
   font-weight: 400;
 }
 
+/* Content links (Download example CSV, the wizard's "Your website") — ink with the
+   leaf-green underline, instead of browser-default blue/purple. Nav links style themselves. */
+.pb-panel a,
+.pb-wizard a,
+.pb-login a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--leaf);
+  text-underline-offset: 2px;
+}
+
 /* ── Sticky save bar (appears only when settings are dirty) ────── */
 .pb-savebar {
   position: fixed;
@@ -430,7 +499,7 @@ body {
   padding: 12px 20px;
   background: var(--ink);
   color: #fff;
-  box-shadow: 0 -8px 24px -16px rgba(28, 58, 74, 0.7);
+  box-shadow: 0 -8px 24px -16px rgba(23, 42, 29, 0.7);
 }
 
 .pb-savebar p {
@@ -439,12 +508,12 @@ body {
 }
 
 .pb-savebar-error {
-  color: #ffb9b2;
+  color: #f4b9ae;
   font-weight: 600;
 }
 
 .pb-savebar-saved {
-  color: #bfe7cd;
+  color: #bce3c6;
   font-weight: 600;
 }
 
@@ -458,6 +527,17 @@ body {
   filter: brightness(0.92);
 }
 
+/* BookingList's confirmation bar (Confirm/Decline/Cancel result, incl. the "couldn't email the
+   client" notice) reuses .pb-savebar for the same "can't scroll out of view" guarantee, but it
+   lives inside .pb-panel while the dashboard's own unsaved-changes/save-result bar is a later
+   sibling at the same fixed bottom:0 — without this, the dashboard bar (later in the DOM) paints
+   over it. --dash-savebar-h is measured in App.tsx (0px when that bar isn't showing) so this one
+   stacks just above it instead, rather than guessing a static offset that could be wrong once the
+   dashboard bar's text wraps to two lines. */
+.pb-panel .pb-savebar {
+  bottom: var(--dash-savebar-h, 0px);
+}
+
 /* ── Login card ────────────────────────────────────────────────── */
 .pb-login {
   max-width: 400px;
@@ -466,7 +546,7 @@ body {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 18px 40px -28px rgba(28, 58, 74, 0.55);
+  box-shadow: 0 18px 40px -28px rgba(23, 42, 29, 0.55);
 }
 
 .pb-login h1 {
@@ -514,11 +594,11 @@ body {
   display: block;
   width: 100%;
   border: 0;
-  background: #fbfaf6;
+  background: #faf9f1;
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--gold) 45%, transparent);
+  outline: 3px solid color-mix(in srgb, var(--leaf) 45%, transparent);
   outline-offset: 2px;
 }
 
@@ -552,6 +632,11 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .pb-wrap button {
+    transition: none;
+  }
+
+  .pb-wrap input[type='checkbox'].pb-svc-switch,
+  .pb-wrap input[type='checkbox'].pb-svc-switch::before {
     transition: none;
   }
 }
@@ -638,9 +723,701 @@ body {
   white-space: nowrap;
   display: inline-block;
   min-width: 0;
+  /* inline-block + overflow:hidden moves the baseline to the box bottom, floating the
+     name above the surrounding text — pin the box to the line instead. */
+  vertical-align: bottom;
 }
 
 .pb-truncate-block {
   display: block;
   min-width: 0;
+}
+
+/* ---- Quick-setup wizard ---- */
+.pb-wizard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+.pb-wizard {
+  width: min(560px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px;
+}
+.pb-wizard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+/* Shared tile base — the wizard's card language, composed by both the wizard's
+   .pb-wizard-cardbtn and Services & rates' .pb-svc-card/.pb-svc-add so the two
+   cannot drift (spec 2026-07-19-services-rates-redesign). Prefixed with
+   .pb-wrap (like the ghost buttons above) to outrank the `.pb-wrap button`
+   primary style — without it button tiles render as filled navy buttons. */
+.pb-wrap .pb-tile-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--body);
+  font: inherit;
+}
+.pb-wrap button.pb-tile-btn {
+  cursor: pointer;
+}
+.pb-wrap button.pb-tile-btn:hover {
+  filter: none;
+}
+.pb-wrap .pb-tile-btn.pb-on {
+  border-color: var(--sage);
+  background: var(--sage-wash);
+}
+/* Wizard-only extras on top of the tile base. */
+.pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {
+  border-color: var(--sage);
+}
+.pb-wrap .pb-wizard-cardbtn:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.pb-wrap .pb-wizard-cardbtn span {
+  color: var(--soft);
+  font-size: 0.85em;
+}
+.pb-wizard-price {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.pb-wizard-done {
+  color: var(--ok);
+  font-size: 0.85em;
+}
+.pb-wizard-custom summary {
+  cursor: pointer;
+  color: var(--soft);
+  font-size: 0.85em;
+}
+.pb-wizard-custom > div {
+  margin: 8px 0 0 12px;
+}
+.pb-wizard-nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pb-wizard-nav .pb-wizard-skip {
+  margin-right: auto;
+  background: none;
+  border: none;
+  color: var(--soft);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* ── Login "New here?" + owner console ─────────────────────────────────────── */
+.pb-login-signup {
+  margin-top: 16px;
+}
+.pb-linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+/* Lets the table itself scroll sideways on a narrow viewport instead of the page body — a long
+   email or the "Joined — business deleted" chip shouldn't be able to widen the whole page. */
+.pb-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.pb-owner-console table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+.pb-owner-console th,
+.pb-owner-console td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+/* The email column: scoped (not every cell) so this doesn't also make the Actions column's
+   "Remove" button wrap letter-by-letter. An email is one long unbreakable token, which would
+   otherwise force this cell — and the table, and (without .pb-table-wrap) the page — wider than
+   the viewport at 360px. */
+.pb-owner-console td:first-child {
+  overflow-wrap: anywhere;
+}
+.pb-owner-console .pb-chip {
+  /* .pb-chip is `white-space: nowrap` everywhere else (short one/two-word status text), but
+     "Joined — business deleted" is long enough to overflow a narrow cell on its own — allow it
+     to wrap here without touching the shared rule other chips (Bookings, Clients) rely on. */
+  white-space: normal;
+}
+
+/* ── Services & rates: expanded editor (spec 2026-07-19) ───────── */
+/* grid-column spans the summary grid once Task 4 lands; harmless before. */
+.pb-svc-editor {
+  grid-column: 1 / -1;
+  padding: 4px 14px 14px;
+  background: var(--card);
+  border: 1px solid var(--sage);
+  border-radius: 10px;
+}
+
+.pb-svc-editor-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Footer buttons are quiet ghosts (same treatment as .pb-options/.pb-questions
+   buttons above); Delete service gets a danger tint. */
+.pb-wrap .pb-svc-editor-foot button {
+  background: none;
+  color: var(--soft);
+  border: 1px solid var(--line);
+  font-family: var(--sans);
+  font-weight: 500;
+}
+.pb-wrap .pb-svc-editor-foot button:hover {
+  filter: none;
+  color: var(--ink);
+  border-color: var(--sage);
+  background: var(--sage-wash);
+}
+/* Un-scoped (button.pb-danger, not just the editor footer's .pb-danger) so any delete/remove
+   action tagged .pb-danger gets the red tint — e.g. the pet-type registry's delete button in
+   PetsSection. Written as `button.pb-danger`, matching .pb-svc-editor-foot button's specificity
+   (two classes + one type) rather than losing to it, so this still wins by source order. */
+.pb-wrap button.pb-danger {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+}
+.pb-wrap button.pb-danger:hover {
+  color: var(--bad);
+  border-color: var(--bad);
+  background: var(--bad-wash);
+}
+
+/* ── Services & rates: summary card grid ───────────────────────── */
+.pb-svc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+/* The card div composes .pb-tile-btn; padding moves to the expand button so
+   the whole face (minus the switch) is tappable. */
+.pb-wrap .pb-svc-card {
+  position: relative;
+  padding: 0;
+}
+
+.pb-wrap .pb-svc-card:hover {
+  border-color: var(--sage);
+}
+
+/* The expand button IS the card body — reset against `.pb-wrap button`. */
+.pb-wrap .pb-svc-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 52px 12px 12px; /* right inset clears the switch */
+  background: none;
+  border: none;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--body);
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.pb-wrap .pb-svc-open:hover {
+  filter: none;
+}
+
+/* Disabled service: content dims; everything stays operable (no disabled attrs). */
+.pb-wrap .pb-svc-card:not(.pb-on) .pb-svc-open {
+  opacity: 0.65;
+}
+
+.pb-svc-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  color: var(--ink);
+}
+
+.pb-svc-title svg {
+  color: var(--leaf);
+  flex: none;
+}
+
+.pb-svc-price {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pb-svc-price-soft {
+  color: var(--soft);
+  font-weight: 400;
+}
+
+/* Enable switch — semantics stay input[type=checkbox]; visual is a small pill.
+   (Attribute+class outranks the global 17px checkbox rule.) */
+.pb-wrap input[type='checkbox'].pb-svc-switch {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  /* Explicit z-index so the switch's own stacking context always paints above
+     .pb-svc-open — without it, disabling a card gives the button opacity < 1,
+     which forces a stacking context that (per CSS painting order, both being
+     z-index:auto positioned/stacking-context descendants painted in tree
+     order) wins over the switch since it comes later in the DOM. That made
+     the switch's hit-box unclickable by mouse on disabled cards. */
+  z-index: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  accent-color: var(--ink);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.pb-wrap input[type='checkbox'].pb-svc-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--soft);
+  transition:
+    translate 0.12s ease,
+    background 0.12s ease;
+}
+
+.pb-wrap input[type='checkbox'].pb-svc-switch:checked {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.pb-wrap input[type='checkbox'].pb-svc-switch:checked::before {
+  translate: 14px 0;
+  background: #fff;
+}
+
+/* Expanded card: sage border + a notch pointing at the full-width editor below.
+   background: inherit picks up white or the sage wash automatically. */
+.pb-wrap .pb-svc-card.pb-svc-expanded {
+  border-color: var(--sage);
+}
+
+.pb-svc-card.pb-svc-expanded::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border-right: 1px solid var(--sage);
+  border-bottom: 1px solid var(--sage);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* Editor entry motion — only outside prefers-reduced-motion (spec). */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-svc-editor {
+    transition:
+      opacity 0.18s ease,
+      translate 0.18s ease;
+  }
+
+  @starting-style {
+    .pb-svc-editor {
+      opacity: 0;
+      translate: 0 -6px;
+    }
+  }
+}
+
+/* Dashed add tile + card-sized empty-state invitation. */
+.pb-wrap .pb-svc-add {
+  justify-content: center;
+  align-items: center;
+  min-height: 96px;
+  background: none;
+  border-style: dashed;
+  color: var(--soft);
+  font-family: var(--display);
+  font-weight: 600;
+}
+
+.pb-wrap .pb-svc-add:hover {
+  border-color: var(--sage);
+  color: var(--ink);
+  background: var(--sage-wash);
+}
+
+.pb-wrap .pb-svc-add.pb-svc-expanded {
+  border-style: solid;
+  border-color: var(--sage);
+}
+
+.pb-wrap .pb-svc-empty {
+  justify-content: center;
+  align-items: center;
+  min-height: 96px;
+  color: var(--soft);
+  text-align: center;
+}
+
+/* ── Calendar section ──────────────────────────────────────────── */
+.pb-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.pb-cal-head h3 {
+  margin: 0;
+}
+
+.pb-cal-nav {
+  display: flex;
+  gap: 6px;
+}
+
+/* Always 7 tracks, minmax(0, 1fr) so long chip text can truncate instead of forcing the
+   column (and the page) wider — no horizontal scroll at any viewport. */
+.pb-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.pb-cal-dow {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--soft);
+  padding: 2px 0;
+}
+
+.pb-cal-cell {
+  min-height: 92px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Leading offset cells before the 1st. */
+.pb-cal-cell.pb-cal-blank {
+  border-color: transparent;
+  background: none;
+}
+
+.pb-cal-cell.pb-cal-weekend {
+  background: var(--page);
+}
+
+/* Day-state tints — a coordinated set, one tint per day (after the weekend rule so a
+   booked/blocked weekend shows its state, not the weekend grey). Green family = has a
+   confirmed booking; a paler half-strength wash = pending only (the hollow dashed chips
+   carry the shape cue); red family = time off / not available. */
+.pb-cal-cell.pb-cal-booked {
+  background: var(--ok-wash);
+  border-color: color-mix(in srgb, var(--ok) 28%, var(--line));
+}
+
+.pb-cal-cell.pb-cal-pend {
+  background: color-mix(in srgb, var(--ok-wash) 40%, var(--card));
+  border-color: color-mix(in srgb, var(--ok) 14%, var(--line));
+}
+
+.pb-cal-cell.pb-cal-off {
+  background: var(--bad-wash);
+  border-color: color-mix(in srgb, var(--bad) 28%, var(--line));
+}
+
+.pb-cal-cell.pb-cal-today {
+  box-shadow: 0 0 0 2px var(--leaf);
+}
+
+.pb-cal-daynum {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--soft);
+}
+
+/* Time off: red-family full-width band at the top of the cell (paint order puts it
+   first). The band's position + label text are the non-color cues; the dark clay text
+   holds >=4.5:1 on the band and >=3:1 against the surrounding washes. */
+.pb-cal-timeoff {
+  background: color-mix(in srgb, var(--bad) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  border-radius: 4px;
+  color: var(--bad);
+  font-size: 0.7rem;
+  padding: 1px 4px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Booking chips: solid = confirmed, dashed hollow = pending. Two-class selectors outrank
+   the `.pb-wrap button` primary style (same specificity trick as .pb-wizard-cardbtn). */
+.pb-wrap .pb-cal-chip {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 1px 5px;
+  text-align: left;
+  border: 1px solid var(--ink);
+  border-radius: 6px;
+  background: var(--ink);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pb-wrap .pb-cal-chip.pb-cal-chip-pending {
+  background: none;
+  color: var(--ink);
+  border-style: dashed;
+  border-color: var(--leaf);
+}
+
+.pb-wrap .pb-cal-more {
+  background: none;
+  border: none;
+  min-height: 0;
+  padding: 0 5px;
+  text-align: left;
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pb-wrap .pb-cal-more:hover {
+  filter: none;
+  color: var(--ink);
+}
+
+.pb-cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: var(--soft);
+}
+
+.pb-cal-key {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 4px;
+  margin-right: 5px;
+}
+
+.pb-cal-key-confirmed {
+  background: var(--ink);
+}
+
+.pb-cal-key-pending {
+  border: 1px dashed var(--leaf);
+}
+
+.pb-cal-key-timeoff {
+  background: color-mix(in srgb, var(--bad) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+}
+
+.pb-cal-sync {
+  margin-top: 6px;
+}
+
+/* Deep-link landing: brief highlight on the focused Bookings row. */
+.pb-focus-flash {
+  animation: pb-focus-fade 2s ease;
+}
+
+@keyframes pb-focus-fade {
+  0%,
+  60% {
+    background: var(--sage-wash);
+  }
+  100% {
+    background: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pb-focus-flash {
+    animation: none;
+    background: var(--sage-wash); /* class is removed after 2s, so this still clears */
+  }
+}
+
+/* Phone width: the month stays a scannable 7-column grid — smaller chips, shorter cells,
+   never horizontal scroll. */
+@media (max-width: 640px) {
+  .pb-cal-grid {
+    gap: 2px;
+  }
+
+  .pb-cal-cell {
+    min-height: 64px;
+    padding: 2px;
+    border-radius: 6px;
+  }
+
+  .pb-wrap .pb-cal-chip,
+  .pb-cal-timeoff,
+  .pb-wrap .pb-cal-more {
+    font-size: 0.6rem;
+    padding: 0 3px;
+  }
+}
+
+/* ── Hint toggletips: `?` buttons with explainer popovers ─────────
+   (spec 2026-07-19-help-and-explainers-design) */
+.pb-hintwrap {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+/* 20px visible circle with a 24px tap target: padding + background-clip
+   keep the wash inside the content box. The two-class selector outranks
+   the `.pb-wrap button` primary style (same trick as .pb-cal-chip). */
+.pb-wrap .pb-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 2px;
+  border: none;
+  border-radius: 50%;
+  background: var(--sage-wash);
+  background-clip: content-box;
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pb-wrap .pb-hint-btn:hover {
+  filter: none;
+  color: var(--ink);
+}
+
+/* Small white card under the button — the section-card shadow at reduced
+   spread. z-index sits above .pb-sidenav (15) and below .pb-savebar (30).
+   Explicit font/color/weight so the popover reads the same inside an h2,
+   a bold table header, or a soft field label. */
+.pb-hint-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 18px -14px rgba(23, 42, 29, 0.45);
+  color: var(--body);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+}
+
+/* Opacity fade only, and only outside prefers-reduced-motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-hint-pop {
+    animation: pb-hint-fade 0.12s ease;
+  }
+}
+
+@keyframes pb-hint-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Field + hint side by side (ServiceEditor's Booking limits caps); the row
+   takes over the label's usual bottom margin. */
+.pb-cap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.pb-cap-row > label {
+  margin-bottom: 0;
 }

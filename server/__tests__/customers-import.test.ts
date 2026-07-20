@@ -59,7 +59,26 @@ describe('POST /:slug/admin/customers/import', () => {
     const { body } = await importCsv(env, csv);
     expect(body.importedCustomers).toBe(1);
     expect(body.importedPets).toBe(0);
-    expect(body.skippedRows).toEqual([{ row: 2, reason: "'ferret' is not an enabled pet type" }]);
+    expect(body.skippedRows).toEqual([{ row: 2, reason: "'ferret' is not one of your pet types" }]);
+  });
+
+  it('imports a pet of a custom registry type (rabbit)', async () => {
+    const { env } = createTestEnv();
+    const token = await adminToken('tnt_sunnypaws');
+    const res = await app.request(
+      '/api/sunny-paws/admin/customers/import',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csv: 'email,name,pet name,pet type\nhopper@example.com,Hope,Thumper,rabbit',
+        }),
+      },
+      env,
+    );
+    const body = (await res.json()) as { importedPets: number; skippedRows: unknown[] };
+    expect(body.importedPets).toBe(1);
+    expect(body.skippedRows).toEqual([]);
   });
 
   it('skips a pet name given without a type, and vice versa', async () => {

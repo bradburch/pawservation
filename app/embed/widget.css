@@ -1,23 +1,24 @@
 /*
- * Embed widget — warm modern pet-care identity, restrained for a guest on any host page.
+ * Embed widget — forest pet-care identity, restrained for a guest on any host page.
  * The tenant's chosen colour drives every ACTION via --bp-accent (set at runtime in App.tsx);
- * Pawbook owns only the quiet bones: cream surface, pine-navy ink, sage neutrals, one rounded
- * display face for headings/buttons. The signature moment is the calendar's connected range band.
+ * the fallback is Pawbook's own forest primary. Pawbook owns only the quiet bones: cream
+ * parchment surface, deep-pine ink, moss/sage neutrals, one rounded display face for
+ * headings/buttons. The signature moment is the calendar's connected range band.
  */
 :root {
-  --bp-accent: #c77d0a; /* fallback; the tenant overrides this per widget */
-  --bp-page: #faf8f3;
+  --bp-accent: #2e6440; /* forest-primary fallback; the tenant overrides this per widget */
+  --bp-page: #f6f4ea;
   --bp-card: #ffffff;
-  --bp-ink: #1c3a4a;
-  --bp-body: #26312e;
-  --bp-soft: #5c6b66;
-  --bp-line: #e7e0d2;
-  --bp-sage: #9db8a4;
-  --bp-sage-wash: #eef3ee;
-  --bp-ok: #1f6b57;
-  --bp-ok-wash: #eef6f0;
-  --bp-bad: #b3403a;
-  --bp-bad-wash: #faf0ef;
+  --bp-ink: #22422e;
+  --bp-body: #2a352c;
+  --bp-soft: #59695b;
+  --bp-line: #ddd8c5;
+  --bp-sage: #94ae9a;
+  --bp-sage-wash: #ebf1e7;
+  --bp-ok: #23684a;
+  --bp-ok-wash: #e7f2e8;
+  --bp-bad: #b23a30;
+  --bp-bad-wash: #f8ebe8;
   --bp-display:
     ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Quicksand, system-ui, sans-serif;
   --bp-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
@@ -37,7 +38,7 @@ body {
   background: var(--bp-page);
   border: 1px solid var(--bp-line);
   border-radius: 16px;
-  box-shadow: 0 14px 34px -26px rgba(28, 58, 74, 0.5);
+  box-shadow: 0 14px 34px -26px rgba(23, 42, 29, 0.5);
 }
 
 /* ── Headings & topline ────────────────────────────────────────── */
@@ -277,7 +278,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--bp-sage);
+  color: var(--bp-soft);
   padding: 6px 0;
 }
 
@@ -316,12 +317,17 @@ body {
 }
 
 .bp-book .bp-cal-day.bp-past {
-  color: #c4c4bb;
+  color: #b9bfae;
   cursor: default;
 }
 
+/* Not available (full, blocked, weekday-only weekend): the red-family slot — a faint
+   red disc with the clay-red struck-through day number (the strikethrough stays as the
+   non-color cue; the red holds >=4.5:1 on both the disc and the page). Matches the
+   admin calendar's red time-off tint. */
 .bp-book .bp-cal-day.bp-unavail {
-  color: color-mix(in srgb, var(--bp-bad) 70%, #fff);
+  color: var(--bp-bad);
+  background: color-mix(in srgb, var(--bp-bad) 12%, #fff);
   cursor: default;
   text-decoration: line-through;
 }
@@ -399,7 +405,10 @@ body {
 }
 
 .bp-lg-unavail::before {
-  background: color-mix(in srgb, var(--bp-bad) 55%, #fff);
+  width: 6px;
+  height: 6px;
+  background: color-mix(in srgb, var(--bp-bad) 10%, #fff);
+  border: 1px solid var(--bp-bad);
 }
 
 /* ── Details (pets + duration + summary) ───────────────────────── */
@@ -410,19 +419,26 @@ body {
   margin-top: 6px;
 }
 
-.bp-pets {
+.bp-pets,
+.bp-questions {
   border: none;
   padding: 0;
   margin: 0;
 }
 
-.bp-pets legend {
+.bp-pets legend,
+.bp-questions legend {
   font-family: var(--bp-sans);
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--bp-soft);
   padding: 0;
   margin-bottom: 8px;
+}
+
+/* Question fields stack with the same rhythm as the rest of the form. */
+.bp-questions .bp-field + .bp-field {
+  margin-top: 12px;
 }
 
 .bp-pet-chips {
@@ -646,4 +662,13 @@ body {
   .bp-identify input {
     font-size: 16px; /* prevents iOS zoom-on-focus */
   }
+}
+
+.bp-pet-chip.bp-off {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.bp-pet-hint {
+  font-size: 0.78em;
+  color: var(--bp-soft);
 }

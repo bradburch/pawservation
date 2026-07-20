@@ -3,6 +3,7 @@ import { adminApi, type AnalyticsPayload } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
 import type { Session } from '../shared.js';
+import { Hint } from '../Hint';
 
 const NO_PAYMENTS = 'No payments recorded yet.';
 
@@ -126,6 +127,10 @@ export function EarningsSection({
     <>
       <h2>
         <IconChartBar size={18} /> Earnings
+        <Hint label="Earnings">
+          Built entirely from the payments you record on bookings. Record every payment and this
+          page keeps itself accurate.
+        </Hint>
       </h2>
 
       <div className="pb-tiles">

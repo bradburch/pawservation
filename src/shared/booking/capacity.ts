@@ -1,42 +1,63 @@
-import type { RequestType } from '../types/booking.js';
 import { addDays, DATE_RE } from '../util/dates.js';
 
 // Single source of truth for the booking calendar's capacity + conflict rules,
 // shared between the web client (calendar UX) and the web server (validation).
 //
-// Capacity is per-tenant config via CapacityLimits: a `null` dimension is UNLIMITED
-// (auto pass-through) and is never compared. Admin-blocked dates always block.
-// House-sit/boarding may overlap by at most one day (structural rule, not a number).
+// Capacity is PER SERVICE (0015): each pool-drawing service carries its own cap
+// (MaxConcurrentPets for boarding-kind, MaxPerDay for housesit-kind); a `null` cap is
+// UNLIMITED (auto pass-through) and is never compared. Other services' occupancy is
+// invisible to a request's cap check. Admin-blocked dates always block.
+// The house-sit/boarding ≤1-day overlap rule stays TENANT-WIDE (all boarding-kind
+// services): it models the sitter's physical absence, not a pool.
 // Boundary (bookend) sharing: the start/end day of an existing booking may be
 // shared by a new booking's endpoint, EXCEPT for blocked events.
 
-/** Per-tenant capacity limits. `null` means no limit (auto pass-through). */
-export type CapacityLimits = {
-  maxBoardingPets: number | null;
-  maxHouseSitsPerDay: number | null;
-};
-
-export type DayCapacity = {
-  boarding: number;
-  houseSits: number;
-  blocked: number;
-  isBoundary: boolean;
-};
+export type PoolKind = 'boarding' | 'housesit';
 
 /** A normalized all-day calendar event for capacity building. `end_date` is exclusive. */
 export type CapacityEvent = {
   start_date: string;
   end_date?: string;
-  type: 'boarding' | 'house-sit' | 'blocked';
+  kind: PoolKind | 'blocked';
+  /** Pool identity — the service's slug. Required unless kind='blocked'. */
+  serviceType?: string;
   /**
-   * Number of pets the event covers — only meaningful for `boarding`, where capacity is
+   * Number of pets the event covers — only meaningful for boarding-kind, where capacity is
    * measured in PETS: a single 2-dog boarding fills both slots. Defaults to 1.
-   * House-sit (no pet limit) and blocked (binary) ignore it.
+   * Housesit-kind (day-counted) and blocked (binary) ignore it.
    */
   petCount?: number;
 };
 
-const emptyDay = (): DayCapacity => ({ boarding: 0, houseSits: 0, blocked: 0, isBoundary: false });
+export type DayCapacity = {
+  /** Occupancy per service: pets (boarding-kind) / bookings (housesit-kind). */
+  byService: Map<string, number>;
+  /** ALL boarding-kind pets on this day — drives the structural house-sit rule only. */
+  boardingTotal: number;
+  blocked: number;
+  isBoundary: boolean;
+};
+
+/** What the caller wants to book, carrying its own service's cap. */
+export type CapacityRequest = {
+  serviceType: string;
+  kind: PoolKind;
+  /** The service's MaxConcurrentPets / MaxPerDay; null = unlimited. */
+  cap: number | null;
+  /** Boarding-kind only; default 1. */
+  petCount?: number;
+};
+
+const emptyDay = (): DayCapacity => ({
+  byService: new Map(),
+  boardingTotal: 0,
+  blocked: 0,
+  isBoundary: false,
+});
+
+/** Units a request/event occupies in its own pool: pets for boarding-kind, 1 for housesit-kind. */
+const unitsOf = (kind: PoolKind, petCount: number | undefined): number =>
+  kind === 'boarding' ? Math.max(1, petCount ?? 1) : 1;
 
 /** Build a per-day capacity map from normalized events (end date exclusive). */
 export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity> {
@@ -56,96 +77,76 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
     if (!DATE_RE.test(start) || !DATE_RE.test(end)) continue;
 
     // Blocked events get no boundary — no bookend sharing.
-    if (event.type !== 'blocked') {
+    if (event.kind !== 'blocked') {
       getOrCreate(start).isBoundary = true;
       getOrCreate(end).isBoundary = true;
     }
 
-    const boardingPets = Math.max(1, event.petCount ?? 1);
     for (let d = start; d < end; d = addDays(d, 1)) {
-      const capacity = getOrCreate(d);
-      if (event.type === 'house-sit') capacity.houseSits += 1;
-      // Boarding capacity is counted in PETS: a 2-dog boarding fills both slots.
-      else if (event.type === 'boarding') capacity.boarding += boardingPets;
-      else capacity.blocked += 1;
+      const day = getOrCreate(d);
+      if (event.kind === 'blocked') {
+        day.blocked += 1;
+        continue;
+      }
+      const units = unitsOf(event.kind, event.petCount);
+      const key = event.serviceType ?? '';
+      day.byService.set(key, (day.byService.get(key) ?? 0) + units);
+      if (event.kind === 'boarding') day.boardingTotal += units;
     }
   }
 
   return byDate;
 }
 
-/** A day is unavailable when blocked, or a configured boarding/house-sit limit is met. */
-export function isUnavailableDate(capacity: DayCapacity, limits: CapacityLimits): boolean {
-  return (
-    capacity.blocked >= 1 ||
-    (limits.maxHouseSitsPerDay !== null && capacity.houseSits >= limits.maxHouseSitsPerDay) ||
-    (limits.maxBoardingPets !== null && capacity.boarding >= limits.maxBoardingPets)
-  );
-}
-
 /**
- * Can a request of `requestPets` pets NOT occupy this day in isolation? A block is always a
- * hard stop. Otherwise each request type is governed only by its OWN configured limit; a `null`
- * limit never blocks (auto pass-through). Cross-type interaction (a house-sit may not overlap
+ * Can a request NOT occupy this day in isolation? A block is always a hard stop. Otherwise the
+ * request is governed only by its OWN service's cap over its OWN service's occupancy; a `null`
+ * cap never blocks (auto pass-through). Cross-service interaction (a house-sit may not overlap
  * occupied boarding by more than one day) is enforced at the range level, not here.
  */
-export function dayBlocksRequest(
-  capacity: DayCapacity,
-  requestType: 'boarding' | 'house-sit',
-  limits: CapacityLimits,
-  requestPets = 1,
-): boolean {
-  if (capacity.blocked >= 1) return true;
-  if (requestType === 'boarding') {
-    const pets = Math.max(1, requestPets);
-    return limits.maxBoardingPets !== null && capacity.boarding + pets > limits.maxBoardingPets;
-  }
-  return limits.maxHouseSitsPerDay !== null && capacity.houseSits + 1 > limits.maxHouseSitsPerDay;
+export function dayBlocksRequest(day: DayCapacity, request: CapacityRequest): boolean {
+  if (day.blocked >= 1) return true;
+  if (request.cap === null) return false;
+  const units = unitsOf(request.kind, request.petCount);
+  return (day.byService.get(request.serviceType) ?? 0) + units > request.cap;
 }
 
 export function rangeHasConflict(
   startDate: string,
   endDateExclusive: string,
-  requestType: 'boarding' | 'house-sit',
+  request: CapacityRequest,
   capacityByDate: Map<string, DayCapacity>,
-  limits: CapacityLimits,
-  requestPetCount = 1,
 ): boolean {
   const requestEnd = addDays(endDateExclusive, -1); // last occupied night
-  const requestPets = Math.max(1, requestPetCount);
+  const units = unitsOf(request.kind, request.petCount);
   let houseSitBoardingOverlapDays = 0;
 
-  // A boarding request for more pets than the cap can NEVER fit — not even on an empty calendar,
+  // A request for more units than its own cap can NEVER fit — not even on an empty calendar,
   // where the day-by-day walk below has nothing to inspect. Enforcing it here keeps the engine
   // correct standalone (the single source of truth), so callers need no separate isolation check.
-  if (
-    requestType === 'boarding' &&
-    limits.maxBoardingPets !== null &&
-    requestPets > limits.maxBoardingPets
-  ) {
-    return true;
-  }
+  if (request.cap !== null && units > request.cap) return true;
 
   for (let date = startDate; date < endDateExclusive; date = addDays(date, 1)) {
-    const capacity = capacityByDate.get(date);
-    if (!capacity) continue;
+    const day = capacityByDate.get(date);
+    if (!day) continue;
 
-    // Structural rule: a house-sit may overlap existing boarding by at most one day.
-    if (requestType === 'house-sit' && capacity.boarding > 0) {
+    // Structural rule (TENANT-WIDE): a house-sit may overlap existing boarding — on ANY
+    // boarding-kind service — by at most one day. Models the sitter's absence, not a pool.
+    if (request.kind === 'housesit' && day.boardingTotal > 0) {
       houseSitBoardingOverlapDays += 1;
       if (houseSitBoardingOverlapDays > 1) return true;
     }
 
-    if (!dayBlocksRequest(capacity, requestType, limits, requestPets)) continue;
+    if (!dayBlocksRequest(day, request)) continue;
 
     const isRequestEndpoint = date === startDate || date === requestEnd;
-    if (isRequestEndpoint && capacity.isBoundary) continue;
+    if (isRequestEndpoint && day.isBoundary) continue;
 
     // Soft bookend: an unavailable (non-blocked) endpoint is allowed when the next day has
     // room for this request — the existing booking is ending here.
-    if (isRequestEndpoint && capacity.blocked === 0) {
+    if (isRequestEndpoint && day.blocked === 0) {
       const next = capacityByDate.get(addDays(date, 1));
-      if (!next || !dayBlocksRequest(next, requestType, limits, requestPets)) continue;
+      if (!next || !dayBlocksRequest(next, request)) continue;
     }
 
     return true;
@@ -161,30 +162,25 @@ export function walkHasConflict(date: string, capacityByDate: Map<string, DayCap
 
 export interface Opening {
   startDate: string; // YYYY-MM-DD
-  endDate?: string; // exclusive checkout, for boarding/house-sit only
+  endDate?: string; // exclusive checkout, for range services only
 }
 
 /**
- * Scan the prebuilt capacity map for available slots of `requestType`, between
- * `from` (inclusive) and `to` (inclusive candidate start dates), returning up to
- * `limit` openings. Reuses rangeHasConflict / walkHasConflict — NO new rules.
- * For boarding/house-sit, `nights` (default 1) defines the span [start, start+nights);
- * for walk/check-in, nights is ignored (single-day).
+ * Scan the prebuilt capacity map for available slots between `from` (inclusive) and `to`
+ * (inclusive candidate start dates), returning up to `limit` openings. Reuses
+ * rangeHasConflict / walkHasConflict — NO new rules. Range requests carry a full
+ * CapacityRequest; `timed` requests (walk/check-in style) are single-day, block-only.
+ *
+ * NOTE: no in-repo callers — kept because it is exported engine API whose semantics external
+ * consumers (e.g. the deployed booking MCP) mirror. Do not delete.
  */
 export function findOpenings(
   capacity: Map<string, DayCapacity>,
-  opts: {
-    requestType: RequestType;
-    from: string;
-    to: string;
-    nights?: number;
-    limit?: number;
-    petCount?: number;
-    limits: CapacityLimits;
-  },
+  opts:
+    | { request: CapacityRequest; from: string; to: string; nights?: number; limit?: number }
+    | { timed: true; from: string; to: string; limit?: number },
 ): Opening[] {
   const limit = opts.limit ?? 3;
-  const isTimed = opts.requestType === 'walk' || opts.requestType === 'check-in';
   const result: Opening[] = [];
 
   for (
@@ -192,23 +188,14 @@ export function findOpenings(
     start <= opts.to && result.length < limit;
     start = addDays(start, 1)
   ) {
-    if (isTimed) {
+    if ('timed' in opts) {
       if (!walkHasConflict(start, capacity)) {
         result.push({ startDate: start });
       }
     } else {
       const nights = Math.max(1, opts.nights ?? 1);
       const end = addDays(start, nights);
-      if (
-        !rangeHasConflict(
-          start,
-          end,
-          opts.requestType as 'boarding' | 'house-sit',
-          capacity,
-          opts.limits,
-          opts.petCount,
-        )
-      ) {
+      if (!rangeHasConflict(start, end, opts.request, capacity)) {
         result.push({ startDate: start, endDate: end });
       }
     }

@@ -1,7 +1,11 @@
 import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
 import { request } from '../shared-ui/api.js';
 
-export type Session = { token: string; slug: string; displayName: string };
+/** Sitter-dashboard session. `role` mirrors the server's login/session responses. */
+export type Session = { token: string; role: 'admin'; slug: string; displayName: string };
+/** Platform-owner session — no slug: owners are instance-level (see server/lib/token.ts). */
+export type OwnerSession = { token: string; role: 'owner'; email: string };
+export type AnySession = Session | OwnerSession;
 
 // `optionKey`/`id` are omitted-until-first-save on the client (the server derives/assigns them),
 // so both forms widen that one field to optional relative to the shared, field-complete shape.
@@ -16,20 +20,21 @@ export type ServiceForm = ServiceConstraints & {
   shape: 'range' | 'single';
   custom: boolean;
   enabled: boolean;
+  capacityKind: 'boarding' | 'housesit' | 'none';
+  maxConcurrentPets: number | null;
+  maxPerDay: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
+  acceptedPetTypes: string[] | null;
 };
 export type ServiceTemplate = { id: string; label: string };
 export type Settings = {
   displayName: string;
   accentColor: string;
-  maxBoardingPets: number | null;
-  maxHouseSitsPerDay: number | null;
-  maxStayNights: number | null;
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
-  petTypes: { petType: string; enabled: boolean }[];
+  petTypes: { petType: string; label: string }[];
   services: ServiceForm[];
   templates: ServiceTemplate[];
   blocked: { id: string; startDate: string; endDate: string | null }[];
@@ -56,19 +61,18 @@ export type SettingsSectionProps = {
 export type ServicePayload = ServiceConstraints & {
   type: string;
   enabled: boolean;
+  maxConcurrentPets: number | null;
+  maxPerDay: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
+  acceptedPetTypes: string[] | null;
 };
 export type SettingsPayload = {
   displayName: string;
   accentColor: string;
-  maxBoardingPets: number | null;
-  maxHouseSitsPerDay: number | null;
-  maxStayNights: number | null;
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
-  petTypes: string[];
   services: ServicePayload[];
 };
 

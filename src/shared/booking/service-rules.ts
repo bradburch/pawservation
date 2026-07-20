@@ -32,6 +32,7 @@ export type ServiceOption = {
   startTime: string | null; // 'HH:MM'; null = no fixed window
   endTime: string | null; // 'HH:MM'; null = no fixed window
   capacity: number | null; // max concurrent bookings/date; null = unlimited
+  weekdaysOnly: boolean; // true = bookable Mon–Fri only (server rejects Sat/Sun; widget marks weekends unavailable)
 };
 
 /** Safety rail (NOT a business rule): bounds regex-evaluation cost against a pathological
@@ -103,5 +104,27 @@ export function validateServiceConstraints(
     return `This service requires at least ${constraints.minPetCount} pet${constraints.minPetCount === 1 ? '' : 's'}.`;
   if (constraints.maxPetCount !== null && petCount > constraints.maxPetCount)
     return `This service allows at most ${constraints.maxPetCount} pet${constraints.maxPetCount === 1 ? '' : 's'}.`;
+  return null;
+}
+
+/**
+ * Per-service pet-type acceptance. `accepted` null = the service accepts every REGISTRY type
+ * (the codebase's null-is-unlimited convention); an array is an explicit allow-list of
+ * pet-type slugs. This is the single behavioral gate — the retired tenant-level enabled switch
+ * no longer exists. Checks EVERY selected pet and returns the first error, or null.
+ * `labelOf` maps a slug to its tenant display label — callers fall back to the raw slug
+ * (`(s) => labels.get(s) ?? s`).
+ */
+export function validatePetTypeAcceptance(
+  accepted: string[] | null,
+  serviceLabel: string,
+  pets: { name: string; petType: string }[],
+  labelOf: (slug: string) => string,
+): string | null {
+  if (accepted === null) return null;
+  for (const pet of pets) {
+    if (!accepted.includes(pet.petType))
+      return `${serviceLabel} doesn't accept ${labelOf(pet.petType).toLowerCase()} — ${pet.name} can't join this booking.`;
+  }
   return null;
 }

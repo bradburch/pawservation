@@ -13,6 +13,12 @@ interface Env {
    * on screen when email is unconfigured; anything else (incl. unset) fails closed in production.
    */
   ENVIRONMENT?: string;
+  /**
+   * Comma-separated platform-owner emails (each trimmed + lowercased on parse). Owners log in
+   * through the same form but route to the owner console. Unset/empty ⇒ no owners ⇒ owner
+   * console unreachable (safe default). Set with `wrangler secret put OWNER_EMAILS`.
+   */
+  OWNER_EMAILS?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /** Google OAuth2 client secret. `wrangler secret put GOOGLE_CLIENT_SECRET`. */

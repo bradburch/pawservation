@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { adminApi } from '../../shared-ui/api.js';
 import { IconPlug } from '../../shared-ui/icons';
 import type { Settings } from '../shared.js';
+import { Hint } from '../Hint';
 
 /**
  * Small inline field for setting the pet-sitting calendar id on a connected Google Calendar.
@@ -82,6 +83,10 @@ export function AppsSection({
     <>
       <h2>
         <IconPlug size={18} /> Connected apps
+        <Hint label="Connected apps">
+          Link Pawbook to tools you already use. With Google Calendar connected, bookings appear on
+          your own calendar automatically.
+        </Hint>
       </h2>
       <ul>
         <li>

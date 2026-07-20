@@ -1,7 +1,14 @@
 // Booking, date, and pricing core — pure TypeScript with no runtime dependencies.
 export { formatShortDate, formatBlockRange } from './util/date-format.js';
 export {
+  serviceSummary,
+  type ServiceSummary,
+  type ServiceSummaryInput,
+  type ServiceSummaryOption,
+} from './util/service-summary.js';
+export {
   addDays,
+  isWeekend,
   nightsBetween,
   getPacificDateStr,
   DATE_RE,
@@ -12,8 +19,9 @@ export {
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
-  type CapacityLimits,
+  type CapacityRequest,
   type DayCapacity,
+  type PoolKind,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
 export {
@@ -29,6 +37,7 @@ export {
   validateAnswer,
   validateAnswers,
   validateServiceConstraints,
+  validatePetTypeAcceptance,
   type ServiceQuestion,
   type ServiceConstraints,
   type ServiceOption,

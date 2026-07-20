@@ -52,7 +52,7 @@ describe('GET /api/:slug/availability/month', () => {
     const d20 = body.days.find((d) => d.date === '2026-10-20')!;
     expect(d20.status).toBe('partial');
     expect(d20.used).toBe(1);
-    expect(d20.max).toBe(2); // Sunny Paws seeded MaxBoardingPets=2
+    expect(d20.max).toBe(2); // Sunny Paws boarding seeded MaxConcurrentPets=2
     expect(d20.mine).toBe(true);
 
     const d15 = body.days.find((d) => d.date === '2026-10-15')!;
@@ -124,7 +124,7 @@ describe('GET /api/:slug/availability/month', () => {
 
   it('regression: a confirmed D1 boarding booking filling capacity marks the day unavailable, with no calendar connected', async () => {
     const { env } = createTestEnv();
-    // Sunny Paws MaxBoardingPets=2 — a 2-pet booking fills the day on its own. No ProviderConnections
+    // Sunny Paws boarding MaxConcurrentPets=2 — a 2-pet booking fills the day on its own. No ProviderConnections
     // row is seeded for this tenant/capability, so there is no calendar connection whatsoever.
     await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,

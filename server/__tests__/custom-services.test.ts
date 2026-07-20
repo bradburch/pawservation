@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { createService, insertBookingRequest, setServiceConfig } from '../db/repo';
-import { adminToken, createTestEnv, TENANT_A } from './helpers';
+import {
+  createService,
+  deleteService,
+  insertBookingRequest,
+  listServices,
+  setServiceConfig,
+} from '../db/repo';
+import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 /** Admin Bearer headers for a tenant, optionally with a JSON content type. */
 async function auth(tenantId: string, json = false): Promise<Record<string, string>> {
@@ -22,9 +28,19 @@ async function createSvc(
   return { status: res.status, json: (await res.json()) as { type?: string; error?: string } };
 }
 
+/** Sunny Paws (TENANT_A) is seeded with exactly 6 TenantServices rows — already at the 6-service
+ * cap by design (see the "6-service cap" describe block below). Tests in this file that create an
+ * ADDITIONAL custom service on Sunny Paws to exercise unrelated behavior must first free a slot;
+ * deleting the seeded custom service (morning-walk, no bookings) does that without touching the
+ * built-in rows other assertions here depend on. */
+async function freeASlot(env: Env): Promise<void> {
+  await deleteService(env.PAWBOOK_DB, TENANT_A, 'morning-walk');
+}
+
 describe('custom services — creation', () => {
   it('creates a disabled service from a template, slug derived from the label', async () => {
     const { env } = createTestEnv();
+    await freeASlot(env);
     const { status, json } = await createSvc(env, { template: 'walk', label: 'Afternoon Walk!' });
     expect(status).toBe(201);
     expect(json.type).toBe('afternoon-walk');
@@ -70,6 +86,7 @@ describe('custom services — creation', () => {
 
   it('a custom service whose slug collides with an Object.prototype key is still custom and deletable', async () => {
     const { env } = createTestEnv();
+    await freeASlot(env);
     const { status, json } = await createSvc(env, { template: 'walk', label: 'Constructor' });
     expect(status).toBe(201);
     expect(json.type).toBe('constructor');
@@ -106,6 +123,62 @@ describe('custom services — creation', () => {
   });
 });
 
+// Owner directive: at most 6 TenantServices rows (enabled or disabled) per tenant. Sunny Paws
+// (TENANT_A) is seeded with exactly 6 rows (boarding, housesitting, daycare, walk, checkin,
+// morning-walk) — already at the cap, which is deliberate seed behavior per the design note.
+// Happy Tails (TENANT_B) is seeded with 5, one under the cap.
+describe('custom services — 6-service cap', () => {
+  it('refuses a 7th create once the tenant is at the cap, with a plain-language 400 and no row added', async () => {
+    const { env } = createTestEnv();
+    const before = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(before).toHaveLength(6);
+
+    const { status, json } = await createSvc(env, { template: 'walk', label: 'Evening Stroll' });
+    expect(status).toBe(400);
+    expect(json.error).toBe(
+      "You've reached the limit of 6 services. Delete one you no longer offer to add another.",
+    );
+
+    const after = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(after).toHaveLength(6);
+  });
+
+  it('allows the 6th create for a tenant one under the cap', async () => {
+    const { env } = createTestEnv();
+    const before = await listServices(env.PAWBOOK_DB, TENANT_B);
+    expect(before).toHaveLength(5);
+
+    const res = await app.request(
+      '/api/happy-tails/admin/services',
+      {
+        method: 'POST',
+        headers: await auth(TENANT_B, true),
+        body: JSON.stringify({ template: 'boarding', label: 'Puppy Boarding' }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+
+    const after = await listServices(env.PAWBOOK_DB, TENANT_B);
+    expect(after).toHaveLength(6);
+  });
+
+  it('allows a create again after a delete brings an at-cap tenant back under it', async () => {
+    const { env } = createTestEnv();
+    const del = await app.request(
+      '/api/sunny-paws/admin/services/morning-walk',
+      { method: 'DELETE', headers: await auth(TENANT_A) },
+      env,
+    );
+    expect(del.status).toBe(204);
+    expect(await listServices(env.PAWBOOK_DB, TENANT_A)).toHaveLength(5);
+
+    const { status } = await createSvc(env, { template: 'walk', label: 'Evening Stroll' });
+    expect(status).toBe(201);
+    expect(await listServices(env.PAWBOOK_DB, TENANT_A)).toHaveLength(6);
+  });
+});
+
 describe('custom services — booking', () => {
   it('a seeded custom service (morning-walk) is bookable through the public availability path', async () => {
     const { env } = createTestEnv();
@@ -121,8 +194,9 @@ describe('custom services — booking', () => {
     expect(avail).toMatchObject({ available: true, estCost: 18 });
   });
 
-  it('a custom boarding-pool service draws from the SAME pet capacity as built-in boarding', async () => {
+  it('a custom boarding-pool service draws from an INDEPENDENT pet capacity from built-in boarding (0015)', async () => {
     const { env } = createTestEnv();
+    await freeASlot(env);
     await createSvc(env, { template: 'boarding', label: 'Luxury Boarding' });
     // Price + enable it via the normal settings PUT.
     const put = await app.request(
@@ -140,7 +214,7 @@ describe('custom services — booking', () => {
     );
     expect(put.status).toBe(204);
 
-    // Fill Sunny Paws' 2-pet boarding pool via the CUSTOM service...
+    // Fill the CUSTOM service's occupancy with 2 pets — a different pool key than 'boarding'.
     await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'luxury-boarding',
@@ -152,21 +226,23 @@ describe('custom services — booking', () => {
       estCost: null,
       status: 'confirmed',
     });
-    // ...and BUILT-IN boarding must see the pool as full on those dates.
-    const shared = (await (
+    // Built-in boarding (own seeded MaxConcurrentPets=2, zero existing bookings) is UNAFFECTED:
+    // each service is its own pool since the 0015 per-service rework, so a 2-pet request still fits.
+    const independent = (await (
       await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2029-01-11&end=2029-01-13&pets=1',
+        '/api/sunny-paws/availability?type=boarding&start=2029-01-11&end=2029-01-13&pets=2',
         {},
         env,
       )
     ).json()) as { available: boolean };
-    expect(shared.available).toBe(false);
+    expect(independent.available).toBe(true);
   });
 });
 
 describe('custom services — deletion', () => {
   it('deletes an unused custom service; it disappears from settings', async () => {
     const { env } = createTestEnv();
+    await freeASlot(env);
     await createSvc(env, { template: 'checkin', label: 'Evening Visit' });
     const del = await app.request(
       '/api/sunny-paws/admin/services/evening-visit',
@@ -225,6 +301,9 @@ describe('custom services — deletion', () => {
       maxNights: null,
       minPetCount: null,
       maxPetCount: null,
+      acceptedPetTypes: null,
+      maxConcurrentPets: null,
+      maxPerDay: null,
     });
     expect(updated).toBe(false);
   });

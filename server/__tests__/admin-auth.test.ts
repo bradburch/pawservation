@@ -49,7 +49,13 @@ describe('sitter login', () => {
     const { env } = createTestEnv();
     const res = await login(env, ADMIN_EMAIL_A, ADMIN_PASSWORD);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { token: string; slug: string; displayName: string };
+    const body = (await res.json()) as {
+      token: string;
+      role: string;
+      slug: string;
+      displayName: string;
+    };
+    expect(body.role).toBe('admin');
     expect(body.slug).toBe('sunny-paws');
     expect(body.displayName).toBe('Sunny Paws');
 

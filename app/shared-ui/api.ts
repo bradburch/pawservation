@@ -16,22 +16,20 @@ export type ServiceConfig = ServiceConstraints & {
   hasDuration: boolean;
   options: ServiceOption[];
   questions: ServiceQuestion[];
+  acceptedPetTypes: string[] | null;
 };
 export type TenantConfig = {
   slug: string;
   displayName: string;
   accentColor: string;
-  maxBoardingPets: number | null;
-  maxHouseSitsPerDay: number | null;
-  maxStayNights: number | null;
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
-  petTypes: string[];
+  petTypes: { slug: string; label: string }[]; // the FULL pet-type registry — serves as the label map; offered types derive per service
   services: ServiceConfig[];
 };
 
-export type Pet = { id: string; name: string; petType: 'dog' | 'cat'; notes?: string | null };
+export type Pet = { id: string; name: string; petType: string; notes?: string | null };
 export type MonthDay = {
   date: string;
   status: 'available' | 'partial' | 'unavailable';

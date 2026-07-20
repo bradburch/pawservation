@@ -3,85 +3,117 @@ import {
   buildCapacity,
   rangeHasConflict,
   type CapacityEvent,
-  type CapacityLimits,
+  type CapacityRequest,
 } from '../../src/shared/index.js';
 
-const boarding = (start: string, end: string, petCount = 1): CapacityEvent => ({
+const boarding = (
+  start: string,
+  end: string,
+  serviceType = 'boarding',
+  petCount = 1,
+): CapacityEvent => ({ start_date: start, end_date: end, kind: 'boarding', serviceType, petCount });
+const houseSit = (start: string, end: string, serviceType = 'housesitting'): CapacityEvent => ({
   start_date: start,
   end_date: end,
-  type: 'boarding',
-  petCount,
-});
-const houseSit = (start: string, end: string): CapacityEvent => ({
-  start_date: start,
-  end_date: end,
-  type: 'house-sit',
+  kind: 'housesit',
+  serviceType,
 });
 const blocked = (start: string, end: string): CapacityEvent => ({
   start_date: start,
   end_date: end,
-  type: 'blocked',
+  kind: 'blocked',
 });
 
-const UNLIMITED: CapacityLimits = { maxBoardingPets: null, maxHouseSitsPerDay: null };
+const req = (over: Partial<CapacityRequest> = {}): CapacityRequest => ({
+  serviceType: 'boarding',
+  kind: 'boarding',
+  cap: null,
+  petCount: 1,
+  ...over,
+});
 
-describe('rangeHasConflict with CapacityLimits', () => {
-  it('auto-passes-through unlimited boarding (many overlaps, no limit)', () => {
+describe('rangeHasConflict with per-service CapacityRequest', () => {
+  it('null cap auto-passes-through (many overlaps, no limit)', () => {
     const cap = buildCapacity([
-      boarding('2028-08-01', '2028-08-10', 5),
-      boarding('2028-08-01', '2028-08-10', 9),
+      boarding('2028-08-01', '2028-08-10', 'boarding', 5),
+      boarding('2028-08-01', '2028-08-10', 'boarding', 9),
     ]);
-    expect(rangeHasConflict('2028-08-02', '2028-08-06', 'boarding', cap, UNLIMITED, 7)).toBe(false);
+    expect(rangeHasConflict('2028-08-02', '2028-08-06', req({ petCount: 7 }), cap)).toBe(false);
   });
 
   it('still blocks admin-blocked dates even when unlimited', () => {
     const cap = buildCapacity([blocked('2028-08-03', '2028-08-05')]);
-    expect(rangeHasConflict('2028-08-01', '2028-08-06', 'boarding', cap, UNLIMITED, 1)).toBe(true);
+    expect(rangeHasConflict('2028-08-01', '2028-08-06', req(), cap)).toBe(true);
   });
 
-  it('enforces a configured boarding pet cap', () => {
-    const cap = buildCapacity([boarding('2028-08-01', '2028-08-05', 2)]);
-    const limit3: CapacityLimits = { maxBoardingPets: 3, maxHouseSitsPerDay: null };
-    // 2 already boarding mid-range: a 1-pet request fits (2+1<=3), a 2-pet request does not (2+2>3).
-    expect(rangeHasConflict('2028-08-02', '2028-08-04', 'boarding', cap, limit3, 1)).toBe(false);
-    expect(rangeHasConflict('2028-08-02', '2028-08-04', 'boarding', cap, limit3, 2)).toBe(true);
+  it("enforces the request's own boarding cap incl. petCount math", () => {
+    const cap = buildCapacity([boarding('2028-08-01', '2028-08-05', 'boarding', 2)]);
+    // 2 already boarding mid-range: 1 more fits (2+1<=3), 2 more do not (2+2>3).
+    expect(rangeHasConflict('2028-08-02', '2028-08-04', req({ cap: 3, petCount: 1 }), cap)).toBe(
+      false,
+    );
+    expect(rangeHasConflict('2028-08-02', '2028-08-04', req({ cap: 3, petCount: 2 }), cap)).toBe(
+      true,
+    );
   });
 
-  it('rejects more pets than the cap even on an EMPTY calendar (engine is correct standalone)', () => {
+  it('two boarding-kind services do NOT share a pool', () => {
+    // Service A is completely full on these dates…
+    const cap = buildCapacity([boarding('2028-08-01', '2028-08-05', 'boarding', 2)]);
+    const full = req({ serviceType: 'boarding', cap: 2, petCount: 1 });
+    expect(rangeHasConflict('2028-08-02', '2028-08-04', full, cap)).toBe(true);
+    // …but service B (kitty-condo) with its own cap 2 still books the same dates.
+    const other = req({ serviceType: 'kitty-condo', cap: 2, petCount: 1 });
+    expect(rangeHasConflict('2028-08-02', '2028-08-04', other, cap)).toBe(false);
+  });
+
+  it('two housesit-kind services keep independent pools', () => {
+    const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04', 'housesitting')]);
+    const sameService: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: 1 };
+    const otherService: CapacityRequest = {
+      serviceType: 'overnight-sit',
+      kind: 'housesit',
+      cap: 1,
+    };
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', sameService, cap)).toBe(true);
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', otherService, cap)).toBe(false);
+  });
+
+  it('rejects more pets than the cap even on an EMPTY calendar (standalone over-cap guard)', () => {
     const empty = buildCapacity([]);
-    const limit3: CapacityLimits = { maxBoardingPets: 3, maxHouseSitsPerDay: null };
-    // No existing bookings, so the day-by-day walk inspects nothing — the isolation short-circuit
-    // is what catches a 5-pet request against a cap of 3.
-    expect(rangeHasConflict('2028-08-02', '2028-08-04', 'boarding', empty, limit3, 5)).toBe(true);
-    expect(rangeHasConflict('2028-08-02', '2028-08-04', 'boarding', empty, limit3, 3)).toBe(false);
-    // …and unlimited still passes any count on an empty calendar.
-    expect(rangeHasConflict('2028-08-02', '2028-08-04', 'boarding', empty, UNLIMITED, 99)).toBe(
+    expect(rangeHasConflict('2028-08-02', '2028-08-04', req({ cap: 3, petCount: 5 }), empty)).toBe(
+      true,
+    );
+    expect(rangeHasConflict('2028-08-02', '2028-08-04', req({ cap: 3, petCount: 3 }), empty)).toBe(
+      false,
+    );
+    expect(
+      rangeHasConflict('2028-08-02', '2028-08-04', req({ cap: null, petCount: 99 }), empty),
+    ).toBe(false);
+  });
+
+  it('shares a boundary day (soft bookend) under a per-service cap', () => {
+    const cap = buildCapacity([boarding('2028-08-01', '2028-08-03', 'boarding', 2)]);
+    expect(rangeHasConflict('2028-08-03', '2028-08-05', req({ cap: 2, petCount: 2 }), cap)).toBe(
       false,
     );
   });
 
-  it('shares a boundary day (soft bookend) under a configured cap', () => {
-    const cap = buildCapacity([boarding('2028-08-01', '2028-08-03', 2)]);
-    const limit2: CapacityLimits = { maxBoardingPets: 2, maxHouseSitsPerDay: null };
-    expect(rangeHasConflict('2028-08-03', '2028-08-05', 'boarding', cap, limit2, 2)).toBe(false);
-  });
-
-  it('enforces a configured house-sit cap; unlimited lets them stack', () => {
+  it('house-sit cap counts only its own service; unlimited lets them stack', () => {
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04')]);
-    const oneSit: CapacityLimits = { maxBoardingPets: null, maxHouseSitsPerDay: 1 };
-    expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, oneSit, 1)).toBe(true);
-    expect(rangeHasConflict('2028-09-02', '2028-09-03', 'house-sit', cap, UNLIMITED, 1)).toBe(
-      false,
-    );
+    const oneSit: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: 1 };
+    const noCap: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: null };
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', oneSit, cap)).toBe(true);
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', noCap, cap)).toBe(false);
   });
 
-  it('keeps the structural house-sit/boarding ≤1-day overlap rule regardless of limits', () => {
-    const cap = buildCapacity([boarding('2028-09-01', '2028-09-10', 1)]);
-    // A house-sit overlapping 2 boarding days conflicts even with unlimited house-sits.
-    expect(rangeHasConflict('2028-09-02', '2028-09-04', 'house-sit', cap, UNLIMITED, 1)).toBe(true);
-    // Overlapping exactly 1 boarding day is allowed.
-    expect(rangeHasConflict('2028-09-01', '2028-09-02', 'house-sit', cap, UNLIMITED, 1)).toBe(
-      false,
-    );
+  it('the structural house-sit rule stays TENANT-WIDE: boardingTotal from ANY boarding-kind service', () => {
+    // The boarding occupancy lives on a DIFFERENT boarding-kind service ('kitty-condo') than the
+    // house-sit request could ever share a pool with — the ≤1-day overlap must still fire, because
+    // it models the sitter's physical absence, not a pool.
+    const cap = buildCapacity([boarding('2028-09-01', '2028-09-10', 'kitty-condo', 1)]);
+    const sit: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: null };
+    expect(rangeHasConflict('2028-09-02', '2028-09-04', sit, cap)).toBe(true); // overlaps 2 days
+    expect(rangeHasConflict('2028-09-01', '2028-09-02', sit, cap)).toBe(false); // exactly 1 day
   });
 });

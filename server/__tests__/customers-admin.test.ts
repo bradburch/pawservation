@@ -65,6 +65,27 @@ describe('admin customers', () => {
     expect(res.status).toBe(409);
   });
 
+  it('removes a customer that has a pet and a prior login code, without a 500 (FK cascade)', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `INSERT INTO EndUsers (Id, TenantId, Email, Status) VALUES ('eu2','${TENANT_A}','pet-and-code@example.com','active')`,
+    );
+    raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+              VALUES ('pet-eu2','${TENANT_A}','eu2','Buddy','dog')`);
+    raw.exec(`INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt)
+              VALUES ('lc-eu2','${TENANT_A}','eu2','111111','2030-01-01T00:00:00.000Z')`);
+
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers/eu2`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(res.status).toBe(204);
+    expect(raw.prepare('SELECT * FROM EndUsers WHERE Id = ?').get('eu2')).toBeUndefined();
+    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet-eu2')).toBeUndefined();
+    expect(raw.prepare('SELECT * FROM LoginCodes WHERE Id = ?').get('lc-eu2')).toBeUndefined();
+  });
+
   it('requires admin auth', async () => {
     const { env } = createTestEnv();
     const res = await app.request(`/api/${SLUG}/admin/customers`, {}, env);

@@ -46,7 +46,7 @@ describe('admin customer pets', () => {
     expect(del.status).toBe(409);
   });
 
-  it('adds and removes a pet; rejects a disabled species', async () => {
+  it('adds and removes a pet; registry membership gates creation, not acceptance', async () => {
     const { env } = createTestEnv();
     const token = await adminToken('tnt_sunnypaws');
     const add = await app.request(
@@ -67,17 +67,30 @@ describe('admin customer pets', () => {
     );
     expect(del.status).toBe(204);
 
+    // Registry membership (0015): cat is a Happy Tails REGISTRY row — recording the pet is
+    // allowed even though no service accepts cats (it just can't be booked).
     const tokenB = await adminToken('tnt_happytails');
-    const bad = await app.request(
+    const catOk = await app.request(
       '/api/happy-tails/admin/customers/eu_ht_jess/pets',
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenB}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'Whiskers', petType: 'cat' }), // Happy Tails = dogs only
+        body: JSON.stringify({ name: 'Whiskers', petType: 'cat' }),
       },
       env,
     );
-    expect(bad.status).toBe(400);
+    expect(catOk.status).toBe(201);
+    // A slug with NO registry row is still rejected.
+    const unknown = await app.request(
+      '/api/happy-tails/admin/customers/eu_ht_jess/pets',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenB}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Bandit', petType: 'ferret' }),
+      },
+      env,
+    );
+    expect(unknown.status).toBe(400);
   });
 
   it('will not add a pet to a customer that belongs to another tenant', async () => {

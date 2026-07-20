@@ -11,14 +11,19 @@ import { mintAdminToken } from '../lib/token';
 
 const SQL_DIR = join(import.meta.dirname, '..', '..', 'sql');
 
-export const TENANT_A = 'tnt_sunnypaws'; // slug sunny-paws, seeded MaxBoardingPets=2 (demo config)
-export const TENANT_B = 'tnt_happytails'; // slug happy-tails, seeded MaxBoardingPets=4 (demo config)
+export const TENANT_A = 'tnt_sunnypaws'; // slug sunny-paws, boarding service seeded MaxConcurrentPets=2 (demo config)
+export const TENANT_B = 'tnt_happytails'; // slug happy-tails, boarding service seeded MaxConcurrentPets=4 (demo config)
 export const TEST_SECRET = 'test-secret-0123456789'; // ≥16 chars to pass the TOKEN_SECRET guard
 
 // Seeded sitter logins (password "demo1234"); see sql/seed.sql.
 export const ADMIN_EMAIL_A = 'admin@sunnypaws.example';
 export const ADMIN_EMAIL_B = 'dana@happytails.test';
 export const ADMIN_PASSWORD = 'demo1234';
+
+// Owner + allowlist fixtures: OWNER_EMAIL is wired into createTestEnv's OWNER_EMAILS;
+// ALLOWED_EMAIL is the unclaimed AllowedSitters row seeded by sql/seed.sql.
+export const OWNER_EMAIL = 'owner@pawbook.test';
+export const ALLOWED_EMAIL = 'newsitter@pawbook.test';
 
 type SqlParam = string | number | null;
 
@@ -73,6 +78,9 @@ function makeKV(): KVNamespace {
 }
 
 export function createTestEnv(): { env: Env; raw: DatabaseSync } {
+  // FK enforcement stays ON (node:sqlite's default) to match production: Cloudflare D1 enforces
+  // FK constraints by default and — unlike SQLite generally — cannot disable them, only defer
+  // them within a transaction (see migrations/0006_custom_services.sql's defer_foreign_keys use).
   const raw = new DatabaseSync(':memory:');
   raw.exec(readFileSync(join(SQL_DIR, 'schema.sql'), 'utf8'));
   raw.exec(readFileSync(join(SQL_DIR, 'seed.sql'), 'utf8'));
@@ -81,6 +89,7 @@ export function createTestEnv(): { env: Env; raw: DatabaseSync } {
     PAWBOOK_CACHE: makeKV(),
     TOKEN_SECRET: TEST_SECRET,
     ENVIRONMENT: 'development', // lets /identify return prototypeCode when no email provider is set
+    OWNER_EMAILS: OWNER_EMAIL,
     ASSETS: { fetch: async () => new Response('<!doctype html>') },
   } as unknown as Env;
   return { env, raw };

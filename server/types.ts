@@ -9,9 +9,6 @@ export type Tenant = {
   Slug: string;
   DisplayName: string;
   AccentColor: string;
-  MaxBoardingPets: number | null; // null = unlimited
-  MaxHouseSitsPerDay: number | null; // null = unlimited
-  MaxStayNights: number | null; // null = unlimited
   Timezone: string | null; // null = DEFAULT_TIMEZONE
   ContactEmail: string | null; // shown to clients in the booking widget
   ContactPhone: string | null; // shown to clients in the booking widget
@@ -22,6 +19,22 @@ export type TenantUser = {
   TenantId: string;
   Email: string;
   PasswordHash: string;
+};
+
+/** Instance-level platform-owner login row (see the owner-scope section of db/repo.ts). */
+export type OwnerUser = {
+  Id: string;
+  Email: string;
+  PasswordHash: string;
+  CreatedAt: string;
+};
+
+/** Instance-level signup-allowlist row. ClaimedAt/TenantId stay NULL until setup completes. */
+export type AllowedSitterRow = {
+  Email: string;
+  AddedAt: string;
+  ClaimedAt: string | null;
+  TenantId: string | null;
 };
 
 export type TenantService = {
@@ -40,6 +53,12 @@ export type TenantService = {
   MaxNights: number | null;
   MinPetCount: number | null;
   MaxPetCount: number | null;
+  /** Pet-type slugs this service accepts; null = accepts every enabled type. */
+  AcceptedPetTypes: string[] | null;
+  /** Boarding-kind only: pets in care per day for THIS service; null = unlimited (0015). */
+  MaxConcurrentPets: number | null;
+  /** Housesit-kind only: bookings of THIS service per day; null = unlimited (0015). */
+  MaxPerDay: number | null;
 };
 
 export type TenantServiceOption = {
@@ -54,12 +73,13 @@ export type TenantServiceOption = {
   StartTime: string | null; // 'HH:MM'; NULL = no fixed window
   EndTime: string | null; // 'HH:MM'; NULL = no fixed window
   Capacity: number | null; // max concurrent bookings/date; NULL = unlimited
+  WeekdaysOnly: number; // int-bool: 1 = bookable Mon–Fri only
 };
 
 export type TenantPetTypeRow = {
   TenantId: string;
-  PetType: PetType;
-  Enabled: number;
+  PetType: string; // per-tenant slug, immutable
+  Label: string; // display name, renamable
 };
 
 export type EndUser = {
@@ -77,7 +97,7 @@ export type EndUserPet = {
   TenantId: string;
   EndUserId: string;
   Name: string;
-  PetType: 'dog' | 'cat';
+  PetType: string; // tenant pet-type slug
   Notes: string | null; // sitter's care notes (feeding, meds, temperament)
   CreatedAt: string;
 };
@@ -160,5 +180,7 @@ export type AppEnv = {
   Variables: {
     tenant: Tenant;
     endUserId: string;
+    /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
+    ownerEmail: string;
   };
 };

@@ -82,3 +82,16 @@ export async function sendInvite(
     html: `<p>${htmlEscape(displayName)} has invited you to book online.</p><p><a href="${htmlEscape(widgetUrl)}">Book now</a></p>`,
   });
 }
+
+/** Send a one-time account-setup link. Throws if email is not configured or Resend rejects. */
+export async function sendSignupLink(env: Env, to: string, url: string): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // url is server-built, but escape it for the attribute context as defense-in-depth (per
+  // sendInvite). Subject/text are plain-text JSON fields in Resend's API — no escaping needed.
+  await resendPost(env, {
+    to,
+    subject: 'Finish setting up your Pawbook account',
+    text: `Finish setting up your Pawbook account: ${url}\n\nThis link expires in 30 minutes. If you didn't request it, ignore this email.`,
+    html: `<p><a href="${htmlEscape(url)}">Finish setting up your Pawbook account</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
+  });
+}

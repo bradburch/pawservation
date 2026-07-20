@@ -25,6 +25,9 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     MaxNights: null,
     MinPetCount: null,
     MaxPetCount: null,
+    AcceptedPetTypes: null,
+    MaxConcurrentPets: null,
+    MaxPerDay: null,
     ...over,
   };
 }
@@ -35,9 +38,6 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     Slug: 'sunny-paws',
     DisplayName: 'Sunny Paws',
     AccentColor: '#000000',
-    MaxBoardingPets: 2,
-    MaxHouseSitsPerDay: null,
-    MaxStayNights: null,
     Timezone: null,
     ContactEmail: null,
     ContactPhone: null,
@@ -46,10 +46,10 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
 }
 
 describe('availability API — regression guards', () => {
-  it('rejects a pet count over the tenant cap even on an empty calendar', async () => {
+  it('rejects a pet count over the service cap even on an empty calendar', async () => {
     const { env } = createTestEnv();
     // No existing rows in 2027; the range walk skips empty days, so the isolation check must catch it.
-    // 5 pets is within the absolute cap (50) but over Sunny Paws' per-tenant max of 2.
+    // 5 pets is within the absolute cap (50) but over the boarding service's MaxConcurrentPets of 2 (seeded).
     const res = (await (
       await app.request(
         '/api/sunny-paws/availability?type=boarding&start=2027-03-01&end=2027-03-04&pets=5',
@@ -170,6 +170,22 @@ describe('availability API — regression guards', () => {
     expect(badDate.status).toBe(400);
     expect(badRange.status).toBe(400);
   });
+
+  it('the public quote enforces the service MaxNights (F3 fix — quote and booking now agree)', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `UPDATE TenantServices SET MaxNights = 3 WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'boarding'`,
+      )
+      .run();
+    const res = await app.request(
+      '/api/sunny-paws/availability?type=boarding&start=2027-06-01&end=2027-06-08&pets=1',
+      {},
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('Stays are limited to 3 nights.');
+  });
 });
 
 describe('rowsToCapacityEvents', () => {
@@ -213,10 +229,10 @@ describe('rowsToCapacityEvents', () => {
       },
     ]);
     expect(events[0]).toMatchObject({
-      type: 'blocked',
+      kind: 'blocked',
       start_date: '2028-08-01',
     });
-    expect(events[1]).toMatchObject({ type: 'boarding', petCount: 2 });
+    expect(events[1]).toMatchObject({ kind: 'boarding', serviceType: 'boarding', petCount: 2 });
   });
 });
 
@@ -224,14 +240,14 @@ describe('config + availability — service options and pet types', () => {
   it('config exposes services with options and accepted pet types', async () => {
     const { env } = createTestEnv();
     const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
-      petTypes: string[];
+      petTypes: { slug: string }[];
       services: {
         type: string;
         hasDuration: boolean;
         options: { optionKey: string; rate: number }[];
       }[];
     };
-    expect(cfg.petTypes).toEqual(expect.arrayContaining(['dog', 'cat']));
+    expect(cfg.petTypes.map((p) => p.slug)).toEqual(expect.arrayContaining(['dog', 'cat']));
     const walk = cfg.services.find((s) => s.type === 'walk')!;
     expect(walk.hasDuration).toBe(true);
     expect(walk.options.map((o) => o.optionKey)).toEqual(['d30', 'd60', 'd90']);
@@ -274,6 +290,7 @@ describe('checkAvailability', () => {
       StartTime: null,
       EndTime: null,
       Capacity: null,
+      WeekdaysOnly: 0,
       ...over,
     };
   }
@@ -301,7 +318,7 @@ describe('checkAvailability', () => {
 
   it('house-sit conflicts when it overlaps existing boarding by more than a day', async () => {
     const { env } = createTestEnv();
-    const t = tenant(); // MaxHouseSitsPerDay null = unlimited; conflict must come from overlap rule
+    const t = tenant(); // housesit cap null = unlimited; conflict must come from overlap rule
     const o = opt({
       ServiceType: 'housesitting',
       OptionKey: 'standard',

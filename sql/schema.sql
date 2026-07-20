@@ -6,10 +6,13 @@ CREATE TABLE IF NOT EXISTS Tenants (
   Slug TEXT NOT NULL UNIQUE,
   DisplayName TEXT NOT NULL,
   AccentColor TEXT NOT NULL DEFAULT '#4f46e5',
-  -- All four are NULL = unlimited / instance-default. New tenants omit them.
+  -- RETIRED by 0015 (service-level attributes): caps/stay-length now live on TenantServices
+  -- (MaxConcurrentPets / MaxPerDay / MaxNights). Columns stay so schema.sql, the local DB, and
+  -- the remote DB keep the exact same shape; no code reads or writes them. Drop in a future 0016+.
   MaxBoardingPets INTEGER,
   MaxHouseSitsPerDay INTEGER,
   MaxStayNights INTEGER,
+  -- NULL = instance default (DEFAULT_TIMEZONE).
   Timezone TEXT,
   -- Optional contact details shown to clients in the booking widget.
   ContactEmail TEXT,
@@ -40,8 +43,8 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   Shape TEXT NOT NULL CHECK (Shape IN ('range', 'single')),
   RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
   HasDuration INTEGER NOT NULL DEFAULT 0, -- options priced per duration (walk/check-in style)?
-  -- Which capacity POOL the service draws from (not the service's name): 'boarding' = pet-counted
-  -- vs Tenants.MaxBoardingPets, 'housesit' = day-counted vs MaxHouseSitsPerDay, 'none' = unlimited.
+  -- Which capacity RULE the service uses (not the service's name): 'boarding' = pet-counted vs its
+  -- own MaxConcurrentPets, 'housesit' = day-counted vs its own MaxPerDay, 'none' = unlimited.
   CapacityKind TEXT NOT NULL DEFAULT 'none' CHECK (CapacityKind IN ('boarding', 'housesit', 'none')),
   SortOrder INTEGER NOT NULL DEFAULT 0,
   -- Per-service intake questions (JSON array of ServiceQuestion, see src/shared/booking/service-rules.ts)
@@ -51,6 +54,14 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   MaxNights INTEGER,
   MinPetCount INTEGER,
   MaxPetCount INTEGER,
+  -- JSON array of pet-type slugs this service accepts; NULL = accepts every registry type
+  -- (null-is-unlimited convention). An empty array is invalid for an ENABLED service.
+  AcceptedPetTypes TEXT,
+  -- Per-service capacity (added by 0015; both NULL = unlimited). MaxConcurrentPets applies to
+  -- CapacityKind='boarding' (pets in care per day for THIS service); MaxPerDay to 'housesit'
+  -- (bookings of THIS service per day). A cap on a 'none'-kind service is rejected on PUT.
+  MaxConcurrentPets INTEGER,
+  MaxPerDay INTEGER,
   UNIQUE (TenantId, ServiceType)
 );
 
@@ -73,13 +84,20 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   StartTime TEXT,
   EndTime TEXT,
   Capacity INTEGER,
+  -- Int-bool: 1 = this option is bookable Mon-Fri only (server rejects Sat/Sun at booking
+  -- validation; the embed widget greys weekends). 0 = any day.
+  WeekdaysOnly INTEGER NOT NULL DEFAULT 0,
   UNIQUE (TenantId, ServiceType, OptionKey)
 );
 
--- Accepted species the sitter cares for. Mirrors TenantServices on/off pattern.
+-- Accepted species the sitter cares for — per-tenant rows (slug + renamable Label), mirroring
+-- the TenantServices rows-not-code model. Slug is immutable; rename changes Label only.
 CREATE TABLE IF NOT EXISTS TenantPetTypes (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
-  PetType TEXT NOT NULL CHECK (PetType IN ('dog', 'cat')),
+  PetType TEXT NOT NULL,            -- per-tenant slug ('dog', 'rabbit', ...), immutable
+  Label TEXT NOT NULL,              -- display name ('Dogs', 'Rabbits'), renamable
+  -- RETIRED by 0015: the registry is pure slug+label; behavior derives from per-service
+  -- AcceptedPetTypes. Column stays for shape lockstep; no code reads or writes it.
   Enabled INTEGER NOT NULL DEFAULT 1,
   UNIQUE (TenantId, PetType)
 );
@@ -117,7 +135,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   StartDate TEXT NOT NULL,
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
-  PetType TEXT, -- booked species ('dog'|'cat'); NULL for blocked. No pricing/capacity effect.
+  PetType TEXT, -- tenant pet-type slug (first selected pet); NULL for blocked. No pricing/capacity effect.
   PetCount INTEGER NOT NULL DEFAULT 1 CHECK (PetCount >= 1), -- fresh-install only; existing DBs enforce this in app code (validation.ts)
   StartTime TEXT, -- 'HH:MM' wall-clock for timed bookings (walk/check-in); NULL = all-day event
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
@@ -140,7 +158,7 @@ CREATE TABLE IF NOT EXISTS EndUserPets (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
   Name TEXT NOT NULL,
-  PetType TEXT NOT NULL CHECK (PetType IN ('dog', 'cat')),
+  PetType TEXT NOT NULL, -- tenant pet-type slug
   Notes TEXT, -- care notes the sitter keeps (feeding, meds, temperament)
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -181,4 +199,28 @@ CREATE TABLE IF NOT EXISTS ProviderConnections (
   TokenExpiresAt TEXT,
   CalendarId TEXT,
   UNIQUE (TenantId, Capability)
+);
+
+-- Invite-only signup + owner console (spec 2026-07-18).
+-- Both tables are INSTANCE-LEVEL — a deliberate, documented exception to the
+-- "TenantId on every table" invariant: they gate entry INTO the tenancy model,
+-- so they cannot themselves be tenant rows.
+
+-- Platform-owner accounts (instance-level, deliberately NOT tenant-scoped).
+-- Membership is governed by the OWNER_EMAILS secret; this table only stores
+-- the password hash for emails that secret already names.
+CREATE TABLE IF NOT EXISTS OwnerUsers (
+  Id TEXT PRIMARY KEY,
+  Email TEXT NOT NULL UNIQUE,
+  PasswordHash TEXT NOT NULL,
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Owner-managed signup allowlist (instance-level, deliberately NOT tenant-
+-- scoped). TenantId/ClaimedAt stay NULL until the sitter completes setup.
+CREATE TABLE IF NOT EXISTS AllowedSitters (
+  Email TEXT PRIMARY KEY,
+  AddedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  ClaimedAt TEXT,
+  TenantId TEXT REFERENCES Tenants(Id)
 );

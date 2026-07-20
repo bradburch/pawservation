@@ -6,7 +6,10 @@ import {
   countBookingPetRefs,
   countBookingsForService,
   countBookingsForUser,
+  countPetTypeReferences,
+  createPetType,
   createService,
+  deletePetTypeAndScrub,
   getAnalytics,
   getBookingWithCustomer,
   getEndUserById,
@@ -29,25 +32,24 @@ import {
   listServiceOptions,
   listServices,
   removeEndUserPet,
+  renamePetType,
   replaceServiceOptions,
   setProviderCalendarId,
-  setPetTypeEnabled,
   setServiceConfig,
   updateBookingStatus,
   updateTenantSettings,
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
-import { reconcileIfStale } from '../lib/calendar-sync';
+import { deleteBookingCalendarEvent, reconcileIfStale } from '../lib/calendar-sync';
 import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
-  isPetType,
   isTemplateId,
-  PET_TYPES,
+  MAX_SERVICES,
   RESERVED_SERVICE_SLUGS,
   SERVICE_TEMPLATES,
   slugifyServiceLabel,
@@ -102,6 +104,7 @@ type OptionBody = {
   startTime?: string | null;
   endTime?: string | null;
   capacity?: number | null;
+  weekdaysOnly?: boolean;
 };
 
 type QuestionBody = {
@@ -145,6 +148,7 @@ type ResolvedOption = {
   startTime: string | null;
   endTime: string | null;
   capacity: number | null;
+  weekdaysOnly: boolean;
 };
 
 /**
@@ -203,6 +207,8 @@ function resolveServiceOptions(
       return {
         error: `${serviceLabel}: capacity must be a positive number, or blank for no limit.`,
       };
+    if (o.weekdaysOnly !== undefined && typeof o.weekdaysOnly !== 'boolean')
+      return { error: `${serviceLabel}: weekdays-only must be true or false.` };
 
     const windowed = hasStart;
     const durationMinutes = windowed
@@ -240,6 +246,7 @@ function resolveServiceOptions(
       startTime: windowed ? (o.startTime as string) : null,
       endTime: windowed ? (o.endTime as string) : null,
       capacity: o.capacity ?? null,
+      weekdaysOnly: o.weekdaysOnly === true,
     });
   }
   // Backstop only: fresh keys are de-duped above, so this can fire only when two options in the
@@ -289,17 +296,16 @@ type ServiceBody = {
   maxNights?: number | null;
   minPetCount?: number | null;
   maxPetCount?: number | null;
+  acceptedPetTypes?: string[] | null;
+  maxConcurrentPets?: number | null;
+  maxPerDay?: number | null;
 };
 type SettingsBody = {
   displayName?: string;
   accentColor?: string;
-  maxBoardingPets?: number | null;
-  maxHouseSitsPerDay?: number | null;
-  maxStayNights?: number | null;
   timezone?: string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
-  petTypes?: string[];
   services?: ServiceBody[];
 };
 
@@ -310,13 +316,7 @@ type SettingsBody = {
  */
 function patchNullable<T extends number | string>(
   body: SettingsBody,
-  key:
-    | 'maxBoardingPets'
-    | 'maxHouseSitsPerDay'
-    | 'maxStayNights'
-    | 'timezone'
-    | 'contactEmail'
-    | 'contactPhone',
+  key: 'timezone' | 'contactEmail' | 'contactPhone',
   current: T | null,
 ): T | null {
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
@@ -337,16 +337,10 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       displayName: tenant.DisplayName,
       accentColor: tenant.AccentColor,
-      maxBoardingPets: tenant.MaxBoardingPets,
-      maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
-      maxStayNights: tenant.MaxStayNights,
       timezone: tenant.Timezone,
       contactEmail: tenant.ContactEmail,
       contactPhone: tenant.ContactPhone,
-      petTypes: PET_TYPES.map((pt) => ({
-        petType: pt,
-        enabled: petTypes.some((p) => p.PetType === pt && p.Enabled),
-      })),
+      petTypes: petTypes.map((p) => ({ petType: p.PetType, label: p.Label })),
       services: services.map((svc) => ({
         type: svc.ServiceType,
         label: svc.Label,
@@ -361,6 +355,10 @@ export const adminRoutes = new Hono<AppEnv>()
         maxNights: svc.MaxNights,
         minPetCount: svc.MinPetCount,
         maxPetCount: svc.MaxPetCount,
+        acceptedPetTypes: svc.AcceptedPetTypes,
+        capacityKind: svc.CapacityKind,
+        maxConcurrentPets: svc.MaxConcurrentPets,
+        maxPerDay: svc.MaxPerDay,
         options: options
           .filter((o) => o.ServiceType === svc.ServiceType)
           .map((o) => ({
@@ -371,6 +369,7 @@ export const adminRoutes = new Hono<AppEnv>()
             startTime: o.StartTime,
             endTime: o.EndTime,
             capacity: o.Capacity,
+            weekdaysOnly: Boolean(o.WeekdaysOnly),
           })), // optionKey round-trips back on save so resolveServiceOptions can preserve identity
       })),
       // "Add service" picker: template id + display label of each built-in behavior archetype.
@@ -388,20 +387,12 @@ export const adminRoutes = new Hono<AppEnv>()
       typeof body.displayName === 'string' ? body.displayName.trim() : tenant.DisplayName;
     const accentColor =
       typeof body.accentColor === 'string' ? body.accentColor : tenant.AccentColor;
-    const maxBoardingPets = patchNullable<number>(body, 'maxBoardingPets', tenant.MaxBoardingPets);
-    const maxHouseSitsPerDay = patchNullable<number>(
-      body,
-      'maxHouseSitsPerDay',
-      tenant.MaxHouseSitsPerDay,
-    );
-    const maxStayNights = patchNullable<number>(body, 'maxStayNights', tenant.MaxStayNights);
     const timezone = patchNullable<string>(body, 'timezone', tenant.Timezone);
     // Whitespace-only contact fields mean "cleared" — store NULL, not ''.
     const rawContactEmail = patchNullable<string>(body, 'contactEmail', tenant.ContactEmail);
     const contactEmail = rawContactEmail?.trim() || null;
     const rawContactPhone = patchNullable<string>(body, 'contactPhone', tenant.ContactPhone);
     const contactPhone = rawContactPhone?.trim() || null;
-    const petTypes = body.petTypes;
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
     // included in a service's body ⇒ take it; absent ⇒ keep that service's current value. Without
@@ -411,6 +402,8 @@ export const adminRoutes = new Hono<AppEnv>()
       services.length > 0 ? await listServices(c.env.PAWBOOK_DB, tenant.Id) : [];
     const currentOptions =
       services.length > 0 ? await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id) : [];
+    const tenantPetTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+    const knownPetSlugs = new Set(tenantPetTypes.map((p) => p.PetType));
     const existingKeysByType = new Map<string, Set<string>>();
     for (const o of currentOptions) {
       const keys = existingKeysByType.get(o.ServiceType) ?? new Set<string>();
@@ -420,32 +413,11 @@ export const adminRoutes = new Hono<AppEnv>()
 
     if (!displayName) return c.json({ error: 'Display name required.' }, 400);
     if (!COLOR_RE.test(accentColor)) return c.json({ error: 'Accent color must be #rrggbb.' }, 400);
-    if (!isNullableLimit(maxBoardingPets, DEFENSIVE_MAX_PET_COUNT))
-      return c.json(
-        { error: 'Boarding capacity must be a positive number, or blank for no limit.' },
-        400,
-      );
-    // DEFENSIVE_MAX_PET_COUNT is reused here purely as a generic "sane capacity integer" ceiling —
-    // a house-sit count isn't a pet count, but the same 1..1000 sanity bound is the right guard.
-    if (!isNullableLimit(maxHouseSitsPerDay, DEFENSIVE_MAX_PET_COUNT))
-      return c.json(
-        { error: 'House-sit capacity must be a positive number, or blank for no limit.' },
-        400,
-      );
-    if (!isNullableLimit(maxStayNights, DEFENSIVE_MAX_NIGHTS))
-      return c.json(
-        { error: 'Max stay nights must be a positive number, or blank for no limit.' },
-        400,
-      );
     if (!isValidTimezone(timezone)) return c.json({ error: 'Unknown timezone.' }, 400);
     if (contactEmail !== null && !EMAIL_RE.test(contactEmail))
       return c.json({ error: 'Contact email must be a valid email address.' }, 400);
     if (contactPhone !== null && contactPhone.length > 40)
       return c.json({ error: 'Contact phone is too long.' }, 400);
-    if (petTypes !== undefined) {
-      if (!Array.isArray(petTypes) || !petTypes.every(isPetType))
-        return c.json({ error: 'Unknown pet type.' }, 400);
-    }
     const resolvedOptionsByType = new Map<string, ResolvedOption[]>();
     for (const svc of services) {
       const meta = currentServices.find((s) => s.ServiceType === svc.type);
@@ -487,22 +459,55 @@ export const adminRoutes = new Hono<AppEnv>()
         );
       if (svc.minPetCount != null && svc.maxPetCount != null && svc.minPetCount > svc.maxPetCount)
         return c.json({ error: `${meta.Label}: min pets cannot exceed max pets.` }, 400);
+      // Per-service caps (0015): same PATCH idiom, same 1..1000 sanity rail as the old tenant
+      // caps. A cap on the wrong CapacityKind is rejected explicitly — silent-ignore would hide
+      // sitter mistakes.
+      if (
+        !isNullableLimit(svc.maxConcurrentPets ?? null, DEFENSIVE_MAX_PET_COUNT) ||
+        !isNullableLimit(svc.maxPerDay ?? null, DEFENSIVE_MAX_PET_COUNT)
+      )
+        return c.json(
+          { error: `${meta.Label}: capacity must be a positive number, or blank for no limit.` },
+          400,
+        );
+      if (svc.maxConcurrentPets != null && meta.CapacityKind !== 'boarding')
+        return c.json(
+          { error: `${meta.Label}: that capacity doesn't apply to this service.` },
+          400,
+        );
+      if (svc.maxPerDay != null && meta.CapacityKind !== 'housesit')
+        return c.json(
+          { error: `${meta.Label}: that capacity doesn't apply to this service.` },
+          400,
+        );
+      // Per-service acceptance list: PATCH semantics (absent = keep current). An explicit list
+      // must be a subset of the tenant's slugs; the EFFECTIVE list (incoming or kept) may not be
+      // empty on an enabled service — "accepts nothing" is expressed by disabling the service.
+      if ('acceptedPetTypes' in svc && svc.acceptedPetTypes != null) {
+        if (
+          !Array.isArray(svc.acceptedPetTypes) ||
+          !svc.acceptedPetTypes.every((t) => typeof t === 'string' && knownPetSlugs.has(t))
+        )
+          return c.json({ error: `${meta.Label}: unknown pet type in the accepted list.` }, 400);
+      }
+      const effectiveAccepted =
+        'acceptedPetTypes' in svc ? (svc.acceptedPetTypes ?? null) : meta.AcceptedPetTypes;
+      if (svc.enabled && effectiveAccepted !== null && effectiveAccepted.length === 0)
+        return c.json(
+          {
+            error: `${meta.Label} must accept at least one pet type — disable the service instead.`,
+          },
+          400,
+        );
     }
 
     await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
       displayName,
       accentColor,
-      maxBoardingPets,
-      maxHouseSitsPerDay,
-      maxStayNights,
       timezone,
       contactEmail,
       contactPhone,
     });
-    if (petTypes !== undefined) {
-      for (const pt of PET_TYPES)
-        await setPetTypeEnabled(c.env.PAWBOOK_DB, tenant.Id, pt, petTypes.includes(pt));
-    }
     for (const svc of services) {
       const svcType = svc.type as string;
       // Validation above guarantees a matching row exists.
@@ -527,6 +532,11 @@ export const adminRoutes = new Hono<AppEnv>()
         maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,
         minPetCount: 'minPetCount' in svc ? (svc.minPetCount ?? null) : current.MinPetCount,
         maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
+        acceptedPetTypes:
+          'acceptedPetTypes' in svc ? (svc.acceptedPetTypes ?? null) : current.AcceptedPetTypes,
+        maxConcurrentPets:
+          'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : current.MaxConcurrentPets,
+        maxPerDay: 'maxPerDay' in svc ? (svc.maxPerDay ?? null) : current.MaxPerDay,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.
@@ -545,6 +555,7 @@ export const adminRoutes = new Hono<AppEnv>()
           startTime: o.startTime,
           endTime: o.endTime,
           capacity: o.capacity,
+          weekdaysOnly: o.weekdaysOnly,
         })),
       );
     }
@@ -570,6 +581,16 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Pick a different service name.' }, 400);
 
     const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    // Owner directive: cap TOTAL service rows (enabled or disabled) per tenant — creation is the
+    // only place a new row appears, so this is the sole gate. Seeded demo tenants may already sit
+    // at the cap; that's fine, they can still edit/enable what they have.
+    if (existing.length >= MAX_SERVICES)
+      return c.json(
+        {
+          error: `You've reached the limit of ${MAX_SERVICES} services. Delete one you no longer offer to add another.`,
+        },
+        400,
+      );
     if (existing.some((s) => s.ServiceType === slug))
       return c.json({ error: 'A service with that name already exists.' }, 400);
 
@@ -611,6 +632,66 @@ export const adminRoutes = new Hono<AppEnv>()
     await deleteService(c.env.PAWBOOK_DB, tenant.Id, type);
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.body(null, 204);
+  })
+
+  // Pet-type registry CRUD: add/rename/delete are immediate (the services split). Slugs are
+  // immutable — rename changes the display Label only, so history keeps resolving. On/off lives
+  // on each service's AcceptedPetTypes.
+  .post('/:slug/admin/pet-types', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req.json<{ label?: unknown }>().catch(() => ({}) as { label?: unknown });
+    const label = typeof body.label === 'string' ? body.label.trim() : '';
+    if (!label) return c.json({ error: 'Pet type name required.' }, 400);
+    const petType = slugifyServiceLabel(label);
+    if (!petType) return c.json({ error: 'Pick a different pet type name.' }, 400);
+    try {
+      await createPetType(c.env.PAWBOOK_DB, tenant.Id, petType, label);
+    } catch (err) {
+      // UNIQUE(TenantId, PetType) is the source of truth for duplicates (concurrent adds included).
+      if (err instanceof Error && err.message.includes('UNIQUE constraint failed'))
+        return c.json({ error: 'A pet type with that name already exists.' }, 409);
+      throw err;
+    }
+    await invalidateTenantCache(tenant.Slug, c.env);
+    return c.json({ petType, label }, 201);
+  })
+
+  .put('/:slug/admin/pet-types/:petType', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req.json<{ label?: unknown }>().catch(() => ({}) as { label?: unknown });
+    const label = typeof body.label === 'string' ? body.label.trim() : '';
+    if (!label) return c.json({ error: 'Pet type name required.' }, 400);
+    const petType = c.req.param('petType');
+    const renamed = await renamePetType(c.env.PAWBOOK_DB, tenant.Id, petType, label);
+    if (!renamed) return c.json({ error: 'Unknown pet type.' }, 404);
+    await invalidateTenantCache(tenant.Slug, c.env);
+    return c.json({ petType, label });
+  })
+
+  // Blocked with 409 while ANY customer pet or booking (any status — history included, the
+  // deleteService precedent) references the slug; an unreferenced delete also scrubs the slug
+  // from every service's acceptance list (config, not history — safe to clean). A list emptied
+  // by the scrub becomes '[]' (accepts nothing), never NULL (accepts all) — and an enabled
+  // service that just emptied out gets disabled in the same batch (migration 0015 step 6's
+  // rule; see deletePetTypeAndScrub). `disabledServices` tells the caller which ones, so the
+  // sitter finds out here instead of noticing a dead service later.
+  .delete('/:slug/admin/pet-types/:petType', async (c) => {
+    const tenant = c.get('tenant');
+    const petType = c.req.param('petType');
+    const rows = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+    if (!rows.some((p) => p.PetType === petType))
+      return c.json({ error: 'Unknown pet type.' }, 404);
+    const refs = await countPetTypeReferences(c.env.PAWBOOK_DB, tenant.Id, petType);
+    if (refs > 0)
+      return c.json(
+        {
+          error: `That pet type is on ${refs} ${refs === 1 ? 'pet or booking' : 'pets or bookings'} and can't be deleted. Uncheck it under each service's Accepted pets instead.`,
+        },
+        409,
+      );
+    const { disabledServices } = await deletePetTypeAndScrub(c.env.PAWBOOK_DB, tenant.Id, petType);
+    await invalidateTenantCache(tenant.Slug, c.env);
+    return c.json({ disabledServices }, 200);
   })
 
   .post('/:slug/admin/blocked', async (c) => {
@@ -776,20 +857,22 @@ export const adminRoutes = new Hono<AppEnv>()
       .json<{ name?: unknown; petType?: unknown; notes?: unknown }>()
       .catch(() => ({}) as { name?: unknown; petType?: unknown; notes?: unknown });
     const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const petType = body.petType;
+    const petType = typeof body.petType === 'string' ? body.petType : '';
     const rawNotes = typeof body.notes === 'string' ? body.notes.trim() : '';
     const notes = rawNotes || null;
     if (!name) return c.json({ error: 'Enter a pet name.' }, 400);
-    if (!isPetType(petType)) return c.json({ error: 'Unknown pet type.' }, 400);
+    if (!petType) return c.json({ error: 'Unknown pet type.' }, 400);
     if (notes !== null && notes.length > 2000) return c.json({ error: 'Notes are too long.' }, 400);
     // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
     // under it (production D1 has foreign keys OFF, so nothing else stops a cross-tenant orphan).
     if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
       return c.json({ error: 'Not found.' }, 404);
-    const accepted = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
-      (pt) => pt.PetType === petType && pt.Enabled,
+    // Registry membership only (0015): a sitter may record a pet of a type no service currently
+    // accepts — it just can't be booked until some service's Accepted pets list includes it.
+    const known = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
+      (pt) => pt.PetType === petType,
     );
-    if (!accepted) return c.json({ error: 'That pet type is not accepted.' }, 400);
+    if (!known) return c.json({ error: 'That pet type is not accepted.' }, 400);
     const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType, notes);
     return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType, notes: pet.Notes }, 201);
   })
@@ -818,10 +901,8 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
     }
-    const petTypesEnabled = new Set(
-      (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id))
-        .filter((pt) => pt.Enabled)
-        .map((pt) => pt.PetType),
+    const knownPetTypes = new Set(
+      (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).map((pt) => pt.PetType),
     );
     const existingPetNames = new Map<string, Set<string>>();
     for (const pet of await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id)) {
@@ -871,8 +952,8 @@ export const adminRoutes = new Hono<AppEnv>()
           skippedRows.push({ row, reason: 'Pet type given without a pet name' });
           continue;
         }
-        if (!isPetType(petType) || !petTypesEnabled.has(petType)) {
-          skippedRows.push({ row, reason: `'${rawPetType.trim()}' is not an enabled pet type` });
+        if (!knownPetTypes.has(petType)) {
+          skippedRows.push({ row, reason: `'${rawPetType.trim()}' is not one of your pet types` });
           continue;
         }
         const petSet = existingPetNames.get(customer.Id) ?? new Set<string>();
@@ -933,7 +1014,6 @@ export const adminRoutes = new Hono<AppEnv>()
     const status = body.status;
     if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
       return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
-    // ponytail: cancel leaves any synced GCal event in place; delete via GCalEventId if sitters complain
     const updated = await updateBookingStatus(
       c.env.PAWBOOK_DB,
       tenant.Id,
@@ -942,21 +1022,39 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!updated) return c.json({ error: 'Not found.' }, 404);
 
+    // One unconditional fetch serves both the calendar delete hook and the customer
+    // notification below (cancel/decline are soft — the row still exists).
+    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+
+    // Cancel/decline: best-effort delete of the synced Google event, mirroring the create
+    // path's never-blocks posture (waitUntil in production; awaited in tests, which have no
+    // ExecutionContext — see routes/bookings.ts). Confirm changes nothing: events are created
+    // at request time, so a confirmed booking's event already exists.
+    if (status !== 'confirmed' && booking?.GCalEventId) {
+      const cleanup = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId).catch(
+        (err) => {
+          console.error('calendar event delete failed', err);
+        },
+      );
+      try {
+        c.executionCtx.waitUntil(cleanup);
+      } catch {
+        await cleanup;
+      }
+    }
+
     // Best-effort customer notification; `notified` lets the dashboard tell the sitter honestly
     // whether the client heard about it (false when email isn't configured or the send failed).
     let notified = false;
-    if (isEmailConfigured(c.env)) {
-      const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
-      if (booking?.Email) {
-        const whenText = booking.EndDate
-          ? `${booking.StartDate} – ${booking.EndDate}`
-          : booking.StartDate;
-        try {
-          await sendBookingStatusEmail(c.env, booking.Email, tenant.DisplayName, status, whenText);
-          notified = true;
-        } catch {
-          /* status change stands; the dashboard reports the client was not emailed */
-        }
+    if (isEmailConfigured(c.env) && booking?.Email) {
+      const whenText = booking.EndDate
+        ? `${booking.StartDate} – ${booking.EndDate}`
+        : booking.StartDate;
+      try {
+        await sendBookingStatusEmail(c.env, booking.Email, tenant.DisplayName, status, whenText);
+        notified = true;
+      } catch {
+        /* status change stands; the dashboard reports the client was not emailed */
       }
     }
     return c.json({ status, notified });

@@ -10,6 +10,7 @@ export default defineConfig({
         embed: resolve(import.meta.dirname, 'embed.html'),
         admin: resolve(import.meta.dirname, 'admin.html'),
         demo: resolve(import.meta.dirname, 'demo.html'),
+        setup: resolve(import.meta.dirname, 'setup.html'),
       },
     },
   },

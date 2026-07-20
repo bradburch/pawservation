@@ -2,6 +2,7 @@ import {
   formatShortDate,
   nightsBetween,
   validateAnswers,
+  validatePetTypeAcceptance,
   validateServiceConstraints,
 } from '../../src/shared/index.js';
 import { useState } from 'react';
@@ -42,6 +43,24 @@ export function BookTab({
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
 
+  const selectedOption = service?.options.find((o) => o.optionKey === optionKey);
+  const petTypeLabels = new Map(config.petTypes.map((p) => [p.slug, p.label]));
+  const labelOf = (petSlug: string) => petTypeLabels.get(petSlug) ?? petSlug;
+  // Mirror of the server verdict: registry membership (slug present in config.petTypes — an
+  // absent slug is corrupt/stale data) AND the service's own acceptance list (null = accepts all).
+  const petAccepted = (p: Pet) =>
+    petTypeLabels.has(p.petType) &&
+    (!service?.acceptedPetTypes || service.acceptedPetTypes.includes(p.petType));
+  const acceptanceError = service
+    ? validatePetTypeAcceptance(
+        service.acceptedPetTypes,
+        service.label,
+        (pets ?? [])
+          .filter((p) => selectedPets.includes(p.id))
+          .map((p) => ({ name: p.name, petType: p.petType })),
+        labelOf,
+      )
+    : null;
   const questionsError = service ? validateAnswers(service.questions, answers) : null;
   const nights = service?.shape === 'range' && start && end ? nightsBetween(start, end) : null;
   const constraintsError = service
@@ -190,6 +209,7 @@ export function BookTab({
         token={getToken(slug) ?? ''}
         serviceType={type}
         optionKey={optionKey}
+        weekdaysOnly={selectedOption?.weekdaysOnly ?? false}
         shape={service.shape === 'range' ? 'range' : 'single'}
         month={month}
         onMonthChange={setMonth}
@@ -215,11 +235,16 @@ export function BookTab({
               <div className="bp-pet-chips">
                 {pets.map((p) => {
                   const on = selectedPets.includes(p.id);
+                  const ok = petAccepted(p);
                   return (
-                    <label className={`bp-pet-chip${on ? ' bp-on' : ''}`} key={p.id}>
+                    <label
+                      className={`bp-pet-chip${on ? ' bp-on' : ''}${ok ? '' : ' bp-off'}`}
+                      key={p.id}
+                    >
                       <input
                         type="checkbox"
                         checked={on}
+                        disabled={!ok}
                         onChange={(e) => {
                           setSelectedPets((cur) =>
                             e.target.checked ? [...cur, p.id] : cur.filter((id) => id !== p.id),
@@ -231,7 +256,8 @@ export function BookTab({
                         <IconCheck size={13} />
                       </span>
                       {p.name}
-                      <span className="bp-pet-type">{p.petType}</span>
+                      <span className="bp-pet-type">{labelOf(p.petType)}</span>
+                      {!ok && <span className="bp-pet-hint">not accepted for {service.label}</span>}
                     </label>
                   );
                 })}
@@ -269,12 +295,16 @@ export function BookTab({
                 </p>
                 <button
                   onClick={submit}
-                  disabled={submitting || !!questionsError || !!constraintsError}
+                  disabled={
+                    submitting || !!questionsError || !!constraintsError || !!acceptanceError
+                  }
                 >
                   {submitting ? 'Sending…' : 'Send request'}
                 </button>
-                {(questionsError || constraintsError) && (
-                  <p className="bp-error">{questionsError ?? constraintsError}</p>
+                {(questionsError || constraintsError || acceptanceError) && (
+                  <p className="bp-error">
+                    {questionsError ?? constraintsError ?? acceptanceError}
+                  </p>
                 )}
               </div>
             ) : (

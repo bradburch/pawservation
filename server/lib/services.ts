@@ -8,8 +8,8 @@
 
 export type ServiceShape = 'range' | 'single';
 export type RateUnit = 'night' | 'day' | 'visit';
-/** 'boarding' = pet-counted vs MaxBoardingPets; 'housesit' = day-counted vs MaxHouseSitsPerDay;
- * 'none' = unlimited (blocked days only). Pool names, not service names. */
+/** 'boarding' = pet-counted vs the service's own MaxConcurrentPets; 'housesit' = day-counted vs
+ * its own MaxPerDay; 'none' = unlimited (blocked days only). Capacity rules, not service names. */
 export type CapacityKind = 'boarding' | 'housesit' | 'none';
 
 /** Service identifiers are per-tenant slugs now — validated against TenantServices rows, not an enum. */
@@ -68,6 +68,11 @@ export const SERVICE_TEMPLATES = {
   },
 } as const satisfies Record<string, ServiceTemplate>;
 
+/** Owner directive: cap the number of TenantServices rows (enabled or disabled) a tenant may
+ * hold. Server-side source of truth — POST /:slug/admin/services is the only place a new row
+ * gets created, and enforces this; UI disabled-states are convenience mirrors only. */
+export const MAX_SERVICES = 6;
+
 export type TemplateId = keyof typeof SERVICE_TEMPLATES;
 
 export const TEMPLATE_IDS = Object.keys(SERVICE_TEMPLATES) as TemplateId[];
@@ -87,9 +92,6 @@ export function slugifyServiceLabel(label: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-export const PET_TYPES = ['dog', 'cat'] as const;
-export type PetType = (typeof PET_TYPES)[number];
-
-export function isPetType(value: unknown): value is PetType {
-  return typeof value === 'string' && (PET_TYPES as readonly string[]).includes(value);
-}
+/** Pet species are per-tenant TenantPetTypes rows now (slug + Label) — validated against rows,
+ * not an enum, exactly like ServiceType. */
+export type PetType = string;

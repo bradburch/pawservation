@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { adminApi, PAYMENT_METHODS, type Payment } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
+import { Hint } from './Hint';
 
 /** Local 'YYYY-MM-DD' default for the paid-date field (the sitter can change it). */
 function todayStr(): string {
@@ -147,6 +148,11 @@ export function PaymentsPanel({
           <button disabled={busyId === RECORDING || !canSubmit} onClick={() => void record()}>
             Record payment
           </button>
+          <Hint label="Recording payments">
+            Pawbook doesn&rsquo;t take payments — you collect money however you like (cash, Venmo,
+            Zelle…). Record what you received here so Earnings stays right; deposits and partial
+            payments are fine.
+          </Hint>
         </div>
       )}
     </div>

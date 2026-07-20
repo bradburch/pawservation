@@ -8,7 +8,8 @@ import {
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
-  type CapacityLimits,
+  type CapacityRequest,
+  type PoolKind,
 } from '../../src/shared/index.js';
 import {
   listCapacityRows,
@@ -19,29 +20,21 @@ import {
 } from '../db/repo';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
-/**
- * Per-tenant availability built on the shared capacity engine. The tenant's nullable config
- * columns map straight onto CapacityLimits (null = unlimited / auto pass-through).
- */
-function tenantLimits(tenant: Tenant): CapacityLimits {
-  return {
-    maxBoardingPets: tenant.MaxBoardingPets,
-    maxHouseSitsPerDay: tenant.MaxHouseSitsPerDay,
-  };
-}
+// Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
+// its own nullable cap (MaxConcurrentPets / MaxPerDay; null = unlimited / auto pass-through).
 
 export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
-  return rows.map((row) => ({
-    start_date: row.StartDate,
-    end_date: row.EndDate ?? undefined,
-    type:
-      row.ServiceType === 'blocked'
-        ? 'blocked'
-        : row.CapacityKind === 'housesit'
-          ? 'house-sit'
-          : 'boarding',
-    petCount: row.PetCount,
-  }));
+  return rows.map((row) =>
+    row.ServiceType === 'blocked'
+      ? { start_date: row.StartDate, end_date: row.EndDate ?? undefined, kind: 'blocked' as const }
+      : {
+          start_date: row.StartDate,
+          end_date: row.EndDate ?? undefined,
+          kind: row.CapacityKind === 'housesit' ? ('housesit' as const) : ('boarding' as const),
+          serviceType: row.ServiceType,
+          petCount: row.PetCount,
+        },
+  );
 }
 
 export type AvailabilityResult =
@@ -63,11 +56,6 @@ export function estimateCost(
   return option.Rate * billableUnits(nightsBetween(startDate, endDateExclusive), 'night');
 }
 
-/** Range services always draw from a pool (templates pin range ⇒ boarding|housesit). */
-function capacityKindToRequestType(kind: TenantService['CapacityKind']): 'boarding' | 'house-sit' {
-  return kind === 'housesit' ? 'house-sit' : 'boarding';
-}
-
 async function checkRange(
   env: Env,
   tenant: Tenant,
@@ -78,16 +66,16 @@ async function checkRange(
   petCount: number,
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
-  const requestType = capacityKindToRequestType(service.CapacityKind);
-  const limits = tenantLimits(tenant);
+  const request: CapacityRequest = {
+    serviceType: service.ServiceType,
+    kind: service.CapacityKind === 'housesit' ? 'housesit' : 'boarding',
+    cap: service.CapacityKind === 'housesit' ? service.MaxPerDay : service.MaxConcurrentPets,
+    petCount,
+  };
   // The engine (rangeHasConflict) already rejects an over-cap boarding request on its own. This
   // fast path is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the
   // generic "dates not available") and short-circuits before the capacity DB read. Unlimited skips it.
-  if (
-    requestType === 'boarding' &&
-    tenant.MaxBoardingPets !== null &&
-    petCount > tenant.MaxBoardingPets
-  ) {
+  if (request.kind === 'boarding' && request.cap !== null && petCount > request.cap) {
     return { available: false, reason: 'That exceeds our boarding capacity.' };
   }
   // Fetch one day PAST checkout so the soft-bookend look-ahead sees a booking starting on the
@@ -100,7 +88,7 @@ async function checkRange(
     excludeBookingId,
   );
   const capacity = buildCapacity(rowsToCapacityEvents(rows));
-  if (rangeHasConflict(startDate, endDateExclusive, requestType, capacity, limits, petCount)) {
+  if (rangeHasConflict(startDate, endDateExclusive, request, capacity)) {
     return { available: false, reason: 'Those dates are not available.' };
   }
   return {
@@ -200,13 +188,12 @@ export async function monthAvailability(
   const lastDay = addDays(monthStart, daysInMonth - 1);
   const monthEndExclusive = addDays(lastDay, 1);
 
-  const requestType: 'boarding' | 'house-sit' | null =
-    service.CapacityKind === 'none' ? null : capacityKindToRequestType(service.CapacityKind);
+  const poolKind: PoolKind | null = service.CapacityKind === 'none' ? null : service.CapacityKind;
 
   // Slot capacity is fetched ONCE for the whole grid (not per day), matching buildCapacity's
   // "build the map once" pattern, and run concurrently with the other D1 reads since none of
   // them depend on each other's result.
-  const capacityLimit = requestType === null ? (option?.Capacity ?? null) : null;
+  const capacityLimit = poolKind === null ? (option?.Capacity ?? null) : null;
   const slotCountsPromise =
     capacityLimit !== null
       ? listSlotBookingCounts(
@@ -251,10 +238,10 @@ export async function monthAvailability(
     let used: number | null;
     let max: number | null;
 
-    if (requestType !== null) {
-      // Range service (boarding / housesitting): capacity-aware
-      const rawUsed = requestType === 'boarding' ? (day?.boarding ?? 0) : (day?.houseSits ?? 0);
-      max = requestType === 'boarding' ? tenant.MaxBoardingPets : tenant.MaxHouseSitsPerDay;
+    if (poolKind !== null) {
+      // Range service (boarding / housesitting): capacity-aware against ITS OWN pool + cap.
+      const rawUsed = day?.byService.get(service.ServiceType) ?? 0;
+      max = poolKind === 'boarding' ? service.MaxConcurrentPets : service.MaxPerDay;
       const blocked = (day?.blocked ?? 0) >= 1;
       const unavailable = blocked || (max != null && rawUsed >= max);
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';

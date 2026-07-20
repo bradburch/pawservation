@@ -98,6 +98,43 @@ export async function verifyAdminToken(token: string, secret: string): Promise<A
   }
 }
 
+/**
+ * Platform-owner session token — same HS256 mechanism, `role: 'owner'`, and deliberately NO
+ * `tid` (owners are instance-level), so adminAuth's tenant match can never pass one. `sub` is
+ * the owner's EMAIL (membership is governed by the OWNER_EMAILS secret, and /admin/session
+ * must report the email without a DB round-trip). Reuses the 8h admin TTL.
+ */
+export type OwnerClaims = {
+  /** Owner email (normalized lowercase). */
+  sub: string;
+  role: 'owner';
+  exp: number;
+};
+
+export async function mintOwnerToken(
+  email: string,
+  secret: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): Promise<string> {
+  const claims: OwnerClaims = {
+    sub: email,
+    role: 'owner',
+    exp: nowSeconds + ADMIN_TOKEN_TTL_SECONDS,
+  };
+  return await sign(claims, secret);
+}
+
+export async function verifyOwnerToken(token: string, secret: string): Promise<OwnerClaims | null> {
+  try {
+    const payload = await verify(token, secret, 'HS256');
+    if (typeof payload.sub !== 'string' || payload.role !== 'owner') return null;
+    if (typeof payload.exp !== 'number') return null;
+    return payload as OwnerClaims;
+  } catch {
+    return null;
+  }
+}
+
 export function extractBearer(header: string | undefined | null): string {
   return header && header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
 }

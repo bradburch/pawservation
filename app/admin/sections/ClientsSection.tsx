@@ -2,10 +2,14 @@ import { useState } from 'react';
 import type { Customer, ImportResult } from '../../shared-ui/api.js';
 import { adminApi } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
+import { Hint } from '../Hint';
+
+/** The full pet-type registry entry (slug + display label), same shape as `Settings.petTypes`. */
+type PetType = { petType: string; label: string };
 
 function PetAdder({
   customer,
-  enabledPetTypes,
+  petTypes,
   slug,
   token,
   onAdded,
@@ -13,7 +17,7 @@ function PetAdder({
   clearError,
 }: {
   customer: Customer;
-  enabledPetTypes: string[];
+  petTypes: PetType[];
   slug: string;
   token: string;
   onAdded: () => void;
@@ -21,16 +25,34 @@ function PetAdder({
   clearError: () => void;
 }) {
   const [name, setName] = useState('');
-  const [petType, setPetType] = useState(enabledPetTypes[0]);
+  // Value held here is the slug (what the server expects), not the label. Just the user's last
+  // pick, not necessarily a valid one right now — see `selectedPetType` below.
+  const [petType, setPetType] = useState(petTypes[0]?.petType ?? '');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Derived, not synced via an effect: `petType` goes stale if the registry changes while this
+  // stays mounted (every section stays mounted — see App.tsx), e.g. the sitter removes the
+  // currently-selected type in the Pet types section. Falling back here — rather than writing
+  // the fallback back into `petType` — means the <select>, and what `add()` submits, are always
+  // in sync with the current registry without a render-then-setState round trip.
+  const selectedPetType = petTypes.some((pt) => pt.petType === petType)
+    ? petType
+    : (petTypes[0]?.petType ?? '');
 
   const add = async () => {
     if (!name.trim() || busy) return;
     clearError();
     setBusy(true);
     try {
-      await adminApi.customers.addPet(slug, token, customer.id, name.trim(), petType, notes.trim());
+      await adminApi.customers.addPet(
+        slug,
+        token,
+        customer.id,
+        name.trim(),
+        selectedPetType,
+        notes.trim(),
+      );
       setName('');
       setNotes('');
       onAdded();
@@ -44,10 +66,10 @@ function PetAdder({
   return (
     <div className="pb-row pb-add-pet">
       <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
-      <select value={petType} onChange={(e) => setPetType(e.target.value)}>
-        {enabledPetTypes.map((pt) => (
-          <option key={pt} value={pt}>
-            {pt === 'dog' ? 'Dog' : 'Cat'}
+      <select value={selectedPetType} onChange={(e) => setPetType(e.target.value)}>
+        {petTypes.map((pt) => (
+          <option key={pt.petType} value={pt.petType}>
+            {pt.label}
           </option>
         ))}
       </select>
@@ -65,7 +87,7 @@ function PetAdder({
 
 export function ClientsSection({
   customers,
-  enabledPetTypes,
+  petTypes,
   slug,
   token,
   onCustomersChanged,
@@ -73,7 +95,7 @@ export function ClientsSection({
   clearError,
 }: {
   customers: Customer[];
-  enabledPetTypes: string[];
+  petTypes: PetType[];
   slug: string;
   token: string;
   onCustomersChanged: () => void;
@@ -148,6 +170,9 @@ export function ClientsSection({
     <>
       <h2>
         <IconUsers size={18} /> Your clients
+        <Hint label="Clients">
+          Only people on this list can book with you. Adding someone emails them an invite.
+        </Hint>
       </h2>
       <p className="pb-applies">
         Only clients you invite can book — adding one sends them an invite by email.
@@ -185,7 +210,7 @@ export function ClientsSection({
             setImportResult(null);
           }}
         />
-        <label>
+        <label className="pb-inline">
           <input
             type="checkbox"
             checked={sendInvites}
@@ -251,10 +276,10 @@ export function ClientsSection({
                 </li>
               ))}
             </ul>
-            {enabledPetTypes.length > 0 && (
+            {petTypes.length > 0 && (
               <PetAdder
                 customer={cust}
-                enabledPetTypes={enabledPetTypes}
+                petTypes={petTypes}
                 slug={slug}
                 token={token}
                 onAdded={onCustomersChanged}

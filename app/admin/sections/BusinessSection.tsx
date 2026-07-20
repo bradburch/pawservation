@@ -1,28 +1,18 @@
 import { DEFAULT_TIMEZONE } from '../../../src/shared/index.js';
 import { IconStore } from '../../shared-ui/icons';
 import type { SettingsSectionProps } from '../shared.js';
-import { NullableNumberField } from './fields.js';
-
-const TIMEZONES: string[] =
-  typeof Intl.supportedValuesOf === 'function'
-    ? Intl.supportedValuesOf('timeZone')
-    : [
-        'America/Los_Angeles',
-        'America/Denver',
-        'America/Chicago',
-        'America/New_York',
-        'America/Anchorage',
-        'Pacific/Honolulu',
-        'Europe/London',
-        'Europe/Paris',
-        'Australia/Sydney',
-      ];
+import { Hint } from '../Hint';
+import { TIMEZONES } from '../timezones.js';
 
 export function BusinessSection({ settings, setSettings }: SettingsSectionProps) {
   return (
     <>
       <h2>
         <IconStore size={18} /> Your business
+        <Hint label="Business">
+          The basics your booking page shows clients — your name, color, and contact details.
+          Changes wait until you press Save.
+        </Hint>
       </h2>
       <label>
         Business name
@@ -58,21 +48,6 @@ export function BusinessSection({ settings, setSettings }: SettingsSectionProps)
         />
       </label>
       <p className="pb-hint">Shown to your clients on the booking page so they can reach you.</p>
-      <NullableNumberField
-        label="Boarding spots per day"
-        value={settings.maxBoardingPets}
-        onChange={(maxBoardingPets) => setSettings({ ...settings, maxBoardingPets })}
-      />
-      <NullableNumberField
-        label="House-sits per day"
-        value={settings.maxHouseSitsPerDay}
-        onChange={(maxHouseSitsPerDay) => setSettings({ ...settings, maxHouseSitsPerDay })}
-      />
-      <NullableNumberField
-        label="Longest stay (nights)"
-        value={settings.maxStayNights}
-        onChange={(maxStayNights) => setSettings({ ...settings, maxStayNights })}
-      />
       <label>
         Your time zone
         <select

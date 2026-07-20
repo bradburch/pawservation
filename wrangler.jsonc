@@ -27,6 +27,19 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/embed/*", "/admin/*", "/demo"],
+    // Every path the worker's page() handler serves must be listed explicitly — glob "/x/*"
+    // does NOT match the bare "/x", and un-listed paths bypass the worker entirely (served
+    // straight off the assets layer with no CSP / X-Frame-Options at all). See server/index.ts.
+    "run_worker_first": [
+      "/api/*",
+      "/embed/*",
+      "/admin",
+      "/admin/*",
+      "/admin.html",
+      "/demo",
+      "/demo.html",
+      "/setup",
+      "/setup.html",
+    ],
   },
 }

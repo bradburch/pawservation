@@ -3,6 +3,7 @@ import {
   validateAnswer,
   validateAnswers,
   validateServiceConstraints,
+  validatePetTypeAcceptance,
   type ServiceQuestion,
 } from '../../src/shared/index.js';
 
@@ -109,5 +110,68 @@ describe('validateServiceConstraints', () => {
     expect(validateServiceConstraints(c, { nights: null, petCount: 3 })).toBe(
       'This service allows at most 2 pets.',
     );
+  });
+});
+
+describe('validatePetTypeAcceptance', () => {
+  const labelOf = (slug: string) => ({ dog: 'Dogs', cat: 'Cats', rabbit: 'Rabbits' })[slug] ?? slug;
+
+  it('null accepted = every type welcome', () => {
+    expect(
+      validatePetTypeAcceptance(null, 'Boarding', [{ name: 'Peanut', petType: 'rabbit' }], labelOf),
+    ).toBeNull();
+  });
+
+  it('rejects the first unaccepted pet with a plain-language message', () => {
+    expect(
+      validatePetTypeAcceptance(
+        ['dog'],
+        'Boarding',
+        [{ name: 'Peanut', petType: 'rabbit' }],
+        labelOf,
+      ),
+    ).toBe("Boarding doesn't accept rabbits — Peanut can't join this booking.");
+  });
+
+  it('a mixed selection fails on the offending pet, accepted ones notwithstanding', () => {
+    expect(
+      validatePetTypeAcceptance(
+        ['dog'],
+        'Boarding',
+        [
+          { name: 'Bella', petType: 'dog' },
+          { name: 'Mochi', petType: 'cat' },
+        ],
+        labelOf,
+      ),
+    ).toBe("Boarding doesn't accept cats — Mochi can't join this booking.");
+  });
+
+  it('passes when every pet is on the list; empty list rejects everything', () => {
+    expect(
+      validatePetTypeAcceptance(
+        ['dog', 'cat'],
+        'Walks',
+        [
+          { name: 'Bella', petType: 'dog' },
+          { name: 'Mochi', petType: 'cat' },
+        ],
+        labelOf,
+      ),
+    ).toBeNull();
+    expect(
+      validatePetTypeAcceptance([], 'Walks', [{ name: 'Bella', petType: 'dog' }], labelOf),
+    ).toBe("Walks doesn't accept dogs — Bella can't join this booking.");
+  });
+
+  it('labelOf falling back to the raw slug still reads', () => {
+    expect(
+      validatePetTypeAcceptance(
+        ['dog'],
+        'Boarding',
+        [{ name: 'Ziggy', petType: 'axolotl' }],
+        (slug) => slug,
+      ),
+    ).toBe("Boarding doesn't accept axolotl — Ziggy can't join this booking.");
   });
 });

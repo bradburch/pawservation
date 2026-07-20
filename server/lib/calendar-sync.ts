@@ -10,6 +10,7 @@ import {
 import {
   buildEventResource,
   createEvent,
+  deleteEvent,
   listCalendarEvents,
   refreshAccessToken,
 } from './google-calendar';
@@ -83,6 +84,25 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
 
   const { id } = await createEvent(accessToken, conn.CalendarId ?? 'primary', resource);
   await setBookingGCalEventId(env.PAWBOOK_DB, tenant.Id, b.bookingId, id);
+}
+
+/**
+ * Best-effort: delete the Google Calendar event for a booking that was cancelled or declined in
+ * the dashboard. Callers run this via executionCtx.waitUntil and swallow rejections — mirroring
+ * syncBookingToCalendar's never-blocks posture: the status change has already been committed and
+ * must stand regardless of what Google does. deleteEvent treats 410 Gone (already deleted, e.g.
+ * removed by hand in Calendar) as success. The booking keeps its GCalEventId as a historical
+ * record; reconciliation ignores it because listSyncedBookingIds excludes cancelled bookings.
+ */
+export async function deleteBookingCalendarEvent(
+  env: Env,
+  tenant: Tenant,
+  gcalEventId: string,
+): Promise<void> {
+  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
+  const accessToken = await getCalendarAccessToken(env, tenant, conn);
+  await deleteEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId);
 }
 
 const CALENDAR_SYNC_TTL_SECONDS = 120;

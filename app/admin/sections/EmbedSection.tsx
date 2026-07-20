@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { IconCode } from '../../shared-ui/icons';
 import { adminFetch, type Session } from '../shared.js';
+import { Hint } from '../Hint';
 
 function CopyableSnippet({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
@@ -46,7 +47,11 @@ function Snippets({ session }: { session: Session }) {
         website builder. Ask whoever manages your website to help if you get stuck.
       </p>
       <p>
-        <strong>Squarespace and most other website builders:</strong>
+        <strong>Squarespace and most other website builders:</strong>{' '}
+        <Hint label="the embed codes">
+          Both codes show the same booking page. Try the first; if your website builder refuses it,
+          the second works everywhere.
+        </Hint>
       </p>
       <ol>
         <li>Click &ldquo;Copy the code&rdquo; below.</li>
@@ -118,6 +123,10 @@ export function EmbedSection({
     <>
       <h2>
         <IconCode size={18} /> Add to your website
+        <Hint label="Your website">
+          Your booking page, ready to drop into your own site. Copy the code, paste it into your
+          website builder, and clients book without leaving your site.
+        </Hint>
       </h2>
       <p className="pb-applies">
         A live preview of your widget — exactly what customers see, with your saved branding. Save
