@@ -60,6 +60,7 @@ export function Hint({ label, children }: { label: string; children: ReactNode }
         aria-label={`About ${label}`}
         aria-expanded={open}
         aria-controls={id}
+        aria-describedby={open ? id : undefined}
         onClick={() => setState((s) => (s === 'pinned' ? 'closed' : 'pinned'))}
         onMouseEnter={() => setState((s) => (s === 'closed' ? 'preview' : s))}
         onMouseLeave={() => setState((s) => (s === 'preview' ? 'closed' : s))}
