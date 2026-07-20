@@ -29,10 +29,18 @@ State as of this merge:
 - **Local dev DB**: wiped and reseeded from `sql/schema.sql` (the Fresh installs path above),
   which already carries everything through `0015_service_level_attributes.sql` — so the local DB
   needs **no** migrations applied; it isn't on the incremental-apply path below at all.
-- **Remote DB**: has `0001`–`0006` applied. Needs the full `0007`–`0015` run, in order, at next
-  deploy — none of the booking-lifecycle, payments, service-slots, slot-index, contact/notes,
+- **Remote DB**: has `0001`–`0006` applied. Needs the full `0007`–`0015` run, in order,
+  **before the new worker is deployed (i.e. before merging to `main`, which auto-deploys)** —
+  none of the booking-lifecycle, payments, service-slots, slot-index, contact/notes,
   weekday-only, invite-signup/owner-console, custom-pet-types, or service-level-attributes
   migrations have reached it yet.
+
+**Order: migrate first, then deploy.** The new worker unconditionally `SELECT`s
+`AcceptedPetTypes`, `MaxConcurrentPets`, `MaxPerDay`, and `Label` (added by `0014`/`0015`) and
+**500s on every request** if those columns are missing — so it must not go live until `0007`–
+`0015` are applied. This direction is safe: `0012`–`0015` are backward-compatible with the
+currently-deployed worker (additive columns it simply ignores), so applying them ahead of the
+deploy breaks nothing that is already running.
 
 Apply with, e.g.:
 

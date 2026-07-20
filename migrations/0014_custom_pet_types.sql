@@ -3,6 +3,12 @@
 -- any tenant slug, and TenantServices gains AcceptedPetTypes — a JSON array of pet-type slugs,
 -- NULL = accepts every enabled type (the schema-wide null-is-unlimited convention).
 -- See docs/superpowers/specs/2026-07-19-animal-types-design.md.
+--
+-- NOT IDEMPOTENT — apply exactly once, and only via `wrangler d1 execute --file` (below). That
+-- runner wraps the file in a single transaction, so an accidental re-run fails on the duplicate
+-- ALTER/rebuild and rolls the whole file back, leaving data intact. A non-transactional runner
+-- would instead partially re-apply and FLATTEN any custom pet-type Labels a sitter has since
+-- edited back to their migration-time defaults. Never re-run; write a new migration instead.
 -- Apply with:
 --   npx wrangler d1 execute pawbook-db --local  --file ./migrations/0014_custom_pet_types.sql
 --   npx wrangler d1 execute pawbook-db --remote --file ./migrations/0014_custom_pet_types.sql

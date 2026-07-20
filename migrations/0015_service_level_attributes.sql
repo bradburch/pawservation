@@ -6,6 +6,13 @@
 -- ALTER ADD + UPDATEs, never a rebuild), but no code reads or writes them after this ships.
 -- A future 0016+ cleanup migration may drop them once every DB has 0015.
 --
+-- NOT IDEMPOTENT — apply exactly once, and only via `wrangler d1 execute --file` (below). That
+-- runner wraps the file in a single transaction, so an accidental re-run fails on the duplicate
+-- `ALTER ... ADD COLUMN` and rolls the whole file back. A non-transactional runner would instead
+-- re-run the materializing UPDATEs and OVERWRITE any per-service cap edits a sitter has made
+-- since the first apply, reverting them to the migration-time derived values. Never re-run;
+-- write a new migration instead.
+--
 -- Apply with:
 --   npx wrangler d1 execute pawbook-db --local  --file ./migrations/0015_service_level_attributes.sql
 --   npx wrangler d1 execute pawbook-db --remote --file ./migrations/0015_service_level_attributes.sql
