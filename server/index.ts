@@ -558,11 +558,11 @@ const LANDING_HTML = `<!doctype html>
           </li>
           <li class="step">
             <h3><span class="step-no" aria-hidden="true">2</span>They pick the dates</h3>
-            <p>Days you can&rsquo;t take aren&rsquo;t offered: full days are struck out, and a weekday-only service greys the weekends.</p>
+            <p>Days you can&rsquo;t take aren&rsquo;t offered: full days and the weekends of a weekday-only service are struck out as unavailable.</p>
             <div class="shot shot-tilt-r">
               <img
                 src="/img/landing/step-calendar.webp"
-                alt="Month grid where full days are struck through and weekends are greyed out for a weekday-only service"
+                alt="Month grid where full days are struck through and the weekends of a weekday-only service are struck through as unavailable"
               />
             </div>
           </li>

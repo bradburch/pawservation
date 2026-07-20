@@ -45,7 +45,7 @@ export function Calendar({
   token: string;
   serviceType: string;
   optionKey?: string;
-  /** Selected option is weekday-only: grey out + disable Sat/Sun (server enforces the same). */
+  /** Selected option is weekday-only: marks unavailable + disable Sat/Sun (server enforces the same). */
   weekdaysOnly?: boolean;
   shape: 'range' | 'single';
   month: string;
@@ -195,7 +195,7 @@ export function Calendar({
               Your bookings
             </li>
           ),
-          // Weekday-only options grey Sat/Sun with the same unavailable treatment, so the
+          // Weekday-only options mark Sat/Sun unavailable with the same treatment, so the
           // legend must explain it even when no server-reported day is unavailable.
           (!!weekdaysOnly || states.some((d) => d.status === 'unavailable')) && (
             <li key="unavail" className="bp-lg-unavail">

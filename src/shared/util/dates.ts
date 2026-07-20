@@ -80,7 +80,7 @@ export function getPacificDateStr(
  * True when a `YYYY-MM-DD` date is a Saturday or Sunday. The day-of-week of a date-only
  * string is timezone-free (the same calendar date is the same weekday in every zone), so
  * this stays pure UTC arithmetic — shared by the server's weekday-only booking check and
- * the widget's greyed-weekend mirror.
+ * the widget's mirror that marks weekends unavailable.
  */
 export function isWeekend(dateStr: string): boolean {
   const day = new Date(parseDateUtc(dateStr)).getUTCDay();
