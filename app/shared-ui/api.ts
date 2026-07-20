@@ -22,13 +22,10 @@ export type TenantConfig = {
   slug: string;
   displayName: string;
   accentColor: string;
-  maxBoardingPets: number | null;
-  maxHouseSitsPerDay: number | null;
-  maxStayNights: number | null;
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
-  petTypes: { slug: string; label: string }[]; // enabled types only
+  petTypes: { slug: string; label: string }[]; // the FULL pet-type registry — serves as the label map; offered types derive per service
   services: ServiceConfig[];
 };
 

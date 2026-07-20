@@ -46,8 +46,8 @@ export function BookTab({
   const selectedOption = service?.options.find((o) => o.optionKey === optionKey);
   const petTypeLabels = new Map(config.petTypes.map((p) => [p.slug, p.label]));
   const labelOf = (petSlug: string) => petTypeLabels.get(petSlug) ?? petSlug;
-  // Mirror of the server verdict: tenant-level disable (slug absent from config.petTypes)
-  // always wins; otherwise NULL accepted = every enabled type.
+  // Mirror of the server verdict: registry membership (slug present in config.petTypes — an
+  // absent slug is corrupt/stale data) AND the service's own acceptance list (null = accepts all).
   const petAccepted = (p: Pet) =>
     petTypeLabels.has(p.petType) &&
     (!service?.acceptedPetTypes || service.acceptedPetTypes.includes(p.petType));
