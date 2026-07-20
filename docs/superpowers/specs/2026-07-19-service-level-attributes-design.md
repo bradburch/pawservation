@@ -7,7 +7,7 @@
 ## Problem
 
 Three booking attributes live on `Tenants` even though each one describes a
-*service*, not the business: `MaxBoardingPets` (pet-counted daily cap for the
+_service_, not the business: `MaxBoardingPets` (pet-counted daily cap for the
 boarding pool), `MaxHouseSitsPerDay` (day-counted cap for the house-sit pool),
 and `MaxStayNights` (stay-length ceiling applied to every range service).
 Likewise `TenantPetTypes.Enabled` is a tenant-global on/off switch layered on
@@ -15,9 +15,9 @@ top of the per-service `AcceptedPetTypes` lists that the animal-types work
 (`2026-07-19-animal-types-design.md`) already added — two gates expressing one
 idea.
 
-Owner's directive (verbatim): *"For the json, maxBoardingPets: 4,
+Owner's directive (verbatim): _"For the json, maxBoardingPets: 4,
 maxHouseSitsPerDay: null, maxStayNights: 14, as well as petTypes are
-service-level attributes. They are not 'global' attributes."*
+service-level attributes. They are not 'global' attributes."_
 
 So: caps move onto the services they describe, stay length collapses into the
 existing per-service `MaxNights`, and `TenantPetTypes` becomes a pure registry
@@ -68,7 +68,7 @@ remote DB keep the exact same shape).
 3. **Stay length → `MaxNights`, effective-min copy** (refinement over the
    plain "copy where NULL" directive — see finding F2): today BOTH limits are
    enforced at booking time, so the effective ceiling is the smaller one.
-   A plain copy-where-NULL would silently *loosen* any service whose explicit
+   A plain copy-where-NULL would silently _loosen_ any service whose explicit
    `MaxNights` exceeds the tenant cap:
 
    ```sql
@@ -82,10 +82,10 @@ remote DB keep the exact same shape).
    ```
 
 4. **Materialize `Enabled = 0` into acceptance lists** — with the tenant gate
-   gone, a NULL acceptance list would suddenly accept a tenant's *disabled*
+   gone, a NULL acceptance list would suddenly accept a tenant's _disabled_
    types (seeded Happy Tails: cats become bookable — finding F1). For every
    tenant that has any disabled row, each service with `AcceptedPetTypes IS
-   NULL` gets the explicit enabled-slug list (`json_group_array` over the
+NULL` gets the explicit enabled-slug list (`json_group_array` over the
    enabled rows, `ORDER BY PetType`).
 5. **Scrub disabled slugs from explicit lists** (`json_each` filter) — an
    explicit list naming a disabled slug was dead under the tenant gate and
@@ -151,7 +151,7 @@ Semantics, explicitly:
   (`null` never blocks — auto pass-through preserved). Other services'
   occupancy is invisible to the cap check.
 - **The structural house-sit rule stays tenant-wide**: a house-sit request may
-  overlap `boardingTotal > 0` days by at most one day, across *all*
+  overlap `boardingTotal > 0` days by at most one day, across _all_
   boarding-kind services — it models the sitter's physical absence, not a
   pool. Unchanged in effect for today's tenants.
 - **Boundary/bookend sharing stays global** (`isBoundary` set by any
@@ -192,7 +192,7 @@ maxNights, timezone)` as-is; the two callers change what they pass:
 - `routes/bookings.ts` POST and `routes/public.ts` `/availability` pass
   `service.MaxNights` instead of `tenant.MaxStayNights`.
 
-This *fixes a latent gap* (finding F3): the public availability quote never
+This _fixes a latent gap_ (finding F3): the public availability quote never
 enforced per-service `MaxNights` (only the booking POST did, via
 `validateServiceConstraints`) — quote and booking now agree.
 `validateServiceConstraints`' own maxNights check in the POST becomes
@@ -209,11 +209,11 @@ existing reference guards (0014's CRUD endpoints unchanged in shape).
 `repo.ts`; `listPetTypes` stops selecting the column.
 
 - **Booking gate** (`routes/bookings.ts`): the tenant-level enabled loop is
-  replaced by a *registry membership* check per chosen pet (unknown slug =
+  replaced by a _registry membership_ check per chosen pet (unknown slug =
   corrupt data, still 400 "That pet type is not accepted."). The behavioral
   gate is now solely `validatePetTypeAcceptance` against the chosen service
   (NULL = accepts every registry type). The union-of-enabled-services
-  derivation the directive names is therefore *implicit*: a type is bookable
+  derivation the directive names is therefore _implicit_: a type is bookable
   iff some enabled service accepts it, enforced per booking by that service's
   own list — no separate union computation needed server-side.
 - **Widget** (`config.petTypes`): becomes the full registry
@@ -226,8 +226,8 @@ existing reference guards (0014's CRUD endpoints unchanged in shape).
 - **Delete guard copy**: "disable it instead" no longer parses — becomes
   "…is on N pets or bookings and can't be deleted. Uncheck it under each
   service's Accepted pets instead." Same 409, same `countPetTypeReferences`
-  + `deletePetTypeAndScrub` (scrub-to-empty on an enabled service still
-  normalizes to NULL, unchanged).
+  - `deletePetTypeAndScrub` (scrub-to-empty on an enabled service still
+    normalizes to NULL, unchanged).
 - **Sitter-side pet creation gates** (admin add-pet, CSV import): become
   registry membership — a sitter may record a pet of a type no service
   currently accepts (it just can't be booked). CSV skip copy: "'X' is not
@@ -237,12 +237,12 @@ existing reference guards (0014's CRUD endpoints unchanged in shape).
 
 **Settings GET** (`/api/:slug/admin/settings`):
 
-| field | change |
-| --- | --- |
-| `maxBoardingPets`, `maxHouseSitsPerDay`, `maxStayNights` | **removed** |
-| `petTypes` | `[{ petType, label }]` — `enabled` removed |
-| `services[].capacityKind` | **added** (`'boarding' \| 'housesit' \| 'none'`) — the editor must know which cap field to render (finding F5: not exposed today) |
-| `services[].maxConcurrentPets`, `services[].maxPerDay` | **added**, `number \| null` |
+| field                                                    | change                                                                                                                            |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `maxBoardingPets`, `maxHouseSitsPerDay`, `maxStayNights` | **removed**                                                                                                                       |
+| `petTypes`                                               | `[{ petType, label }]` — `enabled` removed                                                                                        |
+| `services[].capacityKind`                                | **added** (`'boarding' \| 'housesit' \| 'none'`) — the editor must know which cap field to render (finding F5: not exposed today) |
+| `services[].maxConcurrentPets`, `services[].maxPerDay`   | **added**, `number \| null`                                                                                                       |
 
 **Settings PUT**: top-level `maxBoardingPets` / `maxHouseSitsPerDay` /
 `maxStayNights` / `petTypes` **removed** from `SettingsBody` (and from
@@ -292,7 +292,7 @@ caps either; availability verdicts come from the server.
   hand and the remote DB is chronically behind (README: remote still needs
   0006–0014). Dropping `Tenants` columns via rebuild repeats the 0002
   foot-gun the README warns about in bold; even D1's `ALTER TABLE … DROP
-  COLUMN` would make schema.sql diverge from any DB that hasn't run 0015 the
+COLUMN` would make schema.sql diverge from any DB that hasn't run 0015 the
   moment seed/tests assume the new shape. Retire-in-place keeps 0015
   purely additive (ALTER ADD + UPDATEs — never destructive), keeps
   schema.sql in exact lockstep, and makes "stop reading"
@@ -300,7 +300,7 @@ caps either; availability verdicts come from the server.
   `server/types.ts` drop the three fields, so any stale read is a type/SQL
   error, not a wrong answer. A future cleanup migration (0016+, out of
   scope) drops the dead columns once every DB has 0015. `TenantPetTypes.
-  Enabled` follows identically (column stays, unread; `TenantPetTypeRow`
+Enabled` follows identically (column stays, unread; `TenantPetTypeRow`
   drops the field).
 - **Wizard pet toggles → removed.** The alternatives (inline registry
   add/remove) mix immediate POST/DELETE calls into a step built on staged
@@ -346,7 +346,7 @@ caps either; availability verdicts come from the server.
 - **F6 — `listCapacityRows` needs no SQL change**: it already returns
   `ServiceType` (in `BOOKING_COLS`) and joins `CapacityKind`; the per-service
   rework is entirely in the pure engine + `rowsToCapacityEvents`.
-- **F7 — KV-cached tenant objects are forward-safe**: new code only *removes*
+- **F7 — KV-cached tenant objects are forward-safe**: new code only _removes_
   tenant-field reads, so stale cached tenants (with the retired fields) parse
   fine; no cache version bump needed.
 
@@ -369,7 +369,7 @@ is what the harness executes):
   null-cap pass-through; per-service cap enforcement incl. petCount math;
   **two boarding-kind services don't share a pool** (service A full, service
   B same dates still books); two housesit-kind pools independent; structural
-  house-sit rule still fires on *any* boarding-kind occupancy
+  house-sit rule still fires on _any_ boarding-kind occupancy
   (`boardingTotal`); boundary/soft-bookend under a per-service cap;
   empty-calendar over-cap rejection against the request's own cap.
 - **Migration 0015** (`migration-0015.test.ts`, per the
