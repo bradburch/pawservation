@@ -50,6 +50,9 @@ function AddServiceForm({
  * same full-width grid mechanism as the service cards — the existing
  * AddServiceForm. Add stays an immediate POST + refresh, outside the save-bar
  * draft, exactly as before the redesign.
+ *
+ * `atCap` mirrors the server's 6-service cap (server/lib/services.ts MAX_SERVICES) purely for
+ * UX — the POST is the authority and re-checks on every create, including races between tabs.
  */
 export function AddServiceTile({
   templates,
@@ -57,12 +60,14 @@ export function AddServiceTile({
   expanded,
   onToggleExpanded,
   openRef,
+  atCap,
 }: {
   templates: Settings['templates'];
   addService: (template: string, label: string) => Promise<void>;
   expanded: boolean;
   onToggleExpanded: () => void;
   openRef: (el: HTMLButtonElement | null) => void;
+  atCap: boolean;
 }) {
   return (
     <>
@@ -73,9 +78,11 @@ export function AddServiceTile({
         aria-controls={expanded ? 'pb-svc-editor-add' : undefined}
         onClick={onToggleExpanded}
         ref={openRef}
+        disabled={atCap}
       >
         + Add a service
       </button>
+      {atCap && <p className="pb-hint">You can offer up to 6 services.</p>}
       {expanded && (
         <div
           className="pb-svc-editor"

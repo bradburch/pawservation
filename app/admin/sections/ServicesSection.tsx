@@ -112,6 +112,7 @@ export function ServicesSection({
           expanded={expanded === ADD_KEY}
           onToggleExpanded={() => toggle(ADD_KEY)}
           openRef={(el) => openRefs.current.set(ADD_KEY, el)}
+          atCap={settings.services.length >= 6}
         />
       </div>
     </>

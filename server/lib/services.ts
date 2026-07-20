@@ -68,6 +68,11 @@ export const SERVICE_TEMPLATES = {
   },
 } as const satisfies Record<string, ServiceTemplate>;
 
+/** Owner directive: cap the number of TenantServices rows (enabled or disabled) a tenant may
+ * hold. Server-side source of truth — POST /:slug/admin/services is the only place a new row
+ * gets created, and enforces this; UI disabled-states are convenience mirrors only. */
+export const MAX_SERVICES = 6;
+
 export type TemplateId = keyof typeof SERVICE_TEMPLATES;
 
 export const TEMPLATE_IDS = Object.keys(SERVICE_TEMPLATES) as TemplateId[];

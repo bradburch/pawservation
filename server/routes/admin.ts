@@ -49,6 +49,7 @@ import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
   isTemplateId,
+  MAX_SERVICES,
   RESERVED_SERVICE_SLUGS,
   SERVICE_TEMPLATES,
   slugifyServiceLabel,
@@ -580,6 +581,16 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Pick a different service name.' }, 400);
 
     const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    // Owner directive: cap TOTAL service rows (enabled or disabled) per tenant — creation is the
+    // only place a new row appears, so this is the sole gate. Seeded demo tenants may already sit
+    // at the cap; that's fine, they can still edit/enable what they have.
+    if (existing.length >= MAX_SERVICES)
+      return c.json(
+        {
+          error: `You've reached the limit of ${MAX_SERVICES} services. Delete one you no longer offer to add another.`,
+        },
+        400,
+      );
     if (existing.some((s) => s.ServiceType === slug))
       return c.json({ error: 'A service with that name already exists.' }, 400);
 

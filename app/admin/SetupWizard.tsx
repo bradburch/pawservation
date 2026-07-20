@@ -133,6 +133,17 @@ export function SetupWizard({
   });
   const chosen = states.filter((ps) => selected.includes(ps.preset.id));
 
+  // Owner directive: at most 6 TenantServices rows per tenant (server/lib/services.ts
+  // MAX_SERVICES) — the server is the authority and re-checks on apply, but a preset the apply
+  // loop would try to CREATE (no `existing` row — see PresetState above) must not be selectable
+  // once the tenant is projected to be at the cap, or the apply loop 400s partway through.
+  // Presets that only enable/price an ALREADY-EXISTING row never create anything, so they're
+  // never gated here.
+  const wouldCreateCount = states.filter(
+    (ps) => selected.includes(ps.preset.id) && !ps.existing,
+  ).length;
+  const atCap = settings.services.length + wouldCreateCount >= 6;
+
   const toggle = (id: string) =>
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
@@ -257,21 +268,31 @@ export function SetupWizard({
             <h2>What do you offer?</h2>
             <p className="pb-hint">Tap everything you offer — you can fine-tune it all later.</p>
             <div className="pb-wizard-grid">
-              {states.map(({ preset, alreadyOn }) => {
+              {states.map(({ preset, existing, alreadyOn }) => {
                 const Icon = SERVICE_ICONS[preset.icon] ?? IconPaw;
-                const on = alreadyOn || selected.includes(preset.id);
+                const isSelected = selected.includes(preset.id);
+                const on = alreadyOn || isSelected;
+                // Only an unselected preset that would CREATE a new row is blocked by the cap —
+                // selecting one that just enables/prices an existing row never adds a row.
+                const blockedByCap = !existing && !isSelected && atCap;
                 return (
                   <button
                     key={preset.id}
                     type="button"
                     className={`pb-tile-btn pb-wizard-cardbtn${on ? ' pb-on' : ''}`}
-                    disabled={alreadyOn}
+                    disabled={alreadyOn || blockedByCap}
                     aria-pressed={on}
                     onClick={() => toggle(preset.id)}
                   >
                     <Icon size={20} />
                     <strong>{preset.label}</strong>
-                    <span>{alreadyOn ? 'Already offered' : preset.summary}</span>
+                    <span>
+                      {alreadyOn
+                        ? 'Already offered'
+                        : blockedByCap
+                          ? 'You can offer up to 6 services'
+                          : preset.summary}
+                    </span>
                   </button>
                 );
               })}
