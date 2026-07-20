@@ -4,7 +4,7 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0011_contact_and_notes.sql`. Use:
+`0015_service_level_attributes.sql`. Use:
 
 ```
 npm run seed:local   # wrangler d1 execute pawbook-db --local  --file=./sql/schema.sql && ...seed.sql
@@ -26,26 +26,26 @@ is made to adopt tracked migrations.
 
 State as of this merge:
 
-- **Local dev DB**: has `0001`–`0008` applied (custom-services numbering — `0006_custom_services.sql`
-  through `0008_payments.sql`). Needs `0009_service_slots.sql`, `0010_slot_index.sql`,
-  `0011_contact_and_notes.sql`, `0012_weekday_only.sql`,
-  `0013_invite_signup_owner_console.sql`, `0014_custom_pet_types.sql`, and
-  `0015_service_level_attributes.sql` applied next, in that order.
-- **Remote DB**: has `0001`–`0005` applied. Needs the full `0006`–`0015` run, in order, at next
-  deploy — none of the custom-services, booking-lifecycle, payments, service-slots, slot-index,
-  contact/notes, weekday-only, invite-signup/owner-console, custom-pet-types, or
-  service-level-attributes migrations have reached it yet.
+- **Local dev DB**: wiped and reseeded from `sql/schema.sql` (the Fresh installs path above),
+  which already carries everything through `0015_service_level_attributes.sql` — so the local DB
+  needs **no** migrations applied; it isn't on the incremental-apply path below at all.
+- **Remote DB**: has `0001`–`0006` applied. Needs the full `0007`–`0015` run, in order, at next
+  deploy — none of the booking-lifecycle, payments, service-slots, slot-index, contact/notes,
+  weekday-only, invite-signup/owner-console, custom-pet-types, or service-level-attributes
+  migrations have reached it yet.
 
 Apply with, e.g.:
 
 ```
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0009_service_slots.sql
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0010_slot_index.sql
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0011_contact_and_notes.sql
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0012_weekday_only.sql
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0013_invite_signup_owner_console.sql
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0014_custom_pet_types.sql
-npx wrangler d1 execute pawbook-db --local  --file=./migrations/0015_service_level_attributes.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0007_booking_lifecycle.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0008_payments.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0009_service_slots.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0010_slot_index.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0011_contact_and_notes.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0012_weekday_only.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0013_invite_signup_owner_console.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0014_custom_pet_types.sql
+npx wrangler d1 execute pawbook-db --remote --file=./migrations/0015_service_level_attributes.sql
 ```
 
 ### ⚠️ `0002_tenant_config_limits.sql` is DATA-DESTRUCTIVE if ever re-run against a live DB

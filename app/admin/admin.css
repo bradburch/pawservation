@@ -312,7 +312,6 @@ body {
 .pb-wrap li button,
 .pb-wrap .pb-options button,
 .pb-wrap .pb-questions button,
-.pb-wrap .pb-service > button,
 .pb-wrap .pb-wizard-back,
 .pb-wrap .pb-signout {
   background: none;
@@ -325,7 +324,6 @@ body {
 .pb-wrap li button:hover,
 .pb-wrap .pb-options button:hover,
 .pb-wrap .pb-questions button:hover,
-.pb-wrap .pb-service > button:hover,
 .pb-wrap .pb-wizard-back:hover,
 .pb-wrap .pb-signout:hover {
   filter: none;
@@ -412,18 +410,6 @@ body {
    inherit the stretchy text-input basis (it wraps the label onto two lines). */
 .pb-row > input {
   flex: 1 1 12rem;
-}
-
-.pb-service {
-  margin-bottom: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px dashed var(--line);
-}
-
-.pb-service:last-of-type {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
 }
 
 .pb-options {
