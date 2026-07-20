@@ -193,18 +193,21 @@ body {
   background: #fbfaf6;
 }
 
-/* ── Buttons ───────────────────────────────────────────────────── */
+/* ── Buttons ───────────────────────────────────────────────────────
+   Two sizes only. Default (this rule): form-level actions — Save, Add,
+   wizard Next. Compact (further down): row-level actions repeated per
+   list item, whose visual weight multiplies with the list. */
 .pb-wrap button {
-  padding: 10px 16px;
+  padding: 8px 14px;
   border-radius: 10px;
   border: 1px solid var(--ink);
   background: var(--ink);
   color: #fff;
   font-family: var(--display);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  min-height: 40px;
+  min-height: 36px;
   transition: filter 0.12s ease;
 }
 
@@ -307,11 +310,14 @@ body {
 }
 
 /* Row-level / secondary actions (Remove, Delete, Sign out, Add question, the wizard's
-   Back) are quiet ghosts. Every selector is prefixed with .pb-wrap so it outranks the
-   `.pb-wrap button` primary style above. */
-.pb-wrap li button,
-.pb-wrap .pb-options button,
-.pb-wrap .pb-questions button,
+   Back, calendar month nav, owner-console table actions) are quiet ghosts. Every
+   selector is prefixed with .pb-wrap so it outranks the `.pb-wrap button` primary
+   style above. Hint `?` buttons opt out — they have their own circle treatment. */
+.pb-wrap li button:not(:where(.pb-hint-btn)),
+.pb-wrap td button,
+.pb-wrap .pb-options button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-questions button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-cal-nav button,
 .pb-wrap .pb-wizard-back,
 .pb-wrap .pb-signout {
   background: none;
@@ -321,15 +327,46 @@ body {
   font-weight: 500;
 }
 
-.pb-wrap li button:hover,
-.pb-wrap .pb-options button:hover,
-.pb-wrap .pb-questions button:hover,
+.pb-wrap li button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap td button:hover,
+.pb-wrap .pb-options button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap .pb-questions button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap .pb-cal-nav button:hover,
 .pb-wrap .pb-wizard-back:hover,
 .pb-wrap .pb-signout:hover {
   filter: none;
   color: var(--ink);
   border-color: var(--sage);
   background: var(--sage-wash);
+}
+
+/* Compact scale for actions that repeat per row (Confirm/Decline/Payments, Remove,
+   Move up/down) plus small chrome (month nav, Sign out): they should read as quiet
+   controls next to the row text, not as form buttons. 28px keeps a comfortable
+   ≥24px touch target. */
+.pb-wrap li button:not(:where(.pb-hint-btn)),
+.pb-wrap td button,
+.pb-wrap .pb-options button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-questions button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-cal-nav button,
+.pb-wrap .pb-signout {
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
+/* The month-nav chevrons hold icons; keep them square-ish and centered. */
+.pb-wrap .pb-cal-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* "Add an option" is a direct child of the options flex column — without this it
+   stretches into a full-width bar. */
+.pb-wrap .pb-options > button {
+  align-self: flex-start;
 }
 
 /* ── Data lists ────────────────────────────────────────────────── */
