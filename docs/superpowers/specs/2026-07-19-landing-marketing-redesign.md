@@ -11,7 +11,7 @@ page written for a reader who already cares how Pawbook is built: the hero
 sells "a booking widget," the deploy note pitches self-hosting on Cloudflare
 Workers, an entire section is an embed snippet, and the FAQ ends in "deploy
 your own copy (MIT)." The owner's directive is that the audience is **pet
-sitters deciding whether Pawbook fits their business** — they need to *see*
+sitters deciding whether Pawbook fits their business** — they need to _see_
 what their clients would see and what they'd control, and "they are not as
 interested in the technical details or OSS."
 
@@ -35,7 +35,7 @@ with inline styles only**. Same-origin images are already permitted
    should mention it.
 2. **Pure-CSS mock of the widget inline.** No drift discipline needed and no
    image bytes, but it duplicates widget markup inside `LANDING_HTML` (a
-   second, unshared copy of the calendar/pills/summary DOM) and it *can lie*
+   second, unshared copy of the calendar/pills/summary DOM) and it _can lie_
    — the mock keeps "working" while the real widget changes underneath it,
    which is worse than a visibly stale screenshot. Rejected.
 3. **Stylized SVG illustration of the widget.** Fits the ledger identity but
@@ -54,13 +54,13 @@ Vite copies `public/` into `dist/` at build; the `ASSETS` binding serves it
 `run_worker_first`, so images are served directly by the asset layer,
 same-origin. Committed files:
 
-| File (public/img/landing/)   | Content                                       | Budget |
-| ---------------------------- | --------------------------------------------- | ------ |
-| `widget-hero.webp`           | Full widget, boarding range selected + quote  | ≤90KB  |
-| `step-services.webp`         | Crop: service pill row, one selected          | ≤40KB  |
-| `step-calendar.webp`         | Crop: month grid — struck full days, greyed weekends | ≤40KB |
-| `step-request.webp`          | Crop: summary card + "Send request"           | ≤40KB  |
-| `admin-bookings.webp`        | Dashboard: pending rows w/ Confirm & Decline  | ≤80KB  |
+| File (public/img/landing/) | Content                                              | Budget |
+| -------------------------- | ---------------------------------------------------- | ------ |
+| `widget-hero.webp`         | Full widget, boarding range selected + quote         | ≤90KB  |
+| `step-services.webp`       | Crop: service pill row, one selected                 | ≤40KB  |
+| `step-calendar.webp`       | Crop: month grid — struck full days, greyed weekends | ≤40KB  |
+| `step-request.webp`        | Crop: summary card + "Send request"                  | ≤40KB  |
+| `admin-bookings.webp`      | Dashboard: pending rows w/ Confirm & Decline         | ≤80KB  |
 
 WebP throughout (universal in evergreen browsers; the widget has a single
 light theme, so one set only). **Total budget ≤300KB**, enforced by test
@@ -88,7 +88,7 @@ Then with Playwright (headless Chromium, viewport **480×980, deviceScaleFactor
 2. **`widget-hero.webp`:** pick **Boarding**, page the calendar to **June
    2028** (seeded: 1-of-2 boarding slots taken Jun 20–25 → partial-day rings
    visible), select **Jun 26 → Jun 29**, tick **Bella** and **Mochi**, then
-   *Check availability* so the summary shows the $150 quote. Element
+   _Check availability_ so the summary shows the $150 quote. Element
    screenshot of `.bp-widget`.
 3. **`step-services.webp`:** element shot of `.bp-service-grid` with Boarding
    selected (from the same session).
@@ -96,7 +96,7 @@ Then with Playwright (headless Chromium, viewport **480×980, deviceScaleFactor
    seed change below), page to **July 2028**: seeded block Jul 3–4 renders
    struck-through, weekends grey. Element shot of `.bp-cal`.
 5. **`step-request.webp`:** back on the boarding flow, element shot of
-   `.bp-summary` (dates + cost + *Send request*).
+   `.bp-summary` (dates + cost + _Send request_).
 6. **`admin-bookings.webp`:** log in at `/admin` as
    `admin@sunnypaws.example` / `demo1234`, Bookings section; viewport
    1024×800, element shot of the pending-requests list (seeded rows
@@ -109,7 +109,7 @@ Then with Playwright (headless Chromium, viewport **480×980, deviceScaleFactor
 weekday-only — `WeekdaysOnly=1` on `opt_sp_mw30` in `sql/seed.sql` (column
 exists in `TenantServiceOptions`; seed is `INSERT OR REPLACE`, so re-seeding
 applies it). "Morning walk, weekdays" is plausible sitter behavior, it makes
-the greyed-weekend capability *visible* in both the demo and the calendar
+the greyed-weekend capability _visible_ in both the demo and the calendar
 shot, and it exercises a rule the page claims.
 
 ## Design — page structure
@@ -147,12 +147,12 @@ promise lands ("you confirm it").
 1. **Hero.** The drawn ledger day-book card **retires**; `widget-hero.webp`
    takes its slot with the same taped-object treatment and a marginalia
    caption ("what your clients see"). Headline shifts from product-naming to
-   sitter benefit — lede: *"Your own booking page, on your own website."*;
+   sitter benefit — lede: _"Your own booking page, on your own website."_;
    sub keeps the it-lives-on-your-site + you-confirm promise in client
    language. Actions: **Try the demo →** primary (unchanged), **Sitter sign
    in →** quiet link. The self-host link leaves the hero (footer only). The
-   deploy note becomes an invite note: *"Pawbook is invite-only right now —
-   [ask for an invite](mailto:...) or sign in if you have an account."*
+   deploy note becomes an invite note: _"Pawbook is invite-only right now —
+   [ask for an invite](mailto:...) or sign in if you have an account."_
 2. **What your clients see** — a numbered 3-step strip (numbering is honest
    here: booking is a sequence): **1 They pick a service** (`step-services`),
    **2 They pick the dates** (`step-calendar` — caption calls out struck-out
@@ -173,30 +173,30 @@ promise lands ("you confirm it").
    Squarespace/Wix, card payments (no — you collect), double-booking (no —
    with the one-way calendar caveat), clients-only, second-dog pricing. The
    pet-types sentence **absorbs animal-types Task 6 / finding F5**: "Dogs and
-   cats only." → *"You choose which animal types you accept."* The "How do I
+   cats only." → _"You choose which animal types you accept."_ The "How do I
    get an account?" item leaves the FAQ (replaced by the invite band); its
    OSS half moves to the footer.
 6. **Invite band** — short section: invite-only today, **Ask for an invite**
    (`mailto:` with a subject line) + sign-in link. No signup flow is built or
    implied.
 7. **Footer** — exactly **one** OSS line for the technical reader's exit:
-   *"Pawbook is open source (MIT) — source & technical docs on GitHub"*,
+   _"Pawbook is open source (MIT) — source & technical docs on GitHub"_,
    linking the repo and the project page (`docs/index.md` / its published
    URL). The "Runs on Cloudflare Workers" chip is deleted.
 
 ### Disposition of every current section
 
-| Current                              | Disposition                                        |
-| ------------------------------------ | -------------------------------------------------- |
-| Ledger day-book card (hero)          | Retired; replaced by `widget-hero.webp`, same physical treatment + marginalia |
-| Brand / lede / sub                   | Rewritten sitter-benefit-first (copy above)        |
-| CTA row (demo / sign in / self-host) | Demo + sign-in stay; self-host link → footer       |
-| Deploy note                          | Rewritten as invite note with mailto CTA           |
-| "What it does" cap-lead              | Its lives-on-your-site claim folds into hero sub + installs note |
-| "What it does" book-groups           | Condensed into "What you control" beside the admin shot |
-| Embed slip section                   | Shrunk to "How it installs" note, snippet still escaped |
+| Current                              | Disposition                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------- |
+| Ledger day-book card (hero)          | Retired; replaced by `widget-hero.webp`, same physical treatment + marginalia    |
+| Brand / lede / sub                   | Rewritten sitter-benefit-first (copy above)                                      |
+| CTA row (demo / sign in / self-host) | Demo + sign-in stay; self-host link → footer                                     |
+| Deploy note                          | Rewritten as invite note with mailto CTA                                         |
+| "What it does" cap-lead              | Its lives-on-your-site claim folds into hero sub + installs note                 |
+| "What it does" book-groups           | Condensed into "What you control" beside the admin shot                          |
+| Embed slip section                   | Shrunk to "How it installs" note, snippet still escaped                          |
 | FAQ (6 items)                        | 5 kept/tightened; pet-types copy per animal-types F5; account item → invite band |
-| Footer (5 chips)                     | One OSS sentence, GitHub + project-page links      |
+| Footer (5 chips)                     | One OSS sentence, GitHub + project-page links                                    |
 
 ### Keep (non-negotiable)
 
@@ -204,10 +204,10 @@ Script-free body under `LOCKED_CSP` (`<img>` same-origin only — no external
 assets, no `data:`-bloat inlining), inline `<style>` only, `X-Frame-Options:
 DENY`, `:focus-visible` outlines, `prefers-reduced-motion` guard, single `h1`
 → `h2` sections → `h3` items. **Alt text is informative, not decorative**:
-e.g. hero *"The Pawbook booking widget: a June calendar with a three-night
-boarding stay selected and a $150 quote"*; calendar crop *"Month grid where
+e.g. hero _"The Pawbook booking widget: a June calendar with a three-night
+boarding stay selected and a $150 quote"_; calendar crop _"Month grid where
 full days are struck through and weekends are greyed out for a weekday-only
-service"*. Marginalia and the stamp stay `aria-hidden`.
+service"_. Marginalia and the stamp stay `aria-hidden`.
 
 ## Sequencing
 

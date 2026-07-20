@@ -114,8 +114,7 @@ describe('validateServiceConstraints', () => {
 });
 
 describe('validatePetTypeAcceptance', () => {
-  const labelOf = (slug: string) =>
-    ({ dog: 'Dogs', cat: 'Cats', rabbit: 'Rabbits' })[slug] ?? slug;
+  const labelOf = (slug: string) => ({ dog: 'Dogs', cat: 'Cats', rabbit: 'Rabbits' })[slug] ?? slug;
 
   it('null accepted = every type welcome', () => {
     expect(
