@@ -4,146 +4,207 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 
-An open-source, embeddable, **multi-tenant booking widget**. Drop a booking calendar
-into any website — Squarespace, Wix, or plain HTML — with a single `<script>` tag. Built on
-Cloudflare Workers (Hono + React) with isolated per-tenant configuration, availability and
-capacity rules, and pricing.
+A **multi-tenant, embeddable booking widget for pet-sitting businesses**. A sitter drops
+one `<script>` tag into their website (Squarespace, Wix, plain HTML) and gets a live
+booking calendar; behind it sits a full admin dashboard for running the business. One
+Cloudflare Worker (Hono) serves the JSON API plus four separately-built React bundles,
+backed by D1 (SQLite) and KV. Sitter accounts are **invite-only**, managed from a
+platform-owner console.
 
-> **Status — early release (v0.1).** The booking flow stores requests in D1 (Cloudflare's
-> SQLite). Google Calendar OAuth (Phase 1) and email + invite-only customers (Phase 2) are
-> now implemented. See [Roadmap](#roadmap).
+See [docs/index.md](./docs/index.md) for a project overview, or `CALENDAR_LOGIC.md` for
+the availability/conflict math.
 
 ## Features
 
-- **One-tag embed** — an auto-resizing iframe with an origin- and source-validated
-  `postMessage` channel; no third-party JS on the host page.
-- **Multi-tenant** — each provider is a tenant resolved from the URL, with isolated config,
-  services, pricing, accepted pet types, and bookings.
-- **Capacity-aware availability** — per-tenant, per-day capacity and conflict rules (boarding
-  cap, house-sit cap, max stay length, and business timezone — each **nullable for
-  unlimited / instance-default**), plus blocked dates, computed from a single source of truth.
-- **Two auth flows** — passwordless email-code sessions for customers; password + JWT
-  sessions for the tenant admin dashboard.
-- **Zero runtime dependencies** in the booking/date/pricing core (pure TypeScript).
+- **One-tag embed** — `public/embed.js` injects an auto-resizing iframe; every
+  `postMessage` is validated by origin and source, and a `pawbook:booked` DOM event fires
+  on the host page. A plain-iframe variant exists for script-stripping hosts.
+- **Multi-tenant** — every request is scoped to a tenant resolved from the URL slug, with
+  isolated services, pricing, pets, customers, and bookings.
+- **Custom services** — each tenant defines its own service list (from templates or from
+  scratch) with per-option label/duration/price, time windows, weekday-only scheduling,
+  slot capacity, and custom intake questions.
+- **Per-service capacity & rules** — boarding caps, house-sits-per-day, max stay nights,
+  and accepted animal types are all service-level attributes; blank means unlimited.
+- **Custom animal types** — tenants aren't limited to dogs and cats; add any species and
+  accept it per service.
+- **Admin dashboard** — lands on a monthly **Calendar** view of bookings and time off;
+  plus bookings (confirm/decline/cancel), earnings and payment tracking, client list with
+  CSV import, services & rates card grid, time off, embed codes, and in-app help.
+- **Google Calendar sync** — per-tenant OAuth connect; bookings create calendar events,
+  cancelling/declining deletes them, and events deleted in Google reconcile the booking
+  back to cancelled.
+- **Onboarding wizard** — first login walks a new sitter through business profile,
+  services, and pricing presets; skippable and re-runnable, always additive.
+- **Invite-only signup + owner console** — the platform owner (identified by the
+  `OWNER_EMAILS` secret) allowlists sitter emails; sitters self-serve from the login page
+  via an emailed single-use setup link. No open signup.
+- **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
+  sitter admins (PBKDF2, with timing-safe user-enumeration defenses).
+- **Zero-dependency core** — booking, capacity, pricing, and date logic in `src/shared/`
+  is pure TypeScript shared by server (enforcement) and client (UX).
 
-## Embed it
+## Quick start (local)
 
-```html
-<script src="https://<your-worker>/embed.js" data-pawbook-tenant="your-slug"></script>
-```
-
-The loader injects an auto-resizing iframe, validates every `postMessage` by **origin and
-source**, and re-dispatches a `pawbook:booked` DOM event on the host page so you can react to
-completed bookings. Script-stripping hosts (e.g. Wix "Embed a site") can use the plain-iframe
-variant shown in the admin dashboard.
-
-## How it works
-
-```
-Host site ──<script>──▶ /embed.js ──iframe──▶ /embed/:slug  (React widget)
-                                                    │
-                                                    ▼
-                              Hono Worker ──▶ D1 (per-tenant config + bookings)
-                                          └─▶ KV (caches, login codes)
-```
-
-The Worker serves the built widget/admin assets and an API under `/api/:slug/*`. Tenancy is
-resolved from the slug; capacity and pricing rules live in `src/shared/` (pure functions).
-
-## Local development
+Prereqs: **Node 24** (`nvm use` reads `.nvmrc` — the test harness needs the built-in
+`node:sqlite`) and a wrangler login is _not_ required for local dev.
 
 ```bash
 npm install
-npm run seed:local                                # schema + demo tenants (Sunny Paws, Happy Tails, Paws & Relax)
-printf 'TOKEN_SECRET=%s\nENVIRONMENT=development\n' "$(openssl rand -base64 32)" > .dev.vars
-npm run dev                                        # builds the widget + runs wrangler dev
+npm run seed:local   # applies sql/schema.sql + sql/seed.sql to the local D1 (resets local data)
+npm run build        # build the four Vite bundles into dist/
+npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM:
 ```
 
-- Demo page (two tenants side by side): `http://localhost:8787/demo`
-- Widget: `http://localhost:8787/embed/sunny-paws`
-- Admin dashboard: `http://localhost:8787/admin`
+> **Why not plain `npm run dev`?** `npm run dev` reads `.dev.vars` as-is. If your
+> `.dev.vars` holds a real `RESEND_API_KEY`, the customer login flow sends **actual
+> email** — and the seeded demo addresses (`@example.com`, `.test`) are undeliverable,
+> which breaks login with a 502. The `--var` overrides above blank the email provider so
+> login codes (and signup links) render **on screen** instead. `npm run dev` is still
+> useful for its `vite build --watch`, just know it runs in real-email mode.
+>
+> Never delete or overwrite `.dev.vars` — `TOKEN_SECRET` must come from it, or every
+> request 503s (deliberate boot gate). On a fresh clone with no `.dev.vars`, create one:
+>
+> ```bash
+> printf 'TOKEN_SECRET=%s\nENVIRONMENT=development\n' "$(openssl rand -base64 32)" > .dev.vars
+> ```
 
-## Deploy
+Then open **http://localhost:8787**:
+
+| URL                 | What                                                        |
+| ------------------- | ----------------------------------------------------------- |
+| `/`                 | Marketing landing page                                      |
+| `/demo`             | Demo host page — two tenants' widgets embedded side by side |
+| `/embed/sunny-paws` | The booking widget for the seeded "Sunny Paws" tenant       |
+| `/admin`            | Sitter admin dashboard (also the invite-signup entry point) |
+| `/setup`            | Create-password page reached from emailed signup links      |
+
+Seeded demo logins:
+
+- **Admin dashboard:** `admin@sunnypaws.example` / `demo1234` (slug `sunny-paws`), or
+  `dana@happytails.test` / `demo1234` (slug `happy-tails`).
+- **Widget customer:** sign in as `jess@example.com` — in dev mode the 6-digit code
+  appears on screen. Pets Bella/Mochi are pre-registered.
+
+## Everyday commands
+
+| Command                                                | What it does                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `npm run dev`                                          | Build + watch widgets, run `wrangler dev` (reads `.dev.vars` → real email; see above) |
+| `npm run seed:local`                                   | Reset the local D1 from `sql/schema.sql` + `sql/seed.sql`                             |
+| `npm test`                                             | Vitest against a real in-memory SQLite (`server/**/*.test.ts`)                        |
+| `npx vitest run server/__tests__/availability.test.ts` | Run one test file                                                                     |
+| `npx vitest run -t "conflict"`                         | Filter tests by name                                                                  |
+| `npm run test:watch`                                   | Vitest watch mode                                                                     |
+| `npm run typecheck`                                    | Regenerates `worker-configuration.d.ts` (`wrangler types`), then `tsc -b`             |
+| `npm run lint`                                         | ESLint                                                                                |
+| `npm run format`                                       | Prettier check (CI fails on drift; `npm run format:fix` repairs)                      |
+| `npm run build`                                        | Vite build → `dist/` (embed, admin, demo, setup bundles)                              |
+| `npm run deploy`                                       | Build + `wrangler deploy` — ships **worker code only**, never the DB                  |
+
+CI (`.github/workflows/ci.yml`) gates every PR on typecheck → lint → format → test →
+build, and **auto-deploys to Cloudflare on merge to `main`**.
+
+## Project layout
+
+```
+server/       Hono Worker — routes, tenant middleware, auth/tokens, availability, db/repo.ts
+app/          Four React apps: embed/ (widget), admin/ (dashboard + owner console),
+              setup/ (signup-link page), shared-ui/ (API client, icons, hooks)
+src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
+sql/          schema.sql (canonical DDL) + seed.sql (demo tenants)
+migrations/   Incremental DB changes for already-provisioned databases
+public/       embed.js loader, demo host script, landing images, CSV import example
+```
+
+Two invariants worth knowing before you touch code:
+
+- **Tenancy:** `server/db/repo.ts` is the only module allowed to touch the `PAWBOOK_DB`
+  binding; every function takes `tenantId` first and scopes SQL with `WHERE TenantId = ?`.
+  `tenantMiddleware` is registered exactly once in `server/index.ts`.
+- **The booking engine is pure:** `src/shared/` must stay dependency-free; nullable tenant
+  config limits mean unlimited/instance-default.
+
+## Database & migrations
+
+`npm run deploy` ships worker code **only** — it never touches the database. The two
+lifecycles:
+
+- **Fresh install:** provision from `sql/schema.sql` (+ optional demo `sql/seed.sql`) via
+  `npm run seed:local` / `seed:remote`. The schema already includes everything through
+  `migrations/0015_service_level_attributes.sql`; do not replay migration files on top.
+- **Already-provisioned DB:** apply new files in `migrations/` **by hand**, in order,
+  before (or with) the deploy that needs them — otherwise the new code 500s on missing
+  columns:
+
+  ```bash
+  npx wrangler d1 execute pawbook-db --remote --file=./migrations/0007_booking_lifecycle.sql
+  # ...one command per file, in numeric order (use --local for the dev DB)
+  ```
+
+**Current remote state:** the production DB has `0001`–`0006` applied and needs
+`0007`–`0015` run, in order, at the next deploy (see `migrations/README.md` for the exact
+list and state).
+
+Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
+against existing DBs — no real DB here has a `d1_migrations` tracking table, and
+re-running `0002` against live data is destructive. When you change the schema, add a
+`migrations/` file **and** update `sql/schema.sql` to match (tests run against
+`schema.sql`).
+
+## Deploying
+
+One-time provisioning:
 
 ```bash
 npx wrangler d1 create pawbook-db                  # put database_id into wrangler.jsonc
-npx wrangler kv namespace create PAWBOOK_CACHE # put id into wrangler.jsonc
-npx wrangler secret put TOKEN_SECRET               # a strong random value (openssl rand -base64 32)
-npx wrangler secret put GOOGLE_CLIENT_ID           # OAuth 2.0 client ID from Google Cloud Console
-npx wrangler secret put GOOGLE_CLIENT_SECRET       # OAuth 2.0 client secret from Google Cloud Console
-npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI  # absolute callback URL, e.g. https://<your-worker>/oauth/google/callback — must EXACTLY match the authorized redirect URI registered in Google Cloud
-npm run deploy
-npm run seed:remote                                # ⚠️ demo tenants/logins — do NOT run against a real prod DB
-```
-
-### Database migrations
-
-`npm run deploy` ships **worker code only** — it does **not** touch the database. A fresh install
-gets the full, current schema from `sql/schema.sql` (via `seed:remote`). But when you upgrade an
-**already-provisioned** database, you must apply any new files in `migrations/` yourself, or the new
-code will query columns that don't exist yet and every `/api/:slug/*` route will 500.
-
-Apply pending migrations against the live DB (each file is idempotent-by-intent; run the ones added
-since your last deploy):
-
-```bash
-npx wrangler d1 execute pawbook-db --remote --file ./migrations/0002_tenant_config_limits.sql
-npx wrangler d1 execute pawbook-db --remote --file ./migrations/0003_calendar_oauth_and_invites.sql
-```
-
-Use `--local` instead of `--remote` for your dev database. (Fresh installs created from
-`sql/schema.sql` already include every column and do **not** need to replay migration files.)
-
-### Email delivery (login codes)
-
-In local development (`ENVIRONMENT=development`) login codes are shown on screen. **Production
-emails them and fails closed if no provider is configured** — `/identify` returns 503 rather than
-ever leaking a code. Set two secrets to enable email:
-
-```bash
-npx wrangler secret put RESEND_API_KEY             # from https://resend.com (free tier)
+npx wrangler kv namespace create PAWBOOK_CACHE     # put id into wrangler.jsonc
+npx wrangler secret put TOKEN_SECRET               # strong random value (openssl rand -base64 32)
+npx wrangler secret put OWNER_EMAILS               # comma-separated platform-owner email(s)
+npx wrangler secret put RESEND_API_KEY             # from https://resend.com — required for login codes & signup links
 npx wrangler secret put RESEND_FROM                # e.g. "Pawbook <bookings@yourdomain.com>" (verified sender)
+# Optional — Google Calendar sync:
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI  # e.g. https://<your-worker>/oauth/google/callback — must match Google Cloud exactly
 ```
 
-When `RESEND_API_KEY` is set, the `/identify` response no longer returns the code — it is emailed.
-
-## Tests & quality
+Then:
 
 ```bash
-npm test          # Vitest, backed by in-memory SQLite (node:sqlite)
-npm run typecheck # wrangler types + tsc -b
-npm run lint      # ESLint
-npm run format    # Prettier check
+npm run deploy       # build + wrangler deploy (worker code only)
+npx wrangler d1 execute pawbook-db --remote --file=./sql/schema.sql   # fresh DB only
 ```
 
-## Project structure
+Production **fails closed** without email: customer login and sitter signup return 503
+rather than ever leaking a code or link, so `RESEND_API_KEY`/`RESEND_FROM` are effectively
+required in production. Merges to `main` auto-deploy via CI.
 
-```
-app/            React apps — embed widget, admin dashboard, shared UI/API client
-server/         Hono Worker — routes, auth/token, tenant resolution, availability, db
-src/shared/     Pure booking/date/pricing logic (zero runtime dependencies)
-sql/            D1 schema + demo seed
-public/         embed.js loader + demo host
-```
+## Provisioning the first sitter
 
-## Roadmap
+Signup is invite-only and sitter-initiated:
 
-**Implemented**
+1. **Bootstrap yourself as owner:** put your email in the `OWNER_EMAILS` secret, open
+   `/admin`, and use the "Get set up" form with that email. You'll receive a single-use
+   setup link (`/setup?t=…`) to choose a password — that logs you into the **owner
+   console**.
+2. **Allowlist the sitter:** in the owner console, add the sitter's email to the
+   allowlist.
+3. **Sitter claims the account:** the sitter opens `/admin`, enters their email in the
+   same "Get set up" form, follows their emailed link, and sets a business name +
+   password. The tenant (slug derived from the business name) is provisioned atomically.
+4. **Onboarding wizard:** on first login the wizard walks them through profile, services,
+   and pricing — after which their widget at `/embed/<slug>` is live.
 
-- **Phase 1 — Google Calendar OAuth.** Per-tenant "Connect Calendar" so bookings create real
-  calendar events.
-- **Phase 2 — Email + invite-only customers.** Real email delivery (login codes, invites) and
-  a provider-managed customer list.
-
-**Upcoming**
-
-- **Phase 3 — Self-serve tenant signup, custom domains, billing.**
+In local dev (email blanked), the setup link is shown on screen instead of emailed.
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). By participating you
-agree to the [Code of Conduct](./CODE_OF_CONDUCT.md). To report a security issue, see
-[SECURITY.md](./SECURITY.md).
+Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) and the
+[Code of Conduct](./CODE_OF_CONDUCT.md). Security issues: [SECURITY.md](./SECURITY.md).
+Non-trivial features start as a written design spec in `docs/superpowers/specs/` before
+code.
 
 ## License
 
