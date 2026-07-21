@@ -297,6 +297,14 @@ export function BookTab({
                 <p className="bp-summary-cost">
                   Estimated cost <strong>${result.estCost}</strong>
                 </p>
+                {service?.cancellationTiers && (
+                  <p className="bp-summary-policy">
+                    Cancellation:{' '}
+                    {service.cancellationTiers
+                      .map((t) => `${t.percent}% within ${t.withinDays} day${t.withinDays === 1 ? '' : 's'}`)
+                      .join(', ')}
+                  </p>
+                )}
                 <button
                   onClick={submit}
                   disabled={

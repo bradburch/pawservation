@@ -546,6 +546,12 @@ body {
   color: var(--bp-soft);
 }
 
+.bp-summary-policy {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--bp-soft);
+}
+
 .bp-summary-cost {
   margin: 0 0 8px;
   color: var(--bp-body);

@@ -50,6 +50,7 @@ export function MineTab() {
               ? b.pets.join(', ')
               : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`}
             {b.estCost != null ? ` · est. $${b.estCost}` : ''}
+            {b.status === 'cancelled' && b.cancellationFee != null ? ` · cancellation fee $${b.cancellationFee}` : ''}
           </span>
           <em>{b.status}</em>
         </li>
