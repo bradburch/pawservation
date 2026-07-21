@@ -54,16 +54,23 @@ Vite copies `public/` into `dist/` at build; the `ASSETS` binding serves it
 `run_worker_first`, so images are served directly by the asset layer,
 same-origin. Committed files:
 
+> **Amended 2026-07-20 (landing SaaS redesign, PR #36):** the ledger/paper
+> treatment described later in this spec was replaced by a clean SaaS layout;
+> screenshots now sit in flat framed cards (no tilt, no marginalia, no BOOKED
+> stamp). `admin-bookings.webp` was retired — the dashboard illustration is a
+> coded HTML/CSS mock (`.mockdash` in `LANDING_HTML`), so only the four
+> widget shots below are captured. Total budget is now **≤210KB**
+> (`landing.test.ts` is the enforcing test, updated in the same PR).
+
 | File (public/img/landing/) | Content                                              | Budget |
 | -------------------------- | ---------------------------------------------------- | ------ |
 | `widget-hero.webp`         | Full widget, boarding range selected + quote         | ≤90KB  |
 | `step-services.webp`       | Crop: service pill row, one selected                 | ≤40KB  |
 | `step-calendar.webp`       | Crop: month grid — struck full days, greyed weekends | ≤40KB  |
 | `step-request.webp`        | Crop: summary card + "Send request"                  | ≤40KB  |
-| `admin-bookings.webp`      | Dashboard: pending rows w/ Confirm & Decline         | ≤80KB  |
 
 WebP throughout (universal in evergreen browsers; the widget has a single
-light theme, so one set only). **Total budget ≤300KB**, enforced by test
+light theme, so one set only). **Total budget ≤210KB**, enforced by test
 (below). Intrinsic width 2× the CSS display width (hero displays ~420px →
 840px intrinsic) so it stays crisp on retina without ballooning.
 
@@ -97,11 +104,9 @@ Then with Playwright (headless Chromium, viewport **480×980, deviceScaleFactor
    struck-through, weekends grey. Element shot of `.bp-cal`.
 5. **`step-request.webp`:** back on the boarding flow, element shot of
    `.bp-summary` (dates + cost + _Send request_).
-6. **`admin-bookings.webp`:** log in at `/admin` as
-   `admin@sunnypaws.example` / `demo1234`, Bookings section; viewport
-   1024×800, element shot of the pending-requests list (seeded rows
-   `seed_sp_pend1/2` give it real Confirm/Decline work). Seeded pending dates
-   are fixed strings in `seed.sql`; nudge them forward when they read stale.
+6. ~~**`admin-bookings.webp`**~~ — retired 2026-07-20: the landing page's
+   dashboard illustration is now a coded CSS mock (`.mockdash` in
+   `LANDING_HTML`), not a screenshot. Nothing to capture.
 7. **Optimize:** `cwebp -q 80` (or equivalent), verify each file against its
    budget row above.
 

@@ -98,7 +98,11 @@ function BookingList({
     <span>
       {b.status === 'pending' && (
         <>
-          <button disabled={busyId === b.id} onClick={() => void setStatus(b, 'confirmed')}>
+          <button
+            className="pb-confirm"
+            disabled={busyId === b.id}
+            onClick={() => void setStatus(b, 'confirmed')}
+          >
             Confirm
           </button>
           <button disabled={busyId === b.id} onClick={() => void setStatus(b, 'declined')}>

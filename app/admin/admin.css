@@ -1,29 +1,33 @@
 /*
- * Sitter dashboard — Pawservation's forest identity, first-party.
- * Cream-parchment page, white section cards with icon headers, deep-pine actions.
- * Leaf green appears only as highlight (focus rings, section icons); moss/sage
- * mid-tones carry washes and quiet borders, bark-warm neutrals rule the lines.
- * Mono survives only in embed snippets.
+ * Sitter dashboard — Pawservation's clean, professional SaaS identity, first-party,
+ * sharing the landing page's design system so the whole product reads as one brand.
+ * Near-white page, white section cards with icon headers, brand-green (#2e6440) actions.
+ * A single sans stack carries everything; headings get their voice from weight + tight
+ * tracking, not a display family. Sage mid-tones carry washes and quiet borders, cool
+ * grey-green neutrals rule the lines. Mono survives only in embed snippets.
  */
 :root {
-  --page: #f6f4ea;
+  --page: #fcfcfa;
   --card: #ffffff;
-  --ink: #22422e;
-  --body: #2a352c;
-  --soft: #59695b;
-  --line: #ddd8c5;
-  --sage: #94ae9a;
-  --sage-wash: #ebf1e7;
-  --leaf: #4a7d3c;
+  --ink: #18271d;
+  --body: #415044;
+  --soft: #697a6d;
+  --line: #e3e7e0;
+  --sage: #9db2a2;
+  --sage-wash: #f1f5ee;
+  --leaf: #2e6440;
+  --deep: #1d3826;
+  --deepest: #142919;
   --ok: #23684a;
   --ok-wash: #e7f2e8;
-  --warn: #7c530f;
-  --warn-wash: #f8efdb;
+  --warn: #8a6b1c;
+  --warn-wash: #f8f1de;
   --bad: #b23a30;
   --bad-wash: #f8ebe8;
-  --display:
-    ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Quicksand, system-ui, sans-serif;
-  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* The old rounded display family is gone — headings share the one sans stack and earn
+     their personality from weight (700–800) and tight tracking instead. */
+  --display: var(--sans);
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -49,7 +53,7 @@ body {
   font-family: var(--display);
   font-weight: 700;
   font-size: 1.45rem;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.025em;
   color: var(--ink);
   margin: 0;
 }
@@ -74,7 +78,7 @@ body {
   flex-wrap: wrap;
 }
 
-/* Dashboard is wider than the login/loading pages to fit the sidebar. */
+/* Dashboard is wider than the login/loading pages to give the section content room. */
 .pb-dash {
   max-width: 1040px;
 }
@@ -84,8 +88,8 @@ body {
   padding: 20px 24px 24px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: 0 10px 24px -22px rgba(23, 42, 29, 0.45);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px -22px rgba(24, 39, 29, 0.45);
 }
 
 .pb-wrap h2 {
@@ -95,6 +99,7 @@ body {
   font-family: var(--display);
   font-weight: 700;
   font-size: 1.1rem;
+  letter-spacing: -0.02em;
   color: var(--ink);
   margin: 0 0 16px;
 }
@@ -110,6 +115,7 @@ body {
   font-family: var(--display);
   font-weight: 700;
   font-size: 0.95rem;
+  letter-spacing: -0.02em;
   color: var(--ink);
   margin: 18px 0 10px;
 }
@@ -191,7 +197,7 @@ body {
   font-size: 0.8rem;
   line-height: 1.5;
   resize: vertical;
-  background: #faf9f1;
+  background: #f6f8f4;
 }
 
 /* ── Buttons ───────────────────────────────────────────────────────
@@ -200,20 +206,23 @@ body {
    list item, whose visual weight multiplies with the list. */
 .pb-wrap button {
   padding: 8px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
+  border-radius: 8px;
+  border: 1px solid var(--leaf);
+  background: var(--leaf);
   color: #fff;
   font-family: var(--display);
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
   min-height: 36px;
-  transition: filter 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    filter 0.12s ease;
 }
 
 .pb-wrap button:hover {
-  filter: brightness(1.18);
+  background: var(--deep);
+  border-color: var(--deep);
 }
 
 .pb-wrap button:disabled {
@@ -221,92 +230,174 @@ body {
   cursor: default;
 }
 
-/* ── Settings-style layout: section nav + single active panel ──── */
-.pb-layout {
-  display: flex;
-  align-items: flex-start;
-  gap: 24px;
-  margin-top: 20px;
-}
-
-.pb-sidenav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 0 0 190px;
-  position: sticky;
-  /* --topbar-h is measured in App.tsx — the topbar's height isn't fixed, it wraps to two
-     lines for a long business name on a narrow viewport. 78px is the fallback before JS runs. */
-  top: var(--topbar-h, 78px);
-  z-index: 15;
-}
-
-.pb-wrap .pb-sidenav a {
+/* ── Top nav: section tabs + Settings dropdown, merged into the sticky topbar ──── */
+/* The nav row is the topbar's second row, so it inherits the blurred sticky backdrop and rides
+   under the business-name row. Tabs and the Settings trigger echo the landing page's .nav —
+   quiet text links that gain ink + a sage-wash pill when active, matching the old sidebar's
+   active language. */
+.pb-topnav {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 12px;
-  text-decoration: none;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* Only the tabs scroll horizontally on mobile; the dropdown sits outside this container so its
+   open menu is never clipped by the overflow. */
+.pb-navtabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pb-wrap .pb-navtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  min-height: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--soft);
   font-family: var(--sans);
   font-size: 0.9rem;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
 }
 
-.pb-wrap .pb-sidenav a:hover {
+.pb-wrap .pb-navtab:hover {
   color: var(--ink);
   background: var(--sage-wash);
 }
 
-.pb-wrap .pb-sidenav a.pb-sidenav-active {
+.pb-wrap .pb-navtab-active {
   color: var(--ink);
   background: var(--sage-wash);
-  border-color: var(--sage);
   font-weight: 600;
 }
 
-.pb-sidenav svg {
+.pb-wrap .pb-navtab:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.pb-navtab svg {
+  color: var(--soft);
+  flex: none;
+}
+.pb-wrap .pb-navtab-active svg {
+  color: var(--leaf);
+}
+
+/* ── Settings dropdown ─────────────────────────────────────────── */
+.pb-navdrop {
+  position: relative;
+}
+
+/* White card just below the trigger. Sits above section content but below .pb-savebar (30).
+   The topbar's own stacking context (z-index 20) already lifts the whole cluster over the
+   panel; this orders the menu above its topbar siblings. */
+.pb-navdrop-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* Right-aligned to the trigger: Settings sits at the right end of the nav row, so a
+     left-anchored menu runs off the viewport edge on narrow screens. */
+  right: 0;
+  z-index: 25;
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 14px 30px -18px rgba(24, 39, 29, 0.5);
+}
+
+.pb-wrap .pb-navdrop-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pb-wrap .pb-navdrop-item:hover {
+  color: var(--ink);
+  background: var(--sage-wash);
+}
+
+.pb-wrap .pb-navdrop-item-active {
+  color: var(--ink);
+  background: var(--sage-wash);
+  font-weight: 600;
+}
+
+.pb-wrap .pb-navdrop-item:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: -2px;
+}
+
+.pb-navdrop-item svg {
   color: var(--leaf);
   flex: none;
 }
 
+/* ── Topbar right cluster: quiet meta links (Help) + Sign out ───── */
+.pb-topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pb-wrap .pb-metalink {
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pb-wrap .pb-metalink:hover,
+.pb-wrap .pb-metalink-active {
+  color: var(--ink);
+}
+
+.pb-wrap .pb-metalink:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The content card is now a single full-width column below the merged nav. */
 .pb-panel {
-  flex: 1 1 auto;
   min-width: 0;
+  margin-top: 20px;
 }
 
 @media (max-width: 720px) {
-  .pb-layout {
-    flex-direction: column;
-  }
-
-  /* Stays sticky (not static) so the nav is still reachable after scrolling into a long section. */
-  .pb-sidenav {
-    flex-direction: row;
-    /* Desktop's `flex: 0 0 190px` sets a 190px basis on the now-vertical (column) main axis of
-       .pb-layout, stretching this to 190px tall instead of a compact row — reset it. */
-    flex: 0 0 auto;
+  /* Primary tabs scroll horizontally (no wrap, no hamburger); the Settings dropdown stays put
+     beside the scroller so its menu isn't clipped by the overflow. */
+  .pb-navtabs {
     overflow-x: auto;
-    width: 100%;
-    padding-bottom: 4px;
-    background: var(--page);
-    border-bottom: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
   }
 
-  .pb-wrap .pb-sidenav a {
+  .pb-wrap .pb-navtab {
     flex: none;
-    white-space: nowrap;
-  }
-
-  /* .pb-layout's align-items: flex-start (desktop-only concern: keeps the sticky sidenav from
-     stretching to the panel's height) also applies on the cross axis once flex-direction flips
-     to column here — without a width, that sizes the panel to fit its widest content (e.g. a
-     long timezone <select> or a native file input's intrinsic min-content) instead of the
-     viewport, overflowing narrow screens. Stretch it back to the full row width. */
-  .pb-panel {
-    width: 100%;
   }
 }
 
@@ -321,11 +412,24 @@ body {
 .pb-wrap .pb-cal-nav button,
 .pb-wrap .pb-wizard-back,
 .pb-wrap .pb-signout {
-  background: none;
-  color: var(--soft);
+  background: var(--card);
+  color: var(--ink);
   border: 1px solid var(--line);
   font-family: var(--sans);
   font-weight: 500;
+}
+
+/* Confirm is the one row action that IS the primary decision — it keeps the
+   brand-green fill (matches the landing page's dashboard mock). */
+.pb-wrap li button.pb-confirm:not(:disabled) {
+  background: var(--leaf);
+  color: #fff;
+  border-color: var(--leaf);
+  font-weight: 600;
+}
+.pb-wrap li button.pb-confirm:not(:disabled):hover {
+  background: var(--deep);
+  border-color: var(--deep);
 }
 
 .pb-wrap li button:not(:where(.pb-hint-btn)):hover,
@@ -499,7 +603,7 @@ body {
   padding: 12px 20px;
   background: var(--ink);
   color: #fff;
-  box-shadow: 0 -8px 24px -16px rgba(23, 42, 29, 0.7);
+  box-shadow: 0 -8px 24px -16px rgba(24, 39, 29, 0.7);
 }
 
 .pb-savebar p {
@@ -545,8 +649,8 @@ body {
   padding: 28px 26px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: 0 18px 40px -28px rgba(23, 42, 29, 0.55);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px -28px rgba(24, 39, 29, 0.55);
 }
 
 .pb-login h1 {
@@ -594,11 +698,11 @@ body {
   display: block;
   width: 100%;
   border: 0;
-  background: #faf9f1;
+  background: #f6f8f4;
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--leaf) 45%, transparent);
+  outline: 3px solid var(--leaf);
   outline-offset: 2px;
 }
 
@@ -835,14 +939,25 @@ body {
 .pb-login-signup {
   margin-top: 16px;
 }
-.pb-linklike {
+/* Prefixed with .pb-wrap (like the ghost buttons above) so it outranks the
+   `.pb-wrap button` primary fill — otherwise this renders as a second solid
+   green CTA under the real one. */
+.pb-wrap button.pb-linklike,
+.pb-wrap button.pb-linklike:hover {
+  width: auto;
   background: none;
   border: none;
   padding: 0;
-  color: inherit;
+  color: var(--ink);
   font: inherit;
+  font-weight: 500;
   text-decoration: underline;
+  text-decoration-color: var(--leaf);
+  text-underline-offset: 2px;
   cursor: pointer;
+}
+.pb-wrap button.pb-linklike:hover {
+  color: var(--leaf);
 }
 /* Lets the table itself scroll sideways on a narrow viewport instead of the page body — a long
    email or the "Joined — business deleted" chip shouldn't be able to widen the whole page. */
@@ -895,8 +1010,8 @@ body {
 /* Footer buttons are quiet ghosts (same treatment as .pb-options/.pb-questions
    buttons above); Delete service gets a danger tint. */
 .pb-wrap .pb-svc-editor-foot button {
-  background: none;
-  color: var(--soft);
+  background: var(--card);
+  color: var(--ink);
   border: 1px solid var(--line);
   font-family: var(--sans);
   font-weight: 500;
@@ -1371,7 +1486,7 @@ body {
 }
 
 /* Small white card under the button — the section-card shadow at reduced
-   spread. z-index sits above .pb-sidenav (15) and below .pb-savebar (30).
+   spread. z-index sits above section content and below .pb-savebar (30).
    Explicit font/color/weight so the popover reads the same inside an h2,
    a bold table header, or a soft field label. */
 .pb-hint-pop {
@@ -1385,7 +1500,7 @@ body {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
-  box-shadow: 0 8px 18px -14px rgba(23, 42, 29, 0.45);
+  box-shadow: 0 8px 18px -14px rgba(24, 39, 29, 0.45);
   color: var(--body);
   font-family: var(--sans);
   font-size: 0.82rem;
