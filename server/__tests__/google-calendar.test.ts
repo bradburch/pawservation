@@ -84,7 +84,24 @@ describe('google-calendar', () => {
     expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer AT' });
   });
 
-  it('updateEvent throws on a non-2xx response', async () => {
+  it('updateEvent returns { gone: false } on a 2xx response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'evt_1' }), { status: 200 }),
+    );
+    expect(await updateEvent('AT', 'primary', 'evt_1', {})).toEqual({ gone: false });
+  });
+
+  it('updateEvent reports gone (not an error) when the event was hand-deleted (404)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not found', { status: 404 }));
+    expect(await updateEvent('AT', 'primary', 'evt_1', {})).toEqual({ gone: true });
+  });
+
+  it('updateEvent reports gone on 410 Gone', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('gone', { status: 410 }));
+    expect(await updateEvent('AT', 'primary', 'evt_1', {})).toEqual({ gone: true });
+  });
+
+  it('updateEvent throws on a non-2xx response that is not 404/410', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('no', { status: 500 }));
     await expect(updateEvent('AT', 'primary', 'evt_1', {})).rejects.toThrow(
       'Google updateEvent failed (500)',

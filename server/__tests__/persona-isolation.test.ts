@@ -101,7 +101,7 @@ async function seedSynced(env: Env, tenantId: string, endUserId: string, eventId
     estCost: 150,
     status: 'confirmed',
   });
-  await setBookingGCalEventId(env.PAWBOOK_DB, tenantId, id, eventId);
+  await setBookingGCalEventId(env.PAWBOOK_DB, tenantId, id, eventId, null);
   return id;
 }
 
@@ -304,7 +304,7 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
       estCost: 150,
       status: 'pending',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, tenantId, id, eventId);
+    await setBookingGCalEventId(env.PAWBOOK_DB, tenantId, id, eventId, null);
     return id;
   }
 

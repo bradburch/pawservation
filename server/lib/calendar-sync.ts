@@ -85,17 +85,48 @@ export async function getCalendarAccessToken(
 }
 
 /**
+ * Persist a freshly-created Google event id via compare-and-swap, guarding against the duplicate-
+ * event race: two near-simultaneous writers can each read GCalEventId as `expectedOld` and both
+ * create an event. The CAS lets only one win; if this call lost, its event is a would-be orphan, so
+ * we best-effort delete it (swallowing errors). `expectedOld` is NULL for a first create, or the
+ * stale id when recreating a hand-deleted event.
+ */
+async function persistEventIdOrCleanup(
+  env: Env,
+  tenant: Tenant,
+  accessToken: string,
+  calendarId: string,
+  bookingId: string,
+  eventId: string,
+  expectedOld: string | null,
+): Promise<void> {
+  const stuck = await setBookingGCalEventId(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    bookingId,
+    eventId,
+    expectedOld,
+  );
+  if (!stuck) {
+    await deleteEvent(accessToken, calendarId, eventId).catch(() => {});
+  }
+}
+
+/**
  * Best-effort: create a Google Calendar event for a booking and persist its id. Callers run this
  * via executionCtx.waitUntil and ignore rejections — a Google failure must never affect a booking.
+ * The id is stored with a NULL-expected compare-and-swap so a concurrent writer can't leave a
+ * duplicate event orphaned (see persistEventIdOrCleanup).
  */
 export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInput): Promise<void> {
   const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
+  const calendarId = conn.CalendarId ?? 'primary';
   const resource = await resourceForBooking(env, tenant, b);
-  const { id } = await createEvent(accessToken, conn.CalendarId ?? 'primary', resource);
-  await setBookingGCalEventId(env.PAWBOOK_DB, tenant.Id, b.bookingId, id);
+  const { id } = await createEvent(accessToken, calendarId, resource);
+  await persistEventIdOrCleanup(env, tenant, accessToken, calendarId, b.bookingId, id, null);
 }
 
 /**
@@ -103,6 +134,11 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
  * when the sitter confirms a request, so its title loses the [REQUEST] marker (status flips to
  * 'confirmed'). Same connection gating and never-blocks posture as syncBookingToCalendar; callers
  * run it via executionCtx.waitUntil and swallow rejections.
+ *
+ * If the event was hand-deleted in Calendar (updateEvent reports gone), recreate it and CAS the new
+ * id in place of the stale one. This re-asserts the booking the sitter just confirmed, so a later
+ * reconcile won't cancel it for having no live event. If the CAS loses to a concurrent writer, the
+ * replacement is deleted rather than orphaned (persistEventIdOrCleanup).
  */
 export async function updateBookingCalendarEvent(
   env: Env,
@@ -114,8 +150,21 @@ export async function updateBookingCalendarEvent(
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
+  const calendarId = conn.CalendarId ?? 'primary';
   const resource = await resourceForBooking(env, tenant, b);
-  await updateEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId, resource);
+  const { gone } = await updateEvent(accessToken, calendarId, gcalEventId, resource);
+  if (gone) {
+    const { id } = await createEvent(accessToken, calendarId, resource);
+    await persistEventIdOrCleanup(
+      env,
+      tenant,
+      accessToken,
+      calendarId,
+      b.bookingId,
+      id,
+      gcalEventId,
+    );
+  }
 }
 
 /** Cap on how many bookings one backfill pass creates events for — a sane bound so a sitter with a
@@ -155,7 +204,7 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
         status: r.Status,
       });
       const { id } = await createEvent(accessToken, calendarId, resource);
-      await setBookingGCalEventId(env.PAWBOOK_DB, tenant.Id, r.Id, id);
+      await persistEventIdOrCleanup(env, tenant, accessToken, calendarId, r.Id, id, null);
     } catch (err) {
       console.error('calendar backfill failed for booking', r.Id, err);
     }

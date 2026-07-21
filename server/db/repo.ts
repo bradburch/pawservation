@@ -1030,16 +1030,27 @@ export async function clearProviderConnection(
     .run();
 }
 
+/**
+ * Compare-and-swap the booking's GCalEventId: only writes `eventId` when the current value still
+ * equals `expectedOld` (NULL for a first-time create, the stale id when recreating a hand-deleted
+ * event). Returns whether a row actually changed — false means another writer won the race, so the
+ * caller must clean up the Google event it just created rather than orphan it. `IS` is null-safe,
+ * so binding NULL matches only an unset GCalEventId. Tenant-scoped like every repo function.
+ */
 export async function setBookingGCalEventId(
   db: D1Database,
   tenantId: string,
   bookingId: string,
   eventId: string,
-): Promise<void> {
-  await db
-    .prepare('UPDATE BookingRequests SET GCalEventId = ? WHERE TenantId = ? AND Id = ?')
-    .bind(eventId, tenantId, bookingId)
+  expectedOld: string | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      'UPDATE BookingRequests SET GCalEventId = ? WHERE TenantId = ? AND Id = ? AND GCalEventId IS ?',
+    )
+    .bind(eventId, tenantId, bookingId, expectedOld)
     .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 export async function getEndUserById(

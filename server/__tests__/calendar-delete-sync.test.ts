@@ -30,7 +30,7 @@ async function seedBooking(
     estCost: 150,
     status,
   });
-  if (gcalEventId) await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, gcalEventId);
+  if (gcalEventId) await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, gcalEventId, null);
   return id;
 }
 
@@ -58,7 +58,7 @@ async function bookingRow(
   return row!;
 }
 
-describe('POST /:slug/admin/bookings/:id/status — Google Calendar delete hook', () => {
+describe('POST /:slug/admin/bookings/:id/status — Google Calendar hooks (confirm PATCH, decline/cancel delete)', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('cancel deletes the synced event and keeps GCalEventId on the row', async () => {

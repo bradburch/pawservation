@@ -91,12 +91,17 @@ export async function createEvent(
   return { id: j.id };
 }
 
+/**
+ * PATCH an existing event. If the event no longer exists on Google — 404 Not Found or 410 Gone,
+ * i.e. it was hand-deleted in Calendar — this is not an error: return `{ gone: true }` so the
+ * caller can recreate it (mirrors deleteEvent treating 410 as success). Any other non-2xx throws.
+ */
 export async function updateEvent(
   accessToken: string,
   calendarId: string,
   eventId: string,
   resource: object,
-): Promise<void> {
+): Promise<{ gone: boolean }> {
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
     {
@@ -105,7 +110,9 @@ export async function updateEvent(
       body: JSON.stringify(resource),
     },
   );
+  if (res.status === 404 || res.status === 410) return { gone: true };
   if (!res.ok) throw new Error(`Google updateEvent failed (${res.status})`);
+  return { gone: false };
 }
 
 export async function deleteEvent(

@@ -109,6 +109,49 @@ describe('syncBookingToCalendar', () => {
       Authorization: 'Bearer access-2',
     });
   });
+
+  it('deletes its just-created event and leaves the stored id when the CAS loses the race', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+    seedBooking(raw, 'brace');
+    // Simulate a concurrent writer that already claimed the slot: GCalEventId is non-NULL, so the
+    // NULL-expected compare-and-swap in this call must NOT stick.
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'brace', 'evt_winner', null);
+
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const method = (init as RequestInit).method;
+      if (method === 'POST')
+        return new Response(JSON.stringify({ id: 'evt_dup' }), { status: 200 });
+      return new Response(null, { status: 204 }); // DELETE
+    });
+
+    await syncBookingToCalendar(env, tenant, {
+      bookingId: 'brace',
+      endUserId: null,
+      serviceType: 'boarding',
+      serviceLabel: 'Boarding',
+      startDate: '2030-03-01',
+      endDate: '2030-03-04',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 1,
+      petNames: [],
+      estCost: 150,
+      status: 'pending',
+    });
+
+    // The duplicate event this call created was deleted, not orphaned...
+    const deleteCall = spy.mock.calls.find(
+      ([, init]) => (init as RequestInit).method === 'DELETE',
+    ) as [string, RequestInit] | undefined;
+    expect(deleteCall).toBeTruthy();
+    expect(deleteCall![0]).toContain('/events/evt_dup');
+    // ...and the stored id is the winner's, untouched.
+    const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='brace'`).get() as {
+      GCalEventId: string;
+    };
+    expect(row.GCalEventId).toBe('evt_winner');
+  });
 });
 
 describe('updateBookingCalendarEvent', () => {
@@ -118,7 +161,7 @@ describe('updateBookingCalendarEvent', () => {
     const { env, raw } = createTestEnv();
     await connectCalendar(env, '2030-01-01T00:00:00Z');
     seedBooking(raw, 'bu1');
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu1', 'evt_bu1');
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu1', 'evt_bu1', null);
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_bu1' }), { status: 200 }));
@@ -145,6 +188,89 @@ describe('updateBookingCalendarEvent', () => {
     const resource = JSON.parse(init.body as string) as { summary: string };
     expect(resource.summary).not.toContain('[REQUEST]');
     expect(resource.summary).toBe('Boarding — 1 pet');
+  });
+
+  it('recreates a hand-deleted event (PATCH 404 → create) and replaces the stored id', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+    seedBooking(raw, 'bu_gone');
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu_gone', 'evt_stale', null);
+
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const method = (init as RequestInit).method;
+      if (method === 'PATCH') return new Response('not found', { status: 404 }); // hand-deleted
+      return new Response(JSON.stringify({ id: 'evt_new' }), { status: 200 }); // POST create
+    });
+
+    // The confirm path must not be affected by the recreate — this resolves normally.
+    await expect(
+      updateBookingCalendarEvent(env, tenant, 'evt_stale', {
+        bookingId: 'bu_gone',
+        endUserId: null,
+        serviceType: 'boarding',
+        serviceLabel: 'Boarding',
+        startDate: '2030-03-01',
+        endDate: '2030-03-04',
+        startTime: null,
+        durationMinutes: null,
+        petCount: 1,
+        petNames: [],
+        estCost: 150,
+        status: 'confirmed',
+      }),
+    ).resolves.toBeUndefined();
+
+    // PATCH first, then a POST create — no DELETE (the CAS stuck).
+    expect(spy.mock.calls.map(([, init]) => (init as RequestInit).method)).toEqual([
+      'PATCH',
+      'POST',
+    ]);
+    const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='bu_gone'`).get() as {
+      GCalEventId: string;
+    };
+    expect(row.GCalEventId).toBe('evt_new'); // stale id replaced with the recreated event's id
+  });
+
+  it('deletes the recreated event and leaves the stored id when the recreate CAS loses the race', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+    seedBooking(raw, 'bu_race');
+    // The stored id no longer equals the stale id the confirm path is recreating against (another
+    // writer moved it), so the stale-expected compare-and-swap must NOT stick.
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu_race', 'evt_moved', null);
+
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const method = (init as RequestInit).method;
+      if (method === 'PATCH') return new Response('gone', { status: 410 });
+      if (method === 'POST')
+        return new Response(JSON.stringify({ id: 'evt_replacement' }), { status: 200 });
+      return new Response(null, { status: 204 }); // DELETE
+    });
+
+    await updateBookingCalendarEvent(env, tenant, 'evt_stale', {
+      bookingId: 'bu_race',
+      endUserId: null,
+      serviceType: 'boarding',
+      serviceLabel: 'Boarding',
+      startDate: '2030-03-01',
+      endDate: '2030-03-04',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 1,
+      petNames: [],
+      estCost: 150,
+      status: 'confirmed',
+    });
+
+    const deleteCall = spy.mock.calls.find(
+      ([, init]) => (init as RequestInit).method === 'DELETE',
+    ) as [string, RequestInit] | undefined;
+    expect(deleteCall).toBeTruthy();
+    expect(deleteCall![0]).toContain('/events/evt_replacement');
+    const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='bu_race'`).get() as {
+      GCalEventId: string;
+    };
+    expect(row.GCalEventId).toBe('evt_moved'); // untouched
   });
 
   it('no-ops when the calendar is not connected', async () => {

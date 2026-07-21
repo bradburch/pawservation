@@ -31,7 +31,7 @@ describe('provider token repo', () => {
     const { env, raw } = createTestEnv();
     raw.exec(`INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, PetCount, Status)
               VALUES ('b1', '${TENANT_A}', 'daycare', '2030-02-01', 1, 'pending')`);
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'b1', 'evt_xyz');
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'b1', 'evt_xyz', null);
     const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='b1'`).get() as {
       GCalEventId: string;
     };

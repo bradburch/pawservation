@@ -57,7 +57,7 @@ async function seedSyncedBooking(
     estCost: 150,
     status: 'confirmed',
   });
-  await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_1');
+  await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_1', null);
   return id;
 }
 
