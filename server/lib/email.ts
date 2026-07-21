@@ -90,8 +90,8 @@ export async function sendSignupLink(env: Env, to: string, url: string): Promise
   // sendInvite). Subject/text are plain-text JSON fields in Resend's API — no escaping needed.
   await resendPost(env, {
     to,
-    subject: 'Finish setting up your Pawbook account',
-    text: `Finish setting up your Pawbook account: ${url}\n\nThis link expires in 30 minutes. If you didn't request it, ignore this email.`,
-    html: `<p><a href="${htmlEscape(url)}">Finish setting up your Pawbook account</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
+    subject: 'Finish setting up your Pawservation account',
+    text: `Finish setting up your Pawservation account: ${url}\n\nThis link expires in 30 minutes. If you didn't request it, ignore this email.`,
+    html: `<p><a href="${htmlEscape(url)}">Finish setting up your Pawservation account</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
   });
 }

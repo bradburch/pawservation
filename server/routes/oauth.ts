@@ -15,7 +15,7 @@ export const NONCE_KEY = (nonce: string) => `gcal:nonce:${nonce}`;
  */
 function resultPage(ok: boolean): Response {
   const body = ok
-    ? 'Google Calendar connected. You can close this window and return to Pawbook.'
+    ? 'Google Calendar connected. You can close this window and return to Pawservation.'
     : 'Connection failed. Please close this window and try again.';
   const html = `<!doctype html><meta charset="utf-8"><title>${ok ? 'Connected' : 'Error'}</title>
 <body style="font:14px system-ui;padding:2rem">${body}</body>`;

@@ -100,15 +100,15 @@ describe('owner tokens', () => {
   const SECRET = 'test-secret-0123456789';
 
   it('round-trips owner claims with email as sub and no tid', async () => {
-    const token = await mintOwnerToken('owner@pawbook.test', SECRET);
+    const token = await mintOwnerToken('owner@pawservation.test', SECRET);
     const claims = await verifyOwnerToken(token, SECRET);
-    expect(claims?.sub).toBe('owner@pawbook.test');
+    expect(claims?.sub).toBe('owner@pawservation.test');
     expect(claims?.role).toBe('owner');
     expect(claims && 'tid' in claims).toBe(false);
   });
 
   it('is rejected by the widget and admin verifiers (and rejects theirs)', async () => {
-    const owner = await mintOwnerToken('owner@pawbook.test', SECRET);
+    const owner = await mintOwnerToken('owner@pawservation.test', SECRET);
     expect(await verifyToken(owner, SECRET)).toBeNull(); // widget verifier rejects any role
     expect(await verifyAdminToken(owner, SECRET)).toBeNull(); // requires role 'admin' + tid
     const admin = await mintAdminToken('tu_1', 'tnt_1', SECRET);
@@ -118,7 +118,7 @@ describe('owner tokens', () => {
   });
 
   it('expires with the admin TTL (8h)', async () => {
-    const token = await mintOwnerToken('owner@pawbook.test', SECRET, 1_000);
+    const token = await mintOwnerToken('owner@pawservation.test', SECRET, 1_000);
     // exp = 1_000 + 8h; hono/jwt checks exp against real time, so a token minted in the
     // deep past is already expired.
     expect(await verifyOwnerToken(token, SECRET)).toBeNull();

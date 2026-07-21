@@ -22,8 +22,8 @@ export const ADMIN_PASSWORD = 'demo1234';
 
 // Owner + allowlist fixtures: OWNER_EMAIL is wired into createTestEnv's OWNER_EMAILS;
 // ALLOWED_EMAIL is the unclaimed AllowedSitters row seeded by sql/seed.sql.
-export const OWNER_EMAIL = 'owner@pawbook.test';
-export const ALLOWED_EMAIL = 'newsitter@pawbook.test';
+export const OWNER_EMAIL = 'owner@pawservation.test';
+export const ALLOWED_EMAIL = 'newsitter@pawservation.test';
 
 type SqlParam = string | number | null;
 

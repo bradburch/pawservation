@@ -76,7 +76,7 @@ describe('owner-scope repo: AllowedSitters', () => {
     const claimed = rows.find((r) => r.Email === 'claimed@x.test');
     expect(claimed?.ClaimedAt).toBeTruthy();
     expect(claimed?.TenantSlug).toBe('newbiz');
-    const seeded = rows.find((r) => r.Email === 'newsitter@pawbook.test'); // sql/seed.sql
+    const seeded = rows.find((r) => r.Email === 'newsitter@pawservation.test'); // sql/seed.sql
     expect(seeded?.ClaimedAt).toBeNull();
     expect(seeded?.TenantSlug).toBeNull();
   });

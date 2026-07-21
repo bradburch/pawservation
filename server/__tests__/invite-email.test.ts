@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sendInvite } from '../lib/email';
 
-const env = { RESEND_API_KEY: 'k', RESEND_FROM: 'Pawbook <b@x.com>' } as unknown as Env;
+const env = { RESEND_API_KEY: 'k', RESEND_FROM: 'Pawservation <b@x.com>' } as unknown as Env;
 
 describe('sendInvite', () => {
   afterEach(() => vi.restoreAllMocks());

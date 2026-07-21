@@ -34,7 +34,10 @@ describe('GET / — landing page', () => {
     const body = await res.text();
     expect(body).toContain('href="/admin"');
     expect(body).toContain('href="/demo"');
-    expect(body).toContain('Pawbook');
+    expect(body).toContain('Pawservation');
+    // Case-sensitive on purpose: the only pre-rebrand strings allowed on the landing page are
+    // the lowercase github.com/bradburch/pawbook repo URLs (swept after the Phase 2 repo rename).
+    expect(body).not.toContain('Pawbook');
   });
 
   it('is script-free (safe under the locked CSP) and refuses framing', async () => {
@@ -48,6 +51,7 @@ describe('GET / — landing page', () => {
   it('shows the embed snippet as escaped text only', async () => {
     const body = await landingBody();
     expect(body).toContain('&lt;script');
+    expect(body).toContain('data-pawservation-tenant');
   });
 
   it('has a mailto invite link (invite-only story, no signup flow)', async () => {

@@ -125,4 +125,4 @@ INSERT OR REPLACE INTO ProviderConnections (Id, TenantId, Capability, Provider, 
 
 -- One unclaimed signup-allowlist row so demos/tests can walk the invite-signup
 -- flow end to end (owner allowlists → sitter enters email → setup link).
-INSERT OR REPLACE INTO AllowedSitters (Email) VALUES ('newsitter@pawbook.test');
+INSERT OR REPLACE INTO AllowedSitters (Email) VALUES ('newsitter@pawservation.test');

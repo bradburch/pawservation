@@ -17,7 +17,7 @@ export const start = (env: Env, email: string) =>
 
 function configureEmail(env: Env) {
   env.RESEND_API_KEY = 'test-key';
-  env.RESEND_FROM = 'Pawbook <bookings@example.com>';
+  env.RESEND_FROM = 'Pawservation <bookings@example.com>';
 }
 
 describe('POST /api/signup/start — enumeration neutrality (email configured)', () => {

@@ -102,7 +102,7 @@ const LANDING_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawbook — booking for pet sitters</title>
+    <title>Pawservation — booking for pet sitters</title>
     <style>
       :root {
         color-scheme: light;
@@ -514,16 +514,16 @@ const LANDING_HTML = `<!doctype html>
         <div class="shot hero-shot">
           <img
             src="/img/landing/widget-hero.webp"
-            alt="The Pawbook booking widget: a June calendar with a three-night boarding stay selected and a $150 quote"
+            alt="The Pawservation booking widget: a June calendar with a three-night boarding stay selected and a $150 quote"
           />
           <span class="marginalia" aria-hidden="true">what your clients see</span>
         </div>
 
-        <h1 class="brand">Pawbook</h1>
+        <h1 class="brand">Pawservation</h1>
         <p class="lede">Your own booking page, on your own website.</p>
         <p class="sub">
           It lives on your site with your services and your rates. Clients request the dates,
-          you confirm or decline, and Pawbook keeps track of what you&rsquo;re owed.
+          you confirm or decline, and Pawservation keeps track of what you&rsquo;re owed.
         </p>
 
         <div class="actions">
@@ -532,8 +532,8 @@ const LANDING_HTML = `<!doctype html>
             <a class="quiet" href="/admin">Sitter sign in &rarr;</a>
           </div>
           <p class="invite-note">
-            Pawbook is invite-only right now &mdash;
-            <a href="mailto:bradburch@duck.com?subject=Pawbook%20invite">ask for an invite</a>
+            Pawservation is invite-only right now &mdash;
+            <a href="mailto:bradburch@duck.com?subject=Pawservation%20invite">ask for an invite</a>
             or <a href="/admin">sign in</a> if you have an account.
           </p>
         </div>
@@ -632,7 +632,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="code-scroll">
 <pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;https://your-site/embed.js&quot;
-        <span class="attr">data-pawbook-tenant</span>=&quot;your-slug&quot;
+        <span class="attr">data-pawservation-tenant</span>=&quot;your-slug&quot;
         <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
             </div>
             <p class="slip-foot">
@@ -655,7 +655,7 @@ const LANDING_HTML = `<!doctype html>
           </div>
           <div class="qa-item">
             <h3>Do customers pay by card here?</h3>
-            <p><strong>No.</strong> Pawbook tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate.</p>
+            <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate.</p>
           </div>
           <div class="qa-item">
             <h3>Can it double-book me?</h3>
@@ -678,8 +678,8 @@ const LANDING_HTML = `<!doctype html>
           <span class="rule" aria-hidden="true"></span>
           <span class="tab">invite-only</span>
         </div>
-        <p>Pawbook is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page.</p>
-        <a class="cta" href="mailto:bradburch@duck.com?subject=Pawbook%20invite">Ask for an invite &rarr;</a>
+        <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page.</p>
+        <a class="cta" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite &rarr;</a>
         <div class="links">
           <a class="quiet" href="/admin">Already have an account? Sign in &rarr;</a>
         </div>
@@ -687,7 +687,7 @@ const LANDING_HTML = `<!doctype html>
 
       <footer class="foot">
         <p>
-          Pawbook is open source (MIT) &mdash;
+          Pawservation is open source (MIT) &mdash;
           <a href="https://github.com/bradburch/pawbook">source &amp; technical docs on GitHub</a>
           &middot;
           <a href="https://github.com/bradburch/pawbook/blob/main/docs/index.md">project page</a>

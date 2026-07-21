@@ -22,7 +22,7 @@ describe('identify with email configured', () => {
   it('sends via Resend and omits prototypeCode from the response', async () => {
     const { env } = createTestEnv();
     env.RESEND_API_KEY = 'test-key';
-    env.RESEND_FROM = 'Pawbook <bookings@example.com>';
+    env.RESEND_FROM = 'Pawservation <bookings@example.com>';
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
@@ -38,7 +38,7 @@ describe('identify with email configured', () => {
   it('returns 502 when the email provider fails', async () => {
     const { env } = createTestEnv();
     env.RESEND_API_KEY = 'test-key';
-    env.RESEND_FROM = 'Pawbook <bookings@example.com>';
+    env.RESEND_FROM = 'Pawservation <bookings@example.com>';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 500 }));
 
     const res = await identify(env);

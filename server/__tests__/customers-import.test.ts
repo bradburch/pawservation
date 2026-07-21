@@ -123,7 +123,11 @@ describe('POST /:slug/admin/customers/import', () => {
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
-    const envWithEmail = { ...env, RESEND_API_KEY: 'k', RESEND_FROM: 'Pawbook <b@x.com>' } as Env;
+    const envWithEmail = {
+      ...env,
+      RESEND_API_KEY: 'k',
+      RESEND_FROM: 'Pawservation <b@x.com>',
+    } as Env;
     const { body } = await importCsv(envWithEmail, csv, true);
     expect(body.importedCustomers).toBe(1); // only brandnew@
     expect(body.invitesSent).toBe(1);
@@ -134,7 +138,11 @@ describe('POST /:slug/admin/customers/import', () => {
     const { env } = createTestEnv();
     const csv = 'Client Email,Client Name,Pet Name,Pet Type\nfailmail@example.com,X,,\n';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
-    const envWithEmail = { ...env, RESEND_API_KEY: 'k', RESEND_FROM: 'Pawbook <b@x.com>' } as Env;
+    const envWithEmail = {
+      ...env,
+      RESEND_API_KEY: 'k',
+      RESEND_FROM: 'Pawservation <b@x.com>',
+    } as Env;
     const { status, body } = await importCsv(envWithEmail, csv, true);
     expect(status).toBe(200);
     expect(body.importedCustomers).toBe(1);
@@ -148,7 +156,11 @@ describe('POST /:slug/admin/customers/import', () => {
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
-    const envWithEmail = { ...env, RESEND_API_KEY: 'k', RESEND_FROM: 'Pawbook <b@x.com>' } as Env;
+    const envWithEmail = {
+      ...env,
+      RESEND_API_KEY: 'k',
+      RESEND_FROM: 'Pawservation <b@x.com>',
+    } as Env;
     const { body } = await importCsv(envWithEmail, csv, false);
     expect(body.invitesSent).toBe(0);
     expect(spy).not.toHaveBeenCalled();
