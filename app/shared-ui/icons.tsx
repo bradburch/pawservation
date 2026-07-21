@@ -174,6 +174,14 @@ export function IconChevronRight({ size }: IconProps) {
   );
 }
 
+export function IconChevronDown({ size }: IconProps) {
+  return (
+    <Svg size={size}>
+      <path d="m6 9 6 6 6-6" />
+    </Svg>
+  );
+}
+
 export function IconCheck({ size }: IconProps) {
   return (
     <Svg size={size}>

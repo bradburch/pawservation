@@ -78,7 +78,7 @@ body {
   flex-wrap: wrap;
 }
 
-/* Dashboard is wider than the login/loading pages to fit the sidebar. */
+/* Dashboard is wider than the login/loading pages to give the section content room. */
 .pb-dash {
   max-width: 1040px;
 }
@@ -230,92 +230,174 @@ body {
   cursor: default;
 }
 
-/* ── Settings-style layout: section nav + single active panel ──── */
-.pb-layout {
-  display: flex;
-  align-items: flex-start;
-  gap: 24px;
-  margin-top: 20px;
-}
-
-.pb-sidenav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 0 0 190px;
-  position: sticky;
-  /* --topbar-h is measured in App.tsx — the topbar's height isn't fixed, it wraps to two
-     lines for a long business name on a narrow viewport. 78px is the fallback before JS runs. */
-  top: var(--topbar-h, 78px);
-  z-index: 15;
-}
-
-.pb-wrap .pb-sidenav a {
+/* ── Top nav: section tabs + Settings dropdown, merged into the sticky topbar ──── */
+/* The nav row is the topbar's second row, so it inherits the blurred sticky backdrop and rides
+   under the business-name row. Tabs and the Settings trigger echo the landing page's .nav —
+   quiet text links that gain ink + a sage-wash pill when active, matching the old sidebar's
+   active language. */
+.pb-topnav {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 12px;
-  text-decoration: none;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* Only the tabs scroll horizontally on mobile; the dropdown sits outside this container so its
+   open menu is never clipped by the overflow. */
+.pb-navtabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pb-wrap .pb-navtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  min-height: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--soft);
   font-family: var(--sans);
   font-size: 0.9rem;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
 }
 
-.pb-wrap .pb-sidenav a:hover {
+.pb-wrap .pb-navtab:hover {
   color: var(--ink);
   background: var(--sage-wash);
 }
 
-.pb-wrap .pb-sidenav a.pb-sidenav-active {
+.pb-wrap .pb-navtab-active {
   color: var(--ink);
   background: var(--sage-wash);
-  border-color: var(--sage);
   font-weight: 600;
 }
 
-.pb-sidenav svg {
+.pb-wrap .pb-navtab:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.pb-navtab svg {
+  color: var(--soft);
+  flex: none;
+}
+.pb-wrap .pb-navtab-active svg {
+  color: var(--leaf);
+}
+
+/* ── Settings dropdown ─────────────────────────────────────────── */
+.pb-navdrop {
+  position: relative;
+}
+
+/* White card just below the trigger. Sits above section content but below .pb-savebar (30).
+   The topbar's own stacking context (z-index 20) already lifts the whole cluster over the
+   panel; this orders the menu above its topbar siblings. */
+.pb-navdrop-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* Right-aligned to the trigger: Settings sits at the right end of the nav row, so a
+     left-anchored menu runs off the viewport edge on narrow screens. */
+  right: 0;
+  z-index: 25;
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 14px 30px -18px rgba(24, 39, 29, 0.5);
+}
+
+.pb-wrap .pb-navdrop-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pb-wrap .pb-navdrop-item:hover {
+  color: var(--ink);
+  background: var(--sage-wash);
+}
+
+.pb-wrap .pb-navdrop-item-active {
+  color: var(--ink);
+  background: var(--sage-wash);
+  font-weight: 600;
+}
+
+.pb-wrap .pb-navdrop-item:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: -2px;
+}
+
+.pb-navdrop-item svg {
   color: var(--leaf);
   flex: none;
 }
 
+/* ── Topbar right cluster: quiet meta links (Help) + Sign out ───── */
+.pb-topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pb-wrap .pb-metalink {
+  color: var(--soft);
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pb-wrap .pb-metalink:hover,
+.pb-wrap .pb-metalink-active {
+  color: var(--ink);
+}
+
+.pb-wrap .pb-metalink:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The content card is now a single full-width column below the merged nav. */
 .pb-panel {
-  flex: 1 1 auto;
   min-width: 0;
+  margin-top: 20px;
 }
 
 @media (max-width: 720px) {
-  .pb-layout {
-    flex-direction: column;
-  }
-
-  /* Stays sticky (not static) so the nav is still reachable after scrolling into a long section. */
-  .pb-sidenav {
-    flex-direction: row;
-    /* Desktop's `flex: 0 0 190px` sets a 190px basis on the now-vertical (column) main axis of
-       .pb-layout, stretching this to 190px tall instead of a compact row — reset it. */
-    flex: 0 0 auto;
+  /* Primary tabs scroll horizontally (no wrap, no hamburger); the Settings dropdown stays put
+     beside the scroller so its menu isn't clipped by the overflow. */
+  .pb-navtabs {
     overflow-x: auto;
-    width: 100%;
-    padding-bottom: 4px;
-    background: var(--page);
-    border-bottom: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
   }
 
-  .pb-wrap .pb-sidenav a {
+  .pb-wrap .pb-navtab {
     flex: none;
-    white-space: nowrap;
-  }
-
-  /* .pb-layout's align-items: flex-start (desktop-only concern: keeps the sticky sidenav from
-     stretching to the panel's height) also applies on the cross axis once flex-direction flips
-     to column here — without a width, that sizes the panel to fit its widest content (e.g. a
-     long timezone <select> or a native file input's intrinsic min-content) instead of the
-     viewport, overflowing narrow screens. Stretch it back to the full row width. */
-  .pb-panel {
-    width: 100%;
   }
 }
 
@@ -1404,7 +1486,7 @@ body {
 }
 
 /* Small white card under the button — the section-card shadow at reduced
-   spread. z-index sits above .pb-sidenav (15) and below .pb-savebar (30).
+   spread. z-index sits above section content and below .pb-savebar (30).
    Explicit font/color/weight so the popover reads the same inside an h2,
    a bold table header, or a soft field label. */
 .pb-hint-pop {

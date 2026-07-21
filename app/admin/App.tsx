@@ -3,6 +3,7 @@ import { adminApi, isAuthExpired, type AdminBooking, type Customer } from '../sh
 import {
   IconCalendar,
   IconChartBar,
+  IconChevronDown,
   IconClipboardCheck,
   IconCode,
   IconHelp,
@@ -234,19 +235,28 @@ type SectionKey =
   | 'embed'
   | 'help';
 
-const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore }[] = [
-  { key: 'calendar', label: 'Calendar', icon: IconCalendar },
-  { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck },
-  { key: 'earnings', label: 'Earnings', icon: IconChartBar },
-  { key: 'business', label: 'Business', icon: IconStore },
-  { key: 'pets', label: 'Pet types', icon: IconPaw },
-  { key: 'services', label: 'Services & rates', icon: IconTag },
-  { key: 'timeoff', label: 'Time off', icon: IconCalendar },
-  { key: 'clients', label: 'Clients', icon: IconUsers },
-  { key: 'apps', label: 'Connected apps', icon: IconPlug },
-  { key: 'embed', label: 'Your website', icon: IconCode },
-  { key: 'help', label: 'Help', icon: IconHelp },
+// The single source of truth for the nav — a section can't end up in the nav with no matching
+// panel, or vice versa (the panels map and both nav clusters are derived from this array). The
+// `group` field sorts each entry into one of the three navbar clusters, and the array order sets
+// the order *within* each cluster: primary tabs, the Settings dropdown menu, then the meta links.
+type NavGroup = 'primary' | 'settings' | 'meta';
+const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore; group: NavGroup }[] = [
+  { key: 'calendar', label: 'Calendar', icon: IconCalendar, group: 'primary' },
+  { key: 'bookings', label: 'Bookings', icon: IconClipboardCheck, group: 'primary' },
+  { key: 'clients', label: 'Clients', icon: IconUsers, group: 'primary' },
+  { key: 'earnings', label: 'Earnings', icon: IconChartBar, group: 'primary' },
+  { key: 'business', label: 'Business', icon: IconStore, group: 'settings' },
+  { key: 'services', label: 'Services & rates', icon: IconTag, group: 'settings' },
+  { key: 'pets', label: 'Pet types', icon: IconPaw, group: 'settings' },
+  { key: 'timeoff', label: 'Time off', icon: IconCalendar, group: 'settings' },
+  { key: 'apps', label: 'Connected apps', icon: IconPlug, group: 'settings' },
+  { key: 'embed', label: 'Your website', icon: IconCode, group: 'settings' },
+  { key: 'help', label: 'Help', icon: IconHelp, group: 'meta' },
 ];
+
+const PRIMARY_SECTIONS = SECTIONS.filter((s) => s.group === 'primary');
+const SETTINGS_SECTIONS = SECTIONS.filter((s) => s.group === 'settings');
+const META_SECTIONS = SECTIONS.filter((s) => s.group === 'meta');
 
 /** Reads the initial section from the URL hash (e.g. `/admin#clients`) so deep links and page
  * refreshes land on the right section, same as the old anchor-nav did. */
@@ -256,6 +266,70 @@ function sectionFromHash(): SectionKey {
   // own settings, and the calendar's grid + pending list answers that plus "what does my
   // month look like?" in one view.
   return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'calendar';
+}
+
+/** The navbar's "Settings" cluster: a trigger button opening a menu of the settings-group
+ * sections. Items stay `<a href="#key">` so hash routing is untouched; the menu closes on item
+ * click, on Escape (focus returns to the trigger), and on a click outside. The trigger wears the
+ * active style while any settings section is showing, and the open section gets aria-current. */
+function SettingsMenu({ activeSection }: { activeSection: SectionKey }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const groupActive = SETTINGS_SECTIONS.some((s) => s.key === activeSection);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="pb-navdrop" ref={wrapRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`pb-navtab pb-navdrop-trigger${groupActive ? ' pb-navtab-active' : ''}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        Settings
+        <IconChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="pb-navdrop-menu" role="menu" aria-label="Settings">
+          {SETTINGS_SECTIONS.map(({ key, label, icon: Icon }) => (
+            <a
+              key={key}
+              role="menuitem"
+              href={`#${key}`}
+              className={
+                key === activeSection ? 'pb-navdrop-item pb-navdrop-item-active' : 'pb-navdrop-item'
+              }
+              aria-current={key === activeSection ? 'page' : undefined}
+              onClick={() => setOpen(false)}
+            >
+              <Icon size={16} /> {label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
@@ -279,17 +353,18 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const dirty = settings !== null && JSON.stringify(settings) !== savedSnapshot;
 
-  // The sticky sidebar nav docks just below the topbar, but the topbar's height isn't fixed —
-  // it wraps to two lines for a long business name on a narrow viewport. Measure it instead of
-  // guessing, so the sidebar never overlaps it. A callback ref (not useRef + an empty-deps
-  // effect) because the header doesn't exist yet on the first render — this component returns
-  // the "Loading…" paragraph below until `settings` arrives. useLayoutEffect (not useEffect) so
-  // the measurement applies before paint — no flash of the pre-JS 78px fallback.
+  // The sticky topbar's height isn't fixed — the business-name row wraps for a long name on a
+  // narrow viewport, and the nav row's height varies too. Measure it and expose it as --topbar-h
+  // so anything that needs to dock just below the sticky header can offset by the real height
+  // instead of guessing. A callback ref (not useRef + an empty-deps effect) because the header
+  // doesn't exist yet on the first render — this component returns the "Loading…" paragraph below
+  // until `settings` arrives. useLayoutEffect (not useEffect) so the measurement applies before
+  // paint — no flash of the pre-JS 78px fallback.
   const [topbarEl, setTopbarEl] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    // Scoped to the dashboard's own wrapper (the topbar's parent, also an ancestor of
-    // .pb-sidenav) rather than the document root, so this doesn't leak global state that could
-    // go stale for anything else that might ever read a same-named custom property.
+    // Scoped to the dashboard's own wrapper (the topbar's parent) rather than the document root,
+    // so this doesn't leak global state that could go stale for anything else that might ever
+    // read a same-named custom property.
     const wrap = topbarEl?.parentElement;
     if (!wrap) return;
     const setHeight = () => wrap.style.setProperty('--topbar-h', `${topbarEl.offsetHeight}px`);
@@ -675,37 +750,53 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       <header className="pb-topbar" ref={setTopbarEl}>
         <div className="pb-topbar-row">
           <h1>{settings.displayName}</h1>
-          <button className="pb-signout" onClick={onSignOut}>
-            Sign out
-          </button>
+          <div className="pb-topbar-meta">
+            {/* Quiet meta links (Help) sit apart from the section tabs, next to Sign out. */}
+            {META_SECTIONS.map(({ key, label }) => (
+              <a
+                key={key}
+                href={`#${key}`}
+                className={`pb-metalink${key === activeSection ? ' pb-metalink-active' : ''}`}
+                aria-current={key === activeSection ? 'page' : undefined}
+              >
+                {label}
+              </a>
+            ))}
+            <button className="pb-signout" onClick={onSignOut}>
+              Sign out
+            </button>
+          </div>
         </div>
+        {/* Primary tabs + the Settings dropdown, both derived from SECTIONS by group. The tabs
+            live in their own child so they alone scroll horizontally on mobile — keeping the
+            dropdown out of that overflow container, which would otherwise clip its open menu. */}
+        <nav className="pb-topnav" aria-label="Sections">
+          <div className="pb-navtabs">
+            {PRIMARY_SECTIONS.map(({ key, label }) => (
+              <a
+                key={key}
+                href={`#${key}`}
+                className={`pb-navtab${key === activeSection ? ' pb-navtab-active' : ''}`}
+                aria-current={key === activeSection ? 'page' : undefined}
+              >
+                {label}
+              </a>
+            ))}
+          </div>
+          <SettingsMenu activeSection={activeSection} />
+        </nav>
       </header>
 
-      <div className="pb-layout">
-        <nav className="pb-sidenav" aria-label="Sections">
-          {SECTIONS.map(({ key, label, icon: Icon }) => (
-            <a
-              key={key}
-              href={`#${key}`}
-              className={key === activeSection ? 'pb-sidenav-active' : ''}
-              aria-current={key === activeSection ? 'page' : undefined}
-            >
-              <Icon size={16} /> {label}
-            </a>
-          ))}
-        </nav>
-
-        {/* Every section stays mounted (just hidden) so in-progress edits — e.g. a typed-but-
-            unsaved Google Calendar ID — and the embed preview iframe survive switching tabs.
-            Rendered from SECTIONS (not a hand-listed div per key) so a section can't end up in
-            the nav with no matching panel, or vice versa. */}
-        <div className="pb-panel pb-card">
-          {SECTIONS.map(({ key }) => (
-            <div key={key} hidden={activeSection !== key}>
-              {panels[key]}
-            </div>
-          ))}
-        </div>
+      {/* Every section stays mounted (just hidden) so in-progress edits — e.g. a typed-but-
+          unsaved Google Calendar ID — and the embed preview iframe survive switching tabs.
+          Rendered from SECTIONS (not a hand-listed div per key) so a section can't end up in
+          the nav with no matching panel, or vice versa. */}
+      <div className="pb-panel pb-card">
+        {SECTIONS.map(({ key }) => (
+          <div key={key} hidden={activeSection !== key}>
+            {panels[key]}
+          </div>
+        ))}
       </div>
 
       {(dirty || message || error) && (
