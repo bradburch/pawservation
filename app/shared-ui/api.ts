@@ -83,6 +83,8 @@ export type AdminBooking = {
   estCost: number | null;
   paidTotal: number;
   status: string;
+  cancellationFee: number | null;
+  feeIfCancelledToday: number | null;
   createdAt: string;
 };
 

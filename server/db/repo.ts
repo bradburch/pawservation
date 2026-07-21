@@ -626,10 +626,12 @@ export async function getBookingWithCustomer(
 
 /**
  * Record a payment iff the booking exists for THIS tenant, is not a 'blocked' sentinel, and is
- * not cancelled — the guard lives in the SQL (INSERT ... SELECT ... WHERE) so it is atomic with
- * the write, like updateBookingStatus's guarded UPDATE. 'pending' is deliberately allowed:
- * deposits are commonly collected before a booking is confirmed. Returns the new payment id, or
- * null when the guard refused (route 404s on null, the existing idiom).
+ * either not cancelled OR cancelled with an assessed CancellationFee — the guard lives in the SQL
+ * (INSERT ... SELECT ... WHERE) so it is atomic with the write, like updateBookingStatus's guarded
+ * UPDATE. 'pending' is deliberately allowed: deposits are commonly collected before a booking is
+ * confirmed. A cancelled booking normally refuses payment, but one carrying a cancellation fee is a
+ * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
+ * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
  */
 export async function insertPayment(
   db: D1Database,
@@ -648,7 +650,8 @@ export async function insertPayment(
       `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note)
        SELECT ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
-       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
+         AND (Status != 'cancelled' OR CancellationFee IS NOT NULL)`,
     )
     .bind(
       id,
@@ -766,18 +769,27 @@ export async function getAnalytics(
       .all<AnalyticsData['topClients'][number]>(),
     db
       .prepare(
+        // Expected amount is EstCost for confirmed bookings, but the assessed CancellationFee for a
+        // cancelled one — a cancelled-with-fee booking is a live receivable. Aliased EstCost so the
+        // route/UI shape is unchanged. SQLite can't reference the alias inside an expression, so the
+        // CASE is repeated verbatim in ORDER BY.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate,
-                b.EstCost AS EstCost, COALESCE(paid.Total, 0) AS PaidTotal
+                CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END AS EstCost,
+                COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
          LEFT JOIN (
            SELECT BookingRequestId, SUM(Amount) AS Total
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
-         WHERE b.TenantId = ? AND b.Status = 'confirmed' AND b.ServiceType != 'blocked'
-           AND b.EstCost IS NOT NULL AND COALESCE(paid.Total, 0) < b.EstCost
-         ORDER BY b.EstCost - COALESCE(paid.Total, 0) DESC`,
+         WHERE b.TenantId = ? AND b.ServiceType != 'blocked'
+           AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
+                   AND COALESCE(paid.Total, 0) < b.EstCost)
+                OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
+                   AND COALESCE(paid.Total, 0) < b.CancellationFee))
+         ORDER BY (CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END)
+                  - COALESCE(paid.Total, 0) DESC`,
       )
       .bind(tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),

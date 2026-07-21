@@ -1012,6 +1012,15 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     await reconcileIfStale(c.env, tenant);
     const rows = await listBookingsForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    // Cancellation policy per service, so each confirmed row can preview the fee it would owe if
+    // cancelled today (one query, keyed by ServiceType; NULL/missing = no policy).
+    const tiersByType = new Map<string, CancellationTier[] | null>(
+      (await listServices(c.env.PAWBOOK_DB, tenant.Id)).map((s) => [
+        s.ServiceType,
+        s.CancellationTiers,
+      ]),
+    );
+    const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,
@@ -1026,6 +1035,11 @@ export const adminRoutes = new Hono<AppEnv>()
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
         status: r.Declined ? 'declined' : r.Status,
+        cancellationFee: r.CancellationFee,
+        feeIfCancelledToday:
+          r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
+            ? cancellationFee(tiersByType.get(r.ServiceType)!, r.EstCost, r.StartDate, today)
+            : null,
         createdAt: r.CreatedAt,
       })),
     });
