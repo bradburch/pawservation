@@ -1277,6 +1277,91 @@ export async function addBookingPets(
   );
 }
 
+/**
+ * Pet names linked to ONE booking, tenant-scoped (BookingRequestPets has no TenantId, so tenancy
+ * flows in via the join to BookingRequests + EndUserPets — a foreign pet id contributes nothing).
+ * Ordered by Name for a deterministic, human-readable event summary.
+ */
+export async function listPetNamesForBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT p.Name AS Name
+       FROM BookingRequestPets brp
+       JOIN BookingRequests br ON br.Id = brp.BookingRequestId
+       JOIN EndUserPets p ON p.Id = brp.PetId AND p.TenantId = br.TenantId
+       WHERE br.TenantId = ? AND br.Id = ?
+       ORDER BY p.Name`,
+    )
+    .bind(tenantId, bookingId)
+    .all<{ Name: string }>();
+  return results.map((r) => r.Name);
+}
+
+/** The fields the calendar sync layer (SyncInput) needs, joined from one booking + its service
+ * label + its option's duration. Pet names are fetched separately (listPetNamesForBooking). */
+export type BookingSyncRow = {
+  Id: string;
+  EndUserId: string | null;
+  ServiceType: ServiceType;
+  ServiceLabel: string;
+  StartDate: string;
+  EndDate: string | null;
+  StartTime: string | null;
+  DurationMinutes: number | null;
+  PetCount: number;
+  EstCost: number | null;
+  Status: 'pending' | 'confirmed';
+};
+
+const BOOKING_SYNC_COLS = `b.Id AS Id, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
+       COALESCE(s.Label, b.ServiceType) AS ServiceLabel, b.StartDate AS StartDate,
+       b.EndDate AS EndDate, b.StartTime AS StartTime, o.DurationMinutes AS DurationMinutes,
+       b.PetCount AS PetCount, b.EstCost AS EstCost, b.Status AS Status`;
+
+const BOOKING_SYNC_JOINS = `FROM BookingRequests b
+       LEFT JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
+       LEFT JOIN TenantServiceOptions o
+         ON o.TenantId = b.TenantId AND o.ServiceType = b.ServiceType AND o.OptionKey = b.OptionKey`;
+
+/** One booking's calendar-sync fields (service label + option duration joined in). Used by the
+ * admin confirm route to build an event resource for a catch-up create or a retitle. */
+export async function getBookingSyncData(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<BookingSyncRow | null> {
+  return await db
+    .prepare(`SELECT ${BOOKING_SYNC_COLS} ${BOOKING_SYNC_JOINS} WHERE b.TenantId = ? AND b.Id = ?`)
+    .bind(tenantId, bookingId)
+    .first<BookingSyncRow>();
+}
+
+/** Future (StartDate >= today), non-cancelled, real (non-'blocked') bookings that have NO calendar
+ * event yet — the backfill candidate set when a sitter connects Google Calendar after already
+ * taking bookings. Capped at LIMIT; ordered by date so the soonest are synced first. */
+export async function listUnsyncedFutureBookings(
+  db: D1Database,
+  tenantId: string,
+  today: string,
+  limit: number,
+): Promise<BookingSyncRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${BOOKING_SYNC_COLS} ${BOOKING_SYNC_JOINS}
+       WHERE b.TenantId = ? AND b.GCalEventId IS NULL AND b.Status IN ('pending', 'confirmed')
+         AND b.ServiceType != 'blocked' AND b.StartDate >= ?
+       ORDER BY b.StartDate
+       LIMIT ?`,
+    )
+    .bind(tenantId, today, limit)
+    .all<BookingSyncRow>();
+  return results;
+}
+
 export async function listBookingPetsForUser(
   db: D1Database,
   tenantId: string,

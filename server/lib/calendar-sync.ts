@@ -2,7 +2,9 @@ import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/i
 import {
   getEndUserById,
   getProviderConnection,
+  listPetNamesForBooking,
   listSyncedBookingIds,
+  listUnsyncedFutureBookings,
   setBookingGCalEventId,
   setProviderTokens,
   updateBookingStatus,
@@ -13,6 +15,7 @@ import {
   deleteEvent,
   listCalendarEvents,
   refreshAccessToken,
+  updateEvent,
 } from './google-calendar';
 import type { ServiceType } from './services';
 import { decryptToken, encryptToken } from './token-crypto';
@@ -28,8 +31,35 @@ export type SyncInput = {
   startTime: string | null;
   durationMinutes: number | null;
   petCount: number;
+  petNames: string[];
   estCost: number | null;
+  status: 'pending' | 'confirmed';
 };
+
+/**
+ * Build the Google event resource for a booking, resolving the customer's email for the
+ * description. Shared by the create / update / backfill paths so event shaping stays identical.
+ */
+async function resourceForBooking(env: Env, tenant: Tenant, b: SyncInput) {
+  const customer = b.endUserId
+    ? await getEndUserById(env.PAWBOOK_DB, tenant.Id, b.endUserId)
+    : null;
+  return buildEventResource({
+    serviceLabel: b.serviceLabel,
+    category: b.serviceType,
+    bookingId: b.bookingId,
+    startDate: b.startDate,
+    endDate: b.endDate,
+    startTime: b.startTime,
+    durationMinutes: b.durationMinutes,
+    petCount: b.petCount,
+    petNames: b.petNames,
+    estCost: b.estCost,
+    customerEmail: customer?.Email ?? null,
+    status: b.status,
+    timezone: tenant.Timezone ?? DEFAULT_TIMEZONE,
+  });
+}
 
 /**
  * Decrypt the stored access token for a provider connection, refreshing it (and persisting the new
@@ -63,27 +93,73 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
-
-  const customer = b.endUserId
-    ? await getEndUserById(env.PAWBOOK_DB, tenant.Id, b.endUserId)
-    : null;
-
-  const resource = buildEventResource({
-    serviceLabel: b.serviceLabel,
-    category: b.serviceType,
-    bookingId: b.bookingId,
-    startDate: b.startDate,
-    endDate: b.endDate,
-    startTime: b.startTime,
-    durationMinutes: b.durationMinutes,
-    petCount: b.petCount,
-    estCost: b.estCost,
-    customerEmail: customer?.Email ?? null,
-    timezone: tenant.Timezone ?? DEFAULT_TIMEZONE,
-  });
-
+  const resource = await resourceForBooking(env, tenant, b);
   const { id } = await createEvent(accessToken, conn.CalendarId ?? 'primary', resource);
   await setBookingGCalEventId(env.PAWBOOK_DB, tenant.Id, b.bookingId, id);
+}
+
+/**
+ * Best-effort: PATCH an already-synced booking's Google event to reflect its current state — used
+ * when the sitter confirms a request, so its title loses the [REQUEST] marker (status flips to
+ * 'confirmed'). Same connection gating and never-blocks posture as syncBookingToCalendar; callers
+ * run it via executionCtx.waitUntil and swallow rejections.
+ */
+export async function updateBookingCalendarEvent(
+  env: Env,
+  tenant: Tenant,
+  gcalEventId: string,
+  b: SyncInput,
+): Promise<void> {
+  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
+
+  const accessToken = await getCalendarAccessToken(env, tenant, conn);
+  const resource = await resourceForBooking(env, tenant, b);
+  await updateEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId, resource);
+}
+
+/** Cap on how many bookings one backfill pass creates events for — a sane bound so a sitter with a
+ * huge history doesn't spend an unbounded number of Google round-trips on a single connect. */
+const BACKFILL_LIMIT = 200;
+
+/**
+ * Best-effort: after a sitter connects Google Calendar, create events for every future non-cancelled
+ * booking that predates the connection (GCalEventId NULL), so nothing booked before she connected is
+ * silently missing from her calendar. Sequential and per-booking best-effort — one Google failure
+ * (or a token hiccup) skips that booking and moves on; the rest still sync. Run via waitUntil.
+ */
+export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<void> {
+  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
+
+  const accessToken = await getCalendarAccessToken(env, tenant, conn);
+  const calendarId = conn.CalendarId ?? 'primary';
+  const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, tenant.Id, today, BACKFILL_LIMIT);
+
+  for (const r of rows) {
+    try {
+      const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+      const resource = await resourceForBooking(env, tenant, {
+        bookingId: r.Id,
+        endUserId: r.EndUserId,
+        serviceType: r.ServiceType,
+        serviceLabel: r.ServiceLabel,
+        startDate: r.StartDate,
+        endDate: r.EndDate,
+        startTime: r.StartTime,
+        durationMinutes: r.DurationMinutes,
+        petCount: r.PetCount,
+        petNames,
+        estCost: r.EstCost,
+        status: r.Status,
+      });
+      const { id } = await createEvent(accessToken, calendarId, resource);
+      await setBookingGCalEventId(env.PAWBOOK_DB, tenant.Id, r.Id, id);
+    } catch (err) {
+      console.error('calendar backfill failed for booking', r.Id, err);
+    }
+  }
 }
 
 /**

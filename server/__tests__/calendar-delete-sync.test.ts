@@ -96,14 +96,21 @@ describe('POST /:slug/admin/bookings/:id/status — Google Calendar delete hook'
     expect(url).toContain('/events/evt_2');
   });
 
-  it('confirm makes no Google call — the event already exists', async () => {
+  it('confirm PATCHes the existing event (drops the [REQUEST] marker)', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
     const id = await seedBooking(env, 'pending', 'evt_3');
-    const spy = vi.spyOn(globalThis, 'fetch');
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_3' }), { status: 200 }));
     const res = await postStatus(env, id, 'confirmed');
     expect(res.status).toBe(200);
-    expect(spy).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledOnce();
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe('PATCH');
+    expect(url).toContain('/calendars/primary/events/evt_3');
+    const resource = JSON.parse(init.body as string) as { summary: string };
+    expect(resource.summary).not.toContain('[REQUEST]');
   });
 
   it('no-ops when the booking has no GCalEventId', async () => {

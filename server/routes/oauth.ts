@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { getTenantById, setProviderTokens } from '../db/repo';
+import { backfillCalendarEvents } from '../lib/calendar-sync';
 import { exchangeCode } from '../lib/google-calendar';
 import { verifyState } from '../lib/oauth-state';
 import { encryptToken } from '../lib/token-crypto';
@@ -56,5 +57,18 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   } catch {
     return resultPage(false);
   }
+
+  // Catch-up: create events for bookings taken before the calendar was connected. Best-effort and
+  // never blocks the callback response (waitUntil in production; awaited in tests with no
+  // ExecutionContext — same dance as routes/bookings.ts).
+  const backfill = backfillCalendarEvents(c.env, tenant).catch((err) => {
+    console.error('calendar backfill failed', err);
+  });
+  try {
+    c.executionCtx.waitUntil(backfill);
+  } catch {
+    await backfill;
+  }
+
   return resultPage(true);
 });

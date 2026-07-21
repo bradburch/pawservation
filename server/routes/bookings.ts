@@ -238,7 +238,9 @@ export const bookingRoutes = new Hono<AppEnv>()
       startTime: option.StartTime,
       durationMinutes: option.DurationMinutes,
       petCount: pets,
+      petNames: chosen.map((p) => p!.Name),
       estCost,
+      status: 'pending',
     }).catch((err) => {
       console.error('calendar sync failed', err);
     });

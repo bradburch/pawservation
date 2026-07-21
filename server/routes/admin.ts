@@ -11,6 +11,7 @@ import {
   createService,
   deletePetTypeAndScrub,
   getAnalytics,
+  getBookingSyncData,
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
@@ -27,6 +28,7 @@ import {
   listBookingsForTenant,
   listCustomers,
   listPaymentsForBooking,
+  listPetNamesForBooking,
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
@@ -41,7 +43,13 @@ import {
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
-import { deleteBookingCalendarEvent, reconcileIfStale } from '../lib/calendar-sync';
+import {
+  deleteBookingCalendarEvent,
+  reconcileIfStale,
+  syncBookingToCalendar,
+  updateBookingCalendarEvent,
+} from '../lib/calendar-sync';
+import type { SyncInput } from '../lib/calendar-sync';
 import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
@@ -1010,36 +1018,60 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .post('/:slug/admin/bookings/:id/status', async (c) => {
     const tenant = c.get('tenant');
+    const id = c.req.param('id');
     const body = await c.req.json<{ status?: unknown }>().catch(() => ({}) as { status?: unknown });
     const status = body.status;
     if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
       return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
-    const updated = await updateBookingStatus(
-      c.env.PAWBOOK_DB,
-      tenant.Id,
-      c.req.param('id'),
-      status,
-    );
+    const updated = await updateBookingStatus(c.env.PAWBOOK_DB, tenant.Id, id, status);
     if (!updated) return c.json({ error: 'Not found.' }, 404);
 
-    // One unconditional fetch serves both the calendar delete hook and the customer
+    // One unconditional fetch serves both the calendar hooks and the customer
     // notification below (cancel/decline are soft — the row still exists).
-    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
 
-    // Cancel/decline: best-effort delete of the synced Google event, mirroring the create
-    // path's never-blocks posture (waitUntil in production; awaited in tests, which have no
-    // ExecutionContext — see routes/bookings.ts). Confirm changes nothing: events are created
-    // at request time, so a confirmed booking's event already exists.
-    if (status !== 'confirmed' && booking?.GCalEventId) {
-      const cleanup = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId).catch(
-        (err) => {
-          console.error('calendar event delete failed', err);
-        },
-      );
+    // Calendar hooks are best-effort and never block the response (waitUntil in production; awaited
+    // in tests, which have no ExecutionContext — see routes/bookings.ts).
+    let calendarTask: Promise<void> | null = null;
+    if (status === 'confirmed') {
+      // Confirm: retitle the existing event (drop the [REQUEST] marker), or — if the booking has
+      // NO event yet (booked before the calendar was connected, or a Google outage swallowed the
+      // request-time create) — create it now as a catch-up, already in the confirmed state.
+      const syncData = await getBookingSyncData(c.env.PAWBOOK_DB, tenant.Id, id);
+      if (syncData) {
+        const petNames = await listPetNamesForBooking(c.env.PAWBOOK_DB, tenant.Id, id);
+        const input: SyncInput = {
+          bookingId: id,
+          endUserId: syncData.EndUserId,
+          serviceType: syncData.ServiceType,
+          serviceLabel: syncData.ServiceLabel,
+          startDate: syncData.StartDate,
+          endDate: syncData.EndDate,
+          startTime: syncData.StartTime,
+          durationMinutes: syncData.DurationMinutes,
+          petCount: syncData.PetCount,
+          petNames,
+          estCost: syncData.EstCost,
+          status: 'confirmed',
+        };
+        calendarTask = booking?.GCalEventId
+          ? updateBookingCalendarEvent(c.env, tenant, booking.GCalEventId, input)
+          : syncBookingToCalendar(c.env, tenant, input);
+      }
+    } else if (booking?.GCalEventId) {
+      // Cancel/decline: delete the synced Google event. The booking keeps its GCalEventId as a
+      // historical record; reconciliation ignores cancelled rows.
+      calendarTask = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId);
+    }
+
+    if (calendarTask) {
+      const task = calendarTask.catch((err) => {
+        console.error('calendar status sync failed', err);
+      });
       try {
-        c.executionCtx.waitUntil(cleanup);
+        c.executionCtx.waitUntil(task);
       } catch {
-        await cleanup;
+        await task;
       }
     }
 

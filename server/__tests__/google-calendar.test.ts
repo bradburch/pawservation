@@ -6,6 +6,7 @@ import {
   exchangeCode,
   listCalendarEvents,
   refreshAccessToken,
+  updateEvent,
 } from '../lib/google-calendar';
 
 const env = {
@@ -72,6 +73,24 @@ describe('google-calendar', () => {
     await expect(createEvent('AT', 'primary', {})).rejects.toThrow();
   });
 
+  it('updateEvent PATCHes the specific event and carries the bearer token', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_1' }), { status: 200 }));
+    await updateEvent('AT', 'primary', 'evt_1', { summary: 'Boarding — Rex' });
+    const [url, init] = spy.mock.calls[0];
+    expect(url).toBe('https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_1');
+    expect((init as RequestInit).method).toBe('PATCH');
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer AT' });
+  });
+
+  it('updateEvent throws on a non-2xx response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('no', { status: 500 }));
+    await expect(updateEvent('AT', 'primary', 'evt_1', {})).rejects.toThrow(
+      'Google updateEvent failed (500)',
+    );
+  });
+
   it('buildEventResource: all-day range uses date start/end (exclusive)', () => {
     const r = buildEventResource({
       serviceLabel: 'Boarding',
@@ -82,14 +101,17 @@ describe('google-calendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 2,
+      petNames: ['Rex', 'Fido'],
       estCost: 150,
       customerEmail: 'a@b.c',
+      status: 'confirmed',
       timezone: 'America/Los_Angeles',
     });
     expect(r.start).toEqual({ date: '2030-01-10' });
     expect(r.end).toEqual({ date: '2030-01-13' });
-    expect(r.summary).toContain('Boarding');
-    expect(r.summary).toContain('a@b.c');
+    // Pet NAMES lead the summary (not a bare count), and the customer moved to the description.
+    expect(r.summary).toBe('Boarding — Rex, Fido');
+    expect(r.description).toContain('Customer: a@b.c');
   });
 
   it('buildEventResource: all-day single day uses next-day exclusive end', () => {
@@ -102,8 +124,10 @@ describe('google-calendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 1,
+      petNames: ['Rex'],
       estCost: 40,
       customerEmail: null,
+      status: 'confirmed',
       timezone: 'America/Los_Angeles',
     });
     expect(r.start).toEqual({ date: '2030-01-10' });
@@ -120,15 +144,86 @@ describe('google-calendar', () => {
       startTime: '09:30',
       durationMinutes: 60,
       petCount: 1,
+      petNames: ['Rex'],
       estCost: 35,
       customerEmail: 'a@b.c',
+      status: 'confirmed',
       timezone: 'America/Los_Angeles',
     });
     expect(r.start).toEqual({ dateTime: '2030-01-10T09:30:00', timeZone: 'America/Los_Angeles' });
     expect(r.end).toEqual({ dateTime: '2030-01-10T10:30:00', timeZone: 'America/Los_Angeles' });
   });
 
-  it('buildEventResource: sets extendedProperties.private with booking metadata', () => {
+  it('buildEventResource: pending event gets a [REQUEST] prefix + a full description', () => {
+    const r = buildEventResource({
+      serviceLabel: 'Boarding',
+      category: 'boarding',
+      bookingId: 'bk-pending',
+      startDate: '2030-01-10',
+      endDate: '2030-01-13',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 2,
+      petNames: ['Bella', 'Mochi'],
+      estCost: 150,
+      customerEmail: 'jess@example.com',
+      status: 'pending',
+      timezone: 'America/Los_Angeles',
+    });
+    expect(r.summary).toBe('[REQUEST] Boarding — Bella, Mochi');
+    expect(r.description).toBe(
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
+        'Requested via Pawservation — confirm or decline in your dashboard.',
+    );
+  });
+
+  it('buildEventResource: confirmed event drops the prefix and the "requested via" line', () => {
+    const r = buildEventResource({
+      serviceLabel: 'Boarding',
+      category: 'boarding',
+      bookingId: 'bk-confirmed',
+      startDate: '2030-01-10',
+      endDate: '2030-01-13',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 2,
+      petNames: ['Bella', 'Mochi'],
+      estCost: 150,
+      customerEmail: 'jess@example.com',
+      status: 'confirmed',
+      timezone: 'America/Los_Angeles',
+    });
+    expect(r.summary).toBe('Boarding — Bella, Mochi');
+    expect(r.description).toBe(
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150',
+    );
+    expect(r.description).not.toContain('Requested via');
+  });
+
+  it('buildEventResource: falls back to a pet count when no names are given', () => {
+    const r = buildEventResource({
+      serviceLabel: 'Boarding',
+      category: 'boarding',
+      bookingId: 'bk-count',
+      startDate: '2030-01-10',
+      endDate: '2030-01-13',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 3,
+      petNames: [],
+      estCost: null,
+      customerEmail: null,
+      status: 'pending',
+      timezone: 'America/Los_Angeles',
+    });
+    expect(r.summary).toBe('[REQUEST] Boarding — 3 pets');
+    // No customer + no cost lines when both are absent, but the pending line still appears.
+    expect(r.description).toBe(
+      'Service: Boarding\nPets: 3 pets\nRequested via Pawservation — confirm or decline in your dashboard.',
+    );
+  });
+
+  it('buildEventResource: sets extendedProperties.private with booking metadata + status', () => {
     const r = buildEventResource({
       serviceLabel: 'Boarding',
       category: 'boarding',
@@ -138,8 +233,10 @@ describe('google-calendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 2,
+      petNames: ['Bella', 'Mochi'],
       estCost: 150,
       customerEmail: 'jess@example.com',
+      status: 'pending',
       timezone: 'America/Los_Angeles',
     });
     expect(r.extendedProperties?.private).toEqual({
@@ -148,6 +245,7 @@ describe('google-calendar', () => {
       petCount: '2',
       customerEmail: 'jess@example.com',
       bookingId: 'bk1',
+      status: 'pending',
     });
   });
 
@@ -161,12 +259,15 @@ describe('google-calendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 1,
+      petNames: [],
       estCost: null,
       customerEmail: null,
+      status: 'confirmed',
       timezone: 'America/Los_Angeles',
     });
     expect(r.extendedProperties?.private.customerEmail).toBe('');
     expect(r.extendedProperties?.private.pawbook).toBe('true');
+    expect(r.extendedProperties?.private.status).toBe('confirmed');
   });
 
   describe('listCalendarEvents', () => {

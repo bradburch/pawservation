@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { syncBookingToCalendar } from '../lib/calendar-sync';
-import { setProviderTokens } from '../db/repo';
+import {
+  backfillCalendarEvents,
+  syncBookingToCalendar,
+  updateBookingCalendarEvent,
+} from '../lib/calendar-sync';
+import { addDays, getPacificDateStr, DEFAULT_TIMEZONE } from '../../src/shared/index.js';
+import { setBookingGCalEventId, setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 import type { Tenant } from '../types';
@@ -40,7 +45,9 @@ describe('syncBookingToCalendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 1,
+      petNames: [],
       estCost: 150,
+      status: 'pending',
     });
     const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='b1'`).get() as {
       GCalEventId: string;
@@ -63,7 +70,9 @@ describe('syncBookingToCalendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 1,
+      petNames: [],
       estCost: 150,
+      status: 'pending',
     });
     expect(spy).not.toHaveBeenCalled();
   });
@@ -90,12 +99,173 @@ describe('syncBookingToCalendar', () => {
       startTime: null,
       durationMinutes: null,
       petCount: 1,
+      petNames: [],
       estCost: 150,
+      status: 'pending',
     });
     expect(spy).toHaveBeenCalledTimes(2);
     const eventCall = spy.mock.calls[1];
     expect((eventCall[1] as RequestInit).headers).toMatchObject({
       Authorization: 'Bearer access-2',
     });
+  });
+});
+
+describe('updateBookingCalendarEvent', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('PATCHes the given event id with the confirmed (prefix-free) resource', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+    seedBooking(raw, 'bu1');
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu1', 'evt_bu1');
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_bu1' }), { status: 200 }));
+
+    await updateBookingCalendarEvent(env, tenant, 'evt_bu1', {
+      bookingId: 'bu1',
+      endUserId: null,
+      serviceType: 'boarding',
+      serviceLabel: 'Boarding',
+      startDate: '2030-03-01',
+      endDate: '2030-03-04',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 1,
+      petNames: [],
+      estCost: 150,
+      status: 'confirmed',
+    });
+
+    expect(spy).toHaveBeenCalledOnce();
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/calendars/primary/events/evt_bu1');
+    expect(init.method).toBe('PATCH');
+    const resource = JSON.parse(init.body as string) as { summary: string };
+    expect(resource.summary).not.toContain('[REQUEST]');
+    expect(resource.summary).toBe('Boarding — 1 pet');
+  });
+
+  it('no-ops when the calendar is not connected', async () => {
+    const { env, raw } = createTestEnv();
+    seedBooking(raw, 'bu2');
+    const spy = vi.spyOn(globalThis, 'fetch');
+    await updateBookingCalendarEvent(env, tenant, 'evt_bu2', {
+      bookingId: 'bu2',
+      endUserId: null,
+      serviceType: 'boarding',
+      serviceLabel: 'Boarding',
+      startDate: '2030-03-01',
+      endDate: '2030-03-04',
+      startTime: null,
+      durationMinutes: null,
+      petCount: 1,
+      petNames: [],
+      estCost: 150,
+      status: 'confirmed',
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('backfillCalendarEvents', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
+
+  function insertBooking(
+    raw: { exec: (s: string) => void },
+    id: string,
+    opts: { startDate: string; status: string; gcal?: string },
+  ) {
+    const gcal = opts.gcal ? `'${opts.gcal}'` : 'NULL';
+    raw.exec(
+      `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, EstCost, GCalEventId, Status)
+       VALUES ('${id}', '${TENANT_A}', 'boarding', '${opts.startDate}', NULL, 1, 150, ${gcal}, '${opts.status}')`,
+    );
+  }
+
+  it('creates events for future unsynced pending + confirmed bookings, leaving cancelled/past/synced alone', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+
+    insertBooking(raw, 'bf_pending', { startDate: addDays(TODAY, 5), status: 'pending' });
+    insertBooking(raw, 'bf_confirmed', { startDate: addDays(TODAY, 6), status: 'confirmed' });
+    insertBooking(raw, 'bf_cancelled', { startDate: addDays(TODAY, 7), status: 'cancelled' });
+    insertBooking(raw, 'bf_past', { startDate: addDays(TODAY, -5), status: 'pending' });
+    insertBooking(raw, 'bf_synced', {
+      startDate: addDays(TODAY, 8),
+      status: 'pending',
+      gcal: 'evt_already',
+    });
+
+    const bodies: Record<string, string> = {};
+    let n = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const id = `evt_bf_${++n}`;
+      const body = JSON.parse((init as RequestInit).body as string) as {
+        extendedProperties?: { private?: { bookingId?: string } };
+        summary: string;
+      };
+      bodies[body.extendedProperties!.private!.bookingId!] = body.summary;
+      return new Response(JSON.stringify({ id }), { status: 200 });
+    });
+
+    await backfillCalendarEvents(env, tenant);
+
+    // Both future, unsynced bookings got an event, each with the status-correct summary. (The
+    // shared test DB seeds other future TENANT_A bookings too; we assert about ours specifically.)
+    expect(bodies['bf_pending']).toBe('[REQUEST] Boarding — 1 pet');
+    expect(bodies['bf_confirmed']).toBe('Boarding — 1 pet');
+    // The cancelled and past bookings were never sent to Google.
+    expect(bodies).not.toHaveProperty('bf_cancelled');
+    expect(bodies).not.toHaveProperty('bf_past');
+
+    const idOf = (id: string) =>
+      (
+        raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='${id}'`).get() as {
+          GCalEventId: string | null;
+        }
+      ).GCalEventId;
+    expect(idOf('bf_pending')).toMatch(/^evt_bf_/);
+    expect(idOf('bf_confirmed')).toMatch(/^evt_bf_/);
+    expect(idOf('bf_cancelled')).toBeNull();
+    expect(idOf('bf_past')).toBeNull();
+    expect(idOf('bf_synced')).toBe('evt_already'); // untouched
+  });
+
+  it('one booking failing does not stop the rest', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+    insertBooking(raw, 'bf_a', { startDate: addDays(TODAY, 5), status: 'pending' });
+    insertBooking(raw, 'bf_b', { startDate: addDays(TODAY, 6), status: 'pending' });
+
+    // Fail only bf_a's create (matched by booking id in the payload, so ordering is irrelevant);
+    // every other booking — bf_b and any seeded ones — still succeeds.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const body = JSON.parse((init as RequestInit).body as string) as {
+        extendedProperties?: { private?: { bookingId?: string } };
+      };
+      if (body.extendedProperties?.private?.bookingId === 'bf_a')
+        throw new TypeError('transient google outage');
+      return new Response(JSON.stringify({ id: 'evt_ok' }), { status: 200 });
+    });
+
+    await backfillCalendarEvents(env, tenant); // must not throw
+
+    const idA = (
+      raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='bf_a'`).get() as {
+        GCalEventId: string | null;
+      }
+    ).GCalEventId;
+    const idB = (
+      raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='bf_b'`).get() as {
+        GCalEventId: string | null;
+      }
+    ).GCalEventId;
+    // The earlier one failed (still null); the later one still synced.
+    expect(idA).toBeNull();
+    expect(idB).toBe('evt_ok');
   });
 });

@@ -862,7 +862,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Google Calendar</h3>
-              <p>Confirmed bookings push straight to your calendar, so your week is where you already look.</p>
+              <p>Requests land on your calendar instantly and update when you confirm, so your week is where you already look.</p>
             </div>
           </div>
         </div>

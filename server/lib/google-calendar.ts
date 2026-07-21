@@ -91,6 +91,23 @@ export async function createEvent(
   return { id: j.id };
 }
 
+export async function updateEvent(
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  resource: object,
+): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(resource),
+    },
+  );
+  if (!res.ok) throw new Error(`Google updateEvent failed (${res.status})`);
+}
+
 export async function deleteEvent(
   accessToken: string,
   calendarId: string,
@@ -120,8 +137,10 @@ export type CalendarBooking = {
   startTime: string | null;
   durationMinutes: number | null;
   petCount: number;
+  petNames: string[];
   estCost: number | null;
   customerEmail: string | null;
+  status: 'pending' | 'confirmed';
   timezone: string;
 };
 
@@ -149,10 +168,17 @@ function addMinutesToLocal(date: string, time: string, minutes: number): string 
 }
 
 export function buildEventResource(b: CalendarBooking): EventResource {
-  const who = b.customerEmail ?? 'booking';
-  const summary = `${b.serviceLabel} — ${who} (${b.petCount} pet${b.petCount === 1 ? '' : 's'})`;
-  const description =
-    `Service: ${b.serviceLabel}` + (b.estCost != null ? `\nEstimated cost: $${b.estCost}` : '');
+  const petsText =
+    b.petNames.length > 0
+      ? b.petNames.join(', ')
+      : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`;
+  const summary = `${b.status === 'pending' ? '[REQUEST] ' : ''}${b.serviceLabel} — ${petsText}`;
+  const lines = [`Service: ${b.serviceLabel}`, `Pets: ${petsText}`];
+  if (b.customerEmail) lines.push(`Customer: ${b.customerEmail}`);
+  if (b.estCost != null) lines.push(`Estimated cost: $${b.estCost}`);
+  if (b.status === 'pending')
+    lines.push('Requested via Pawservation — confirm or decline in your dashboard.');
+  const description = lines.join('\n');
   const extendedProperties = {
     private: {
       pawbook: 'true',
@@ -160,6 +186,7 @@ export function buildEventResource(b: CalendarBooking): EventResource {
       petCount: String(b.petCount),
       customerEmail: b.customerEmail ?? '',
       bookingId: b.bookingId,
+      status: b.status,
     },
   };
 
