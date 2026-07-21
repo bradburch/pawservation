@@ -688,9 +688,9 @@ const LANDING_HTML = `<!doctype html>
       <footer class="foot">
         <p>
           Pawservation is open source (MIT) &mdash;
-          <a href="https://github.com/bradburch/pawbook">source &amp; technical docs on GitHub</a>
+          <a href="https://github.com/bradburch/pawservation">source &amp; technical docs on GitHub</a>
           &middot;
-          <a href="https://github.com/bradburch/pawbook/blob/main/docs/index.md">project page</a>
+          <a href="https://github.com/bradburch/pawservation/blob/main/docs/index.md">project page</a>
         </p>
       </footer>
     </main>

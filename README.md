@@ -1,8 +1,6 @@
 # Pawservation
 
-<!-- Repo URLs below still point at github.com/bradburch/pawbook until the Phase 2 repo rename. -->
-
-[![CI](https://github.com/bradburch/pawbook/actions/workflows/ci.yml/badge.svg)](https://github.com/bradburch/pawbook/actions/workflows/ci.yml)
+[![CI](https://github.com/bradburch/pawservation/actions/workflows/ci.yml/badge.svg)](https://github.com/bradburch/pawservation/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 

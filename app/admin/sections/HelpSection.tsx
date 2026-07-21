@@ -70,8 +70,8 @@ export function HelpSection() {
         and updates handled for you. Pawservation is also open source (MIT), so if you&rsquo;re
         technical (or know someone who is) you can run your own copy on Cloudflare Workers, with
         your own database and domain. The README at{' '}
-        <a href="https://github.com/bradburch/pawbook">github.com/bradburch/pawbook</a> walks
-        through it.
+        <a href="https://github.com/bradburch/pawservation">github.com/bradburch/pawservation</a>{' '}
+        walks through it.
       </p>
     </>
   );

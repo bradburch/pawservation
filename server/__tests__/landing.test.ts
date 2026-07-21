@@ -35,8 +35,8 @@ describe('GET / — landing page', () => {
     expect(body).toContain('href="/admin"');
     expect(body).toContain('href="/demo"');
     expect(body).toContain('Pawservation');
-    // Case-sensitive on purpose: the only pre-rebrand strings allowed on the landing page are
-    // the lowercase github.com/bradburch/pawbook repo URLs (swept after the Phase 2 repo rename).
+    // Case-sensitive on purpose: no "Pawbook" string should remain anywhere on the landing
+    // page, including the repo URLs (swept after the Phase 2 repo rename).
     expect(body).not.toContain('Pawbook');
   });
 
