@@ -14,7 +14,7 @@ copy) to actively dangerous to touch (HKDF domain-separation labels, the Google
 Calendar event marker, embed snippets already pasted into sitters' websites).
 
 This spec inventories every occurrence, splits the rebrand into **Phase 1** (a
-code PR on this branch: every *user-visible* occurrence becomes Pawservation,
+code PR on this branch: every _user-visible_ occurrence becomes Pawservation,
 with compatibility shims where the old name is a live contract) and **Phase 2**
 (an operational runbook the owner executes: domains, Cloudflare, Resend, Google
 OAuth, GitHub), and documents exactly which occurrences stay "pawbook" forever —
@@ -25,18 +25,18 @@ and why.
 `grep -ri pawbook` (excluding `.git`, `node_modules`, `dist`) → **572 hits**
 across ~100 files, categorized:
 
-| Category | ~Hits | Disposition |
-| --- | --- | --- |
-| `PAWBOOK_DB` / `PAWBOOK_CACHE` bindings + `pawbook-db` D1 name (repo.ts, tests, env types, wrangler.jsonc, package.json scripts, migrations) | 415 | **Keep** — internal (bindings) / Phase 2 decision (names), see exceptions |
-| Historical specs in `docs/superpowers/specs/`, migration comments | ~85 | **Keep** — historical record |
-| User-visible brand copy: landing (`server/index.ts`, 13), admin UI (~11), signup email (3), README/CONTRIBUTING/SECURITY/docs pages (~15), `.github` issue templates (3) | ~45 | **Phase 1 rename** |
-| Embed integration contract: `data-pawbook-tenant` attribute, `pawbook:resize` / `pawbook:booked` postMessage types + DOM event (embed.js, snippet.ts, landing snippet display, demo.html, EmbedSection, snippet tests) | 20 | **Phase 1 rename with permanent legacy support** |
-| Client storage keys: `pawbook-admin-token` (localStorage), `pawbook-embed-token:<slug>` (sessionStorage), popup window name `pawbook-gcal` | 6 | **Phase 1 rename with migrate-once fallback** |
-| Crypto/persistence identifiers: HKDF info labels `pawbook-oauth-state`, `pawbook-signup-link`, `pawbook-gcal-token`; cookie `pawbook_gcal_nonce`; Google Calendar event marker `extendedProperties.private.pawbook` | ~15 | **Keep forever** — see exceptions |
-| Demo/test fixtures: `owner@pawbook.test`, `newsitter@pawbook.test` (seed.sql + test helpers), `RESEND_FROM: 'Pawbook <…>'` test fixtures | ~25 | **Phase 1 rename** (fixtures, cheap) |
-| GitHub repo URLs `github.com/bradburch/pawbook` (README badge, landing footer, HelpSection, SECURITY, issue-template config) | ~10 | **Keep until Phase 2** repo rename, then sweep |
-| CSS custom-property prefix `--bp-*`, class prefixes `pb-`/`bp-` | 230+ in admin.css alone | **Keep** — internal, no user impact |
-| Misc internal: `.claude/skills/running-pawbook`, code comments, `package.json` name | ~20 | Keep skill dir; comments updated opportunistically; package name renamed (private, unpublished — free) |
+| Category                                                                                                                                                                                                               | ~Hits                   | Disposition                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `PAWBOOK_DB` / `PAWBOOK_CACHE` bindings + `pawbook-db` D1 name (repo.ts, tests, env types, wrangler.jsonc, package.json scripts, migrations)                                                                           | 415                     | **Keep** — internal (bindings) / Phase 2 decision (names), see exceptions                              |
+| Historical specs in `docs/superpowers/specs/`, migration comments                                                                                                                                                      | ~85                     | **Keep** — historical record                                                                           |
+| User-visible brand copy: landing (`server/index.ts`, 13), admin UI (~11), signup email (3), README/CONTRIBUTING/SECURITY/docs pages (~15), `.github` issue templates (3)                                               | ~45                     | **Phase 1 rename**                                                                                     |
+| Embed integration contract: `data-pawbook-tenant` attribute, `pawbook:resize` / `pawbook:booked` postMessage types + DOM event (embed.js, snippet.ts, landing snippet display, demo.html, EmbedSection, snippet tests) | 20                      | **Phase 1 rename with permanent legacy support**                                                       |
+| Client storage keys: `pawbook-admin-token` (localStorage), `pawbook-embed-token:<slug>` (sessionStorage), popup window name `pawbook-gcal`                                                                             | 6                       | **Phase 1 rename with migrate-once fallback**                                                          |
+| Crypto/persistence identifiers: HKDF info labels `pawbook-oauth-state`, `pawbook-signup-link`, `pawbook-gcal-token`; cookie `pawbook_gcal_nonce`; Google Calendar event marker `extendedProperties.private.pawbook`    | ~15                     | **Keep forever** — see exceptions                                                                      |
+| Demo/test fixtures: `owner@pawbook.test`, `newsitter@pawbook.test` (seed.sql + test helpers), `RESEND_FROM: 'Pawbook <…>'` test fixtures                                                                               | ~25                     | **Phase 1 rename** (fixtures, cheap)                                                                   |
+| GitHub repo URLs `github.com/bradburch/pawbook` (README badge, landing footer, HelpSection, SECURITY, issue-template config)                                                                                           | ~10                     | **Keep until Phase 2** repo rename, then sweep                                                         |
+| CSS custom-property prefix `--bp-*`, class prefixes `pb-`/`bp-`                                                                                                                                                        | 230+ in admin.css alone | **Keep** — internal, no user impact                                                                    |
+| Misc internal: `.claude/skills/running-pawbook`, code comments, `package.json` name                                                                                                                                    | ~20                     | Keep skill dir; comments updated opportunistically; package name renamed (private, unpublished — free) |
 
 ### Surprises found during inventory
 
@@ -56,7 +56,7 @@ across ~100 files, categorized:
 4. **The screenshots do not show the name.** All five landing images
    (`public/img/landing/*.webp`) were inspected: widget hero, three step crops,
    admin bookings crop. None renders "Pawbook" — the widget brands as the
-   *tenant* ("How can I help, Jess?"), by design. **No regeneration needed.**
+   _tenant_ ("How can I help, Jess?"), by design. **No regeneration needed.**
 5. **`admin.html` / `embed.html` / `setup.html` titles don't contain the name**
    ("Tenant admin", "Book with us", "Set up your account"). Only the landing
    `<title>` in `server/index.ts` and the two `docs/*.html` pages do.
@@ -74,7 +74,7 @@ Every user-visible "Pawbook" becomes "Pawservation". By surface:
 
 - **Landing** (`server/index.ts`): `<title>`, `<h1 class="brand">`, body copy,
   FAQ, OSS footer text, `mailto:` subjects (`Pawbook%20invite`), hero image
-  `alt` text. GitHub *URLs* stay (Phase 2).
+  `alt` text. GitHub _URLs_ stay (Phase 2).
 - **Admin UI**: `OwnerConsole.tsx` ("Who can join Pawbook", header comment),
   `AppsSection.tsx`, `ServiceEditor.tsx` (two capacity hints),
   `PaymentsPanel.tsx`, `HelpSection.tsx` (five mentions; the
@@ -116,7 +116,7 @@ API we shipped. New name forward, old name honored indefinitely:
   the widget cannot assume the loader understands the new types. The new
   loader listens for both (dedupe `booked` by `requestId` guard is
   unnecessary: the loader reacts to whichever arrives; it must simply not
-  double-fire — react to the *new* type and ignore the legacy one when both
+  double-fire — react to the _new_ type and ignore the legacy one when both
   are its own origin's current loader, i.e. new loader handles
   `pawservation:*` only, legacy loaders handle `pawbook:*` only. Both being
   posted means every loader vintage works, and no loader sees both of "its"
@@ -185,18 +185,18 @@ Updated in place alongside the code they pin:
 
 ### Explicitly OUT of Phase 1 (stays "pawbook" by design)
 
-| Occurrence | Why it stays |
-| --- | --- |
-| `PAWBOOK_DB` / `PAWBOOK_CACHE` bindings (415 hits incl. tests/types) | Internal binding names; zero user visibility; renaming is a giant diff plus a wrangler config change for no benefit |
-| `pb-` / `bp-` CSS prefixes, `--bp-*` custom properties | Internal; 230+ occurrences in admin.css alone; zero user impact; huge diff risk |
-| Wrangler worker `"name": "pawbook"` + `database_name: "pawbook-db"` (and the `pawbook-db` in package.json scripts) | Operational — Phase 2 decision (recommendation: keep forever, argued below) |
-| HKDF info labels `pawbook-gcal-token`, `pawbook-signup-link`, `pawbook-oauth-state` | Cryptographic domain-separation constants. Changing them invalidates encrypted Google refresh tokens at rest, outstanding signup links, and in-flight OAuth states. Never rename. |
-| Google Calendar marker `extendedProperties.private.pawbook` | Persisted in events already written to sitters' calendars; reconcile/delete-sync would stop recognizing them. Never rename. |
-| Cookie `pawbook_gcal_nonce` | 10-minute TTL, path-scoped, invisible; renaming buys nothing and risks breaking an in-flight OAuth handoff at deploy time |
-| Legacy compat identifiers (`data-pawbook-tenant` fallback, `pawbook:*` postMessage/DOM aliases, `pawbook-*` legacy storage keys) | Deliberately retained by this design |
-| Repo URLs `github.com/bradburch/pawbook` everywhere | Accurate until the Phase 2 repo rename; swept afterward |
-| `docs/superpowers/specs/*` history, `migrations/*` comments, memory files `pawbook-*.md`, the `.superpowers` ledger | Historical record; rewriting history creates confusion |
-| `.claude/skills/running-pawbook` | Internal tooling; optional rename later, not user-visible |
+| Occurrence                                                                                                                       | Why it stays                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PAWBOOK_DB` / `PAWBOOK_CACHE` bindings (415 hits incl. tests/types)                                                             | Internal binding names; zero user visibility; renaming is a giant diff plus a wrangler config change for no benefit                                                               |
+| `pb-` / `bp-` CSS prefixes, `--bp-*` custom properties                                                                           | Internal; 230+ occurrences in admin.css alone; zero user impact; huge diff risk                                                                                                   |
+| Wrangler worker `"name": "pawbook"` + `database_name: "pawbook-db"` (and the `pawbook-db` in package.json scripts)               | Operational — Phase 2 decision (recommendation: keep forever, argued below)                                                                                                       |
+| HKDF info labels `pawbook-gcal-token`, `pawbook-signup-link`, `pawbook-oauth-state`                                              | Cryptographic domain-separation constants. Changing them invalidates encrypted Google refresh tokens at rest, outstanding signup links, and in-flight OAuth states. Never rename. |
+| Google Calendar marker `extendedProperties.private.pawbook`                                                                      | Persisted in events already written to sitters' calendars; reconcile/delete-sync would stop recognizing them. Never rename.                                                       |
+| Cookie `pawbook_gcal_nonce`                                                                                                      | 10-minute TTL, path-scoped, invisible; renaming buys nothing and risks breaking an in-flight OAuth handoff at deploy time                                                         |
+| Legacy compat identifiers (`data-pawbook-tenant` fallback, `pawbook:*` postMessage/DOM aliases, `pawbook-*` legacy storage keys) | Deliberately retained by this design                                                                                                                                              |
+| Repo URLs `github.com/bradburch/pawbook` everywhere                                                                              | Accurate until the Phase 2 repo rename; swept afterward                                                                                                                           |
+| `docs/superpowers/specs/*` history, `migrations/*` comments, memory files `pawbook-*.md`, the `.superpowers` ledger              | Historical record; rewriting history creates confusion                                                                                                                            |
+| `.claude/skills/running-pawbook`                                                                                                 | Internal tooling; optional rename later, not user-visible                                                                                                                         |
 
 ## Phase 2 — operational runbook (owner-executed, after Phase 1 ships)
 
@@ -219,7 +219,7 @@ In order; each step is independently safe.
    redirect. Snippets are origin-derived (`server/lib/snippet.ts`), so admins
    visiting the new domain copy pawservation.com snippets automatically.
 4. **Do NOT rename the worker** (recommendation: keep `pawbook`). Renaming
-   creates a *new* worker: (a) the workers.dev hostname changes, breaking
+   creates a _new_ worker: (a) the workers.dev hostname changes, breaking
    every deployed embed snippet — the one thing we must not do; (b) all
    secrets (`TOKEN_SECRET`, `RESEND_*`, Google OAuth creds) must be re-put,
    and a mistyped `TOKEN_SECRET` invalidates every session **and** all
@@ -234,7 +234,7 @@ In order; each step is independently safe.
 6. **GitHub repo rename** `bradburch/pawbook` → `bradburch/pawservation`: one
    click; GitHub automatically redirects old web URLs and git remotes (until
    a new repo reuses the old name — don't). Owner chose a full rebrand, so
-   the OSS project name changes too; the rename *is* that action. If GitHub
+   the OSS project name changes too; the rename _is_ that action. If GitHub
    Pages serves `docs/`, note the Pages URL changes and old Pages URLs do
    **not** redirect.
 7. **Post-rename sweep PR**: README badge + links, landing footer links,
@@ -267,7 +267,7 @@ deploy, still logged in after) complete verification.
 - **Missed legacy listener double-fire**: the widget posting both message
   types means a hypothetical loader handling both would react twice. Current
   and legacy loaders each handle exactly one family; keep it that way.
-- **Session migration edge**: a user with *both* keys populated (e.g. logged
+- **Session migration edge**: a user with _both_ keys populated (e.g. logged
   in post-deploy, then an old tab writes the legacy key) — new key always
   wins on read; logout clears both. Acceptable.
 - **Search/SEO**: the landing page title change is instant; domain-level SEO
