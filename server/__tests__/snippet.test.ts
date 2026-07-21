@@ -7,7 +7,7 @@ describe('embed snippets', () => {
   it('generates both variants with the right origin and slug', () => {
     const { script, iframe } = embedSnippets('https://proto.example.workers.dev', 'happy-tails');
     expect(script).toBe(
-      '<script src="https://proto.example.workers.dev/embed.js" data-pawbook-tenant="happy-tails" data-height="520"></script>',
+      '<script src="https://proto.example.workers.dev/embed.js" data-pawservation-tenant="happy-tails" data-height="520"></script>',
     );
     expect(iframe).toContain('src="https://proto.example.workers.dev/embed/happy-tails"');
     expect(iframe).toContain('height:640px');
@@ -17,9 +17,9 @@ describe('embed snippets', () => {
     // Script variant: raw slug in the data attribute — the loader encodeURIComponent's it for the URL,
     // so pre-encoding here would double-encode. HTML-special chars are still escaped for attribute safety.
     const { script } = embedSnippets('https://x.dev', 'weird slug');
-    expect(script).toContain('data-pawbook-tenant="weird slug"');
+    expect(script).toContain('data-pawservation-tenant="weird slug"');
     const escaped = embedSnippets('https://x.dev', 'a"b&c').script;
-    expect(escaped).toContain('data-pawbook-tenant="a&quot;b&amp;c"');
+    expect(escaped).toContain('data-pawservation-tenant="a&quot;b&amp;c"');
 
     // Iframe variant: builds the URL directly, so it URL-encodes.
     const { iframe } = embedSnippets('https://x.dev', 'weird slug');
@@ -35,7 +35,7 @@ describe('embed snippets', () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { script: string; iframe: string };
-    expect(body.script).toContain('data-pawbook-tenant="sunny-paws"');
+    expect(body.script).toContain('data-pawservation-tenant="sunny-paws"');
     expect(body.script).toContain('https://proto.example.workers.dev/embed.js');
     expect(body.iframe).toContain('https://proto.example.workers.dev/embed/sunny-paws');
   });

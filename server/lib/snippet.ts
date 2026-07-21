@@ -20,7 +20,7 @@ export function embedSnippets(origin: string, slug: string): EmbedSnippets {
   return {
     // The loader URL-encodes the slug itself when building the iframe src, so the data attribute
     // carries the RAW slug (HTML-escaped only) — encoding here too would double-encode it.
-    script: `<script src="${origin}/embed.js" data-pawbook-tenant="${htmlAttr(slug)}" data-height="520"></script>`,
+    script: `<script src="${origin}/embed.js" data-pawservation-tenant="${htmlAttr(slug)}" data-height="520"></script>`,
     // The iframe variant builds the URL directly, so it URL-encodes the slug here.
     iframe: `<iframe src="${origin}/embed/${encodeURIComponent(slug)}" title="Booking widget" style="width:100%;height:640px;border:0;"></iframe>`,
   };

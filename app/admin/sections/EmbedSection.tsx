@@ -80,7 +80,7 @@ function Snippets({ session }: { session: Session }) {
  * server-side, so this never exposes anything the customer can't already see.
  *
  * Displays at a fixed height (640px / 70vh) with internal scrolling — simpler than the production
- * loader which auto-resizes off the widget's `pawbook:resize` postMessage (it must resize
+ * loader which auto-resizes off the widget's `pawservation:resize` postMessage (it must resize
  * cross-origin, lacking access to contentDocument).
  */
 function WidgetPreview({ slug, reloadKey }: { slug: string; reloadKey: number }) {

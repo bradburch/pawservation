@@ -144,7 +144,11 @@ export function BookTab({
       setAnswers({});
       setResult(null);
       setCalReloadKey((k) => k + 1);
-      window.parent.postMessage({ type: 'pawbook:booked', requestId: res.id }, parentOrigin);
+      // Both families, for HTTP-cached pre-rebrand loaders (see the resize note in App.tsx):
+      // the current loader handles `pawservation:booked`, legacy loaders handle `pawbook:booked`.
+      for (const type of ['pawservation:booked', 'pawbook:booked']) {
+        window.parent.postMessage({ type, requestId: res.id }, parentOrigin);
+      }
     } catch (e) {
       if (isAuthExpired(e)) {
         onAuthExpired();

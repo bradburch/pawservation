@@ -22,15 +22,18 @@ export default function App() {
 
   // Report content height to the parent loader so the iframe auto-resizes (story 3.1).
   useEffect(() => {
-    const report = () =>
-      window.parent.postMessage(
-        // No secrets ever cross postMessage; the loader filters by origin + source.
-        {
-          type: 'pawbook:resize',
-          height: document.documentElement.scrollHeight,
-        },
-        parentOrigin,
-      );
+    const report = () => {
+      // No secrets ever cross postMessage; the loader filters by origin + source. Both type
+      // families are posted: a host page may serve an HTTP-cached pre-rebrand loader that only
+      // understands `pawbook:resize`; the current loader reacts to `pawservation:resize` only,
+      // so no loader vintage handles both.
+      for (const type of ['pawservation:resize', 'pawbook:resize']) {
+        window.parent.postMessage(
+          { type, height: document.documentElement.scrollHeight },
+          parentOrigin,
+        );
+      }
+    };
     report();
     const observer = new ResizeObserver(report);
     observer.observe(document.body);
