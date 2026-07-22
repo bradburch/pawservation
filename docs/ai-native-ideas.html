@@ -1,0 +1,890 @@
+<title>Pawservation — AI-native Ideas</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f4ea;
+    --bg-elev: #ffffff;
+    --text: #2a352c;
+    --text-dim: #59695b;
+    --border: #ddd8c5;
+    --code-bg: #ebf1e7;
+    --ink: #22422e;
+    --leaf: #4a7d3c;
+    --clay: #b23a30;
+    --highlight-ring: #7c530f;
+    --highlight-bg: #f8efdb;
+    --ok: #23684a;
+    --ok-wash: #e7f2e8;
+    --warn: #7c530f;
+    --warn-wash: #f8efdb;
+    --bad: #b23a30;
+    --bad-wash: #f8ebe8;
+    --cost-s-bg: #23684a;
+    --cost-m-bg: #7c530f;
+    --cost-l-bg: #b23a30;
+    --oss-bg: #2f6b3f;
+    --premium-bg: #22422e;
+    --mixed-bg: #7c530f;
+    --accent-a: #4a7d3c;
+    --accent-b: #b23a30;
+    --accent-c: #22422e;
+    --accent-a-bg: #e7f2e8;
+    --accent-b-bg: #f8ebe8;
+    --accent-c-bg: #e9efe9;
+  }
+  :root[data-theme='dark'] {
+    --bg: #10231a;
+    --bg-elev: #16281e;
+    --text: #eaf0e8;
+    --text-dim: #a9b9ac;
+    --border: #2c4536;
+    --code-bg: #1c3527;
+    --ink: #cfe0d2;
+    --leaf: #7cc26a;
+    --clay: #e8837a;
+    --highlight-ring: #e8b567;
+    --highlight-bg: #2c2413;
+    --ok: #6fcf9e;
+    --ok-wash: #163826;
+    --warn: #e8b567;
+    --warn-wash: #3a2c12;
+    --bad: #e8837a;
+    --bad-wash: #3a1f1c;
+    --accent-a: #7cc26a;
+    --accent-b: #e8837a;
+    --accent-c: #9fc9ab;
+    --accent-a-bg: #16281e;
+    --accent-b-bg: #2c1c19;
+    --accent-c-bg: #182720;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --bg: #10231a;
+      --bg-elev: #16281e;
+      --text: #eaf0e8;
+      --text-dim: #a9b9ac;
+      --border: #2c4536;
+      --code-bg: #1c3527;
+      --ink: #cfe0d2;
+      --leaf: #7cc26a;
+      --clay: #e8837a;
+      --highlight-ring: #e8b567;
+      --highlight-bg: #2c2413;
+      --ok: #6fcf9e;
+      --ok-wash: #163826;
+      --warn: #e8b567;
+      --warn-wash: #3a2c12;
+      --bad: #e8837a;
+      --bad-wash: #3a1f1c;
+      --accent-a: #7cc26a;
+      --accent-b: #e8837a;
+      --accent-c: #9fc9ab;
+      --accent-a-bg: #16281e;
+      --accent-b-bg: #2c1c19;
+      --accent-c-bg: #182720;
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 2rem 2rem 4rem;
+    line-height: 1.5;
+  }
+  h1 {
+    font-size: 1.7rem;
+    margin: 0 0 0.25rem;
+    color: var(--ink);
+  }
+  .subtitle {
+    color: var(--text-dim);
+    margin: 0 0 0.75rem;
+    font-size: 0.95rem;
+    max-width: 60rem;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 0.92em;
+  }
+
+  .header-note {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--highlight-ring);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.88rem;
+    color: var(--text-dim);
+    max-width: 62rem;
+  }
+
+  .anchor-fact {
+    background: var(--accent-c-bg);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--ink);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1.25rem 0 2rem;
+    font-size: 0.92rem;
+    max-width: 62rem;
+  }
+  .anchor-fact strong.lede {
+    color: var(--ink);
+  }
+
+  .meta-line {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin: 0 0 1rem;
+    max-width: 62rem;
+  }
+
+  /* ---- Horizon filter (JS-driven, purely additive — content works fine with JS off) ---- */
+  .filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 0 2rem;
+    flex-wrap: wrap;
+  }
+  .filter-bar button {
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .filter-bar button.active {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: #ffffff;
+  }
+  .filter-bar button:hover {
+    border-color: var(--leaf);
+  }
+
+  section.horizon {
+    margin-bottom: 2.75rem;
+  }
+  section.horizon.hidden-by-filter {
+    display: none;
+  }
+  .horizon-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    margin: 0 0 0.35rem;
+    font-size: 1.25rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid var(--border);
+  }
+  .horizon-title .swatch {
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 3px;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .horizon-desc {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    margin: 0 0 1.1rem;
+    max-width: 60rem;
+  }
+
+  .horizon-a .swatch {
+    background: var(--accent-a);
+  }
+  .horizon-b .swatch {
+    background: var(--accent-b);
+  }
+  .horizon-c .swatch {
+    background: var(--accent-c);
+  }
+  .horizon-a .card-head {
+    background: var(--accent-a-bg);
+    color: var(--accent-a);
+    border-left: 4px solid var(--accent-a);
+  }
+  .horizon-b .card-head {
+    background: var(--accent-b-bg);
+    color: var(--accent-b);
+    border-left: 4px solid var(--accent-b);
+  }
+  .horizon-c .card-head {
+    background: var(--accent-c-bg);
+    color: var(--accent-c);
+    border-left: 4px solid var(--accent-c);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .card-head {
+    padding: 0.6rem 0.9rem;
+    font-weight: 700;
+    font-size: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .card-head .id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin-right: 0.4rem;
+    opacity: 0.75;
+  }
+  .card-badges {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+
+  .badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 0.16rem 0.42rem;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    color: #ffffff;
+  }
+  .badge.cost-s {
+    background: var(--cost-s-bg);
+  }
+  .badge.cost-m {
+    background: var(--cost-m-bg);
+  }
+  .badge.cost-l {
+    background: var(--cost-l-bg);
+  }
+  .badge.place-oss {
+    background: var(--oss-bg);
+  }
+  .badge.place-premium {
+    background: var(--premium-bg);
+  }
+  .badge.place-mixed {
+    background: var(--mixed-bg);
+  }
+
+  .card-body {
+    padding: 0.7rem 0.9rem 0.85rem;
+    font-size: 0.88rem;
+  }
+  .card-body .for-whom {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-style: italic;
+    margin: 0 0 0.5rem;
+  }
+  .card-body .field-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    font-weight: 700;
+    margin: 0.55rem 0 0.15rem;
+  }
+  .card-body .field-label:first-of-type {
+    margin-top: 0;
+  }
+  .card-body p {
+    margin: 0.15rem 0;
+  }
+  .card-body .seam-note {
+    font-size: 0.82rem;
+  }
+  .placement-note {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 0.3rem;
+  }
+
+  .safety-section {
+    margin-bottom: 2.75rem;
+  }
+  .safety-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.9rem;
+  }
+  .safety-item {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+  }
+  .safety-item h3 {
+    margin: 0 0 0.35rem;
+    font-size: 0.95rem;
+    color: var(--ink);
+  }
+  .safety-item p {
+    margin: 0;
+    font-size: 0.86rem;
+  }
+
+  .callout-0016 {
+    grid-column: 1 / -1;
+    background: var(--bad-wash);
+    border: 1px solid var(--clay);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+  }
+  .callout-0016 h3 {
+    color: var(--clay);
+    margin: 0 0 0.4rem;
+    font-size: 0.98rem;
+  }
+  .callout-0016 .tag {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: var(--clay);
+    color: #fff;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+  }
+
+  .recommend {
+    background: var(--highlight-bg);
+    border: 2px solid var(--highlight-ring);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    max-width: 68rem;
+    margin-bottom: 2.5rem;
+  }
+  .recommend h2 {
+    margin: 0 0 0.6rem;
+    font-size: 1.15rem;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .recommend p {
+    margin: 0.4rem 0;
+    font-size: 0.94rem;
+  }
+  .recommend .star {
+    color: var(--warn);
+  }
+
+  footer {
+    margin-top: 2.5rem;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+  }
+</style>
+
+<h1>Pawservation — AI-native Ideas</h1>
+<p class="subtitle">
+  How could Pawservation be &ldquo;AI native,&rdquo; and how could AI agents work within the
+  project? Three horizons, from zero-product-change outward. Every idea names the seam it plugs
+  into, a build-cost tier (S/M/L), and its OSS-vs-premium placement per the split doc's boundary
+  test — <em>removing it must leave a product a solo sitter would still happily run</em> &rarr;
+  premium; otherwise OSS.
+</p>
+
+<div class="header-note">
+  Generated from <code>docs/superpowers/specs/2026-07-20-ai-native-ideas.md</code> on 2026-07-20.
+  Regenerate after edits to that file — this file (<code>docs/ai-native-ideas.html</code>) is
+  gitignored and not committed to the repo.
+</div>
+
+<p class="meta-line">
+  <strong>Source date:</strong> 2026-07-20 &middot; <strong>Status:</strong> Ideas — for discussion
+  &middot; <strong>Companions:</strong> <code>2026-07-18-premium-features-path.md</code>,
+  <code>2026-07-19-oss-proprietary-split.md</code>
+</p>
+
+<div class="anchor-fact">
+  <strong class="lede">One fact anchors all of this:</strong> a customer-facing Pawservation MCP
+  server <strong>already exists in the wild</strong>, built by a third party against the public API
+  — sitters' customers checking availability and booking through Claude today. The architecture
+  already supports agents; the question is how far to lean in.
+</div>
+
+<div class="filter-bar" id="filter-bar" role="group" aria-label="Filter by horizon">
+  <button type="button" data-filter="all" class="active">All horizons</button>
+  <button type="button" data-filter="a">Horizon A — edges</button>
+  <button type="button" data-filter="b">Horizon B — in-product</button>
+  <button type="button" data-filter="c">Horizon C — native ops</button>
+</div>
+
+<section class="horizon horizon-a" data-horizon="a">
+  <h2 class="horizon-title">
+    <span class="swatch"></span> Horizon A — AI at the edges
+    <span style="font-weight: 400; font-size: 0.75em; color: var(--text-dim)"
+      >(no product change)</span
+    >
+  </h2>
+  <p class="horizon-desc">
+    Agents interact with Pawservation as it stands. The work is making the existing surface legible
+    to them.
+  </p>
+  <div class="grid">
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">A1</span>Agent-readable site contract (llms.txt + JSON-LD)</span>
+        <span class="card-badges"
+          ><span class="badge cost-s">S</span><span class="badge place-oss">OSS</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="for-whom">
+          For whom: customers using any AI assistant; the sitter gets bookings from clients who
+          never opened the widget.
+        </p>
+        <p class="field-label">What</p>
+        <p>
+          Serve <code>/llms.txt</code> describing the public API per tenant (config, availability,
+          identify/verify, bookings) with worked examples; add JSON-LD (<code>LocalBusiness</code> +
+          <code>Service</code> + offers) to the landing page and embed host page so crawlers and
+          agents discover services, prices, and the API root.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          <code>server/index.ts</code> (a static route beside <code>LANDING_HTML</code>, which is
+          script-free under <code>LOCKED_CSP</code> — JSON-LD is a
+          <code>&lt;script type="application/ld+json"&gt;</code> and needs a CSP carve-out or lives
+          only on <code>/embed/*</code> under <code>EMBEDDABLE_CSP</code>); data from
+          <code>GET /api/:slug/config</code>.
+        </p>
+        <p class="placement-note">Placement rationale: it documents the MIT API surface.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">A2</span>Hosted booking MCP server per tenant</span>
+        <span class="card-badges"
+          ><span class="badge cost-m">M</span><span class="badge place-premium">premium</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="for-whom">
+          For whom: the sitter — &ldquo;flip a switch, your clients can book from Claude/any MCP
+          client,&rdquo; zero setup, same rules as the widget.
+        </p>
+        <p class="field-label">What</p>
+        <p>
+          A managed version of the wild one: a separate Worker (Agents SDK) at
+          <code>mcp.&lt;hosted-domain&gt;/:slug</code> exposing check-availability / get-quote /
+          request-booking / my-bookings tools. It authenticates customers by driving the existing
+          email-code flow (<code>POST /api/:slug/identify</code> + <code>verify</code>,
+          <code>server/routes/auth.ts</code>) and calls the public API, so
+          <code>src/shared/booking/</code> capacity + service rules are enforced by the same server
+          code as everything else.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          The public JSON API only; no repo changes (architecture C&rarr;B from the premium doc).
+        </p>
+        <p class="placement-note">
+          Placement rationale: managed convenience; self-hosters keep the API and the right to run
+          their own — the wild server proves it works.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">A3</span>Structured booking data for agents</span>
+        <span class="card-badges"
+          ><span class="badge cost-s">S</span><span class="badge place-oss">OSS</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          Small additive polish to the public API so agents fail less: machine-readable validation
+          errors (which rule from <code>service-rules.ts</code> rejected the request and why), an
+          explicit <code>nextAvailable</code> hint on conflicts, idempotency keys on
+          <code>POST /api/:slug/bookings</code>.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          <code>server/routes/bookings.ts</code>, error shapes from
+          <code>src/shared/booking/service-rules.ts</code> / <code>capacity.ts</code>.
+        </p>
+        <p class="placement-note">Placement rationale: better API errors help every client.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="horizon horizon-b" data-horizon="b">
+  <h2 class="horizon-title">
+    <span class="swatch"></span> Horizon B — AI features in the product
+    <span style="font-weight: 400; font-size: 0.75em; color: var(--text-dim)"
+      >(premium-worker candidates)</span
+    >
+  </h2>
+  <p class="horizon-desc">
+    All follow the premium doc's architecture B: a closed premium Worker behind an optional
+    <code>PREMIUM</code> binding; forwarding routes are the only public-repo change.
+  </p>
+  <div class="grid">
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">B1</span>Sitter-admin MCP server (new)</span>
+        <span class="card-badges"
+          ><span class="badge cost-m">M</span><span class="badge place-premium">premium</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="for-whom">
+          For whom: the sitter, from any AI client: &ldquo;confirm this weekend's bookings,&rdquo;
+          &ldquo;block next week,&rdquo; &ldquo;who still owes me money?&rdquo;
+        </p>
+        <p class="field-label">What</p>
+        <p>
+          A hosted MCP Worker (variant of A2) that holds the sitter's admin JWT
+          (<code>server/routes/admin-auth.ts</code>) and wraps the admin API — bookings list and
+          status (<code>POST /api/:slug/admin/bookings/:id/status</code>), blocked dates (<code
+            >POST /api/:slug/admin/blocked</code
+          >), payments, customers, analytics. Tools mirror routes one-to-one; no new server logic.
+        </p>
+        <p class="placement-note">
+          Placement rationale: managed; the admin API it wraps stays MIT, so a self-hoster can build
+          their own.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">B2</span>AI drafting — booking replies and client messages</span>
+        <span class="card-badges"
+          ><span class="badge cost-m">M</span><span class="badge place-premium">premium</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          &ldquo;Draft a reply&rdquo; on a booking request; &ldquo;summarize this client's
+          history&rdquo; on a customer. Per the premium doc's sketch:
+          <code>/api/:slug/admin/ai/draft</code> (JWT + entitlement) forwards context to the premium
+          worker, which calls <strong>Workers AI</strong> (cheap, data stays in Cloudflare) for
+          summaries and the <strong>Claude API</strong> for prose worth editing. Output is always a
+          draft the sitter sends herself.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          One forwarding route in <code>server/routes/admin.ts</code>; context from
+          <code>BookingRequests</code>, <code>EndUsers</code>, <code>Payments</code>.
+        </p>
+        <p class="placement-note">Placement rationale: removing it leaves the product whole.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span
+          ><span class="id">B3</span>Intake summarization — Answers JSON &rarr; sitter brief</span
+        >
+        <span class="card-badges"
+          ><span class="badge cost-s">S</span><span class="badge place-premium">premium</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          <code>BookingRequests.Answers</code> is freeform JSON keyed to per-service intake
+          questions; multi-pet, multi-question requests are a wall of text. Generate a one-paragraph
+          brief per booking (&ldquo;Two dogs, one on meds at 8am, gate code 4411, reactive to
+          bikes&rdquo;) shown on the booking card and in the confirmation email to the sitter.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          <code>BookingRequests.Answers</code> + <code>EndUserPets.Notes</code>; surfaces in the
+          admin Bookings section and <code>server/lib</code> email templates.
+        </p>
+        <p class="placement-note">
+          Cost note: a constrained summarize call — the easiest real AI feature here.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">B4</span>Smart scheduling suggestions</span>
+        <span class="card-badges"
+          ><span class="badge cost-m">M</span><span class="badge cost-l">L</span
+          ><span class="badge place-mixed">mixed</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          The shared engine already knows capacity, conflicts, and per-day load. Add suggestions on
+          top: gap-filling (&ldquo;Tuesday has one walk — nudge regulars who usually book
+          Tuesdays&rdquo;), capacity warnings (&ldquo;boarding is 90% booked over the holidays;
+          consider raising the rate or blocking intake&rdquo;), and quiet-week detection from
+          <code>BookingRequests</code> history.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          Reads via existing admin bookings/analytics endpoints (<code
+            >GET /api/:slug/admin/analytics</code
+          >); math builds on <code>src/shared/booking/capacity.ts</code> outputs.
+        </p>
+        <p class="placement-note">
+          Placement rationale: deterministic parts could be OSS analytics; the LLM-phrased advice is
+          premium. Cost: M&ndash;L.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">B5</span>AI onboarding copilot</span>
+        <span class="card-badges"
+          ><span class="badge cost-m">M</span><span class="badge place-premium">premium</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          The setup wizard (<code>app/admin/SetupWizard.tsx</code>) already applies presets
+          (<code>app/admin/presets.ts</code>). Add a free-text step — &ldquo;describe your
+          business&rdquo; — and have a model map it onto the preset vocabulary: services, rates,
+          capacity limits, pet types, intake questions. Output is a pre-filled wizard the sitter
+          reviews, applied through the <strong>existing</strong> settings/services APIs (<code
+            >PUT /api/:slug/admin/settings</code
+          >, <code>POST /api/:slug/admin/services</code>,
+          <code>POST /api/:slug/admin/pet-types</code>) — the model proposes, the same validated
+          endpoints dispose.
+        </p>
+        <p class="placement-note">
+          Placement rationale: premium feature, OSS-shaped seam (the wizard and presets stay MIT).
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">B6</span>Voice/SMS agent intake</span>
+        <span class="card-badges"
+          ><span class="badge cost-l">L</span><span class="badge place-premium">premium</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          A phone number per tenant; an agent answers, checks availability, and files a booking
+          <em>request</em> (never a confirmation) via the public API, then texts the customer the
+          widget link to verify their email. Highest wow, highest cost, and dependent on telephony
+          vendors.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">Public API only, like A2.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="horizon horizon-c" data-horizon="c">
+  <h2 class="horizon-title">
+    <span class="swatch"></span> Horizon C — AI-native operation
+    <span style="font-weight: 400; font-size: 0.75em; color: var(--text-dim)"
+      >(agents as first-class actors)</span
+    >
+  </h2>
+  <div class="grid">
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">C1</span>Ops/anomaly agent for the owner</span>
+        <span class="card-badges"
+          ><span class="badge cost-m">M</span><span class="badge place-mixed">mixed</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          The invariant-sweep follow-up from the branch reviews, done by an agent on a schedule:
+          orphaned <code>GCalEventId</code>s (event deleted in Google but booking active), failed
+          sync writes, expired <code>ProviderConnections</code> tokens, stale
+          <code>AllowedSitters</code> invites never completed, pending bookings older than N days.
+          Reports to the owner console or email; fixes nothing autonomously at first.
+        </p>
+        <p class="field-label">Seam</p>
+        <p class="seam-note">
+          <code>server/routes/owner.ts</code> (a read-only sweep endpoint) or a scheduled Worker
+          reading via admin APIs; tables <code>BookingRequests</code>,
+          <code>ProviderConnections</code>, <code>AllowedSitters</code>.
+        </p>
+        <p class="placement-note">
+          Placement rationale: the sweep endpoint is OSS-worthy (self-hosters have the same rot);
+          the managed agent that watches it is hosted-operational/premium.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">C2</span>Agents as attributed actors (the schema gap)</span>
+      </div>
+      <div class="card-body">
+        <p>
+          Today an agent-made booking is indistinguishable from a widget booking. If agents become
+          normal actors, attribution is the missing primitive — see the
+          <a href="#agent-safety" style="color: var(--leaf)">agent-safety section</a> below
+          (migration <code>0016</code> candidate).
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span><span class="id">C3</span>Repo-level agents (already the norm here)</span>
+        <span class="card-badges"
+          ><span class="badge cost-s">S</span><span class="badge place-oss">OSS</span></span
+        >
+      </div>
+      <div class="card-body">
+        <p class="field-label">What</p>
+        <p>
+          Development itself is AI-native: spec-first docs in <code>docs/superpowers/specs/</code>,
+          subagent delegation in <code>CLAUDE.md</code>, the <code>running-pawbook</code> skill.
+          Worth extending with a CI review agent gated on the same invariants the docs name (tenant
+          scoping, repo.ts exclusivity) — and it protects everything above.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="safety-section" id="agent-safety">
+  <h2 class="horizon-title" style="border-bottom-color: var(--border)">
+    <span class="swatch" style="background: var(--clay)"></span> Agent safety
+  </h2>
+  <div class="safety-list">
+    <div class="safety-item">
+      <h3>Autonomy boundary — already right by design</h3>
+      <p>
+        Bookings are request&rarr;sitter-confirm (<code>Status 'pending'</code> until
+        <code>POST …/bookings/:id/status</code>); nothing an agent does on the customer path can
+        commit the sitter. Keep that: agents may <em>request</em>, <em>query</em>, and
+        <em>draft</em> autonomously; anything state-changing on the admin side (confirm/decline,
+        block dates, record payments, edit services) should require an explicit human confirmation
+        in the AI client, even though the API token technically permits it. AI drafts are never
+        auto-sent.
+      </p>
+    </div>
+
+    <div class="safety-item">
+      <h3>Tenant isolation</h3>
+      <p>
+        Agents get no new trust: they enter through the same slug-scoped routes as browsers, so
+        <code>tenantMiddleware</code> + repo.ts scoping hold. The rule for any MCP/premium worker:
+        it holds a token <em>for one tenant</em> and speaks only the public/admin HTTP API — never a
+        DB binding (this is the premium doc's invariant restated for agents).
+      </p>
+    </div>
+
+    <div class="safety-item">
+      <h3>Rate limits</h3>
+      <p>
+        Agents retry enthusiastically. <code>LoginCodes</code> already has attempt limits; the
+        public availability/booking endpoints and any MCP worker need per-tenant request budgets
+        before agent traffic is invited.
+      </p>
+    </div>
+
+    <div class="safety-item callout-0016">
+      <h3>Audit trail — one column short <span class="tag">migration 0016 proposal</span></h3>
+      <p>
+        <code>BookingRequests</code> already records everything about <em>what</em> was requested;
+        it doesn't record <em>who typed it</em>. Proposal: a nullable
+        <code>Source TEXT</code> column (<code>NULL</code> = widget, else <code>'mcp'</code>,
+        <code>'voice'</code>, <code>'admin-import'</code>, …) —
+        <code>migrations/0016_booking_source.sql</code> + <code>sql/schema.sql</code> + repo cols,
+        matching the null-is-default convention. Cheap now, impossible to backfill later, and it
+        gives the sitter a &ldquo;booked via Claude&rdquo; badge plus the data to judge agent
+        quality. The same idea applies to admin actions if B1 ships (who confirmed: sitter or her
+        agent?).
+      </p>
+    </div>
+  </div>
+</section>
+
+<div class="recommend">
+  <h2><span class="star">&#9733;</span> Recommended first step</h2>
+  <p>
+    <strong
+      >A1 + A3, then harden the path A2 formalizes: llms.txt + structured errors now, the hosted
+      booking MCP next.</strong
+    >
+  </p>
+  <p>
+    Argument: the wild MCP server is proof of demand that arrived unprompted — customers already
+    want to book through agents, and the public API already safely supports it (request-only,
+    tenant-scoped, same shared rules). A1/A3 are small, pure-OSS, and make every current and future
+    agent integration better; A2 then converts proven demand into the first premium feature with
+    <strong>zero public-repo code</strong> (the premium doc's &ldquo;behave like C until B is
+    needed&rdquo; posture).
+  </p>
+  <p>
+    Slip the <code>Source</code> column (<code>0016</code>) in alongside, while agent traffic is
+    still small enough to start the audit trail clean. B3 (intake briefs) is the best first
+    <em>in-product</em> AI feature when the premium worker exists: smallest prompt surface, obvious
+    sitter value, no autonomy risk.
+  </p>
+</div>
+
+<footer>
+  3 horizons, 12 ideas, 4 agent-safety principles. Source:
+  <code>docs/superpowers/specs/2026-07-20-ai-native-ideas.md</code>.
+</footer>
+
+<script>
+  (function () {
+    var buttons = document.querySelectorAll('#filter-bar button');
+    var horizons = document.querySelectorAll('section.horizon');
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        buttons.forEach(function (b) {
+          b.classList.remove('active');
+        });
+        btn.classList.add('active');
+        var filter = btn.getAttribute('data-filter');
+        horizons.forEach(function (h) {
+          if (filter === 'all' || h.getAttribute('data-horizon') === filter) {
+            h.classList.remove('hidden-by-filter');
+          } else {
+            h.classList.add('hidden-by-filter');
+          }
+        });
+      });
+    });
+  })();
+</script>
