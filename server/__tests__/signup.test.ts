@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { SIGNUP_NONCE_KEY, signSignupLink } from '../lib/signup-link';
-import { RATE_LIMIT_TTL_SECONDS } from '../routes/signup';
+import { ALREADY_SET_UP_ERROR, RATE_LIMIT_TTL_SECONDS } from '../routes/signup';
 import { ALLOWED_EMAIL, createTestEnv, OWNER_EMAIL, TEST_SECRET } from './helpers';
 
 export const start = (env: Env, email: string) =>
@@ -319,6 +319,25 @@ describe('POST /api/signup/complete — sitter', () => {
     expect(after).toBe(before); // no orphan 'second-biz' tenant row
   });
 
+  it('a non-UNIQUE insert failure is a 500, NOT a false "already set up" 409', async () => {
+    // Regression for the production incident: a blanket catch mapped EVERY throw to the
+    // "already set up" 409, so a "no such table: TenantUsers" error (migration not yet applied)
+    // masqueraded as "already set up". Drop a leaf table the batch writes (no inbound FKs) to
+    // force a non-UNIQUE error and prove it surfaces as a retryable 500, not the misleading 409.
+    const { env, raw } = createTestEnv();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const t = await getSetupToken(env, ALLOWED_EMAIL);
+    raw.prepare('DROP TABLE TenantPetTypes').run();
+    const res = await complete(env, {
+      token: t,
+      password: 'hunter22',
+      businessName: 'Broken Biz',
+    });
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).not.toBe(ALREADY_SET_UP_ERROR);
+    expect(errSpy).toHaveBeenCalledWith('sitter signup insert failed', expect.anything());
+  });
+
   it('a revoked-mid-flight invite (deleted between link mint and completion) is rejected with no orphan tenant or login row', async () => {
     // The allowlist-claim UPDATE inside createTenantFromSignup guards with
     // `WHERE Email = ? AND ClaimedAt IS NULL`; if an owner revokes the invite (deleting the
@@ -376,6 +395,20 @@ describe('POST /api/signup/complete — owner', () => {
     const t = await getSetupToken(env, OWNER_EMAIL);
     env.OWNER_EMAILS = ''; // secret changed since the link was issued
     expect((await complete(env, { token: t, password: 'ownerpass1' })).status).toBe(400);
+  });
+
+  it('a non-UNIQUE insert failure is a 500, NOT a false "already set up" 409', async () => {
+    // Regression for the production incident: "no such table: OwnerUsers" (migration not yet
+    // applied) was relabeled "already set up", locking the platform owner out. Drop the table to
+    // force a non-UNIQUE error and prove it surfaces as a retryable 500, not the misleading 409.
+    const { env, raw } = createTestEnv();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const t = await getSetupToken(env, OWNER_EMAIL);
+    raw.prepare('DROP TABLE OwnerUsers').run();
+    const res = await complete(env, { token: t, password: 'ownerpass1' });
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).not.toBe(ALREADY_SET_UP_ERROR);
+    expect(errSpy).toHaveBeenCalledWith('owner signup insert failed', expect.anything());
   });
 
   it('a duplicate-owner replay gets 409', async () => {

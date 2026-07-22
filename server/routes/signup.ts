@@ -44,7 +44,20 @@ const CompleteBody = v.object({
 
 export const EXPIRED_ERROR =
   'This link has expired or was already used — enter your email on the sign-in page to get a fresh one.';
-const ALREADY_SET_UP_ERROR = 'This email is already set up — sign in instead.';
+export const ALREADY_SET_UP_ERROR = 'This email is already set up — sign in instead.';
+export const RETRYABLE_ERROR = 'Something went wrong — please try again.';
+
+/**
+ * Only a genuine SQLite UNIQUE-constraint violation means "already set up" (a replay that beat
+ * the nonce consume, dying on OwnerUsers.Email / TenantUsers.Email UNIQUE). Any other throw —
+ * e.g. "no such table" from an unapplied migration — must NOT be relabeled "already set up", or
+ * an outage masquerades as a benign message (the owner-lockout incident). D1 sometimes wraps the
+ * driver error in a cause, so inspect that too.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const hit = (e: unknown) => e instanceof Error && e.message.includes('UNIQUE constraint failed');
+  return hit(err) || (err instanceof Error && hit(err.cause));
+}
 
 const RATE_LIMIT_MAX = 5;
 export const RATE_LIMIT_TTL_SECONDS = 3600;
@@ -173,7 +186,8 @@ export const signupRoutes = new Hono<AppEnv>()
         );
       } catch (err) {
         console.error('owner signup insert failed', err);
-        return c.json({ error: ALREADY_SET_UP_ERROR }, 409);
+        if (isUniqueViolation(err)) return c.json({ error: ALREADY_SET_UP_ERROR }, 409);
+        return c.json({ error: RETRYABLE_ERROR }, 500);
       }
       const ownerToken = await mintOwnerToken(payload.email, c.env.TOKEN_SECRET);
       return c.json({ token: ownerToken, role: 'owner', email: payload.email });
@@ -204,7 +218,8 @@ export const signupRoutes = new Hono<AppEnv>()
       });
     } catch (err) {
       console.error('sitter signup insert failed', err);
-      return c.json({ error: ALREADY_SET_UP_ERROR }, 409);
+      if (isUniqueViolation(err)) return c.json({ error: ALREADY_SET_UP_ERROR }, 409);
+      return c.json({ error: RETRYABLE_ERROR }, 500);
     }
     if (!claimed) {
       // The invite was revoked (or its allowlist row otherwise vanished/was already claimed)
