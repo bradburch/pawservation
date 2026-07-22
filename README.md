@@ -55,7 +55,7 @@ Prereqs: **Node 24** (`nvm use` reads `.nvmrc` — the test harness needs the bu
 npm install
 npm run seed:local   # applies sql/schema.sql + sql/seed.sql to the local D1 (resets local data)
 npm run build        # build the four Vite bundles into dist/
-npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM:
+npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM_NOREPLY: --var RESEND_FROM_BOOKING:
 ```
 
 > **Why not plain `npm run dev`?** `npm run dev` reads `.dev.vars` as-is. If your
@@ -165,7 +165,8 @@ npx wrangler kv namespace create PAWBOOK_CACHE     # put id into wrangler.jsonc
 npx wrangler secret put TOKEN_SECRET               # strong random value (openssl rand -base64 32)
 npx wrangler secret put OWNER_EMAILS               # comma-separated platform-owner email(s)
 npx wrangler secret put RESEND_API_KEY             # from https://resend.com — required for login codes & signup links
-npx wrangler secret put RESEND_FROM                # e.g. "Pawservation <bookings@pawservation.com>" (verified sender)
+npx wrangler secret put RESEND_FROM_NOREPLY        # e.g. "Pawservation <no_reply@pawservation.com>" — account access (login codes, password resets, signup links)
+npx wrangler secret put RESEND_FROM_BOOKING        # e.g. "Pawservation <booking@pawservation.com>" — booking mail (invites, confirm/decline/cancel)
 # Optional — Google Calendar sync:
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
@@ -180,8 +181,10 @@ npx wrangler d1 execute pawbook-db --remote --file=./sql/schema.sql   # fresh DB
 ```
 
 Production **fails closed** without email: customer login and sitter signup return 503
-rather than ever leaking a code or link, so `RESEND_API_KEY`/`RESEND_FROM` are effectively
-required in production. Merges to `main` auto-deploy via CI.
+rather than ever leaking a code or link, so `RESEND_API_KEY`/`RESEND_FROM_NOREPLY`/
+`RESEND_FROM_BOOKING` are effectively all required in production (email counts as
+configured only when all three are set — see `server/lib/email.ts`). Merges to `main`
+auto-deploy via CI.
 
 ## Provisioning the first sitter
 

@@ -25,7 +25,8 @@ const complete = (env: Env, body: unknown) =>
 
 function configureEmail(env: Env) {
   env.RESEND_API_KEY = 'test-key';
-  env.RESEND_FROM = 'Pawservation <bookings@example.com>';
+  env.RESEND_FROM_NOREPLY = 'Pawservation <no_reply@example.com>';
+  env.RESEND_FROM_BOOKING = 'Pawservation <booking@example.com>';
 }
 
 // Creates a real OwnerUsers row via the actual signup flow (no direct-insert shortcut), so the
@@ -85,6 +86,9 @@ describe('POST /api/password-reset/start — enumeration neutrality', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     await start(env, OWNER_EMAIL);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // Account-access mail (reset links) goes out from the no-reply sender, not the booking one.
+    const sentBody = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+    expect(sentBody.from).toBe(env.RESEND_FROM_NOREPLY);
   });
 
   it('dev + no email provider: prototypeLink ONLY for emails with an account', async () => {

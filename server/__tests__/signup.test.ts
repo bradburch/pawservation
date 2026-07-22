@@ -17,7 +17,8 @@ export const start = (env: Env, email: string) =>
 
 function configureEmail(env: Env) {
   env.RESEND_API_KEY = 'test-key';
-  env.RESEND_FROM = 'Pawservation <bookings@example.com>';
+  env.RESEND_FROM_NOREPLY = 'Pawservation <no_reply@example.com>';
+  env.RESEND_FROM_BOOKING = 'Pawservation <booking@example.com>';
 }
 
 describe('POST /api/signup/start — enumeration neutrality (email configured)', () => {
@@ -55,6 +56,9 @@ describe('POST /api/signup/start — enumeration neutrality (email configured)',
     expect(fetchSpy).toHaveBeenCalledWith('https://api.resend.com/emails', expect.anything());
     await start(env, OWNER_EMAIL); // owner without a password yet → send
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // Account-access mail (signup links) goes out from the no-reply sender, not the booking one.
+    const sentBody = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+    expect(sentBody.from).toBe(env.RESEND_FROM_NOREPLY);
   });
 
   it('swallows send failures — the neutral 200 already went out', async () => {

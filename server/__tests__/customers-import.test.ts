@@ -126,12 +126,15 @@ describe('POST /:slug/admin/customers/import', () => {
     const envWithEmail = {
       ...env,
       RESEND_API_KEY: 'k',
-      RESEND_FROM: 'Pawservation <b@x.com>',
+      RESEND_FROM_NOREPLY: 'Pawservation <no_reply@x.com>',
+      RESEND_FROM_BOOKING: 'Pawservation <booking@x.com>',
     } as Env;
     const { body } = await importCsv(envWithEmail, csv, true);
     expect(body.importedCustomers).toBe(1); // only brandnew@
     expect(body.invitesSent).toBe(1);
     expect(spy).toHaveBeenCalledTimes(1);
+    const sentBody = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(sentBody.from).toBe(envWithEmail.RESEND_FROM_BOOKING); // invite mail, not no-reply
   });
 
   it('does not fail the request when an invite send fails; counts it instead', async () => {
@@ -141,7 +144,8 @@ describe('POST /:slug/admin/customers/import', () => {
     const envWithEmail = {
       ...env,
       RESEND_API_KEY: 'k',
-      RESEND_FROM: 'Pawservation <b@x.com>',
+      RESEND_FROM_NOREPLY: 'Pawservation <no_reply@x.com>',
+      RESEND_FROM_BOOKING: 'Pawservation <booking@x.com>',
     } as Env;
     const { status, body } = await importCsv(envWithEmail, csv, true);
     expect(status).toBe(200);
@@ -159,7 +163,8 @@ describe('POST /:slug/admin/customers/import', () => {
     const envWithEmail = {
       ...env,
       RESEND_API_KEY: 'k',
-      RESEND_FROM: 'Pawservation <b@x.com>',
+      RESEND_FROM_NOREPLY: 'Pawservation <no_reply@x.com>',
+      RESEND_FROM_BOOKING: 'Pawservation <booking@x.com>',
     } as Env;
     const { body } = await importCsv(envWithEmail, csv, false);
     expect(body.invitesSent).toBe(0);

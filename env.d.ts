@@ -6,8 +6,16 @@ interface Env {
   TOKEN_SECRET: string;
   /** Resend API key for sending login codes. Unset in dev → codes are shown on screen instead. */
   RESEND_API_KEY?: string;
-  /** Verified Resend sender, e.g. "Pawservation <bookings@pawservation.com>". Required to send email. */
-  RESEND_FROM?: string;
+  /**
+   * Verified Resend sender for account-access mail (login codes, password resets, signup
+   * links) — customer, sitter, and owner alike. e.g. "Pawservation <no_reply@pawservation.com>".
+   */
+  RESEND_FROM_NOREPLY?: string;
+  /**
+   * Verified Resend sender for booking-related mail (invites, confirm/decline/cancel
+   * notices). e.g. "Pawservation <booking@pawservation.com>".
+   */
+  RESEND_FROM_BOOKING?: string;
   /**
    * Deployment environment. Only `'development'` (set in local `.dev.vars`) may show login codes
    * on screen when email is unconfigured; anything else (incl. unset) fails closed in production.

@@ -13,12 +13,12 @@ Cloudflare Worker (Hono) + D1 + three Vite bundles (embed widget, admin dashboar
 npm install                 # if node_modules is missing/stale
 npm run seed:local          # applies sql/schema.sql + sql/seed.sql to local D1 (fresh state)
 npm run build               # build the Vite bundles into dist/
-npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM:
+npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM_NOREPLY: --var RESEND_FROM_BOOKING:
 ```
 
 Server: **http://localhost:8787** (landing → /admin, /demo; widget at /embed/:slug).
 
-**Why the `--var` overrides (do not skip):** `.dev.vars` contains a REAL `RESEND_API_KEY`, so with it active the widget's identify flow sends actual email — and the seeded addresses (`@example.com`, `.test`) are undeliverable, which 502s the login step. Blanking `RESEND_API_KEY`/`RESEND_FROM` makes `isEmailConfigured()` false, and `ENVIRONMENT=development` then shows the 6-digit login code ON SCREEN (see `server/routes/auth.ts`). Never edit or overwrite `.dev.vars` itself — `TOKEN_SECRET` must keep coming from it or every API route 503s.
+**Why the `--var` overrides (do not skip):** `.dev.vars` contains a REAL `RESEND_API_KEY`, so with it active the widget's identify flow sends actual email — and the seeded addresses (`@example.com`, `.test`) are undeliverable, which 502s the login step. Blanking `RESEND_API_KEY`/`RESEND_FROM_NOREPLY`/`RESEND_FROM_BOOKING` makes `isEmailConfigured()` false (it requires all three), and `ENVIRONMENT=development` then shows the 6-digit login code ON SCREEN (see `server/routes/auth.ts`). Never edit or overwrite `.dev.vars` itself — `TOKEN_SECRET` must keep coming from it or every API route 503s.
 
 `npm run dev` also works (build --watch + wrangler dev) but reads `.dev.vars` as-is → real email mode. Prefer the explicit `wrangler dev --var` line above for demos.
 

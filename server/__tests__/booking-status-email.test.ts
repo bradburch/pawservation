@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sendBookingStatusEmail } from '../lib/email';
 
-const env = { RESEND_API_KEY: 'k', RESEND_FROM: 'Pawservation <b@x.com>' } as unknown as Env;
+const env = {
+  RESEND_API_KEY: 'k',
+  RESEND_FROM_NOREPLY: 'Pawservation <no_reply@x.com>',
+  RESEND_FROM_BOOKING: 'Pawservation <booking@x.com>',
+} as unknown as Env;
 
 describe('sendBookingStatusEmail', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -20,6 +24,7 @@ describe('sendBookingStatusEmail', () => {
     const init = spy.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
     expect(body.to).toBe('client@example.com');
+    expect(body.from).toBe(env.RESEND_FROM_BOOKING); // booking mail, not the no-reply sender
     expect(body.subject).toBe('Your booking with Sunny Paws was confirmed');
     expect(body.html).toContain('2030-03-01 – 2030-03-04');
   });

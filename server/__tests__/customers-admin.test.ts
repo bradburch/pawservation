@@ -96,7 +96,10 @@ describe('admin customers', () => {
     const { env } = createTestEnv();
     // Set up email so the route would normally attempt to send.
     (env as unknown as Record<string, unknown>).RESEND_API_KEY = 'test-key';
-    (env as unknown as Record<string, unknown>).RESEND_FROM = 'Pawservation <noreply@example.com>';
+    (env as unknown as Record<string, unknown>).RESEND_FROM_NOREPLY =
+      'Pawservation <no_reply@example.com>';
+    (env as unknown as Record<string, unknown>).RESEND_FROM_BOOKING =
+      'Pawservation <booking@example.com>';
 
     // Seed an active customer directly.
     const customer = await insertInvitedCustomer(
