@@ -3,14 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawsome Site Builder — fake CMS host page</title>
+    <title>Try the demo — Pawservation</title>
     <style>
+      :root {
+        /* Same tokens as the landing page (server/index.ts) — the Pawservation bar below
+           should read as one product with the rest of the site. */
+        --bg: #fcfcfa;
+        --ink: #18271d;
+        --body-c: #415044;
+        --line: #e3e7e0;
+        --green: #2e6440;
+        --deep: #1d3826;
+        --sans:
+          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+          sans-serif;
+      }
       body {
         margin: 0;
         font-family: Georgia, 'Times New Roman', serif;
         background: #f6f3ee;
         color: #2d2a26;
       }
+      .pawservation-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 24px;
+        background: var(--bg);
+        border-bottom: 1px solid var(--line);
+        font-family: var(--sans);
+      }
+      .pawservation-bar .logo {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        text-decoration: none;
+        color: var(--ink);
+        font-weight: 700;
+        font-size: 1.02rem;
+        letter-spacing: -0.02em;
+      }
+      .pawservation-bar .logo svg { display: block; color: var(--green); }
+      .pawservation-bar .back {
+        color: var(--body-c);
+        text-decoration: none;
+        font-size: 0.88rem;
+        font-weight: 500;
+      }
+      .pawservation-bar .back:hover { color: var(--ink); }
       .site-header {
         background: #2d2a26;
         color: #f6f3ee;
@@ -77,13 +118,26 @@
     </style>
   </head>
   <body>
+    <header class="pawservation-bar">
+      <a class="logo" href="/">
+        <svg width="20" height="20" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
+          <ellipse cx="50" cy="63" rx="24" ry="20" />
+          <ellipse cx="18" cy="38" rx="10" ry="13" />
+          <ellipse cx="39" cy="24" rx="10" ry="14" />
+          <ellipse cx="61" cy="24" rx="10" ry="14" />
+          <ellipse cx="82" cy="38" rx="10" ry="13" />
+        </svg>
+        Pawservation
+      </a>
+      <a class="back" href="/">← Back to Pawservation</a>
+    </header>
     <header class="site-header">
       <h1>Pawsome Site Builder</h1>
     </header>
     <p class="note">
-      This page simulates a customer's CMS website. Each column below embeds a different tenant's
-      widget via the real <code>/embed.js</code> loader — same dates, different branding, rates,
-      capacity, and data.
+      Everything below the bar above is a mock-up — a stand-in for a customer's own CMS website,
+      not part of Pawservation. Each column embeds a different tenant's widget via the real
+      <code>/embed.js</code> loader — same dates, different branding, rates, capacity, and data.
     </p>
     <main class="columns">
       <section class="column">

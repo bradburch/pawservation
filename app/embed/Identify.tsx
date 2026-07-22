@@ -75,7 +75,7 @@ export function Identify({ onDone }: { onDone: () => void }) {
           <>
             Your code: <strong>{state.prototypeCode}</strong>
             <br />
-            <small>(dev mode: this would be emailed to {state.email})</small>
+            <small>(demo: this would be emailed to {state.email})</small>
           </>
         ) : (
           <>

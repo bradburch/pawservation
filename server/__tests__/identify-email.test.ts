@@ -22,7 +22,8 @@ describe('identify with email configured', () => {
   it('sends via Resend and omits prototypeCode from the response', async () => {
     const { env } = createTestEnv();
     env.RESEND_API_KEY = 'test-key';
-    env.RESEND_FROM = 'Pawservation <bookings@example.com>';
+    env.RESEND_FROM_NOREPLY = 'Pawservation <no_reply@example.com>';
+    env.RESEND_FROM_BOOKING = 'Pawservation <booking@example.com>';
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
@@ -33,12 +34,15 @@ describe('identify with email configured', () => {
     expect(body.codeId).toBeTruthy();
     expect(body.prototypeCode).toBeUndefined();
     expect(fetchSpy).toHaveBeenCalledWith('https://api.resend.com/emails', expect.anything());
+    const sentBody = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
+    expect(sentBody.from).toBe(env.RESEND_FROM_NOREPLY); // login mail, not the booking sender
   });
 
   it('returns 502 when the email provider fails', async () => {
     const { env } = createTestEnv();
     env.RESEND_API_KEY = 'test-key';
-    env.RESEND_FROM = 'Pawservation <bookings@example.com>';
+    env.RESEND_FROM_NOREPLY = 'Pawservation <no_reply@example.com>';
+    env.RESEND_FROM_BOOKING = 'Pawservation <booking@example.com>';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 500 }));
 
     const res = await identify(env);
@@ -48,10 +52,28 @@ describe('identify with email configured', () => {
   it('fails closed (503) in production when no email provider is configured', async () => {
     const { env } = createTestEnv();
     env.ENVIRONMENT = 'production'; // not development, and no RESEND_* set
-    const res = await identify(env);
+    // paws-and-relax isn't one of the public /demo tenants, so it still needs a real provider.
+    const res = await app.request(
+      '/api/paws-and-relax/identify',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'jess@example.com' }),
+      },
+      env,
+    );
     expect(res.status).toBe(503);
     const body = (await res.json()) as { prototypeCode?: string };
     expect(body.prototypeCode).toBeUndefined();
+  });
+
+  it('still shows the on-screen code in production for the public demo tenant', async () => {
+    const { env } = createTestEnv();
+    env.ENVIRONMENT = 'production'; // no RESEND_* set — /demo visitors have no real inbox
+    const res = await identify(env); // sunny-paws
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { prototypeCode?: string };
+    expect(body.prototypeCode).toBeTruthy();
   });
 });
 

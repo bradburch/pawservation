@@ -13,6 +13,11 @@ import type { AppEnv } from '../types';
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 
+// The public /demo page (demo.html) embeds these two tenants for anyone to try, with no
+// real inbox behind their seeded EndUsers — so they always get the on-screen code, the same
+// path local dev uses, regardless of ENVIRONMENT.
+const DEMO_TENANT_SLUGS = new Set(['sunny-paws', 'happy-tails']);
+
 // --- Reference valibot pattern ---
 // This file is the reference for validating request bodies with valibot: declare a schema, then
 // `safeParse` once to both validate and narrow types (replacing hand-rolled `typeof` guards + casts).
@@ -60,10 +65,11 @@ export const authRoutes = new Hono<AppEnv>()
       }
       return c.json({ codeId });
     }
-    // No email provider configured. Only show the code on screen in explicit local development —
-    // gating on an env signal (not merely on the secrets being absent) so a production deploy that
-    // forgot to set RESEND_* fails CLOSED instead of silently leaking codes.
-    if (c.env.ENVIRONMENT === 'development') {
+    // No email provider configured. Only show the code on screen in explicit local development,
+    // or for the two public demo tenants — gating on an env signal (not merely on the secrets
+    // being absent) so a production deploy that forgot to set RESEND_* fails CLOSED instead of
+    // silently leaking codes for real tenants.
+    if (c.env.ENVIRONMENT === 'development' || DEMO_TENANT_SLUGS.has(tenant.Slug)) {
       return c.json({ codeId, prototypeCode: code });
     }
     return c.json({ error: 'Login is temporarily unavailable.' }, 503);
