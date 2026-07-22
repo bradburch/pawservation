@@ -84,6 +84,7 @@ export function OwnerConsole({
 
   const remove = async (target: string) => {
     setError('');
+    setNote(null);
     try {
       await adminFetch(session.token, `/api/owner/allowlist/${encodeURIComponent(target)}`, {
         method: 'DELETE',

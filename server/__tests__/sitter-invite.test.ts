@@ -162,4 +162,29 @@ describe('POST /api/owner/allowlist — invite email', () => {
     expect(claim.ClaimedAt).toBeTruthy();
     expect(raw.prepare('SELECT 1 FROM Tenants WHERE Id = ?').get(claim.TenantId)).toBeTruthy();
   });
+
+  it('unconfigured email outside development adds the row without minting', async () => {
+    const { env, raw } = createTestEnv();
+    // Blank email config (simulate unconfigured email).
+    env.RESEND_API_KEY = undefined;
+    env.RESEND_FROM_NOREPLY = undefined;
+    env.RESEND_FROM_BOOKING = undefined;
+    env.ENVIRONMENT = 'production';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const res = await post(env, 'unconfigured@x.test');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { emailSent: boolean; prototypeLink?: string };
+    expect(body.emailSent).toBe(false);
+    expect(body.prototypeLink).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    // Row should exist.
+    const n = (
+      raw
+        .prepare('SELECT COUNT(*) AS n FROM AllowedSitters WHERE Email = ?')
+        .get('unconfigured@x.test') as { n: number }
+    ).n;
+    expect(n).toBe(1);
+  });
 });
