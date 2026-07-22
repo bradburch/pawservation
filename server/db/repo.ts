@@ -64,6 +64,19 @@ export async function getTenantUserByEmail(
     .first<TenantUser>();
 }
 
+/** Returns whether a row actually changed — false means the email has no sitter login. */
+export async function updateTenantUserPasswordHash(
+  db: D1Database,
+  email: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE TenantUsers SET PasswordHash = ? WHERE Email = ?')
+    .bind(passwordHash, email)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 export async function listServices(db: D1Database, tenantId: string): Promise<TenantService[]> {
   const { results } = await db
     .prepare(
@@ -1452,6 +1465,19 @@ export async function insertOwnerUser(
     .prepare('INSERT INTO OwnerUsers (Id, Email, PasswordHash) VALUES (?, ?, ?)')
     .bind(id, email, passwordHash)
     .run();
+}
+
+/** Returns whether a row actually changed — false means the email has no owner account. */
+export async function updateOwnerPasswordHash(
+  db: D1Database,
+  email: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE OwnerUsers SET PasswordHash = ? WHERE Email = ?')
+    .bind(passwordHash, email)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 export async function getAllowedSitter(
