@@ -170,6 +170,8 @@ const complete = (env: Env, body: unknown) =>
   );
 
 describe('POST /api/signup/complete — sitter', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('provisions tenant + login atomically and returns a working admin token', async () => {
     const { env, raw } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);
@@ -295,6 +297,7 @@ describe('POST /api/signup/complete — sitter', () => {
 
   it('a second live link that beat the nonce race aborts atomically with 409 — no orphan tenant', async () => {
     const { env, raw } = createTestEnv();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const t1 = await getSetupToken(env, ALLOWED_EMAIL);
     const t2 = await getSetupToken(env, ALLOWED_EMAIL); // second link, its own live nonce
     expect(
@@ -307,6 +310,7 @@ describe('POST /api/signup/complete — sitter', () => {
       businessName: 'Second Biz',
     });
     expect(res.status).toBe(409); // TenantUsers.Email UNIQUE aborted the whole batch
+    expect(errSpy).toHaveBeenCalledWith('sitter signup insert failed', expect.anything());
     const after = (raw.prepare('SELECT COUNT(*) AS n FROM Tenants').get() as { n: number }).n;
     expect(after).toBe(before); // no orphan 'second-biz' tenant row
   });
@@ -347,6 +351,8 @@ describe('POST /api/signup/complete — sitter', () => {
 });
 
 describe('POST /api/signup/complete — owner', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('creates the OwnerUsers row and returns an owner token', async () => {
     const { env, raw } = createTestEnv();
     const t = await getSetupToken(env, OWNER_EMAIL);
@@ -370,9 +376,11 @@ describe('POST /api/signup/complete — owner', () => {
 
   it('a duplicate-owner replay gets 409', async () => {
     const { env } = createTestEnv();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const t1 = await getSetupToken(env, OWNER_EMAIL);
     const t2 = await getSetupToken(env, OWNER_EMAIL);
     expect((await complete(env, { token: t1, password: 'ownerpass1' })).status).toBe(200);
     expect((await complete(env, { token: t2, password: 'ownerpass1' })).status).toBe(409);
+    expect(errSpy).toHaveBeenCalledWith('owner signup insert failed', expect.anything());
   });
 });

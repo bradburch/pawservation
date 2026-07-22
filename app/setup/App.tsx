@@ -45,12 +45,16 @@ function ExpiredNotice() {
 }
 
 export default function App() {
-  useEffect(() => {
-    document.title = 'Set up your account';
-  }, []);
-
   const token = useMemo(() => new URLSearchParams(window.location.search).get('t'), []);
   const payload = useMemo(() => decodePayload(token), [token]);
+  const isReset = useMemo(
+    () => new URLSearchParams(window.location.search).get('reset') === '1',
+    [],
+  );
+
+  useEffect(() => {
+    document.title = isReset ? 'Reset your password' : 'Set up your account';
+  }, [isReset]);
   // Captured once at mount (not read live during render, which React's purity rule forbids) —
   // the server re-verifies expiry on submit regardless, so this is UX-only staleness.
   const [now] = useState(() => Date.now());
@@ -66,7 +70,7 @@ export default function App() {
 
   const submit = async () => {
     if (busy) return;
-    if (sitter && !businessName.trim()) {
+    if (!isReset && sitter && !businessName.trim()) {
       setError('Enter your business name.');
       return;
     }
@@ -81,13 +85,13 @@ export default function App() {
     setError('');
     setBusy(true);
     try {
-      const res = await fetch('/api/signup/complete', {
+      const res = await fetch(isReset ? '/api/password-reset/complete' : '/api/signup/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
           password,
-          ...(sitter ? { businessName: businessName.trim() } : {}),
+          ...(!isReset && sitter ? { businessName: businessName.trim() } : {}),
         }),
       });
       const body = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
@@ -110,11 +114,17 @@ export default function App() {
 
   return (
     <div className="pb-wrap pb-login">
-      <h1>{sitter ? 'Set up your business' : 'Set up your owner account'}</h1>
+      <h1>
+        {isReset
+          ? 'Reset your password'
+          : sitter
+            ? 'Set up your business'
+            : 'Set up your owner account'}
+      </h1>
       <p>
-        Setting up <strong>{payload.email}</strong>
+        {isReset ? 'Resetting the password for' : 'Setting up'} <strong>{payload.email}</strong>
       </p>
-      {sitter && (
+      {!isReset && sitter && (
         <label>
           Business name
           <input
@@ -146,7 +156,13 @@ export default function App() {
         />
       </label>
       <button onClick={submit} disabled={busy}>
-        {busy ? 'Setting up…' : 'Finish setup'}
+        {busy
+          ? isReset
+            ? 'Resetting…'
+            : 'Setting up…'
+          : isReset
+            ? 'Reset password'
+            : 'Finish setup'}
       </button>
       {error && <p className="pb-error">{error}</p>}
     </div>

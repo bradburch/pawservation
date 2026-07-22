@@ -5,10 +5,11 @@ import type { AppEnv } from '../types';
 
 /**
  * Reserved first-segment words under /api that are NOT tenant slugs: /api/admin/* (sitter
- * login), /api/signup/* (invite signup), /api/owner/* (owner console). Tenants can never claim
- * these as slugs — enforced again at signup-time slug generation (routes/signup.ts).
+ * login), /api/signup/* (invite signup), /api/owner/* (owner console), /api/password-reset/*
+ * (password recovery). Tenants can never claim these as slugs — enforced again at signup-time
+ * slug generation (routes/signup.ts).
  */
-export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner']);
+export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner', 'password-reset']);
 
 /** Resolves the :slug param to a tenant (404 on unknown) and stores it on the context. */
 export const tenantMiddleware = createMiddleware<AppEnv>(async (c, next) => {
