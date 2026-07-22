@@ -7,8 +7,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
     const { env } = createTestEnv();
     const services = await listServices(env.PAWBOOK_DB, TENANT_A);
     expect(services.find((s) => s.ServiceType === 'boarding')?.MaxConcurrentPets).toBe(2);
-    expect(services.find((s) => s.ServiceType === 'boarding')?.MaxPerDay).toBeNull();
-    expect(services.find((s) => s.ServiceType === 'housesitting')?.MaxPerDay).toBeNull();
+    expect(services.find((s) => s.ServiceType === 'housesitting')?.MaxConcurrentPets).toBeNull();
     expect(services.find((s) => s.ServiceType === 'walk')?.MaxConcurrentPets).toBeNull();
   });
 
@@ -26,7 +25,6 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       maxPetCount: before.MaxPetCount,
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: 7,
-      maxPerDay: null,
       cancellationTiers: before.CancellationTiers,
     });
     let after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
@@ -42,7 +40,6 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       maxPetCount: before.MaxPetCount,
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: null,
-      maxPerDay: null,
       cancellationTiers: before.CancellationTiers,
     });
     after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(

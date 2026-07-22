@@ -118,7 +118,6 @@ describe('pet-type rows (repo)', () => {
       maxPetCount: null,
       acceptedPetTypes: ['rabbit'],
       maxConcurrentPets: null,
-      maxPerDay: null,
       cancellationTiers: null,
     });
     const result = await deletePetTypeAndScrub(env.PAWBOOK_DB, TENANT_A, 'rabbit');
@@ -149,7 +148,6 @@ describe('AcceptedPetTypes round-trip (repo)', () => {
       maxPetCount: before.MaxPetCount,
       acceptedPetTypes: ['dog'],
       maxConcurrentPets: before.MaxConcurrentPets,
-      maxPerDay: before.MaxPerDay,
       cancellationTiers: before.CancellationTiers,
     });
     const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(

@@ -993,7 +993,6 @@ describe('configurable limits via admin settings (service-level, 0015)', () => {
       type: string;
       capacityKind: 'boarding' | 'housesit' | 'none';
       maxConcurrentPets: number | null;
-      maxPerDay: number | null;
       maxNights: number | null;
     }[];
   };
@@ -1011,7 +1010,7 @@ describe('configurable limits via admin settings (service-level, 0015)', () => {
     const res = await putSettings(env, {
       services: [
         { type: 'boarding', enabled: true, maxConcurrentPets: 5, options: boardingOpts },
-        { type: 'housesitting', enabled: true, maxPerDay: 2, options: houseOpts },
+        { type: 'housesitting', enabled: true, maxConcurrentPets: 2, options: houseOpts },
       ],
     });
     expect(res.status).toBe(204);
@@ -1020,16 +1019,14 @@ describe('configurable limits via admin settings (service-level, 0015)', () => {
     expect(boarding).toMatchObject({
       capacityKind: 'boarding',
       maxConcurrentPets: 5,
-      maxPerDay: null,
     });
     expect(settings.services.find((s) => s.type === 'housesitting')).toMatchObject({
       capacityKind: 'housesit',
-      maxPerDay: 2,
+      maxConcurrentPets: 2,
     });
     expect(settings.services.find((s) => s.type === 'walk')).toMatchObject({
       capacityKind: 'none',
       maxConcurrentPets: null,
-      maxPerDay: null,
     });
   });
 
@@ -1118,5 +1115,77 @@ describe('configurable limits via admin settings (service-level, 0015)', () => {
     const { env } = createTestEnv();
     const res = await putSettings(env, { timezone: 'Mars/Phobos' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('settings — capacity in pets (MaxPerDay retired)', () => {
+  it('PATCH maxConcurrentPets on a house-sit service persists and GET reflects it', async () => {
+    const { env } = createTestEnv();
+    const headers = {
+      ...(await adminHeaders(TENANT_A)),
+      'Content-Type': 'application/json',
+    };
+    const put = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'housesitting',
+              enabled: true,
+              maxConcurrentPets: 3,
+              options: [{ label: 'Standard', rate: 70 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(put.status).toBe(204);
+
+    const get = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const body = (await get.json()) as {
+      services: { type: string; maxConcurrentPets: number | null }[];
+    };
+    const house = body.services.find((s) => s.type === 'housesitting')!;
+    expect(house.maxConcurrentPets).toBe(3);
+    // maxPerDay is gone from the API surface.
+    expect('maxPerDay' in house).toBe(false);
+  });
+
+  it('PATCH rejects a maxPerDay value on any service', async () => {
+    const { env } = createTestEnv();
+    const headers = {
+      ...(await adminHeaders(TENANT_A)),
+      'Content-Type': 'application/json',
+    };
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'housesitting',
+              enabled: true,
+              maxPerDay: 2,
+              options: [{ label: 'Standard', rate: 70 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "House sitting: that capacity doesn't apply to this service.",
+    );
   });
 });

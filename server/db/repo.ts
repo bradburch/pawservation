@@ -82,7 +82,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind,
               SortOrder, Questions, MinNights, MaxNights, MinPetCount, MaxPetCount, AcceptedPetTypes,
-              MaxConcurrentPets, MaxPerDay, CancellationTiers
+              MaxConcurrentPets, CancellationTiers
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -887,7 +887,6 @@ export async function setServiceConfig(
     maxPetCount: number | null;
     acceptedPetTypes: string[] | null;
     maxConcurrentPets: number | null;
-    maxPerDay: number | null;
     cancellationTiers: CancellationTier[] | null;
   },
 ): Promise<boolean> {
@@ -895,7 +894,7 @@ export async function setServiceConfig(
     .prepare(
       `UPDATE TenantServices SET
          Enabled = ?, Questions = ?, MinNights = ?, MaxNights = ?, MinPetCount = ?, MaxPetCount = ?,
-         AcceptedPetTypes = ?, MaxConcurrentPets = ?, MaxPerDay = ?, CancellationTiers = ?
+         AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -907,7 +906,6 @@ export async function setServiceConfig(
       config.maxPetCount,
       config.acceptedPetTypes === null ? null : JSON.stringify(config.acceptedPetTypes),
       config.maxConcurrentPets,
-      config.maxPerDay,
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),
       tenantId,
       serviceType,

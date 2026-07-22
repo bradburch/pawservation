@@ -373,7 +373,6 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers: svc.CancellationTiers,
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
-        maxPerDay: svc.MaxPerDay,
         options: options
           .filter((o) => o.ServiceType === svc.ServiceType)
           .map((o) => ({
@@ -474,23 +473,25 @@ export const adminRoutes = new Hono<AppEnv>()
         );
       if (svc.minPetCount != null && svc.maxPetCount != null && svc.minPetCount > svc.maxPetCount)
         return c.json({ error: `${meta.Label}: min pets cannot exceed max pets.` }, 400);
-      // Per-service caps (0015): same PATCH idiom, same 1..1000 sanity rail as the old tenant
-      // caps. A cap on the wrong CapacityKind is rejected explicitly — silent-ignore would hide
-      // sitter mistakes.
-      if (
-        !isNullableLimit(svc.maxConcurrentPets ?? null, DEFENSIVE_MAX_PET_COUNT) ||
-        !isNullableLimit(svc.maxPerDay ?? null, DEFENSIVE_MAX_PET_COUNT)
-      )
+      // Per-service cap (0015; pets everywhere as of 0017): same PATCH idiom, same 1..1000 sanity
+      // rail. MaxConcurrentPets is the pets-per-day cap for BOTH pool kinds.
+      if (!isNullableLimit(svc.maxConcurrentPets ?? null, DEFENSIVE_MAX_PET_COUNT))
         return c.json(
           { error: `${meta.Label}: capacity must be a positive number, or blank for no limit.` },
           400,
         );
-      if (svc.maxConcurrentPets != null && meta.CapacityKind !== 'boarding')
+      if (
+        svc.maxConcurrentPets != null &&
+        meta.CapacityKind !== 'boarding' &&
+        meta.CapacityKind !== 'housesit'
+      )
         return c.json(
           { error: `${meta.Label}: that capacity doesn't apply to this service.` },
           400,
         );
-      if (svc.maxPerDay != null && meta.CapacityKind !== 'housesit')
+      // MaxPerDay is retired (0017): the house-sit cap now lives on MaxConcurrentPets. A client that
+      // still sends the old field is rejected — rather than silently dropping the intended cap.
+      if (svc.maxPerDay != null)
         return c.json(
           { error: `${meta.Label}: that capacity doesn't apply to this service.` },
           400,
@@ -558,7 +559,6 @@ export const adminRoutes = new Hono<AppEnv>()
           'acceptedPetTypes' in svc ? (svc.acceptedPetTypes ?? null) : current.AcceptedPetTypes,
         maxConcurrentPets:
           'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : current.MaxConcurrentPets,
-        maxPerDay: 'maxPerDay' in svc ? (svc.maxPerDay ?? null) : current.MaxPerDay,
         cancellationTiers:
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
       });
