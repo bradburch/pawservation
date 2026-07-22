@@ -68,7 +68,13 @@ describe('mintLink', () => {
   it('mints a /setup link whose token + nonce carry the requested TTL', async () => {
     const { env } = createTestEnv();
     const before = Date.now();
-    const url = await mintLink(env, 'https://x.test', 'sitter@x.test', 'sitter', INVITE_LINK_TTL_SECONDS);
+    const url = await mintLink(
+      env,
+      'https://x.test',
+      'sitter@x.test',
+      'sitter',
+      INVITE_LINK_TTL_SECONDS,
+    );
     expect(url).toMatch(/^https:\/\/x\.test\/setup\?t=/);
 
     const token = new URL(url).searchParams.get('t')!;

@@ -105,7 +105,10 @@ export const signupRoutes = new Hono<AppEnv>()
       if (overCap) return c.json({ ok: true });
       const kind = await eligibleKind(c.env, email);
       if (!kind) return c.json({ ok: true });
-      return c.json({ ok: true, prototypeLink: await mintLink(c.env, origin, email, kind, SIGNUP_LINK_TTL_SECONDS) });
+      return c.json({
+        ok: true,
+        prototypeLink: await mintLink(c.env, origin, email, kind, SIGNUP_LINK_TTL_SECONDS),
+      });
     }
 
     // Enumeration neutrality is structural: the 200 goes out NOW; everything whose duration
@@ -115,7 +118,11 @@ export const signupRoutes = new Hono<AppEnv>()
       if (overCap) return;
       const kind = await eligibleKind(c.env, email);
       if (!kind) return;
-      await sendSignupLink(c.env, email, await mintLink(c.env, origin, email, kind, SIGNUP_LINK_TTL_SECONDS));
+      await sendSignupLink(
+        c.env,
+        email,
+        await mintLink(c.env, origin, email, kind, SIGNUP_LINK_TTL_SECONDS),
+      );
     })().catch((err) => console.error('signup link send failed', err));
     try {
       c.executionCtx.waitUntil(work);
