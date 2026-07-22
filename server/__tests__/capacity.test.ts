@@ -137,13 +137,21 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
   });
 
   it('house-sit petCount null/0 still counts as 1', () => {
-    const capNull = buildCapacity([houseSit('2028-09-01', '2028-09-04', 'housesitting', undefined)]);
+    const capNull = buildCapacity([
+      houseSit('2028-09-01', '2028-09-04', 'housesitting', undefined),
+    ]);
     const sit: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: 1 };
     // 1 existing pet (defaulted) fills cap 1 → a second 1-pet request blocks.
     expect(rangeHasConflict('2028-09-02', '2028-09-03', sit, capNull)).toBe(true);
 
     const capZero = buildCapacity([
-      { start_date: '2028-10-01', end_date: '2028-10-04', kind: 'housesit', serviceType: 'housesitting', petCount: 0 },
+      {
+        start_date: '2028-10-01',
+        end_date: '2028-10-04',
+        kind: 'housesit',
+        serviceType: 'housesitting',
+        petCount: 0,
+      },
     ]);
     expect(rangeHasConflict('2028-10-02', '2028-10-03', sit, capZero)).toBe(true);
   });
