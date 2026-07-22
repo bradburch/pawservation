@@ -194,32 +194,36 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
 
   return (
     <div className="pb-wrap pb-login">
-      <h1>Welcome back</h1>
-      <label>
-        Email
-        <input
-          type="email"
-          value={email}
-          autoComplete="username"
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void submit()}
-        />
-      </label>
-      <label>
-        Password
-        <input
-          type="password"
-          value={password}
-          autoComplete="current-password"
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void submit()}
-        />
-      </label>
-      <button onClick={submit} disabled={busy}>
-        {busy ? 'Signing in…' : 'Sign in'}
-      </button>
+      {!signupOpen && !resetOpen && (
+        <>
+          <h1>Welcome back</h1>
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              autoComplete="username"
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void submit()}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void submit()}
+            />
+          </label>
+          <button onClick={submit} disabled={busy}>
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+        </>
+      )}
       <div className="pb-login-signup">
-        {!signupOpen ? (
+        {resetOpen ? null : !signupOpen ? (
           <button type="button" className="pb-linklike" onClick={() => setSignupOpen(true)}>
             New here? Enter your email to get set up
           </button>
@@ -253,7 +257,7 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
         )}
       </div>
       <div className="pb-login-signup">
-        {!resetOpen ? (
+        {signupOpen ? null : !resetOpen ? (
           <button type="button" className="pb-linklike" onClick={() => setResetOpen(true)}>
             Forgot password?
           </button>
