@@ -98,6 +98,30 @@ export async function sendSignupLink(env: Env, to: string, url: string): Promise
   });
 }
 
+/**
+ * Send a sitter their owner-console invite: a welcome + the 7-day setup link + a self-serve
+ * fallback. From RESEND_FROM_NOREPLY (account-lifecycle mail, per the #41 sender split). Throws
+ * if email is not configured or Resend rejects.
+ */
+export async function sendSitterInvite(env: Env, to: string, url: string): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // url is server-built, but escape it for the attribute context as defense-in-depth (per
+  // sendSignupLink). The fallback origin is derived from the same url. Subject/text are plain-text
+  // JSON fields in Resend's API — no escaping needed.
+  const origin = new URL(url).origin;
+  await resendPost(env, env.RESEND_FROM_NOREPLY!, {
+    to,
+    subject: "You're invited to set up your Pawservation account",
+    text:
+      `You've been invited to Pawservation. Set up your account here: ${url}\n\n` +
+      `This link expires in 7 days. Link expired? Go to ${origin}/admin, choose "New here", and enter this email address.`,
+    html:
+      `<p>You have been invited to Pawservation.</p>` +
+      `<p><a href="${htmlEscape(url)}">Set up your account</a></p>` +
+      `<p>This link expires in 7 days. Link expired? Go to ${htmlEscape(origin)}/admin, choose &ldquo;New here&rdquo; and enter this email address.</p>`,
+  });
+}
+
 /** Send a one-time password-reset link. Throws if email is not configured or Resend rejects. */
 export async function sendResetLink(env: Env, to: string, url: string): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
