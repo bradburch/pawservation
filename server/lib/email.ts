@@ -95,3 +95,16 @@ export async function sendSignupLink(env: Env, to: string, url: string): Promise
     html: `<p><a href="${htmlEscape(url)}">Finish setting up your Pawservation account</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
   });
 }
+
+/** Send a one-time password-reset link. Throws if email is not configured or Resend rejects. */
+export async function sendResetLink(env: Env, to: string, url: string): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // url is server-built, but escape it for the attribute context as defense-in-depth (per
+  // sendInvite/sendSignupLink). Subject/text are plain-text JSON fields in Resend's API.
+  await resendPost(env, {
+    to,
+    subject: 'Reset your Pawservation password',
+    text: `Reset your Pawservation password: ${url}\n\nThis link expires in 30 minutes. If you didn't request it, ignore this email.`,
+    html: `<p><a href="${htmlEscape(url)}">Reset your Pawservation password</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
+  });
+}
