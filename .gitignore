@@ -5,10 +5,12 @@ dist/
 worker-configuration.d.ts
 *.tsbuildinfo
 .superpowers/
-docs/superpowers/plans/
+docs/superpowers/
 .worktrees/
 client_secret*
 CALENDAR_LOGIC.md
 CLAUDE.md
 docs/data-model.html
 docs/d1-vs-neon.html
+docs/ai-native-ideas.html
+docs/specs/
