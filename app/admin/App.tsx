@@ -86,6 +86,13 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
   const [signupSent, setSignupSent] = useState(false);
   const [prototypeLink, setPrototypeLink] = useState('');
   const [signupBusy, setSignupBusy] = useState(false);
+  // "Forgot password?" — same neutral-response shape as the signup toggle above; the server
+  // never reveals whether the email has an account (see /api/password-reset/start).
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSent, setResetSent] = useState(false);
+  const [resetPrototypeLink, setResetPrototypeLink] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
 
   const submit = async () => {
     if (busy) return;
@@ -157,6 +164,34 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
     }
   };
 
+  const startReset = async () => {
+    if (resetBusy) return;
+    setError('');
+    setResetBusy(true);
+    try {
+      const res = await fetch('/api/password-reset/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        prototypeLink?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(body.error ?? 'Try again.');
+        return;
+      }
+      setResetSent(true);
+      setResetPrototypeLink(body.prototypeLink ?? '');
+    } catch {
+      setError('Could not reach the server.');
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
   return (
     <div className="pb-wrap pb-login">
       <h1>Welcome back</h1>
@@ -213,6 +248,40 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
             </label>
             <button type="button" onClick={startSignup} disabled={signupBusy}>
               {signupBusy ? 'Sending…' : 'Get set up'}
+            </button>
+          </>
+        )}
+      </div>
+      <div className="pb-login-signup">
+        {!resetOpen ? (
+          <button type="button" className="pb-linklike" onClick={() => setResetOpen(true)}>
+            Forgot password?
+          </button>
+        ) : resetSent ? (
+          <>
+            <p>If that email has an account, a reset link is on its way.</p>
+            {resetPrototypeLink && (
+              <p>
+                {/* Dev only: the server includes prototypeLink when no email provider is
+                    configured (mirrors the signup toggle above). */}
+                <a href={resetPrototypeLink}>Open your reset link (dev)</a>
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <label>
+              Your email
+              <input
+                type="email"
+                value={resetEmail}
+                autoComplete="email"
+                onChange={(e) => setResetEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void startReset()}
+              />
+            </label>
+            <button type="button" onClick={startReset} disabled={resetBusy}>
+              {resetBusy ? 'Sending…' : 'Send reset link'}
             </button>
           </>
         )}
