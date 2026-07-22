@@ -211,6 +211,25 @@ describe('POST /api/password-reset/complete — owner', () => {
     expect(await verifyPassword('newownerpass', row.PasswordHash)).toBe(true);
     expect(await verifyPassword('ownerpass1', row.PasswordHash)).toBe(false);
   });
+
+  it('re-checks OWNER_EMAILS at completion — a removed owner is rejected (400)', async () => {
+    const { env } = createTestEnv();
+    await makeOwner(env, 'ownerpass1');
+    const t = await getResetToken(env, OWNER_EMAIL);
+    env.OWNER_EMAILS = ''; // secret changed since the link was issued
+    expect((await complete(env, { token: t, password: 'newownerpass' })).status).toBe(400);
+  });
+
+  it('does not mint a reset link for a deprovisioned owner even though the OwnerUsers row persists', async () => {
+    const { env } = createTestEnv();
+    await makeOwner(env, 'ownerpass1');
+    env.OWNER_EMAILS = ''; // owner removed from the allowlist secret; row still exists
+    const res = await start(env, OWNER_EMAIL);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; prototypeLink?: string };
+    expect(body).toEqual({ ok: true });
+    expect(body.prototypeLink).toBeUndefined();
+  });
 });
 
 describe('POST /api/password-reset/complete — vanished account', () => {

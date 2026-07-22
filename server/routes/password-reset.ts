@@ -7,6 +7,7 @@ import {
   updateTenantUserPasswordHash,
 } from '../db/repo';
 import { isEmailConfigured, sendResetLink } from '../lib/email';
+import { isOwnerEmail } from '../lib/owners';
 import { hashPassword } from '../lib/password';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
 import {
@@ -41,9 +42,15 @@ const RATE_LIMIT_MAX = 5;
 export const RATE_LIMIT_TTL_SECONDS = 3600;
 const RATE_KEY = (email: string, ip: string) => `pwreset:rl:${email}:${ip}`;
 
-/** Owner checked first — an owner email's account, if it exists, is always the OwnerUsers row. */
+/**
+ * Owner checked first — an owner email's account, if it exists, is always the OwnerUsers row.
+ * Also gated on OWNER_EMAILS membership (not just the OwnerUsers row) so a deprovisioned owner
+ * — the row persists forever; there's no delete endpoint — doesn't get a reset link minted for
+ * them just because they once had one. Mirrors signup.ts's eligibleKind.
+ */
 async function resettableKind(env: Env, email: string): Promise<'sitter' | 'owner' | null> {
-  if (await getOwnerUserByEmail(env.PAWBOOK_DB, email)) return 'owner';
+  if (isOwnerEmail(env, email) && (await getOwnerUserByEmail(env.PAWBOOK_DB, email)))
+    return 'owner';
   if (await getTenantUserByEmail(env.PAWBOOK_DB, email)) return 'sitter';
   return null;
 }
@@ -129,6 +136,8 @@ export const passwordResetRoutes = new Hono<AppEnv>()
     const passwordHash = await hashPassword(password);
 
     if (payload.kind === 'owner') {
+      // The secret may have changed since the link was issued — re-check membership.
+      if (!isOwnerEmail(c.env, payload.email)) return c.json({ error: EXPIRED_ERROR }, 400);
       const changed = await updateOwnerPasswordHash(c.env.PAWBOOK_DB, payload.email, passwordHash);
       if (!changed) return c.json({ error: EXPIRED_ERROR }, 400);
       const ownerToken = await mintOwnerToken(payload.email, c.env.TOKEN_SECRET);
