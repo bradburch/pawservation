@@ -1508,6 +1508,51 @@ export async function listAllowedSitters(
   return results;
 }
 
+export type SitterRosterRow = {
+  TenantId: string;
+  Slug: string;
+  DisplayName: string;
+  CreatedAt: string;
+  Clients: number; // COUNT(EndUsers), all-time
+  Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
+  Earned: number; // SUM(Payments.Amount), PaidDate >= sinceDate
+};
+
+/**
+ * Cross-tenant sitter roster — the FIRST sanctioned no-WHERE-TenantId query, safe only under
+ * ownerAuth. `sinceDate` ('YYYY-MM-DD') or null = all-time. Clients are always all-time; bookings
+ * window on CreatedAt, earned on PaidDate. LEFT-JOIN semantics via correlated subqueries so a
+ * sitter with zero activity still returns a row (Bookings 0, Earned 0).
+ */
+export async function listSitterRoster(
+  db: D1Database,
+  sinceDate: string | null,
+): Promise<SitterRosterRow[]> {
+  // null window → a lower bound before any real date, so one positional bind serves both
+  // windowed subqueries. CreatedAt is a datetime ('YYYY-MM-DD HH:MM:SS'); PaidDate is a date;
+  // both sort correctly against a 'YYYY-MM-DD' floor.
+  const floor = sinceDate ?? '0000-01-01';
+  const { results } = await db
+    .prepare(
+      `SELECT
+         t.Id AS TenantId,
+         t.Slug AS Slug,
+         t.DisplayName AS DisplayName,
+         t.CreatedAt AS CreatedAt,
+         (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id) AS Clients,
+         (SELECT COUNT(*) FROM BookingRequests b
+            WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
+              AND b.ServiceType != 'blocked' AND b.CreatedAt >= ?) AS Bookings,
+         (SELECT COALESCE(SUM(p.Amount), 0) FROM Payments p
+            WHERE p.TenantId = t.Id AND p.PaidDate >= ?) AS Earned
+       FROM Tenants t
+       ORDER BY t.DisplayName COLLATE NOCASE, t.Id`,
+    )
+    .bind(floor, floor)
+    .all<SitterRosterRow>();
+  return results;
+}
+
 /** Idempotent: re-adding returns the existing row untouched (customer-invite precedent). */
 export async function addAllowedSitter(db: D1Database, email: string): Promise<AllowedSitterRow> {
   await db
