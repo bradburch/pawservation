@@ -136,7 +136,9 @@ export type PaymentRow = {
 };
 
 /** getAnalytics result: raw PascalCase aggregate rows. monthly is exactly 12 entries, oldest
- * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS. */
+ * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS.
+ * Exception: `ytd`/`quarterly` are already in payload (camelCase) shape — the helper emits them
+ * that way and the route forwards them unmapped, so do NOT "correct" them to PascalCase. */
 export type AnalyticsData = {
   monthly: { Month: string; Total: number }[];
   ytd: number;
