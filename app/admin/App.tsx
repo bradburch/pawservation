@@ -638,22 +638,35 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       }
     });
 
+  // Open the Google OAuth popup and poll for it closing, then refresh just the calendar status.
+  // Extracted so the settings panel (connectCalendar) and the onboarding wizard drive ONE popup
+  // path — a future popup fix touches only this. The callback page is script-free (CSP), so we
+  // detect the popup closing here; the timer fires up to 1s after close (and immediately if the
+  // popup was blocked), detached from any user action, so it narrows to `calendar` alone rather
+  // than the full refresh() to avoid clobbering edits the sitter staged elsewhere meanwhile.
+  const openCalendarPopup = (url: string) => {
+    const popup = window.open(url, 'pawservation-gcal', 'width=520,height=640');
+    const timer = window.setInterval(() => {
+      if (!popup || popup.closed) {
+        window.clearInterval(timer);
+        void refreshCalendarStatus();
+      }
+    }, 1000);
+  };
+
   const connectCalendar = () =>
     run(async () => {
       const { url } = await adminApi.calendar.start(slug, token);
-      const popup = window.open(url, 'pawservation-gcal', 'width=520,height=640');
-      // The callback page is script-free (CSP), so detect the popup closing here and re-fetch
-      // the connection status. Narrowed to just `calendar` (not the full refresh()) — this fires
-      // on a timer detached from any user action (up to 1s after the popup actually closes, and
-      // immediately if it was blocked), so it must not clobber whatever the sitter has staged
-      // elsewhere on the page in the meantime.
-      const timer = window.setInterval(() => {
-        if (!popup || popup.closed) {
-          window.clearInterval(timer);
-          void refreshCalendarStatus();
-        }
-      }, 1000);
+      openCalendarPopup(url);
     });
+
+  // Wizard-facing variant: same start+popup path, but REJECTS on a failed start (notably a 503
+  // when the server's Google OAuth env is unset) so the calendar step can catch it and render
+  // its disabled note — instead of run() swallowing it into the page-level error banner.
+  const connectCalendarOrThrow = async () => {
+    const { url } = await adminApi.calendar.start(slug, token);
+    openCalendarPopup(url);
+  };
 
   const disconnectCalendar = () =>
     run(async () => {
@@ -882,6 +895,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           settings={settings}
           slug={slug}
           token={token}
+          connectCalendar={connectCalendarOrThrow}
           onClose={() => setWizardOpen(false)}
           onApplied={async () => {
             await refresh();
