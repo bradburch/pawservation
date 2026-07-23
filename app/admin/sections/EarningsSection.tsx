@@ -122,6 +122,7 @@ export function EarningsSection({
 
   const hasPayments = data.byService.length > 0;
   const maxService = Math.max(1, ...data.byService.map((s) => s.total));
+  const maxQuarter = Math.max(1, ...data.quarterly.map((q) => q.total));
 
   return (
     <>
@@ -143,6 +144,10 @@ export function EarningsSection({
           <span>Last month</span>
         </div>
         <div className="pb-tile">
+          <strong>${data.ytd}</strong>
+          <span>Year to date</span>
+        </div>
+        <div className="pb-tile">
           <strong>${data.tiles.outstandingTotal}</strong>
           <span>Outstanding</span>
         </div>
@@ -158,6 +163,22 @@ export function EarningsSection({
       ) : (
         <p className="pb-hint">{NO_PAYMENTS}</p>
       )}
+
+      <h3>By quarter (this year)</h3>
+      <ul className="pb-hbars">
+        {data.quarterly.map((qt) => (
+          <li key={qt.q}>
+            <span>Q{qt.q}</span>
+            <div className="pb-hbar">
+              <div
+                className="pb-hbar-fill"
+                style={{ width: `${(qt.total / maxQuarter) * 100}%` }}
+              />
+            </div>
+            <span>${qt.total}</span>
+          </li>
+        ))}
+      </ul>
 
       <h3>By service (all-time)</h3>
       {data.byService.length === 0 ? (
