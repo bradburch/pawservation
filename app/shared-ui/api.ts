@@ -129,6 +129,22 @@ export type AnalyticsPayload = {
   }[];
 };
 
+export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';
+export type SitterRow = {
+  tenantId: string;
+  slug: string;
+  displayName: string;
+  createdAt: string;
+  clients: number;
+  bookings: number;
+  earned: number;
+};
+export type SitterRosterResponse = {
+  window: SitterWindow;
+  totals: { sitters: number; clients: number; bookings: number; earned: number };
+  sitters: SitterRow[];
+};
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -331,6 +347,18 @@ export const adminApi = {
         body: JSON.stringify({ calendarId }),
       }),
   },
+};
+
+export const owner = {
+  sitters: (token: string, window: SitterWindow) =>
+    request<SitterRosterResponse>(`/api/owner/sitters?window=${window}`, {
+      headers: authHeaders(token),
+    }),
+  sitterDetail: (token: string, tenantId: string, window: SitterWindow) =>
+    request<AnalyticsPayload>(
+      `/api/owner/sitters/${encodeURIComponent(tenantId)}?window=${window}`,
+      { headers: authHeaders(token) },
+    ),
 };
 
 /**
