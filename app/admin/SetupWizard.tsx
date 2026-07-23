@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
+import { ApiError } from '../shared-ui/api.js';
 import { SERVICE_PRESETS, type PresetOption, type ServicePreset } from './presets.js';
 import { NullableNumberField } from './sections/fields.js';
 import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
@@ -78,12 +79,16 @@ export function SetupWizard({
   settings,
   slug,
   token,
+  connectCalendar,
   onClose,
   onApplied,
 }: {
   settings: Settings;
   slug: string;
   token: string;
+  /** App.tsx's throwing connect wrapper: opens the OAuth popup + polls; rejects on a failed
+   * start (503 when server OAuth env is unset) so step 4 can render its disabled note. */
+  connectCalendar: () => Promise<void>;
   onClose: () => void;
   /** Reloads the dashboard's settings after the wizard writes (same as addService's refresh). */
   onApplied: () => Promise<void>;
@@ -107,6 +112,28 @@ export function SetupWizard({
   // exist only in memory for THIS run — an existing service's saved options are never touched
   // (alreadyPriced presets get no disclosure at all).
   const [optionEdits, setOptionEdits] = useState<Record<string, PresetOption[]>>({});
+
+  // Step 4 (calendar): connect is in flight while awaiting the popup open; disabled flips true
+  // once a start 503s (server OAuth unconfigured), swapping the Connect button for a ⚠ note.
+  // Connected-vs-not is read live from settings.calendar.status (App re-passes fresh settings
+  // after the popup poll's refreshCalendarStatus), so no local connected state is kept here.
+  const [connecting, setConnecting] = useState(false);
+  const [calendarDisabled, setCalendarDisabled] = useState(false);
+
+  const handleConnectCalendar = async () => {
+    setError('');
+    setConnecting(true);
+    try {
+      await connectCalendar();
+    } catch (e) {
+      // A 503 means the server has no Google OAuth env — degrade to the disabled note. Any
+      // other failure is transient; surface it inline and let the sitter retry or skip.
+      if (e instanceof ApiError && e.status === 503) setCalendarDisabled(true);
+      else setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   /** Options the apply loop will stamp the rate onto for a preset this run. */
   const presetOptions = (preset: ServicePreset): PresetOption[] =>
@@ -393,6 +420,52 @@ export function SetupWizard({
                 onClick={() => void apply()}
               >
                 {applying ? 'Setting up…' : error ? 'Retry' : 'Finish setup'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 4 && (
+          <>
+            <h2>Connect your calendar</h2>
+            {calendarDisabled ? (
+              <p className="pb-hint">
+                ⚠ Calendar sync isn&rsquo;t set up on this server. You can finish setup now and
+                connect a calendar later from Connected apps.
+              </p>
+            ) : settings.calendar.status === 'connected' ? (
+              <p>
+                <span className="pb-chip pb-chip-ok">Connected</span> New bookings will sync to your
+                Google Calendar automatically.
+              </p>
+            ) : (
+              <>
+                <p>
+                  Connect Google Calendar so new bookings land on the calendar you already use, and
+                  your busy days block off automatically.
+                </p>
+                <button
+                  type="button"
+                  disabled={connecting}
+                  onClick={() => void handleConnectCalendar()}
+                >
+                  {connecting ? 'Connecting…' : 'Connect Google Calendar'}
+                </button>
+              </>
+            )}
+            {error && <p className="pb-error">{error}</p>}
+            <div className="pb-wizard-nav">
+              {settings.calendar.status === 'connected' ? (
+                <button type="button" onClick={() => goTo(5)}>
+                  Continue
+                </button>
+              ) : (
+                <button type="button" className="pb-wizard-skip" onClick={() => goTo(5)}>
+                  Skip
+                </button>
+              )}
+              <button type="button" className="pb-wizard-back" onClick={() => goTo(3)}>
+                Back
               </button>
             </div>
           </>
