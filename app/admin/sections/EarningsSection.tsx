@@ -63,62 +63,27 @@ function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
   );
 }
 
-export function EarningsSection({
+/**
+ * Presentational render body for the earnings payload — tiles, monthly/quarterly charts,
+ * by-service, top-clients, outstanding balances. No data fetching, no session requirement.
+ *
+ * When `session` + `onChanged` (and `handleError`, needed by `PaymentsPanel`) are all supplied,
+ * the outstanding row gets a "Record payment" button that opens `PaymentsPanel`. Omit them (the
+ * owner drill-down case, which has no session/mutation path for a sitter's own bookings) and
+ * outstanding rows render read-only — same numbers, no button.
+ */
+export function EarningsView({
+  data,
   session,
+  onChanged,
   handleError,
-  clearError,
 }: {
-  session: Session;
-  handleError: (e: unknown) => void;
-  clearError: () => void;
+  data: AnalyticsPayload;
+  session?: Session;
+  onChanged?: () => void;
+  handleError?: (e: unknown) => void;
 }) {
-  const [data, setData] = useState<AnalyticsPayload | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const alive = useRef(true);
-
-  const load = () => adminApi.analytics.get(session.slug, session.token);
-
-  useEffect(() => {
-    let active = true;
-    load()
-      .then((d) => active && setData(d))
-      .catch((e) => active && handleError(e));
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  const reload = async () => {
-    clearError();
-    try {
-      const result = await load();
-      if (alive.current) {
-        setData(result);
-      }
-    } catch (e) {
-      if (alive.current) {
-        handleError(e);
-      }
-    }
-  };
-
-  if (data === null)
-    return (
-      <>
-        <h2>
-          <IconChartBar size={18} /> Earnings
-        </h2>
-        <p>Loading…</p>
-      </>
-    );
 
   const hasPayments = data.byService.length > 0;
   const maxService = Math.max(1, ...data.byService.map((s) => s.total));
@@ -232,21 +197,86 @@ export function EarningsSection({
                 owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost}
                 {o.isCancellationFee ? ' cancellation fee' : ''})
               </span>
-              <button onClick={() => setOpenId(openId === o.bookingId ? null : o.bookingId)}>
-                {openId === o.bookingId ? 'Close' : 'Record payment'}
-              </button>
-              {openId === o.bookingId && (
-                <PaymentsPanel
-                  session={session}
-                  bookingId={o.bookingId}
-                  onChanged={reload}
-                  handleError={handleError}
-                />
+              {session && onChanged && handleError && (
+                <>
+                  <button onClick={() => setOpenId(openId === o.bookingId ? null : o.bookingId)}>
+                    {openId === o.bookingId ? 'Close' : 'Record payment'}
+                  </button>
+                  {openId === o.bookingId && (
+                    <PaymentsPanel
+                      session={session}
+                      bookingId={o.bookingId}
+                      onChanged={onChanged}
+                      handleError={handleError}
+                    />
+                  )}
+                </>
               )}
             </li>
           ))}
         </ul>
       )}
     </>
+  );
+}
+
+export function EarningsSection({
+  session,
+  handleError,
+  clearError,
+}: {
+  session: Session;
+  handleError: (e: unknown) => void;
+  clearError: () => void;
+}) {
+  const [data, setData] = useState<AnalyticsPayload | null>(null);
+  const alive = useRef(true);
+
+  const load = () => adminApi.analytics.get(session.slug, session.token);
+
+  useEffect(() => {
+    let active = true;
+    load()
+      .then((d) => active && setData(d))
+      .catch((e) => active && handleError(e));
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const reload = async () => {
+    clearError();
+    try {
+      const result = await load();
+      if (alive.current) {
+        setData(result);
+      }
+    } catch (e) {
+      if (alive.current) {
+        handleError(e);
+      }
+    }
+  };
+
+  if (data === null)
+    return (
+      <>
+        <h2>
+          <IconChartBar size={18} /> Earnings
+        </h2>
+        <p>Loading…</p>
+      </>
+    );
+
+  return (
+    <EarningsView data={data} session={session} onChanged={reload} handleError={handleError} />
   );
 }
