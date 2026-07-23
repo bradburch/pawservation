@@ -43,6 +43,7 @@ import {
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
+import { serializeAnalytics } from '../lib/analytics';
 import {
   deleteBookingCalendarEvent,
   reconcileIfStale,
@@ -1223,41 +1224,5 @@ export const adminRoutes = new Hono<AppEnv>()
     await reconcileIfStale(c.env, tenant);
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
-    const outstanding = data.outstanding.map((o) => ({
-      bookingId: o.BookingId,
-      name: o.Name,
-      email: o.Email,
-      serviceType: o.ServiceType,
-      startDate: o.StartDate,
-      estCost: o.EstCost,
-      paidTotal: o.PaidTotal,
-      balance: o.EstCost - o.PaidTotal,
-      // The subquery's EstCost is aliased from CancellationFee on a cancelled row, so the UI
-      // needs this flag to label the amount as a fee rather than a live booking balance.
-      isCancellationFee: o.Status === 'cancelled',
-    }));
-    return c.json({
-      tiles: {
-        thisMonth: data.monthly.at(-1)?.Total ?? 0,
-        lastMonth: data.monthly.at(-2)?.Total ?? 0,
-        outstandingTotal: outstanding.reduce((sum, o) => sum + o.balance, 0),
-        outstandingCount: outstanding.length,
-      },
-      monthly: data.monthly.map((m) => ({ month: m.Month, total: m.Total })),
-      ytd: data.ytd,
-      quarterly: data.quarterly,
-      byService: data.byService.map((s) => ({
-        serviceType: s.ServiceType,
-        label: s.Label,
-        total: s.Total,
-      })),
-      topClients: data.topClients.map((t) => ({
-        endUserId: t.EndUserId,
-        name: t.Name,
-        email: t.Email,
-        total: t.Total,
-        bookings: t.Bookings,
-      })),
-      outstanding,
-    });
+    return c.json(serializeAnalytics(data));
   });

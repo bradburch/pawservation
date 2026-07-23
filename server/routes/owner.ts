@@ -4,14 +4,20 @@ import {
   addAllowedSitter,
   deleteUnclaimedAllowedSitter,
   getAllowedSitter,
+  getAnalytics,
+  getTenantById,
   listAllowedSitters,
+  listSitterRoster,
 } from '../db/repo';
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
+import { serializeAnalytics } from '../lib/analytics';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
 import { INVITE_LINK_TTL_SECONDS, mintLink } from '../lib/signup-link';
 import { EMAIL_RE } from '../lib/validation';
 import type { AppEnv } from '../types';
+import { quarterSinceDate } from '../../src/shared/analytics/periods.js';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 
 /**
  * Owner console: allowlist management. Non-slug-scoped ('owner' is in RESERVED_SLUGS) and
@@ -24,6 +30,28 @@ const EmailBody = v.object({
 });
 
 const ALREADY_JOINED_ERROR = 'That sitter already has an account.';
+
+export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';
+
+/** Map a raw ?window value to its canonical key + sinceDate. Unknown/empty → 'all' (null). Pure. */
+export function sinceDateForWindow(
+  raw: string | undefined,
+  today: string,
+): { window: SitterWindow; sinceDate: string | null } {
+  const [y, m] = today.split('-').map(Number);
+  switch (raw) {
+    case '30d':
+      return { window: '30d', sinceDate: addDays(today, -30) };
+    case '90d':
+      return { window: '90d', sinceDate: addDays(today, -90) };
+    case 'quarter':
+      return { window: 'quarter', sinceDate: quarterSinceDate(y, m) };
+    case 'ytd':
+      return { window: 'ytd', sinceDate: `${y}-01-01` };
+    default:
+      return { window: 'all', sinceDate: null };
+  }
+}
 
 export const ownerRoutes = new Hono<AppEnv>()
   // Path-scoped tightly: Hono flattens .use() patterns across every app mounted at /api.
@@ -110,4 +138,42 @@ export const ownerRoutes = new Hono<AppEnv>()
     const deleted = await deleteUnclaimedAllowedSitter(c.env.PAWBOOK_DB, email);
     if (!deleted) return c.json({ error: ALREADY_JOINED_ERROR }, 409);
     return c.body(null, 204);
+  })
+
+  // Cross-tenant roster (owner-only — listSitterRoster is the one sanctioned no-WHERE-TenantId
+  // query). Owner requests have no tenant (owner routes bypass tenantMiddleware), so `today`
+  // uses the instance default timezone rather than any one sitter's.
+  .get('/owner/sitters', async (c) => {
+    const today = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
+    const { window, sinceDate } = sinceDateForWindow(c.req.query('window'), today);
+    const rows = await listSitterRoster(c.env.PAWBOOK_DB, sinceDate);
+    const sitters = rows.map((r) => ({
+      tenantId: r.TenantId,
+      slug: r.Slug,
+      displayName: r.DisplayName,
+      createdAt: r.CreatedAt,
+      clients: r.Clients,
+      bookings: r.Bookings,
+      earned: r.Earned,
+    }));
+    const totals = {
+      sitters: sitters.length,
+      clients: sitters.reduce((s, r) => s + r.clients, 0),
+      bookings: sitters.reduce((s, r) => s + r.bookings, 0),
+      earned: sitters.reduce((s, r) => s + r.earned, 0),
+    };
+    return c.json({ window, totals, sitters });
+  })
+
+  // Per-sitter drill-down: same payload shape as the sitter's own /admin/analytics (via the
+  // shared serializeAnalytics), so the frontend can reuse the analytics view as-is.
+  .get('/owner/sitters/:tenantId', async (c) => {
+    const tenantId = c.req.param('tenantId');
+    const tenant = await getTenantById(c.env.PAWBOOK_DB, tenantId);
+    if (!tenant) return c.json({ error: 'Not found.' }, 404);
+    // Window is a roster control only — the detail always shows getAnalytics' own fixed
+    // 12-month breakdown, anchored to the sitter's own timezone.
+    const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+    const data = await getAnalytics(c.env.PAWBOOK_DB, tenantId, today);
+    return c.json(serializeAnalytics(data));
   });
