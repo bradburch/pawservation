@@ -12,6 +12,7 @@ export type Tenant = {
   Timezone: string | null; // null = DEFAULT_TIMEZONE
   ContactEmail: string | null; // shown to clients in the booking widget
   ContactPhone: string | null; // shown to clients in the booking widget
+  DisabledAt: string | null; // null = active; timestamp = owner-disabled
 };
 
 export type TenantUser = {

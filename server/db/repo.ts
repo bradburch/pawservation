@@ -29,7 +29,8 @@ import { constantTimeEqual } from '../lib/timing';
  * is a defect.
  */
 
-const TENANT_COLS = 'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone';
+const TENANT_COLS =
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, DisabledAt';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, CancellationFee, GCalEventId, Status, Declined, CreatedAt';

@@ -41,6 +41,7 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     Timezone: null,
     ContactEmail: null,
     ContactPhone: null,
+    DisabledAt: null,
     ...over,
   };
 }

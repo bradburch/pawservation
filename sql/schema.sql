@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- Optional contact details shown to clients in the booking widget.
   ContactEmail TEXT,
   ContactPhone TEXT,
+  -- NULL = active; timestamp = disabled by the owner (widget dark + admin read-only).
+  DisabledAt TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
