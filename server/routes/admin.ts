@@ -1225,7 +1225,8 @@ export const adminRoutes = new Hono<AppEnv>()
   // here in JS from the aggregates — no extra queries, no KV caching (prototype-scale D1).
   .get('/:slug/admin/analytics', async (c) => {
     const tenant = c.get('tenant');
-    await reconcileIfStale(c.env, tenant);
+    // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET.
+    if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant);
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
     return c.json(serializeAnalytics(data));

@@ -37,6 +37,30 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
   });
 
+  it('skips reconcileIfStale on the analytics dashboard when disabled', async () => {
+    const { env, raw } = createTestEnv();
+    disable(raw);
+    const res = await app.request(
+      '/api/sunny-paws/admin/analytics',
+      { headers: await adminHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200); // read-only view still works
+    // reconcileIfStale writes calendarSyncKey in its finally; skipping means the key is never set.
+    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
+  });
+
+  it('runs reconcileIfStale (sets the sync key) for an ACTIVE tenant on analytics — control', async () => {
+    const { env } = createTestEnv(); // TENANT_A not disabled
+    const res = await app.request(
+      '/api/sunny-paws/admin/analytics',
+      { headers: await adminHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
+  });
+
   it('blocks GET oauth/start when disabled with account_disabled 403', async () => {
     const { env, raw } = createTestEnv();
     disable(raw);
