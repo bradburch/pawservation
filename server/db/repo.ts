@@ -1597,6 +1597,40 @@ export async function setTenantDisabled(
 }
 
 /**
+ * Owner-scope: irreversibly delete a tenant and ALL its data. One child-first batch (D1 enforces
+ * FKs with no ON DELETE CASCADE, so leaves must go before parents; the single batch means a
+ * failure leaves every table untouched together). Covers all tenant-keyed tables, the
+ * transitively-scoped BookingRequestPets, and the claimed AllowedSitters row (email fully
+ * deleted — the owner must re-invite to bring the sitter back). Returns whether the Tenants row
+ * was deleted (false = no such tenant). Caller must resolve the slug first and
+ * invalidateTenantCache after.
+ */
+export async function deleteTenantCompletely(db: D1Database, tenantId: string): Promise<boolean> {
+  const results = await db.batch([
+    db
+      .prepare(
+        `DELETE FROM BookingRequestPets
+           WHERE BookingRequestId IN (SELECT Id FROM BookingRequests WHERE TenantId = ?)`,
+      )
+      .bind(tenantId),
+    db.prepare('DELETE FROM Payments WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM TenantServices WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM TenantPetTypes WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM ProviderConnections WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM TenantUsers WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM AllowedSitters WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM Tenants WHERE Id = ?').bind(tenantId),
+  ]);
+  const tenantResult = results[results.length - 1] as { meta: { changes?: number } };
+  return (tenantResult.meta.changes ?? 0) > 0;
+}
+
+/**
  * Signup provisioning as ONE atomic batch (deleteService precedent; the test shim's batch is
  * transactional): Tenants → TenantUsers → claim the allowlist row. A replay that beat the
  * nonce race dies on TenantUsers.Email UNIQUE, aborting the WHOLE batch — no orphan tenant.
