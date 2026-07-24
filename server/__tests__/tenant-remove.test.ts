@@ -45,6 +45,8 @@ describe('deleteTenantCompletely', () => {
     // Isolation: the other tenant is fully intact.
     for (const table of TENANT_TABLES) expect(countFor(raw, table, 't_keep')).toBe(1);
     expect((raw.prepare("SELECT COUNT(*) AS n FROM Tenants WHERE Id='t_keep'").get() as { n: number }).n).toBe(1);
+    expect((raw.prepare("SELECT COUNT(*) AS n FROM BookingRequestPets WHERE BookingRequestId='t_keep_b'").get() as { n: number }).n).toBe(1);
+    expect((raw.prepare("SELECT COUNT(*) AS n FROM AllowedSitters WHERE TenantId='t_keep'").get() as { n: number }).n).toBe(1);
   });
 
   it('returns false for a non-existent tenant', async () => {
