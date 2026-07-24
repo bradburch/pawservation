@@ -1,5 +1,11 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { adminApi, isAuthExpired, type AdminBooking, type Customer } from '../shared-ui/api.js';
+import {
+  adminApi,
+  ApiError,
+  isAuthExpired,
+  type AdminBooking,
+  type Customer,
+} from '../shared-ui/api.js';
 import {
   IconCalendar,
   IconChartBar,
@@ -481,8 +487,16 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const handle = useCallback(
     (e: unknown) => {
-      if (isAuthExpired(e)) onSignOut();
-      else setError(e instanceof Error ? e.message : 'Try again.');
+      // account_disabled is also a 403 (isAuthExpired's own trigger), so it must be checked
+      // first — otherwise a blocked mutation would read as an expired session and sign the
+      // sitter out instead of surfacing the real reason the save was rejected.
+      if (e instanceof ApiError && e.message === 'account_disabled') {
+        setError('Your account is disabled — contact the platform owner.');
+      } else if (isAuthExpired(e)) {
+        onSignOut();
+      } else {
+        setError(e instanceof Error ? e.message : 'Try again.');
+      }
     },
     [onSignOut],
   );
@@ -864,6 +878,15 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           <SettingsMenu activeSection={activeSection} />
         </nav>
       </header>
+
+      {/* Read-only-in-spirit notice, not read-only-in-fact — the server's non-GET account_disabled
+          guard is the actual enforcement (see `handle` above), so this banner is just UX: it stays
+          up for the whole session rather than gating individual buttons. */}
+      {settings.disabled && (
+        <p className="pb-disabled-banner" role="status">
+          Your account is disabled — contact the platform owner.
+        </p>
+      )}
 
       {/* Every section stays mounted (just hidden) so in-progress edits — e.g. a typed-but-
           unsaved Google Calendar ID — and the embed preview iframe survive switching tabs.

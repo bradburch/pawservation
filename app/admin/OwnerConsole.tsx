@@ -163,7 +163,58 @@ export function OwnerConsole({
     }
   }, [session.token, win, handleDash]);
 
-  const { data: roster } = useAsync(loadRoster);
+  const { data: roster, reload: reloadRoster } = useAsync(loadRoster);
+
+  // Row-level actions (disable/enable + remove), separate from the drill-down's `dashError` so
+  // an action failure surfaces right by the row that caused it. `busyId` disables only the row
+  // in flight — same per-row-busy convention as BookingsSection's busyId.
+  const [busyId, setBusyId] = useState<string | null>(null);
+  // The row currently mid type-to-confirm remove; its inline input replaces the row's actions.
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeInput, setRemoveInput] = useState('');
+
+  const toggleDisabled = async (s: SitterRow) => {
+    if (busyId) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterDisabled(session.token, s.tenantId, !s.disabled);
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startRemove = (s: SitterRow) => {
+    setDashError('');
+    setRemovingId(s.tenantId);
+    setRemoveInput('');
+  };
+
+  const cancelRemove = () => {
+    setRemovingId(null);
+    setRemoveInput('');
+  };
+
+  // Irreversible — requires the owner to type the business name or slug exactly before the
+  // DELETE fires (the confirm button stays disabled until it matches).
+  const confirmRemove = async (s: SitterRow) => {
+    if (busyId) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.removeSitter(session.token, s.tenantId);
+      cancelRemove();
+      if (selected?.tenantId === s.tenantId) setSelected(null);
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const loadDetail = useCallback(async (): Promise<AnalyticsPayload | null> => {
     if (!selected) return null;
@@ -321,6 +372,8 @@ export function OwnerConsole({
                                 Earned{sortIndicator(sort, 'earned')}
                               </button>
                             </th>
+                            <th>Status</th>
+                            <th aria-label="Actions" />
                           </tr>
                         </thead>
                         <tbody>
@@ -343,6 +396,60 @@ export function OwnerConsole({
                               <td>{s.clients}</td>
                               <td>{s.bookings}</td>
                               <td>${s.earned}</td>
+                              <td>
+                                {s.disabled && (
+                                  <span className="pb-chip pb-chip-warn">Disabled</span>
+                                )}
+                              </td>
+                              <td>
+                                {removingId === s.tenantId ? (
+                                  <span className="pb-row">
+                                    <input
+                                      value={removeInput}
+                                      aria-label={`Type ${s.displayName} or ${s.slug} to confirm removal`}
+                                      placeholder={s.displayName}
+                                      onChange={(e) => setRemoveInput(e.target.value)}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="pb-danger"
+                                      disabled={
+                                        busyId === s.tenantId ||
+                                        (removeInput.trim() !== s.displayName &&
+                                          removeInput.trim() !== s.slug)
+                                      }
+                                      onClick={() => void confirmRemove(s)}
+                                    >
+                                      {busyId === s.tenantId ? 'Removing…' : 'Confirm remove'}
+                                    </button>
+                                    <button type="button" onClick={cancelRemove}>
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <span className="pb-row">
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId}
+                                      onClick={() => void toggleDisabled(s)}
+                                    >
+                                      {busyId === s.tenantId
+                                        ? '…'
+                                        : s.disabled
+                                          ? 'Enable'
+                                          : 'Disable'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="pb-danger"
+                                      disabled={busyId === s.tenantId}
+                                      onClick={() => startRemove(s)}
+                                    >
+                                      Remove
+                                    </button>
+                                  </span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

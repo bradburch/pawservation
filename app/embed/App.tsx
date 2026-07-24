@@ -81,6 +81,20 @@ export default function App() {
   if (error) return <p className="bp-error">{error}</p>;
   if (!config) return <p>Loading…</p>;
 
+  // The sitter's account is disabled platform-side — the server's non-GET guard is the real
+  // enforcement (routes 403 with account_disabled); this is purely UX so a customer sees a
+  // clear reason instead of a booking form that would fail on submit.
+  if (config.disabled) {
+    return (
+      <div className="bp-widget">
+        <h1 className="bp-greeting">{config.displayName}</h1>
+        <p className="bp-signin-lede">
+          This business isn&apos;t currently taking bookings. Please check back later.
+        </p>
+      </div>
+    );
+  }
+
   const contact =
     config.contactEmail || config.contactPhone ? (
       <p className="bp-signin-lede">

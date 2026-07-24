@@ -543,6 +543,20 @@ body {
   border-color: color-mix(in srgb, var(--bad) 25%, transparent);
 }
 
+/* Persistent "your account is disabled" notice at the top of the dashboard — a full-width block
+   (not a chip) since it needs to read as a standing notice, not a status label. Same warn tokens
+   as .pb-chip-warn. */
+.pb-disabled-banner {
+  margin: 0 0 16px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  color: var(--warn);
+  background: var(--warn-wash);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
 /* Add-a-customer / block-a-range input rows. */
 .pb-row {
   display: flex;

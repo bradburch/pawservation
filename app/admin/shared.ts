@@ -43,6 +43,7 @@ export type Settings = {
     connectedAt: string | null;
     calendarId: string | null;
   };
+  disabled: boolean;
 };
 
 /** Shared prop shape for sections that edit the staged, save-button-gated `settings` draft. */

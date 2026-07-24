@@ -28,6 +28,7 @@ export type TenantConfig = {
   contactPhone: string | null;
   petTypes: { slug: string; label: string }[]; // the FULL pet-type registry — serves as the label map; offered types derive per service
   services: ServiceConfig[];
+  disabled: boolean;
 };
 
 export type Pet = { id: string; name: string; petType: string; notes?: string | null };
@@ -138,6 +139,7 @@ export type SitterRow = {
   clients: number;
   bookings: number;
   earned: number;
+  disabled: boolean;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;
@@ -359,6 +361,17 @@ export const owner = {
       `/api/owner/sitters/${encodeURIComponent(tenantId)}?window=${window}`,
       { headers: authHeaders(token) },
     ),
+  setSitterDisabled: (token: string, tenantId: string, disabled: boolean) =>
+    request<{ disabled: boolean }>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {
+      method: 'PATCH',
+      headers: { ...jsonHeaders, ...authHeaders(token) },
+      body: JSON.stringify({ disabled }),
+    }),
+  removeSitter: (token: string, tenantId: string) =>
+    request<unknown>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
 };
 
 /**
