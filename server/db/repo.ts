@@ -491,14 +491,15 @@ export async function insertBookingRequest(
     estCost: number | null;
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
+    source?: string | null;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status, Source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -514,6 +515,7 @@ export async function insertBookingRequest(
       row.estCost,
       JSON.stringify(row.answers ?? {}),
       row.status,
+      row.source ?? null,
     )
     .run();
   return id;

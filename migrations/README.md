@@ -166,3 +166,18 @@ TABLE` statement with no second statement after it, it could also have been appl
 `--remote --command` instead of `--file`, with no partial-apply risk — unlike `0019`, where
 `--command` would have been dangerous because its backfill is a second statement (a failure
 partway through would leave the table created but the backfill not run).
+
+### 0022_booking_source.sql
+
+Adds `BookingRequests.Source` (TEXT, attribution channel like 'mcp', 'voice', etc.; NULL = embed
+widget). Purely additive — a single `ALTER TABLE` to add one optional column — and **nothing in
+the running worker reads it yet**, so applying ahead of a deploy is safe. Mirrored into
+`sql/schema.sql`, so fresh installs and the Vitest harness get it without running this file.
+
+**NOT IDEMPOTENT** — plain ALTER TABLE fails if re-run against an existing database (the column
+already exists). Apply exactly once per database.
+
+```
+npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
+npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
+```

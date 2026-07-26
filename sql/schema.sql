@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- 1 when a pending request was declined by the sitter (stored as Status 'cancelled' + this
   -- flag; widening the CHECK above would require a table rebuild on existing databases).
   Declined INTEGER NOT NULL DEFAULT 0,
+  Source TEXT, -- attribution channel: 'mcp', 'voice', etc.; NULL = embed widget (0022)
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
