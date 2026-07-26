@@ -30,6 +30,8 @@ the availability/conflict math.
   and accepted animal types are all service-level attributes; blank means unlimited.
 - **Custom animal types** — tenants aren't limited to dogs and cats; add any species and
   accept it per service.
+- **Pet co-ownership** — a pet can belong to more than one customer account (e.g.
+  co-parents), and a pet can be marked deceased without losing its booking history.
 - **Admin dashboard** — lands on a monthly **Calendar** view of bookings and time off;
   plus bookings (confirm/decline/cancel), earnings and payment tracking, client list with
   CSV import, services & rates card grid, time off, embed codes, and in-app help.
@@ -40,7 +42,9 @@ the availability/conflict math.
   services, and pricing presets; skippable and re-runnable, always additive.
 - **Invite-only signup + owner console** — the platform owner (identified by the
   `OWNER_EMAILS` secret) allowlists sitter emails; sitters self-serve from the login page
-  via an emailed single-use setup link. No open signup.
+  via an emailed single-use setup link. No open signup. The owner console can also disable
+  (and later remove) a joined sitter — a disabled tenant's widget goes dark and its admin
+  dashboard drops to read-only.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
   sitter admins (PBKDF2, with timing-safe user-enumeration defenses).
 - **Zero-dependency core** — booking, capacity, pricing, and date logic in `src/shared/`
@@ -135,7 +139,7 @@ lifecycles:
 
 - **Fresh install:** provision from `sql/schema.sql` (+ optional demo `sql/seed.sql`) via
   `npm run seed:local` / `seed:remote`. The schema already includes everything through
-  `migrations/0015_service_level_attributes.sql`; do not replay migration files on top.
+  `migrations/0019_pet_co_ownership.sql`; do not replay migration files on top.
 - **Already-provisioned DB:** apply new files in `migrations/` **by hand**, in order,
   before (or with) the deploy that needs them — otherwise the new code 500s on missing
   columns:
@@ -145,9 +149,8 @@ lifecycles:
   # ...one command per file, in numeric order (use --local for the dev DB)
   ```
 
-**Current remote state:** the production DB has `0001`–`0006` applied and needs
-`0007`–`0015` run, in order, at the next deploy (see `migrations/README.md` for the exact
-list and state).
+**Current remote state:** the production DB is fully migrated through `0019` (see
+`migrations/README.md` for the exact history and state).
 
 Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
 against existing DBs — no real DB here has a `d1_migrations` tracking table, and

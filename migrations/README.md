@@ -25,24 +25,29 @@ npm scripts exist but aren't the established convention here; this merge doesn't
 keep applying new migration files manually with `d1 execute --file` until a deliberate decision
 is made to adopt tracked migrations.
 
-State as of this merge:
+Current state:
 
 - **Local dev DB**: wiped and reseeded from `sql/schema.sql` (the Fresh installs path above),
-  which already carries everything through `0015_service_level_attributes.sql` — so the local DB
+  which already carries everything through `0019_pet_co_ownership.sql` — so the local DB
   needs **no** migrations applied; it isn't on the incremental-apply path below at all.
-- **Remote DB**: fully migrated through `0015` (applied by hand 2026-07-20; verified via
-  read-only schema probes). Note `0011_contact_and_notes.sql` errors with "duplicate column"
-  on this DB — its columns were applied out of band before the renumbering — and that
-  error is safe: D1 rolls the whole file back, and the end state is already present.
+- **Remote DB**: fully migrated through `0019` — `0001`–`0015` were applied by hand
+  2026-07-20 (verified via read-only schema probes), and `0016`–`0019` have since been
+  applied by hand as each shipped, most recently `0019` on 2026-07-25. Note
+  `0011_contact_and_notes.sql` errors with "duplicate column" on this DB — its columns
+  were applied out of band before the renumbering — and that error is safe: D1 rolls the
+  whole file back, and the end state is already present.
 
-**Order: migrate first, then deploy.** The new worker unconditionally `SELECT`s
-`AcceptedPetTypes`, `MaxConcurrentPets`, `MaxPerDay`, and `Label` (added by `0014`/`0015`) and
-**500s on every request** if those columns are missing — so it must not go live until `0007`–
-`0015` are applied. This direction is safe: `0012`–`0015` are backward-compatible with the
-currently-deployed worker (additive columns it simply ignores), so applying them ahead of the
-deploy breaks nothing that is already running.
+**Order: migrate first, then deploy.** The worker unconditionally `SELECT`s columns/tables
+added by every migration through `0019` — e.g. `AcceptedPetTypes`, `MaxConcurrentPets`,
+`MaxPerDay`, and `Label` (added by `0014`/`0015`), and `PetOwners`/`EndUserPets.DeceasedAt`
+(added by `0019`, see below) — and **500s on every request** if any of those are missing.
+`0007`–`0019` are now fully applied to both local and remote, so there is nothing pending;
+the same rule applies to any future migration: apply it before (or with) the deploy that
+needs it, never after. Backward-compatible additive migrations (like `0012`–`0018`) are safe
+to apply ahead of a deploy, since the currently-running worker just ignores the new columns
+until the new code ships.
 
-Apply with, e.g.:
+`0007`–`0015` were applied, in order, with:
 
 ```
 npx wrangler d1 execute pawbook-db --remote --file=./migrations/0007_booking_lifecycle.sql
@@ -55,6 +60,9 @@ npx wrangler d1 execute pawbook-db --remote --file=./migrations/0013_invite_sign
 npx wrangler d1 execute pawbook-db --remote --file=./migrations/0014_custom_pet_types.sql
 npx wrangler d1 execute pawbook-db --remote --file=./migrations/0015_service_level_attributes.sql
 ```
+
+`0016`–`0018` were applied the same way, one `wrangler d1 execute --file` per migration, in
+order; see the `### 0019_pet_co_ownership.sql` section below for how `0019` was applied.
 
 ### ⚠️ `0002_tenant_config_limits.sql` is DATA-DESTRUCTIVE if ever re-run against a live DB
 
