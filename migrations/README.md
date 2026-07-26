@@ -62,3 +62,20 @@ It rebuilds the `Tenants` table, copying forward only 6 columns (`Id`, `Slug`, `
 data in `MaxHouseSitsPerDay`, `MaxStayNights`, or `Timezone` **wipes those columns back to
 NULL** for every tenant. Never re-run an already-applied migration against a live DB — write a
 new one instead.
+
+### 0019_pet_co_ownership.sql
+
+Adds `PetOwners` (owner↔pet edge list, PK `(PetId, EndUserId)`, with its own `TenantId`),
+`EndUserPets.DeceasedAt`, and a backfill of exactly one `PetOwners` row per existing pet. Additive
+and non-destructive, but **not idempotent** — the backfill `INSERT` would fail on the PK a second
+time. Mirrored into `sql/schema.sql` and `sql/seed.sql`, so fresh installs and the Vitest harness
+get it without running this file.
+
+**Order: migrate first, then deploy.** The new worker `SELECT`s `PetOwners` and
+`EndUserPets.DeceasedAt` unconditionally on the widget's `/me` and on the admin customer list, and
+500s on every one of those requests if the table/column is missing.
+
+```
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0019_pet_co_ownership.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0019_pet_co_ownership.sql
+```

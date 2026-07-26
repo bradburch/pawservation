@@ -103,6 +103,14 @@ INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Note
   ('pet_sp_mochi', 'tnt_sunnypaws', 'eu_sp_jess', 'Mochi', 'cat', NULL),
   ('pet_ht_otis',  'tnt_happytails', 'eu_ht_jess', 'Otis', 'dog', 'Deaf in one ear; approach from the front.');
 
+-- Ownership edges (0019). EVERY pet needs a PetOwners row: it is the authoritative owner list that
+-- /me, the booking-time ownership gate, and invoicing accounts read. A pet without one is invisible
+-- to its own owner.
+INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES
+  ('tnt_sunnypaws', 'pet_sp_bella', 'eu_sp_jess'),
+  ('tnt_sunnypaws', 'pet_sp_mochi', 'eu_sp_jess'),
+  ('tnt_happytails', 'pet_ht_otis',  'eu_ht_jess');
+
 -- Existing bookings so availability looks real, tied to the demo customer so the admin list
 -- never shows an anonymous "Unknown customer" row.
 -- Sunny Paws boarding (MaxConcurrentPets=2): June 20-25 already has 1 pet boarding -> 1 slot left.

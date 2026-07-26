@@ -1174,16 +1174,24 @@ export async function deleteCustomer(
   // common path; this closes the TOCTOU with a safe no-op (0 rows -> false) on the race.
   //
   // D1 enforces foreign keys, so EndUsers can't be deleted while LoginCodes/EndUserPets rows
-  // still reference it — and EndUserPets can't be deleted while BookingRequestPets rows still
-  // reference IT (possible even though this customer has no bookings of their own: addBookingPets
-  // only checks tenant match, not that a pet's owner is the booking's customer). Cascade child-first
+  // still reference it — and EndUserPets can't be deleted while BookingRequestPets or PetOwners
+  // (0019) rows still reference IT (BookingRequestPets: possible even though this customer has no
+  // bookings of their own, since addBookingPets only checks tenant match, not that a pet's owner
+  // is the booking's customer; PetOwners: every pet has a backfilled owner row). Cascade child-first
   // in one batch, each statement carrying the same NOT-EXISTS bookings guard so a TOCTOU race leaves
   // every table untouched together rather than partially cascading before the guard trips.
   const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequests WHERE TenantId = ? AND EndUserId = ?)`;
-  const [, , , endUsersResult] = await db.batch([
+  const [, , , , endUsersResult] = await db.batch([
     db
       .prepare(
         `DELETE FROM BookingRequestPets
+           WHERE PetId IN (SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?)
+             AND ${bookingGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id),
+    db
+      .prepare(
+        `DELETE FROM PetOwners
            WHERE PetId IN (SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?)
              AND ${bookingGuard}`,
       )
@@ -1230,7 +1238,7 @@ export async function listAllEndUserPetsByTenant(
 ): Promise<EndUserPet[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, CreatedAt
+      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, DeceasedAt, CreatedAt
        FROM EndUserPets WHERE TenantId = ? ORDER BY EndUserId, Name`,
     )
     .bind(tenantId)
@@ -1245,7 +1253,7 @@ export async function listEndUserPets(
 ): Promise<EndUserPet[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, CreatedAt
+      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, DeceasedAt, CreatedAt
        FROM EndUserPets WHERE TenantId = ? AND EndUserId = ? ORDER BY Name`,
     )
     .bind(tenantId, endUserId)
@@ -1270,7 +1278,7 @@ export async function addEndUserPet(
     .run();
   const row = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, CreatedAt FROM EndUserPets WHERE TenantId = ? AND Id = ?`,
+      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, DeceasedAt, CreatedAt FROM EndUserPets WHERE TenantId = ? AND Id = ?`,
     )
     .bind(tenantId, id)
     .first<EndUserPet>();
@@ -1303,11 +1311,13 @@ export async function removeEndUserPet(
   tenantId: string,
   petId: string,
 ): Promise<boolean> {
-  const result = await db
-    .prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?')
-    .bind(tenantId, petId)
-    .run();
-  return (result.meta as { changes?: number }).changes !== 0;
+  // PetOwners (0019) FKs to EndUserPets, so its row(s) for this pet must go first — production D1
+  // has foreign keys OFF (so this wouldn't error there), but leaving the orphan is still wrong.
+  const [, petResult] = await db.batch([
+    db.prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ?').bind(tenantId, petId),
+    db.prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?').bind(tenantId, petId),
+  ]);
+  return (petResult.meta as { changes?: number }).changes !== 0;
 }
 
 /**
@@ -1602,10 +1612,10 @@ export async function setTenantDisabled(
  * Owner-scope: irreversibly delete a tenant and ALL its data. One child-first batch (D1 enforces
  * FKs with no ON DELETE CASCADE, so leaves must go before parents; the single batch means a
  * failure leaves every table untouched together). Covers all tenant-keyed tables, the
- * transitively-scoped BookingRequestPets, and the claimed AllowedSitters row (email fully
- * deleted — the owner must re-invite to bring the sitter back). Returns whether the Tenants row
- * was deleted (false = no such tenant). Caller must resolve the slug first and
- * invalidateTenantCache after.
+ * transitively-scoped BookingRequestPets, PetOwners (0019, carries its own TenantId), and the
+ * claimed AllowedSitters row (email fully deleted — the owner must re-invite to bring the sitter
+ * back). Returns whether the Tenants row was deleted (false = no such tenant). Caller must resolve
+ * the slug first and invalidateTenantCache after.
  */
 export async function deleteTenantCompletely(db: D1Database, tenantId: string): Promise<boolean> {
   const results = await db.batch([
@@ -1617,6 +1627,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
       .bind(tenantId),
     db.prepare('DELETE FROM Payments WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM PetOwners WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),

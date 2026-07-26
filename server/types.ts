@@ -100,6 +100,7 @@ export type EndUserPet = {
   Name: string;
   PetType: string; // tenant pet-type slug
   Notes: string | null; // sitter's care notes (feeding, meds, temperament)
+  DeceasedAt: string | null; // NULL = alive; timestamp = deceased (0019)
   CreatedAt: string;
 };
 

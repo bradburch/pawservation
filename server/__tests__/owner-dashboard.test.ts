@@ -17,10 +17,10 @@ const ownerHeaders = async () => ({
 function reset(raw: DatabaseSync) {
   // child tables first (FKs are ON in the harness). sql/seed.sql populates more tables than the
   // brief's reset lists (TenantServiceOptions, TenantPetTypes, ProviderConnections, LoginCodes,
-  // EndUserPets, BookingRequestPets) — all of them FK to Tenants (directly or transitively), so
-  // they must be cleared too or DELETE FROM Tenants fails FK constraint.
+  // EndUserPets, BookingRequestPets, PetOwners) — all of them FK to Tenants (directly or
+  // transitively), so they must be cleared too or DELETE FROM Tenants fails FK constraint.
   raw.exec(
-    'DELETE FROM BookingRequestPets; DELETE FROM LoginCodes; DELETE FROM Payments;' +
+    'DELETE FROM BookingRequestPets; DELETE FROM PetOwners; DELETE FROM LoginCodes; DELETE FROM Payments;' +
       ' DELETE FROM EndUserPets; DELETE FROM BookingRequests; DELETE FROM EndUsers;' +
       ' DELETE FROM TenantServiceOptions; DELETE FROM TenantPetTypes;' +
       ' DELETE FROM ProviderConnections; DELETE FROM AllowedSitters;' +
