@@ -4,7 +4,8 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0015_service_level_attributes.sql`. Use:
+`0019_pet_co_ownership.sql` (keep this line in step with the highest-numbered migration mirrored
+into `schema.sql`). Use:
 
 ```
 npm run seed:local   # wrangler d1 execute pawbook-db --local  --file=./sql/schema.sql && ...seed.sql
@@ -62,3 +63,62 @@ It rebuilds the `Tenants` table, copying forward only 6 columns (`Id`, `Slug`, `
 data in `MaxHouseSitsPerDay`, `MaxStayNights`, or `Timezone` **wipes those columns back to
 NULL** for every tenant. Never re-run an already-applied migration against a live DB — write a
 new one instead.
+
+### 0019_pet_co_ownership.sql
+
+Adds `PetOwners` (owner↔pet edge list, PK `(PetId, EndUserId)`, with its own `TenantId`),
+`EndUserPets.DeceasedAt`, and a backfill of exactly one `PetOwners` row per existing pet. Additive
+and non-destructive, but **not idempotent** — the backfill `INSERT` would fail on the PK a second
+time. Mirrored into `sql/schema.sql` and `sql/seed.sql`, so fresh installs and the Vitest harness
+get it without running this file.
+
+**Apply 0019 to the remote DB BEFORE merging the PR** — merging to `main` runs `npx wrangler
+deploy` unconditionally (`.github/workflows/ci.yml`), so the deploy is not something you get to
+time separately: the merge _is_ the deploy. The new worker `SELECT`s `PetOwners` and
+`EndUserPets.DeceasedAt` unconditionally on the widget's `/me` and on the admin customer list, and
+500s on every one of those requests if the table/column is missing. Applying ahead of the merge is
+safe: the currently-deployed worker never reads either, so the new table/column just sits there.
+
+```
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0019_pet_co_ownership.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0019_pet_co_ownership.sql
+```
+
+#### Verify the backfill, and repair the gap the window leaves
+
+Between applying 0019 and the new worker actually going live, the OLD worker keeps writing
+`EndUserPets` rows with **no** `PetOwners` edge — and every new read is an `INNER JOIN` on
+`PetOwners`, so such a pet is permanently invisible to its owner and to the sitter, silently and
+with no error. Same hazard after any rollback to the old worker.
+
+```sql
+-- Verify the backfill (these two must be equal):
+SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwners) AS edges;
+
+-- Idempotent repair — safe to re-run; fixes pets created by the old worker:
+INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;
+```
+
+Reading the numbers: `edges` **short** of `pets` means some pets have no owner edge and are
+therefore invisible — always fix it, never merge on it. It is _expected_ while the old worker is
+still live (that is the window described above), so a shortfall before the merge is not a sign
+anything went wrong; it just has to be repaired. `edges` **exceeding** `pets` is normal once
+co-owners exist, and is never a problem.
+
+When to run each:
+
+- **Verify** right after applying 0019, and again immediately before merging the PR. If `edges` is
+  short of `pets`, **run the repair below, re-verify until the two are equal, then merge.**
+- **Repair** whenever verify shows a shortfall: before the merge (per above), once the deploy is
+  confirmed live — run it then even if the pre-merge check was clean, since the window stays open
+  until the new worker is actually serving — and again after **any** rollback to a worker that
+  predates 0019. It is `INSERT OR IGNORE`, so re-running it costs nothing and can only add the
+  missing creating-owner edges — unlike 0019's own bare `INSERT ... SELECT` backfill, which fails on
+  the primary key the second time.
+
+Run both with `--command` rather than `--file`:
+
+```
+npx wrangler d1 execute pawbook-db --remote --command "SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwners) AS edges;"
+npx wrangler d1 execute pawbook-db --remote --command "INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;"
+```

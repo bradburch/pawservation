@@ -65,6 +65,59 @@ describe('admin customers', () => {
     expect(res.status).toBe(409);
   });
 
+  // The three outcomes of DELETE /admin/customers/:id, pinned at the ROUTE so the mapping from
+  // deleteCustomer's discriminated result to status codes cannot silently collapse. The 409 below
+  // is the co-ownership refusal, which has no pre-check ahead of it — unlike the has-bookings 409
+  // above, which the route's own countBookingsForUser catches first.
+  it("refuses with 409 (not 404) when a pet the client owns is on someone else's booking", async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `INSERT INTO EndUsers (Id, TenantId, Email, Status) VALUES ('eu_own','${TENANT_A}','owner@example.com','active')`,
+    );
+    raw.exec(
+      `INSERT INTO EndUsers (Id, TenantId, Email, Status) VALUES ('eu_bkr','${TENANT_A}','booker@example.com','active')`,
+    );
+    raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+              VALUES ('pet_own','${TENANT_A}','eu_own','Rex','dog')`);
+    raw.exec(
+      `INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES ('${TENANT_A}','pet_own','eu_own')`,
+    );
+    // The booking belongs to the OTHER client, so eu_own has none of their own and sails past the
+    // route's countBookingsForUser pre-check.
+    raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
+              VALUES ('bk_own','${TENANT_A}','eu_bkr','daycare','2030-05-01',1,'confirmed')`);
+    raw.exec(
+      `INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk_own','pet_own')`,
+    );
+
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers/eu_own`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+
+    expect(res.status).toBe(409);
+    // The message must name the real cause — a 404 or a bare "cannot remove" sends the sitter
+    // looking for a missing record instead of at the pet that is actually blocking them.
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toMatch(/pet this client owns is on a booking/i);
+    expect(error).not.toMatch(/not found/i);
+    // And nothing was deleted.
+    expect(raw.prepare('SELECT * FROM EndUsers WHERE Id = ?').get('eu_own')).toBeDefined();
+    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet_own')).toBeDefined();
+  });
+
+  it('404s for a customer that does not exist in this tenant', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers/eu_nope`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: 'Not found.' });
+  });
+
   it('removes a customer that has a pet and a prior login code, without a 500 (FK cascade)', async () => {
     const { env, raw } = createTestEnv();
     raw.exec(

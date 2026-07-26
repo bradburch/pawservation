@@ -148,6 +148,17 @@ export function ClientsSection({
   const removePet = (endUserId: string, petId: string) =>
     mutate(() => adminApi.customers.removePet(slug, token, endUserId, petId));
 
+  // Co-ownership (0019): a pet can belong to several clients, so it is listed under each of them.
+  // "Remove pet" deletes the record for everyone; "Remove from this client" only drops one edge.
+  const addPetOwner = (petId: string, endUserId: string) =>
+    mutate(() => adminApi.customers.addPetOwner(slug, token, petId, endUserId));
+
+  const removePetOwner = (petId: string, endUserId: string) =>
+    mutate(() => adminApi.customers.removePetOwner(slug, token, petId, endUserId));
+
+  const setPetDeceased = (petId: string, deceased: boolean) =>
+    mutate(() => adminApi.customers.setPetDeceased(slug, token, petId, deceased));
+
   const runImport = async () => {
     if (!csvFile || importing) return;
     clearError();
@@ -269,9 +280,33 @@ export function ClientsSection({
               {cust.pets.map((p) => (
                 <li key={p.id}>
                   {p.name} <em>{p.petType}</em>
+                  {p.deceasedAt ? <span className="pb-chip pb-chip-warn">Deceased</span> : null}
                   {p.notes ? <span className="pb-hint"> — {p.notes}</span> : null}
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) void addPetOwner(p.id, e.target.value);
+                    }}
+                    disabled={busy}
+                    aria-label={`Add another owner for ${p.name}`}
+                  >
+                    <option value="">Add another owner…</option>
+                    {customers
+                      .filter((other) => other.id !== cust.id)
+                      .map((other) => (
+                        <option key={other.id} value={other.id}>
+                          {other.name ?? other.email}
+                        </option>
+                      ))}
+                  </select>
+                  <button onClick={() => void removePetOwner(p.id, cust.id)} disabled={busy}>
+                    Remove from this client
+                  </button>
+                  <button onClick={() => void setPetDeceased(p.id, !p.deceasedAt)} disabled={busy}>
+                    {p.deceasedAt ? 'Mark alive' : 'Mark deceased'}
+                  </button>
                   <button onClick={() => void removePet(cust.id, p.id)} disabled={busy}>
-                    Remove
+                    Remove pet
                   </button>
                 </li>
               ))}

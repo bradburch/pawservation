@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
   addEndUserPet,
+  addPetOwner,
   clearProviderConnection,
   countBookingPetRefs,
   countBookingsForService,
@@ -34,10 +35,12 @@ import {
   listServiceOptions,
   listServices,
   removeEndUserPet,
+  removePetOwner,
   renamePetType,
   replaceServiceOptions,
   setProviderCalendarId,
   setServiceConfig,
+  setPetDeceased,
   updateBookingStatus,
   updateTenantSettings,
 } from '../db/repo';
@@ -813,11 +816,25 @@ export const adminRoutes = new Hono<AppEnv>()
     ]);
     const byUser = new Map<
       string,
-      { id: string; name: string; petType: string; notes: string | null }[]
+      {
+        id: string;
+        name: string;
+        petType: string;
+        notes: string | null;
+        deceasedAt: string | null;
+      }[]
     >();
+    // listAllEndUserPetsByTenant returns ONE ROW PER OWNER LINK (0019), so a co-owned pet lands in
+    // both owners' buckets with no change to this grouping.
     for (const p of allPets) {
       const list = byUser.get(p.EndUserId) ?? [];
-      list.push({ id: p.Id, name: p.Name, petType: p.PetType, notes: p.Notes });
+      list.push({
+        id: p.Id,
+        name: p.Name,
+        petType: p.PetType,
+        notes: p.Notes,
+        deceasedAt: p.DeceasedAt,
+      });
       byUser.set(p.EndUserId, list);
     }
     const withPets = customers.map((u) => ({
@@ -874,9 +891,39 @@ export const adminRoutes = new Hono<AppEnv>()
     const id = c.req.param('id');
     if ((await countBookingsForUser(c.env.PAWBOOK_DB, tenant.Id, id)) > 0)
       return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
-    const deleted = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
-    if (!deleted) return c.json({ error: 'Not found.' }, 404);
-    return c.body(null, 204);
+    // deleteCustomer reports WHICH precondition refused, so a refusal never masquerades as a 404
+    // for a customer who plainly exists. 'has-bookings' is only reachable when a booking lands
+    // between the count above and the delete itself; the co-ownership refusal below has no such
+    // pre-check and is the common one.
+    //
+    // Exhaustive switch, not an if-chain ending in the 204: success must be reached by a POSITIVE
+    // 'deleted' test. A fifth outcome added to deleteCustomer later would otherwise fall through to
+    // "204 No Content" — a refusal reported as success, which is the exact failure this whole guard
+    // exists to prevent. Here it fails to compile (`never`) and, if it somehow ships, fails closed.
+    const outcome = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+    switch (outcome) {
+      case 'deleted':
+        return c.body(null, 204);
+      case 'not-found':
+        return c.json({ error: 'Not found.' }, 404);
+      case 'has-bookings':
+        return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
+      case 'pet-on-booking':
+        return c.json(
+          {
+            // Adding a second owner is the remedy that works: the pet is then handed to that owner
+            // instead of being cascaded. Cancelling the booking would NOT help — cancel/decline are
+            // soft, so the BookingRequestPets row survives.
+            error:
+              'A pet this client owns is on a booking; cannot remove. Add a second owner first.',
+          },
+          409,
+        );
+      default: {
+        const unhandled: never = outcome;
+        return c.json({ error: `Cannot remove this client (${String(unhandled)}).` }, 409);
+      }
+    }
   })
   .post('/:slug/admin/customers/:id/pets', async (c) => {
     const tenant = c.get('tenant');
@@ -892,7 +939,8 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!petType) return c.json({ error: 'Unknown pet type.' }, 400);
     if (notes !== null && notes.length > 2000) return c.json({ error: 'Notes are too long.' }, 400);
     // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
-    // under it (production D1 has foreign keys OFF, so nothing else stops a cross-tenant orphan).
+    // under it — EndUserPets.EndUserId FKs to EndUsers(Id) without a TenantId, so D1's foreign-key
+    // enforcement wouldn't catch a cross-tenant id on its own; this check is what prevents it.
     if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
       return c.json({ error: 'Not found.' }, 404);
     // Registry membership only (0015): a sitter may record a pet of a type no service currently
@@ -910,6 +958,50 @@ export const adminRoutes = new Hono<AppEnv>()
     if (refs > 0) return c.json({ error: 'Pet has bookings; cannot remove.' }, 409);
     const removed = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
     if (!removed) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+  // Co-ownership (0019). Keyed on the pet, not on a customer, because a co-owned pet has no single
+  // owning customer to nest under. Covered by this app's one `.use('/:slug/admin/*', adminAuth)`
+  // declaration, and by tenantMiddleware's non-GET rejection for a disabled tenant.
+  .post('/:slug/admin/pets/:petId/owners', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ endUserId?: unknown }>()
+      .catch(() => ({}) as { endUserId?: unknown });
+    const endUserId = typeof body.endUserId === 'string' ? body.endUserId : '';
+    if (!endUserId) return c.json({ error: 'Choose a client.' }, 400);
+    const added = await addPetOwner(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'), endUserId);
+    // A pet or customer from another tenant is reported exactly like a nonexistent one.
+    if (!added) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+  .delete('/:slug/admin/pets/:petId/owners/:endUserId', async (c) => {
+    const tenant = c.get('tenant');
+    const outcome = await removePetOwner(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('petId'),
+      c.req.param('endUserId'),
+    );
+    if (outcome === 'not-found') return c.json({ error: 'Not found.' }, 404);
+    if (outcome === 'last-owner')
+      return c.json({ error: 'A pet must keep at least one owner — remove the pet instead.' }, 409);
+    return c.body(null, 204);
+  })
+  .patch('/:slug/admin/pets/:petId', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ deceased?: unknown }>()
+      .catch(() => ({}) as { deceased?: unknown });
+    if (typeof body.deceased !== 'boolean')
+      return c.json({ error: 'deceased must be true or false.' }, 400);
+    const updated = await setPetDeceased(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('petId'),
+      body.deceased,
+    );
+    if (!updated) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
   .post('/:slug/admin/customers/import', async (c) => {

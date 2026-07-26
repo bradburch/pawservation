@@ -169,6 +169,8 @@ CREATE TABLE IF NOT EXISTS EndUserPets (
   Name TEXT NOT NULL,
   PetType TEXT NOT NULL, -- tenant pet-type slug
   Notes TEXT, -- care notes the sitter keeps (feeding, meds, temperament)
+  -- NULL = alive; timestamp = deceased (0019). Excluded from every bookable/quotable pet list.
+  DeceasedAt TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_EndUserPets_Tenant_User ON EndUserPets (TenantId, EndUserId);
@@ -179,6 +181,19 @@ CREATE TABLE IF NOT EXISTS BookingRequestPets (
   PetId TEXT NOT NULL REFERENCES EndUserPets(Id),
   PRIMARY KEY (BookingRequestId, PetId)
 );
+
+-- Owner<->pet edges (0019). AUTHORITATIVE ownership: /me, the booking-time ownership gate, and
+-- union-find invoicing accounts all read this, not EndUserPets.EndUserId (which stays as the
+-- primary/creating owner). TenantId is carried here DELIBERATELY, unlike BookingRequestPets above:
+-- the union-find source query must be one tenant-scoped read, not a three-way join.
+CREATE TABLE IF NOT EXISTS PetOwners (
+  TenantId  TEXT NOT NULL REFERENCES Tenants(Id),
+  PetId     TEXT NOT NULL REFERENCES EndUserPets(Id),
+  EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (PetId, EndUserId)
+);
+CREATE INDEX IF NOT EXISTS idx_PetOwners_Tenant_User ON PetOwners (TenantId, EndUserId);
 
 -- Recorded payments against bookings (earnings analytics). Multiple rows per booking
 -- (deposits/partials); whole dollars matching EstCost/Rate. PaidDate is sitter-entered.
