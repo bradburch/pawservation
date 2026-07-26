@@ -1173,25 +1173,41 @@ export async function deleteCustomer(
   // the route's count check and here can never orphan a live booking. The route still 409s on the
   // common path; this closes the TOCTOU with a safe no-op (0 rows -> false) on the race.
   //
-  // D1 enforces foreign keys, so EndUsers can't be deleted while LoginCodes/EndUserPets rows
-  // still reference it — and EndUserPets can't be deleted while BookingRequestPets or PetOwners
-  // (0019) rows still reference IT (BookingRequestPets: possible even though this customer has no
-  // bookings of their own, since addBookingPets only checks tenant match, not that a pet's owner
-  // is the booking's customer; PetOwners: every pet has a backfilled owner row). Cascade child-first
-  // in one batch, each statement carrying the same NOT-EXISTS bookings guard so a TOCTOU race leaves
-  // every table untouched together rather than partially cascading before the guard trips.
+  // D1 enforces foreign keys, so EndUsers can't be deleted while LoginCodes/EndUserPets/PetOwners
+  // rows still reference it — and EndUserPets can't be deleted while BookingRequestPets or
+  // PetOwners rows still reference IT. Cascade child-first in one batch, each statement carrying
+  // the same NOT-EXISTS bookings guard so a TOCTOU race leaves every table untouched together
+  // rather than partially cascading before the guard trips.
+  //
+  // Co-ownership (0019) adds the first two statements, and they must run in this order:
+  //   1. hand EndUserPets.EndUserId (NOT NULL + FK, the creating-owner column) to the oldest
+  //      surviving co-owner for every pet that HAS one — otherwise deleting this EndUsers row
+  //      leaves that column dangling;
+  //   2. drop this customer's ownership edges;
+  //   3. cascade only the pets still stamped with this EndUserId, which after (1) are exactly the
+  //      pets nobody else owns. A pet another customer co-owns is never deleted here.
   const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequests WHERE TenantId = ? AND EndUserId = ?)`;
-  const [, , , , endUsersResult] = await db.batch([
+  const [, , , , , endUsersResult] = await db.batch([
     db
       .prepare(
-        `DELETE FROM BookingRequestPets
-           WHERE PetId IN (SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?)
-             AND ${bookingGuard}`,
+        `UPDATE EndUserPets
+            SET EndUserId = (SELECT po.EndUserId FROM PetOwners po
+                              WHERE po.TenantId = EndUserPets.TenantId AND po.PetId = EndUserPets.Id
+                                AND po.EndUserId <> ?
+                           ORDER BY po.CreatedAt, po.EndUserId LIMIT 1)
+          WHERE TenantId = ? AND EndUserId = ?
+            AND EXISTS (SELECT 1 FROM PetOwners po
+                         WHERE po.TenantId = EndUserPets.TenantId AND po.PetId = EndUserPets.Id
+                           AND po.EndUserId <> ?)
+            AND ${bookingGuard}`,
       )
+      .bind(id, tenantId, id, id, tenantId, id),
+    db
+      .prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard}`)
       .bind(tenantId, id, tenantId, id),
     db
       .prepare(
-        `DELETE FROM PetOwners
+        `DELETE FROM BookingRequestPets
            WHERE PetId IN (SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?)
              AND ${bookingGuard}`,
       )
@@ -1829,14 +1845,19 @@ export async function setTenantDisabled(
 /**
  * Owner-scope: irreversibly delete a tenant and ALL its data. One child-first batch (D1 enforces
  * FKs with no ON DELETE CASCADE, so leaves must go before parents; the single batch means a
- * failure leaves every table untouched together). Covers all tenant-keyed tables, the
- * transitively-scoped BookingRequestPets, PetOwners (0019, carries its own TenantId), and the
- * claimed AllowedSitters row (email fully deleted — the owner must re-invite to bring the sitter
- * back). Returns whether the Tenants row was deleted (false = no such tenant). Caller must resolve
- * the slug first and invalidateTenantCache after.
+ * failure leaves every table untouched together). Covers all tenant-keyed tables — including
+ * PetOwners, which references BOTH EndUserPets and EndUsers and so must be the first thing to go —
+ * the transitively-scoped BookingRequestPets, and the claimed AllowedSitters row (email fully
+ * deleted — the owner must re-invite to bring the sitter back). Returns whether the Tenants row
+ * was deleted (false = no such tenant). Caller must resolve the slug first and
+ * invalidateTenantCache after.
+ *
+ * THIS LIST IS HAND-MAINTAINED: a new tenant-keyed table that is not added here makes tenant
+ * deletion fail on a foreign key.
  */
 export async function deleteTenantCompletely(db: D1Database, tenantId: string): Promise<boolean> {
   const results = await db.batch([
+    db.prepare('DELETE FROM PetOwners WHERE TenantId = ?').bind(tenantId),
     db
       .prepare(
         `DELETE FROM BookingRequestPets
@@ -1845,7 +1866,6 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
       .bind(tenantId),
     db.prepare('DELETE FROM Payments WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
-    db.prepare('DELETE FROM PetOwners WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import type { DatabaseSync } from 'node:sqlite';
 import {
+  addEndUserPet,
+  addPetOwner,
   countBookingsForUser,
   deleteCustomer,
   getEndUserByEmail,
   insertInvitedCustomer,
   listCustomers,
+  listEndUserPets,
   promoteCustomerActive,
 } from '../db/repo';
-import { createTestEnv, TENANT_A } from './helpers';
+import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 describe('customer repo', () => {
   it('inserts an invited customer and is idempotent (no active downgrade)', async () => {
@@ -70,6 +74,13 @@ describe('customer repo', () => {
     expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(true);
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
     expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, 'missing')).toBe(false);
+  });
+
+  it('deleteCustomer refuses cross-tenant, leaving the customer intact', async () => {
+    const { env } = createTestEnv();
+    const c = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'cross@example.com', null);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_B, c.Id)).toBe(false);
+    expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
   });
 
   it('deleteCustomer cascades EndUserPets and LoginCodes (no FK violation, no orphans)', async () => {
@@ -139,5 +150,64 @@ describe('customer repo', () => {
     expect(
       raw.prepare('SELECT * FROM BookingRequestPets WHERE PetId = ?').get('pet3'),
     ).toBeDefined();
+  });
+});
+
+describe('deleteCustomer under co-ownership', () => {
+  const petRow = (raw: DatabaseSync, petId: string) =>
+    raw.prepare('SELECT Id, EndUserId FROM EndUserPets WHERE Id = ?').get(petId) as
+      { Id: string; EndUserId: string } | undefined;
+  const ownerCount = (raw: DatabaseSync, petId: string) =>
+    (raw.prepare('SELECT COUNT(*) AS n FROM PetOwners WHERE PetId = ?').get(petId) as { n: number })
+      .n;
+
+  it('keeps a co-owned pet alive and hands it to the surviving owner', async () => {
+    const { env, raw } = createTestEnv();
+    const creator = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'creator@example.com',
+      'Creator',
+    );
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, creator.Id, 'Rex', 'dog');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
+
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe(true);
+
+    // The pet survives, now stamped with the survivor (EndUserPets.EndUserId is NOT NULL + FK).
+    expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: co.Id });
+    expect(ownerCount(raw, pet.Id)).toBe(1);
+    // The survivor still sees it.
+    expect((await listEndUserPets(env.PAWBOOK_DB, TENANT_A, co.Id)).map((p) => p.Name)).toEqual([
+      'Rex',
+    ]);
+  });
+
+  it('still deletes a pet nobody else owns', async () => {
+    const { env, raw } = createTestEnv();
+    const solo = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'solo@example.com', 'Solo');
+    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, solo.Id, 'Only', 'dog');
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, solo.Id)).toBe(true);
+    expect(petRow(raw, pet.Id)).toBeUndefined();
+    expect(ownerCount(raw, pet.Id)).toBe(0);
+  });
+
+  it('removes only the departing owner from a pet they merely co-own', async () => {
+    const { env, raw } = createTestEnv();
+    const creator = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'creator@example.com',
+      'Creator',
+    );
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, creator.Id, 'Rex', 'dog');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
+
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, co.Id)).toBe(true);
+
+    expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: creator.Id });
+    expect(ownerCount(raw, pet.Id)).toBe(1);
   });
 });

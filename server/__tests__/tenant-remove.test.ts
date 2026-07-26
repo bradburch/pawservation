@@ -13,6 +13,7 @@ const TENANT_TABLES = [
   'LoginCodes',
   'BookingRequests',
   'EndUserPets',
+  'PetOwners',
   'Payments',
   'ProviderConnections',
 ] as const;
@@ -38,6 +39,9 @@ function seedFullTenant(raw: DatabaseSync, t: string, slug: string) {
   );
   raw.exec(
     `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES ('${t}_pet','${t}','${t}_eu','Rex','dog');`,
+  );
+  raw.exec(
+    `INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES ('${t}','${t}_pet','${t}_eu');`,
   );
   raw.exec(
     `INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, Status) VALUES ('${t}_b','${t}','${t}_eu','boarding','2026-07-20','confirmed');`,
