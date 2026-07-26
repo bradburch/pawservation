@@ -101,6 +101,52 @@ describe('admin co-owner + deceased routes', () => {
     });
   });
 
+  it('404s removing a non-owner, and a foreign-tenant pet is indistinguishable from nonexistent', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    // co was invited but never linked as an owner of Bella — no such edge exists to delete.
+    const notOwner = await app.request(
+      `/api/sunny-paws/admin/pets/pet_sp_bella/owners/${co.Id}`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(notOwner.status).toBe(404);
+    expect(await notOwner.json()).toEqual({ error: 'Not found.' });
+
+    // Another tenant's pet+owner link is indistinguishable from a nonexistent one.
+    const foreign = await app.request(
+      `/api/sunny-paws/admin/pets/pet_ht_otis/owners/eu_sp_jess`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(foreign.status).toBe(404);
+    expect(await foreign.json()).toEqual({ error: 'Not found.' });
+  });
+
+  it('is idempotent when the same owner is added twice', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const addOnce = async () =>
+      app.request(
+        `/api/sunny-paws/admin/pets/pet_sp_bella/owners`,
+        {
+          method: 'POST',
+          headers: await jsonHeaders(TENANT_A),
+          body: JSON.stringify({ endUserId: co.Id }),
+        },
+        env,
+      );
+    expect((await addOnce()).status).toBe(204);
+    expect((await addOnce()).status).toBe(204);
+
+    const row = await env.PAWBOOK_DB.prepare(
+      'SELECT COUNT(*) AS n FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?',
+    )
+      .bind(TENANT_A, 'pet_sp_bella', co.Id)
+      .first<{ n: number }>();
+    expect(row?.n).toBe(1);
+  });
+
   it('marks a pet deceased and back, surfacing deceasedAt to the sitter', async () => {
     const { env } = createTestEnv();
     const mark = async (deceased: boolean) =>
