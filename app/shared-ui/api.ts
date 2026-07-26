@@ -31,7 +31,14 @@ export type TenantConfig = {
   disabled: boolean;
 };
 
-export type Pet = { id: string; name: string; petType: string; notes?: string | null };
+export type Pet = {
+  id: string;
+  name: string;
+  petType: string;
+  notes?: string | null;
+  /** NULL/absent = alive. Only the admin payload sets it — customer-facing lists omit deceased pets. */
+  deceasedAt?: string | null;
+};
 export type MonthDay = {
   date: string;
   status: 'available' | 'partial' | 'unavailable';
@@ -272,6 +279,23 @@ export const adminApi = {
       request<unknown>(`/api/${slug}/admin/customers/${endUserId}/pets/${petId}`, {
         method: 'DELETE',
         headers: authHeaders(token),
+      }),
+    addPetOwner: (slug: string, token: string, petId: string, endUserId: string) =>
+      request<unknown>(`/api/${slug}/admin/pets/${petId}/owners`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ endUserId }),
+      }),
+    removePetOwner: (slug: string, token: string, petId: string, endUserId: string) =>
+      request<unknown>(`/api/${slug}/admin/pets/${petId}/owners/${endUserId}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+      }),
+    setPetDeceased: (slug: string, token: string, petId: string, deceased: boolean) =>
+      request<unknown>(`/api/${slug}/admin/pets/${petId}`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ deceased }),
       }),
     import: (slug: string, token: string, csv: string, sendInvites: boolean) =>
       request<ImportResult>(`/api/${slug}/admin/customers/import`, {
