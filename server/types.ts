@@ -70,7 +70,9 @@ export type TenantServiceOption = {
   Label: string;
   DurationMinutes: number | null;
   Rate: number;
-  RateUnit: RateUnit;
+  // No RateUnit: the TenantServiceOptions copy is retired and not selected (see sql/schema.sql).
+  // The billing unit lives on TenantService.RateUnit; omitting it here makes reading the wrong
+  // column a type error rather than a convention.
   StartTime: string | null; // 'HH:MM'; NULL = no fixed window
   EndTime: string | null; // 'HH:MM'; NULL = no fixed window
   Capacity: number | null; // max concurrent bookings/date; NULL = unlimited

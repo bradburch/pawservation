@@ -279,8 +279,9 @@ describe('config + availability — service options and pet types', () => {
   });
 });
 
-/** An option row. `Rate` is what the sitter typed; the option's own `RateUnit` is display-only —
- *  the BILLING unit is the service's, so cost tests vary the service and keep the option fixed. */
+/** An option row. `Rate` is what the sitter typed; there is no per-option billing unit to set —
+ *  `TenantServiceOption` has no `RateUnit` (the retired column is not selected), so the BILLING
+ *  unit can only be the service's, and cost tests vary the service and keep the option fixed. */
 function opt(over: Partial<TenantServiceOption>): TenantServiceOption {
   return {
     Id: 'o',
@@ -290,7 +291,6 @@ function opt(over: Partial<TenantServiceOption>): TenantServiceOption {
     Label: '30 minutes',
     DurationMinutes: 30,
     Rate: 20,
-    RateUnit: 'visit',
     StartTime: null,
     EndTime: null,
     Capacity: null,
@@ -315,7 +315,6 @@ describe('checkAvailability', () => {
       OptionKey: 'standard',
       DurationMinutes: null,
       Rate: 50,
-      RateUnit: 'night',
     });
     const res = await checkAvailability(env, t, svc('boarding'), o, '2028-08-10', '2028-08-13', 1);
     expect(res).toMatchObject({ available: true, estCost: 150, nights: 3 });
@@ -329,7 +328,6 @@ describe('checkAvailability', () => {
       OptionKey: 'standard',
       DurationMinutes: null,
       Rate: 70,
-      RateUnit: 'night',
     });
     // Seed: 1 pet boarding Jun 20-25. A house-sit Jun 21-23 overlaps boarding on Jun 21 AND 22.
     const res = await checkAvailability(
@@ -464,7 +462,6 @@ describe('checkAvailability', () => {
       OptionKey: 'standard',
       DurationMinutes: null,
       Rate: 70,
-      RateUnit: 'night',
     });
     // House-sit service with a 2-pet cap and one existing 2-pet sit (Aug, no boarding overlap).
     const service = svc('housesitting', { MaxConcurrentPets: 2 });
@@ -529,6 +526,138 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
   });
 });
 
+describe('the quote’s quantity is unit-aware (billedUnits + unit)', () => {
+  const RANGE_OPT = {
+    ServiceType: 'boarding',
+    OptionKey: 'standard',
+    DurationMinutes: null,
+  } as const;
+
+  it('regression lock — a night-billed range service still bills nights, and says so', async () => {
+    const { env } = createTestEnv();
+    const res = await checkAvailability(
+      env,
+      tenant(),
+      svc('boarding'), // template rateUnit: 'night'
+      opt({ ...RANGE_OPT, Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      1,
+    );
+    // `nights` is untouched, and the new quantity equals it — today's behavior, restated.
+    expect(res).toMatchObject({ available: true, estCost: 150, nights: 3, billedUnits: 3 });
+    expect(res).toMatchObject({ unit: 'night' });
+  });
+
+  it('a day-billed range service reports nights + 1 days, not nights', async () => {
+    const { env } = createTestEnv();
+    const res = await checkAvailability(
+      env,
+      tenant(),
+      svc('boarding', { ServiceType: 'day-boarding', RateUnit: 'day' }),
+      opt({ ...RANGE_OPT, ServiceType: 'day-boarding', Rate: 30 }),
+      '2029-04-10',
+      '2029-04-13',
+      1,
+    );
+    // 3 nights = 4 chargeable days. `nights` keeps its own meaning (3) for wire compatibility.
+    expect(res).toMatchObject({ available: true, estCost: 120, nights: 3, billedUnits: 4 });
+    expect(res).toMatchObject({ unit: 'day' });
+  });
+
+  it('estCost is always rate × billedUnits, so the number and the price cannot drift', async () => {
+    const { env } = createTestEnv();
+    const cases = [
+      {
+        service: svc('boarding'),
+        rate: 50,
+        unit: 'night' as const,
+        start: '2028-08-10',
+        end: '2028-08-13',
+      },
+      {
+        service: svc('housesitting'),
+        rate: 70,
+        unit: 'night' as const,
+        start: '2028-08-10',
+        end: '2028-08-15',
+      },
+      {
+        service: svc('boarding', { ServiceType: 'day-boarding', RateUnit: 'day' }),
+        rate: 30,
+        unit: 'day' as const,
+        start: '2029-04-10',
+        end: '2029-04-13',
+      },
+      {
+        service: svc('boarding', { ServiceType: 'day-boarding-1', RateUnit: 'day' }),
+        rate: 30,
+        unit: 'day' as const,
+        start: '2029-04-10',
+        end: '2029-04-10', // degenerate same-day range: 1 day, never 2
+      },
+    ];
+    for (const c of cases) {
+      const res = await checkAvailability(
+        env,
+        tenant(),
+        c.service,
+        opt({ ...RANGE_OPT, ServiceType: c.service.ServiceType, Rate: c.rate }),
+        c.start,
+        c.end,
+        1,
+      );
+      expect(res.available).toBe(true);
+      const ok = res as { estCost: number; billedUnits?: number; unit?: string };
+      expect(ok.unit).toBe(c.unit);
+      expect(c.rate * ok.billedUnits!).toBe(ok.estCost);
+    }
+  });
+
+  it('single-day services carry no quantity at all — a flat per-booking charge', async () => {
+    const { env } = createTestEnv();
+    const res = await checkAvailability(
+      env,
+      tenant(),
+      svc('walk'),
+      opt({ Rate: 20 }),
+      '2028-08-01',
+      '',
+    );
+    expect(res).toMatchObject({ available: true, estCost: 20 });
+    // Deliberately absent (like `nights`): there is no quantity to bill, so there is nothing
+    // for the widget to label.
+    const ok = res as { billedUnits?: number; unit?: string };
+    expect(ok.billedUnits).toBeUndefined();
+    expect(ok.unit).toBeUndefined();
+  });
+});
+
+describe('no inferred pricing — pet count never moves the price', () => {
+  it('the API quote is identical for 1 pet and 3 pets, yet 5 pets is refused', async () => {
+    const { env } = createTestEnv();
+    // Happy Tails boarding: MaxConcurrentPets = 4 (sql/seed.sql), so 1 and 3 pets are bookable and
+    // 5 is over the cap; the dates are clear of the seeded Jun 20-25 booking / Jul 3-5 block. This
+    // must go through the HTTP route because the ROUTE is what receives `pets` — a direct
+    // estimateCost() call could not see a pet count to ignore.
+    const dates = 'type=boarding&start=2029-05-10&end=2029-05-13';
+    const quote = async (pets: number) =>
+      (await (
+        await app.request(`/api/happy-tails/availability?${dates}&pets=${pets}`, {}, env)
+      ).json()) as Record<string, unknown>;
+    const [one, three, five] = await Promise.all([quote(1), quote(3), quote(5)]);
+
+    expect(one).toMatchObject({ available: true, estCost: 120 }); // $40/night × 3 nights
+    expect(three.available).toBe(true);
+    // The WHOLE payload must match — not just estCost — so no future per-pet quantity or
+    // multiplier can sneak in through another field either.
+    expect(three).toEqual(one);
+    // …and `pets` is genuinely READ, not merely unused: 5 > the 4-pet cap is refused. Without this
+    // leg the equality above would still pass if the route stopped looking at `pets` altogether.
+    expect(five).toEqual({ available: false, reason: 'That exceeds our boarding capacity.' });
+  });
+});
+
 describe('quote/stamp parity for a day-unit range service', () => {
   /** Seeds an enabled range service billed per DAY at Sunny Paws, the way a sitter would get one
    *  from a template clone (admin PUT writes the same columns). */
@@ -559,9 +688,16 @@ describe('quote/stamp parity for a day-unit range service', () => {
         {},
         env,
       )
-    ).json()) as { available: boolean; estCost: number; nights: number };
-    expect(quote).toMatchObject({ available: true, nights: 3 });
+    ).json()) as {
+      available: boolean;
+      estCost: number;
+      nights: number;
+      billedUnits: number;
+      unit: string;
+    };
+    expect(quote).toMatchObject({ available: true, nights: 3, billedUnits: 4, unit: 'day' });
     expect(quote.estCost).toBe(120); // 3 nights = 4 days × $30
+    expect(quote.billedUnits * 30).toBe(quote.estCost); // the label and the price agree
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(

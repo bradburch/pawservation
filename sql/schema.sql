@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   Label TEXT NOT NULL,
   DurationMinutes INTEGER,
   Rate INTEGER NOT NULL,
+  -- RETIRED in place (no migration): the billing unit is read from TenantServices.RateUnit; this
+  -- copy is read by nothing and is not even SELECTed into the app's types. NOT NULL with no
+  -- DEFAULT, so writes must still supply it. No drop scheduled — that needs expand/contract across
+  -- two hand-applied production migrations to remove a column that causes no defect.
   RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
   -- A fixed clock window (both set together, or both NULL). Windowed options derive
   -- DurationMinutes from this window server-side (see server/routes/admin.ts); Capacity caps
