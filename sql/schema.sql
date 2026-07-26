@@ -104,16 +104,18 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
 -- Explicit rate for a specific set of pets, keyed per service (0020). GroupKey is the sorted,
 -- comma-joined pet-id list with a '|<duration>' suffix for timed services — see buildGroupKey in
 -- src/shared/pricing/pet-set-rates.ts. Exact-match only; nothing reads this table yet.
+-- Explicit rate for a specific pet-id set, keyed per OPTION so OptionKey pins duration — no
+-- suffix or DurationMinutes column needed. RateUnit comes from TenantServices.RateUnit (see
+-- migrations/0020_pet_group_pricing.sql for the full rationale).
 CREATE TABLE IF NOT EXISTS PetGroupPricing (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   ServiceType TEXT NOT NULL,
+  OptionKey TEXT NOT NULL,
   GroupKey TEXT NOT NULL,
   Rate INTEGER NOT NULL CHECK (Rate > 0),
-  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
-  DurationMinutes INTEGER,
   UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (TenantId, ServiceType, GroupKey)
+  UNIQUE (TenantId, ServiceType, OptionKey, GroupKey)
 );
 
 -- Explicit rate for a species count ("2 dogs"), applying to every client, keyed per OPTION (0021).

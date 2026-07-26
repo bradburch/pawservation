@@ -3,8 +3,9 @@
  *
  * A sitter may price a set two ways, and they are tried in this order:
  *
- * 1. **Specific animals** — `PetGroupPricing.GroupKey` is the sorted, comma-joined pet-id list
- *    with a `|<duration>` suffix for timed services. "Pedro & Remy, 60 min."
+ * 1. **Specific animals** — `PetGroupPricing.GroupKey` is the sorted, comma-joined pet-id list.
+ *    "Pedro & Remy." Keyed per option (`OptionKey`), so a rate set for one option of a service
+ *    never prices a different option of the same service.
  * 2. **A species count** — `TenantServicePetRates.MixKey` is `cat:1|dog:2`, species sorted.
  *    "Any 2 dogs." Set once, applies to every client.
  *
@@ -17,16 +18,22 @@
 /** Species slug → count. Counts are >= 1; non-positive entries are not part of a mix. */
 export type PetMix = Record<string, number>;
 
-/** A stored pet-id rate, reduced to what resolution needs. */
-export type GroupRate = { groupKey: string; rate: number };
+/**
+ * A stored pet-id rate, reduced to what resolution needs. `PetGroupPricing` rows are queried
+ * per-service (`listPetGroupPricing(db, tenantId, serviceType)`) but a service can have several
+ * options sharing a duration (`server/routes/admin.ts:252-255` — "two 30-minute check-ins with
+ * different names/rates"), so `groupKey` alone cannot tell them apart. `optionKey` travels with
+ * each rate and `resolvePetSetRate` filters on it before ever comparing `groupKey` — the same
+ * scope check `MixRate` needs, and for the same reason.
+ */
+export type GroupRate = { groupKey: string; rate: number; serviceType: string; optionKey: string };
 
 /**
- * A stored species-count rate, reduced to what resolution needs. Unlike `GroupRate` — whose
- * source table is already queried per-service (`listPetGroupPricing(db, tenantId, serviceType)`)
- * — `TenantServicePetRates` rows for an entire tenant share one `MixKey` namespace across every
- * service/option, so `serviceType`/`optionKey` travel with each rate and `resolvePetSetRate`
- * filters on them before ever comparing `mixKey`. Without that scope, a boarding `dog:2` rate and
- * an unrelated walk `dog:2` rate would be indistinguishable to `.find()`.
+ * A stored species-count rate, reduced to what resolution needs. `TenantServicePetRates` rows for
+ * an entire tenant share one `MixKey` namespace across every service/option, so `serviceType`/
+ * `optionKey` travel with each rate and `resolvePetSetRate` filters on them before ever comparing
+ * `mixKey`. Without that scope, a boarding `dog:2` rate and an unrelated walk `dog:2` rate would
+ * be indistinguishable to `.find()`.
  */
 export type MixRate = { mixKey: string; rate: number; serviceType: string; optionKey: string };
 
@@ -62,26 +69,28 @@ export function petCountOf(mix: PetMix): number {
 
 /**
  * Canonical pet-id key: ids deduped then sorted so selection order cannot change the key,
- * comma-joined, with `|<duration>` appended for timed services. Pet ids are UUIDs and so
- * comma-free, which is what makes the join unambiguous. '' when there are no pets.
+ * comma-joined. Pet ids are UUIDs and so comma-free, which is what makes the join unambiguous.
+ * '' when there are no pets. Duration is NOT part of this key — `OptionKey` (carried alongside
+ * on `GroupRate`/the stored row) already pins duration, since two options of one service may
+ * share a duration and a suffix here could not distinguish them.
  *
  * Deduping happens HERE, not at the caller: a caller that accepts client-supplied `petIds` may
  * validate only set membership (every id belongs to this customer), not uniqueness, and a
  * repeated id must never be allowed to manufacture a phantom multi-pet set (`['p_a','p_a']`
  * matching a 2-pet rate for what is really a single pet).
  */
-export function buildGroupKey(petIds: string[], durationMinutes: number | null): string {
+export function buildGroupKey(petIds: string[]): string {
   if (petIds.length === 0) return '';
-  const ids = [...new Set(petIds)].sort().join(',');
-  return durationMinutes === null ? ids : `${ids}|${durationMinutes}`;
+  return [...new Set(petIds)].sort().join(',');
 }
 
 /**
  * The rate for EXACTLY this pet set, or null. Pet-id rates win over species rates; nothing
  * else is consulted and nothing is derived. See the module comment.
  *
- * `serviceType`/`optionKey` scope which `mixRates` entries are even eligible to match — required
- * because `MixRate` rows are drawn from a tenant-wide table (see the `MixRate` doc comment).
+ * `serviceType`/`optionKey` scope which `groupRates` and `mixRates` entries are even eligible to
+ * match — required because both `GroupRate` and `MixRate` rows are drawn from queries that can
+ * span more than one option (see their doc comments).
  *
  * Callers must derive `petTypes` from the SAME deduped pet set as `petIds` (`buildGroupKey`
  * dedups `petIds` internally, but `petTypes` is a separate array this function does not dedup
@@ -91,15 +100,19 @@ export function buildGroupKey(petIds: string[], durationMinutes: number | null):
 export function resolvePetSetRate(args: {
   petIds: string[];
   petTypes: string[];
-  durationMinutes: number | null;
   serviceType: string;
   optionKey: string;
   groupRates: GroupRate[];
   mixRates: MixRate[];
 }): RateResolution {
-  const groupKey = buildGroupKey(args.petIds, args.durationMinutes);
+  const groupKey = buildGroupKey(args.petIds);
   if (groupKey) {
-    const hit = args.groupRates.find((r) => r.groupKey === groupKey);
+    const hit = args.groupRates.find(
+      (r) =>
+        r.groupKey === groupKey &&
+        r.serviceType === args.serviceType &&
+        r.optionKey === args.optionKey,
+    );
     if (hit) return { source: 'group', rate: hit.rate };
   }
   const mixKey = buildMixKey(mixFromPetTypes(args.petTypes));

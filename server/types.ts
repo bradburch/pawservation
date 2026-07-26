@@ -79,15 +79,18 @@ export type TenantServiceOption = {
   WeekdaysOnly: number; // int-bool: 1 = bookable Mon–Fri only
 };
 
-/** One explicit rate for a specific set of pets. GroupKey is the sorted pet-id list. */
+/**
+ * One explicit rate for a specific set of pets. GroupKey is the sorted pet-id list; OptionKey
+ * pins duration (see migrations/0020_pet_group_pricing.sql), so there is no DurationMinutes here
+ * and no RateUnit — the billing unit comes from TenantServices.RateUnit.
+ */
 export type PetGroupPricingRow = {
   Id: string;
   TenantId: string;
   ServiceType: string;
+  OptionKey: string;
   GroupKey: string;
   Rate: number;
-  RateUnit: RateUnit;
-  DurationMinutes: number | null;
   UpdatedAt: string;
 };
 

@@ -50,24 +50,19 @@ describe('mixFromPetTypes / petCountOf', () => {
 
 describe('buildGroupKey', () => {
   it('sorts pet ids so selection order does not matter', () => {
-    expect(buildGroupKey(['p_b', 'p_a'], null)).toBe('p_a,p_b');
-    expect(buildGroupKey(['p_a', 'p_b'], null)).toBe('p_a,p_b');
-  });
-  it('appends the duration suffix only when a duration is given', () => {
-    expect(buildGroupKey(['p_a'], 60)).toBe('p_a|60');
-    expect(buildGroupKey(['p_a'], null)).toBe('p_a');
+    expect(buildGroupKey(['p_b', 'p_a'])).toBe('p_a,p_b');
+    expect(buildGroupKey(['p_a', 'p_b'])).toBe('p_a,p_b');
   });
   it('empties to an empty string', () => {
-    expect(buildGroupKey([], 60)).toBe('');
+    expect(buildGroupKey([])).toBe('');
   });
   it('dedups repeated ids so a one-pet booking cannot match a two-pet rate', () => {
-    expect(buildGroupKey(['p_a', 'p_a'], null)).toBe('p_a');
+    expect(buildGroupKey(['p_a', 'p_a'])).toBe('p_a');
   });
 });
 
 describe('resolvePetSetRate — precedence, exact match only', () => {
   const base = {
-    durationMinutes: null,
     serviceType: 'walk',
     optionKey: 'w30',
     groupRates: [],
@@ -79,7 +74,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
       ...base,
       petIds: ['p_a', 'p_b'],
       petTypes: ['dog', 'dog'],
-      groupRates: [{ groupKey: 'p_a,p_b', rate: 44 }],
+      groupRates: [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }],
       mixRates: [{ mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' }],
     });
     expect(got).toEqual({ source: 'group', rate: 44 });
@@ -90,7 +85,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
       ...base,
       petIds: ['p_c', 'p_d'],
       petTypes: ['dog', 'dog'],
-      groupRates: [{ groupKey: 'p_a,p_b', rate: 44 }],
+      groupRates: [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }],
       mixRates: [{ mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' }],
     });
     expect(got).toEqual({ source: 'mix', rate: 35 });
@@ -157,7 +152,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
   });
 
   it('does not match a subset or superset group', () => {
-    const groupRates = [{ groupKey: 'p_a,p_b', rate: 44 }];
+    const groupRates = [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }];
     expect(
       resolvePetSetRate({ ...base, petIds: ['p_a'], petTypes: ['dog'], groupRates }),
     ).toBeNull();
@@ -171,23 +166,44 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     ).toBeNull();
   });
 
-  it('respects the duration suffix — a 60-min group rate does not price a 30-min booking', () => {
-    const groupRates = [{ groupKey: 'p_a|60', rate: 40 }];
+  it('does not select a same-groupKey rate scoped to a different OptionKey', () => {
+    // The exact bug this amendment fixes: two options of one service ("Morning 30" / "Evening
+    // 30") can share a duration, so a duration suffix alone could not tell them apart and one
+    // option's group rate would silently price the other. OptionKey must be checked.
+    const groupRates = [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }];
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a'],
-        petTypes: ['dog'],
-        durationMinutes: 60,
+        petIds: ['p_a', 'p_b'],
+        petTypes: ['dog', 'dog'],
+        serviceType: 'walk',
+        optionKey: 'w30-evening',
         groupRates,
       }),
-    ).toEqual({ source: 'group', rate: 40 });
+    ).toBeNull();
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a'],
-        petTypes: ['dog'],
-        durationMinutes: 30,
+        petIds: ['p_a', 'p_b'],
+        petTypes: ['dog', 'dog'],
+        serviceType: 'walk',
+        optionKey: 'w30',
+        groupRates,
+      }),
+    ).toEqual({ source: 'group', rate: 44 });
+  });
+
+  it('does not select a same-groupKey rate scoped to a different ServiceType', () => {
+    const groupRates = [
+      { groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'standard' },
+    ];
+    expect(
+      resolvePetSetRate({
+        ...base,
+        petIds: ['p_a', 'p_b'],
+        petTypes: ['dog', 'dog'],
+        serviceType: 'boarding',
+        optionKey: 'standard',
         groupRates,
       }),
     ).toBeNull();

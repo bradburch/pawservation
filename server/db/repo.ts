@@ -973,11 +973,14 @@ export async function replaceServiceOptions(
   ]);
 }
 
-const PET_GROUP_COLS =
-  'Id, TenantId, ServiceType, GroupKey, Rate, RateUnit, DurationMinutes, UpdatedAt';
+const PET_GROUP_COLS = 'Id, TenantId, ServiceType, OptionKey, GroupKey, Rate, UpdatedAt';
 const PET_MIX_COLS = 'TenantId, ServiceType, OptionKey, MixKey, Rate';
 
-/** Pet-id rates for one service. Exact-match resolution happens in src/shared. */
+/**
+ * Pet-id rates for one service (across every option — the admin editor is per-service, §6 of the
+ * design spec, not per-option). Exact-match resolution happens in src/shared, scoped by
+ * OptionKey on each returned row.
+ */
 export async function listPetGroupPricing(
   db: D1Database,
   tenantId: string,
@@ -993,17 +996,27 @@ export async function listPetGroupPricing(
   return results ?? [];
 }
 
-/** Replace the pet-id rate set for ONE service — delete-then-insert. Empty list clears it. */
+/**
+ * Replace the pet-id rate set for ONE service — delete-then-insert. Empty list clears it.
+ *
+ * Scoped to (tenantId, serviceType), NOT additionally to OptionKey, even though the table is now
+ * keyed per option: the admin editor this backs is per-service (§6 of the design spec), so one
+ * call always supplies the COMPLETE set of group rows for that service, spanning whatever options
+ * it has rates for. Each row carries its own `optionKey`, so narrowing the DELETE further would
+ * gain nothing (the caller-supplied set already IS the full service-scoped set) while adding a
+ * spurious per-option parameter this call site has no single value for. Contrast
+ * `replaceServicePetRates`, whose editor is explicitly per (service, option) and therefore scopes
+ * its DELETE to match.
+ */
 export async function replacePetGroupPricing(
   db: D1Database,
   tenantId: string,
   serviceType: string,
   rows: {
     id: string;
+    optionKey: string;
     groupKey: string;
     rate: number;
-    rateUnit: RateUnit;
-    durationMinutes: number | null;
   }[],
 ): Promise<void> {
   await db.batch([
@@ -1014,10 +1027,10 @@ export async function replacePetGroupPricing(
       db
         .prepare(
           `INSERT INTO PetGroupPricing
-             (Id, TenantId, ServiceType, GroupKey, Rate, RateUnit, DurationMinutes)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             (Id, TenantId, ServiceType, OptionKey, GroupKey, Rate)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .bind(r.id, tenantId, serviceType, r.groupKey, r.rate, r.rateUnit, r.durationMinutes),
+        .bind(r.id, tenantId, serviceType, r.optionKey, r.groupKey, r.rate),
     ),
   ]);
 }
