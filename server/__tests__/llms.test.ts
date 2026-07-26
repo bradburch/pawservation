@@ -1,0 +1,48 @@
+import { describe, expect, it } from 'vitest';
+import app from '../index';
+import { createTestEnv, TENANT_A } from './helpers';
+
+describe('llms.txt + JSON-LD', () => {
+  it('serves per-tenant llms.txt with business facts and booking API pointers', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/embed/sunny-paws/llms.txt', {}, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    const body = await res.text();
+    expect(body).toContain('Sunny Paws'); // display name from seed
+    expect(body).toContain('/api/sunny-paws/config'); // machine entry points
+    expect(body).toContain('/api/sunny-paws/availability');
+  });
+
+  it('404s for an unknown tenant', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/embed/nope/llms.txt', {}, env);
+    expect(res.status).toBe(404);
+  });
+
+  it('404s for a disabled tenant', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET DisabledAt='2026-07-23 00:00:00' WHERE Id='${TENANT_A}';`);
+    const res = await app.request('/embed/sunny-paws/llms.txt', {}, env);
+    expect(res.status).toBe(404);
+  });
+
+  it('injects escaped JSON-LD into the embed page', async () => {
+    const { env } = createTestEnv({
+      html: '<!doctype html><html><head></head><body></body></html>',
+    });
+    const res = await app.request('/embed/sunny-paws', {}, env);
+    const html = await res.text();
+    expect(html).toContain('application/ld+json');
+    expect(html).toContain('"@type":"LocalBusiness"');
+  });
+
+  it('embed page still serves for unknown tenants (no crash, no JSON-LD)', async () => {
+    const { env } = createTestEnv({
+      html: '<!doctype html><html><head></head><body></body></html>',
+    });
+    const res = await app.request('/embed/nope', {}, env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain('ld+json');
+  });
+});
