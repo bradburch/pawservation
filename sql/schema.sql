@@ -101,6 +101,37 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   UNIQUE (TenantId, ServiceType, OptionKey)
 );
 
+-- Explicit rate for a specific set of pets, keyed per service (0020). GroupKey is the sorted,
+-- comma-joined pet-id list with a '|<duration>' suffix for timed services — see buildGroupKey in
+-- src/shared/pricing/pet-set-rates.ts. Exact-match only; nothing reads this table yet.
+CREATE TABLE IF NOT EXISTS PetGroupPricing (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  ServiceType TEXT NOT NULL,
+  GroupKey TEXT NOT NULL,
+  Rate INTEGER NOT NULL CHECK (Rate > 0),
+  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
+  DurationMinutes INTEGER,
+  UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (TenantId, ServiceType, GroupKey)
+);
+
+-- Explicit rate for a species count ("2 dogs"), applying to every client, keyed per OPTION (0021).
+-- MixKey is species-sorted 'slug:count' joined by '|' — see buildMixKey in
+-- src/shared/pricing/pet-set-rates.ts. Keyed per option (duration already pinned), so unlike
+-- PetGroupPricing this needs no RateUnit/DurationMinutes. Exact-match only; nothing reads this yet.
+CREATE TABLE IF NOT EXISTS TenantServicePetRates (
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  ServiceType TEXT NOT NULL,
+  OptionKey TEXT NOT NULL,
+  MixKey TEXT NOT NULL,
+  Rate INTEGER NOT NULL CHECK (Rate > 0),
+  UNIQUE (TenantId, ServiceType, OptionKey, MixKey)
+);
+
+CREATE INDEX IF NOT EXISTS idx_TenantServicePetRates_Lookup
+  ON TenantServicePetRates (TenantId, ServiceType, OptionKey);
+
 -- Accepted species the sitter cares for — per-tenant rows (slug + renamable Label), mirroring
 -- the TenantServices rows-not-code model. Slug is immutable; rename changes Label only.
 CREATE TABLE IF NOT EXISTS TenantPetTypes (

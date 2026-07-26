@@ -4,7 +4,7 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0019_pet_co_ownership.sql` (keep this line in step with the highest-numbered migration mirrored
+`0021_pet_mix_rates.sql` (keep this line in step with the highest-numbered migration mirrored
 into `schema.sql`). Use:
 
 ```
@@ -28,13 +28,13 @@ is made to adopt tracked migrations.
 Current state:
 
 - **Local dev DB**: wiped and reseeded from `sql/schema.sql` (the Fresh installs path above),
-  which already carries everything through `0019_pet_co_ownership.sql` — so the local DB
+  which already carries everything through `0021_pet_mix_rates.sql` — so the local DB
   needs **no** migrations applied; it isn't on the incremental-apply path below at all.
-- **Remote DB**: fully migrated through `0019` — `0001`–`0015` were applied by hand
-  2026-07-20 (verified via read-only schema probes), and `0016`–`0019` have since been
-  applied by hand as each shipped, most recently `0019` on 2026-07-25. Note
-  `0011_contact_and_notes.sql` errors with "duplicate column" on this DB — its columns
-  were applied out of band before the renumbering — and that error is safe: D1 rolls the
+- **Remote DB**: fully migrated through `0019` as of this writing — `0001`–`0015` were applied
+  by hand 2026-07-20 (verified via read-only schema probes), and `0016`–`0019` have since been
+  applied by hand as each shipped, most recently `0019` on 2026-07-25. `0020` and `0021` (below)
+  are pending. Note `0011_contact_and_notes.sql` errors with "duplicate column" on this DB — its
+  columns were applied out of band before the renumbering — and that error is safe: D1 rolls the
   whole file back, and the end state is already present.
 
 **Order: migrate first, then deploy.** The worker unconditionally `SELECT`s columns/tables
@@ -129,4 +129,25 @@ Run both with `--command` rather than `--file`:
 ```
 npx wrangler d1 execute pawbook-db --remote --command "SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwners) AS edges;"
 npx wrangler d1 execute pawbook-db --remote --command "INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;"
+```
+
+### 0020_pet_group_pricing.sql and 0021_pet_mix_rates.sql
+
+Add two new, unrelated tables for explicit pet-set pricing (part of the pet-mix-rates feature):
+`PetGroupPricing` (0020, rates for a specific set of pet ids, keyed per service) and
+`TenantServicePetRates` (0021, rates for a species count like "2 dogs", keyed per option). Both are
+purely additive — new tables only, no column changes to existing tables — and **nothing in the
+running worker reads either table yet**, so applying them ahead of a deploy is safe with no
+window-of-inconsistency concerns like 0019's backfill had. Mirrored into `sql/schema.sql`, so
+fresh installs and the Vitest harness get them without running these files.
+
+**Apply both to the remote DB before merging this PR** — merging to `main` runs `npx wrangler
+deploy` unconditionally, so timing the migration separately from the deploy isn't an option once
+the merge happens.
+
+```
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0020_pet_group_pricing.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0020_pet_group_pricing.sql
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0021_pet_mix_rates.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0021_pet_mix_rates.sql
 ```
