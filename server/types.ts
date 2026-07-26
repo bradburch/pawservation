@@ -79,6 +79,27 @@ export type TenantServiceOption = {
   WeekdaysOnly: number; // int-bool: 1 = bookable Mon–Fri only
 };
 
+/** One explicit rate for a specific set of pets. GroupKey is the sorted pet-id list. */
+export type PetGroupPricingRow = {
+  Id: string;
+  TenantId: string;
+  ServiceType: string;
+  GroupKey: string;
+  Rate: number;
+  RateUnit: RateUnit;
+  DurationMinutes: number | null;
+  UpdatedAt: string;
+};
+
+/** One explicit rate for a species count. MixKey is canonical (src/shared/pricing/pet-set-rates.ts). */
+export type TenantServicePetRateRow = {
+  TenantId: string;
+  ServiceType: string;
+  OptionKey: string;
+  MixKey: string;
+  Rate: number;
+};
+
 export type TenantPetTypeRow = {
   TenantId: string;
   PetType: string; // per-tenant slug, immutable
