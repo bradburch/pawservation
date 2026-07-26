@@ -1,9 +1,4 @@
-import {
-  SERVICE_TEMPLATES,
-  type RateUnit,
-  type ServiceOption,
-  type TemplateId,
-} from '../../src/shared/index.js';
+import { type ServiceOption, type TemplateId } from '../../src/shared/index.js';
 
 /** Option payload prefilled by a preset; the wizard adds the sitter's `rate` and the server
  * derives `optionKey` (and window duration) on save. */
@@ -20,10 +15,6 @@ export type ServicePreset = {
   summary: string;
   /** Widget icon key (matches the template's icon). */
   icon: string;
-  /** Fixed by the template; shown next to the price input ("$30 /visit"). DERIVED from
-   * SERVICE_TEMPLATES below — never written per preset, or it could drift from the unit the
-   * server stamps onto the row it creates. */
-  rateUnit: RateUnit;
   /** The slug POST /services derives from `label` — used when a create collides ("already
    * exists") so a retry can proceed against the existing row deterministically. */
   createdSlug: string;
@@ -44,9 +35,10 @@ const anyDay = {
 
 /** The 7 one-tap presets from docs/superpowers/specs/2026-07-18-onboarding-wizard-design.md.
  * The walk trio come from the docs/specs/*.md stubs (weekdays-only group/solo walks); the last
- * four simply enable the built-in template behaviors. Everything except `rateUnit` is preset-
- * specific; `rateUnit` is stamped from the template below. */
-const PRESETS: Omit<ServicePreset, 'rateUnit'>[] = [
+ * four simply enable the built-in template behaviors. The unit shown next to a price input is not
+ * stored here — the wizard reads it from SERVICE_TEMPLATES[preset.template].rateUnit, the same
+ * object the server stamps onto the row it creates, so the two can't drift. */
+export const SERVICE_PRESETS: ServicePreset[] = [
   {
     id: 'pack-walks',
     template: 'walk',
@@ -156,11 +148,3 @@ const PRESETS: Omit<ServicePreset, 'rateUnit'>[] = [
     options: [{ ...anyDay, label: '30 min', durationMinutes: 30 }],
   },
 ];
-
-/** The unit the wizard prints next to a price input comes from the SAME template object the
- * server stamps onto the TenantServices row it creates (server/routes/admin.ts POST /services),
- * so the two can't drift. */
-export const SERVICE_PRESETS: ServicePreset[] = PRESETS.map((preset) => ({
-  ...preset,
-  rateUnit: SERVICE_TEMPLATES[preset.template].rateUnit,
-}));

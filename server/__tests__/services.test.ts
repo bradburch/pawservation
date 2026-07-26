@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { SERVICE_PRESETS } from '../../app/admin/presets.js';
 import { SERVICE_TEMPLATES as SHARED_TEMPLATES } from '../../src/shared/index.js';
 import {
   SERVICE_TEMPLATES,
@@ -31,18 +30,12 @@ describe('service templates', () => {
 });
 
 /** `rateUnit` used to be stated twice — once here (the unit the server stamps onto a created
- * TenantServices row) and again per entry in the admin wizard's SERVICE_PRESETS, agreeing only by
- * hand. These assertions fail if either copy comes back. */
+ * TenantServices row) and again in the admin wizard, agreeing only by hand. The wizard now reads
+ * SERVICE_TEMPLATES directly; this assertion fails if the server's re-export is ever replaced by a
+ * hand-copied object, which the type system would not catch. */
 describe('rateUnit has one source', () => {
   it("the server's SERVICE_TEMPLATES is the shared object, not a copy", () => {
     expect(SERVICE_TEMPLATES).toBe(SHARED_TEMPLATES);
-  });
-
-  it('every wizard preset shows its template’s rate unit', () => {
-    expect(SERVICE_PRESETS.length).toBeGreaterThan(0);
-    for (const preset of SERVICE_PRESETS) {
-      expect(preset.rateUnit).toBe(SERVICE_TEMPLATES[preset.template].rateUnit);
-    }
   });
 });
 

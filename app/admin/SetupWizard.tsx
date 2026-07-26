@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { isValidRate } from '../../src/shared/index.js';
+import { isValidRate, SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { ApiError } from '../shared-ui/api.js';
 import { SERVICE_PRESETS, type PresetOption, type ServicePreset } from './presets.js';
@@ -376,25 +376,26 @@ export function SetupWizard({
                         setPrices((cur) => ({ ...cur, [ps.preset.id]: e.target.value }))
                       }
                     />
-                    /{ps.preset.rateUnit}
+                    /{SERVICE_TEMPLATES[ps.preset.template].rateUnit}
                   </label>
                 )}
-                {!ps.alreadyPriced && ps.preset.rateUnit === 'visit' && (
-                  <details className="pb-wizard-custom">
-                    <summary>Customize</summary>
-                    {presetOptions(ps.preset).map((o, oi) => (
-                      <PresetOptionFields
-                        key={oi}
-                        option={o}
-                        onChange={(next) => {
-                          const options = [...presetOptions(ps.preset)];
-                          options[oi] = next;
-                          setOptionEdits((cur) => ({ ...cur, [ps.preset.id]: options }));
-                        }}
-                      />
-                    ))}
-                  </details>
-                )}
+                {!ps.alreadyPriced &&
+                  SERVICE_TEMPLATES[ps.preset.template].rateUnit === 'visit' && (
+                    <details className="pb-wizard-custom">
+                      <summary>Customize</summary>
+                      {presetOptions(ps.preset).map((o, oi) => (
+                        <PresetOptionFields
+                          key={oi}
+                          option={o}
+                          onChange={(next) => {
+                            const options = [...presetOptions(ps.preset)];
+                            options[oi] = next;
+                            setOptionEdits((cur) => ({ ...cur, [ps.preset.id]: options }));
+                          }}
+                        />
+                      ))}
+                    </details>
+                  )}
                 {applied.includes(ps.preset.id) && <span className="pb-wizard-done">Added</span>}
               </div>
             ))}
