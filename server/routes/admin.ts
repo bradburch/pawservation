@@ -909,7 +909,8 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!petType) return c.json({ error: 'Unknown pet type.' }, 400);
     if (notes !== null && notes.length > 2000) return c.json({ error: 'Notes are too long.' }, 400);
     // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
-    // under it (production D1 has foreign keys OFF, so nothing else stops a cross-tenant orphan).
+    // under it — EndUserPets.EndUserId FKs to EndUsers(Id) without a TenantId, so D1's foreign-key
+    // enforcement wouldn't catch a cross-tenant id on its own; this check is what prevents it.
     if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
       return c.json({ error: 'Not found.' }, 404);
     // Registry membership only (0015): a sitter may record a pet of a type no service currently

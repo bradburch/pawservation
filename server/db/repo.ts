@@ -1175,17 +1175,23 @@ export async function deleteCustomer(
   //
   // D1 enforces foreign keys, so EndUsers can't be deleted while LoginCodes/EndUserPets/PetOwners
   // rows still reference it — and EndUserPets can't be deleted while BookingRequestPets or
-  // PetOwners rows still reference IT. Cascade child-first in one batch, each statement carrying
-  // the same NOT-EXISTS bookings guard so a TOCTOU race leaves every table untouched together
-  // rather than partially cascading before the guard trips.
+  // PetOwners rows still reference IT. (BookingRequestPets rows can reference a pet of THIS
+  // customer even though this customer has no bookings of their own: addBookingPets only checks
+  // that a pet's tenant matches the booking's tenant, not that the pet's owner is the booking's
+  // customer, so another customer's booking can hold a pet this customer co-owns.) Cascade
+  // child-first in one batch, each statement carrying the same NOT-EXISTS bookings guard so a
+  // TOCTOU race leaves every table untouched together rather than partially cascading before the
+  // guard trips.
   //
-  // Co-ownership (0019) adds the first two statements, and they must run in this order:
+  // Co-ownership (0019) adds two statements; the resulting order is:
   //   1. hand EndUserPets.EndUserId (NOT NULL + FK, the creating-owner column) to the oldest
   //      surviving co-owner for every pet that HAS one — otherwise deleting this EndUsers row
   //      leaves that column dangling;
   //   2. drop this customer's ownership edges;
-  //   3. cascade only the pets still stamped with this EndUserId, which after (1) are exactly the
-  //      pets nobody else owns. A pet another customer co-owns is never deleted here.
+  //   3. (pre-existing) delete BookingRequestPets rows for this customer's remaining pets;
+  //   4. (pre-existing) cascade only the pets still stamped with this EndUserId, which after (1)
+  //      are exactly the pets nobody else owns. A pet another customer co-owns is never deleted
+  //      here.
   const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequests WHERE TenantId = ? AND EndUserId = ?)`;
   const [, , , , , endUsersResult] = await db.batch([
     db
@@ -1388,7 +1394,9 @@ export async function addEndUserPet(
 /**
  * Count bookings referencing a pet, scoped to the tenant. BookingRequestPets has no TenantId, so
  * tenancy flows in via a join to EndUserPets — a foreign pet id counts as 0 (never a cross-tenant
- * existence oracle) even with production D1's foreign keys OFF.
+ * existence oracle) regardless of D1's own foreign-key enforcement, since BookingRequestPets' FKs
+ * reference BookingRequests(Id)/EndUserPets(Id) without a TenantId and so can't detect a
+ * cross-tenant mismatch on their own.
  */
 export async function countBookingPetRefs(
   db: D1Database,
@@ -1411,8 +1419,9 @@ export async function removeEndUserPet(
   tenantId: string,
   petId: string,
 ): Promise<boolean> {
-  // PetOwners (0019) FKs to EndUserPets, so its row(s) for this pet must go first — production D1
-  // has foreign keys OFF (so this wouldn't error there), but leaving the orphan is still wrong.
+  // PetOwners (0019) FKs to EndUserPets, so its row(s) for this pet must be deleted first — D1
+  // enforces foreign keys, so deleting EndUserPets first would fail with a constraint error rather
+  // than silently leave an orphaned PetOwners row.
   const [, petResult] = await db.batch([
     db.prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ?').bind(tenantId, petId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?').bind(tenantId, petId),
@@ -1422,9 +1431,11 @@ export async function removeEndUserPet(
 
 /**
  * Link an existing customer to an existing pet as a co-owner (sitter action). Returns false when
- * either id lives outside `tenantId` — production D1 has foreign keys OFF, so this explicit check
- * is the only thing preventing a cross-tenant ownership edge. Re-adding an existing owner is a
- * no-op that still returns true, so a double-click is harmless rather than a spurious 404.
+ * either id lives outside `tenantId` — PetOwners' FKs reference EndUserPets(Id)/EndUsers(Id)
+ * without a TenantId, so D1's foreign-key enforcement can't by itself catch a cross-tenant pairing
+ * (both ids can be individually valid FK targets in different tenants); this explicit check is
+ * what prevents a cross-tenant ownership edge. Re-adding an existing owner is a no-op that still
+ * returns true, so a double-click is harmless rather than a spurious 404.
  */
 export async function addPetOwner(
   db: D1Database,
@@ -1467,13 +1478,17 @@ export async function addPetOwner(
  * would dangle. That UPDATE carries its own "another owner exists" guard (EXISTS ... <> ?) so it
  * can never resolve its subquery to NULL and fail the NOT NULL constraint on a last-owner attempt.
  *
- * The UPDATE and DELETE fire under IDENTICAL conditions by construction, not by relying on the
- * rest of the codebase keeping EndUserPets.EndUserId and PetOwners in sync: both require `endUserId`
- * to actually own the pet in this tenant (an explicit EXISTS on PetOwners for the UPDATE, mirroring
- * the DELETE's own WHERE). Without that, a future divergence (e.g. a not-yet-written delete path)
- * could hit the case where the UPDATE's weaker guard fires — silently reassigning the creating-owner
- * column — while the DELETE matches nothing and the function reports 'not-found', contradicting
- * the "nothing was written" guarantee below.
+ * The UPDATE and DELETE fire under logically EQUIVALENT conditions by construction, not by relying
+ * on the rest of the codebase keeping EndUserPets.EndUserId and PetOwners in sync: both require
+ * `endUserId` to actually own the pet in this tenant. The two WHERE clauses aren't textually
+ * identical — the UPDATE's `po3` EXISTS pins `endUserId` as a current owner and its `po2` EXISTS
+ * (`<> ?`) then asks "does some OTHER owner exist", while the DELETE's `COUNT(*) > 1` asks "are
+ * there more than one owner total" — but once `po3` has pinned `endUserId` as a current owner,
+ * those two questions have the same answer on every row, so the conditions agree. Without that
+ * equivalence, a future divergence (e.g. a not-yet-written delete path) could hit the case where
+ * the UPDATE's guard fires — silently reassigning the creating-owner column — while the DELETE
+ * matches nothing and the function reports 'not-found', contradicting the "nothing was written"
+ * guarantee below.
  *
  * If the guarded DELETE matches zero rows, nothing was written by this call on any path — a
  * follow-up read is then made purely to decide which of 'not-found' / 'last-owner' to report; a
@@ -1557,7 +1572,9 @@ export async function setPetDeceased(
 /**
  * Link pets to a booking, tenant-scoped. Each insert is guarded so it only writes when BOTH the
  * booking and the pet belong to `tenantId` — a cross-tenant pet id (or a booking from another
- * tenant) silently inserts nothing, upholding isolation even with production D1's foreign keys OFF.
+ * tenant) silently inserts nothing. BookingRequestPets' FKs reference BookingRequests(Id)/
+ * EndUserPets(Id) with no TenantId column, so D1's foreign-key enforcement doesn't catch a
+ * cross-tenant mismatch on its own; this explicit tenant check is what upholds isolation here.
  */
 export async function addBookingPets(
   db: D1Database,
