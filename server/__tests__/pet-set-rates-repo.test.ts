@@ -58,6 +58,20 @@ describe('species-count rates repo', () => {
     expect((await listServicePetRates(env.PAWBOOK_DB, TENANT_A))[0].Rate).toBe(35);
     expect((await listServicePetRates(env.PAWBOOK_DB, TENANT_B))[0].Rate).toBe(99);
   });
+
+  it('keeps ServiceType separate from OptionKey — same mixKey, two service types', async () => {
+    const { env } = createTestEnv();
+    await replaceServicePetRates(env.PAWBOOK_DB, TENANT_A, 'walk', 'standard', [
+      { mixKey: 'dog:2', rate: 35 },
+    ]);
+    await replaceServicePetRates(env.PAWBOOK_DB, TENANT_A, 'boarding', 'standard', [
+      { mixKey: 'dog:2', rate: 80 },
+    ]);
+    const rows = await listServicePetRates(env.PAWBOOK_DB, TENANT_A);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.ServiceType === 'walk')?.Rate).toBe(35);
+    expect(rows.find((r) => r.ServiceType === 'boarding')?.Rate).toBe(80);
+  });
 });
 
 describe('pet-group rates repo', () => {
@@ -73,6 +87,7 @@ describe('pet-group rates repo', () => {
     expect(walk).toHaveLength(1);
     expect(walk[0].GroupKey).toBe('p_a,p_b|60');
     expect(walk[0].Rate).toBe(44);
+    expect(walk[0].RateUnit).toBe('visit');
     expect(walk[0].DurationMinutes).toBe(60);
     expect(await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'boarding')).toHaveLength(1);
   });

@@ -37,6 +37,15 @@ describe('mixFromPetTypes / petCountOf', () => {
     expect(mixFromPetTypes([])).toEqual({});
     expect(petCountOf({})).toBe(0);
   });
+
+  it('is not corrupted by a species slug that collides with an Object.prototype member', () => {
+    // 'constructor' is a reachable species slug (slugifyServiceLabel allows [a-z0-9-]+). A
+    // {}-literal accumulator resolves `mix['constructor']` through the prototype chain instead
+    // of setting an own property, silently dropping the third pet from the mix.
+    const mix = mixFromPetTypes(['dog', 'dog', 'constructor']);
+    expect(buildMixKey(mix)).toBe('constructor:1|dog:2');
+    expect(petCountOf(mix)).toBe(3);
+  });
 });
 
 describe('buildGroupKey', () => {
@@ -51,10 +60,19 @@ describe('buildGroupKey', () => {
   it('empties to an empty string', () => {
     expect(buildGroupKey([], 60)).toBe('');
   });
+  it('dedups repeated ids so a one-pet booking cannot match a two-pet rate', () => {
+    expect(buildGroupKey(['p_a', 'p_a'], null)).toBe('p_a');
+  });
 });
 
 describe('resolvePetSetRate — precedence, exact match only', () => {
-  const base = { durationMinutes: null, groupRates: [], mixRates: [] };
+  const base = {
+    durationMinutes: null,
+    serviceType: 'walk',
+    optionKey: 'w30',
+    groupRates: [],
+    mixRates: [],
+  };
 
   it('prefers an exact pet-id rate over a matching species rate', () => {
     const got = resolvePetSetRate({
@@ -62,7 +80,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
       petIds: ['p_a', 'p_b'],
       petTypes: ['dog', 'dog'],
       groupRates: [{ groupKey: 'p_a,p_b', rate: 44 }],
-      mixRates: [{ mixKey: 'dog:2', rate: 35 }],
+      mixRates: [{ mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' }],
     });
     expect(got).toEqual({ source: 'group', rate: 44 });
   });
@@ -73,7 +91,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
       petIds: ['p_c', 'p_d'],
       petTypes: ['dog', 'dog'],
       groupRates: [{ groupKey: 'p_a,p_b', rate: 44 }],
-      mixRates: [{ mixKey: 'dog:2', rate: 35 }],
+      mixRates: [{ mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' }],
     });
     expect(got).toEqual({ source: 'mix', rate: 35 });
   });
@@ -88,7 +106,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
         ...base,
         petIds: ['p_a', 'p_b'],
         petTypes: ['dog', 'dog'],
-        mixRates: [{ mixKey: 'dog:1', rate: 20 }],
+        mixRates: [{ mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' }],
       }),
     ).toBeNull();
   });
@@ -100,9 +118,40 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
         petIds: ['p_a', 'p_b'],
         petTypes: ['dog', 'cat'],
         mixRates: [
-          { mixKey: 'dog:1', rate: 20 },
-          { mixKey: 'cat:1', rate: 15 },
+          { mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' },
+          { mixKey: 'cat:1', rate: 15, serviceType: 'walk', optionKey: 'w30' },
         ],
+      }),
+    ).toBeNull();
+  });
+
+  it('does not select a same-mixKey rate scoped to a different service or option', () => {
+    // Same tenant, same mixKey (`dog:2`), two unrelated rates: boarding/standard = $80,
+    // walk/w30 = $35. Resolving the walk booking must get $35 — the scope check is what
+    // prevents a tenant-wide `.find()` from matching whichever row happens to come first.
+    const mixRates = [
+      { mixKey: 'dog:2', rate: 80, serviceType: 'boarding', optionKey: 'standard' },
+      { mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' },
+    ];
+    const got = resolvePetSetRate({
+      ...base,
+      petIds: ['p_a', 'p_b'],
+      petTypes: ['dog', 'dog'],
+      serviceType: 'walk',
+      optionKey: 'w30',
+      mixRates,
+    });
+    expect(got).toEqual({ source: 'mix', rate: 35 });
+
+    // And a service/option combo with no matching rate resolves to null, not a mismatched hit.
+    expect(
+      resolvePetSetRate({
+        ...base,
+        petIds: ['p_a', 'p_b'],
+        petTypes: ['dog', 'dog'],
+        serviceType: 'walk',
+        optionKey: 'w60',
+        mixRates,
       }),
     ).toBeNull();
   });
@@ -150,7 +199,7 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
         ...base,
         petIds: [],
         petTypes: [],
-        mixRates: [{ mixKey: 'dog:1', rate: 20 }],
+        mixRates: [{ mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' }],
       }),
     ).toBeNull();
   });

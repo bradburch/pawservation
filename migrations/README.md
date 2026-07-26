@@ -27,9 +27,11 @@ is made to adopt tracked migrations.
 
 Current state:
 
-- **Local dev DB**: wiped and reseeded from `sql/schema.sql` (the Fresh installs path above),
-  which already carries everything through `0021_pet_mix_rates.sql` — so the local DB
-  needs **no** migrations applied; it isn't on the incremental-apply path below at all.
+- **Local dev DB**: `sql/schema.sql` already carries everything through `0021_pet_mix_rates.sql`,
+  so a **freshly reseeded** local DB (`npm run seed:local`) needs no migrations applied. A local
+  DB seeded before today predates `0020`/`0021` and is on the incremental-apply path below like
+  any other already-provisioned DB — either re-seed it, or apply `0020`/`0021` locally with the
+  `--local` commands in the `0020`/`0021` section.
 - **Remote DB**: fully migrated through `0019` as of this writing — `0001`–`0015` were applied
   by hand 2026-07-20 (verified via read-only schema probes), and `0016`–`0019` have since been
   applied by hand as each shipped, most recently `0019` on 2026-07-25. `0020` and `0021` (below)
@@ -41,11 +43,11 @@ Current state:
 added by every migration through `0019` — e.g. `AcceptedPetTypes`, `MaxConcurrentPets`,
 `MaxPerDay`, and `Label` (added by `0014`/`0015`), and `PetOwners`/`EndUserPets.DeceasedAt`
 (added by `0019`, see below) — and **500s on every request** if any of those are missing.
-`0007`–`0019` are now fully applied to both local and remote, so there is nothing pending;
-the same rule applies to any future migration: apply it before (or with) the deploy that
-needs it, never after. Backward-compatible additive migrations (like `0012`–`0018`) are safe
-to apply ahead of a deploy, since the currently-running worker just ignores the new columns
-until the new code ships.
+`0007`–`0019` are fully applied to both local and remote; `0020`/`0021` are pending as of this
+writing (see that section below) — apply each migration before (or with) the deploy that needs
+it, never after. Backward-compatible additive migrations (like `0012`–`0018`, and `0020`/`0021`)
+are safe to apply ahead of a deploy, since the currently-running worker just ignores the new
+columns/tables until the new code ships.
 
 `0007`–`0015` were applied, in order, with:
 
