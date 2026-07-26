@@ -90,13 +90,8 @@ app.get('/admin.html', page('admin.html'));
 app.get('/demo.html', page('demo.html'));
 app.get('/setup.html', page('setup.html'));
 
-/**
- * Single source of truth for published tier pricing. Every figure shown on the landing page
- * interpolates from here (and anything comparative is computed from it) — never hardcode a
- * price in the markup, or a change becomes a hunt for stragglers. The Free tier's "$0" is
- * deliberately literal: free is the promise, not a price point that could be edited.
- * These are PLANNED prices — the Pro tier is not built and nothing is for sale.
- */
+// Every price figure on the landing page interpolates from here — never hardcode one in the
+// markup. The Free tier's "$0" is deliberately literal: free is the promise, not a price point.
 const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
 
 /**
@@ -555,16 +550,14 @@ const LANDING_HTML = `<!doctype html>
         letter-spacing: -0.01em;
         margin: 0 0 4px;
       }
-      .wf-sub { margin: 0 0 16px; font-size: 0.86rem; color: var(--soft); }
+      .wf-h + .note { margin-bottom: 16px; }
       /* Each row names what the sitter keeps, then what Pawservation does with it. The
          contrast IS the message, so both lines share one hairline-ruled row. */
       .wf-pair { padding: 15px 0; border-top: 1px solid var(--line); }
       .wf-pair:last-of-type { border-bottom: 1px solid var(--line); }
       .wf-pair p { margin: 0; font-size: 0.91rem; }
       .wf-keep { color: var(--ink); font-weight: 600; }
-      /* Scoped to .wf-pair on purpose: a bare .wf-does loses its margin to the
-         .wf-pair p margin reset above, which outranks it on specificity. */
-      .wf-pair .wf-does { margin-top: 3px; color: var(--body-c); }
+      .wf-pair p + p { margin-top: 3px; color: var(--body-c); }
       .wf-steps {
         list-style: none;
         margin: 0;
@@ -577,12 +570,6 @@ const LANDING_HTML = `<!doctype html>
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 15px 18px 17px;
-      }
-      .wf-no {
-        font-family: var(--mono);
-        font-size: 0.74rem;
-        font-weight: 700;
-        color: var(--green);
       }
       .wf-step p { margin: 4px 0 0; font-size: 0.91rem; color: var(--body-c); }
       .wf-step p strong { color: var(--ink); }
@@ -660,8 +647,6 @@ const LANDING_HTML = `<!doctype html>
         align-items: start;
       }
       .price-card {
-        display: flex;
-        flex-direction: column;
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: 12px;
@@ -683,16 +668,9 @@ const LANDING_HTML = `<!doctype html>
         font-weight: 700;
         letter-spacing: -0.01em;
       }
-      .price-tag {
-        padding: 3px 10px;
-        border-radius: 999px;
-        background: var(--panel);
-        font-size: 0.73rem;
-        font-weight: 700;
-        white-space: nowrap;
-      }
-      .price-tag-live { color: var(--green); border: 1px solid var(--line); }
-      .price-tag-soon { color: var(--body-c); border: 1px dashed var(--soft); }
+      /* Shape comes from .state (the pill the mock dashboard already uses); these add colour only. */
+      .price-tag-live { background: var(--panel); color: var(--green); border: 1px solid var(--line); }
+      .price-tag-soon { background: var(--panel); color: var(--body-c); border: 1px dashed var(--soft); }
       .price-amt {
         display: flex;
         flex-wrap: wrap;
@@ -748,7 +726,7 @@ const LANDING_HTML = `<!doctype html>
         font-weight: 600;
         color: var(--body-c);
       }
-      .price-fine { margin: 10px 0 0; font-size: 0.82rem; color: var(--soft); }
+      .price-card .note { margin-top: 10px; }
       @media (min-width: 780px) {
         .price-grid { grid-template-columns: 1fr 1fr; }
       }
@@ -1064,46 +1042,46 @@ const LANDING_HTML = `<!doctype html>
           <div class="wf-grid">
             <div>
               <h3 class="wf-h">What stays exactly as it is</h3>
-              <p class="wf-sub">Five things that don&rsquo;t change on the day you start.</p>
+              <p class="note">Five things that don&rsquo;t change on the day you start.</p>
               <div class="wf-pair">
                 <p class="wf-keep">You keep collecting money your own way.</p>
-                <p class="wf-does">Cash, Venmo, Zelle, a check on the counter &mdash; you take it and you keep it. Pawservation records what came in and shows what&rsquo;s still outstanding. It never touches the money.</p>
+                <p>Cash, Venmo, Zelle, a check on the counter &mdash; you take it and you keep it. Pawservation records what came in and shows what&rsquo;s still outstanding. It never touches the money.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep living in Google Calendar.</p>
-                <p class="wf-does">Connect it once and bookings appear there, updating when you confirm. The sync runs one way, Pawservation to Google &mdash; it writes your bookings and leaves the rest of your calendar alone, so something you keep only in Google won&rsquo;t block a request unless you enter it as time off.</p>
+                <p>Connect it once and bookings appear there, updating when you confirm. The sync runs one way, Pawservation to Google &mdash; it writes your bookings and leaves the rest of your calendar alone, so something you keep only in Google won&rsquo;t block a request unless you enter it as time off.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep the website you already have.</p>
-                <p class="wf-does">One line of HTML on a page you already publish. No rebuild, no move, no second site to keep in step with the first.</p>
+                <p>One line of HTML on a page you already publish. No rebuild, no move, no second site to keep in step with the first.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">Your clients stay your clients.</p>
-                <p class="wf-does">You add each one before they can book, and there&rsquo;s a CSV import for the list you already have. No marketplace, no directory, nobody browsing for a sitter.</p>
+                <p>You add each one before they can book, and there&rsquo;s a CSV import for the list you already have. No marketplace, no directory, nobody browsing for a sitter.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep taking texts.</p>
-                <p class="wf-does">The widget answers the repetitive question &mdash; what you offer, when you&rsquo;re free, what it costs. Every other conversation stays where it was.</p>
+                <p>The widget answers the repetitive question &mdash; what you offer, when you&rsquo;re free, what it costs. Every other conversation stays where it was.</p>
               </div>
             </div>
             <div>
               <h3 class="wf-h">Moving over, without moving anything</h3>
-              <p class="wf-sub">Four small steps, none of them destructive.</p>
+              <p class="note">Four small steps, none of them destructive.</p>
               <ol class="wf-steps">
                 <li class="wf-step">
-                  <span class="wf-no">01</span>
+                  <span class="step-no">01</span>
                   <p><strong>Connect Google Calendar, or skip it.</strong> One link under Connected apps and your bookings start showing up on the calendar you already keep. Skip it and nothing else works differently.</p>
                 </li>
                 <li class="wf-step">
-                  <span class="wf-no">02</span>
+                  <span class="step-no">02</span>
                   <p><strong>Enter your services, rates, and caps once.</strong> What you call each service, what it costs, how much you&rsquo;ll take at a time, the longest stay you&rsquo;ll do &mdash; and the days you&rsquo;re off.</p>
                 </li>
                 <li class="wf-step">
-                  <span class="wf-no">03</span>
+                  <span class="step-no">03</span>
                   <p><strong>Add your clients.</strong> Type in the emails you already have, or upload a CSV &mdash; there&rsquo;s an example file to copy the columns from. Pets and care notes sit on their profiles.</p>
                 </li>
                 <li class="wf-step">
-                  <span class="wf-no">04</span>
+                  <span class="step-no">04</span>
                   <p><strong>Paste one line on your site, then point people at it.</strong> Next time someone asks whether you&rsquo;re free, send them the page instead of answering from memory. Anyone who&rsquo;d rather text you still can.</p>
                 </li>
               </ol>
@@ -1133,7 +1111,7 @@ const LANDING_HTML = `<!doctype html>
             <div class="price-card">
               <div class="price-head">
                 <h3>Free</h3>
-                <span class="price-tag price-tag-live">Available now</span>
+                <span class="state price-tag-live">Available now</span>
               </div>
               <p class="price-amt">
                 <span class="price-num">$0</span>
@@ -1147,15 +1125,13 @@ const LANDING_HTML = `<!doctype html>
                 <li>Client accounts and pet profiles</li>
                 <li>Google Calendar sync</li>
               </ul>
-              <div class="price-foot">
-                <a class="btn btn-primary" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
-                <p class="price-fine">New sitters are added by hand for now &mdash; ask, and we&rsquo;ll email you a sign-up link.</p>
-              </div>
+              <a class="btn btn-primary" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
+              <p class="note">New sitters are added by hand for now &mdash; ask, and we&rsquo;ll email you a sign-up link.</p>
             </div>
             <div class="price-card price-card-soon">
               <div class="price-head">
                 <h3>Pro</h3>
-                <span class="price-tag price-tag-soon">In development</span>
+                <span class="state price-tag-soon">In development</span>
               </div>
               <p class="price-amt">
                 <span class="price-num">$${PRICING.proMonthly}</span>
@@ -1167,10 +1143,8 @@ const LANDING_HTML = `<!doctype html>
                 <li>Card payments &mdash; deposits, saved cards, auto-charge</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
-              <div class="price-foot">
-                <p class="price-unavail">Not available yet &mdash; nothing here is built or for sale.</p>
-                <p class="price-fine">Planned at $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year &mdash; $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
-              </div>
+              <p class="price-unavail">Not available yet &mdash; nothing here is built or for sale.</p>
+              <p class="note">Planned at $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year &mdash; $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
             </div>
           </div>
         </div>
