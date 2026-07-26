@@ -1360,9 +1360,25 @@ export async function addPetOwner(
  * Unlink one owner from a co-owned pet. Three outcomes, because the caller must tell them apart:
  * 'not-found' (no such edge in this tenant → 404), 'last-owner' (refused: a pet with zero owners
  * would be invisible to everyone and unreachable from the account graph → 409, delete the pet
- * instead), 'removed'. When the departing owner is also the pet's creating owner, EndUserPets
- * .EndUserId is handed to the oldest surviving co-owner in the same batch — that column is NOT NULL
- * with an FK to EndUsers, so leaving it pointing at a customer who is on their way out would dangle.
+ * instead), 'removed'.
+ *
+ * The eligibility guard ("more than one owner exists") is folded INTO the DELETE's WHERE clause —
+ * following insertPayment's INSERT...SELECT...WHERE idiom — rather than a separate read-then-write,
+ * so two concurrent removals on a two-owner pet can't both pass a stale count and both delete,
+ * which would leave the pet with zero owners (exactly what this function exists to forbid). D1
+ * batch() is an implicit transaction (the test shim wraps batch in a real BEGIN/COMMIT too, see
+ * helpers.ts), so within one call the UPDATE and DELETE see a consistent snapshot and commit or
+ * roll back together.
+ *
+ * When the departing owner is also the pet's creating owner, EndUserPets.EndUserId is handed to the
+ * oldest surviving co-owner by an UPDATE placed BEFORE the DELETE in the same batch — that column
+ * is NOT NULL with an FK to EndUsers, so leaving it pointing at a customer who is on their way out
+ * would dangle. That UPDATE carries its own "another owner exists" guard (EXISTS ... <> ?) so it
+ * can never resolve its subquery to NULL and fail the NOT NULL constraint on a last-owner attempt.
+ *
+ * If the guarded DELETE matches zero rows, nothing was written by this call on any path — a
+ * follow-up read is then made purely to decide which of 'not-found' / 'last-owner' to report; a
+ * stale answer there is harmless since it never drives a write.
  */
 export async function removePetOwner(
   db: D1Database,
@@ -1370,17 +1386,7 @@ export async function removePetOwner(
   petId: string,
   endUserId: string,
 ): Promise<'removed' | 'last-owner' | 'not-found'> {
-  const link = await db
-    .prepare('SELECT 1 AS Ok FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?')
-    .bind(tenantId, petId, endUserId)
-    .first<{ Ok: number }>();
-  if (!link) return 'not-found';
-  const count = await db
-    .prepare('SELECT COUNT(*) AS n FROM PetOwners WHERE TenantId = ? AND PetId = ?')
-    .bind(tenantId, petId)
-    .first<{ n: number }>();
-  if ((count?.n ?? 0) <= 1) return 'last-owner';
-  await db.batch([
+  const [, deleteResult] = await db.batch([
     db
       .prepare(
         `UPDATE EndUserPets
@@ -1388,21 +1394,36 @@ export async function removePetOwner(
                               WHERE po.TenantId = EndUserPets.TenantId AND po.PetId = EndUserPets.Id
                                 AND po.EndUserId <> ?
                            ORDER BY po.CreatedAt, po.EndUserId LIMIT 1)
-          WHERE TenantId = ? AND Id = ? AND EndUserId = ?`,
+          WHERE TenantId = ? AND Id = ? AND EndUserId = ?
+            AND EXISTS (SELECT 1 FROM PetOwners po2
+                         WHERE po2.TenantId = ? AND po2.PetId = ? AND po2.EndUserId <> ?)`,
       )
-      .bind(endUserId, tenantId, petId, endUserId),
+      .bind(endUserId, tenantId, petId, endUserId, tenantId, petId, endUserId),
     db
-      .prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?')
-      .bind(tenantId, petId, endUserId),
+      .prepare(
+        `DELETE FROM PetOwners
+          WHERE TenantId = ? AND PetId = ? AND EndUserId = ?
+            AND (SELECT COUNT(*) FROM PetOwners po2 WHERE po2.TenantId = ? AND po2.PetId = ?) > 1`,
+      )
+      .bind(tenantId, petId, endUserId, tenantId, petId),
   ]);
-  return 'removed';
+  if (((deleteResult.meta as { changes?: number }).changes ?? 0) !== 0) return 'removed';
+  const link = await db
+    .prepare('SELECT 1 AS Ok FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?')
+    .bind(tenantId, petId, endUserId)
+    .first<{ Ok: number }>();
+  return link ? 'last-owner' : 'not-found';
 }
 
 /**
  * Mark a pet deceased (or undo it). NULL = alive. A deceased pet vanishes from every bookable and
  * quotable list and from the account graph, but its rows stay: past bookings must keep naming it.
- * Idempotent — re-marking an already-deceased pet still matches its row and returns true, so the
- * route never 404s a harmless repeat. Returns false only when the pet is outside `tenantId`.
+ * Idempotent in BOTH senses — re-marking an already-deceased pet still matches its row and returns
+ * true (so the route never 404s a harmless repeat), AND the stored DeceasedAt is left untouched
+ * (COALESCE keeps the original date rather than overwriting it with a fresh `now()`), because
+ * Task 6/8 surface this date to the sitter — silently moving a recorded death date forward on every
+ * repeat call would be a real, user-visible bug. Returns false only when the pet is outside
+ * `tenantId`.
  */
 export async function setPetDeceased(
   db: D1Database,
@@ -1413,7 +1434,7 @@ export async function setPetDeceased(
   const result = await db
     .prepare(
       deceased
-        ? "UPDATE EndUserPets SET DeceasedAt = datetime('now') WHERE TenantId = ? AND Id = ?"
+        ? "UPDATE EndUserPets SET DeceasedAt = COALESCE(DeceasedAt, datetime('now')) WHERE TenantId = ? AND Id = ?"
         : 'UPDATE EndUserPets SET DeceasedAt = NULL WHERE TenantId = ? AND Id = ?',
     )
     .bind(tenantId, petId)
