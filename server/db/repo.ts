@@ -1261,6 +1261,11 @@ export async function listEndUserPets(
   return results;
 }
 
+/**
+ * Create a pet and its FIRST ownership edge in one batch. A pet without a PetOwners row is
+ * invisible to its own owner (every customer-facing pet list reads PetOwners, not
+ * EndUserPets.EndUserId), so the two writes must never come apart.
+ */
 export async function addEndUserPet(
   db: D1Database,
   tenantId: string,
@@ -1270,12 +1275,16 @@ export async function addEndUserPet(
   notes: string | null = null,
 ): Promise<EndUserPet> {
   const id = crypto.randomUUID();
-  await db
-    .prepare(
-      `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Notes) VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(id, tenantId, endUserId, name, petType, notes)
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Notes) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(id, tenantId, endUserId, name, petType, notes),
+    db
+      .prepare(`INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)`)
+      .bind(tenantId, id, endUserId),
+  ]);
   const row = await db
     .prepare(
       `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, DeceasedAt, CreatedAt FROM EndUserPets WHERE TenantId = ? AND Id = ?`,
@@ -1318,6 +1327,98 @@ export async function removeEndUserPet(
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?').bind(tenantId, petId),
   ]);
   return (petResult.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Link an existing customer to an existing pet as a co-owner (sitter action). Returns false when
+ * either id lives outside `tenantId` — production D1 has foreign keys OFF, so this explicit check
+ * is the only thing preventing a cross-tenant ownership edge. Re-adding an existing owner is a
+ * no-op that still returns true, so a double-click is harmless rather than a spurious 404.
+ */
+export async function addPetOwner(
+  db: D1Database,
+  tenantId: string,
+  petId: string,
+  endUserId: string,
+): Promise<boolean> {
+  const valid = await db
+    .prepare(
+      `SELECT 1 AS Ok FROM EndUserPets p, EndUsers u
+        WHERE p.Id = ? AND p.TenantId = ? AND u.Id = ? AND u.TenantId = ?`,
+    )
+    .bind(petId, tenantId, endUserId, tenantId)
+    .first<{ Ok: number }>();
+  if (!valid) return false;
+  await db
+    .prepare('INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)')
+    .bind(tenantId, petId, endUserId)
+    .run();
+  return true;
+}
+
+/**
+ * Unlink one owner from a co-owned pet. Three outcomes, because the caller must tell them apart:
+ * 'not-found' (no such edge in this tenant → 404), 'last-owner' (refused: a pet with zero owners
+ * would be invisible to everyone and unreachable from the account graph → 409, delete the pet
+ * instead), 'removed'. When the departing owner is also the pet's creating owner, EndUserPets
+ * .EndUserId is handed to the oldest surviving co-owner in the same batch — that column is NOT NULL
+ * with an FK to EndUsers, so leaving it pointing at a customer who is on their way out would dangle.
+ */
+export async function removePetOwner(
+  db: D1Database,
+  tenantId: string,
+  petId: string,
+  endUserId: string,
+): Promise<'removed' | 'last-owner' | 'not-found'> {
+  const link = await db
+    .prepare('SELECT 1 AS Ok FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?')
+    .bind(tenantId, petId, endUserId)
+    .first<{ Ok: number }>();
+  if (!link) return 'not-found';
+  const count = await db
+    .prepare('SELECT COUNT(*) AS n FROM PetOwners WHERE TenantId = ? AND PetId = ?')
+    .bind(tenantId, petId)
+    .first<{ n: number }>();
+  if ((count?.n ?? 0) <= 1) return 'last-owner';
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE EndUserPets
+            SET EndUserId = (SELECT po.EndUserId FROM PetOwners po
+                              WHERE po.TenantId = EndUserPets.TenantId AND po.PetId = EndUserPets.Id
+                                AND po.EndUserId <> ?
+                           ORDER BY po.CreatedAt, po.EndUserId LIMIT 1)
+          WHERE TenantId = ? AND Id = ? AND EndUserId = ?`,
+      )
+      .bind(endUserId, tenantId, petId, endUserId),
+    db
+      .prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?')
+      .bind(tenantId, petId, endUserId),
+  ]);
+  return 'removed';
+}
+
+/**
+ * Mark a pet deceased (or undo it). NULL = alive. A deceased pet vanishes from every bookable and
+ * quotable list and from the account graph, but its rows stay: past bookings must keep naming it.
+ * Idempotent — re-marking an already-deceased pet still matches its row and returns true, so the
+ * route never 404s a harmless repeat. Returns false only when the pet is outside `tenantId`.
+ */
+export async function setPetDeceased(
+  db: D1Database,
+  tenantId: string,
+  petId: string,
+  deceased: boolean,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      deceased
+        ? "UPDATE EndUserPets SET DeceasedAt = datetime('now') WHERE TenantId = ? AND Id = ?"
+        : 'UPDATE EndUserPets SET DeceasedAt = NULL WHERE TenantId = ? AND Id = ?',
+    )
+    .bind(tenantId, petId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**
