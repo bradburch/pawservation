@@ -38,7 +38,29 @@ export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
 }
 
 export type AvailabilityResult =
-  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
+  | {
+      available: true;
+      estCost: number;
+      /**
+       * The quantity `estCost` was actually billed for, in `unit`s — the number the widget shows
+       * next to the price. Comes from the same `billableUnits` call `estimateCost` uses, so the
+       * displayed quantity and the price can never disagree. Both are absent for single-day
+       * services (daycare/walk/check-in): those are a flat per-booking charge with no quantity.
+       */
+      billedUnits?: number;
+      unit?: 'night' | 'day';
+      /**
+       * RETAINED FOR WIRE COMPATIBILITY ONLY — prefer `billedUnits`/`unit`. Still literally the
+       * night count (`nightsBetween`), which for a day-billed range service is one LESS than what
+       * is charged. Kept (rather than renamed to `units`) because the exported engine API is
+       * mirrored by the out-of-tree booking MCP deployment, whose readers CI here cannot inspect;
+       * a rename would risk unprovable breakage for zero present-day gain, since every service
+       * that exists today is night-billed. Droppable once the deployed MCP is confirmed not to
+       * read it.
+       */
+      nights?: number;
+    }
+  | { available: false; reason: string };
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
@@ -47,6 +69,20 @@ export type AvailabilityResult =
  * "/day", so the price and its label can never disagree); single-day services (daycare/walk/
  * check-in) are a flat per-booking rate. Pure (no DB), so callers that already know the dates
  * can price a booking without a capacity read.
+ *
+ * INVARIANT — no inferred pricing. A price must never come from an algorithm the sitter did not
+ * configure:
+ *
+ * - **Pet count never affects price.** Two dogs for three nights cost the same as one dog for
+ *   three nights unless the sitter stored a different rate.
+ * - The only arithmetic permitted here is over **units of time** (nights, days, per-visit) times
+ *   a stored `Rate`. Nothing else may be multiplied, scaled, or surcharged.
+ * - A per-pet or per-combination rate requires an explicit stored rate entry the sitter chose. It
+ *   must never be inferred (no "×1.5 for the second dog", no per-pet multiplier).
+ *
+ * Today the guarantee is structural: `petCount` is not a parameter, so it cannot reach the
+ * formula. Adding it as one — even "just to read a cap" — is precisely the defect this comment
+ * exists to prevent; capacity checks belong in the capacity engine, not the price.
  */
 export function estimateCost(
   service: TenantService,
@@ -56,9 +92,17 @@ export function estimateCost(
 ): number {
   if (service.Shape !== 'range') return option.Rate;
   const nights = nightsBetween(startDate, endDateExclusive);
-  // Unit comes from the service's own RateUnit (the column the UI prints); anything but 'day'
-  // bills nights, which is the pre-change behavior of every service.
-  return option.Rate * billableUnits(nights, service.RateUnit === 'day' ? 'day' : 'night');
+  return option.Rate * billableUnits(nights, billingUnit(service));
+}
+
+/**
+ * The unit a range service bills in, from its own RateUnit (the column the UI prints). Anything
+ * but 'day' bills nights — the pre-change behavior of every service, and the safe fallback for
+ * bad data ('visit' on a range service can only arrive that way). Shared by `estimateCost` and
+ * the quote's `billedUnits` so the price and its stated quantity read the same column.
+ */
+function billingUnit(service: TenantService): 'night' | 'day' {
+  return service.RateUnit === 'day' ? 'day' : 'night';
 }
 
 async function checkRange(
@@ -102,13 +146,16 @@ async function checkRange(
   if (rangeHasConflict(startDate, endDateExclusive, request, capacity)) {
     return { available: false, reason: 'Those dates are not available.' };
   }
+  const nights = nightsBetween(startDate, endDateExclusive);
+  const unit = billingUnit(service);
   return {
     available: true,
     estCost: estimateCost(service, option, startDate, endDateExclusive),
-    // CEILING: always a NIGHT count while `estCost` is unit-aware, so a range service billed per
-    // DAY would display a mismatch (4 chargeable days shown next to "3 nights"). Fixing it needs
-    // the widget to label this from RateUnit instead of hardcoding "nights".
-    nights: nightsBetween(startDate, endDateExclusive),
+    // The quantity the price was computed from — same unit, same `billableUnits` call as
+    // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
+    billedUnits: billableUnits(nights, unit),
+    unit,
+    nights, // wire-compat only; see AvailabilityResult
   };
 }
 

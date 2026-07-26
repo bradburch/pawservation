@@ -175,7 +175,9 @@ export async function listServiceOptions(
 ): Promise<TenantServiceOption[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity, WeekdaysOnly
+      // RateUnit is deliberately NOT selected: the per-option copy is retired (see sql/schema.sql),
+      // so leaving it off the read makes "nothing reads it" a compiler-enforced fact.
+      `SELECT Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity, WeekdaysOnly
        FROM TenantServiceOptions WHERE TenantId = ? ORDER BY ServiceType, DurationMinutes`,
     )
     .bind(tenantId)
@@ -938,6 +940,9 @@ export async function replaceServiceOptions(
 ): Promise<void> {
   // DELETE-then-INSERT as ONE atomic, single-round-trip batch: a mid-write failure can no longer
   // leave the service's options half-wiped, and N options cost one trip instead of N+1.
+  // NB: RateUnit here is the RETIRED per-option copy (see sql/schema.sql) — read by nothing and
+  // absent from TenantServiceOption; it is bound only because the column is NOT NULL with no
+  // DEFAULT. This input type is the write shape, deliberately separate from the read type.
   const insert = db.prepare(
     `INSERT INTO TenantServiceOptions
        (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity, WeekdaysOnly)

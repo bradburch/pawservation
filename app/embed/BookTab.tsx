@@ -290,8 +290,11 @@ export function BookTab({
                 <p className="bp-summary-dates">
                   {formatShortDate(start)}
                   {end ? ` – ${formatShortDate(end)}` : ''}
-                  {result.nights != null
-                    ? ` · ${result.nights} night${result.nights === 1 ? '' : 's'}`
+                  {/* Quantity AND noun both come from the response, never from
+                      service.rateUnit — the number and its label must share one source, or a
+                      day-billed stay shows "4" next to "nights". Still no money math here. */}
+                  {result.billedUnits != null && result.unit != null
+                    ? ` · ${result.billedUnits} ${result.unit}${result.billedUnits === 1 ? '' : 's'}`
                     : ''}
                 </p>
                 <p className="bp-summary-cost">

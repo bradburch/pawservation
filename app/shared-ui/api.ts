@@ -47,8 +47,20 @@ export type MonthDay = {
   mine: boolean;
 };
 
+// Hand-mirrors server/lib/availability.ts's AvailabilityResult — keep the two in step.
 export type Availability =
-  { available: true; estCost: number; nights?: number } | { available: false; reason: string };
+  | {
+      available: true;
+      estCost: number;
+      /** Quantity `estCost` was billed for, with its noun. Absent for single-day services
+       *  (flat per-booking charge, no quantity). Label from these, never from
+       *  `ServiceConfig.rateUnit` — the number and its noun must share one source. */
+      billedUnits?: number;
+      unit?: 'night' | 'day';
+      /** Wire-compat only; always a night count. Prefer `billedUnits`/`unit`. */
+      nights?: number;
+    }
+  | { available: false; reason: string };
 
 export type Booking = {
   id: string;
