@@ -1268,7 +1268,7 @@ const LANDING_HTML = `<!doctype html>
             <ul>
               <li><a href="/demo">Try the demo</a></li>
               <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="/how-it-works">How it works</a></li>
+              <li><a href="/how-it-works">Full tour</a></li>
               <li><a href="#faq">FAQ</a></li>
             </ul>
           </div>
@@ -1381,7 +1381,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>House sitting &middot; per night</h3>
-              <p>You stay at the client&rsquo;s home, again over a range of dates. It draws on its own cap, kept separate from boarding, so a house sit doesn&rsquo;t use up a space at yours.</p>
+              <p>You stay at the client&rsquo;s home, again over a range of dates, under its own cap. And because you can&rsquo;t be in two places at once, a house sit won&rsquo;t overlap an occupied boarding stay by more than a day.</p>
             </div>
             <div class="feature">
               <h3>Day care &middot; per day</h3>
@@ -1436,6 +1436,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               animal you don&rsquo;t accept can&rsquo;t be chosen.
             </p>
           </div>
+          <div class="wf-math">
           <div class="wf-pair">
             <p class="wf-keep">Caps count pets, not bookings.</p>
             <p>If you&rsquo;ll take three at a time, one booking for three dogs fills the day by itself &mdash; three pets, three slots &mdash; and the calendar strikes that day out for everyone else. That is the whole point of counting animals rather than requests.</p>
@@ -1452,6 +1453,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p class="wf-keep">Cancellation fees in your own windows.</p>
             <p>Set up to five windows, each a percentage of the estimated cost. When a client cancels, the tightest window that applies is the one that wins. Leave it blank and there&rsquo;s no fee at all &mdash; the policy is only what you wrote.</p>
           </div>
+          </div>
         </div>
       </section>
 
@@ -1465,6 +1467,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               and a booking is a request until you act on it.
             </p>
           </div>
+          <div class="wf-math">
           <ol class="wf-steps">
             <li class="wf-step">
               <span class="step-no">01</span>
@@ -1480,9 +1483,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </li>
             <li class="wf-step">
               <span class="step-no">04</span>
-              <p><strong>You confirm, or you decline.</strong> Every request is pending until you confirm it; nothing reaches your calendar on its own. Declines and cancellations stay on the record rather than disappearing, so the history of what was asked still reads straight months later.</p>
+              <p><strong>You confirm, or you decline.</strong> Every request is pending until you confirm it, and nothing gets confirmed on its own &mdash; a request does land on your calendar right away, but marked <code>[REQUEST]</code>, and it stays that way until you act. Declines and cancellations stay on the record rather than disappearing, so the history of what was asked still reads straight months later.</p>
             </li>
           </ol>
+          </div>
         </div>
       </section>
 
@@ -1496,6 +1500,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               booked. Nothing else multiplies it.
             </p>
           </div>
+          <div class="wf-math">
           <div class="wf-pair">
             <p class="wf-keep">Rates are per service, and they don&rsquo;t multiply behind your back.</p>
             <p>A second pet uses a second slot of your capacity; it does not quietly double the bill. Any figure a client sees comes from a rate you typed in, never from a multiplier nobody chose.</p>
@@ -1510,7 +1515,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           </div>
           <div class="wf-pair">
             <p class="wf-keep">Charging more for a second dog is being built.</p>
-            <p>Today each service carries one rate. Multi-pet rates are coming as rates <em>you</em> set explicitly &mdash; price &ldquo;two dogs&rdquo; as its own line if you want to &mdash; and never auto-multiplied from the single-pet price.</p>
+            <p>Today the price doesn&rsquo;t depend on how many pets are on the booking &mdash; one dog or three, the same dates cost the same. Multi-pet rates are coming as rates <em>you</em> set explicitly &mdash; price &ldquo;two dogs&rdquo; as its own line if you want to &mdash; and never auto-multiplied from the single-pet price.</p>
+          </div>
           </div>
         </div>
       </section>
@@ -1595,10 +1601,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               and it only ever adds &mdash; run it again and it won&rsquo;t undo what you set.
             </p>
           </div>
+          <div class="wf-math">
           <ol class="wf-steps">
             <li class="wf-step">
               <span class="step-no">01</span>
-              <p><strong>Your business.</strong> What you&rsquo;re called and which timezone your dates mean.</p>
+              <p><strong>Your business.</strong> What you&rsquo;re called, how clients reach you, your brand color, and which timezone your dates are in.</p>
             </li>
             <li class="wf-step">
               <span class="step-no">02</span>
@@ -1613,6 +1620,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p><strong>Your calendar, if you want it.</strong> Connect Google Calendar, or skip it &mdash; skipping costs you nothing else, and you can connect from Connected apps whenever.</p>
             </li>
           </ol>
+          </div>
         </div>
       </section>
 
@@ -1629,7 +1637,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Errors a machine can read</h3>
-              <p>The API answers with a stable code, not just a sentence &mdash; so &ldquo;those dates are full&rdquo; and &ldquo;that pet isn&rsquo;t yours&rdquo; are told apart by software, not by guessing at prose.</p>
+              <p>Booking requests answer with a stable code, not just a sentence &mdash; so &ldquo;those dates are full&rdquo; and &ldquo;that pet isn&rsquo;t yours&rdquo; are told apart by software, not by guessing at prose.</p>
             </div>
             <div class="feature">
               <h3>Requests that are safe to repeat</h3>
@@ -1646,10 +1654,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
       <section class="cta-band" aria-labelledby="tour-cta-h">
         <div class="wrap">
           <div class="cta-panel">
-            <h2 id="tour-cta-h">That&rsquo;s the whole thing</h2>
-            <p>Have a click around the demo with seeded data, or look at what it costs &mdash; taking bookings is free, and stays free.</p>
+            <h2 id="tour-cta-h">That&rsquo;s the whole thing. Want in?</h2>
+            <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page &mdash; taking bookings is free, and stays free.</p>
             <div class="cta-row">
-              <a class="btn btn-inverse" href="/demo">Try the demo</a>
+              <a class="btn btn-inverse" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
+              <a class="signin-inverse" href="/demo">Try the demo</a>
               <a class="signin-inverse" href="/#pricing">See pricing</a>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import app from '../index';
 import { createTestEnv } from './helpers';
 
@@ -41,13 +42,12 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('&lt;iframe');
   });
 
-  it('covers the five service templates with their billing units', async () => {
+  it('covers every service template, each paired with its own billing unit', async () => {
     const body = await howItWorksBody();
-    for (const label of ['Boarding', 'House sitting', 'Day care', 'Walks', 'Check-ins']) {
-      expect(body, label).toContain(label);
-    }
-    for (const unit of ['per night', 'per day', 'per visit']) {
-      expect(body, unit).toContain(unit);
+    // Derived from SERVICE_TEMPLATES, not hardcoded: changing a template's rateUnit (or adding a
+    // template) must fail here rather than leave the page quietly claiming the wrong unit.
+    for (const t of Object.values(SERVICE_TEMPLATES)) {
+      expect(body, t.label).toContain(`${t.label} &middot; per ${t.rateUnit}`);
     }
   });
 
@@ -55,6 +55,20 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     const body = await howItWorksBody();
     expect(body).toContain('pending until you confirm');
     expect(body).toContain('never processes');
+  });
+
+  it('is truthful that a pending request DOES reach the calendar', async () => {
+    const body = await howItWorksBody();
+    // Pending bookings sync immediately as "[REQUEST] …" events (server/lib/google-calendar.ts),
+    // so what the confirm step protects is confirmation, not calendar absence. Saying otherwise
+    // would contradict the calendar section further down the same page.
+    expect(body).toContain('[REQUEST]');
+    expect(body).not.toContain('nothing reaches your calendar');
+  });
+
+  it('ends with a way to ask for access, since the product is invite-only', async () => {
+    const body = await howItWorksBody();
+    expect(body).toMatch(/href="mailto:[^"]+"/);
   });
 
   it('is truthful about multi-pet pricing — not yet available, never auto-multiplied', async () => {
