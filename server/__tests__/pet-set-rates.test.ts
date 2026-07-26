@@ -19,6 +19,15 @@ describe('buildMixKey', () => {
     expect(buildMixKey({ dog: 2, cat: 0 })).toBe('dog:2');
     expect(buildMixKey({})).toBe('');
   });
+  it('drops negative counts', () => {
+    expect(buildMixKey({ dog: 2, cat: -1 })).toBe('dog:2');
+  });
+  it('drops non-integer counts', () => {
+    expect(buildMixKey({ dog: 1.5, cat: 1 })).toBe('cat:1');
+  });
+  it('empties when all counts are invalid', () => {
+    expect(buildMixKey({ dog: -1, cat: 1.5 })).toBe('');
+  });
 });
 
 describe('mixFromPetTypes / petCountOf', () => {

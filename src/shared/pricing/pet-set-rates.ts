@@ -28,11 +28,11 @@ export type RateResolution = { source: 'group' | 'mix'; rate: number } | null;
 
 /** Canonical species-count key: species sorted, `slug:count` joined by `|`. '' when empty. */
 export function buildMixKey(mix: PetMix): string {
-  return Object.entries(mix)
+  const slugs = Object.entries(mix)
     .filter(([, count]) => Number.isInteger(count) && count > 0)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([slug, count]) => `${slug}:${count}`)
-    .join('|');
+    .map(([slug]) => slug)
+    .sort();
+  return slugs.map((slug) => `${slug}:${mix[slug]}`).join('|');
 }
 
 /** Tally a list of species slugs (one entry per pet) into a mix. */
