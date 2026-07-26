@@ -865,6 +865,7 @@ const LANDING_HTML = `<!doctype html>
         </a>
         <nav class="nav-links" aria-label="Sections">
           <a href="#how">How it works</a>
+          <a href="/how-it-works">Full tour</a>
           <a href="#dashboard">Dashboard</a>
           <a href="#workflow">Your workflow</a>
           <a href="#pricing">Pricing</a>
@@ -1267,7 +1268,7 @@ const LANDING_HTML = `<!doctype html>
             <ul>
               <li><a href="/demo">Try the demo</a></li>
               <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="#how">How it works</a></li>
+              <li><a href="/how-it-works">How it works</a></li>
               <li><a href="#faq">FAQ</a></li>
             </ul>
           </div>
@@ -1291,7 +1292,420 @@ const LANDING_HTML = `<!doctype html>
 </html>
 `;
 
+/**
+ * The long-form tour at /how-it-works — the page the landing links to when someone wants the
+ * whole picture before asking for an invite. Same constraints as the landing: served under
+ * LOCKED_CSP, so it is script-free, image-free, and styled only by the shared PAGE_STYLE.
+ * Both embed snippets are shown as escaped text (&lt;script&gt; / &lt;iframe&gt;).
+ *
+ * Every claim here is behavior that ships today. Two guardrails are enforced by
+ * server/__tests__/how-it-works.test.ts rather than by convention: the page may not use the
+ * words "invoice"/"statement"/"SMS"/"AI" (none of those exist), and multi-pet pricing must be
+ * described as being built and never auto-multiplied.
+ */
+const HOW_IT_WORKS_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>How it works &mdash; Pawservation</title>
+    <meta
+      name="description"
+      content="The full tour of Pawservation: the services you can offer, the rules that protect your calendar, how clients book, and how the money is tracked."
+    />
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <svg width="22" height="22" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
+            <ellipse cx="50" cy="63" rx="24" ry="20" />
+            <ellipse cx="18" cy="38" rx="10" ry="13" />
+            <ellipse cx="39" cy="24" rx="10" ry="14" />
+            <ellipse cx="61" cy="24" rx="10" ry="14" />
+            <ellipse cx="82" cy="38" rx="10" ry="13" />
+          </svg>
+          Pawservation
+        </a>
+        <nav class="nav-links" aria-label="Sections">
+          <a href="/#how">Overview</a>
+          <a href="/#dashboard">Dashboard</a>
+          <a href="/#workflow">Your workflow</a>
+          <a href="/#pricing">Pricing</a>
+          <a href="/#install">Install</a>
+          <a href="/#faq">FAQ</a>
+        </nav>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">The complete tour</p>
+          <h1>How it works, in full.</h1>
+          <p class="sub">
+            Pawservation is a booking page that lives on your own website, showing your
+            services, your rates, and only the dates your rules allow. You stay in control of
+            all of it &mdash; every request arrives as a request, and waits for you.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="/demo">Try the demo</a>
+            <a class="btn btn-ghost" href="/">Back to the overview</a>
+          </div>
+          <p class="note">
+            Everything below is built and working today. Where something isn&rsquo;t, it says so.
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="services" aria-labelledby="services-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Services</span>
+            <h2 id="services-h">Five kinds of service, each with its own rules</h2>
+            <p>
+              Every service you offer starts from one of five templates. The template decides how
+              dates are chosen and how the price is counted; everything else &mdash; the name, the
+              rate, the limits &mdash; is yours.
+            </p>
+          </div>
+          <div class="features">
+            <div class="feature">
+              <h3>Boarding &middot; per night</h3>
+              <p>Overnight stays at your place, over a range of dates. Set the most pets you&rsquo;ll keep at once, and the shortest and longest stay you&rsquo;ll accept.</p>
+            </div>
+            <div class="feature">
+              <h3>House sitting &middot; per night</h3>
+              <p>You stay at the client&rsquo;s home, again over a range of dates. It draws on its own cap, kept separate from boarding, so a house sit doesn&rsquo;t use up a space at yours.</p>
+            </div>
+            <div class="feature">
+              <h3>Day care &middot; per day</h3>
+              <p>Daytime care at your place, priced per day. Clients pick single dates rather than a stay, so a Tuesday and a Friday are two separate bookings.</p>
+            </div>
+            <div class="feature">
+              <h3>Walks &middot; per visit</h3>
+              <p>Priced per visit, with options that carry their own length and time window &mdash; a &ldquo;Morning 30&rdquo; and an &ldquo;Evening 30&rdquo; can sit side by side at different prices.</p>
+            </div>
+            <div class="feature">
+              <h3>Check-ins &middot; per visit</h3>
+              <p>Drop-in visits &mdash; feed, let out, top up the water &mdash; with the same per-option lengths and windows as walks.</p>
+            </div>
+            <div class="feature">
+              <h3>Anything you call your own</h3>
+              <p>A custom service clones one of the five, so a &ldquo;Morning walk&rdquo; behaves exactly like Walks under your name and your price. New services can&rsquo;t invent behavior the calendar doesn&rsquo;t understand.</p>
+            </div>
+          </div>
+          <div class="wf-math">
+            <h3 class="wf-h">What you set on each one</h3>
+            <div class="wf-pair">
+              <p class="wf-keep">A rate in whole dollars, in a unit you can&rsquo;t get wrong.</p>
+              <p>The unit belongs to the service, not to the price box: boarding is per night whether you charge forty or ninety-five. The number and the word printed beside it come from the same place, so they can never drift apart.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Options, each with a length and a fixed window.</p>
+              <p>A thirty-minute walk between 10 and 2 is one option; the same walk between 4 and 6 is another. Clients pick the option, not an arbitrary time, so you&rsquo;re never booked at 6am by accident.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">A per-day limit on each option.</p>
+              <p>Eight pets on the morning pack walk and four on the solo walk, counted separately, per date. When an option fills for a day, that day stops being offered for that option.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Weekdays only, where that&rsquo;s the truth.</p>
+              <p>Mark an option weekdays-only and its weekends are struck out in the calendar rather than quietly accepted and then declined.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">A shortest and longest stay.</p>
+              <p>For the per-night services, set a minimum and a maximum number of nights. A request outside that range never gets as far as your queue.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section band" id="rules" aria-labelledby="rules-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Your rules</span>
+            <h2 id="rules-h">The limits you set are the limits clients see</h2>
+            <p>
+              None of this is advisory. A day you can&rsquo;t take isn&rsquo;t offered, and an
+              animal you don&rsquo;t accept can&rsquo;t be chosen.
+            </p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Caps count pets, not bookings.</p>
+            <p>If you&rsquo;ll take three at a time, one booking for three dogs fills the day by itself &mdash; three pets, three slots &mdash; and the calendar strikes that day out for everyone else. That is the whole point of counting animals rather than requests.</p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Only the animals you actually take.</p>
+            <p>Accepted pet types are set per service, so you can board dogs and do check-ins for cats without accidentally agreeing to board the cat.</p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Your questions, asked at booking time.</p>
+            <p>Write your own intake questions &mdash; medications, the gate code, which vet, anything you always end up asking &mdash; and they arrive answered, with the request, instead of over six texts on the day.</p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Cancellation fees in your own windows.</p>
+            <p>Set up to five windows, each a percentage of the estimated cost. When a client cancels, the tightest window that applies is the one that wins. Leave it blank and there&rsquo;s no fee at all &mdash; the policy is only what you wrote.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="booking" aria-labelledby="booking-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">For your clients</span>
+            <h2 id="booking-h">Invite-only, and pending until you confirm</h2>
+            <p>
+              There is no public sign-up and no directory. Your client list is a list you built,
+              and a booking is a request until you act on it.
+            </p>
+          </div>
+          <ol class="wf-steps">
+            <li class="wf-step">
+              <span class="step-no">01</span>
+              <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add an email at a time, or import a CSV &mdash; up to 500 rows in one go, with an example file to copy the columns from.</p>
+            </li>
+            <li class="wf-step">
+              <span class="step-no">02</span>
+              <p><strong>They sign in with a code.</strong> No password to invent, forget, or reset. They type the email you invited, a code arrives, and they&rsquo;re in. Co-owned pets work the way households actually do: a dog can belong to two people, and both can book for it.</p>
+            </li>
+            <li class="wf-step">
+              <span class="step-no">03</span>
+              <p><strong>They pick a service, then dates.</strong> The widget offers only what you&rsquo;ve set up, only where your rules allow it. The estimated cost is worked out on the server and sent back &mdash; the browser never does the arithmetic &mdash; so the figure your client is shown is the figure the booking is stamped with. The two cannot disagree.</p>
+            </li>
+            <li class="wf-step">
+              <span class="step-no">04</span>
+              <p><strong>You confirm, or you decline.</strong> Every request is pending until you confirm it; nothing reaches your calendar on its own. Declines and cancellations stay on the record rather than disappearing, so the history of what was asked still reads straight months later.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section band" id="money" aria-labelledby="money-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Money</span>
+            <h2 id="money-h">You collect it your way &mdash; Pawservation keeps the count</h2>
+            <p>
+              The arithmetic is deliberately boring: your rate, times the nights, days, or visits
+              booked. Nothing else multiplies it.
+            </p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Rates are per service, and they don&rsquo;t multiply behind your back.</p>
+            <p>A second pet uses a second slot of your capacity; it does not quietly double the bill. Any figure a client sees comes from a rate you typed in, never from a multiplier nobody chose.</p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Record payments as they land.</p>
+            <p>Cash, Venmo, Zelle, PayPal, check, card, or something else entirely. Log as many part-payments against one booking as it takes &mdash; a deposit now and the rest later &mdash; each with its own date and note.</p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Pawservation records payments. It never processes them.</p>
+            <p>The money goes from your client to you by whatever means you already use. Nothing routes through us, so there is no cut taken and no fee on your earnings. An earnings view totals up what you&rsquo;ve recorded.</p>
+          </div>
+          <div class="wf-pair">
+            <p class="wf-keep">Charging more for a second dog is being built.</p>
+            <p>Today each service carries one rate. Multi-pet rates are coming as rates <em>you</em> set explicitly &mdash; price &ldquo;two dogs&rdquo; as its own line if you want to &mdash; and never auto-multiplied from the single-pet price.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="calendar" aria-labelledby="calendar-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Google Calendar</span>
+            <h2 id="calendar-h">Bookings turn up where you already look</h2>
+            <p>
+              Connect Google Calendar once and your week keeps living in the place you already
+              check twenty times a day.
+            </p>
+          </div>
+          <div class="features">
+            <div class="feature">
+              <h3>Pending and confirmed, both</h3>
+              <p>A request becomes an event the moment it arrives, not only once you&rsquo;ve said yes &mdash; so a busy week looks busy before you&rsquo;ve made up your mind.</p>
+            </div>
+            <div class="feature">
+              <h3>The whole booking, in the event</h3>
+              <p>Service, dates, times, the pets by name, the estimated cost, and the client&rsquo;s email address &mdash; enough to answer from your phone without opening anything else.</p>
+            </div>
+            <div class="feature">
+              <h3>Cancelled means gone</h3>
+              <p>Cancel or decline in Pawservation and the event is removed from the calendar, so a dead booking never sits there looking alive.</p>
+            </div>
+            <div class="feature">
+              <h3>Optional, and skippable</h3>
+              <p>Skip it during setup and everything else works exactly the same. Connect it later, or never, and nothing about your bookings changes.</p>
+            </div>
+            <div class="feature">
+              <h3>Your tokens are encrypted</h3>
+              <p>The credentials that let us write to your calendar are stored encrypted, and you can disconnect whenever you like.</p>
+            </div>
+            <div class="feature">
+              <h3>One way, on purpose</h3>
+              <p>Pawservation writes your bookings and leaves the rest of your calendar alone. Something you keep only in Google won&rsquo;t block a request unless you enter it as time off.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section band" id="embed" aria-labelledby="embed-h">
+        <div class="wrap install-grid">
+          <div class="install-copy">
+            <span class="label">On your website</span>
+            <h2 id="embed-h">One line, on the site you already have</h2>
+            <p>Paste the script line into a page on Squarespace, Wix, or plain HTML, swap the slug for yours, and save. The widget measures itself and tells the page how tall to be, so it never sits in a box that&rsquo;s too short.</p>
+            <p>If your host strips scripts &mdash; Wix&rsquo;s &ldquo;Embed a site&rdquo; is the usual culprit &mdash; use the iframe version underneath instead. Same widget, fixed height, no JavaScript on your side.</p>
+          </div>
+          <div class="codecard">
+            <div class="codecard-cap">
+              <span>your-page.html</span>
+              <span>paste &amp; save</span>
+            </div>
+            <div class="code-scroll">
+<pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;https://your-site/embed.js&quot;
+        <span class="attr">data-pawservation-tenant</span>=&quot;your-slug&quot;
+        <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
+            </div>
+            <div class="codecard-cap">
+              <span>or, if scripts are stripped</span>
+              <span>iframe fallback</span>
+            </div>
+            <div class="code-scroll">
+<pre><span class="tag">&lt;iframe</span> <span class="attr">src</span>=&quot;https://your-site/embed/your-slug&quot;
+        <span class="attr">title</span>=&quot;Booking widget&quot;
+        <span class="attr">style</span>=&quot;width:100%;height:640px;border:0;&quot;<span class="tag">&gt;&lt;/iframe&gt;</span></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="setup" aria-labelledby="setup-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Setup</span>
+            <h2 id="setup-h">Four steps, none of them destructive</h2>
+            <p>
+              The wizard gets you from an empty account to a working booking page in one sitting,
+              and it only ever adds &mdash; run it again and it won&rsquo;t undo what you set.
+            </p>
+          </div>
+          <ol class="wf-steps">
+            <li class="wf-step">
+              <span class="step-no">01</span>
+              <p><strong>Your business.</strong> What you&rsquo;re called and which timezone your dates mean.</p>
+            </li>
+            <li class="wf-step">
+              <span class="step-no">02</span>
+              <p><strong>What you offer.</strong> Seven one-tap presets, each a whole service already shaped &mdash; &ldquo;Group walks &middot; weekdays 10&ndash;2 &middot; up to 8 pets&rdquo; is one tap, windows and limits included. Tap the ones that describe you.</p>
+            </li>
+            <li class="wf-step">
+              <span class="step-no">03</span>
+              <p><strong>Your prices.</strong> Whole dollars, with each service&rsquo;s own unit printed beside the box. Times and limits come prefilled, and anything can be changed later.</p>
+            </li>
+            <li class="wf-step">
+              <span class="step-no">04</span>
+              <p><strong>Your calendar, if you want it.</strong> Connect Google Calendar, or skip it &mdash; skipping costs you nothing else, and you can connect from Connected apps whenever.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section band" id="next" aria-labelledby="next-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Under the hood</span>
+            <h2 id="next-h">The plumbing for what comes next is already in</h2>
+            <p>
+              None of this is a feature you switch on. It&rsquo;s groundwork, laid early because
+              retrofitting it later is how booking systems end up double-booking people.
+            </p>
+          </div>
+          <div class="features">
+            <div class="feature">
+              <h3>Errors a machine can read</h3>
+              <p>The API answers with a stable code, not just a sentence &mdash; so &ldquo;those dates are full&rdquo; and &ldquo;that pet isn&rsquo;t yours&rdquo; are told apart by software, not by guessing at prose.</p>
+            </div>
+            <div class="feature">
+              <h3>Requests that are safe to repeat</h3>
+              <p>A booking request can carry an idempotency key. Send the same one twice on a flaky connection and you get the same booking back &mdash; not two.</p>
+            </div>
+            <div class="feature">
+              <h3>A machine-readable description of your services</h3>
+              <p>Your booking page publishes an <code>llms.txt</code> setting out what you offer and how to request it, so an automated client can read your rules instead of scraping the page.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-band" aria-labelledby="tour-cta-h">
+        <div class="wrap">
+          <div class="cta-panel">
+            <h2 id="tour-cta-h">That&rsquo;s the whole thing</h2>
+            <p>Have a click around the demo with seeded data, or look at what it costs &mdash; taking bookings is free, and stays free.</p>
+            <div class="cta-row">
+              <a class="btn btn-inverse" href="/demo">Try the demo</a>
+              <a class="signin-inverse" href="/#pricing">See pricing</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <a class="logo" href="/">
+              <svg width="20" height="20" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
+                <ellipse cx="50" cy="63" rx="24" ry="20" />
+                <ellipse cx="18" cy="38" rx="10" ry="13" />
+                <ellipse cx="39" cy="24" rx="10" ry="14" />
+                <ellipse cx="61" cy="24" rx="10" ry="14" />
+                <ellipse cx="82" cy="38" rx="10" ry="13" />
+              </svg>
+              Pawservation
+            </a>
+            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <ul>
+              <li><a href="/demo">Try the demo</a></li>
+              <li><a href="/admin">Sitter sign in</a></li>
+              <li><a href="/">Overview</a></li>
+              <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Open source</h3>
+            <ul>
+              <li><a href="https://github.com/bradburch/pawservation">Source on GitHub</a></li>
+              <li><a href="https://github.com/bradburch/pawservation/blob/main/docs/index.md">Technical docs</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <p>
+            Pawservation is open source under the MIT license &middot; Created by
+            <a href="https://bradburch.github.io/">Brad Burch</a>
+          </p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
+`;
+
 app.get('/', (c) => c.html(LANDING_HTML));
+// Listed in wrangler.jsonc's run_worker_first as the BARE path "/how-it-works" — a glob does not
+// match it, and an unlisted path is served straight off the assets layer (404, no CSP).
+app.get('/how-it-works', (c) => c.html(HOW_IT_WORKS_HTML));
 
 // Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
 // through to Hono's plain-text default and break the { error } contract every client parses.
