@@ -891,8 +891,24 @@ export const adminRoutes = new Hono<AppEnv>()
     const id = c.req.param('id');
     if ((await countBookingsForUser(c.env.PAWBOOK_DB, tenant.Id, id)) > 0)
       return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
-    const deleted = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
-    if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    // deleteCustomer reports WHICH precondition refused, so a refusal never masquerades as a 404
+    // for a customer who plainly exists. 'has-bookings' is only reachable when a booking lands
+    // between the count above and the delete itself; the co-ownership refusal below has no such
+    // pre-check and is the common one.
+    const outcome = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+    if (outcome === 'not-found') return c.json({ error: 'Not found.' }, 404);
+    if (outcome === 'has-bookings')
+      return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
+    if (outcome === 'pet-on-booking')
+      return c.json(
+        {
+          // Adding a second owner is the remedy that works: the pet is then handed to that owner
+          // instead of being cascaded. Cancelling the booking would NOT help — cancel/decline are
+          // soft, so the BookingRequestPets row survives.
+          error: 'A pet this client owns is on a booking; cannot remove. Add a second owner first.',
+        },
+        409,
+      );
     return c.body(null, 204);
   })
   .post('/:slug/admin/customers/:id/pets', async (c) => {

@@ -63,18 +63,18 @@ describe('customer repo', () => {
     );
     raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
               VALUES ('bk2','${TENANT_A}','${c.Id}','daycare','2030-04-01',1,'pending')`);
-    // With a booking: must return false and leave both rows intact
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(false);
+    // With a booking: must report the refusal by name and leave both rows intact
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe('has-bookings');
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
     expect(await countBookingsForUser(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(1);
   });
 
-  it('deleteCustomer succeeds with no bookings; returns false for missing id', async () => {
+  it("deleteCustomer succeeds with no bookings; reports 'not-found' for a missing id", async () => {
     const { env } = createTestEnv();
     const c = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'nobooking@example.com', null);
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe('deleted');
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, 'missing')).toBe(false);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, 'missing')).toBe('not-found');
   });
 
   it('deleteCustomer refuses cross-tenant, leaving the customer, their pet and its edges intact', async () => {
@@ -87,7 +87,7 @@ describe('customer repo', () => {
     const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, c.Id, 'Cross', 'dog');
     await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_B, c.Id)).toBe(false);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_B, c.Id)).toBe('not-found');
 
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
     // The pet is untouched AND still stamped with its creating owner (not handed to the co-owner).
@@ -112,7 +112,7 @@ describe('customer repo', () => {
     raw.exec(`INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt)
               VALUES ('lc1','${TENANT_A}','${c.Id}','123456','2030-01-01T00:00:00.000Z')`);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe('deleted');
 
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
     expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet1')).toBeUndefined();
@@ -138,7 +138,7 @@ describe('customer repo', () => {
               VALUES ('bk3','${TENANT_A}','${other.Id}','daycare','2030-04-01',1,'pending')`);
     raw.exec(`INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk3','pet2')`);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(false);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe('pet-on-booking');
 
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
     expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet2')).toBeDefined();
@@ -164,7 +164,7 @@ describe('customer repo', () => {
               VALUES ('bk4','${TENANT_A}','${c.Id}','daycare','2030-04-01',1,'pending')`);
     raw.exec(`INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk4','pet3')`);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(false);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe('has-bookings');
 
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
     expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet3')).toBeDefined();
@@ -195,7 +195,7 @@ describe('deleteCustomer under co-ownership', () => {
     const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, creator.Id, 'Rex', 'dog');
     await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe('deleted');
 
     // The pet survives, now stamped with the survivor (EndUserPets.EndUserId is NOT NULL + FK).
     expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: co.Id });
@@ -210,7 +210,7 @@ describe('deleteCustomer under co-ownership', () => {
     const { env, raw } = createTestEnv();
     const solo = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'solo@example.com', 'Solo');
     const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, solo.Id, 'Only', 'dog');
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, solo.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, solo.Id)).toBe('deleted');
     expect(petRow(raw, pet.Id)).toBeUndefined();
     expect(ownerCount(raw, pet.Id)).toBe(0);
   });
@@ -242,7 +242,7 @@ describe('deleteCustomer under co-ownership', () => {
 
     // 4. the sitter deletes the creator. They have no bookings of their own, so the has-bookings
     //    guard passes — but cascading the pet would strip the last pet off bk_co, so: refused.
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe(false);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe('pet-on-booking');
 
     // Nothing at all was written: the batch fails as a unit, not statement by statement.
     expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: creator.Id });
@@ -272,7 +272,7 @@ describe('deleteCustomer under co-ownership', () => {
     );
 
     // The pet is REASSIGNED, not cascaded, so its bookings are none of this delete's business.
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe('deleted');
 
     expect(raw.prepare('SELECT * FROM EndUsers WHERE Id = ?').get(creator.Id)).toBeUndefined();
     expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: co.Id });
@@ -296,7 +296,7 @@ describe('deleteCustomer under co-ownership', () => {
     const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, creator.Id, 'Rex', 'dog');
     await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, co.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, co.Id)).toBe('deleted');
 
     expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: creator.Id });
     expect(ownerCount(raw, pet.Id)).toBe(1);
