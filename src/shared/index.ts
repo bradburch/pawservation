@@ -26,6 +26,17 @@ export {
 export { billableUnits } from './pricing/booking-cost.js';
 export { isValidRate } from './pricing/rate.js';
 export {
+  buildGroupKey,
+  buildMixKey,
+  mixFromPetTypes,
+  petCountOf,
+  resolvePetSetRate,
+  type GroupRate,
+  type MixRate,
+  type PetMix,
+  type RateResolution,
+} from './pricing/pet-set-rates.js';
+export {
   SERVICE_TEMPLATES,
   TEMPLATE_IDS,
   isTemplateId,

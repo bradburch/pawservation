@@ -7,6 +7,7 @@ import type {
   EndUserPet,
   OwnerUser,
   PaymentRow,
+  PetGroupPricingRow,
   PetType,
   ProviderConnection,
   ProviderConnectionWithTokens,
@@ -14,6 +15,7 @@ import type {
   TenantPetTypeRow,
   TenantService,
   TenantServiceOption,
+  TenantServicePetRateRow,
   TenantUser,
 } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
@@ -967,6 +969,107 @@ export async function replaceServiceOptions(
         o.capacity,
         o.weekdaysOnly ? 1 : 0,
       ),
+    ),
+  ]);
+}
+
+const PET_GROUP_COLS = 'Id, TenantId, ServiceType, OptionKey, GroupKey, Rate, UpdatedAt';
+const PET_MIX_COLS = 'TenantId, ServiceType, OptionKey, MixKey, Rate';
+
+/**
+ * Pet-id rates for one service (across every option — the admin editor is per-service, §6 of the
+ * design spec, not per-option). Exact-match resolution happens in src/shared, scoped by
+ * OptionKey on each returned row.
+ */
+export async function listPetGroupPricing(
+  db: D1Database,
+  tenantId: string,
+  serviceType: string,
+): Promise<PetGroupPricingRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${PET_GROUP_COLS} FROM PetGroupPricing
+         WHERE TenantId = ? AND ServiceType = ?`,
+    )
+    .bind(tenantId, serviceType)
+    .all<PetGroupPricingRow>();
+  return results ?? [];
+}
+
+/**
+ * Replace the pet-id rate set for ONE service — delete-then-insert. Empty list clears it.
+ *
+ * Scoped to (tenantId, serviceType), NOT additionally to OptionKey, even though the table is now
+ * keyed per option: the admin editor this backs is per-service (§6 of the design spec), so one
+ * call always supplies the COMPLETE set of group rows for that service, spanning whatever options
+ * it has rates for. Each row carries its own `optionKey`, so narrowing the DELETE further would
+ * gain nothing (the caller-supplied set already IS the full service-scoped set) while adding a
+ * spurious per-option parameter this call site has no single value for. Contrast
+ * `replaceServicePetRates`, whose editor is explicitly per (service, option) and therefore scopes
+ * its DELETE to match.
+ */
+export async function replacePetGroupPricing(
+  db: D1Database,
+  tenantId: string,
+  serviceType: string,
+  rows: {
+    id: string;
+    optionKey: string;
+    groupKey: string;
+    rate: number;
+  }[],
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare('DELETE FROM PetGroupPricing WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+    ...rows.map((r) =>
+      db
+        .prepare(
+          `INSERT INTO PetGroupPricing
+             (Id, TenantId, ServiceType, OptionKey, GroupKey, Rate)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(r.id, tenantId, serviceType, r.optionKey, r.groupKey, r.rate),
+    ),
+  ]);
+}
+
+/** Every species-count rate for a tenant. Callers filter by service/option in memory. */
+export async function listServicePetRates(
+  db: D1Database,
+  tenantId: string,
+): Promise<TenantServicePetRateRow[]> {
+  const { results } = await db
+    .prepare(`SELECT ${PET_MIX_COLS} FROM TenantServicePetRates WHERE TenantId = ?`)
+    .bind(tenantId)
+    .all<TenantServicePetRateRow>();
+  return results ?? [];
+}
+
+/**
+ * Replace the species-count rate set for ONE (serviceType, optionKey) — delete-then-insert,
+ * mirroring replaceServiceOptions. Empty list clears it. MixKey must already be canonical;
+ * callers build it with buildMixKey.
+ */
+export async function replaceServicePetRates(
+  db: D1Database,
+  tenantId: string,
+  serviceType: string,
+  optionKey: string,
+  rates: { mixKey: string; rate: number }[],
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare(
+        `DELETE FROM TenantServicePetRates
+           WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ?`,
+      )
+      .bind(tenantId, serviceType, optionKey),
+    ...rates.map((r) =>
+      db
+        .prepare(`INSERT INTO TenantServicePetRates (${PET_MIX_COLS}) VALUES (?, ?, ?, ?, ?)`)
+        .bind(tenantId, serviceType, optionKey, r.mixKey, r.rate),
     ),
   ]);
 }
@@ -1971,6 +2074,8 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM PetGroupPricing WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM TenantServicePetRates WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantServices WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantPetTypes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM ProviderConnections WHERE TenantId = ?').bind(tenantId),

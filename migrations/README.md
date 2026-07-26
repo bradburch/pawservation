@@ -4,7 +4,7 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0019_pet_co_ownership.sql` (keep this line in step with the highest-numbered migration mirrored
+`0021_pet_mix_rates.sql` (keep this line in step with the highest-numbered migration mirrored
 into `schema.sql`). Use:
 
 ```
@@ -27,25 +27,29 @@ is made to adopt tracked migrations.
 
 Current state:
 
-- **Local dev DB**: wiped and reseeded from `sql/schema.sql` (the Fresh installs path above),
-  which already carries everything through `0019_pet_co_ownership.sql` — so the local DB
-  needs **no** migrations applied; it isn't on the incremental-apply path below at all.
-- **Remote DB**: fully migrated through `0019` — `0001`–`0015` were applied by hand
-  2026-07-20 (verified via read-only schema probes), and `0016`–`0019` have since been
-  applied by hand as each shipped, most recently `0019` on 2026-07-25. Note
-  `0011_contact_and_notes.sql` errors with "duplicate column" on this DB — its columns
-  were applied out of band before the renumbering — and that error is safe: D1 rolls the
-  whole file back, and the end state is already present.
+- **Local dev DB**: `sql/schema.sql` already carries everything through `0021_pet_mix_rates.sql`,
+  so a **freshly reseeded** local DB (`npm run seed:local`) needs no migrations applied. A local
+  DB seeded before today predates `0020`/`0021` and is on the incremental-apply path below like
+  any other already-provisioned DB — either re-seed it, or apply `0020`/`0021` locally with the
+  `--local` commands in the `0020`/`0021` section.
+- **Remote DB**: fully migrated through `0021` as of this writing — `0001`–`0015` were applied
+  by hand 2026-07-20 (verified via read-only schema probes), `0016`–`0019` have since been
+  applied by hand as each shipped, most recently `0019` on 2026-07-25, and `0020`/`0021` (below)
+  were applied by hand on 2026-07-26 (verified via read-only `sqlite_master` probes matching
+  `sql/schema.sql` column-for-column). Note `0011_contact_and_notes.sql` errors with "duplicate
+  column" on this DB — its columns were applied out of band before the renumbering — and that
+  error is safe: D1 rolls the whole file back, and the end state is already present.
 
 **Order: migrate first, then deploy.** The worker unconditionally `SELECT`s columns/tables
 added by every migration through `0019` — e.g. `AcceptedPetTypes`, `MaxConcurrentPets`,
 `MaxPerDay`, and `Label` (added by `0014`/`0015`), and `PetOwners`/`EndUserPets.DeceasedAt`
 (added by `0019`, see below) — and **500s on every request** if any of those are missing.
-`0007`–`0019` are now fully applied to both local and remote, so there is nothing pending;
-the same rule applies to any future migration: apply it before (or with) the deploy that
-needs it, never after. Backward-compatible additive migrations (like `0012`–`0018`) are safe
-to apply ahead of a deploy, since the currently-running worker just ignores the new columns
-until the new code ships.
+`0007`–`0021` are now fully applied to remote (`0020`/`0021` as of 2026-07-26, see that section
+below); a local DB still needs `0020`/`0021` unless it's a fresh `npm run seed:local` reseed —
+see the Local dev DB bullet above. Apply each migration before (or with) the deploy that needs
+it, never after. Backward-compatible additive migrations (like `0012`–`0018`, and `0020`/`0021`)
+are safe to apply ahead of a deploy, since the currently-running worker just ignores the new
+columns/tables until the new code ships.
 
 `0007`–`0015` were applied, in order, with:
 
@@ -130,3 +134,35 @@ Run both with `--command` rather than `--file`:
 npx wrangler d1 execute pawbook-db --remote --command "SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwners) AS edges;"
 npx wrangler d1 execute pawbook-db --remote --command "INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;"
 ```
+
+### 0020_pet_group_pricing.sql and 0021_pet_mix_rates.sql — applied to remote 2026-07-26
+
+Add two new, unrelated tables for explicit pet-set pricing (part of the pet-mix-rates feature):
+`PetGroupPricing` (0020, rates for a specific set of pet ids, keyed per service) and
+`TenantServicePetRates` (0021, rates for a species count like "2 dogs", keyed per option). Both are
+purely additive — new tables only, no column changes to existing tables — and **nothing in the
+running worker reads either table yet**, so applying them ahead of a deploy is safe with no
+window-of-inconsistency concerns like 0019's backfill had. Mirrored into `sql/schema.sql`, so
+fresh installs and the Vitest harness get them without running these files.
+
+Both were applied to the remote DB on 2026-07-26, ahead of merging this PR — merging to `main`
+runs `npx wrangler deploy` unconditionally, so timing the migration separately from the deploy
+isn't an option once the merge happens. Verified afterwards via a read-only `sqlite_master`
+query: both tables match `sql/schema.sql` column-for-column.
+
+```
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0020_pet_group_pricing.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0020_pet_group_pricing.sql
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0021_pet_mix_rates.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0021_pet_mix_rates.sql
+```
+
+**Gotcha hit while applying, worth recording because it will recur:** the first `--remote --file`
+attempt for `0020` failed with `Authentication error [code: 10000]` on the `/import` endpoint. The
+immediately following `--file` call for `0021` succeeded, and re-running `0020` afterwards then
+also succeeded — so the failure was transient, not a missing scope or a real auth problem. **A
+retry is the first thing to try** if this recurs. Separately: because `0020` is a single `CREATE
+TABLE` statement with no second statement after it, it could also have been applied with
+`--remote --command` instead of `--file`, with no partial-apply risk — unlike `0019`, where
+`--command` would have been dangerous because its backfill is a second statement (a failure
+partway through would leave the table created but the backfill not run).
