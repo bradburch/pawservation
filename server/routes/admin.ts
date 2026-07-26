@@ -895,21 +895,35 @@ export const adminRoutes = new Hono<AppEnv>()
     // for a customer who plainly exists. 'has-bookings' is only reachable when a booking lands
     // between the count above and the delete itself; the co-ownership refusal below has no such
     // pre-check and is the common one.
+    //
+    // Exhaustive switch, not an if-chain ending in the 204: success must be reached by a POSITIVE
+    // 'deleted' test. A fifth outcome added to deleteCustomer later would otherwise fall through to
+    // "204 No Content" — a refusal reported as success, which is the exact failure this whole guard
+    // exists to prevent. Here it fails to compile (`never`) and, if it somehow ships, fails closed.
     const outcome = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
-    if (outcome === 'not-found') return c.json({ error: 'Not found.' }, 404);
-    if (outcome === 'has-bookings')
-      return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
-    if (outcome === 'pet-on-booking')
-      return c.json(
-        {
-          // Adding a second owner is the remedy that works: the pet is then handed to that owner
-          // instead of being cascaded. Cancelling the booking would NOT help — cancel/decline are
-          // soft, so the BookingRequestPets row survives.
-          error: 'A pet this client owns is on a booking; cannot remove. Add a second owner first.',
-        },
-        409,
-      );
-    return c.body(null, 204);
+    switch (outcome) {
+      case 'deleted':
+        return c.body(null, 204);
+      case 'not-found':
+        return c.json({ error: 'Not found.' }, 404);
+      case 'has-bookings':
+        return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
+      case 'pet-on-booking':
+        return c.json(
+          {
+            // Adding a second owner is the remedy that works: the pet is then handed to that owner
+            // instead of being cascaded. Cancelling the booking would NOT help — cancel/decline are
+            // soft, so the BookingRequestPets row survives.
+            error:
+              'A pet this client owns is on a booking; cannot remove. Add a second owner first.',
+          },
+          409,
+        );
+      default: {
+        const unhandled: never = outcome;
+        return c.json({ error: `Cannot remove this client (${String(unhandled)}).` }, 409);
+      }
+    }
   })
   .post('/:slug/admin/customers/:id/pets', async (c) => {
     const tenant = c.get('tenant');

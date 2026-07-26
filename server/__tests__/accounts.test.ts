@@ -45,10 +45,32 @@ describe('buildAccounts (union-find over owner<->pet links)', () => {
       },
     ];
     expect(buildAccounts(chain)).toEqual(expected);
-    // The same chain walked from the far end: the links that fuse two ALREADY-MERGED components
-    // arrive last here and first there, so this also pins that find() resolves through a multi-node
-    // parent walk rather than one level of indirection.
+    // The same chain walked from the far end. Every link introduces exactly one new node in EITHER
+    // direction, so this is not about fusing components (see the next test for that) — it pins that
+    // the answer does not depend on which end of the chain the rows arrived from, which is what
+    // makes the account id stable when the repo's ORDER BY changes.
     expect(buildAccounts([...chain].reverse())).toEqual(expected);
+  });
+
+  it('fuses two already-multi-node components when a single late link bridges them', () => {
+    // Distinct from the chain above: the first four links build two SEPARATE 3-node components, and
+    // only the last one bridges them. That link is the case where union() is handed two nodes that
+    // are each already deep in a tree, so it must union their ROOTS — resolving only one level of
+    // indirection would merge two subtrees and strand the rest.
+    const accounts = buildAccounts([
+      { ownerId: 'u_ann', petId: 'p_bella' }, // component A: ann - bella - bob
+      { ownerId: 'u_bob', petId: 'p_bella' },
+      { ownerId: 'u_cara', petId: 'p_chip' }, // component B: cara - chip - dave
+      { ownerId: 'u_dave', petId: 'p_chip' },
+      { ownerId: 'u_bob', petId: 'p_chip' }, // the bridge: A and B are one household
+    ]);
+    expect(accounts).toEqual([
+      {
+        id: 'p_bella',
+        ownerIds: ['u_ann', 'u_bob', 'u_cara', 'u_dave'],
+        petIds: ['p_bella', 'p_chip'],
+      },
+    ]);
   });
 
   it('uses the lexicographically-first pet id as the account id, whatever the input order', () => {

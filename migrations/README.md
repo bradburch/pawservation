@@ -99,11 +99,19 @@ SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwne
 INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;
 ```
 
+Reading the numbers: `edges` **short** of `pets` means some pets have no owner edge and are
+therefore invisible — always fix it, never merge on it. It is _expected_ while the old worker is
+still live (that is the window described above), so a shortfall before the merge is not a sign
+anything went wrong; it just has to be repaired. `edges` **exceeding** `pets` is normal once
+co-owners exist, and is never a problem.
+
 When to run each:
 
-- **Verify** right after applying 0019 and again before merging the PR — `pets` and `edges` must be
-  equal. (`edges` may legitimately exceed `pets` later, once co-owners exist; a shortfall never is.)
-- **Repair** once the deploy is confirmed live, and again after **any** rollback to a worker that
+- **Verify** right after applying 0019, and again immediately before merging the PR. If `edges` is
+  short of `pets`, **run the repair below, re-verify until the two are equal, then merge.**
+- **Repair** whenever verify shows a shortfall: before the merge (per above), once the deploy is
+  confirmed live — run it then even if the pre-merge check was clean, since the window stays open
+  until the new worker is actually serving — and again after **any** rollback to a worker that
   predates 0019. It is `INSERT OR IGNORE`, so re-running it costs nothing and can only add the
   missing creating-owner edges — unlike 0019's own bare `INSERT ... SELECT` backfill, which fails on
   the primary key the second time.
