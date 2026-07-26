@@ -167,7 +167,7 @@ TABLE` statement with no second statement after it, it could also have been appl
 `--command` would have been dangerous because its backfill is a second statement (a failure
 partway through would leave the table created but the backfill not run).
 
-### 0022_booking_source.sql
+### 0022_booking_source.sql — applied to remote 2026-07-26 (verified: column present)
 
 Adds `BookingRequests.Source` (TEXT, attribution channel like 'mcp', 'voice', etc.; NULL = embed
 widget). Purely additive — a single `ALTER TABLE` to add one optional column — and **nothing in
@@ -182,7 +182,7 @@ npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingReques
 npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
 ```
 
-### 0023_booking_idempotency.sql
+### 0023_booking_idempotency.sql — applied to remote 2026-07-26 (verified: column + index present)
 
 Adds `BookingRequests.IdempotencyKey` (TEXT, client-supplied replay-protection key for the
 `Idempotency-Key` header on `POST /api/:slug/bookings`; NULL = no key supplied) plus a unique
