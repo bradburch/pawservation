@@ -63,7 +63,7 @@ export function isFutureOrToday(value: string, timezone?: string): boolean {
   return value >= getPacificDateStr(undefined, timezone);
 }
 
-export type DateRangeError = { error: string; status: 400 };
+export type DateRangeError = { error: string; code: string; status: 400 };
 
 /**
  * Validate a boarding date range. Returns null when valid, or an error payload + status.
@@ -76,21 +76,30 @@ export function validateBoardingRange(
   maxStayNights: number | null,
   timezone?: string,
 ): DateRangeError | null {
-  if (!isRealDate(start)) return { error: 'Invalid start date.', status: 400 };
-  if (!isRealDate(end) || end <= start) return { error: 'Invalid end date.', status: 400 };
-  if (!isFutureOrToday(start, timezone)) return { error: 'That date is in the past.', status: 400 };
+  if (!isRealDate(start))
+    return { error: 'Invalid start date.', code: 'invalid_date', status: 400 };
+  if (!isRealDate(end) || end <= start)
+    return { error: 'Invalid end date.', code: 'invalid_date', status: 400 };
+  if (!isFutureOrToday(start, timezone))
+    return { error: 'That date is in the past.', code: 'date_in_past', status: 400 };
   const nights = nightsBetween(start, end);
   // Defensive rail first: an over-rail range is malformed input, not "over capacity".
-  if (nights > DEFENSIVE_MAX_NIGHTS) return { error: 'Invalid date range.', status: 400 };
+  if (nights > DEFENSIVE_MAX_NIGHTS)
+    return { error: 'Invalid date range.', code: 'invalid_date_range', status: 400 };
   if (maxStayNights !== null && nights > maxStayNights)
-    return { error: `Stays are limited to ${maxStayNights} nights.`, status: 400 };
+    return {
+      error: `Stays are limited to ${maxStayNights} nights.`,
+      code: 'stay_too_long',
+      status: 400,
+    };
   return null;
 }
 
 /** Validate a single-day (walk) date. */
 export function validateSingleDate(date: string, timezone?: string): DateRangeError | null {
-  if (!isRealDate(date)) return { error: 'Invalid date.', status: 400 };
-  if (!isFutureOrToday(date, timezone)) return { error: 'That date is in the past.', status: 400 };
+  if (!isRealDate(date)) return { error: 'Invalid date.', code: 'invalid_date', status: 400 };
+  if (!isFutureOrToday(date, timezone))
+    return { error: 'That date is in the past.', code: 'date_in_past', status: 400 };
   return null;
 }
 

@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- flag; widening the CHECK above would require a table rebuild on existing databases).
   Declined INTEGER NOT NULL DEFAULT 0,
   Source TEXT, -- attribution channel: 'mcp', 'voice', etc.; NULL = embed widget (0022)
+  IdempotencyKey TEXT, -- replay-protection key, unique per (TenantId, EndUserId) (0023)
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -199,6 +200,9 @@ CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_Dates ON BookingRequests (
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Slot
   ON BookingRequests (TenantId, ServiceType, OptionKey, StartDate);
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_User ON BookingRequests (TenantId, EndUserId);
+CREATE UNIQUE INDEX IF NOT EXISTS BookingRequests_IdempotencyKey
+  ON BookingRequests (TenantId, EndUserId, IdempotencyKey)
+  WHERE IdempotencyKey IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS EndUserPets (
   Id TEXT PRIMARY KEY,

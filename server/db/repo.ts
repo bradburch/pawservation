@@ -492,14 +492,15 @@ export async function insertBookingRequest(
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
     source?: string | null;
+    idempotencyKey?: string | null;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status, Source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -516,9 +517,27 @@ export async function insertBookingRequest(
       JSON.stringify(row.answers ?? {}),
       row.status,
       row.source ?? null,
+      row.idempotencyKey ?? null,
     )
     .run();
   return id;
+}
+
+/** Booking previously created with this Idempotency-Key by this customer, or null. */
+export async function findBookingByIdempotencyKey(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  key: string,
+): Promise<{ Id: string; EstCost: number | null; Status: string } | null> {
+  const row = await db
+    .prepare(
+      `SELECT Id, EstCost, Status FROM BookingRequests
+        WHERE TenantId = ? AND EndUserId = ? AND IdempotencyKey = ?`,
+    )
+    .bind(tenantId, endUserId, key)
+    .first<{ Id: string; EstCost: number | null; Status: string }>();
+  return row ?? null;
 }
 
 /** Delete a single booking by id (tenant-scoped). Used to roll back a lost overbooking race. */

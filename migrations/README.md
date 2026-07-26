@@ -181,3 +181,26 @@ already exists). Apply exactly once per database.
 npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
 npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
 ```
+
+### 0023_booking_idempotency.sql
+
+Adds `BookingRequests.IdempotencyKey` (TEXT, client-supplied replay-protection key for the
+`Idempotency-Key` header on `POST /api/:slug/bookings`; NULL = no key supplied) plus a unique
+index scoped `(TenantId, EndUserId, IdempotencyKey)` — deliberately scoped per customer, not
+tenant-wide, so one customer's key can never collide with or leak another's booking, and
+`WHERE IdempotencyKey IS NOT NULL` so unkeyed bookings (the common case) never collide with each
+other. Purely additive — the running worker doesn't read the column until this PR's code ships —
+so applying ahead of a deploy is safe. Mirrored into `sql/schema.sql`, so fresh installs and the
+Vitest harness get it without running this file.
+
+**NOT IDEMPOTENT** — plain `ALTER TABLE` fails if re-run against an existing database (the column
+already exists). Apply exactly once per database, as two separate statements (`ALTER TABLE` then
+`CREATE UNIQUE INDEX`) so a transient failure on the second statement doesn't require re-running
+the first:
+
+```
+npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
+npx wrangler d1 execute pawbook-db --local  --command "CREATE UNIQUE INDEX IF NOT EXISTS BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
+npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+```

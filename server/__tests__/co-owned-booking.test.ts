@@ -45,7 +45,7 @@ describe('co-owned pets in the widget', () => {
     expect((await me(env, token)).pets).toEqual([]);
     const res = await book(env, token, ['pet_sp_bella']);
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Unknown pet.' });
+    expect(await res.json()).toEqual({ error: 'Unknown pet.', code: 'unknown_pet' });
   });
 
   it('a removed co-owner immediately loses access again', async () => {
@@ -69,7 +69,7 @@ describe('co-owned pets in the widget', () => {
     expect((await me(env, token)).pets.map((p) => p.name)).toEqual(['Mochi']);
     const res = await book(env, token, ['pet_sp_bella']);
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Unknown pet.' });
+    expect(await res.json()).toEqual({ error: 'Unknown pet.', code: 'unknown_pet' });
   });
 
   it('the pet still appears on a booking made before it died', async () => {
