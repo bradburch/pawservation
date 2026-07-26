@@ -1232,20 +1232,42 @@ export async function promoteCustomerActive(
     .run();
 }
 
+/**
+ * Every owner<->pet pairing in the tenant, ONE ROW PER LINK: a co-owned pet appears once per owner,
+ * with `EndUserId` set to THAT LINK's owner rather than the pet's creating owner. The admin customer
+ * list groups pets by `EndUserId` (server/routes/admin.ts), so this shape makes a co-owned pet show
+ * under both clients with no change to the grouping code, and the customers-import dedupe sees a
+ * shared pet's name under each owner it belongs to.
+ *
+ * Deceased pets are INCLUDED here on purpose: the sitter must still see them (and be able to undo a
+ * mistake). Only the customer-facing lists filter them out.
+ */
 export async function listAllEndUserPetsByTenant(
   db: D1Database,
   tenantId: string,
 ): Promise<EndUserPet[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, DeceasedAt, CreatedAt
-       FROM EndUserPets WHERE TenantId = ? ORDER BY EndUserId, Name`,
+      `SELECT p.Id, p.TenantId, po.EndUserId, p.Name, p.PetType, p.Notes, p.DeceasedAt, p.CreatedAt
+       FROM EndUserPets p
+       JOIN PetOwners po ON po.PetId = p.Id AND po.TenantId = p.TenantId
+       WHERE p.TenantId = ? ORDER BY po.EndUserId, p.Name`,
     )
     .bind(tenantId)
     .all<EndUserPet>();
   return results;
 }
 
+/**
+ * The pets a customer may book with. The widget's picker (`GET /:slug/me`) and the booking-time
+ * ownership gate (`server/routes/bookings.ts`) both read this, so this query IS the ownership
+ * boundary between customers — get it wrong and it is a cross-customer data leak, not a UX bug.
+ *
+ * Ownership comes from PetOwners, not EndUserPets.EndUserId: under co-ownership (0019) a second
+ * owner legitimately books a pet they did not create. Deceased pets are excluded — a dead pet is
+ * never bookable, and filtering here keeps this in exact lockstep with listPetIdsForOwner (the
+ * quote route's check). If the two ever disagreed, a customer could quote a pet they cannot book.
+ */
 export async function listEndUserPets(
   db: D1Database,
   tenantId: string,
@@ -1253,12 +1275,65 @@ export async function listEndUserPets(
 ): Promise<EndUserPet[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, EndUserId, Name, PetType, Notes, DeceasedAt, CreatedAt
-       FROM EndUserPets WHERE TenantId = ? AND EndUserId = ? ORDER BY Name`,
+      `SELECT p.Id, p.TenantId, p.EndUserId, p.Name, p.PetType, p.Notes, p.DeceasedAt, p.CreatedAt
+       FROM EndUserPets p
+       JOIN PetOwners po ON po.PetId = p.Id AND po.TenantId = p.TenantId
+       WHERE p.TenantId = ? AND po.EndUserId = ? AND p.DeceasedAt IS NULL
+       ORDER BY p.Name`,
     )
     .bind(tenantId, endUserId)
     .all<EndUserPet>();
   return results;
+}
+
+/** One owner<->pet edge, PascalCase straight off the PetOwners row. */
+export type PetOwnerLink = { EndUserId: string; PetId: string };
+
+/**
+ * Every owner<->pet edge for the tenant in ONE tenant-scoped read — the union-find source for
+ * invoicing accounts (`buildAccounts`, src/shared/invoicing/accounts.ts). PetOwners carries its own
+ * TenantId, deliberately unlike BookingRequestPets, precisely so this is a single indexed read
+ * rather than a three-way join.
+ *
+ * Deceased pets are excluded HERE, in the DB layer, so the pure module never learns that a
+ * DeceasedAt column exists — an owner whose only pet has died therefore has no edge at all and
+ * drops out of the account graph entirely, which is the intended §9.1 behavior.
+ */
+export async function listOwnerPetLinks(db: D1Database, tenantId: string): Promise<PetOwnerLink[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT po.EndUserId, po.PetId
+       FROM PetOwners po
+       JOIN EndUserPets p ON p.Id = po.PetId AND p.TenantId = po.TenantId
+       WHERE po.TenantId = ? AND p.DeceasedAt IS NULL
+       ORDER BY po.PetId, po.EndUserId`,
+    )
+    .bind(tenantId)
+    .all<PetOwnerLink>();
+  return results;
+}
+
+/**
+ * The pet ids one customer owns — co-ownership included, deceased excluded. The cheapest form of
+ * the ownership boundary listEndUserPets enforces, kept in deliberate lockstep with it: the two are
+ * the same predicate, and a divergence would let a customer quote a pet they cannot book.
+ */
+export async function listPetIdsForOwner(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT po.PetId
+       FROM PetOwners po
+       JOIN EndUserPets p ON p.Id = po.PetId AND p.TenantId = po.TenantId
+       WHERE po.TenantId = ? AND po.EndUserId = ? AND p.DeceasedAt IS NULL
+       ORDER BY po.PetId`,
+    )
+    .bind(tenantId, endUserId)
+    .all<{ PetId: string }>();
+  return results.map((r) => r.PetId);
 }
 
 /**

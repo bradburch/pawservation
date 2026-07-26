@@ -4,11 +4,16 @@ import {
   addEndUserPet,
   addPetOwner,
   insertInvitedCustomer,
+  listAllEndUserPetsByTenant,
+  listEndUserPets,
+  listOwnerPetLinks,
+  listPetIdsForOwner,
   removeEndUserPet,
   removePetOwner,
   setPetDeceased,
 } from '../db/repo';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
+import { buildAccounts } from '../../src/shared/index.js';
 
 /** Owner ids linked to a pet, straight from the table — the assertions must not lean on the
  *  read functions under test in the sibling task. */
@@ -157,5 +162,97 @@ describe('PetOwners write-side repo', () => {
     // Wrong tenant: refused (404 at the route, never a silent cross-tenant write).
     expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella', true)).toBe(false);
     expect(deceasedAt()).toBeNull();
+  });
+});
+
+describe('PetOwners read-side repo', () => {
+  it('listEndUserPets returns co-owned pets and hides deceased ones', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    expect((await listEndUserPets(env.PAWBOOK_DB, TENANT_A, co.Id)).map((p) => p.Name)).toEqual([
+      'Bella',
+    ]);
+    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true);
+    expect(await listEndUserPets(env.PAWBOOK_DB, TENANT_A, co.Id)).toEqual([]);
+    expect(
+      (await listEndUserPets(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess')).map((p) => p.Name),
+    ).toEqual(['Mochi']);
+  });
+
+  it('listEndUserPets is tenant-scoped', async () => {
+    const { env } = createTestEnv();
+    expect(await listEndUserPets(env.PAWBOOK_DB, TENANT_B, 'eu_sp_jess')).toEqual([]);
+  });
+
+  it('listPetIdsForOwner reads PetOwners, excludes deceased, and is tenant-scoped', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', co.Id);
+    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_A, co.Id)).toEqual(['pet_sp_mochi']);
+    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess')).toEqual([
+      'pet_sp_bella',
+      'pet_sp_mochi',
+    ]);
+    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', true);
+    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_A, co.Id)).toEqual([]);
+    // Tenant B scope with tenant A's customer: nothing.
+    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_B, 'eu_sp_jess')).toEqual([]);
+  });
+
+  it('listOwnerPetLinks returns every edge for the tenant, deceased excluded', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    expect(await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A)).toEqual(
+      [
+        { EndUserId: co.Id, PetId: 'pet_sp_bella' },
+        { EndUserId: 'eu_sp_jess', PetId: 'pet_sp_bella' },
+        { EndUserId: 'eu_sp_jess', PetId: 'pet_sp_mochi' },
+      ].sort((a, b) => (a.PetId + a.EndUserId < b.PetId + b.EndUserId ? -1 : 1)),
+    );
+    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true);
+    expect(await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A)).toEqual([
+      { EndUserId: 'eu_sp_jess', PetId: 'pet_sp_mochi' },
+    ]);
+  });
+
+  it('listOwnerPetLinks never leaks another tenant edge', async () => {
+    const { env } = createTestEnv();
+    const links = await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_B);
+    expect(links).toEqual([{ EndUserId: 'eu_ht_jess', PetId: 'pet_ht_otis' }]);
+  });
+
+  it('listOwnerPetLinks feeds buildAccounts: two owners of one pet are ONE account', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    const accounts = buildAccounts(
+      (await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A)).map((l) => ({
+        ownerId: l.EndUserId,
+        petId: l.PetId,
+      })),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]!.ownerIds.sort()).toEqual([co.Id, 'eu_sp_jess'].sort());
+    expect(accounts[0]!.petIds).toEqual(['pet_sp_bella', 'pet_sp_mochi']);
+    expect(accounts[0]!.id).toBe('pet_sp_bella');
+  });
+
+  it('listAllEndUserPetsByTenant returns one row per LINK and keeps deceased pets visible', async () => {
+    const { env } = createTestEnv();
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', true);
+    const rows = await listAllEndUserPetsByTenant(env.PAWBOOK_DB, TENANT_A);
+    // Bella appears under BOTH owners; Mochi is still listed for the sitter, flagged deceased.
+    expect(
+      rows
+        .filter((r) => r.Id === 'pet_sp_bella')
+        .map((r) => r.EndUserId)
+        .sort(),
+    ).toEqual([co.Id, 'eu_sp_jess'].sort());
+    expect(rows.find((r) => r.Id === 'pet_sp_mochi')!.DeceasedAt).not.toBeNull();
+    expect(await listAllEndUserPetsByTenant(env.PAWBOOK_DB, TENANT_B)).toHaveLength(1);
   });
 });
