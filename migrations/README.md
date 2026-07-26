@@ -200,7 +200,7 @@ the first:
 
 ```
 npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
-npx wrangler d1 execute pawbook-db --local  --command "CREATE UNIQUE INDEX IF NOT EXISTS BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+npx wrangler d1 execute pawbook-db --local  --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
 npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
-npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
 ```

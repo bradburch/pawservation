@@ -200,7 +200,7 @@ CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_Dates ON BookingRequests (
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Slot
   ON BookingRequests (TenantId, ServiceType, OptionKey, StartDate);
 CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_User ON BookingRequests (TenantId, EndUserId);
-CREATE UNIQUE INDEX IF NOT EXISTS BookingRequests_IdempotencyKey
+CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey
   ON BookingRequests (TenantId, EndUserId, IdempotencyKey)
   WHERE IdempotencyKey IS NOT NULL;
 
