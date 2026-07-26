@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { insertInvitedCustomer } from '../db/repo';
-import { adminHeaders, createTestEnv, TENANT_A } from './helpers';
+import { addPetOwner, insertInvitedCustomer } from '../db/repo';
+import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 const jsonHeaders = async (tenantId: string) => ({
   ...(await adminHeaders(tenantId)),
@@ -101,7 +101,7 @@ describe('admin co-owner + deceased routes', () => {
     });
   });
 
-  it('404s removing a non-owner, and a foreign-tenant pet is indistinguishable from nonexistent', async () => {
+  it('404s removing a customer who was never linked as an owner', async () => {
     const { env } = createTestEnv();
     const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
     // co was invited but never linked as an owner of Bella — no such edge exists to delete.
@@ -112,15 +112,39 @@ describe('admin co-owner + deceased routes', () => {
     );
     expect(notOwner.status).toBe(404);
     expect(await notOwner.json()).toEqual({ error: 'Not found.' });
+  });
 
-    // Another tenant's pet+owner link is indistinguishable from a nonexistent one.
+  it('404s an admin for TENANT_A trying to remove TENANT_B’s real owner link, and leaves it intact', async () => {
+    const { env } = createTestEnv();
+    // pet_ht_otis / eu_ht_jess is a REAL edge, but it belongs to tnt_happytails. Give the pet a
+    // second owner IN ITS OWN TENANT first, so the "last owner" guard can't independently explain
+    // a refusal to delete — without a co-owner, pet_ht_otis has exactly one owner globally and the
+    // removal would be refused by removePetOwner's own last-owner protection regardless of whether
+    // tenant scoping holds, making the probe meaningless. With a genuine second owner in place, the
+    // ONLY thing left to block a TENANT_A-authenticated delete of this TENANT_B row is the
+    // TenantId predicate in removePetOwner's DELETE.
+    const coHt = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_B,
+      'co-ht@example.com',
+      'Co Owner HT',
+    );
+    await addPetOwner(env.PAWBOOK_DB, TENANT_B, 'pet_ht_otis', coHt.Id);
+
     const foreign = await app.request(
-      `/api/sunny-paws/admin/pets/pet_ht_otis/owners/eu_sp_jess`,
+      `/api/sunny-paws/admin/pets/pet_ht_otis/owners/eu_ht_jess`,
       { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
       env,
     );
     expect(foreign.status).toBe(404);
     expect(await foreign.json()).toEqual({ error: 'Not found.' });
+
+    const row = await env.PAWBOOK_DB.prepare(
+      'SELECT 1 AS Ok FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?',
+    )
+      .bind('tnt_happytails', 'pet_ht_otis', 'eu_ht_jess')
+      .first<{ Ok: number }>();
+    expect(row).toBeTruthy();
   });
 
   it('is idempotent when the same owner is added twice', async () => {
