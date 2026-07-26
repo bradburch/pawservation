@@ -130,13 +130,7 @@ const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
  * genuinely contains no <script tag. Screenshot regeneration recipe (fixed 2028 seed months):
  * docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
  */
-const LANDING_HTML = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawservation — booking for pet sitters</title>
-    <style>
+const PAGE_STYLE = /* css */ `
       :root {
         color-scheme: light;
         /* Palette derived from the widget's own tokens (app/embed/widget.css) so the
@@ -846,7 +840,15 @@ const LANDING_HTML = `<!doctype html>
         html { scroll-behavior: auto; }
         .btn { transition: none; }
       }
-    </style>
+`;
+
+const LANDING_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pawservation — booking for pet sitters</title>
+    <style>${PAGE_STYLE}</style>
   </head>
   <body>
     <header class="nav">
@@ -1222,10 +1224,10 @@ const LANDING_HTML = `<!doctype html>
               <h3>Can anyone book, or just my clients?</h3>
               <p><strong>Just your clients.</strong> You add each client&rsquo;s email (or import a CSV) before they can book. You choose which animal types you accept.</p>
             </div>
-            <div class="qa-item">
-              <h3>Can I charge more for a second dog?</h3>
-              <p><strong>No.</strong> Rates are flat per service. A second pet uses a slot of your capacity, not extra money.</p>
-            </div>
+              <div class="qa-item">
+                <h3>Can I charge more for a second dog?</h3>
+                <p><strong>Not yet — multi-pet pricing is on the way.</strong> Today rates are flat per service: a second pet uses one of your capacity slots, and the price never silently multiplies. Explicit multi-pet rates (price &ldquo;two dogs&rdquo; as its own rate, set by you) are being built right now.</p>
+              </div>
           </div>
         </div>
       </section>

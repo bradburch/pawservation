@@ -58,6 +58,11 @@ describe('GET / — landing page', () => {
     expect(body).toMatch(/href="mailto:[^"]+"/);
   });
 
+  it('is truthful about multi-pet pricing (not yet built, no silent multiplier)', async () => {
+    const body = await landingBody();
+    expect(body).toContain('multi-pet pricing is on the way');
+  });
+
   it('every image is a same-origin landing screenshot with informative alt text', async () => {
     const body = await landingBody();
     const imgTags = body.match(/<img\b[^>]*>/g) ?? [];
