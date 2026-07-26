@@ -18,7 +18,7 @@ import {
   listUserBookingDatesInRange,
   type CapacityRow,
 } from '../db/repo';
-import type { Tenant, TenantService, TenantServiceOption } from '../types';
+import type { RateUnit, Tenant, TenantService, TenantServiceOption } from '../types';
 
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
@@ -41,10 +41,24 @@ export type AvailabilityResult =
   { available: true; estCost: number; nights?: number } | { available: false; reason: string };
 
 /**
+ * `RateUnit` → the billing unit `billableUnits` understands. RateUnit is the WIDER type (it also
+ * carries 'visit'), so the mapping is made total here rather than left to a cast: 'visit' only
+ * ever appears on shape:'single' services, which take the flat-rate path below and never reach
+ * this function — but bad data must not be able to produce a wrong NUMBER. Anything that isn't
+ * explicitly per-day bills per night, the conservative choice: it is the pre-existing behavior
+ * of every service, and it under-bills (nights) rather than over-billing (nights + 1).
+ */
+function billingUnit(rateUnit: RateUnit): 'day' | 'night' {
+  return rateUnit === 'day' ? 'day' : 'night';
+}
+
+/**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
- * quote and the stored booking cost can't diverge. Range services bill per night; single-day
- * services (daycare/walk/check-in) are a flat per-booking rate. Pure (no DB), so callers that
- * already know the dates can price a booking without a capacity read.
+ * quote and the stored booking cost can't diverge. Range services bill per unit of stay, taking
+ * that unit from the service's own `RateUnit` (the same column the widget prints as "/night" or
+ * "/day", so the price and its label can never disagree); single-day services (daycare/walk/
+ * check-in) are a flat per-booking rate. Pure (no DB), so callers that already know the dates
+ * can price a booking without a capacity read.
  */
 export function estimateCost(
   service: TenantService,
@@ -53,7 +67,8 @@ export function estimateCost(
   endDateExclusive: string,
 ): number {
   if (service.Shape !== 'range') return option.Rate;
-  return option.Rate * billableUnits(nightsBetween(startDate, endDateExclusive), 'night');
+  const nights = nightsBetween(startDate, endDateExclusive);
+  return option.Rate * billableUnits(nights, billingUnit(service.RateUnit));
 }
 
 async function checkRange(
@@ -100,6 +115,14 @@ async function checkRange(
   return {
     available: true,
     estCost: estimateCost(service, option, startDate, endDateExclusive),
+    // CEILING: `estCost` above is unit-aware (it bills per the service's RateUnit) but this
+    // quantity is always nights, and the widget prints the two side by side ("3 nights ·
+    // Estimated cost $120"). For a range service billed per DAY they would not reconcile:
+    // 4 chargeable days at $30 shown next to "3 nights". Unreachable today — no template
+    // pairs shape:'range' with rateUnit:'day', so every range service bills nights (and the
+    // quote test pins nights: 3 on the day-unit case deliberately). The fix, when the first
+    // day-unit range service lands: return billableUnits(nights, billingUnit(RateUnit)) and
+    // have the widget label it from RateUnit rather than hardcoding the word "nights".
     nights: nightsBetween(startDate, endDateExclusive),
   };
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isValidRate } from '../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { ApiError } from '../shared-ui/api.js';
 import { SERVICE_PRESETS, type PresetOption, type ServicePreset } from './presets.js';
@@ -183,8 +184,9 @@ export function SetupWizard({
 
   const priceValid = (ps: PresetState): boolean => {
     if (ps.alreadyPriced) return true; // keeps its current pricing — no input to validate
-    const n = Number(prices[ps.preset.id]);
-    return Number.isInteger(n) && n >= 1;
+    // Same predicate the server enforces on the options PUT (server/lib/validation.ts re-exports
+    // it) — this copy is UX only; the server still validates independently.
+    return isValidRate(Number(prices[ps.preset.id]));
   };
 
   // Step 1 → 2: PUT only the changed profile fields — nothing changed means no request at all

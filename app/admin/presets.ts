@@ -1,4 +1,9 @@
-import type { ServiceOption } from '../../src/shared/index.js';
+import {
+  SERVICE_TEMPLATES,
+  type RateUnit,
+  type ServiceOption,
+  type TemplateId,
+} from '../../src/shared/index.js';
 
 /** Option payload prefilled by a preset; the wizard adds the sitter's `rate` and the server
  * derives `optionKey` (and window duration) on save. */
@@ -8,15 +13,17 @@ export type ServicePreset = {
   /** Stable preset id (also the expected slug for the three walk clones). */
   id: string;
   /** SERVICE_TEMPLATES id sent to POST /api/:slug/admin/services when the row must be created. */
-  template: 'boarding' | 'housesitting' | 'daycare' | 'walk' | 'checkin';
+  template: TemplateId;
   /** Service label sent on create (its server-derived slug is `createdSlug`). */
   label: string;
   /** One-line card copy for the wizard's step 1. */
   summary: string;
   /** Widget icon key (matches the template's icon). */
   icon: string;
-  /** Fixed by the template; shown next to the price input ("$30 /visit"). */
-  rateUnit: 'night' | 'day' | 'visit';
+  /** Fixed by the template; shown next to the price input ("$30 /visit"). DERIVED from
+   * SERVICE_TEMPLATES below — never written per preset, or it could drift from the unit the
+   * server stamps onto the row it creates. */
+  rateUnit: RateUnit;
   /** The slug POST /services derives from `label` — used when a create collides ("already
    * exists") so a retry can proceed against the existing row deterministically. */
   createdSlug: string;
@@ -37,15 +44,15 @@ const anyDay = {
 
 /** The 7 one-tap presets from docs/superpowers/specs/2026-07-18-onboarding-wizard-design.md.
  * The walk trio come from the docs/specs/*.md stubs (weekdays-only group/solo walks); the last
- * four simply enable the built-in template behaviors. */
-export const SERVICE_PRESETS: ServicePreset[] = [
+ * four simply enable the built-in template behaviors. Everything except `rateUnit` is preset-
+ * specific; `rateUnit` is stamped from the template below. */
+const PRESETS: Omit<ServicePreset, 'rateUnit'>[] = [
   {
     id: 'pack-walks',
     template: 'walk',
     label: 'Pack Walks',
     summary: 'Group walks · weekdays 10–2 · up to 8 pets',
     icon: 'paw',
-    rateUnit: 'visit',
     createdSlug: 'pack-walks',
     matchTypes: ['pack-walks'],
     options: [
@@ -65,7 +72,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     label: 'Multi Pack Walks',
     summary: 'Two group walks · weekdays 10–2 and 2–5 · up to 8 pets each',
     icon: 'paw',
-    rateUnit: 'visit',
     createdSlug: 'multi-pack-walks',
     matchTypes: ['multi-pack-walks'],
     options: [
@@ -94,7 +100,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     label: 'Solo Walker',
     summary: 'One-on-one walks · weekdays 10–4 · up to 4 pets',
     icon: 'paw',
-    rateUnit: 'visit',
     createdSlug: 'solo-walker',
     matchTypes: ['solo-walker'],
     options: [
@@ -114,7 +119,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     label: 'Boarding',
     summary: 'Overnight stays at your place · priced per night',
     icon: 'bed',
-    rateUnit: 'night',
     createdSlug: 'boarding',
     matchTypes: ['boarding'],
     options: [{ label: 'Standard', ...anyDay }],
@@ -125,7 +129,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     label: 'House sitting',
     summary: "You stay at the client's home · priced per night",
     icon: 'home',
-    rateUnit: 'night',
     createdSlug: 'house-sitting',
     matchTypes: ['housesitting', 'house-sitting'],
     options: [{ label: 'Standard', ...anyDay }],
@@ -136,7 +139,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     label: 'Day care',
     summary: 'Daytime care at your place · priced per day',
     icon: 'sun',
-    rateUnit: 'day',
     createdSlug: 'day-care',
     matchTypes: ['daycare', 'day-care'],
     options: [{ label: 'Standard', ...anyDay }],
@@ -147,7 +149,6 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     label: 'Check-ins',
     summary: 'Quick 30-minute drop-in visits · priced per visit',
     icon: 'clipboard',
-    rateUnit: 'visit',
     createdSlug: 'check-ins',
     matchTypes: ['checkin', 'check-ins'],
     // checkin is a per-duration template with no stock option, so the preset supplies the same
@@ -155,3 +156,11 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     options: [{ ...anyDay, label: '30 min', durationMinutes: 30 }],
   },
 ];
+
+/** The unit the wizard prints next to a price input comes from the SAME template object the
+ * server stamps onto the TenantServices row it creates (server/routes/admin.ts POST /services),
+ * so the two can't drift. */
+export const SERVICE_PRESETS: ServicePreset[] = PRESETS.map((preset) => ({
+  ...preset,
+  rateUnit: SERVICE_TEMPLATES[preset.template].rateUnit,
+}));

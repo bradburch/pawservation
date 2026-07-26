@@ -4,10 +4,13 @@ import {
   nightsBetween,
   PAYMENT_METHODS,
   isPaymentMethod,
+  isValidRate,
   type PaymentMethod,
 } from '../../src/shared/index.js';
 
-export { PAYMENT_METHODS, isPaymentMethod, type PaymentMethod };
+/** `isValidRate` lives in `src/shared/pricing/rate.ts` so the admin bundle imports the same
+ * predicate; re-exported here unchanged, and still enforced server-side at the trust boundary. */
+export { PAYMENT_METHODS, isPaymentMethod, isValidRate, type PaymentMethod };
 
 /**
  * Shared request-validation guards. `DATE_RE` alone accepts impossible dates ("2026-02-30"),
@@ -89,11 +92,6 @@ export function validateSingleDate(date: string, timezone?: string): DateRangeEr
   if (!isRealDate(date)) return { error: 'Invalid date.', status: 400 };
   if (!isFutureOrToday(date, timezone)) return { error: 'That date is in the past.', status: 400 };
   return null;
-}
-
-/** Whole-dollar rate, at least $1 (free-typed; no relationship to duration). */
-export function isValidRate(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
 
 /** Positive whole-minute duration. */
