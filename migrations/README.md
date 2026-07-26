@@ -4,7 +4,8 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0015_service_level_attributes.sql`. Use:
+`0019_pet_co_ownership.sql` (keep this line in step with the highest-numbered migration mirrored
+into `schema.sql`). Use:
 
 ```
 npm run seed:local   # wrangler d1 execute pawbook-db --local  --file=./sql/schema.sql && ...seed.sql
@@ -71,11 +72,45 @@ and non-destructive, but **not idempotent** — the backfill `INSERT` would fail
 time. Mirrored into `sql/schema.sql` and `sql/seed.sql`, so fresh installs and the Vitest harness
 get it without running this file.
 
-**Order: migrate first, then deploy.** The new worker `SELECT`s `PetOwners` and
+**Apply 0019 to the remote DB BEFORE merging the PR** — merging to `main` runs `npx wrangler
+deploy` unconditionally (`.github/workflows/ci.yml`), so the deploy is not something you get to
+time separately: the merge _is_ the deploy. The new worker `SELECT`s `PetOwners` and
 `EndUserPets.DeceasedAt` unconditionally on the widget's `/me` and on the admin customer list, and
-500s on every one of those requests if the table/column is missing.
+500s on every one of those requests if the table/column is missing. Applying ahead of the merge is
+safe: the currently-deployed worker never reads either, so the new table/column just sits there.
 
 ```
 npx wrangler d1 execute pawbook-db --local  --file ./migrations/0019_pet_co_ownership.sql
 npx wrangler d1 execute pawbook-db --remote --file ./migrations/0019_pet_co_ownership.sql
+```
+
+#### Verify the backfill, and repair the gap the window leaves
+
+Between applying 0019 and the new worker actually going live, the OLD worker keeps writing
+`EndUserPets` rows with **no** `PetOwners` edge — and every new read is an `INNER JOIN` on
+`PetOwners`, so such a pet is permanently invisible to its owner and to the sitter, silently and
+with no error. Same hazard after any rollback to the old worker.
+
+```sql
+-- Verify the backfill (these two must be equal):
+SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwners) AS edges;
+
+-- Idempotent repair — safe to re-run; fixes pets created by the old worker:
+INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;
+```
+
+When to run each:
+
+- **Verify** right after applying 0019 and again before merging the PR — `pets` and `edges` must be
+  equal. (`edges` may legitimately exceed `pets` later, once co-owners exist; a shortfall never is.)
+- **Repair** once the deploy is confirmed live, and again after **any** rollback to a worker that
+  predates 0019. It is `INSERT OR IGNORE`, so re-running it costs nothing and can only add the
+  missing creating-owner edges — unlike 0019's own bare `INSERT ... SELECT` backfill, which fails on
+  the primary key the second time.
+
+Run both with `--command` rather than `--file`:
+
+```
+npx wrangler d1 execute pawbook-db --remote --command "SELECT (SELECT COUNT(*) FROM EndUserPets) AS pets, (SELECT COUNT(*) FROM PetOwners) AS edges;"
+npx wrangler d1 execute pawbook-db --remote --command "INSERT OR IGNORE INTO PetOwners (TenantId, PetId, EndUserId) SELECT TenantId, Id, EndUserId FROM EndUserPets;"
 ```

@@ -10,6 +10,7 @@ import {
   listCustomers,
   listEndUserPets,
   promoteCustomerActive,
+  removePetOwner,
 } from '../db/repo';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -76,11 +77,31 @@ describe('customer repo', () => {
     expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, 'missing')).toBe(false);
   });
 
-  it('deleteCustomer refuses cross-tenant, leaving the customer intact', async () => {
-    const { env } = createTestEnv();
+  it('deleteCustomer refuses cross-tenant, leaving the customer, their pet and its edges intact', async () => {
+    const { env, raw } = createTestEnv();
     const c = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'cross@example.com', null);
+    // A pet WITH a co-owner, so the wrong-tenant call has something to damage via each of the two
+    // co-ownership statements: the creating-owner reassignment UPDATE and the PetOwners delete.
+    // Without these rows the test cannot see whether either statement is tenant-scoped at all.
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'crossco@example.com', null);
+    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, c.Id, 'Cross', 'dog');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
+
     expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_B, c.Id)).toBe(false);
+
     expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
+    // The pet is untouched AND still stamped with its creating owner (not handed to the co-owner).
+    expect(
+      raw.prepare('SELECT Id, EndUserId FROM EndUserPets WHERE Id = ?').get(pet.Id),
+    ).toMatchObject({ Id: pet.Id, EndUserId: c.Id });
+    // Both ownership edges survive — the cross-tenant call deleted neither.
+    expect(
+      (
+        raw.prepare('SELECT COUNT(*) AS n FROM PetOwners WHERE PetId = ?').get(pet.Id) as {
+          n: number;
+        }
+      ).n,
+    ).toBe(2);
   });
 
   it('deleteCustomer cascades EndUserPets and LoginCodes (no FK violation, no orphans)', async () => {
@@ -98,7 +119,7 @@ describe('customer repo', () => {
     expect(raw.prepare('SELECT * FROM LoginCodes WHERE Id = ?').get('lc1')).toBeUndefined();
   });
 
-  it("deleteCustomer cascades BookingRequestPets referencing the deleted customer's pets", async () => {
+  it("deleteCustomer refuses when ANOTHER customer's booking holds a pet that would cascade", async () => {
     const { env, raw } = createTestEnv();
     const c = await insertInvitedCustomer(
       env.PAWBOOK_DB,
@@ -110,19 +131,20 @@ describe('customer repo', () => {
     raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
               VALUES ('pet2','${TENANT_A}','${c.Id}','Rex','dog')`);
     // A booking owned by a DIFFERENT customer that references this customer's pet (the app's
-    // addBookingPets only checks tenant match, not pet ownership vs. booking owner).
+    // addBookingPets only checks tenant match, not pet ownership vs. booking owner). Deleting c
+    // would cascade pet2 — nobody else owns it — and strip the last pet off a live booking, so the
+    // whole delete is refused rather than silently gutting bk3.
     raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
               VALUES ('bk3','${TENANT_A}','${other.Id}','daycare','2030-04-01',1,'pending')`);
     raw.exec(`INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk3','pet2')`);
 
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(true);
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(false);
 
-    expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(false);
-    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet2')).toBeUndefined();
+    expect((await listCustomers(env.PAWBOOK_DB, TENANT_A)).some((u) => u.Id === c.Id)).toBe(true);
+    expect(raw.prepare('SELECT * FROM EndUserPets WHERE Id = ?').get('pet2')).toBeDefined();
     expect(
       raw.prepare('SELECT * FROM BookingRequestPets WHERE PetId = ?').get('pet2'),
-    ).toBeUndefined();
-    // The other customer's booking itself is untouched.
+    ).toBeDefined();
     expect(raw.prepare('SELECT * FROM BookingRequests WHERE Id = ?').get('bk3')).toBeDefined();
   });
 
@@ -191,6 +213,75 @@ describe('deleteCustomer under co-ownership', () => {
     expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, solo.Id)).toBe(true);
     expect(petRow(raw, pet.Id)).toBeUndefined();
     expect(ownerCount(raw, pet.Id)).toBe(0);
+  });
+
+  it('refuses outright once an unlink leaves a BOOKED pet with only the departing owner', async () => {
+    const { env, raw } = createTestEnv();
+    const creator = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'creator@example.com',
+      'Creator',
+    );
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, creator.Id, 'Rex', 'dog');
+    // Every step below is a supported product action, which is what makes this reachable:
+    // 1. the sitter co-owns `co` onto the creator's pet;
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
+    // 2. `co` books the shared pet — legal, listEndUserPets returns co-owned pets;
+    raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
+              VALUES ('bk_co','${TENANT_A}','${co.Id}','daycare','2030-04-01',1,'confirmed')`);
+    raw.exec(
+      `INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk_co','${pet.Id}')`,
+    );
+    // 3. the sitter unlinks `co` from the pet (removePetOwner has no booking check, by design),
+    //    leaving the creator as sole owner of a pet that someone else's confirmed booking names.
+    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id)).toBe('removed');
+    raw.exec(`INSERT INTO LoginCodes (Id, TenantId, EndUserId, Code, ExpiresAt)
+              VALUES ('lc_co','${TENANT_A}','${creator.Id}','111111','2030-01-01T00:00:00.000Z')`);
+
+    // 4. the sitter deletes the creator. They have no bookings of their own, so the has-bookings
+    //    guard passes — but cascading the pet would strip the last pet off bk_co, so: refused.
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe(false);
+
+    // Nothing at all was written: the batch fails as a unit, not statement by statement.
+    expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: creator.Id });
+    expect(ownerCount(raw, pet.Id)).toBe(1);
+    expect(
+      raw.prepare('SELECT * FROM BookingRequestPets WHERE PetId = ?').get(pet.Id),
+    ).toBeDefined();
+    expect(raw.prepare('SELECT * FROM EndUsers WHERE Id = ?').get(creator.Id)).toBeDefined();
+    expect(raw.prepare('SELECT * FROM LoginCodes WHERE Id = ?').get('lc_co')).toBeDefined();
+  });
+
+  it('deletes the creating owner of a BOOKED co-owned pet, keeping its BookingRequestPets rows', async () => {
+    const { env, raw } = createTestEnv();
+    const creator = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'creator@example.com',
+      'Creator',
+    );
+    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, creator.Id, 'Rex', 'dog');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, pet.Id, co.Id);
+    raw.exec(`INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, Status)
+              VALUES ('bk_keep','${TENANT_A}','${co.Id}','daycare','2030-04-01',1,'confirmed')`);
+    raw.exec(
+      `INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('bk_keep','${pet.Id}')`,
+    );
+
+    // The pet is REASSIGNED, not cascaded, so its bookings are none of this delete's business.
+    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, creator.Id)).toBe(true);
+
+    expect(raw.prepare('SELECT * FROM EndUsers WHERE Id = ?').get(creator.Id)).toBeUndefined();
+    expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: co.Id });
+    expect(ownerCount(raw, pet.Id)).toBe(1);
+    // The survivor's booking still names the pet.
+    expect(
+      raw.prepare('SELECT * FROM BookingRequestPets WHERE BookingRequestId = ?').get('bk_keep'),
+    ).toMatchObject({ PetId: pet.Id });
+    expect(raw.prepare('SELECT * FROM BookingRequests WHERE Id = ?').get('bk_keep')).toBeDefined();
   });
 
   it('removes only the departing owner from a pet they merely co-own', async () => {

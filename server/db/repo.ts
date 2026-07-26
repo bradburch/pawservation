@@ -1164,6 +1164,24 @@ export async function listCustomers(db: D1Database, tenantId: string): Promise<E
   return results;
 }
 
+/**
+ * Delete a customer and everything that would be orphaned by their departure. TWO preconditions,
+ * both enforced in SQL rather than by a preceding read, and both all-or-nothing:
+ *
+ *  1. the customer themselves has no BookingRequests; and
+ *  2. no pet that this delete WOULD cascade (one stamped with their EndUserId that no other owner
+ *     holds a PetOwners edge to) is referenced by BookingRequestPets — including by SOMEONE ELSE's
+ *     booking, which co-ownership makes reachable.
+ *
+ * Either precondition failing refuses the ENTIRE delete: every statement in the batch carries both
+ * guards, so the customer, their pets, their ownership edges and their login codes are all left
+ * exactly as they were. A pet with a surviving co-owner is handed to that owner instead of being
+ * cascaded, so it never blocks the delete however many bookings name it.
+ *
+ * Returns whether the EndUsers row was actually deleted (`meta.changes`) — false covers "no such
+ * customer in this tenant" and "refused by a precondition" alike, which the route surfaces as 404
+ * after its own 409 check has already caught the common has-bookings case.
+ */
 export async function deleteCustomer(
   db: D1Database,
   tenantId: string,
@@ -1175,13 +1193,9 @@ export async function deleteCustomer(
   //
   // D1 enforces foreign keys, so EndUsers can't be deleted while LoginCodes/EndUserPets/PetOwners
   // rows still reference it — and EndUserPets can't be deleted while BookingRequestPets or
-  // PetOwners rows still reference IT. (BookingRequestPets rows can reference a pet of THIS
-  // customer even though this customer has no bookings of their own: addBookingPets only checks
-  // that a pet's tenant matches the booking's tenant, not that the pet's owner is the booking's
-  // customer, so another customer's booking can hold a pet this customer co-owns.) Cascade
-  // child-first in one batch, each statement carrying the same NOT-EXISTS bookings guard so a
-  // TOCTOU race leaves every table untouched together rather than partially cascading before the
-  // guard trips.
+  // PetOwners rows still reference IT. Cascade child-first in one batch, each statement carrying
+  // the SAME guards so a TOCTOU race leaves every table untouched together rather than partially
+  // cascading before a guard trips.
   //
   // Co-ownership (0019) adds two statements; the resulting order is:
   //   1. hand EndUserPets.EndUserId (NOT NULL + FK, the creating-owner column) to the oldest
@@ -1193,6 +1207,32 @@ export async function deleteCustomer(
   //      are exactly the pets nobody else owns. A pet another customer co-owns is never deleted
   //      here.
   const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequests WHERE TenantId = ? AND EndUserId = ?)`;
+  // Second precondition, and the reason "this customer has no bookings" is no longer enough under
+  // co-ownership: a BookingRequestPets row can reference a pet of THIS customer even when this
+  // customer has no bookings of their own. Co-ownership makes that reachable through supported
+  // sitter/customer actions — X creates pet P, the sitter co-owns Y onto it, Y books P (legal:
+  // listEndUserPets returns co-owned pets), the sitter then unlinks Y from P (removePetOwner has
+  // no booking check, by design) — leaving P owned only by X while Y's booking still names it.
+  // Cascading P there would strip the last pet off a live booking and leave it showing PetCount=1
+  // with no pets. So refuse the whole delete, exactly like DELETE /admin/customers/:id/pets/:petId
+  // already does ("Pet has bookings; cannot remove.", 409): if ANY pet that WOULD cascade is
+  // referenced by BookingRequestPets, nothing happens and the route reports the failure.
+  //
+  // "Would cascade" is precisely "stamped with this EndUserId AND owned by nobody else" — a pet
+  // with a surviving co-owner is handed off by statement (1) rather than deleted, so it must NOT
+  // block the delete. That set only ever shrinks as the batch runs (statement (1) reassigns the
+  // co-owned pets out of it; nothing ever adds to it), so this guard evaluates identically at
+  // every position: true throughout a successful batch (where by definition it matches no pet
+  // carrying bookings) and false throughout a refused one, which is what makes the batch fail as
+  // a unit. Every statement carries it for that reason — including the PetOwners and LoginCodes
+  // deletes, which would otherwise strip a surviving customer's ownership edges.
+  const cascadingPetGuard = `NOT EXISTS (
+             SELECT 1 FROM EndUserPets orphan
+              WHERE orphan.TenantId = ? AND orphan.EndUserId = ?
+                AND NOT EXISTS (SELECT 1 FROM PetOwners po
+                                 WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
+                                   AND po.EndUserId <> ?)
+                AND EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id))`;
   const [, , , , , endUsersResult] = await db.batch([
     db
       .prepare(
@@ -1205,28 +1245,47 @@ export async function deleteCustomer(
             AND EXISTS (SELECT 1 FROM PetOwners po
                          WHERE po.TenantId = EndUserPets.TenantId AND po.PetId = EndUserPets.Id
                            AND po.EndUserId <> ?)
-            AND ${bookingGuard}`,
+            AND ${bookingGuard}
+            AND ${cascadingPetGuard}`,
       )
-      .bind(id, tenantId, id, id, tenantId, id),
+      .bind(id, tenantId, id, id, tenantId, id, tenantId, id, id),
     db
-      .prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard}`)
-      .bind(tenantId, id, tenantId, id),
+      .prepare(
+        `DELETE FROM PetOwners
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    // After (1) this matches exactly the pets nobody else owns, and cascadingPetGuard has already
+    // established that none of those carry BookingRequestPets rows — so this statement can only
+    // ever delete zero rows now. It stays as the structurally correct child-first step (and the
+    // thing that would have to do the work if that guard were ever narrowed), carrying both guards
+    // so it can never run while the batch is refusing.
     db
       .prepare(
         `DELETE FROM BookingRequestPets
            WHERE PetId IN (SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?)
-             AND ${bookingGuard}`,
+             AND ${bookingGuard}
+             AND ${cascadingPetGuard}`,
       )
-      .bind(tenantId, id, tenantId, id),
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
     db
-      .prepare(`DELETE FROM EndUserPets WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard}`)
-      .bind(tenantId, id, tenantId, id),
+      .prepare(
+        `DELETE FROM EndUserPets
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
     db
-      .prepare(`DELETE FROM LoginCodes WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard}`)
-      .bind(tenantId, id, tenantId, id),
+      .prepare(
+        `DELETE FROM LoginCodes
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
     db
-      .prepare(`DELETE FROM EndUsers WHERE TenantId = ? AND Id = ? AND ${bookingGuard}`)
-      .bind(tenantId, id, tenantId, id),
+      .prepare(
+        `DELETE FROM EndUsers
+           WHERE TenantId = ? AND Id = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
   ]);
   return (endUsersResult.meta as { changes?: number }).changes !== 0;
 }
@@ -1287,8 +1346,13 @@ export async function listAllEndUserPetsByTenant(
  *
  * Ownership comes from PetOwners, not EndUserPets.EndUserId: under co-ownership (0019) a second
  * owner legitimately books a pet they did not create. Deceased pets are excluded — a dead pet is
- * never bookable, and filtering here keeps this in exact lockstep with listPetIdsForOwner (the
- * quote route's check). If the two ever disagreed, a customer could quote a pet they cannot book.
+ * never bookable, and filtering here keeps this in exact lockstep with listPetIdsForOwner (which
+ * will be read by the quote route, PR 2). If the two ever disagreed, a customer could quote a pet
+ * they cannot book.
+ *
+ * NOTE the returned `EndUserId` is the pet's CREATING owner, not necessarily `endUserId` — for a
+ * co-owned pet they differ. listAllEndUserPetsByTenant returns the LINK's owner in that same field
+ * of the same EndUserPet type, so never treat this field as "whose list this is".
  */
 export async function listEndUserPets(
   db: D1Database,
@@ -1338,7 +1402,8 @@ export async function listOwnerPetLinks(db: D1Database, tenantId: string): Promi
 /**
  * The pet ids one customer owns — co-ownership included, deceased excluded. The cheapest form of
  * the ownership boundary listEndUserPets enforces, kept in deliberate lockstep with it: the two are
- * the same predicate, and a divergence would let a customer quote a pet they cannot book.
+ * the same predicate, and a divergence would let a customer quote a pet they cannot book. Will be
+ * read by the quote route (PR 2); no quote route exists yet.
  */
 export async function listPetIdsForOwner(
   db: D1Database,

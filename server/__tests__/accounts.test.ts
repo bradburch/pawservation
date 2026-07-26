@@ -24,14 +24,31 @@ describe('buildAccounts (union-find over owner<->pet links)', () => {
     ]);
   });
 
-  it('drops an owner entirely when their only pet is absent (the deceased-pet case)', () => {
-    // The CALLER filters deceased pets out of the input, so u_bob's only link never arrives and
-    // his zero-pet component cannot exist — no filter inside the function can or should fire.
-    const links: OwnerPetLink[] = [{ ownerId: 'u_ann', petId: 'p_bella' }];
-    const accounts = buildAccounts(links);
-    expect(accounts).toHaveLength(1);
-    expect(accounts[0]!.ownerIds).toEqual(['u_ann']);
-    expect(accounts.some((a) => a.ownerIds.includes('u_bob'))).toBe(false);
+  it('merges a TRANSITIVE chain — ann-bella-bob-chip-cara-dot-dave — into one account', () => {
+    // The multi-hop property, and the whole reason this is union-find rather than "group by pet":
+    // ann and dave share no pet, no owner and no direct link, yet they bill together because a
+    // chain of shared pets connects them. Every invoice in PRs 2-5 is computed per account, so a
+    // merge that stopped at one hop would split one household's statement into four.
+    const chain: OwnerPetLink[] = [
+      { ownerId: 'u_ann', petId: 'p_bella' },
+      { ownerId: 'u_bob', petId: 'p_bella' },
+      { ownerId: 'u_bob', petId: 'p_chip' },
+      { ownerId: 'u_cara', petId: 'p_chip' },
+      { ownerId: 'u_cara', petId: 'p_dot' },
+      { ownerId: 'u_dave', petId: 'p_dot' },
+    ];
+    const expected = [
+      {
+        id: 'p_bella',
+        ownerIds: ['u_ann', 'u_bob', 'u_cara', 'u_dave'],
+        petIds: ['p_bella', 'p_chip', 'p_dot'],
+      },
+    ];
+    expect(buildAccounts(chain)).toEqual(expected);
+    // The same chain walked from the far end: the links that fuse two ALREADY-MERGED components
+    // arrive last here and first there, so this also pins that find() resolves through a multi-node
+    // parent walk rather than one level of indirection.
+    expect(buildAccounts([...chain].reverse())).toEqual(expected);
   });
 
   it('uses the lexicographically-first pet id as the account id, whatever the input order', () => {
