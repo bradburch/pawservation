@@ -77,7 +77,7 @@ function makeKV(): KVNamespace {
   } as unknown as KVNamespace;
 }
 
-export function createTestEnv(): { env: Env; raw: DatabaseSync } {
+export function createTestEnv(opts?: { html?: string }): { env: Env; raw: DatabaseSync } {
   // FK enforcement stays ON (node:sqlite's default) to match production: Cloudflare D1 enforces
   // FK constraints by default and — unlike SQLite generally — cannot disable them, only defer
   // them within a transaction (see migrations/0006_custom_services.sql's defer_foreign_keys use).
@@ -90,7 +90,14 @@ export function createTestEnv(): { env: Env; raw: DatabaseSync } {
     TOKEN_SECRET: TEST_SECRET,
     ENVIRONMENT: 'development', // lets /identify return prototypeCode when no email provider is set
     OWNER_EMAILS: OWNER_EMAIL,
-    ASSETS: { fetch: async () => new Response('<!doctype html>') },
+    // `html` lets tests stand in a real embed.html body (e.g. to assert on JSON-LD injection)
+    // without the real Vite-built asset — the ASSETS binding is otherwise just a static stub.
+    ASSETS: {
+      fetch: async () =>
+        new Response(opts?.html ?? '<!doctype html>', {
+          headers: { 'content-type': 'text/html' },
+        }),
+    },
   } as unknown as Env;
   return { env, raw };
 }

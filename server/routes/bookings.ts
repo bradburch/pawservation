@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   addBookingPets,
   deleteBookingRequest,
+  findBookingByIdempotencyKey,
   getEndUserById,
   insertBookingRequest,
   listBookingPetsForUser,
@@ -13,6 +14,7 @@ import {
 } from '../db/repo';
 import { checkAvailability, estimateCost, monthAvailability } from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
+import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
 import {
@@ -102,23 +104,52 @@ export const bookingRoutes = new Hono<AppEnv>()
           )
         : {};
 
+    const tenantId = tenant.Id;
+    const endUserId = c.get('endUserId');
+
+    const idemKey = c.req.header('Idempotency-Key')?.trim() || null;
+    if (idemKey && idemKey.length > 128) {
+      return c.json(
+        {
+          error: 'Idempotency-Key must be 128 characters or fewer.',
+          code: 'invalid_idempotency_key',
+        },
+        400,
+      );
+    }
+    if (idemKey) {
+      const prior = await findBookingByIdempotencyKey(
+        c.env.PAWBOOK_DB,
+        tenantId,
+        endUserId,
+        idemKey,
+      );
+      if (prior) return c.json({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
+    }
+
     const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
     const service = services.find((s) => s.ServiceType === type);
-    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
-    if (petIds.length === 0) return c.json({ error: 'Choose at least one pet.' }, 400);
+    if (!service)
+      return c.json({ error: 'Unknown service type.', code: 'unknown_service_type' }, 400);
+    if (petIds.length === 0)
+      return c.json({ error: 'Choose at least one pet.', code: 'no_pets_selected' }, 400);
 
     const myPets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
     const chosen = petIds.map((id) => myPets.find((p) => p.Id === id));
-    if (chosen.some((p) => !p)) return c.json({ error: 'Unknown pet.' }, 400);
+    if (chosen.some((p) => !p)) return c.json({ error: 'Unknown pet.', code: 'unknown_pet' }, 400);
     const pets = chosen.length;
-    if (!isValidPetCount(pets)) return c.json({ error: 'Too many pets.' }, 400);
+    if (!isValidPetCount(pets))
+      return c.json({ error: 'Too many pets.', code: 'too_many_pets' }, 400);
     const acceptedTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
     // Registry membership: a pet whose slug isn't a TenantPetTypes row at all is corrupt data.
     // The BEHAVIORAL gate is the per-service acceptance check below (0015 — the tenant-level
     // enabled switch is retired).
     for (const p of chosen) {
       if (!acceptedTypes.find((pt) => pt.PetType === p!.PetType))
-        return c.json({ error: 'That pet type is not accepted.' }, 400);
+        return c.json(
+          { error: 'That pet type is not accepted.', code: 'pet_type_not_accepted' },
+          400,
+        );
     }
     const petType = chosen[0]!.PetType;
 
@@ -132,9 +163,11 @@ export const bookingRoutes = new Hono<AppEnv>()
       chosen.map((p) => ({ name: p!.Name, petType: p!.PetType })),
       (petSlug) => labelBySlug.get(petSlug) ?? petSlug,
     );
-    if (acceptanceError) return c.json({ error: acceptanceError }, 400);
+    if (acceptanceError)
+      return c.json({ error: acceptanceError, code: 'pet_type_not_accepted' }, 400);
 
-    if (!service.Enabled) return c.json({ error: 'Service not offered.' }, 400);
+    if (!service.Enabled)
+      return c.json({ error: 'Service not offered.', code: 'service_not_offered' }, 400);
 
     const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
 
@@ -142,10 +175,11 @@ export const bookingRoutes = new Hono<AppEnv>()
     let option: (typeof options)[number] | undefined;
     if (body.optionKey !== undefined) {
       option = options.find((o) => o.ServiceType === type && o.OptionKey === body.optionKey);
-      if (!option) return c.json({ error: 'Unknown service option.' }, 400);
+      if (!option) return c.json({ error: 'Unknown service option.', code: 'unknown_option' }, 400);
     } else {
       option = options.find((o) => o.ServiceType === type);
-      if (!option) return c.json({ error: 'Service not configured.' }, 400);
+      if (!option)
+        return c.json({ error: 'Service not configured.', code: 'service_not_configured' }, 400);
     }
 
     // Re-validate dates at submit time with the same logic the widget used (PRD FR13).
@@ -154,7 +188,8 @@ export const bookingRoutes = new Hono<AppEnv>()
       shape === 'range'
         ? validateBoardingRange(start, end, service.MaxNights, tenant.Timezone ?? undefined)
         : validateSingleDate(start, tenant.Timezone ?? undefined);
-    if (dateError) return c.json({ error: dateError.error }, dateError.status);
+    if (dateError)
+      return c.json({ error: dateError.error, code: dateError.code }, dateError.status);
 
     // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. The flag is
     // settable on ANY option, including range-shaped services (boarding/housesitting) — a stay
@@ -166,7 +201,10 @@ export const bookingRoutes = new Hono<AppEnv>()
       for (let i = 0; i < spanNights; i++) {
         if (isWeekend(addDays(start, i)))
           return c.json(
-            { error: 'That option is only available on weekdays — pick a Monday–Friday date.' },
+            {
+              error: 'That option is only available on weekdays — pick a Monday–Friday date.',
+              code: 'weekdays_only',
+            },
             400,
           );
       }
@@ -176,7 +214,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     const nights = shape === 'range' ? nightsBetween(start, end) : null;
 
     const answersError = validateAnswers(service.Questions, answers);
-    if (answersError) return c.json({ error: answersError }, 400);
+    if (answersError) return c.json({ error: answersError, code: 'invalid_answers' }, 400);
 
     const constraintsError = validateServiceConstraints(
       {
@@ -187,7 +225,8 @@ export const bookingRoutes = new Hono<AppEnv>()
       },
       { nights, petCount: pets },
     );
-    if (constraintsError) return c.json({ error: constraintsError }, 400);
+    if (constraintsError)
+      return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
 
     // Price is computed server-side (never trusted from the client) and is pure — no DB read.
     const estCost = estimateCost(service, option, start, end);
@@ -196,26 +235,45 @@ export const bookingRoutes = new Hono<AppEnv>()
     // The check covers both "those dates were already full" and the check-then-insert race (a
     // concurrent booking taking the last slot); either way we delete and 409. Two simultaneous
     // racers may both roll back — fail-safe, never an overbooking. This is the ONLY capacity read.
-    const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
-      endUserId: c.get('endUserId'),
-      serviceType: service.ServiceType,
-      startDate: start,
-      endDate,
-      optionKey: option.OptionKey,
-      petType,
-      petCount: pets,
-      startTime: option.StartTime,
-      estCost,
-      status: 'pending',
-      answers,
-    });
+    let id: string;
+    try {
+      id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
+        endUserId: c.get('endUserId'),
+        serviceType: service.ServiceType,
+        startDate: start,
+        endDate,
+        optionKey: option.OptionKey,
+        petType,
+        petCount: pets,
+        startTime: option.StartTime,
+        estCost,
+        status: 'pending',
+        answers,
+        idempotencyKey: idemKey,
+      });
+    } catch (e) {
+      if (idemKey && isUniqueViolation(e)) {
+        const prior = await findBookingByIdempotencyKey(
+          c.env.PAWBOOK_DB,
+          tenantId,
+          endUserId,
+          idemKey,
+        );
+        if (prior)
+          return c.json({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
+      }
+      throw e;
+    }
 
     let check;
     try {
       check = await checkAvailability(c.env, tenant, service, option, start, end, pets, id);
       if (!check.available) {
         await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
-        return c.json({ error: 'Sorry — those dates just filled up.' }, 409);
+        return c.json(
+          { error: 'Sorry — those dates just filled up.', code: 'capacity_conflict' },
+          409,
+        );
       }
       await addBookingPets(c.env.PAWBOOK_DB, tenant.Id, id, petIds);
     } catch (err) {

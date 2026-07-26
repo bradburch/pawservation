@@ -4,8 +4,8 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0021_pet_mix_rates.sql` (keep this line in step with the highest-numbered migration mirrored
-into `schema.sql`). Use:
+`0023_booking_idempotency.sql` (keep this line in step with the highest-numbered migration
+mirrored into `schema.sql`). Use:
 
 ```
 npm run seed:local   # wrangler d1 execute pawbook-db --local  --file=./sql/schema.sql && ...seed.sql
@@ -27,14 +27,14 @@ is made to adopt tracked migrations.
 
 Current state:
 
-- **Local dev DB**: `sql/schema.sql` already carries everything through `0021_pet_mix_rates.sql`,
+- **Local dev DB**: `sql/schema.sql` already carries everything through `0023_booking_idempotency.sql`,
   so a **freshly reseeded** local DB (`npm run seed:local`) needs no migrations applied. A local
-  DB seeded before today predates `0020`/`0021` and is on the incremental-apply path below like
-  any other already-provisioned DB — either re-seed it, or apply `0020`/`0021` locally with the
-  `--local` commands in the `0020`/`0021` section.
-- **Remote DB**: fully migrated through `0021` as of this writing — `0001`–`0015` were applied
+  DB seeded before today predates `0020`–`0023` and is on the incremental-apply path below like
+  any other already-provisioned DB — either re-seed it, or apply `0020`–`0023` locally with the
+  `--local` commands in the `0020`/`0021` and `0022`/`0023` sections.
+- **Remote DB**: fully migrated through `0023` as of this writing — `0001`–`0015` were applied
   by hand 2026-07-20 (verified via read-only schema probes), `0016`–`0019` have since been
-  applied by hand as each shipped, most recently `0019` on 2026-07-25, and `0020`/`0021` (below)
+  applied by hand as each shipped, most recently `0019` on 2026-07-25, and `0020`–`0023` (below)
   were applied by hand on 2026-07-26 (verified via read-only `sqlite_master` probes matching
   `sql/schema.sql` column-for-column). Note `0011_contact_and_notes.sql` errors with "duplicate
   column" on this DB — its columns were applied out of band before the renumbering — and that
@@ -44,10 +44,10 @@ Current state:
 added by every migration through `0019` — e.g. `AcceptedPetTypes`, `MaxConcurrentPets`,
 `MaxPerDay`, and `Label` (added by `0014`/`0015`), and `PetOwners`/`EndUserPets.DeceasedAt`
 (added by `0019`, see below) — and **500s on every request** if any of those are missing.
-`0007`–`0021` are now fully applied to remote (`0020`/`0021` as of 2026-07-26, see that section
-below); a local DB still needs `0020`/`0021` unless it's a fresh `npm run seed:local` reseed —
+`0007`–`0023` are now fully applied to remote (`0020`–`0023` as of 2026-07-26, see those sections
+below); a local DB still needs `0020`–`0023` unless it's a fresh `npm run seed:local` reseed —
 see the Local dev DB bullet above. Apply each migration before (or with) the deploy that needs
-it, never after. Backward-compatible additive migrations (like `0012`–`0018`, and `0020`/`0021`)
+it, never after. Backward-compatible additive migrations (like `0012`–`0018`, and `0020`–`0023`)
 are safe to apply ahead of a deploy, since the currently-running worker just ignores the new
 columns/tables until the new code ships.
 
@@ -166,3 +166,41 @@ TABLE` statement with no second statement after it, it could also have been appl
 `--remote --command` instead of `--file`, with no partial-apply risk — unlike `0019`, where
 `--command` would have been dangerous because its backfill is a second statement (a failure
 partway through would leave the table created but the backfill not run).
+
+### 0022_booking_source.sql — applied to remote 2026-07-26 (verified: column present)
+
+Adds `BookingRequests.Source` (TEXT, attribution channel like 'mcp', 'voice', etc.; NULL = embed
+widget). Purely additive — a single `ALTER TABLE` to add one optional column — and **nothing in
+the running worker reads it yet**, so applying ahead of a deploy is safe. Mirrored into
+`sql/schema.sql`, so fresh installs and the Vitest harness get it without running this file.
+
+**NOT IDEMPOTENT** — plain ALTER TABLE fails if re-run against an existing database (the column
+already exists). Apply exactly once per database.
+
+```
+npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
+npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN Source TEXT;"
+```
+
+### 0023_booking_idempotency.sql — applied to remote 2026-07-26 (verified: column + index present)
+
+Adds `BookingRequests.IdempotencyKey` (TEXT, client-supplied replay-protection key for the
+`Idempotency-Key` header on `POST /api/:slug/bookings`; NULL = no key supplied) plus a unique
+index scoped `(TenantId, EndUserId, IdempotencyKey)` — deliberately scoped per customer, not
+tenant-wide, so one customer's key can never collide with or leak another's booking, and
+`WHERE IdempotencyKey IS NOT NULL` so unkeyed bookings (the common case) never collide with each
+other. Purely additive — the running worker doesn't read the column until this PR's code ships —
+so applying ahead of a deploy is safe. Mirrored into `sql/schema.sql`, so fresh installs and the
+Vitest harness get it without running this file.
+
+**NOT IDEMPOTENT** — plain `ALTER TABLE` fails if re-run against an existing database (the column
+already exists). Apply exactly once per database, as two separate statements (`ALTER TABLE` then
+`CREATE UNIQUE INDEX`) so a transient failure on the second statement doesn't require re-running
+the first:
+
+```
+npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
+npx wrangler d1 execute pawbook-db --local  --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
+npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+```

@@ -1,5 +1,8 @@
 import { Hono } from 'hono';
+import { listServiceOptions, listServices } from './db/repo';
+import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
 import { tenantMiddleware } from './lib/middleware';
+import { resolveTenant } from './lib/tenant-resolve';
 import { adminRoutes } from './routes/admin';
 import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
@@ -75,7 +78,31 @@ const page = (asset: string) =>
     return new Response(res.body, res);
   };
 
-app.get('/embed/:slug', page('embed.html'));
+app.get('/embed/:slug/llms.txt', async (c) => {
+  const tenant = await resolveTenant(c.req.param('slug'), c.env);
+  if (!tenant || tenant.DisabledAt) return c.text('Not found', 404);
+  const [services, options] = await Promise.all([
+    listServices(c.env.PAWBOOK_DB, tenant.Id),
+    listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+  ]);
+  return c.text(buildLlmsTxt(tenant, services, options, new URL(c.req.url).origin));
+});
+
+// Wraps the built embed.html with per-tenant LocalBusiness JSON-LD for crawlers/agents. Buffers
+// the (few-KB) HTML and does a plain string replace rather than HTMLRewriter: HTMLRewriter is a
+// Workers-runtime global that doesn't exist in the Node-based Vitest harness. Unknown/disabled
+// tenants still get the page (just without JSON-LD) — only the dedicated llms.txt route 404s.
+app.get('/embed/:slug', async (c) => {
+  const res = await c.env.ASSETS.fetch(new URL('/embed.html', c.req.url));
+  const tenant = await resolveTenant(c.req.param('slug'), c.env).catch(() => null);
+  if (!tenant || tenant.DisabledAt) return new Response(res.body, res);
+  const html = await res.text();
+  const ldScript = buildJsonLdScript(tenant, new URL(c.req.url).origin);
+  return new Response(
+    html.replace('</head>', () => `${ldScript}</head>`),
+    res,
+  );
+});
 app.get('/admin', page('admin.html')); // login landing — the dashboard learns its slug from the session
 app.get('/admin/:slug', page('admin.html')); // deep link still works; auth drives the rest
 app.get('/demo', page('demo.html'));

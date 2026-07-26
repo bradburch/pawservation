@@ -149,6 +149,8 @@ export type BookingRow = {
   // 1 = the cancellation was the sitter declining a pending request. Optional because only the
   // booking-list queries select it; capacity/availability queries never need it.
   Declined?: number;
+  /** Attribution channel: 'mcp', 'voice', etc.; null = embed widget (0022). Optional: only selected where displayed. */
+  Source?: string | null;
   CreatedAt: string;
 };
 

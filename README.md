@@ -139,7 +139,7 @@ lifecycles:
 
 - **Fresh install:** provision from `sql/schema.sql` (+ optional demo `sql/seed.sql`) via
   `npm run seed:local` / `seed:remote`. The schema already includes everything through
-  `migrations/0019_pet_co_ownership.sql`; do not replay migration files on top.
+  `migrations/0023_booking_idempotency.sql`; do not replay migration files on top.
 - **Already-provisioned DB:** apply new files in `migrations/` **by hand**, in order,
   before (or with) the deploy that needs them — otherwise the new code 500s on missing
   columns:
@@ -149,7 +149,7 @@ lifecycles:
   # ...one command per file, in numeric order (use --local for the dev DB)
   ```
 
-**Current remote state:** the production DB is fully migrated through `0019` (see
+**Current remote state:** the production DB is fully migrated through `0023` (see
 `migrations/README.md` for the exact history and state).
 
 Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
