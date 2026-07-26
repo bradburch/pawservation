@@ -69,16 +69,33 @@ describe('PetOwners write-side repo', () => {
 
   it('removePetOwner drops a NON-creating co-owner and leaves the creating-owner column alone', async () => {
     const { env, raw } = createTestEnv();
-    const co1 = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co1@example.com', 'Co One');
-    const co2 = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co2@example.com', 'Co Two');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co1.Id);
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co2.Id);
+    // Deterministic ids, NOT insertInvitedCustomer's crypto.randomUUID() — both id and CreatedAt
+    // are candidate tie-breakers in the reassignment UPDATE's ORDER BY, and in a fast test run
+    // every PetOwners row here (seed + these two) lands in the same datetime('now') second, so the
+    // tie always falls to EndUserId. 'eu_co1'/'eu_co2' both sort before 'eu_sp_jess' ('eu_c' <
+    // 'eu_s'), so if the reassignment UPDATE's `AND EndUserId = ?` scoping were dropped, it would
+    // deterministically reassign the creating-owner column away from 'eu_sp_jess' every run —
+    // a random co-owner id could occasionally sort AFTER 'eu_sp_jess' and mask the mutation.
+    raw
+      .prepare(
+        `INSERT INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES (?, ?, ?, ?, 'invited')`,
+      )
+      .run('eu_co1', TENANT_A, 'co1@example.com', 'Co One');
+    raw
+      .prepare(
+        `INSERT INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES (?, ?, ?, ?, 'invited')`,
+      )
+      .run('eu_co2', TENANT_A, 'co2@example.com', 'Co Two');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_co1');
+    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_co2');
     // co1 is neither the creating owner nor the survivor being tested — removing it must be a
     // pure PetOwners delete: the EndUserPets.EndUserId reassignment UPDATE is scoped to rows where
     // EndUserId = the departing owner, so it must NOT fire when the departing owner isn't the one
     // in that column. Without that scoping this test fails.
-    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co1.Id)).toBe('removed');
-    expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_sp_jess', co2.Id].sort());
+    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_co1')).toBe(
+      'removed',
+    );
+    expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_co2', 'eu_sp_jess']);
     expect(creatingOwnerOf(raw, 'pet_sp_bella')).toBe('eu_sp_jess');
   });
 
@@ -122,11 +139,19 @@ describe('PetOwners write-side repo', () => {
         }
       ).DeceasedAt;
     expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true)).toBe(true);
-    const firstMarkedAt = deceasedAt();
-    expect(firstMarkedAt).not.toBeNull();
+    expect(deceasedAt()).not.toBeNull();
     // Repeat marking must NOT move the recorded death date forward (COALESCE keeps the original).
+    // datetime('now') is second-granular, so re-marking microseconds later and comparing against
+    // a captured "first" value would pass even WITHOUT the COALESCE fix (both writes land in the
+    // same second). Pin a pre-existing value that is clearly not "now" instead, so a regression to
+    // unconditional `datetime('now')` fails deterministically, not by wall-clock luck.
+    raw
+      .prepare(
+        `UPDATE EndUserPets SET DeceasedAt = '2020-01-01 00:00:00' WHERE Id = 'pet_sp_bella'`,
+      )
+      .run();
     expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true)).toBe(true);
-    expect(deceasedAt()).toBe(firstMarkedAt);
+    expect(deceasedAt()).toBe('2020-01-01 00:00:00');
     expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', false)).toBe(true);
     expect(deceasedAt()).toBeNull();
     // Wrong tenant: refused (404 at the route, never a silent cross-tenant write).

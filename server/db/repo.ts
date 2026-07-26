@@ -1376,6 +1376,14 @@ export async function addPetOwner(
  * would dangle. That UPDATE carries its own "another owner exists" guard (EXISTS ... <> ?) so it
  * can never resolve its subquery to NULL and fail the NOT NULL constraint on a last-owner attempt.
  *
+ * The UPDATE and DELETE fire under IDENTICAL conditions by construction, not by relying on the
+ * rest of the codebase keeping EndUserPets.EndUserId and PetOwners in sync: both require `endUserId`
+ * to actually own the pet in this tenant (an explicit EXISTS on PetOwners for the UPDATE, mirroring
+ * the DELETE's own WHERE). Without that, a future divergence (e.g. a not-yet-written delete path)
+ * could hit the case where the UPDATE's weaker guard fires — silently reassigning the creating-owner
+ * column — while the DELETE matches nothing and the function reports 'not-found', contradicting
+ * the "nothing was written" guarantee below.
+ *
  * If the guarded DELETE matches zero rows, nothing was written by this call on any path — a
  * follow-up read is then made purely to decide which of 'not-found' / 'last-owner' to report; a
  * stale answer there is harmless since it never drives a write.
@@ -1396,9 +1404,22 @@ export async function removePetOwner(
                            ORDER BY po.CreatedAt, po.EndUserId LIMIT 1)
           WHERE TenantId = ? AND Id = ? AND EndUserId = ?
             AND EXISTS (SELECT 1 FROM PetOwners po2
-                         WHERE po2.TenantId = ? AND po2.PetId = ? AND po2.EndUserId <> ?)`,
+                         WHERE po2.TenantId = ? AND po2.PetId = ? AND po2.EndUserId <> ?)
+            AND EXISTS (SELECT 1 FROM PetOwners po3
+                         WHERE po3.TenantId = ? AND po3.PetId = ? AND po3.EndUserId = ?)`,
       )
-      .bind(endUserId, tenantId, petId, endUserId, tenantId, petId, endUserId),
+      .bind(
+        endUserId,
+        tenantId,
+        petId,
+        endUserId,
+        tenantId,
+        petId,
+        endUserId,
+        tenantId,
+        petId,
+        endUserId,
+      ),
     db
       .prepare(
         `DELETE FROM PetOwners
