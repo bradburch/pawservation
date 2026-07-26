@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { countSlotBookings, insertBookingRequest, listSlotBookingCounts } from '../db/repo';
-import { checkAvailability, rowsToCapacityEvents } from '../lib/availability';
+import { checkAvailability, estimateCost, rowsToCapacityEvents } from '../lib/availability';
 import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
-import { createTestEnv, TENANT_A } from './helpers';
+import { createTestEnv, endUserToken, TENANT_A } from './helpers';
 
 /** A TenantService row cloned from a built-in template, as the migration/seed produces. */
 function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService {
@@ -279,25 +279,27 @@ describe('config + availability — service options and pet types', () => {
   });
 });
 
-describe('checkAvailability', () => {
-  function opt(over: Partial<TenantServiceOption>): TenantServiceOption {
-    return {
-      Id: 'o',
-      TenantId: TENANT_A,
-      ServiceType: 'walk',
-      OptionKey: 'd30',
-      Label: '30 minutes',
-      DurationMinutes: 30,
-      Rate: 20,
-      RateUnit: 'visit',
-      StartTime: null,
-      EndTime: null,
-      Capacity: null,
-      WeekdaysOnly: 0,
-      ...over,
-    };
-  }
+/** An option row. `Rate` is what the sitter typed; the option's own `RateUnit` is display-only —
+ *  the BILLING unit is the service's, so cost tests vary the service and keep the option fixed. */
+function opt(over: Partial<TenantServiceOption>): TenantServiceOption {
+  return {
+    Id: 'o',
+    TenantId: TENANT_A,
+    ServiceType: 'walk',
+    OptionKey: 'd30',
+    Label: '30 minutes',
+    DurationMinutes: 30,
+    Rate: 20,
+    RateUnit: 'visit',
+    StartTime: null,
+    EndTime: null,
+    Capacity: null,
+    WeekdaysOnly: 0,
+    ...over,
+  };
+}
 
+describe('checkAvailability', () => {
   it('single-visit cost is the picked option price (no nights math)', async () => {
     const { env } = createTestEnv();
     const t = tenant();
@@ -485,6 +487,105 @@ describe('checkAvailability', () => {
     const overCap = await checkAvailability(env, t, service, o, '2028-08-20', '2028-08-22', 3);
     expect(overCap).toMatchObject({ available: false });
     expect((overCap as { reason: string }).reason).toBe('That exceeds our house-sitting capacity.');
+  });
+});
+
+describe('estimateCost — the billing unit is the service’s RateUnit, not a hardcoded constant', () => {
+  // THE test that must never break: every service that exists today is night-billed, so this
+  // change must not move a single price. Numbers are the seeded rates (sql/seed.sql).
+  it('regression lock — night-unit range services bill exactly nights, at the seeded rates', () => {
+    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-13')).toBe(150); // 3 nights
+    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2028-06-21', '2028-06-24')).toBe(120); // Happy Tails
+    expect(estimateCost(svc('housesitting'), opt({ Rate: 70 }), '2028-08-10', '2028-08-15')).toBe(
+      350,
+    ); // 5 nights
+    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-11')).toBe(50); // 1 night
+    // Degenerate 0-night range still bills the 1-night floor (billableUnits' Math.max(1, …)).
+    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-10')).toBe(50);
+    // Both built-in range templates are night-billed — the premise of the lock above.
+    expect(SERVICE_TEMPLATES.boarding.rateUnit).toBe('night');
+    expect(SERVICE_TEMPLATES.housesitting.rateUnit).toBe('night');
+  });
+
+  it('a day-unit range service bills nights + 1 (the departure day is chargeable)', () => {
+    const dayBoarding = svc('boarding', { ServiceType: 'day-boarding', RateUnit: 'day' });
+    // Apr 10 → Apr 13 is 3 nights = 4 chargeable DAYS at $30 → $120, not $90.
+    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-13')).toBe(120);
+    // A same-day day-unit range is 1 day, never 2.
+    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-10')).toBe(30);
+  });
+
+  it('single-shape services return the flat option rate whatever their RateUnit', () => {
+    expect(estimateCost(svc('walk'), opt({ Rate: 20 }), '2028-08-01', '')).toBe(20);
+    expect(estimateCost(svc('checkin'), opt({ Rate: 12 }), '2028-08-01', '')).toBe(12);
+    // daycare is the shape:'single' + rateUnit:'day' pairing — flat rate, no nights math.
+    expect(estimateCost(svc('daycare'), opt({ Rate: 40 }), '2028-08-01', '')).toBe(40);
+  });
+
+  it('an unexpected RateUnit on a range service falls back to per-night (never inflates a bill)', () => {
+    // 'visit' can only reach a range service through bad data; the mapping must be total.
+    const odd = svc('boarding', { RateUnit: 'visit' });
+    expect(estimateCost(odd, opt({ Rate: 50 }), '2028-08-10', '2028-08-13')).toBe(150); // 3 nights, not 4
+  });
+});
+
+describe('quote/stamp parity for a day-unit range service', () => {
+  /** Seeds an enabled range service billed per DAY at Sunny Paws, the way a sitter would get one
+   *  from a template clone (admin PUT writes the same columns). */
+  function seedDayBoarding(raw: ReturnType<typeof createTestEnv>['raw']): void {
+    raw
+      .prepare(
+        `INSERT INTO TenantServices
+           (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder)
+         VALUES (?, ?, 1, ?, 'bed', 'range', 'day', 0, 'boarding', 9)`,
+      )
+      .run(TENANT_A, 'day-boarding', 'Day boarding');
+    raw
+      .prepare(
+        `INSERT INTO TenantServiceOptions
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit)
+         VALUES (?, ?, ?, 'standard', 'Standard', NULL, 30, 'day')`,
+      )
+      .run('opt_sp_dayboard', TENANT_A, 'day-boarding');
+  }
+
+  it('the availability quote, the POST response, and the stored EstCost all agree', async () => {
+    const { env, raw } = createTestEnv();
+    seedDayBoarding(raw);
+
+    const quote = (await (
+      await app.request(
+        '/api/sunny-paws/availability?type=day-boarding&start=2029-04-10&end=2029-04-13&pets=1',
+        {},
+        env,
+      )
+    ).json()) as { available: boolean; estCost: number; nights: number };
+    expect(quote).toMatchObject({ available: true, nights: 3 });
+    expect(quote.estCost).toBe(120); // 3 nights = 4 days × $30
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'day-boarding',
+          startDate: '2029-04-10',
+          endDate: '2029-04-13',
+          petIds: ['pet_sp_bella'],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    const booked = (await res.json()) as { id: string; estCost: number };
+    expect(booked.estCost).toBe(quote.estCost);
+
+    const stored = raw
+      .prepare('SELECT EstCost FROM BookingRequests WHERE Id = ?')
+      .get(booked.id) as { EstCost: number } | undefined;
+    expect(stored?.EstCost).toBe(quote.estCost);
   });
 });
 

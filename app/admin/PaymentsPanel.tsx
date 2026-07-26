@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isValidRate } from '../../src/shared/index.js';
 import { adminApi, PAYMENT_METHODS, type Payment } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -38,7 +39,9 @@ export function PaymentsPanel({
   const RECORDING = '__record__';
 
   const amountNum = Number(amount);
-  const canSubmit = Number.isInteger(amountNum) && amountNum >= 1 && paidDate.trim() !== '';
+  // Same predicate the server enforces on POST payments (server/lib/validation.ts re-exports it)
+  // — this copy is UX only; the server still validates independently.
+  const canSubmit = isValidRate(amountNum) && paidDate.trim() !== '';
 
   const load = () =>
     adminApi.payments

@@ -42,9 +42,11 @@ export type AvailabilityResult =
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
- * quote and the stored booking cost can't diverge. Range services bill per night; single-day
- * services (daycare/walk/check-in) are a flat per-booking rate. Pure (no DB), so callers that
- * already know the dates can price a booking without a capacity read.
+ * quote and the stored booking cost can't diverge. Range services bill per unit of stay, taking
+ * that unit from the service's own `RateUnit` (the same column the widget prints as "/night" or
+ * "/day", so the price and its label can never disagree); single-day services (daycare/walk/
+ * check-in) are a flat per-booking rate. Pure (no DB), so callers that already know the dates
+ * can price a booking without a capacity read.
  */
 export function estimateCost(
   service: TenantService,
@@ -53,7 +55,10 @@ export function estimateCost(
   endDateExclusive: string,
 ): number {
   if (service.Shape !== 'range') return option.Rate;
-  return option.Rate * billableUnits(nightsBetween(startDate, endDateExclusive), 'night');
+  const nights = nightsBetween(startDate, endDateExclusive);
+  // Unit comes from the service's own RateUnit (the column the UI prints); anything but 'day'
+  // bills nights, which is the pre-change behavior of every service.
+  return option.Rate * billableUnits(nights, service.RateUnit === 'day' ? 'day' : 'night');
 }
 
 async function checkRange(
@@ -100,6 +105,9 @@ async function checkRange(
   return {
     available: true,
     estCost: estimateCost(service, option, startDate, endDateExclusive),
+    // CEILING: always a NIGHT count while `estCost` is unit-aware, so a range service billed per
+    // DAY would display a mismatch (4 chargeable days shown next to "3 nights"). Fixing it needs
+    // the widget to label this from RateUnit instead of hardcoding "nights".
     nights: nightsBetween(startDate, endDateExclusive),
   };
 }

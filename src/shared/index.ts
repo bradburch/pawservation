@@ -24,6 +24,17 @@ export {
   type PoolKind,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
+export { isValidRate } from './pricing/rate.js';
+export {
+  SERVICE_TEMPLATES,
+  TEMPLATE_IDS,
+  isTemplateId,
+  type CapacityKind,
+  type RateUnit,
+  type ServiceShape,
+  type ServiceTemplate,
+  type TemplateId,
+} from './service-templates.js';
 export { buildAccounts, type Account, type OwnerPetLink } from './invoicing/accounts.js';
 export {
   cancellationFee,
