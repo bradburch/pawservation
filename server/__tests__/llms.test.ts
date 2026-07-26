@@ -45,4 +45,19 @@ describe('llms.txt + JSON-LD', () => {
     expect(res.status).toBe(200);
     expect(await res.text()).not.toContain('ld+json');
   });
+
+  it('does not let a $&-bearing DisplayName corrupt the JSON-LD splice', async () => {
+    const { env, raw } = createTestEnv({
+      html: '<!doctype html><html><head></head><body></body></html>',
+    });
+    raw.exec(`UPDATE Tenants SET DisplayName='Paws $& Co' WHERE Id='${TENANT_A}';`);
+    const res = await app.request('/embed/sunny-paws', {}, env);
+    const html = await res.text();
+    // The literal "$&" must survive JSON-LD injection intact — a plain string.replace would
+    // interpret it as a substitution pattern and splice the matched </head> in its place.
+    expect(html).toContain('Paws $& Co');
+    // Exactly one </head> — the closing tag the JSON-LD was spliced before, and no second one
+    // corrupted into the middle of the JSON-LD payload.
+    expect(html.split('</head>').length).toBe(2);
+  });
 });

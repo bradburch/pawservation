@@ -14,6 +14,7 @@ import {
 } from '../db/repo';
 import { checkAvailability, estimateCost, monthAvailability } from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
+import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
 import {
@@ -251,7 +252,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         idempotencyKey: idemKey,
       });
     } catch (e) {
-      if (idemKey && /UNIQUE/i.test(String(e))) {
+      if (idemKey && isUniqueViolation(e)) {
         const prior = await findBookingByIdempotencyKey(
           c.env.PAWBOOK_DB,
           tenantId,

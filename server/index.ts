@@ -97,8 +97,9 @@ app.get('/embed/:slug', async (c) => {
   const tenant = await resolveTenant(c.req.param('slug'), c.env).catch(() => null);
   if (!tenant || tenant.DisabledAt) return new Response(res.body, res);
   const html = await res.text();
+  const ldScript = buildJsonLdScript(tenant, new URL(c.req.url).origin);
   return new Response(
-    html.replace('</head>', `${buildJsonLdScript(tenant, new URL(c.req.url).origin)}</head>`),
+    html.replace('</head>', () => `${ldScript}</head>`),
     res,
   );
 });
