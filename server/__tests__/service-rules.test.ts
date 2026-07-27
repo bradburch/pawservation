@@ -55,16 +55,12 @@ describe('validateAnswer', () => {
     );
   });
 
-  it('validates a text pattern when present', () => {
-    const q = question({ pattern: '^[0-9]{5}$', label: 'Zip code' });
-    expect(validateAnswer(q, '94103')).toBeNull();
-    expect(validateAnswer(q, 'abcde')).toBe('Zip code is not in the expected format.');
-  });
-
-  it('rejects an overlong answer against a pattern before running the regex (ReDoS safety rail)', () => {
-    const q = question({ pattern: '^[0-9]{5}$', label: 'Zip code' });
-    const overlong = '9'.repeat(101);
-    expect(validateAnswer(q, overlong)).toBe('Zip code is too long.');
+  it('accepts any non-empty text answer — the regex pattern feature is retired', () => {
+    // A question stored back when text questions could carry a `pattern` keeps that key in its
+    // Questions JSON; the field is gone from the type, so it must simply be ignored.
+    const stored = { ...question({ label: 'Zip code' }), pattern: '^[0-9]{5}$' } as ServiceQuestion;
+    expect(validateAnswer(stored, 'not-a-zip')).toBeNull();
+    expect(validateAnswer(stored, '9'.repeat(101))).toBeNull();
   });
 });
 
@@ -80,7 +76,7 @@ describe('validateAnswers', () => {
 });
 
 describe('validateServiceConstraints', () => {
-  const noLimits = { minNights: null, maxNights: null, minPetCount: null, maxPetCount: null };
+  const noLimits = { minNights: null, maxNights: null, maxPetCount: null };
 
   it('passes when every constraint is null (auto pass-through)', () => {
     expect(validateServiceConstraints(noLimits, { nights: 1, petCount: 50 })).toBeNull();
@@ -103,8 +99,8 @@ describe('validateServiceConstraints', () => {
     expect(validateServiceConstraints(c, { nights: null, petCount: 1 })).toBeNull();
   });
 
-  it('enforces min/max pet count at the boundary', () => {
-    const c = { ...noLimits, minPetCount: 1, maxPetCount: 2 };
+  it('enforces max pet count at the boundary (there is no minimum)', () => {
+    const c = { ...noLimits, maxPetCount: 2 };
     expect(validateServiceConstraints(c, { nights: null, petCount: 1 })).toBeNull();
     expect(validateServiceConstraints(c, { nights: null, petCount: 2 })).toBeNull();
     expect(validateServiceConstraints(c, { nights: null, petCount: 3 })).toBe(

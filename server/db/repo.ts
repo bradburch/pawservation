@@ -85,7 +85,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
   const { results } = await db
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind,
-              SortOrder, Questions, MinNights, MaxNights, MinPetCount, MaxPetCount, AcceptedPetTypes,
+              SortOrder, Questions, MinNights, MaxNights, MaxPetCount, AcceptedPetTypes,
               MaxConcurrentPets, CancellationTiers
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
@@ -914,7 +914,6 @@ export async function setServiceConfig(
     questions: ServiceQuestion[];
     minNights: number | null;
     maxNights: number | null;
-    minPetCount: number | null;
     maxPetCount: number | null;
     acceptedPetTypes: string[] | null;
     maxConcurrentPets: number | null;
@@ -924,7 +923,7 @@ export async function setServiceConfig(
   const result = await db
     .prepare(
       `UPDATE TenantServices SET
-         Enabled = ?, Questions = ?, MinNights = ?, MaxNights = ?, MinPetCount = ?, MaxPetCount = ?,
+         Enabled = ?, Questions = ?, MinNights = ?, MaxNights = ?, MaxPetCount = ?,
          AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
@@ -933,7 +932,6 @@ export async function setServiceConfig(
       JSON.stringify(config.questions),
       config.minNights,
       config.maxNights,
-      config.minPetCount,
       config.maxPetCount,
       config.acceptedPetTypes === null ? null : JSON.stringify(config.acceptedPetTypes),
       config.maxConcurrentPets,

@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   Questions TEXT NOT NULL DEFAULT '[]',
   MinNights INTEGER,
   MaxNights INTEGER,
+  -- MinPetCount is RETIRED in place (services have only a max-pets limit): nullable, so nothing
+  -- writes it, and it is deliberately absent from the TenantService type and listServices SELECT —
+  -- the compiler, not a comment, prevents reading it. Drop in a future cleanup migration.
   MinPetCount INTEGER,
   MaxPetCount INTEGER,
   -- JSON array of pet-type slugs this service accepts; NULL = accepts every registry type

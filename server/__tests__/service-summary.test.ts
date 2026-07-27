@@ -41,6 +41,13 @@ describe('serviceSummary price line', () => {
   it('equal rates across options → "$20/visit · 2 options"', () => {
     expect(serviceSummary(svc({ options: [opt(), opt()] })).price).toBe('$20/visit · 2 options');
   });
+
+  it('an option added but not priced yet ("") never prints as $0', () => {
+    // New services/options start with an EMPTY price the sitter must fill.
+    expect(serviceSummary(svc({ options: [opt({ rate: '' })] })).price).toBe('No pricing yet');
+    // One priced, one not: the count form is withheld so it can't overstate what's priced.
+    expect(serviceSummary(svc({ options: [opt(), opt({ rate: '' })] })).price).toBe('$20/visit');
+  });
 });
 
 describe('serviceSummary facts line', () => {

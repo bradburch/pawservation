@@ -10,14 +10,14 @@ export type ServiceQuestion = {
   required: boolean;
   min?: number; // type: 'number'
   max?: number; // type: 'number'
-  pattern?: string; // type: 'text', optional regex source
   options?: string[]; // type: 'select'
 };
+// NOTE: text questions once carried an optional `pattern` (regex) — retired. Old stored
+// Questions JSON may still hold a `pattern` key; it parses fine and is simply ignored.
 
 export type ServiceConstraints = {
   minNights: number | null;
   maxNights: number | null;
-  minPetCount: number | null;
   maxPetCount: number | null;
 };
 
@@ -34,10 +34,6 @@ export type ServiceOption = {
   capacity: number | null; // max concurrent bookings/date; null = unlimited
   weekdaysOnly: boolean; // true = bookable Mon–Fri only (server rejects Sat/Sun; widget marks weekends unavailable)
 };
-
-/** Safety rail (NOT a business rule): bounds regex-evaluation cost against a pathological
- * pattern that slipped past admin-time validation. Intake answers are short by nature. */
-const MAX_PATTERN_INPUT_LENGTH = 100;
 
 /** Validates one answer against its question. Returns an error message, or null if valid. */
 export function validateAnswer(
@@ -67,11 +63,6 @@ export function validateAnswer(
       return null;
     case 'text':
     default:
-      if (question.pattern) {
-        if (trimmed.length > MAX_PATTERN_INPUT_LENGTH) return `${question.label} is too long.`;
-        if (!new RegExp(question.pattern).test(trimmed))
-          return `${question.label} is not in the expected format.`;
-      }
       return null;
   }
 }
@@ -100,8 +91,6 @@ export function validateServiceConstraints(
     if (constraints.maxNights !== null && nights > constraints.maxNights)
       return `This service allows at most ${constraints.maxNights} night${constraints.maxNights === 1 ? '' : 's'}.`;
   }
-  if (constraints.minPetCount !== null && petCount < constraints.minPetCount)
-    return `This service requires at least ${constraints.minPetCount} pet${constraints.minPetCount === 1 ? '' : 's'}.`;
   if (constraints.maxPetCount !== null && petCount > constraints.maxPetCount)
     return `This service allows at most ${constraints.maxPetCount} pet${constraints.maxPetCount === 1 ? '' : 's'}.`;
   return null;

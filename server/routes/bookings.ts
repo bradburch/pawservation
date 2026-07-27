@@ -220,7 +220,6 @@ export const bookingRoutes = new Hono<AppEnv>()
       {
         minNights: service.MinNights,
         maxNights: service.MaxNights,
-        minPetCount: service.MinPetCount,
         maxPetCount: service.MaxPetCount,
       },
       { nights, petCount: pets },

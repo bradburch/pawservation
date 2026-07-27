@@ -299,7 +299,6 @@ describe('custom services — deletion', () => {
       questions: [],
       minNights: null,
       maxNights: null,
-      minPetCount: null,
       maxPetCount: null,
       acceptedPetTypes: null,
       maxConcurrentPets: null,

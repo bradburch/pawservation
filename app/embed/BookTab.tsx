@@ -68,7 +68,6 @@ export function BookTab({
         {
           minNights: service.minNights,
           maxNights: service.maxNights,
-          minPetCount: service.minPetCount,
           maxPetCount: service.maxPetCount,
         },
         { nights, petCount: selectedPets.length },

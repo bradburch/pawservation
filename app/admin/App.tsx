@@ -575,7 +575,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           questions: s.questions,
           minNights: s.minNights,
           maxNights: s.maxNights,
-          minPetCount: s.minPetCount,
           maxPetCount: s.maxPetCount,
           acceptedPetTypes: s.acceptedPetTypes,
           // Empty editor list normalizes to null; sort by withinDays so honest sitter input
@@ -595,14 +594,20 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       setPreviewKey((k) => k + 1);
     });
 
-  const addService = (template: string, label: string) =>
-    run(async () => {
-      await adminFetch(token, `/api/${slug}/admin/services`, {
+  // Returns the created service's slug (undefined on failure — `run` routes errors to the
+  // banner) so ServicesSection can open the new service's editor right away.
+  const addService = async (template: string, label: string): Promise<string | undefined> => {
+    let created: string | undefined;
+    await run(async () => {
+      const res = await adminFetch<{ type: string }>(token, `/api/${slug}/admin/services`, {
         method: 'POST',
         body: JSON.stringify({ template, label }),
       });
-      await refresh();
+      applyLoaded(await loadSettings());
+      created = res.type;
     });
+    return created;
+  };
 
   const removeService = (type: string) =>
     run(async () => {
