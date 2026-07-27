@@ -940,13 +940,13 @@ const LANDING_HTML = `<!doctype html>
               <div class="frame">
                 <img
                   src="/img/landing/step-services.webp"
-                  alt="The widget's service picker: Boarding selected from a row of services including House sitting, Day care, Walks, Check-ins, and Morning walk"
+                  alt="The widget's service picker: Boarding selected from a row of services including House sitting, Daycare, Walk, Check-in, and Morning walk"
                 />
               </div>
               <div class="step-body">
                 <span class="step-no">01</span>
                 <h3>They pick a service</h3>
-                <p>Your services, under your names and your prices &mdash; boarding, day care, walks, or anything you invent.</p>
+                <p>Your services, under your names and your prices &mdash; boarding, daycare, walks, or anything you invent.</p>
               </div>
             </li>
             <li class="step-card">
@@ -1023,7 +1023,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="mock-row">
               <div class="mock-info">
-                <div class="mock-who">Marco T. &mdash; Day care</div>
+                <div class="mock-who">Marco T. &mdash; Daycare</div>
                 <div class="mock-meta">Aug 8 &middot; 2 pets &middot; $70 &middot; paid in full</div>
               </div>
               <span class="state state-ok">Confirmed</span>
@@ -1035,7 +1035,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Rates &amp; services</h3>
-              <p>Boarding, house-sitting, day care, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
+              <p>Boarding, house-sitting, daycare, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
             </div>
             <div class="feature">
               <h3>Caps &amp; time off</h3>
@@ -1403,20 +1403,20 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>You stay at the client&rsquo;s home, again over a range of dates, under its own cap. And because you can&rsquo;t be in two places at once, a house sit won&rsquo;t overlap an occupied boarding stay by more than a day.</p>
             </div>
             <div class="feature">
-              <h3>Day care &middot; per day</h3>
+              <h3>Daycare &middot; per day</h3>
               <p>Daytime care at your place, priced per day. Clients pick single dates rather than a stay, so a Tuesday and a Friday are two separate bookings.</p>
             </div>
             <div class="feature">
-              <h3>Walks &middot; per visit</h3>
-              <p>Priced per visit, with options that carry their own length and time window &mdash; a &ldquo;Morning 30&rdquo; and an &ldquo;Evening 30&rdquo; can sit side by side at different prices.</p>
+              <h3>Walk &middot; per walk</h3>
+              <p>Priced per walk, with options that carry their own length and time window &mdash; a &ldquo;Morning 30&rdquo; and an &ldquo;Evening 30&rdquo; can sit side by side at different prices.</p>
             </div>
             <div class="feature">
-              <h3>Check-ins &middot; per visit</h3>
+              <h3>Check-in &middot; per visit</h3>
               <p>Drop-in visits &mdash; feed, let out, top up the water &mdash; with the same per-option lengths and windows as walks.</p>
             </div>
             <div class="feature">
               <h3>Anything you call your own</h3>
-              <p>A custom service clones one of the five, so a &ldquo;Morning walk&rdquo; behaves exactly like Walks under your name and your price. New services can&rsquo;t invent behavior the calendar doesn&rsquo;t understand.</p>
+              <p>A custom service clones one of the five, so a &ldquo;Morning walk&rdquo; behaves exactly like Walk under your name and your price. New services can&rsquo;t invent behavior the calendar doesn&rsquo;t understand.</p>
             </div>
           </div>
           <div class="wf-math">
@@ -1525,8 +1525,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <span class="label">Money</span>
             <h2 id="money-h">You collect it your way &mdash; Pawservation keeps the count</h2>
             <p>
-              The arithmetic is deliberately boring: your rate, times the nights, days, or visits
-              booked. Nothing else multiplies it.
+              The arithmetic is deliberately boring: your rate, times the nights, days, walks, or
+              visits booked. Nothing else multiplies it.
             </p>
           </div>
           <div class="wf-math">

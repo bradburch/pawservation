@@ -98,7 +98,7 @@ export function estimateCost(
 /**
  * The unit a range service bills in, from its own RateUnit (the column the UI prints). Anything
  * but 'day' bills nights — the pre-change behavior of every service, and the safe fallback for
- * bad data ('visit' on a range service can only arrive that way). Shared by `estimateCost` and
+ * bad data ('visit'/'walk' on a range service can only arrive that way). Shared by `estimateCost` and
  * the quote's `billedUnits` so the price and its stated quantity read the same column.
  */
 function billingUnit(service: TenantService): 'night' | 'day' {

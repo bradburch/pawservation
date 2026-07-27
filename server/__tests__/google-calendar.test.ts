@@ -133,7 +133,7 @@ describe('google-calendar', () => {
 
   it('buildEventResource: all-day single day uses next-day exclusive end', () => {
     const r = buildEventResource({
-      serviceLabel: 'Day care',
+      serviceLabel: 'Daycare',
       category: 'day-care',
       bookingId: 'bk-single',
       startDate: '2030-01-10',
@@ -153,7 +153,7 @@ describe('google-calendar', () => {
 
   it('buildEventResource: timed booking uses dateTime + timeZone, end = start + duration', () => {
     const r = buildEventResource({
-      serviceLabel: 'Walks',
+      serviceLabel: 'Walk',
       category: 'walks',
       bookingId: 'bk-timed',
       startDate: '2030-01-10',

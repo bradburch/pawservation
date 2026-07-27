@@ -61,11 +61,13 @@ export const SERVICE_PRESETS: ServicePreset[] = [
   {
     id: 'multi-pack-walks',
     template: 'walk',
-    label: 'Multi Pack Walks',
+    // "Multiple" = the sitter runs more than one pack per day (the two windows below).
+    label: 'Multiple Pack Walks',
     summary: 'Two group walks · weekdays 10–2 and 2–5 · up to 8 pets each',
     icon: 'paw',
-    createdSlug: 'multi-pack-walks',
-    matchTypes: ['multi-pack-walks'],
+    createdSlug: 'multiple-pack-walks',
+    // Old slug kept so tenants who created the service under the previous label still match.
+    matchTypes: ['multi-pack-walks', 'multiple-pack-walks'],
     options: [
       // One price is applied to both windows (the wizard sets the same rate on each).
       {
@@ -89,11 +91,12 @@ export const SERVICE_PRESETS: ServicePreset[] = [
   {
     id: 'solo-walker',
     template: 'walk',
-    label: 'Solo Walker',
+    label: 'Solo Walks',
     summary: 'One-on-one walks · weekdays 10–4 · up to 4 pets',
     icon: 'paw',
-    createdSlug: 'solo-walker',
-    matchTypes: ['solo-walker'],
+    createdSlug: 'solo-walks',
+    // Old slug kept so tenants who created the service under the previous label still match.
+    matchTypes: ['solo-walker', 'solo-walks'],
     options: [
       {
         label: 'Solo walk',
@@ -128,21 +131,22 @@ export const SERVICE_PRESETS: ServicePreset[] = [
   {
     id: 'daycare',
     template: 'daycare',
-    label: 'Day care',
+    label: 'Daycare',
     summary: 'Daytime care at your place · priced per day',
     icon: 'sun',
-    createdSlug: 'day-care',
+    createdSlug: 'daycare',
     matchTypes: ['daycare', 'day-care'],
     options: [{ label: 'Standard', ...anyDay }],
   },
   {
     id: 'checkin',
     template: 'checkin',
-    label: 'Check-ins',
+    label: 'Check-in',
     summary: 'Quick 30-minute drop-in visits · priced per visit',
     icon: 'clipboard',
-    createdSlug: 'check-ins',
-    matchTypes: ['checkin', 'check-ins'],
+    createdSlug: 'check-in',
+    // Old slug kept so tenants who created the service under the previous label still match.
+    matchTypes: ['checkin', 'check-ins', 'check-in'],
     // checkin is a per-duration template with no stock option, so the preset supplies the same
     // 30-minute starter the Services section's "Add an option" button uses.
     options: [{ ...anyDay, label: '30 min', durationMinutes: 30 }],

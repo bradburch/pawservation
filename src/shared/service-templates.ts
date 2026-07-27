@@ -12,7 +12,7 @@
  */
 
 export type ServiceShape = 'range' | 'single';
-export type RateUnit = 'night' | 'day' | 'visit';
+export type RateUnit = 'night' | 'day' | 'visit' | 'walk';
 /** 'boarding' and 'housesit' both count PETS against the service's own MaxConcurrentPets;
  * 'none' = unlimited (blocked days only). Capacity rules, not service names. */
 export type CapacityKind = 'boarding' | 'housesit' | 'none';
@@ -45,7 +45,7 @@ export const SERVICE_TEMPLATES = {
     capacityKind: 'housesit',
   },
   daycare: {
-    label: 'Day care',
+    label: 'Daycare',
     icon: 'sun',
     shape: 'single',
     rateUnit: 'day',
@@ -53,15 +53,15 @@ export const SERVICE_TEMPLATES = {
     capacityKind: 'none',
   },
   walk: {
-    label: 'Walks',
+    label: 'Walk',
     icon: 'paw',
     shape: 'single',
-    rateUnit: 'visit',
+    rateUnit: 'walk',
     hasDuration: true,
     capacityKind: 'none',
   },
   checkin: {
-    label: 'Check-ins',
+    label: 'Check-in',
     icon: 'clipboard',
     shape: 'single',
     rateUnit: 'visit',

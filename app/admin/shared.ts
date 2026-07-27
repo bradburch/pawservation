@@ -40,6 +40,8 @@ export type Settings = {
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  /** The authenticated admin's own login email — wizard prefill for a missing contactEmail. */
+  adminEmail: string | null;
   petTypes: { petType: string; label: string }[];
   services: ServiceForm[];
   templates: ServiceTemplate[];

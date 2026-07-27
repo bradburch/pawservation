@@ -17,6 +17,19 @@ describe('service templates', () => {
     expect(SERVICE_TEMPLATES.boarding.hasDuration).toBe(false);
   });
 
+  it('prices walks per WALK and check-ins per visit', () => {
+    // The unit is printed verbatim wherever a rate is shown, so 'walk' is a stored value, not a
+    // display-time substitution on 'visit' (see migration 0024 + the schema CHECKs).
+    expect(SERVICE_TEMPLATES.walk.rateUnit).toBe('walk');
+    expect(SERVICE_TEMPLATES.checkin.rateUnit).toBe('visit');
+  });
+
+  it('names services in the singular the sitter reads in Services & rates', () => {
+    expect(SERVICE_TEMPLATES.daycare.label).toBe('Daycare');
+    expect(SERVICE_TEMPLATES.walk.label).toBe('Walk');
+    expect(SERVICE_TEMPLATES.checkin.label).toBe('Check-in');
+  });
+
   it('pins each template to a capacity pool', () => {
     expect(SERVICE_TEMPLATES.boarding.capacityKind).toBe('boarding');
     expect(SERVICE_TEMPLATES.housesitting.capacityKind).toBe('housesit');

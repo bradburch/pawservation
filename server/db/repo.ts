@@ -68,6 +68,20 @@ export async function getTenantUserByEmail(
     .first<TenantUser>();
 }
 
+/** The authenticated admin's own login email, tenant-scoped like every read here — used by the
+ * settings GET so the setup wizard can prefill a missing contact email. */
+export async function getTenantUserEmailById(
+  db: D1Database,
+  tenantId: string,
+  userId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT Email FROM TenantUsers WHERE TenantId = ? AND Id = ?')
+    .bind(tenantId, userId)
+    .first<{ Email: string }>();
+  return row?.Email ?? null;
+}
+
 /** Returns whether a row actually changed — false means the email has no sitter login. */
 export async function updateTenantUserPasswordHash(
   db: D1Database,
@@ -952,7 +966,7 @@ export async function replaceServiceOptions(
     label: string;
     durationMinutes: number | null;
     rate: number;
-    rateUnit: 'night' | 'day' | 'visit';
+    rateUnit: RateUnit;
     startTime: string | null;
     endTime: string | null;
     capacity: number | null;
@@ -2166,6 +2180,14 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
  * nonce race dies on TenantUsers.Email UNIQUE, aborting the WHOLE batch — no orphan tenant.
  * The new tenant carries only Id/Slug/DisplayName: every limit stays NULL (unlimited /
  * instance-default) and NO services are seeded — the onboarding wizard owns that.
+ *
+ * `ContactEmail` is deliberately left NULL, and the signup email must NOT be copied into it:
+ * ContactEmail is PUBLIC (unauthenticated `/config` → the widget renders it as a live `mailto:`,
+ * and `lib/llms.ts` emits it as JSON-LD `email` for crawlers), while the signup address is a
+ * LOGIN credential that may well be personal. Publishing it silently, before the sitter has seen
+ * a single prompt, is a privacy leak. The wizard instead PREFILLS the field from the admin's own
+ * email (`adminEmail` on GET /admin/settings) so the sitter sees the value in a labelled input
+ * and affirmatively continues — consent at the point of publication, not at signup.
  *
  * The claim UPDATE's `WHERE ... AND ClaimedAt IS NULL` guard can match ZERO rows (invite
  * revoked, or its row deleted, between the caller's checks and this batch) without D1

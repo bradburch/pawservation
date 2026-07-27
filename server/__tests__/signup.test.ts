@@ -227,6 +227,33 @@ describe('POST /api/signup/complete — sitter', () => {
     expect(((await login.json()) as { slug: string }).slug).toBe(body.slug);
   });
 
+  it('never publishes the signup email — it is a login credential, not a public contact', async () => {
+    const { env } = createTestEnv();
+    const t = await getSetupToken(env, ALLOWED_EMAIL);
+    const res = await complete(env, { token: t, password: 'hunter22', businessName: 'Rex Walks' });
+    const { slug, token } = (await res.json()) as { slug: string; token: string };
+
+    // Tenants.ContactEmail is PUBLIC: the unauthenticated /config feeds the widget's live mailto:
+    // link, and /embed/:slug emits it as JSON-LD `email` for crawlers. Copying the signup address
+    // into it at provisioning time would publish a possibly-personal address to clients and
+    // crawlers before the sitter had seen a single prompt.
+    const config = await app.request(`/api/${slug}/config`, {}, env);
+    expect(((await config.json()) as { contactEmail: string | null }).contactEmail).toBeNull();
+    const embed = await app.request(`/embed/${slug}`, {}, env);
+    expect(await embed.text()).not.toContain(ALLOWED_EMAIL);
+
+    // Consent instead of silence: the wizard prefills the field from the AUTHENTICATED admin's own
+    // email, so the sitter sees the address in a labelled input and presses Next to publish it.
+    const settings = await app.request(
+      `/api/${slug}/admin/settings`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    const loaded = (await settings.json()) as { contactEmail: string | null; adminEmail: string };
+    expect(loaded.contactEmail).toBeNull();
+    expect(loaded.adminEmail).toBe(ALLOWED_EMAIL);
+  });
+
   it('uniquifies a taken slug with -2', async () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);

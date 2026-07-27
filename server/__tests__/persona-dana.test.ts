@@ -137,7 +137,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
       expect(init.method).toBe('POST'); // a create, not a PATCH (there was no prior event)
       expect(String(url)).toContain('/calendars/primary/events');
       const body = bearerBody(init) as { summary: string };
-      expect(body.summary).toBe('Walks — 1 pet'); // confirmed, so no [REQUEST] prefix
+      expect(body.summary).toBe('Walk — 1 pet'); // confirmed, so no [REQUEST] prefix
     });
   });
 
@@ -161,7 +161,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         bookingId: 'w1',
         endUserId: null,
         serviceType: 'walk',
-        serviceLabel: 'Walks',
+        serviceLabel: 'Walk',
         startDate: '2028-11-06',
         endDate: null,
         startTime: '08:00',
@@ -212,7 +212,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         bookingId: 'w2',
         endUserId: null,
         serviceType: 'walk',
-        serviceLabel: 'Walks',
+        serviceLabel: 'Walk',
         startDate: '2028-11-06',
         endDate: null,
         startTime: '08:00',
@@ -282,7 +282,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         bookingId: 'b_day1',
         endUserId: null,
         serviceType: 'daycare',
-        serviceLabel: 'Day care',
+        serviceLabel: 'Daycare',
         startDate: '2028-11-20',
         endDate: null,
         startTime: null,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { mintToken } from '../lib/token';
+import { mintAdminToken, mintToken } from '../lib/token';
 import {
   adminHeaders,
   adminToken,
@@ -149,7 +149,7 @@ describe('tenant admin', () => {
     );
     expect(res.status).toBe(400);
     const { error } = (await res.json()) as { error: string };
-    expect(error).toContain('Walks'); // the service…
+    expect(error).toContain('Walk'); // the service (singular since the rename)…
     expect(error).toContain('Puppy Check-in'); // …and the specific option
     // Same atomicity as the rate: 0 case above — nothing in the request persists.
     const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
@@ -1243,5 +1243,37 @@ describe('settings — capacity in pets (MaxPerDay retired)', () => {
     expect(((await res.json()) as { error: string }).error).toBe(
       "House sitting: that capacity doesn't apply to this service.",
     );
+  });
+});
+
+describe('GET /admin/settings exposes the signed-in sitter’s own login email', () => {
+  // The setup wizard prefills a NULL contactEmail with it — tenants provisioned before signup
+  // started stamping Tenants.ContactEmail have no contact address at all, and asking the sitter
+  // to retype the address they just signed up with is the bug this closes.
+  it('returns adminEmail for the authenticated TenantUsers row', async () => {
+    const { env } = createTestEnv();
+    const token = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { adminEmail: string | null }).adminEmail).toBe(
+      'admin@sunnypaws.example',
+    );
+  });
+
+  it('is null — never another tenant’s sitter — when the user id is not this tenant’s', async () => {
+    const { env } = createTestEnv();
+    // 'tu_dana' belongs to TENANT_B; the read is scoped by TenantId, so it must not resolve here.
+    const token = await mintAdminToken('tu_dana', TENANT_A, TEST_SECRET);
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { adminEmail: string | null }).adminEmail).toBeNull();
   });
 });

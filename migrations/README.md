@@ -4,7 +4,7 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0023_booking_idempotency.sql` (keep this line in step with the highest-numbered migration
+`0024_walk_rate_unit.sql` (keep this line in step with the highest-numbered migration
 mirrored into `schema.sql`). Use:
 
 ```
@@ -27,12 +27,16 @@ is made to adopt tracked migrations.
 
 Current state:
 
-- **Local dev DB**: `sql/schema.sql` already carries everything through `0023_booking_idempotency.sql`,
-  so a **freshly reseeded** local DB (`npm run seed:local`) needs no migrations applied. A local
-  DB seeded before today predates `0020`–`0023` and is on the incremental-apply path below like
-  any other already-provisioned DB — either re-seed it, or apply `0020`–`0023` locally with the
-  `--local` commands in the `0020`/`0021` and `0022`/`0023` sections.
-- **Remote DB**: fully migrated through `0023` as of this writing — `0001`–`0015` were applied
+- **Local dev DB**: `sql/schema.sql` already carries everything through `0024_walk_rate_unit.sql`,
+  so a local DB built **from scratch** (`npm run seed:local` against no existing DB) needs no
+  migrations applied. A local DB seeded before today predates `0020`–`0024` and is on the
+  incremental-apply path below like any other already-provisioned DB — apply `0020`–`0024` with the
+  `--local` commands in the `0020`/`0021`, `0022`/`0023`, and `0024` sections. **`seed:local` alone
+  will NOT repair it**: `schema.sql` is `CREATE … IF NOT EXISTS`, so the old narrow `RateUnit` CHECK
+  survives and `seed.sql`'s `'walk'` rows then fail — see the `seed:local` note in the `0024`
+  section for the two ways out.
+- **Remote DB**: fully migrated through `0023` as of this writing (**`0024` is NOT yet applied
+  — see its section below; it must be applied before this branch merges**) — `0001`–`0015` were applied
   by hand 2026-07-20 (verified via read-only schema probes), `0016`–`0019` have since been
   applied by hand as each shipped, most recently `0019` on 2026-07-25, and `0020`–`0023` (below)
   were applied by hand on 2026-07-26 (verified via read-only `sqlite_master` probes matching
@@ -45,11 +49,16 @@ added by every migration through `0019` — e.g. `AcceptedPetTypes`, `MaxConcurr
 `MaxPerDay`, and `Label` (added by `0014`/`0015`), and `PetOwners`/`EndUserPets.DeceasedAt`
 (added by `0019`, see below) — and **500s on every request** if any of those are missing.
 `0007`–`0023` are now fully applied to remote (`0020`–`0023` as of 2026-07-26, see those sections
-below); a local DB still needs `0020`–`0023` unless it's a fresh `npm run seed:local` reseed —
-see the Local dev DB bullet above. Apply each migration before (or with) the deploy that needs
-it, never after. Backward-compatible additive migrations (like `0012`–`0018`, and `0020`–`0023`)
-are safe to apply ahead of a deploy, since the currently-running worker just ignores the new
-columns/tables until the new code ships.
+below); `0024` is not — apply it before merging its branch, and **before `0025`** (its section
+explains why that order is not optional). A local DB still needs `0020`–`0024` unless it was built
+from scratch — a `seed:local` over an EXISTING local DB does not repair it, see the Local dev DB
+bullet above. Apply each migration before (or
+with) the deploy that needs it, never after. Backward-compatible additive migrations (like
+`0012`–`0018`, and `0020`–`0023`) are safe to apply ahead of a deploy, since the currently-running
+worker just ignores the new columns/tables until the new code ships. `0024` is also safe ahead of a
+deploy for the opposite reason — it only _widens_ a CHECK and renames a unit the old worker merely
+prints — but it is **not** safe to run twice, and deploying `0024`'s code without the migration 500s
+new-sitter onboarding. Both are covered in its section.
 
 `0007`–`0015` were applied, in order, with:
 
@@ -203,4 +212,87 @@ npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingReques
 npx wrangler d1 execute pawbook-db --local  --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
 npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
 npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+```
+
+### 0024_walk_rate_unit.sql — NOT yet applied to remote
+
+Adds `'walk'` to the `RateUnit` CHECK on **both** `TenantServices` and `TenantServiceOptions`, then
+moves existing walk services onto it. Walks are priced per **walk**, not per visit; check-ins keep
+`'visit'`. The billing noun is printed straight from `TenantServices.RateUnit`, so a new noun has to
+be a real allowed value rather than a display-time substitution.
+
+SQLite cannot `ALTER` a CHECK constraint, so this **rebuilds both tables** (precedent:
+`0006_custom_services.sql`) — `CREATE … _new`, copy every column, `DROP`, `RENAME`. Neither table
+has any explicit index (their `UNIQUE` constraints travel with the table definition), so nothing
+needs recreating; FKs are handled with `PRAGMA defer_foreign_keys` exactly as `0006` does, since D1
+runs the file in a transaction where `PRAGMA foreign_keys` is a no-op.
+
+#### ⚠️ RUN ONCE ONLY — never re-run `0024` after `0025` has been applied
+
+`0024` rebuilds `TenantServices` from an **explicit column list frozen at the `0023` shape**.
+`0025_service_description.sql` adds `TenantServices.Description`, which is not in that list — so
+re-running `0024` on a database that already has `0025` **silently drops `Description` and all its
+data, and reports success.** There is no error to notice.
+
+That is not a cosmetic loss: `repo.listServices()` `SELECT`s `Description` unconditionally and is
+called from 13 non-test sites including both the create and the list path in
+`server/routes/bookings.ts`, so a missing column is a **total per-tenant outage** — no bookings can
+be made or read until it is restored.
+
+`server/__tests__/migration-0024.test.ts` asserts `0024` is re-runnable, but it does so against the
+pre-`0025` schema (its `OLD_DDL` has no `Description`, correctly for its own era). It therefore
+**cannot** catch this, and is not permission to re-run the file.
+
+#### Apply order across the two in-flight migrations: `0024` **before** `0025`
+
+Both `0024` (this PR) and `0025` (the service-Description PR) are unapplied and each says "apply
+before merging". They are not interchangeable — `0024` must go first, because `0024`'s rebuild
+would eat `Description` if that column already existed. The verified-safe sequence:
+
+1. Apply `0024` to remote.
+2. Merge the walk-rate-unit PR (**merging to `main` IS the deploy** — see below).
+3. Rebase the `0025` PR on the new `main`.
+4. Apply `0025` to remote.
+5. Merge the `0025` PR.
+
+**Apply it against a DB already at `0023`, and not yet at `0025`** — the column lists in the file
+are `sql/schema.sql`'s exact post-`0023` shape.
+
+#### `0024` must be on remote BEFORE the merge, or new-sitter onboarding 500s
+
+Merging to `main` runs `npx wrangler deploy` unconditionally, so the merge _is_ the deploy and the
+migration cannot be timed separately afterwards. The new worker creates services with
+`rateUnit: tpl.rateUnit` (`server/routes/admin.ts` → `repo.createService`), and the walk template is
+now `'walk'` — which **violates the pre-`0024` CHECK**. The `catch` around that insert only
+recognises `UNIQUE constraint failed`, so a CHECK violation rethrows as a **500** on every attempt
+to add a walk service. Applying `0024` first is safe in the other direction: the currently-running
+worker only ever prints whatever string the column holds, and the CHECK is merely widened.
+
+The data step matches walk services by name (`RateUnit='visit' AND (ServiceType LIKE '%walk%' OR
+Label LIKE '%walk%')`) because no column records which template a row came from. Marked with a
+`-- ponytail:` comment in the file, wrong in both directions and accepted in both: a check-in
+service named "Walk & feed" is swept in and prints `/walk`, and a real walk named "Morning stroll"
+keeps `/visit` forever (so one tenant can show `$22/visit` beside `$22/walk` on rows that behave
+identically). It changes a noun, never a price, a quantity, a capacity, or a booking.
+
+```
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0024_walk_rate_unit.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0024_walk_rate_unit.sql
+```
+
+Verify afterwards (both CHECKs widened, walk rows moved):
+
+```
+npx wrangler d1 execute pawbook-db --remote --command "SELECT ServiceType, Label, RateUnit FROM TenantServices ORDER BY TenantId, SortOrder;"
+```
+
+#### `npm run seed:local` fails on a local DB that predates `0024`
+
+`sql/schema.sql` is `CREATE TABLE IF NOT EXISTS`, so re-seeding an existing local DB **keeps the old
+narrow-CHECK tables** — and then `sql/seed.sql`'s `RateUnit='walk'` rows fail with `CHECK constraint
+failed: TenantServices`. Either apply `0024` to the local DB first (the `--local` command above), or
+throw the local DB away and let `seed:local` build it from scratch:
+
+```
+rm -rf .wrangler/state/v3/d1 && npm run seed:local
 ```

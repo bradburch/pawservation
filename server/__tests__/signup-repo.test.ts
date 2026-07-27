@@ -99,6 +99,12 @@ describe('createTenantFromSignup (atomic batch)', () => {
     expect(tenant?.DisplayName).toBe('X Biz');
     // New-tenant timezone defaults to NULL (unlimited / instance-default).
     expect(tenant?.Timezone).toBeNull();
+    // ContactEmail stays NULL — and must. It is PUBLIC (unauthenticated /config, the widget's
+    // mailto: link, JSON-LD `email` for crawlers), whereas the signup address is a login
+    // credential that may be personal. Copying it here would publish it to clients and crawlers
+    // before the sitter ever saw a prompt. The wizard prefills the field from `adminEmail`
+    // instead, so publication needs the sitter to look at it and press Next.
+    expect(tenant?.ContactEmail).toBeNull();
     const user = await getTenantUserByEmail(env.PAWBOOK_DB, 'new@x.test');
     expect(user?.TenantId).toBe('tnt_x');
     const claim = await getAllowedSitter(env.PAWBOOK_DB, 'new@x.test');

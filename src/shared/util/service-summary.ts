@@ -66,7 +66,9 @@ export function serviceSummary(s: ServiceSummaryInput): ServiceSummary {
   const capped = s.options.find((o) => o.capacity !== null);
   if (capped) facts.push(`up to ${capped.capacity}`);
   if (n > 1 && !countInPrice) {
-    facts.push(`${n} ${s.rateUnit === 'visit' ? 'visit lengths' : 'options'}`);
+    // Per-duration units get "<unit> lengths" ("3 walk lengths"); everything else "options".
+    const lengths = s.rateUnit === 'visit' || s.rateUnit === 'walk';
+    facts.push(`${n} ${lengths ? `${s.rateUnit} lengths` : 'options'}`);
   }
   if (s.minNights !== null && s.maxNights !== null) {
     facts.push(`${s.minNights}–${s.maxNights} nights`);

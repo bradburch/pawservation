@@ -84,7 +84,7 @@ describe('getAnalytics (repo)', () => {
     expect(byService).toEqual([
       { ServiceType: 'boarding', Label: 'Boarding', Total: 200 },
       { ServiceType: 'retired-svc', Label: 'retired-svc', Total: 80 },
-      { ServiceType: 'walk', Label: 'Walks', Total: 35 },
+      { ServiceType: 'walk', Label: 'Walk', Total: 35 },
     ]);
   });
 

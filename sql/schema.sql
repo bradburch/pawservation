@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   Label TEXT NOT NULL,
   Icon TEXT NOT NULL DEFAULT 'paw', -- widget icon key: bed|home|sun|paw|clipboard
   Shape TEXT NOT NULL CHECK (Shape IN ('range', 'single')),
-  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
+  -- 'walk' added by 0024: walks are priced per WALK, not per visit. The unit is printed straight
+  -- from this column, so a new noun needs a new allowed value, not a display-time substitution.
+  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit', 'walk')),
   HasDuration INTEGER NOT NULL DEFAULT 0, -- options priced per duration (walk/check-in style)?
   -- Which capacity RULE the service uses (not the service's name): 'boarding' and 'housesit' both
   -- count PETS against their own MaxConcurrentPets; 'none' = unlimited (blocked days only).
@@ -93,7 +95,7 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   -- copy is read by nothing and is not even SELECTed into the app's types. NOT NULL with no
   -- DEFAULT, so writes must still supply it. No drop scheduled — that needs expand/contract across
   -- two hand-applied production migrations to remove a column that causes no defect.
-  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit')),
+  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit', 'walk')),
   -- A fixed clock window (both set together, or both NULL). Windowed options derive
   -- DurationMinutes from this window server-side (see server/routes/admin.ts); Capacity caps
   -- concurrent bookings against this option on one date. NULL = unlimited, matching the

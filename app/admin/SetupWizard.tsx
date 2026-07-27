@@ -30,8 +30,8 @@ type PresetState = {
 
 /** One preset option's editable fields — time window, capacity, weekdays-only — mirroring the
  * Services & rates option-row idioms (the weekdays checkbox only exists while windowed, exactly
- * as there). Rendered only for per-visit presets: the server rejects time windows on
- * non-duration services ("only per-visit services can have a time window"), and capacity for
+ * as there). Rendered only for per-walk/per-visit presets: the server rejects time windows on
+ * non-duration services ("only services with timed options can have a time window"), and capacity for
  * boarding/house-sitting capacity is a per-service setting (Services & rates), not per-option. */
 function PresetOptionFields({
   option,
@@ -95,7 +95,20 @@ export function SetupWizard({
   onApplied: () => Promise<void>;
 }) {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-  const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => makeProfileDraft(settings));
+  // The DRAFT prefills a missing contact email with the admin's own login email (the address the
+  // sitter signed up with) — profileInitial below keeps the RAW settings value, so the prefill
+  // still diffs in profilePutBody and actually gets saved on Next. The sitter SEES it in the
+  // labelled field first: this is a suggestion to confirm, never a silent publish (ContactEmail
+  // is public — see createTenantFromSignup, which deliberately leaves it NULL).
+  //
+  // Gated on "no service is enabled yet" — the same un-onboarded signal App.tsx uses to
+  // auto-open this wizard. Without the gate, a sitter who deliberately CLEARED their contact
+  // email would get their login address written back every time they reopened Quick setup.
+  const neverOnboarded = settings.services.every((s) => !s.enabled);
+  const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => ({
+    ...makeProfileDraft(settings),
+    contactEmail: settings.contactEmail ?? (neverOnboarded ? (settings.adminEmail ?? '') : ''),
+  }));
   // Snapshot the profile PUT diffs against; advanced to the saved draft after each successful
   // save so Back-then-Next doesn't resend fields (resending is harmless, just noisy).
   const [profileInitial, setProfileInitial] = useState<ProfileDraft>(() =>
@@ -406,7 +419,7 @@ export function SetupWizard({
                   </label>
                 )}
                 {!ps.alreadyPriced &&
-                  SERVICE_TEMPLATES[ps.preset.template].rateUnit === 'visit' && (
+                  ['visit', 'walk'].includes(SERVICE_TEMPLATES[ps.preset.template].rateUnit) && (
                     <details className="pb-wizard-custom">
                       <summary>Customize</summary>
                       {presetOptions(ps.preset).map((o, oi) => (
