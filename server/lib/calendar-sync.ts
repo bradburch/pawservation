@@ -7,8 +7,8 @@ import {
   listSyncedBookingIds,
   listUnsyncedFutureBookings,
   setBookingGCalEventId,
+  setProviderAccessToken,
   setProviderCalendarId,
-  setProviderTokens,
   updateBookingStatus,
 } from '../db/repo';
 import {
@@ -65,7 +65,10 @@ async function resourceForBooking(env: Env, tenant: Tenant, b: SyncInput) {
 
 /**
  * Decrypt the stored access token for a provider connection, refreshing it (and persisting the new
- * tokens) if the current token is missing or expired. Returns the plaintext access token.
+ * access token) if the current one is missing or expired. Returns the plaintext access token.
+ *
+ * Only AccessToken/TokenExpiresAt are written — a refresh must not touch the connection's target
+ * calendar (see setProviderAccessToken).
  */
 export async function getCalendarAccessToken(
   env: Env,
@@ -75,11 +78,9 @@ export async function getCalendarAccessToken(
   if (!conn.TokenExpiresAt || conn.TokenExpiresAt <= new Date().toISOString()) {
     const refreshToken = await decryptToken(env.TOKEN_SECRET, conn.RefreshToken!);
     const refreshed = await refreshAccessToken(env, refreshToken);
-    await setProviderTokens(env.PAWBOOK_DB, tenant.Id, 'calendar', conn.Provider, {
+    await setProviderAccessToken(env.PAWBOOK_DB, tenant.Id, 'calendar', {
       access: await encryptToken(env.TOKEN_SECRET, refreshed.accessToken),
-      refresh: conn.RefreshToken!,
       expiresAt: refreshed.expiresAt,
-      calendarId: conn.CalendarId ?? 'primary',
     });
     return refreshed.accessToken;
   }

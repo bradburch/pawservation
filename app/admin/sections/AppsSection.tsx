@@ -4,9 +4,73 @@ import { IconPlug } from '../../shared-ui/icons';
 import type { Settings } from '../shared.js';
 import { Hint } from '../Hint';
 
+/** Must match PET_CALENDAR_SUMMARY in server/lib/google-calendar.ts (copy only — the server names
+ *  the calendar it creates; this is just what we promise before the round-trip). */
+const PET_CALENDAR_NAME = 'Pawservation — Pet bookings';
+
 /**
- * Small inline field for setting the pet-sitting calendar id on a connected Google Calendar.
- * Keyed on the capability so local state resets if the provider changes.
+ * The default way to get a pet-only calendar: Pawservation creates a secondary calendar inside the
+ * sitter's own Google account and points booking sync at it. Once a non-primary calendar is the
+ * target there is nothing to create, so this renders the current target instead of a button that
+ * the server would only reject (it 409s to avoid making a second calendar).
+ */
+function PetCalendarAction({
+  slug,
+  token,
+  calendarId,
+  onCreated,
+  onError,
+}: {
+  slug: string;
+  token: string;
+  calendarId: string | null | undefined;
+  onCreated: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<string | null>(null);
+
+  if (calendarId && calendarId !== 'primary') {
+    return (
+      <p className="pb-hint">
+        {created ? `Created “${created}”. ` : ''}Bookings sync to a separate calendar:{' '}
+        <code className="pb-truncate">{calendarId}</code>. Clear the calendar ID below to go back to
+        your main calendar.
+      </p>
+    );
+  }
+
+  const create = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { summary } = await adminApi.calendar.createPetCalendar(slug, token);
+      setCreated(summary);
+      onCreated();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={() => void create()} disabled={busy}>
+        {busy ? 'Creating…' : 'Create a pet calendar'}
+      </button>
+      <small className="pb-hint">
+        Pawservation makes a separate “{PET_CALENDAR_NAME}” calendar in your Google account, so pet
+        work stays out of your personal calendar.
+      </small>
+    </div>
+  );
+}
+
+/**
+ * Escape hatch for a sitter who already made her own pet-sitting calendar: paste its id instead of
+ * letting Pawservation create one. Keyed on the capability so local state resets if the provider
+ * changes.
  */
 function CalendarIdField({
   slug,
@@ -40,7 +104,7 @@ function CalendarIdField({
   return (
     <div className="pb-inline">
       <label>
-        Pet-sitting calendar ID <span className="pb-hint">(blank = primary)</span>
+        Or use a calendar you already made <span className="pb-hint">(blank = primary)</span>
         <input
           type="text"
           placeholder="primary"
@@ -48,10 +112,12 @@ function CalendarIdField({
           onChange={(e) => setValue(e.target.value)}
         />
         <small className="pb-hint">
-          Connect Google Calendar above, then paste the calendar you use for pet-sitting — bookings
-          sync there and your busy days block automatically. Find the ID in Google Calendar →
-          Settings → your calendar → &quot;Integrate calendar&quot; → Calendar ID (like{' '}
-          <code>abc123@group.calendar.google.com</code>). Leave blank to use your main calendar.
+          Paste the calendar you use for pet-sitting and bookings are written there instead. Find
+          the ID in Google Calendar → Settings → your calendar → &quot;Integrate calendar&quot; →
+          Calendar ID (like <code>abc123@group.calendar.google.com</code>). Leave blank to use your
+          main calendar. Bookings flow out to Google, not in: an event you add in Google does
+          <em>not</em> block your Pawservation availability — use Blocked dates for that. (Deleting
+          a synced booking&apos;s event in Google does cancel that booking.)
         </small>
       </label>
       <button onClick={() => void save()} disabled={busy}>
@@ -97,6 +163,13 @@ export function AppsSection({
           {connected ? (
             <>
               <button onClick={() => void disconnectCalendar()}>Disconnect</button>
+              <PetCalendarAction
+                slug={slug}
+                token={token}
+                calendarId={calendar.calendarId}
+                onCreated={onCalendarSaved}
+                onError={handleError}
+              />
               <CalendarIdField
                 slug={slug}
                 token={token}

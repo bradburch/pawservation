@@ -444,8 +444,9 @@ export function SetupWizard({
             ) : (
               <>
                 <p>
-                  Connect Google Calendar so new bookings land on the calendar you already use, and
-                  your busy days block off automatically.
+                  Connect Google Calendar so new bookings land on the calendar you already use — or,
+                  from Connected apps afterwards, on a separate pet calendar Pawservation makes for
+                  you.
                 </p>
                 <button
                   type="button"
