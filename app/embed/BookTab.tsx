@@ -135,7 +135,9 @@ export function BookTab({
       };
       const res = await api.createBooking(slug, token, body);
       setConfirmation(
-        `Request sent! Estimated cost $${res.estCost}. Track it under "My bookings".`,
+        res.demo
+          ? `Looks good! Estimated cost $${res.estCost}. ${res.note ?? 'This was a demo — no booking was created.'}`
+          : `Request sent! Estimated cost $${res.estCost}. Track it under "My bookings".`,
       );
       setStart('');
       setEnd('');
@@ -145,8 +147,11 @@ export function BookTab({
       setCalReloadKey((k) => k + 1);
       // Both families, for HTTP-cached pre-rebrand loaders (see the resize note in App.tsx):
       // the current loader handles `pawservation:booked`, legacy loaders handle `pawbook:booked`.
-      for (const type of ['pawservation:booked', 'pawbook:booked']) {
-        window.parent.postMessage({ type, requestId: res.id }, parentOrigin);
+      // Demo requests skip the notification — nothing was created for a host page to react to.
+      if (!res.demo) {
+        for (const type of ['pawservation:booked', 'pawbook:booked']) {
+          window.parent.postMessage({ type, requestId: res.id }, parentOrigin);
+        }
       }
     } catch (e) {
       if (isAuthExpired(e)) {

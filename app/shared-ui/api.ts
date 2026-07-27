@@ -200,10 +200,14 @@ export const api = {
 
   // `prototypeCode` is only present in dev (no email provider configured); in prod the code is
   // emailed and the response carries only `codeId`.
-  identify: (slug: string, email: string) =>
+  // `hostOrigin` (the embedding page's origin, from document.referrer) is forwarded as
+  // X-Pawservation-Host so the server can gate the reserved demo login to pawservation.com's
+  // own pages — the fetch itself is same-origin from the iframe, so its Origin header is the
+  // worker's origin on EVERY embedding site and can't distinguish them.
+  identify: (slug: string, email: string, hostOrigin?: string) =>
     request<{ codeId: string; prototypeCode?: string }>(`/api/${slug}/identify`, {
       method: 'POST',
-      headers: jsonHeaders,
+      headers: hostOrigin ? { ...jsonHeaders, 'X-Pawservation-Host': hostOrigin } : jsonHeaders,
       body: JSON.stringify({ email }),
     }),
 
@@ -226,11 +230,14 @@ export const api = {
       answers: Record<string, string>;
     },
   ) =>
-    request<{ id: string; estCost: number; status: string }>(`/api/${slug}/bookings`, {
-      method: 'POST',
-      headers: { ...jsonHeaders, ...authHeaders(token) },
-      body: JSON.stringify(body),
-    }),
+    request<{ id: string; estCost: number; status: string; demo?: boolean; note?: string }>(
+      `/api/${slug}/bookings`,
+      {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify(body),
+      },
+    ),
 
   me: (slug: string, token: string) =>
     request<{ name: string | null; pets: Pet[] }>(`/api/${slug}/me`, {
