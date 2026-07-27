@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
   addEndUserPet,
@@ -51,13 +52,22 @@ import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import { serializeAnalytics } from '../lib/analytics';
 import {
+  backfillCalendarEvents,
   deleteBookingCalendarEvent,
+  getCalendarAccessToken,
   reconcileIfStale,
+  repointCalendarTarget,
   syncBookingToCalendar,
   updateBookingCalendarEvent,
 } from '../lib/calendar-sync';
 import type { SyncInput } from '../lib/calendar-sync';
-import { buildAuthUrl, revokeToken } from '../lib/google-calendar';
+import {
+  buildAuthUrl,
+  CalendarAuthError,
+  createCalendar,
+  PET_CALENDAR_SUMMARY,
+  revokeToken,
+} from '../lib/google-calendar';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
@@ -85,7 +95,7 @@ import {
   isValidTimeString,
   minutesBetweenTimes,
 } from '../lib/validation';
-import type { AppEnv } from '../types';
+import type { AppEnv, Tenant } from '../types';
 import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
 import {
   cancellationFee,
@@ -95,6 +105,22 @@ import {
 } from '../../src/shared/index.js';
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Re-create future bookings' events in the currently-targeted calendar. Best-effort and never blocks
+ * the response (waitUntil in production; awaited in tests, which have no ExecutionContext — same
+ * dance as routes/bookings.ts and the OAuth callback).
+ */
+async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise<void> {
+  const task = backfillCalendarEvents(c.env, tenant).catch((err) => {
+    console.error('calendar backfill failed', err);
+  });
+  try {
+    c.executionCtx.waitUntil(task);
+  } catch {
+    await task;
+  }
+}
 
 /**
  * Each pet-bearing row triggers several sequential D1 calls; an unbounded import can exceed
@@ -797,13 +823,81 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ status: 'disconnected' });
   })
 
+  /**
+   * Create a dedicated "Pawservation — Pet bookings" calendar inside the sitter's own Google account
+   * and make it the sync target, so pet work never lands in her personal calendar. Guards, in order:
+   * disabled tenant (read-only), unconfigured server, no live connection, and — so a second press
+   * can't litter the account with duplicate calendars — a connection that already points somewhere
+   * other than `primary`.
+   */
+  .post('/:slug/admin/providers/calendar/create-calendar', async (c) => {
+    const tenant = c.get('tenant');
+    if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
+    // A token refresh mid-call needs the client credentials, so the same 503 as oauth/start applies.
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
+      return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
+
+    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
+      return c.json({ error: 'Connect Google Calendar first, then create the pet calendar.' }, 409);
+    if (conn.CalendarId && conn.CalendarId !== 'primary')
+      return c.json(
+        {
+          error: `Bookings already sync to the calendar "${conn.CalendarId}". Clear the calendar ID field first if you want a new pet calendar.`,
+          calendarId: conn.CalendarId,
+        },
+        409,
+      );
+
+    let calendarId: string;
+    try {
+      const accessToken = await getCalendarAccessToken(c.env, tenant, conn);
+      const created = await createCalendar(
+        accessToken,
+        PET_CALENDAR_SUMMARY,
+        tenant.Timezone ?? DEFAULT_TIMEZONE,
+      );
+      calendarId = created.id;
+    } catch (err) {
+      // A connection authorized before calendar.app.created was requested cannot create calendars.
+      // Say so, instead of letting an insufficient-scope refusal surface as a bare 500.
+      if (err instanceof CalendarAuthError)
+        return c.json(
+          {
+            error:
+              'Google has not given Pawservation permission to create a calendar. Disconnect Google Calendar, connect it again to approve the new permission, then try again.',
+          },
+          400,
+        );
+      throw err;
+    }
+
+    // Repoint before responding (clears the old calendar's event ids — see repointCalendarTarget),
+    // then re-create future bookings in the new calendar in the background.
+    await repointCalendarTarget(c.env, tenant, calendarId);
+    await backfillInBackground(c, tenant);
+    return c.json({ calendarId, summary: PET_CALENDAR_SUMMARY });
+  })
+
   .post('/:slug/admin/providers/calendar/calendar-id', async (c) => {
     const tenant = c.get('tenant');
     const body = await c.req
       .json<{ calendarId?: unknown }>()
       .catch(() => ({}) as { calendarId?: unknown });
     const raw = typeof body.calendarId === 'string' ? body.calendarId.trim() : '';
-    await setProviderCalendarId(c.env.PAWBOOK_DB, tenant.Id, 'calendar', raw === '' ? null : raw);
+    const next = raw === '' ? null : raw;
+    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    // NULL and the literal 'primary' name the same calendar, so compare through that default: a
+    // save that doesn't actually move the target must not churn every booking's event.
+    if ((conn?.CalendarId ?? 'primary') === (next ?? 'primary')) {
+      await setProviderCalendarId(c.env.PAWBOOK_DB, tenant.Id, 'calendar', next);
+      return c.body(null, 204);
+    }
+    // Real switch: clear the stored event ids with the new target (repointCalendarTarget — without
+    // this, reconciliation would cancel every booking whose event lives in the old calendar), then
+    // re-create future bookings in the new calendar.
+    await repointCalendarTarget(c.env, tenant, next);
+    await backfillInBackground(c, tenant);
     return c.body(null, 204);
   })
 

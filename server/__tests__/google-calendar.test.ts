@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAuthUrl,
   buildEventResource,
+  CalendarAuthError,
+  createCalendar,
   createEvent,
+  PET_CALENDAR_SUMMARY,
   exchangeCode,
   listCalendarEvents,
   refreshAccessToken,
@@ -25,7 +28,12 @@ describe('google-calendar', () => {
     expect(p.get('client_id')).toBe('cid');
     expect(p.get('redirect_uri')).toBe('https://w/oauth/google/callback');
     expect(p.get('response_type')).toBe('code');
-    expect(p.get('scope')).toBe('https://www.googleapis.com/auth/calendar.events');
+    // Both scopes, space-separated: calendar.events keeps writing to primary / a hand-made calendar
+    // working, calendar.app.created is what lets us create the dedicated pet calendar.
+    expect(p.get('scope')?.split(' ')).toEqual([
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.app.created',
+    ]);
     expect(p.get('access_type')).toBe('offline');
     expect(p.get('prompt')).toBe('consent');
     expect(p.get('state')).toBe('STATE123');
@@ -54,6 +62,40 @@ describe('google-calendar', () => {
     const r = await refreshAccessToken(env, 'rt');
     expect(r.accessToken).toBe('at2');
     expect(new Date(r.expiresAt).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('createCalendar POSTs summary + timeZone to /calendars and returns the new calendar id', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: 'abc123@group.calendar.google.com' }), { status: 200 }),
+      );
+    const { id } = await createCalendar('AT', PET_CALENDAR_SUMMARY, 'America/Denver');
+    expect(id).toBe('abc123@group.calendar.google.com');
+    const [url, init] = spy.mock.calls[0];
+    expect(url).toBe('https://www.googleapis.com/calendar/v3/calendars');
+    expect((init as RequestInit).method).toBe('POST');
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer AT' });
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      summary: 'Pawservation — Pet bookings',
+      timeZone: 'America/Denver',
+    });
+  });
+
+  // 403 insufficientPermissions is what a token issued before calendar.app.created was requested
+  // gets back; 401 is a token Google won't accept at all. Both mean "reconnect", not "server bug".
+  it.each([401, 403])('createCalendar throws CalendarAuthError on %i', async (status) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: 'Insufficient Permission' } }), { status }),
+    );
+    await expect(createCalendar('AT', 'X', 'UTC')).rejects.toBeInstanceOf(CalendarAuthError);
+  });
+
+  it('createCalendar throws a plain error on other failures', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('boom', { status: 500 }));
+    const err = await createCalendar('AT', 'X', 'UTC').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(CalendarAuthError);
   });
 
   it('createEvent POSTs to the calendar and returns the new id', async () => {

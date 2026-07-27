@@ -386,6 +386,12 @@ export const adminApi = {
         method: 'POST',
         headers: authHeaders(token),
       }),
+    /** Creates a dedicated "Pawservation — Pet bookings" calendar in the sitter's Google account. */
+    createPetCalendar: (slug: string, token: string) =>
+      request<{ calendarId: string; summary: string }>(
+        `/api/${slug}/admin/providers/calendar/create-calendar`,
+        { method: 'POST', headers: authHeaders(token) },
+      ),
     setCalendarId: (slug: string, token: string, calendarId: string) =>
       request<unknown>(`/api/${slug}/admin/providers/calendar/calendar-id`, {
         method: 'POST',

@@ -1,12 +1,14 @@
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
+  clearBookingCalendarEventIds,
   getEndUserById,
   getProviderConnection,
   listPetNamesForBooking,
   listSyncedBookingIds,
   listUnsyncedFutureBookings,
   setBookingGCalEventId,
-  setProviderTokens,
+  setProviderAccessToken,
+  setProviderCalendarId,
   updateBookingStatus,
 } from '../db/repo';
 import {
@@ -63,7 +65,10 @@ async function resourceForBooking(env: Env, tenant: Tenant, b: SyncInput) {
 
 /**
  * Decrypt the stored access token for a provider connection, refreshing it (and persisting the new
- * tokens) if the current token is missing or expired. Returns the plaintext access token.
+ * access token) if the current one is missing or expired. Returns the plaintext access token.
+ *
+ * Only AccessToken/TokenExpiresAt are written — a refresh must not touch the connection's target
+ * calendar (see setProviderAccessToken).
  */
 export async function getCalendarAccessToken(
   env: Env,
@@ -73,11 +78,9 @@ export async function getCalendarAccessToken(
   if (!conn.TokenExpiresAt || conn.TokenExpiresAt <= new Date().toISOString()) {
     const refreshToken = await decryptToken(env.TOKEN_SECRET, conn.RefreshToken!);
     const refreshed = await refreshAccessToken(env, refreshToken);
-    await setProviderTokens(env.PAWBOOK_DB, tenant.Id, 'calendar', conn.Provider, {
+    await setProviderAccessToken(env.PAWBOOK_DB, tenant.Id, 'calendar', {
       access: await encryptToken(env.TOKEN_SECRET, refreshed.accessToken),
-      refresh: conn.RefreshToken!,
       expiresAt: refreshed.expiresAt,
-      calendarId: conn.CalendarId ?? 'primary',
     });
     return refreshed.accessToken;
   }
@@ -165,6 +168,26 @@ export async function updateBookingCalendarEvent(
       gcalEventId,
     );
   }
+}
+
+/**
+ * Point this tenant's calendar sync at a different Google calendar (`null` = the account's primary
+ * calendar). Every stored GCalEventId is cleared BEFORE the new target is written, so there is never
+ * an instant where the connection names the new calendar while bookings still hold event ids created
+ * in the old one — that combination is exactly what makes reconcileBookingsWithCalendar cancel real
+ * bookings, since it reads "id absent from the current calendar" as "deleted by hand in Calendar"
+ * (see clearBookingCalendarEventIds for the trade-off this accepts).
+ *
+ * Callers should then run backfillCalendarEvents in the background: with the ids cleared, every
+ * future non-cancelled booking is an unsynced booking again, so it is re-created in the new calendar.
+ */
+export async function repointCalendarTarget(
+  env: Env,
+  tenant: Tenant,
+  calendarId: string | null,
+): Promise<void> {
+  await clearBookingCalendarEventIds(env.PAWBOOK_DB, tenant.Id);
+  await setProviderCalendarId(env.PAWBOOK_DB, tenant.Id, 'calendar', calendarId);
 }
 
 /** Cap on how many bookings one backfill pass creates events for — a sane bound so a sitter with a

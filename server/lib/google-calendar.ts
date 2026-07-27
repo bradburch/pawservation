@@ -7,7 +7,33 @@ import { addDays } from '../../src/shared/index.js';
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
-const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+/**
+ * Two scopes, space-separated as Google's `scope` param requires:
+ * - `calendar.events` — read/write events on calendars the sitter already has. Keeps today's
+ *   behavior working for a connection that targets `primary` or a hand-made calendar.
+ * - `calendar.app.created` — create secondary calendars and manage events on calendars THIS app
+ *   created, and nothing else. The narrowest scope that can create the dedicated pet calendar; it
+ *   grants no access to the sitter's existing calendars.
+ */
+const CALENDAR_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar.app.created',
+].join(' ');
+
+/** Summary (display name) of the dedicated calendar Pawservation creates inside the sitter's account. */
+export const PET_CALENDAR_SUMMARY = 'Pawservation — Pet bookings';
+
+/**
+ * Google rejected the call for lack of authorization rather than for anything about the request.
+ * The remedy is always the same — reconnect Google so a fresh grant carries the current scope set —
+ * so callers can turn this into one actionable message instead of a generic 500.
+ */
+export class CalendarAuthError extends Error {
+  constructor(readonly status: number) {
+    super(`Google rejected the request as unauthorized (${status})`);
+    this.name = 'CalendarAuthError';
+  }
+}
 
 export type TokenSet = { accessToken: string; refreshToken: string; expiresAt: string };
 
@@ -16,7 +42,7 @@ export function buildAuthUrl(env: Env, state: string): string {
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: env.GOOGLE_OAUTH_REDIRECT_URI,
     response_type: 'code',
-    scope: CALENDAR_SCOPE,
+    scope: CALENDAR_SCOPES,
     access_type: 'offline',
     prompt: 'consent',
     state,
@@ -71,6 +97,31 @@ export async function refreshAccessToken(
   if (!res.ok) throw new Error(`Google token refresh failed (${res.status})`);
   const j = (await res.json()) as { access_token: string; expires_in: number };
   return { accessToken: j.access_token, expiresAt: expiresAtFrom(j.expires_in) };
+}
+
+/**
+ * Create a secondary calendar in the authenticated sitter's own Google account and return its id —
+ * a `…@group.calendar.google.com` value, which every call site here already encodeURIComponent's, so
+ * it drops into the existing event paths unchanged.
+ *
+ * Requires the `calendar.app.created` scope. A connection authorized before that scope was requested
+ * will be refused (Google answers 403 `insufficientPermissions`, 401 for a token it won't accept at
+ * all) — surfaced as CalendarAuthError, because the fix in both cases is to reconnect Google.
+ */
+export async function createCalendar(
+  accessToken: string,
+  summary: string,
+  timeZone: string,
+): Promise<{ id: string }> {
+  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ summary, timeZone }),
+  });
+  if (res.status === 401 || res.status === 403) throw new CalendarAuthError(res.status);
+  if (!res.ok) throw new Error(`Google createCalendar failed (${res.status})`);
+  const j = (await res.json()) as { id: string };
+  return { id: j.id };
 }
 
 export async function createEvent(

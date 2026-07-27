@@ -1181,13 +1181,17 @@ export async function setProviderTokens(
 ): Promise<void> {
   await db
     .prepare(
+      // `calendarId` is the INITIAL target only: on re-connect, COALESCE keeps whatever calendar the
+      // sitter already chose (including a Pawservation-created one, which clearProviderConnection
+      // deliberately preserves) and falls back to the supplied default when none was ever set.
       `INSERT INTO ProviderConnections
          (Id, TenantId, Capability, Provider, Status, ConnectedAt, AccessToken, RefreshToken, TokenExpiresAt, CalendarId)
        VALUES (?, ?, ?, ?, 'connected', ?, ?, ?, ?, ?)
        ON CONFLICT (TenantId, Capability) DO UPDATE SET
          Provider = excluded.Provider, Status = 'connected', ConnectedAt = excluded.ConnectedAt,
          AccessToken = excluded.AccessToken, RefreshToken = excluded.RefreshToken,
-         TokenExpiresAt = excluded.TokenExpiresAt, CalendarId = excluded.CalendarId`,
+         TokenExpiresAt = excluded.TokenExpiresAt,
+         CalendarId = COALESCE(ProviderConnections.CalendarId, excluded.CalendarId)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -1203,6 +1207,32 @@ export async function setProviderTokens(
     .run();
 }
 
+/**
+ * Store a refreshed access token and nothing else. A token refresh has no business rewriting the
+ * connection's other columns: routing it through setProviderTokens used to re-stamp CalendarId,
+ * silently collapsing a NULL (= "use primary") into the literal string 'primary'.
+ */
+export async function setProviderAccessToken(
+  db: D1Database,
+  tenantId: string,
+  capability: string,
+  t: { access: string; expiresAt: string },
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE ProviderConnections SET AccessToken = ?, TokenExpiresAt = ?
+       WHERE TenantId = ? AND Capability = ?`,
+    )
+    .bind(t.access, t.expiresAt, tenantId, capability)
+    .run();
+}
+
+/**
+ * Disconnect: drop every credential, keep the sitter's calendar choice. `CalendarId` is an
+ * identifier, not a secret — forgetting it would make her re-pick her pet calendar after every
+ * reconnect, and would let the create-calendar route make a SECOND dedicated calendar because the
+ * "already points somewhere other than primary" guard had nothing left to see.
+ */
 export async function clearProviderConnection(
   db: D1Database,
   tenantId: string,
@@ -1212,7 +1242,7 @@ export async function clearProviderConnection(
     .prepare(
       `UPDATE ProviderConnections
        SET Status = 'disconnected', AccessToken = NULL, RefreshToken = NULL,
-           TokenExpiresAt = NULL, CalendarId = NULL, ConnectedAt = NULL
+           TokenExpiresAt = NULL, ConnectedAt = NULL
        WHERE TenantId = ? AND Capability = ?`,
     )
     .bind(tenantId, capability)
@@ -1240,6 +1270,35 @@ export async function setBookingGCalEventId(
     .bind(eventId, tenantId, bookingId, expectedOld)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Clear every stored Google event id for this tenant. Called when the sync TARGET calendar changes:
+ * a stored GCalEventId names an event inside whatever calendar was configured when it was created,
+ * and reconcileBookingsWithCalendar looks those ids up in the CURRENTLY configured calendar — so
+ * carrying them across a switch makes reconcile see every booking as "deleted by hand in Calendar"
+ * and mass-cancel real bookings. NULLing them makes reconcile skip those rows entirely
+ * (listSyncedBookingIds requires GCalEventId IS NOT NULL) until the backfill re-creates them in the
+ * new calendar. Returns how many rows were cleared. Tenant-scoped like every repo function.
+ *
+ * ponytail: deliberately the cheap half of the fix — no schema change. Ceiling: the events already
+ * written to the OLD calendar are orphaned there, because once the id is cleared we can no longer
+ * delete them (and we never knew which calendar they lived in). The sitter deletes the old calendar,
+ * or those few stray events, by hand. Upgrade path if orphan cleanup is ever wanted: add a nullable
+ * BookingRequests.GCalCalendarId written alongside GCalEventId, and this function becomes "delete
+ * the events whose GCalCalendarId differs from the new target, then clear".
+ */
+export async function clearBookingCalendarEventIds(
+  db: D1Database,
+  tenantId: string,
+): Promise<number> {
+  const result = await db
+    .prepare(
+      'UPDATE BookingRequests SET GCalEventId = NULL WHERE TenantId = ? AND GCalEventId IS NOT NULL',
+    )
+    .bind(tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes ?? 0;
 }
 
 export async function getEndUserById(
