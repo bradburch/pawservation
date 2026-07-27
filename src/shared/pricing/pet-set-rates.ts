@@ -68,6 +68,24 @@ export function petCountOf(mix: PetMix): number {
 }
 
 /**
+ * Inverse of `buildMixKey` for CANONICAL keys. Deliberately lenient on malformed input —
+ * strictness is the round-trip: `buildMixKey(parseMixKey(k)) === k` holds iff `k` is canonical
+ * (sorted species, positive-integer counts, no duplicates), which is exactly the check write
+ * paths use. Returns a null-prototype record for the same reason `mixFromPetTypes` does:
+ * 'constructor' is a reachable species slug.
+ */
+export function parseMixKey(mixKey: string): PetMix {
+  const mix: PetMix = Object.create(null);
+  if (mixKey === '') return mix;
+  for (const part of mixKey.split('|')) {
+    const sep = part.lastIndexOf(':');
+    if (sep <= 0) continue; // malformed part — the rebuild-equality check catches it
+    mix[part.slice(0, sep)] = Number(part.slice(sep + 1));
+  }
+  return mix;
+}
+
+/**
  * Canonical pet-id key: ids deduped then sorted so selection order cannot change the key,
  * comma-joined. Pet ids are UUIDs and so comma-free, which is what makes the join unambiguous.
  * '' when there are no pets. Duration is NOT part of this key — `OptionKey` (carried alongside
