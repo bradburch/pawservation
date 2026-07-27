@@ -59,6 +59,34 @@ body {
   margin: 0 0 16px;
 }
 
+/* ── Sign-in welcome ───────────────────────────────────────────── */
+.bp-welcome-steps {
+  margin: 0 0 16px;
+  padding-left: 22px;
+  display: grid;
+  gap: 6px;
+  color: var(--bp-body);
+  font-size: 0.92rem;
+}
+
+.bp-welcome-steps li::marker {
+  color: var(--bp-accent);
+  font-weight: 700;
+}
+
+.bp-new-client {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  background: var(--bp-sage-wash);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  color: var(--bp-body);
+}
+
+.bp-new-client strong {
+  color: var(--bp-ink);
+}
+
 .bp-topline {
   display: flex;
   justify-content: flex-end;

@@ -820,7 +820,7 @@ const PAGE_STYLE = /* css */ `
       }
       .foot-bottom p { margin: 0; }
       @media (min-width: 700px) {
-        .foot-grid { grid-template-columns: 1.4fr 1fr 1fr; }
+        .foot-grid { grid-template-columns: 1.4fr 1fr; }
       }
 
       :focus-visible {
@@ -1035,7 +1035,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Rates &amp; services</h3>
-              <p>Boarding, house-sitting, daycare, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
+              <p>Boarding, house sitting, daycare, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
             </div>
             <div class="feature">
               <h3>Caps &amp; time off</h3>
@@ -1043,7 +1043,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Clients &amp; pets</h3>
-              <p>Invite by email or CSV up to 500. Keep profiles and care notes for every animal.</p>
+              <p>Invite by email or import a CSV. Keep profiles and care notes for every animal.</p>
             </div>
             <div class="feature">
               <h3>Payments</h3>
@@ -1227,19 +1227,11 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Can anyone book, or just my clients?</h3>
-              <p><strong>Just your clients.</strong> You add each client&rsquo;s email (or import a CSV) before they can book. You choose which animal types you accept.</p>
-            </div>
-            <div class="qa-item">
-              <h3>Can I charge more for a second dog?</h3>
-              <p><strong>Not yet — multi-pet pricing is on the way.</strong> Today rates are flat per service: a second pet uses one of your capacity slots, and the price never silently multiplies. Explicit multi-pet rates (price &ldquo;two dogs&rdquo; as its own rate, set by you) are being built right now.</p>
+              <p><strong>Just your clients.</strong> You add each client &mdash; and their pets &mdash; before they can book. A client record always starts with at least one pet, so every request says exactly which animal is coming. Add them one at a time or import a CSV, and choose which animal types you accept.</p>
             </div>
             <div class="qa-item">
               <h3>Can my whole team use it?</h3>
               <p><strong>Not yet.</strong> Pawservation runs one sitter per account today. Extra sitters, with assignment, are part of the Pro plan &mdash; which isn&rsquo;t built yet.</p>
-            </div>
-            <div class="qa-item">
-              <h3>Can I get my data out?</h3>
-              <p><strong>Not in one click yet</strong> &mdash; there&rsquo;s no export button. It&rsquo;s your data, so ask by email and it will be handed over. The whole platform is open source too, so you can see exactly how it&rsquo;s stored, or run your own copy.</p>
             </div>
           </div>
         </div>
@@ -1284,19 +1276,10 @@ const LANDING_HTML = `<!doctype html>
               <li><a href="#faq">FAQ</a></li>
             </ul>
           </div>
-          <div>
-            <h3>Open source</h3>
-            <ul>
-              <li><a href="https://github.com/bradburch/pawservation">Source on GitHub</a></li>
-              <li><a href="https://github.com/bradburch/pawservation/blob/main/docs/index.md">Technical docs</a></li>
-              <li>Self-hostable on Cloudflare Workers &mdash; the <a href="https://github.com/bradburch/pawservation#deploying">README&rsquo;s deploy steps</a> cover it.</li>
-            </ul>
-          </div>
         </div>
         <div class="foot-bottom">
           <p>
-            Pawservation is open source under the MIT license &middot; Created by
-            <a href="https://bradburch.github.io/">Brad Burch</a>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
           </p>
         </div>
       </div>
@@ -1312,8 +1295,8 @@ const LANDING_HTML = `<!doctype html>
  * Both embed snippets are shown as escaped text (&lt;script&gt; / &lt;iframe&gt;).
  *
  * Every claim here is behavior that ships today, and where something is NOT built the page says
- * so out loud (no repeating schedule, no way to type in a stay agreed before signing up, no
- * one-click export). Guardrails are enforced by server/__tests__/how-it-works.test.ts rather
+ * so out loud (no repeating schedule, no way to type in a stay agreed before signing up).
+ * Guardrails are enforced by server/__tests__/how-it-works.test.ts rather
  * than by convention: the page may not use the words "invoice"/"statement"/"SMS"/"AI" (none of
  * those exist), multi-pet pricing must be described as being built and never auto-multiplied,
  * and the developer nouns "idempotency"/"machine-readable"/"llms.txt" are banned from the body
@@ -1431,7 +1414,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">A per-day limit on each option.</p>
-              <p>Eight pets on the morning pack walk and four on the solo walk, counted separately, per date. When an option fills for a day, that day stops being offered for that option.</p>
+              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk &mdash; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Weekdays only, where that&rsquo;s the truth.</p>
@@ -1500,7 +1483,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <ol class="wf-steps">
               <li class="wf-step">
                 <span class="step-no">01</span>
-                <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add an email at a time, or import a CSV &mdash; up to 500 rows in one go, with an example file to copy the columns from.</p>
+                <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add clients one at a time, or import a CSV &mdash; an example file shows the columns to copy.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">02</span>
@@ -1679,7 +1662,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>A &ldquo;no&rdquo; that says why</h3>
-              <p>A refused booking answers with a fixed code as well as a sentence, so other software can understand a &ldquo;no&rdquo; and say why &mdash; &ldquo;those dates are full&rdquo; and &ldquo;that pet isn&rsquo;t yours&rdquo; are told apart without guessing at the wording.</p>
+              <p>A refused booking answers with a fixed code as well as a sentence, so other software can understand a &ldquo;no&rdquo; and say why &mdash; &ldquo;those dates are full&rdquo; and &ldquo;that stay is too long&rdquo; are told apart without guessing at the wording.</p>
             </div>
             <div class="feature">
               <h3>Sent twice, booked once</h3>
@@ -1733,19 +1716,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <li><a href="/#faq">FAQ</a></li>
             </ul>
           </div>
-          <div>
-            <h3>Open source</h3>
-            <ul>
-              <li><a href="https://github.com/bradburch/pawservation">Source on GitHub</a></li>
-              <li><a href="https://github.com/bradburch/pawservation/blob/main/docs/index.md">Technical docs</a></li>
-              <li>Self-hostable on Cloudflare Workers &mdash; the <a href="https://github.com/bradburch/pawservation#deploying">README&rsquo;s deploy steps</a> cover it.</li>
-            </ul>
-          </div>
         </div>
         <div class="foot-bottom">
           <p>
-            Pawservation is open source under the MIT license &middot; Created by
-            <a href="https://bradburch.github.io/">Brad Burch</a>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
           </p>
         </div>
       </div>

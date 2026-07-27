@@ -1,7 +1,7 @@
 import { IconHelp } from '../../shared-ui/icons';
 
 /**
- * Static in-app help (spec: 2026-07-19-help-and-explainers-design). Six short topics on one
+ * Static in-app help (spec: 2026-07-19-help-and-explainers-design). Five short topics on one
  * scroll — no accordion, so find-in-page works. Cross-references to other sections are real
  * #hash links; the existing hash nav switches panels. No props, no fetches, no server routes.
  */
@@ -62,16 +62,6 @@ export function HelpSection() {
         appear; the preview shows exactly what clients will see. If your site builder refuses the
         first code, use the second — same page, works everywhere. No website? Send clients the
         direct link to your booking page instead.
-      </p>
-
-      <h3>Running your own copy</h3>
-      <p>
-        Most sitters use Pawservation as a hosted service — sign in and it just works, with hosting
-        and updates handled for you. Pawservation is also open source (MIT), so if you&rsquo;re
-        technical (or know someone who is) you can run your own copy on Cloudflare Workers, with
-        your own database and domain. The README at{' '}
-        <a href="https://github.com/bradburch/pawservation">github.com/bradburch/pawservation</a>{' '}
-        walks through it.
       </p>
     </>
   );

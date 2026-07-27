@@ -77,6 +77,19 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('never auto-multiplied');
   });
 
+  it('teaches capacity with a worked example and cites two real refusal reasons', async () => {
+    const body = await howItWorksBody();
+    // The per-option capacity example walks a concrete Tuesday, not an abstract listing.
+    expect(body).toContain('the solo walk still shows');
+    // Both refusal examples correspond to real stable codes on POST /bookings:
+    // "those dates are full" -> capacity_conflict, "that stay is too long" -> service_constraint.
+    expect(body).toContain('those dates are full');
+    expect(body).toContain('that stay is too long');
+    expect(body).not.toContain('that pet isn&rsquo;t yours');
+    // MAX_IMPORT_ROWS stays in code; the tour stops quoting it.
+    expect(body).not.toContain('up to 500');
+  });
+
   it('never claims an unbuilt capability as available', async () => {
     const body = await howItWorksBody();
     // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features.
@@ -137,6 +150,20 @@ describe('GET /how-it-works — the in-depth tour page', () => {
   it('carries no images (no new weight budget to police)', async () => {
     const body = await howItWorksBody();
     expect(body).not.toContain('<img');
+  });
+
+  it('footer carries no open-source / self-host block, only the created-by line', async () => {
+    const body = await howItWorksBody();
+    for (const gone of [
+      'MIT license',
+      'Self-hostable',
+      'Technical docs',
+      'Source on GitHub',
+      'github.com/bradburch/pawservation',
+    ]) {
+      expect(body, gone).not.toContain(gone);
+    }
+    expect(body).toContain('Brad Burch');
   });
 });
 

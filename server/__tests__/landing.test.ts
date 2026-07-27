@@ -58,9 +58,24 @@ describe('GET / — landing page', () => {
     expect(body).toMatch(/href="mailto:[^"]+"/);
   });
 
-  it('is truthful about multi-pet pricing (not yet built, no silent multiplier)', async () => {
+  it('makes no multi-pet pricing claim (the FAQ item is gone; rates ship with pet-mix-rates)', async () => {
     const body = await landingBody();
-    expect(body).toContain('multi-pet pricing is on the way');
+    expect(body).not.toContain('Can I charge more for a second dog?');
+    expect(body).not.toContain('multi-pet pricing is on the way');
+  });
+
+  it('no longer advertises data export (no export route exists; the FAQ item is gone)', async () => {
+    const body = await landingBody();
+    expect(body).not.toContain('Can I get my data out?');
+    expect(body).not.toContain('export button');
+  });
+
+  it('tells the client-AND-pet truth and drops the CSV row cap from copy', async () => {
+    const body = await landingBody();
+    // Post-#73 a client is a client-and-pet record; the FAQ must say pets are added too.
+    expect(body).toContain('and their pets');
+    // MAX_IMPORT_ROWS=500 stays in code (server/routes/admin.ts); marketing stops quoting it.
+    expect(body).not.toContain('up to 500');
   });
 
   it('is honest that an account is one sitter today, with teams behind the unbuilt Pro tier', async () => {
@@ -68,13 +83,6 @@ describe('GET / — landing page', () => {
     expect(body).toContain('Can my whole team use it?');
     expect(body).toContain('one sitter per account today');
     expect(body).toContain('which isn&rsquo;t built yet');
-  });
-
-  it('is honest that there is no one-click data export', async () => {
-    const body = await landingBody();
-    // No export route exists anywhere in server/routes — the FAQ must not imply one does.
-    expect(body).toContain('Can I get my data out?');
-    expect(body).toContain('no export button');
   });
 
   it('tells visitors the demo costs them nothing to try', async () => {
@@ -110,5 +118,19 @@ describe('GET / — landing page', () => {
       expect(size, `${file} over its ${kb}KB budget`).toBeLessThanOrEqual(kb * 1024);
     }
     expect(total, 'total image weight').toBeLessThanOrEqual(TOTAL_BUDGET_KB * 1024);
+  });
+
+  it('footer carries no open-source / self-host block, only the created-by line', async () => {
+    const body = await landingBody();
+    for (const gone of [
+      'MIT license',
+      'Self-hostable',
+      'Technical docs',
+      'Source on GitHub',
+      'github.com/bradburch/pawservation',
+    ]) {
+      expect(body, gone).not.toContain(gone);
+    }
+    expect(body).toContain('Brad Burch');
   });
 });

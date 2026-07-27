@@ -119,9 +119,19 @@ export default function App() {
       <div className="bp-widget">
         <h1 className="bp-greeting">Book with {config.displayName}</h1>
         <p className="bp-signin-lede">
-          Enter the email your sitter has on file and we&apos;ll send you a sign-in code.
+          Welcome! {config.displayName} uses Pawservation to take booking requests online — pick
+          your dates, send a request, and your sitter confirms it personally.
         </p>
+        <ol className="bp-welcome-steps">
+          <li>Enter the email your sitter has on file for you.</li>
+          <li>We&apos;ll email you a 6-digit sign-in code — no password to remember.</li>
+          <li>Pick your dates and your pets, and send the request.</li>
+        </ol>
         <Identify onDone={() => setAuthed(true)} />
+        <p className="bp-new-client">
+          <strong>New client?</strong> Booking is invite-only — get in touch with{' '}
+          {config.displayName} and they&apos;ll add you and your pets.
+        </p>
         {contact}
       </div>
     );

@@ -57,12 +57,14 @@ function Snippets({ session }: { session: Session }) {
         <li>Click &ldquo;Copy the code&rdquo; below.</li>
         <li>In Squarespace, edit the page where you want bookings to appear.</li>
         <li>
-          Click a &ldquo;+&rdquo; to add a content block and choose <strong>Code</strong> (on some
-          Squarespace plans the Code block is not available — use the Wix/iframe code below with an
-          <strong> Embed</strong> block instead).
+          Click a &ldquo;+&rdquo; to add a content block and choose <strong>Code</strong>.
         </li>
         <li>Paste the code and save the page. Your booking form appears right there.</li>
       </ol>
+      <p>
+        Don&apos;t see a <strong>Code</strong> block? Some Squarespace plans leave it out &mdash;
+        use the Wix/iframe code below with an <strong>Embed</strong> block instead.
+      </p>
       <CopyableSnippet value={snippets.script} />
       <p>
         <strong>Wix</strong> (choose &ldquo;Embed a site&rdquo;) <strong>and other builders</strong>{' '}
