@@ -1,3 +1,22 @@
+-- ############################################################################
+-- ## RUN THIS FILE EXACTLY ONCE PER DATABASE. NEVER RE-RUN IT AFTER 0025.   ##
+-- ############################################################################
+--
+-- This is a TABLE REBUILD driven by an EXPLICIT column list. The list below is TenantServices'
+-- shape as of 0023. 0025 adds TenantServices.Description, which is NOT in that list — so
+-- re-running this file on a database that already has 0025 applied SILENTLY DROPS the Description
+-- column and every value in it, and reports success while doing it. There is no error to notice.
+--
+-- The blast radius is not one settings page: repo.listServices() SELECTs Description
+-- unconditionally and is called from 13 non-test sites, including server/routes/bookings.ts (both
+-- the create and the list path), so a missing column is a total per-tenant outage — no bookings
+-- can be made or read until it is restored.
+--
+-- APPLY ORDER IS THEREFORE FIXED: 0024 first, then 0025. Never the reverse, and never 0024 twice.
+-- (server/__tests__/migration-0024.test.ts asserts re-runnability against the pre-0025 schema,
+-- which is exactly why it cannot catch this — do not read that test as permission to re-run.)
+--
+-- ----------------------------------------------------------------------------
 -- Walks are priced per WALK, not per visit.
 --
 -- The billing noun is printed straight from TenantServices.RateUnit (the widget's option list,
@@ -10,8 +29,8 @@
 --   npx wrangler d1 execute pawbook-db --local  --file ./migrations/0024_walk_rate_unit.sql
 --   npx wrangler d1 execute pawbook-db --remote --file ./migrations/0024_walk_rate_unit.sql
 --
--- Safe to re-run (it copies every column forward and the UPDATEs are idempotent), but it MUST be
--- applied against a DB already at 0023 — the column lists below are sql/schema.sql's exact shape.
+-- Apply against a DB already at 0023 and NOT yet at 0025 — the column lists below are
+-- sql/schema.sql's exact 0023 shape. See the one-run-only warning at the top of this file.
 --
 -- D1 runs a file inside a transaction where `PRAGMA foreign_keys` is a no-op; defer_foreign_keys
 -- is its supported escape hatch — FKs are re-checked at COMMIT, when the renamed tables are back.
@@ -81,11 +100,17 @@ ALTER TABLE TenantServiceOptions_new RENAME TO TenantServiceOptions;
 
 -- 3) Move existing walk services onto the new unit.
 -- ponytail: name-matching heuristic, deliberately. There is no column that says "this row came
--- from the walk template", so slug/label matching is the only signal available. Its ceiling: a
--- custom service created from the CHECK-IN template but named e.g. "Walk & feed" gets swept in
--- and will print "/walk" instead of "/visit". Accepted — it is a noun on a label, no price or
--- capacity behavior changes, and the sitter can rename the service. Do not build a template-
--- provenance column just for this.
+-- from the walk template", so slug/label matching is the only signal available. It is wrong in
+-- BOTH directions, and both are accepted:
+--   * False POSITIVE — a service created from the CHECK-IN template but named e.g. "Walk & feed"
+--     is swept in and prints "/walk" instead of "/visit".
+--   * False NEGATIVE — a real walk service named without the word ("Morning stroll", "Trail
+--     time") keeps "/visit" forever, so ONE tenant can show $22/visit next to $22/walk on two
+--     rows that behave identically. Nothing re-runs this heuristic later; the sitter renames the
+--     service (which does not change the unit) or lives with it.
+-- Accepted because the unit is a NOUN: no price, quantity, capacity, or booking behavior changes
+-- either way (billableUnits only ever sees 'night'/'day'). Do not build a template-provenance
+-- column, or a repair job, just to make a label read better.
 UPDATE TenantServices
    SET RateUnit = 'walk'
  WHERE RateUnit = 'visit'

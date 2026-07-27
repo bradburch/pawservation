@@ -165,7 +165,12 @@ describe("migration 0024 — 'walk' becomes a real RateUnit", () => {
     ]);
   });
 
-  it('is idempotent — a second run changes nothing', () => {
+  // NOT a licence to re-run the file in production. This proves only that the SQL is idempotent
+  // against the 0023-era schema above. The real DB gains TenantServices.Description in 0025, which
+  // is absent from the migration's explicit column list — so a second run against a 0025 database
+  // silently DROPS that column and its data, and reports success. See the run-once-only warning at
+  // the top of migrations/0024_walk_rate_unit.sql. This test cannot observe that by construction.
+  it('is idempotent against the schema it was written for — a second run changes nothing', () => {
     const db = migratedDb();
     const before = db.prepare('SELECT * FROM TenantServices ORDER BY TenantId, ServiceType').all();
     db.exec('BEGIN');

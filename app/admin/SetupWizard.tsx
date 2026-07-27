@@ -95,12 +95,19 @@ export function SetupWizard({
   onApplied: () => Promise<void>;
 }) {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-  // The DRAFT prefills a missing contact email with the admin's own login email (the address
-  // the sitter signed up with) — but profileInitial below keeps the RAW settings value, so the
-  // prefill still diffs as a change in profilePutBody and actually gets saved on Next.
+  // The DRAFT prefills a missing contact email with the admin's own login email (the address the
+  // sitter signed up with) — profileInitial below keeps the RAW settings value, so the prefill
+  // still diffs in profilePutBody and actually gets saved on Next. The sitter SEES it in the
+  // labelled field first: this is a suggestion to confirm, never a silent publish (ContactEmail
+  // is public — see createTenantFromSignup, which deliberately leaves it NULL).
+  //
+  // Gated on "no service is enabled yet" — the same un-onboarded signal App.tsx uses to
+  // auto-open this wizard. Without the gate, a sitter who deliberately CLEARED their contact
+  // email would get their login address written back every time they reopened Quick setup.
+  const neverOnboarded = settings.services.every((s) => !s.enabled);
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => ({
     ...makeProfileDraft(settings),
-    contactEmail: settings.contactEmail ?? settings.adminEmail ?? '',
+    contactEmail: settings.contactEmail ?? (neverOnboarded ? (settings.adminEmail ?? '') : ''),
   }));
   // Snapshot the profile PUT diffs against; advanced to the saved draft after each successful
   // save so Back-then-Next doesn't resend fields (resending is harmless, just noisy).
