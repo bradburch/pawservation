@@ -4,7 +4,7 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0023_booking_idempotency.sql` (keep this line in step with the highest-numbered migration
+`0024_walk_rate_unit.sql` (keep this line in step with the highest-numbered migration
 mirrored into `schema.sql`). Use:
 
 ```
@@ -27,12 +27,13 @@ is made to adopt tracked migrations.
 
 Current state:
 
-- **Local dev DB**: `sql/schema.sql` already carries everything through `0023_booking_idempotency.sql`,
+- **Local dev DB**: `sql/schema.sql` already carries everything through `0024_walk_rate_unit.sql`,
   so a **freshly reseeded** local DB (`npm run seed:local`) needs no migrations applied. A local
-  DB seeded before today predates `0020`–`0023` and is on the incremental-apply path below like
-  any other already-provisioned DB — either re-seed it, or apply `0020`–`0023` locally with the
-  `--local` commands in the `0020`/`0021` and `0022`/`0023` sections.
-- **Remote DB**: fully migrated through `0023` as of this writing — `0001`–`0015` were applied
+  DB seeded before today predates `0020`–`0024` and is on the incremental-apply path below like
+  any other already-provisioned DB — either re-seed it, or apply `0020`–`0024` locally with the
+  `--local` commands in the `0020`/`0021`, `0022`/`0023`, and `0024` sections.
+- **Remote DB**: fully migrated through `0023` as of this writing (**`0024` is NOT yet applied
+  — see its section below; it must be applied before this branch merges**) — `0001`–`0015` were applied
   by hand 2026-07-20 (verified via read-only schema probes), `0016`–`0019` have since been
   applied by hand as each shipped, most recently `0019` on 2026-07-25, and `0020`–`0023` (below)
   were applied by hand on 2026-07-26 (verified via read-only `sqlite_master` probes matching
@@ -45,11 +46,13 @@ added by every migration through `0019` — e.g. `AcceptedPetTypes`, `MaxConcurr
 `MaxPerDay`, and `Label` (added by `0014`/`0015`), and `PetOwners`/`EndUserPets.DeceasedAt`
 (added by `0019`, see below) — and **500s on every request** if any of those are missing.
 `0007`–`0023` are now fully applied to remote (`0020`–`0023` as of 2026-07-26, see those sections
-below); a local DB still needs `0020`–`0023` unless it's a fresh `npm run seed:local` reseed —
-see the Local dev DB bullet above. Apply each migration before (or with) the deploy that needs
-it, never after. Backward-compatible additive migrations (like `0012`–`0018`, and `0020`–`0023`)
-are safe to apply ahead of a deploy, since the currently-running worker just ignores the new
-columns/tables until the new code ships.
+below); `0024` is not — apply it before merging its branch. A local DB still needs `0020`–`0024`
+unless it's a fresh `npm run seed:local` reseed — see the Local dev DB bullet above. Apply each
+migration before (or with) the deploy that needs it, never after. Backward-compatible additive
+migrations (like `0012`–`0018`, and `0020`–`0023`) are safe to apply ahead of a deploy, since the
+currently-running worker just ignores the new columns/tables until the new code ships. `0024` is
+also safe ahead of a deploy for the opposite reason: it only _widens_ a CHECK and renames a unit
+the old worker merely prints.
 
 `0007`–`0015` were applied, in order, with:
 
@@ -203,4 +206,41 @@ npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE BookingReques
 npx wrangler d1 execute pawbook-db --local  --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
 npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingRequests ADD COLUMN IdempotencyKey TEXT;"
 npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
+```
+
+### 0024_walk_rate_unit.sql — NOT yet applied to remote
+
+Adds `'walk'` to the `RateUnit` CHECK on **both** `TenantServices` and `TenantServiceOptions`, then
+moves existing walk services onto it. Walks are priced per **walk**, not per visit; check-ins keep
+`'visit'`. The billing noun is printed straight from `TenantServices.RateUnit`, so a new noun has to
+be a real allowed value rather than a display-time substitution.
+
+SQLite cannot `ALTER` a CHECK constraint, so this **rebuilds both tables** (precedent:
+`0006_custom_services.sql`) — `CREATE … _new`, copy every column, `DROP`, `RENAME`. Neither table
+has any explicit index (their `UNIQUE` constraints travel with the table definition), so nothing
+needs recreating; FKs are handled with `PRAGMA defer_foreign_keys` exactly as `0006` does, since D1
+runs the file in a transaction where `PRAGMA foreign_keys` is a no-op.
+
+**Apply it against a DB already at `0023`** — the column lists in the file are `sql/schema.sql`'s
+exact post-`0023` shape, so a DB missing an earlier column would lose nothing but would fail the
+copy. Unlike `0019`/`0022`/`0023` this file **is** re-runnable (it copies every column forward and
+both `UPDATE`s are idempotent), and `server/__tests__/migration-0024.test.ts` asserts that.
+
+The data step matches walk services by name (`RateUnit='visit' AND (ServiceType LIKE '%walk%' OR
+Label LIKE '%walk%')`) because no column records which template a row came from. Marked with a
+`-- ponytail:` comment in the file: a check-in-template service named e.g. "Walk & feed" gets swept
+in and prints `/walk`. Accepted — it changes a noun, never a price, a capacity, or a booking.
+
+Safe ahead of a deploy: the currently-running worker prints whatever string the column holds, and
+the CHECK is only widened.
+
+```
+npx wrangler d1 execute pawbook-db --local  --file ./migrations/0024_walk_rate_unit.sql
+npx wrangler d1 execute pawbook-db --remote --file ./migrations/0024_walk_rate_unit.sql
+```
+
+Verify afterwards (both CHECKs widened, walk rows moved):
+
+```
+npx wrangler d1 execute pawbook-db --remote --command "SELECT ServiceType, Label, RateUnit FROM TenantServices ORDER BY TenantId, SortOrder;"
 ```

@@ -99,6 +99,9 @@ describe('createTenantFromSignup (atomic batch)', () => {
     expect(tenant?.DisplayName).toBe('X Biz');
     // New-tenant timezone defaults to NULL (unlimited / instance-default).
     expect(tenant?.Timezone).toBeNull();
+    // ContactEmail comes from the SIGNUP email, so the setup wizard shows it prefilled instead
+    // of asking for an address the sitter already typed.
+    expect(tenant?.ContactEmail).toBe('new@x.test');
     const user = await getTenantUserByEmail(env.PAWBOOK_DB, 'new@x.test');
     expect(user?.TenantId).toBe('tnt_x');
     const claim = await getAllowedSitter(env.PAWBOOK_DB, 'new@x.test');

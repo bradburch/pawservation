@@ -52,6 +52,7 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in.' }, 401);
   if (claims.tid !== c.get('tenant').Id) return c.json({ error: 'Wrong account.' }, 403);
+  c.set('adminUserId', claims.sub);
   await next();
 });
 

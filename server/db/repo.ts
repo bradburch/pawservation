@@ -68,6 +68,20 @@ export async function getTenantUserByEmail(
     .first<TenantUser>();
 }
 
+/** The authenticated admin's own login email, tenant-scoped like every read here — used by the
+ * settings GET so the setup wizard can prefill a missing contact email. */
+export async function getTenantUserEmailById(
+  db: D1Database,
+  tenantId: string,
+  userId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT Email FROM TenantUsers WHERE TenantId = ? AND Id = ?')
+    .bind(tenantId, userId)
+    .first<{ Email: string }>();
+  return row?.Email ?? null;
+}
+
 /** Returns whether a row actually changed — false means the email has no sitter login. */
 export async function updateTenantUserPasswordHash(
   db: D1Database,
@@ -952,7 +966,7 @@ export async function replaceServiceOptions(
     label: string;
     durationMinutes: number | null;
     rate: number;
-    rateUnit: 'night' | 'day' | 'visit';
+    rateUnit: RateUnit;
     startTime: string | null;
     endTime: string | null;
     capacity: number | null;
@@ -2164,8 +2178,9 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
  * Signup provisioning as ONE atomic batch (deleteService precedent; the test shim's batch is
  * transactional): Tenants → TenantUsers → claim the allowlist row. A replay that beat the
  * nonce race dies on TenantUsers.Email UNIQUE, aborting the WHOLE batch — no orphan tenant.
- * The new tenant carries only Id/Slug/DisplayName: every limit stays NULL (unlimited /
- * instance-default) and NO services are seeded — the onboarding wizard owns that.
+ * The new tenant carries only Id/Slug/DisplayName/ContactEmail (the signup email, so the
+ * wizard can show it prefilled): every limit stays NULL (unlimited / instance-default) and NO
+ * services are seeded — the onboarding wizard owns that.
  *
  * The claim UPDATE's `WHERE ... AND ClaimedAt IS NULL` guard can match ZERO rows (invite
  * revoked, or its row deleted, between the caller's checks and this batch) without D1
@@ -2192,8 +2207,10 @@ export async function createTenantFromSignup(
   const claimedAt = args.claimedAtIso ?? new Date().toISOString();
   const results = await db.batch([
     db
-      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName) VALUES (?, ?, ?)')
-      .bind(args.tenantId, args.slug, args.displayName),
+      // ContactEmail starts as the signup email — the wizard shows it prefilled instead of
+      // asking for an address the sitter already typed once.
+      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName, ContactEmail) VALUES (?, ?, ?, ?)')
+      .bind(args.tenantId, args.slug, args.displayName, args.email),
     db
       .prepare('INSERT INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES (?, ?, ?, ?)')
       .bind(args.userId, args.tenantId, args.email, args.passwordHash),

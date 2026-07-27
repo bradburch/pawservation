@@ -21,6 +21,7 @@ import {
   deletePayment,
   deleteService,
   getProviderConnection,
+  getTenantUserEmailById,
   insertBookingRequest,
   insertInvitedCustomerWithPet,
   insertPayment,
@@ -208,7 +209,9 @@ function resolveServiceOptions(
     if (hasStart !== hasEnd)
       return { error: `${serviceLabel}: a time window needs both a start and an end time.` };
     if (hasStart && !meta.hasDuration)
-      return { error: `${serviceLabel}: only per-visit services can have a time window.` };
+      // Gated on hasDuration (walks bill per walk, check-ins per visit — both qualify), so the
+      // message names the shape rather than one unit's noun.
+      return { error: `${serviceLabel}: only services with timed options can have a time window.` };
     if (hasStart && (!isValidTimeString(o.startTime) || !isValidTimeString(o.endTime)))
       return { error: `${serviceLabel}: times must be in HH:MM format.` };
     if (hasStart && (o.endTime as string) <= (o.startTime as string))
@@ -330,12 +333,13 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get('/:slug/admin/settings', async (c) => {
     const tenant = c.get('tenant');
-    const [services, options, petTypes, blocked, connections] = await Promise.all([
+    const [services, options, petTypes, blocked, connections, adminEmail] = await Promise.all([
       listServices(c.env.PAWBOOK_DB, tenant.Id),
       listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
       listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
       listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
       listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
+      getTenantUserEmailById(c.env.PAWBOOK_DB, tenant.Id, c.get('adminUserId')),
     ]);
     return c.json({
       disabled: tenant.DisabledAt != null,
@@ -344,6 +348,9 @@ export const adminRoutes = new Hono<AppEnv>()
       timezone: tenant.Timezone,
       contactEmail: tenant.ContactEmail,
       contactPhone: tenant.ContactPhone,
+      // The signed-in sitter's own login email — never a client-settable field; the setup wizard
+      // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
+      adminEmail,
       petTypes: petTypes.map((p) => ({ petType: p.PetType, label: p.Label })),
       services: services.map((svc) => ({
         type: svc.ServiceType,

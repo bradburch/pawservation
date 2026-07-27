@@ -80,9 +80,19 @@ describe('serviceSummary facts line', () => {
     expect(serviceSummary(svc({ options: [opt(), opt()] })).facts).toBe('');
   });
 
-  it('option count says "options" for non-visit rate units', () => {
+  it('option count says "walk lengths" for walk-billed services', () => {
+    // Walks bill per walk (SERVICE_TEMPLATES.walk.rateUnit === 'walk'), and the per-duration
+    // options are still lengths — the noun follows the unit rather than being hardcoded 'visit'.
+    const s = svc({ rateUnit: 'walk', options: [opt({ rate: 20 }), opt({ rate: 35 })] });
+    expect(serviceSummary(s).facts).toBe('2 walk lengths');
+  });
+
+  it('option count says "options" for rate units that are not per-duration', () => {
     const s = svc({ rateUnit: 'night', options: [opt({ rate: 40 }), opt({ rate: 55 })] });
     expect(serviceSummary(s).facts).toBe('2 options');
+    expect(
+      serviceSummary(svc({ rateUnit: 'day', options: [opt({ rate: 40 }), opt()] })).facts,
+    ).toBe('2 options');
   });
 
   it('min nights only → "Min 2 nights" (singular for 1)', () => {

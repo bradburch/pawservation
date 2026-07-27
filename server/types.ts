@@ -218,6 +218,8 @@ export type AppEnv = {
   Variables: {
     tenant: Tenant;
     endUserId: string;
+    /** Set by adminAuth: the authenticated sitter-admin's TenantUser id (AdminClaims.sub). */
+    adminUserId: string;
     /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
     ownerEmail: string;
   };

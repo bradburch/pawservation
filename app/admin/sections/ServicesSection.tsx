@@ -57,7 +57,7 @@ export function ServicesSection({
       <p className="pb-applies">
         Tap a card to edit pricing, questions, and limits; the switch turns a service on or off. To
         create a new offering clients can book (say, a 30-minute &ldquo;Puppy Check-in&rdquo;), add
-        it as an option under Walks or Check-ins with its own name, length, and price.
+        it as an option under Walk or Check-in with its own name, length, and price.
       </p>
       <div className="pb-svc-grid">
         {settings.services.map((s, si) => {

@@ -12,7 +12,7 @@ export type ServiceConfig = ServiceConstraints & {
   label: string;
   icon: string; // widget icon key: bed|home|sun|paw|clipboard
   shape: 'range' | 'single';
-  rateUnit: 'night' | 'day' | 'visit';
+  rateUnit: 'night' | 'day' | 'visit' | 'walk';
   hasDuration: boolean;
   options: ServiceOption[];
   questions: ServiceQuestion[];
