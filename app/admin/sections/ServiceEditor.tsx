@@ -53,6 +53,7 @@ function QuestionRow({
     <div className="pb-options">
       <div className="pb-inline">
         <input
+          className="pb-question-input"
           placeholder="Question"
           value={question.label}
           onChange={(e) => onChange({ ...question, label: e.target.value })}
@@ -194,16 +195,24 @@ export function ServiceEditor({
       <h3>Pricing &amp; options</h3>
       {!s.hasDuration ? (
         <div className="pb-inline">
-          <input
-            placeholder="Label"
-            value={s.options[0]?.label ?? 'Standard'}
-            onChange={(e) =>
-              setService({
-                ...s,
-                options: [{ ...(s.options[0] ?? emptyOption()), label: e.target.value }],
-              })
-            }
-          />
+          <label className="pb-optname">
+            <span className="pb-labelrow">
+              Option name{' '}
+              <span className="pb-hint">
+                (what clients see — e.g. &ldquo;Standard {s.label.toLowerCase()}&rdquo;)
+              </span>
+            </span>
+            <input
+              placeholder="Standard"
+              value={s.options[0]?.label ?? 'Standard'}
+              onChange={(e) =>
+                setService({
+                  ...s,
+                  options: [{ ...(s.options[0] ?? emptyOption()), label: e.target.value }],
+                })
+              }
+            />
+          </label>
           $
           <input
             type="number"
@@ -239,11 +248,20 @@ export function ServiceEditor({
             return (
               <div key={oi}>
                 <div className="pb-inline">
-                  <input
-                    placeholder="Label"
-                    value={o.label}
-                    onChange={(e) => setOption({ label: e.target.value })}
-                  />
+                  <label className="pb-optname">
+                    <span className="pb-labelrow">
+                      Option name{' '}
+                      <span className="pb-hint">
+                        (what clients see — e.g. &ldquo;30 min&rdquo;, &ldquo;Morning
+                        walk&rdquo;)
+                      </span>
+                    </span>
+                    <input
+                      placeholder="Standard"
+                      value={o.label}
+                      onChange={(e) => setOption({ label: e.target.value })}
+                    />
+                  </label>
                   {!windowed && (
                     <input
                       type="number"

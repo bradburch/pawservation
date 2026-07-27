@@ -594,6 +594,22 @@ body {
   margin-top: 8px;
 }
 
+/* The question-label input holds a sentence, not a word — give it the full row. */
+.pb-wrap .pb-question-input {
+  flex: 1 1 100%;
+  min-width: min(20rem, 100%);
+}
+
+/* Labeled option-name field inside an option row: the label text sits on its own line
+   above the input without the default 14px label margin unbalancing the row, and the
+   row's other fields align to the input's baseline, not the taller labeled column. */
+.pb-wrap label.pb-optname {
+  margin-bottom: 0;
+}
+.pb-inline:has(.pb-optname) {
+  align-items: flex-end;
+}
+
 .pb-error {
   color: var(--bad);
   font-weight: 600;
