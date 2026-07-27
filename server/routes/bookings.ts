@@ -14,6 +14,7 @@ import {
 } from '../db/repo';
 import { checkAvailability, estimateCost, monthAvailability } from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
+import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
 import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
@@ -106,6 +107,12 @@ export const bookingRoutes = new Hono<AppEnv>()
 
     const tenantId = tenant.Id;
     const endUserId = c.get('endUserId');
+
+    // The reserved demo identity books like a real customer right up to persistence. One extra
+    // indexed read; every other request pays it too, which keeps the two paths byte-identical
+    // through validation and pricing.
+    const requester = await getEndUserById(c.env.PAWBOOK_DB, tenantId, endUserId);
+    const isDemo = requester?.Email === DEMO_EMAIL;
 
     const idemKey = c.req.header('Idempotency-Key')?.trim() || null;
     if (idemKey && idemKey.length > 128) {
@@ -229,6 +236,39 @@ export const bookingRoutes = new Hono<AppEnv>()
 
     // Price is computed server-side (never trusted from the client) and is pure — no DB read.
     const estCost = estimateCost(service, option, start, end);
+
+    if (isDemo) {
+      // Zero-pollution demo: the FULL validation pipeline above already ran; now check capacity
+      // against real bookings (the exclude id matches no row) and stop short of persisting
+      // anything — no BookingRequests row, no BookingRequestPets, no calendar sync, so the
+      // sitter's dashboard, capacity math, analytics, and emails never see this request. A
+      // genuinely full date still 409s exactly like a real booking would.
+      const demoCheck = await checkAvailability(
+        c.env,
+        tenant,
+        service,
+        option,
+        start,
+        end,
+        pets,
+        'demo-excludes-no-row',
+      );
+      if (!demoCheck.available)
+        return c.json(
+          { error: 'Sorry — those dates just filled up.', code: 'capacity_conflict' },
+          409,
+        );
+      return c.json(
+        {
+          id: `demo_${crypto.randomUUID()}`,
+          estCost,
+          status: 'pending',
+          demo: true,
+          note: 'This was a demo — no booking was created.',
+        },
+        201,
+      );
+    }
 
     // Optimistic insert, then a single capacity check that excludes our own just-inserted row.
     // The check covers both "those dates were already full" and the check-then-insert race (a

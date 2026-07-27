@@ -23,6 +23,7 @@ import type { PaymentMethod } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
 import { quarterlyBreakdown } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
+import { DEMO_EMAIL } from '../lib/demo';
 
 /**
  * The ONLY module allowed to touch PAWBOOK_DB. Every function below either resolves a
@@ -262,10 +263,10 @@ export async function countPetTypeReferences(
 ): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT (SELECT COUNT(*) FROM EndUserPets WHERE TenantId = ? AND PetType = ?)
+      `SELECT (SELECT COUNT(*) FROM EndUserPets WHERE TenantId = ? AND PetType = ? AND EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?))
             + (SELECT COUNT(*) FROM BookingRequests WHERE TenantId = ? AND PetType = ?) AS n`,
     )
-    .bind(tenantId, petType, tenantId, petType)
+    .bind(tenantId, petType, tenantId, DEMO_EMAIL, tenantId, petType)
     .first<{ n: number }>();
   return row?.n ?? 0;
 }
@@ -1413,10 +1414,67 @@ export async function insertInvitedCustomerWithPet(
   };
 }
 
+/**
+ * Lookup-or-create the per-tenant shadow customer behind the reserved demo login
+ * (server/lib/demo.ts). Provisioned like any real client — customer AND first pet in one atomic
+ * batch, so the client-AND-pet invariant holds for the shadow too — but Status 'active' (no
+ * invite email path ever fires, promoteCustomerActive is a no-op) and excluded by Email from
+ * listCustomers and the owner roster below. Its bookings are never persisted
+ * (routes/bookings.ts short-circuits), so capacity/analytics/calendar never see it.
+ */
+export async function ensureDemoCustomer(
+  db: D1Database,
+  tenantId: string,
+  email: string,
+  petType: PetType,
+): Promise<EndUser> {
+  const existing = await getEndUserByEmail(db, tenantId, email);
+  if (existing) return existing;
+  const id = `eu_demo_${crypto.randomUUID()}`;
+  const petId = `pet_demo_${crypto.randomUUID()}`;
+  const invitedAt = new Date().toISOString();
+  try {
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status, InvitedAt)
+           VALUES (?, ?, ?, 'Demo Visitor', NULL, 'active', ?)`,
+        )
+        .bind(id, tenantId, email, invitedAt),
+      db
+        .prepare(
+          `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES (?, ?, ?, 'Biscuit', ?)`,
+        )
+        .bind(petId, tenantId, id, petType),
+      db
+        .prepare(`INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)`)
+        .bind(tenantId, petId, id),
+    ]);
+  } catch (e) {
+    // Concurrent first use: UNIQUE (TenantId, Email) aborted the whole batch — re-read the winner.
+    const raced = await getEndUserByEmail(db, tenantId, email);
+    if (raced) return raced;
+    throw e;
+  }
+  return {
+    Id: id,
+    TenantId: tenantId,
+    Email: email,
+    Name: 'Demo Visitor',
+    Phone: null,
+    Status: 'active',
+    InvitedAt: invitedAt,
+  };
+}
+
 export async function listCustomers(db: D1Database, tenantId: string): Promise<EndUser[]> {
+  // The reserved demo identity (lib/demo.ts) is a real row but never a client the sitter
+  // manages — its email is uncreatable via admin routes, so this filter can't hide real data.
   const { results } = await db
-    .prepare(`SELECT ${ENDUSER_COLS} FROM EndUsers WHERE TenantId = ? ORDER BY Email`)
-    .bind(tenantId)
+    .prepare(
+      `SELECT ${ENDUSER_COLS} FROM EndUsers WHERE TenantId = ? AND Email <> ? ORDER BY Email`,
+    )
+    .bind(tenantId, DEMO_EMAIL)
     .all<EndUser>();
   return results;
 }
@@ -2139,7 +2197,7 @@ export async function listSitterRoster(
          t.DisplayName AS DisplayName,
          t.CreatedAt AS CreatedAt,
          t.DisabledAt AS DisabledAt,
-         (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id) AS Clients,
+         (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
               AND b.ServiceType != 'blocked' AND b.CreatedAt >= ?) AS Bookings,
@@ -2148,7 +2206,7 @@ export async function listSitterRoster(
        FROM Tenants t
        ORDER BY t.DisplayName COLLATE NOCASE, t.Id`,
     )
-    .bind(floor, floor)
+    .bind(DEMO_EMAIL, floor, floor)
     .all<SitterRosterRow>();
   return results;
 }

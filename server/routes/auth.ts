@@ -3,10 +3,13 @@ import * as v from 'valibot';
 import {
   consumeLoginCode,
   createLoginCode,
+  ensureDemoCustomer,
   getEndUserByEmail,
+  listPetTypes,
   promoteCustomerActive,
 } from '../db/repo';
 import { isEmailConfigured, sendLoginCode } from '../lib/email';
+import { DEMO_EMAIL, demoHostAllowed } from '../lib/demo';
 import { mintToken } from '../lib/token';
 import { EMAIL_RE } from '../lib/validation';
 import type { AppEnv } from '../types';
@@ -48,6 +51,29 @@ export const authRoutes = new Hono<AppEnv>()
     const parsed = v.safeParse(IdentifyBody, raw);
     if (!parsed.success) return c.json({ error: 'Enter a valid email.' }, 400);
     const { email } = parsed.output;
+
+    // Reserved demo identity — pawservation.com's own pages only. Checked BEFORE the normal
+    // lookup so this email can never reach the email-send path or act as a real customer:
+    // off the allowlist it is indistinguishable from an unknown email. The code is ALWAYS
+    // returned on-screen for this identity and never sent (there is no inbox behind it).
+    if (email === DEMO_EMAIL) {
+      if (!demoHostAllowed(c.req.header('X-Pawservation-Host')))
+        return c.json({ error: 'This provider books by invitation only.' }, 403);
+      const registry = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+      const petType =
+        registry.find((t) => t.PetType === 'dog')?.PetType ?? registry[0]?.PetType ?? 'dog';
+      const demoUser = await ensureDemoCustomer(c.env.PAWBOOK_DB, tenant.Id, DEMO_EMAIL, petType);
+      const code = generateCode();
+      const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
+      const codeId = await createLoginCode(
+        c.env.PAWBOOK_DB,
+        tenant.Id,
+        demoUser.Id,
+        code,
+        expiresAt,
+      );
+      return c.json({ codeId, prototypeCode: code });
+    }
 
     // Invite-only: only customers the provider has added may receive a code. Do NOT auto-create.
     const user = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);

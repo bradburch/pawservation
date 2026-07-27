@@ -139,3 +139,35 @@ export async function endUserToken(env: Env, slug: string, email: string): Promi
   );
   return ((await vRes.json()) as { token: string }).token;
 }
+
+/** Demo-login flow: identify demo@pawservation.com with an allowed forwarded host, then verify.
+ *  Mirrors endUserToken above, plus the X-Pawservation-Host header the widget forwards. */
+export async function demoToken(env: Env, slug: string): Promise<string> {
+  const { default: app } = await import('../index');
+  const idRes = await app.request(
+    `/api/${slug}/identify`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pawservation-Host': 'https://pawservation.com',
+      },
+      body: JSON.stringify({ email: 'demo@pawservation.com' }),
+    },
+    env,
+  );
+  const { codeId, prototypeCode } = (await idRes.json()) as {
+    codeId: string;
+    prototypeCode: string;
+  };
+  const vRes = await app.request(
+    `/api/${slug}/verify`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codeId, code: prototypeCode }),
+    },
+    env,
+  );
+  return ((await vRes.json()) as { token: string }).token;
+}

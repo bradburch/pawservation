@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, setToken } from '../shared-ui/api';
-import { errorMsg, slug } from './shared';
+import { errorMsg, parentOrigin, slug } from './shared';
 
 type IdentifyState =
   { step: 'email' } | { step: 'code'; codeId: string; prototypeCode?: string; email: string };
@@ -17,7 +17,7 @@ export function Identify({ onDone }: { onDone: () => void }) {
     setError('');
     setBusy(true);
     try {
-      const res = await api.identify(slug, email);
+      const res = await api.identify(slug, email, parentOrigin);
       setState({
         step: 'code',
         codeId: res.codeId,
