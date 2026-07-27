@@ -1556,15 +1556,11 @@ body {
   }
 }
 
-/* Field + hint side by side (ServiceEditor's Booking limits caps); the row
-   takes over the label's usual bottom margin. */
-.pb-cap-row {
-  display: flex;
+/* Label text + its `?` hint button as ONE inline row, so the icon sits immediately
+   after the words it explains instead of wrapping under the field. */
+.pb-labelrow {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.pb-cap-row > label {
-  margin-bottom: 0;
+  gap: 6px;
+  flex-wrap: wrap;
 }

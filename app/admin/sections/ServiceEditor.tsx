@@ -169,6 +169,9 @@ export function ServiceEditor({
     const last = tiers[tiers.length - 1];
     commitTiers([...tiers, { withinDays: (last?.withinDays ?? 0) + 5, percent: 50 }]);
   };
+  // Boarding is priced/booked per night, daycare-style pools per day — the capacity label
+  // must use the same noun the price does (RateUnit is the single source of that noun).
+  const capUnit = s.rateUnit === 'night' ? 'night' : 'day';
   return (
     <div
       className="pb-svc-editor"
@@ -299,13 +302,15 @@ export function ServiceEditor({
                     label="Capacity"
                     value={o.capacity}
                     onChange={(capacity) => setOption({ capacity })}
+                    hint={
+                      <Hint label="Capacity">
+                        How many pets this time slot can take. A booking with three dogs uses
+                        three spots. A full slot stops being offered; blank means no limit.
+                      </Hint>
+                    }
                   />
-                  <Hint label="Capacity">
-                    How many pets this time slot can take. A booking with three dogs uses three
-                    spots. A full slot stops being offered; blank means no limit.
-                  </Hint>
                   {windowed && (
-                    <>
+                    <span className="pb-labelrow">
                       <label className="pb-inline">
                         <input
                           type="checkbox"
@@ -318,7 +323,7 @@ export function ServiceEditor({
                         Clients will only see this option on Mondays through Fridays. It appears
                         once the option has a time window.
                       </Hint>
-                    </>
+                    </span>
                   )}
                 </div>
               </div>
@@ -386,17 +391,17 @@ export function ServiceEditor({
       <div className="pb-limits">
         <h3>Booking limits</h3>
         {(s.capacityKind === 'boarding' || s.capacityKind === 'housesit') && (
-          <div className="pb-cap-row">
-            <NullableNumberField
-              label="Pets per day"
-              value={s.maxConcurrentPets}
-              onChange={(maxConcurrentPets) => setService({ ...s, maxConcurrentPets })}
-            />
-            <Hint label="Pets per day">
-              Blank means no limit. Counts every pet in care that day — a booking with three dogs
-              uses three spots.
-            </Hint>
-          </div>
+          <NullableNumberField
+            label={`Pets in care per ${capUnit}`}
+            value={s.maxConcurrentPets}
+            onChange={(maxConcurrentPets) => setService({ ...s, maxConcurrentPets })}
+            hint={
+              <Hint label={`Pets in care per ${capUnit}`}>
+                Blank means no limit. Counts every pet in your care that {capUnit}, across all
+                overlapping stays — a booking with three dogs uses three spots.
+              </Hint>
+            }
+          />
         )}
         {s.shape === 'range' && (
           <>
