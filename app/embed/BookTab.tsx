@@ -176,7 +176,10 @@ export function BookTab({
               <span className="bp-service-emoji" aria-hidden="true">
                 <Icon />
               </span>
-              <span className="bp-service-label">{s.label}</span>
+              <span className="bp-service-text">
+                <span className="bp-service-label">{s.label}</span>
+                {s.description && <span className="bp-service-desc">{s.description}</span>}
+              </span>
             </button>
           );
         })}

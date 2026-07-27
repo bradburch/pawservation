@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   Enabled INTEGER NOT NULL DEFAULT 1,
   Label TEXT NOT NULL,
   Icon TEXT NOT NULL DEFAULT 'paw', -- widget icon key: bed|home|sun|paw|clipboard
+  -- Optional SHORT blurb the sitter writes, shown to pet owners under the service name in the
+  -- embed widget (0025). Plain text, capped at 200 chars by the admin PUT. NULL = absent.
+  Description TEXT,
   Shape TEXT NOT NULL CHECK (Shape IN ('range', 'single')),
   -- 'walk' added by 0024: walks are priced per WALK, not per visit. The unit is printed straight
   -- from this column, so a new noun needs a new allowed value, not a display-time substitution.

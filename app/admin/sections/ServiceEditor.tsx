@@ -5,6 +5,9 @@ import { Hint } from '../Hint';
 /** One row of the cancellation-policy editor, mirroring the wire/shared CancellationTier shape. */
 type ServiceEditorTier = { withinDays: number; percent: number };
 
+/** Mirrors MAX_SERVICE_DESCRIPTION in server/routes/admin.ts — UX only; the server still validates. */
+const MAX_DESCRIPTION = 200;
+
 const QUESTION_TYPES: QuestionForm['type'][] = ['text', 'yesno', 'number', 'select'];
 const QUESTION_TYPE_LABELS: Record<QuestionForm['type'], string> = {
   text: 'Text',
@@ -173,6 +176,17 @@ export function ServiceEditor({
       aria-labelledby={labelledBy}
       aria-label={labelledBy ? undefined : s.label}
     >
+      <label>
+        Short description{' '}
+        <span className="pb-hint">(optional — clients see this on your booking widget)</span>
+        <input
+          maxLength={MAX_DESCRIPTION}
+          placeholder="e.g. Overnight stays at our home, two walks a day"
+          value={s.description ?? ''}
+          onChange={(e) => setService({ ...s, description: e.target.value || null })}
+        />
+      </label>
+
       <h3>Pricing &amp; options</h3>
       {!s.hasDuration ? (
         <div className="pb-inline">

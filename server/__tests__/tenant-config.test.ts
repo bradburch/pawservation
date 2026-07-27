@@ -18,6 +18,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
     )!;
     await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
       enabled: true,
+      description: before.Description,
       questions: before.Questions,
       minNights: before.MinNights,
       maxNights: before.MaxNights,
@@ -32,6 +33,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
     expect(after.MaxConcurrentPets).toBe(7);
     await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
       enabled: true,
+      description: before.Description,
       questions: before.Questions,
       minNights: before.MinNights,
       maxNights: before.MaxNights,

@@ -568,6 +568,8 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         services: settings.services.map((s): ServicePayload => ({
           type: s.type,
           enabled: s.enabled,
+          // Whitespace-only means "cleared"; the server trims and stores NULL either way.
+          description: s.description?.trim() || null,
           maxConcurrentPets: s.maxConcurrentPets,
           options: s.options.map((o): ServiceOptionForm => ({
             optionKey: o.optionKey,

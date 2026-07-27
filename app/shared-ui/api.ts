@@ -11,6 +11,8 @@ export type ServiceConfig = ServiceConstraints & {
   type: string;
   label: string;
   icon: string; // widget icon key: bed|home|sun|paw|clipboard
+  /** Short sitter-written blurb shown under the service name in the picker; null = show nothing. */
+  description: string | null;
   shape: 'range' | 'single';
   rateUnit: 'night' | 'day' | 'visit' | 'walk';
   hasDuration: boolean;

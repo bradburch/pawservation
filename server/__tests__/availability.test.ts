@@ -15,6 +15,7 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     Enabled: 1,
     Label: tpl.label,
     Icon: tpl.icon,
+    Description: null,
     Shape: tpl.shape,
     RateUnit: tpl.rateUnit,
     HasDuration: tpl.hasDuration ? 1 : 0,

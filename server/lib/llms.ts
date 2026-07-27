@@ -5,23 +5,39 @@ function jsonForScript(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
+/**
+ * Collapse whitespace in a sitter-authored string before it reaches this LINE-ORIENTED document.
+ * Every interpolated value below — DisplayName, Label, Description — is sitter-controlled and
+ * stored with at most a `.trim()`, so a newline in any of them lets its author forge extra `-` list
+ * items, a `##` section, or instructions aimed at the agent reading the file. Own-tenant only
+ * (tenancy holds), but a tenant must not get to author STRUCTURE in its own machine-readable doc.
+ * Every sitter-authored value on an llms.txt line goes through this — no exceptions.
+ */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 export function buildLlmsTxt(
   tenant: Tenant,
   services: TenantService[],
   options: TenantServiceOption[],
   origin: string,
 ): string {
+  const displayName = oneLine(tenant.DisplayName);
   const lines: string[] = [
-    `# ${tenant.DisplayName}`,
+    `# ${displayName}`,
     '',
-    `> Pet-care booking for ${tenant.DisplayName}. Availability, quotes, and booking requests are served by a JSON API; all prices are computed server-side.`,
+    `> Pet-care booking for ${displayName}. Availability, quotes, and booking requests are served by a JSON API; all prices are computed server-side.`,
     '',
     '## Services',
   ];
   for (const svc of services.filter((s) => s.Enabled)) {
     const svcOptions = options.filter((o) => o.ServiceType === svc.ServiceType);
     const rates = svcOptions.map((o) => `$${o.Rate}/${svc.RateUnit}`).join(', ');
-    lines.push(`- ${svc.Label}${rates ? ` (${rates})` : ''}`);
+    // Label and Description are both sitter-authored: one service stays one list item.
+    const label = oneLine(svc.Label);
+    const blurb = svc.Description === null ? '' : oneLine(svc.Description);
+    lines.push(`- ${label}${rates ? ` (${rates})` : ''}${blurb ? ` — ${blurb}` : ''}`);
   }
   lines.push(
     '',

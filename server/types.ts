@@ -44,6 +44,8 @@ export type TenantService = {
   Enabled: number;
   Label: string;
   Icon: string;
+  /** Optional short sitter-written blurb shown to pet owners in the widget; null = absent (0025). */
+  Description: string | null;
   Shape: ServiceShape;
   RateUnit: RateUnit;
   HasDuration: number;

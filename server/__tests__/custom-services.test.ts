@@ -296,6 +296,7 @@ describe('custom services — deletion', () => {
     const { env } = createTestEnv();
     const updated = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'no-such-service', {
       enabled: true,
+      description: null,
       questions: [],
       minNights: null,
       maxNights: null,
