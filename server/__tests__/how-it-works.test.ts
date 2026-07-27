@@ -138,6 +138,20 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     const body = await howItWorksBody();
     expect(body).not.toContain('<img');
   });
+
+  it('footer carries no open-source / self-host block, only the created-by line', async () => {
+    const body = await howItWorksBody();
+    for (const gone of [
+      'MIT license',
+      'Self-hostable',
+      'Technical docs',
+      'Source on GitHub',
+      'github.com/bradburch/pawservation',
+    ]) {
+      expect(body, gone).not.toContain(gone);
+    }
+    expect(body).toContain('Brad Burch');
+  });
 });
 
 describe('the landing page points at /how-it-works', () => {

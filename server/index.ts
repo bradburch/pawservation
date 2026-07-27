@@ -820,7 +820,7 @@ const PAGE_STYLE = /* css */ `
       }
       .foot-bottom p { margin: 0; }
       @media (min-width: 700px) {
-        .foot-grid { grid-template-columns: 1.4fr 1fr 1fr; }
+        .foot-grid { grid-template-columns: 1.4fr 1fr; }
       }
 
       :focus-visible {
@@ -1276,19 +1276,10 @@ const LANDING_HTML = `<!doctype html>
               <li><a href="#faq">FAQ</a></li>
             </ul>
           </div>
-          <div>
-            <h3>Open source</h3>
-            <ul>
-              <li><a href="https://github.com/bradburch/pawservation">Source on GitHub</a></li>
-              <li><a href="https://github.com/bradburch/pawservation/blob/main/docs/index.md">Technical docs</a></li>
-              <li>Self-hostable on Cloudflare Workers &mdash; the <a href="https://github.com/bradburch/pawservation#deploying">README&rsquo;s deploy steps</a> cover it.</li>
-            </ul>
-          </div>
         </div>
         <div class="foot-bottom">
           <p>
-            Pawservation is open source under the MIT license &middot; Created by
-            <a href="https://bradburch.github.io/">Brad Burch</a>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
           </p>
         </div>
       </div>
@@ -1725,19 +1716,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <li><a href="/#faq">FAQ</a></li>
             </ul>
           </div>
-          <div>
-            <h3>Open source</h3>
-            <ul>
-              <li><a href="https://github.com/bradburch/pawservation">Source on GitHub</a></li>
-              <li><a href="https://github.com/bradburch/pawservation/blob/main/docs/index.md">Technical docs</a></li>
-              <li>Self-hostable on Cloudflare Workers &mdash; the <a href="https://github.com/bradburch/pawservation#deploying">README&rsquo;s deploy steps</a> cover it.</li>
-            </ul>
-          </div>
         </div>
         <div class="foot-bottom">
           <p>
-            Pawservation is open source under the MIT license &middot; Created by
-            <a href="https://bradburch.github.io/">Brad Burch</a>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
           </p>
         </div>
       </div>

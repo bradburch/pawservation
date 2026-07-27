@@ -119,4 +119,18 @@ describe('GET / — landing page', () => {
     }
     expect(total, 'total image weight').toBeLessThanOrEqual(TOTAL_BUDGET_KB * 1024);
   });
+
+  it('footer carries no open-source / self-host block, only the created-by line', async () => {
+    const body = await landingBody();
+    for (const gone of [
+      'MIT license',
+      'Self-hostable',
+      'Technical docs',
+      'Source on GitHub',
+      'github.com/bradburch/pawservation',
+    ]) {
+      expect(body, gone).not.toContain(gone);
+    }
+    expect(body).toContain('Brad Burch');
+  });
 });
