@@ -1039,16 +1039,9 @@ export const adminRoutes = new Hono<AppEnv>()
       );
     }
 
-    // Only send the invite for a freshly-invited customer — skip if the customer is already active
-    // (a re-POST of an existing active customer must not send a confusing "you're invited" email).
-    if (customer.Status === 'invited' && isEmailConfigured(c.env)) {
-      const widgetUrl = new URL(`/embed/${tenant.Slug}`, c.req.url).toString();
-      try {
-        await sendInvite(c.env, email, tenant.DisplayName, widgetUrl);
-      } catch {
-        return c.json({ error: 'Customer saved, but the invite email could not be sent.' }, 502);
-      }
-    }
+    // Deliberately NO email here (WS-C owner decision): creating a client is a data entry, not an
+    // introduction. The welcome mail is the explicit POST /:slug/admin/customers/:id/welcome
+    // below, so the sitter chooses when (and whether) a client first hears from Pawservation.
     return c.json(
       {
         id: customer.Id,
