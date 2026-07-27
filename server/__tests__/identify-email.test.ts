@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { createLoginCode } from '../db/repo';
+import { sendLoginCode } from '../lib/email';
 import { createTestEnv } from './helpers';
 
 /** When email is configured, /identify must email the code and never return it in the response. */
@@ -38,6 +39,8 @@ describe('identify with email configured', () => {
     expect(fetchSpy).toHaveBeenCalledWith('https://api.resend.com/emails', expect.anything());
     const sentBody = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
     expect(sentBody.from).toBe(env.RESEND_FROM_NOREPLY); // login mail, not the booking sender
+    // The sent email should include the tenant's display name (seeded as 'Paws & Relax' for paws-and-relax).
+    expect(sentBody.text).toContain('Paws & Relax');
   });
 
   it('returns 502 when the email provider fails', async () => {
@@ -86,6 +89,37 @@ describe('identify with email configured', () => {
     const body = (await res.json()) as { prototypeCode?: string };
     expect(body.prototypeCode).toBeTruthy();
     expect(fetchSpy).not.toHaveBeenCalled(); // no real send attempted for a demo tenant
+  });
+});
+
+/** Test sendLoginCode with display name parameter. */
+describe('sendLoginCode', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const env = {
+    RESEND_API_KEY: 'k',
+    RESEND_FROM_NOREPLY: 'Pawservation <no_reply@x.com>',
+    RESEND_FROM_BOOKING: 'Pawservation <booking@x.com>',
+  } as unknown as Env;
+
+  it('sends a login code email with display name, escaping the display name in HTML', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    await sendLoginCode(env, 'user@example.com', '123456', '<b>Evil</b>');
+    const init = spy.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.to).toBe('user@example.com');
+    expect(body.from).toBe(env.RESEND_FROM_NOREPLY);
+    expect(body.text).toContain('123456');
+    expect(body.html).toContain('123456');
+    // HTML escapes the display name but not the code (server-generated digits).
+    expect(body.html).toContain('&lt;b&gt;Evil');
+    expect(body.html).not.toContain('<b>Evil');
+  });
+
+  it('throws when email is not configured', async () => {
+    await expect(sendLoginCode({} as Env, 'a@b.c', '123456', 'X')).rejects.toThrow();
   });
 });
 

@@ -75,13 +75,28 @@ async function resendPost(env: Env, from: string, body: Record<string, unknown>)
 }
 
 /** Send a login code. Throws if email is not configured or Resend rejects the request. */
-export async function sendLoginCode(env: Env, to: string, code: string): Promise<void> {
+export async function sendLoginCode(
+  env: Env,
+  to: string,
+  code: string,
+  displayName: string,
+): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // displayName is tenant-controlled → escaped in HTML. code is server-generated digits
+  // (from generateCode in routes/auth.ts) interpolated as-is — no escaping needed. Subject/text
+  // are plain-text JSON fields in Resend's API — no escaping needed.
   await resendPost(env, env.RESEND_FROM_NOREPLY!, {
     to,
     subject: `Your booking code: ${code}`,
-    text: `Your verification code is ${code}. It expires in 10 minutes.`,
-    html: `<p>Your verification code is <strong>${code}</strong>.</p><p>It expires in 10 minutes.</p>`,
+    text:
+      `Your code to sign in and book with ${displayName} is ${code}. It expires in 10 minutes.\n\n` +
+      `If you didn't try to sign in, you can ignore this email.`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">Your code to sign in and book with <strong>${htmlEscape(displayName)}</strong>:</p>` +
+        `<p style="margin:12px 0;font-size:28px;font-weight:800;letter-spacing:6px;">${code}</p>` +
+        `<p style="margin:8px 0 0;">It expires in 10 minutes. If you didn&#39;t try to sign in, you can ignore this email.</p>`,
+      `Sent by Pawservation on behalf of ${displayName}`,
+    ),
   });
 }
 
@@ -97,15 +112,24 @@ export async function sendBookingStatusEmail(
   whenText: string,
 ): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // displayName and whenText are tenant/user-controlled → escaped in HTML. statusWord is one of
+  // three code literals (confirmed/declined/cancelled) — safe unescaped. Subject/text are
+  // plain-text JSON fields in Resend's API — no escaping needed.
   await resendPost(env, env.RESEND_FROM_BOOKING!, {
     to,
     subject: `Your booking with ${displayName} was ${statusWord}`,
-    text: `${displayName} has ${statusWord} your booking (${whenText}).`,
-    html: `<p>${htmlEscape(displayName)} has <strong>${statusWord}</strong> your booking (${htmlEscape(whenText)}).</p>`,
+    text:
+      `${displayName} has ${statusWord} your booking (${whenText}).\n\n` +
+      `You can review your bookings anytime on ${displayName}'s booking page — sign in with this email address.`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">${htmlEscape(displayName)} has <strong>${statusWord}</strong> your booking (${htmlEscape(whenText)}).</p>` +
+        `<p style="margin:8px 0 0;">You can review your bookings anytime on ${htmlEscape(displayName)}&#39;s booking page &mdash; sign in with this email address.</p>`,
+      `Sent by Pawservation on behalf of ${displayName}`,
+    ),
   });
 }
 
-/** Send a booking invite. Throws if email is not configured or Resend rejects the request. */
+/** Send a booking invite (on-demand customer welcome). Throws if email is not configured or Resend rejects the request. */
 export async function sendInvite(
   env: Env,
   to: string,
@@ -113,14 +137,22 @@ export async function sendInvite(
   widgetUrl: string,
 ): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
-  // displayName is tenant-controlled; escape it before it reaches the HTML body. widgetUrl is
-  // server-built, but escape it for the attribute context as defense-in-depth. Subject and text
-  // are plain-text fields in Resend's JSON API (not raw headers / not HTML), so they need no escaping.
+  // displayName is tenant-controlled → escaped in HTML. widgetUrl is server-built, but escaped
+  // for attribute context as defense-in-depth. Subject/text are plain-text JSON fields in
+  // Resend's API — no escaping needed.
   await resendPost(env, env.RESEND_FROM_BOOKING!, {
     to,
-    subject: `You're invited to book with ${displayName}`,
-    text: `${displayName} has invited you to book online. Get started here: ${widgetUrl}`,
-    html: `<p>${htmlEscape(displayName)} has invited you to book online.</p><p><a href="${htmlEscape(widgetUrl)}">Book now</a></p>`,
+    subject: `You're set up to book with ${displayName}`,
+    text:
+      `${displayName} uses Pawservation to take booking requests online — and you're on their client list.\n\n` +
+      `Request a stay, a walk or a visit for your pets here: ${widgetUrl}\n\n` +
+      `Sign in with this email address and we'll send you a one-time code — no password to remember. Your sitter reviews every request personally, so nothing is booked until they confirm.`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;"><strong>${htmlEscape(displayName)}</strong> uses Pawservation to take booking requests online &mdash; and you&#39;re on their client list.</p>` +
+        `${emailButton(widgetUrl, 'Request a booking')}` +
+        `<p style="margin:8px 0 0;">Sign in with this email address and we&#39;ll send you a one-time code &mdash; no password to remember. Your sitter reviews every request personally, so nothing is booked until they confirm.</p>`,
+      `Sent by Pawservation on behalf of ${displayName}`,
+    ),
   });
 }
 
