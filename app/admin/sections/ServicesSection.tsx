@@ -115,6 +115,7 @@ export function ServicesSection({
           addService={async (template, label) => {
             const type = await addService(template, label);
             if (type) setExpanded(type);
+            return type; // undefined on failure — the tile keeps the typed name for a retry
           }}
           expanded={expanded === ADD_KEY}
           onToggleExpanded={() => toggle(ADD_KEY)}

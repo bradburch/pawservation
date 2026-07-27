@@ -432,6 +432,13 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
 
   const dirty = settings !== null && JSON.stringify(settings) !== savedSnapshot;
 
+  // A new service/option starts with an EMPTY price the sitter must fill (no default price), so
+  // that omission is the COMMON way a save would fail. Stop it before the round-trip and name the
+  // service. This is a PRESENCE check on an input, not a price computation — the client still never
+  // computes money, and the server re-validates every rate at its trust boundary regardless.
+  // Only ever true of an unsaved draft: the server never persists a rate this shape.
+  const unpricedService = settings?.services.find((s) => s.options.some((o) => o.rate === ''));
+
   // The dashboard's own wrapper element, captured via callback ref (not useRef + an empty-deps
   // effect) because it doesn't exist on the first render — this component returns the "Loading…"
   // paragraph below until `settings` arrives. Custom properties are set on it (rather than the
@@ -909,12 +916,16 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         <div className="pb-savebar" role="status" ref={setDashSavebarEl}>
           {error ? (
             <p className="pb-savebar-error">{error}</p>
+          ) : unpricedService ? (
+            <p className="pb-savebar-error">
+              Add a price for every option in {unpricedService.label} to save.
+            </p>
           ) : dirty ? (
             <p>You have unsaved changes.</p>
           ) : (
             <p className="pb-savebar-saved">{message}</p>
           )}
-          {dirty && <button onClick={save}>Save settings</button>}
+          {dirty && !unpricedService && <button onClick={save}>Save settings</button>}
         </div>
       )}
 

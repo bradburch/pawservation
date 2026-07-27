@@ -196,7 +196,11 @@ function resolveServiceOptions(
         error: `${serviceLabel}: two options are both named “${label}” — give each option a different name.`,
       };
     seenLabels.add(labelKey);
-    if (!isValidRate(o.rate)) return { error: 'Rates must be whole dollars ≥ 1.' };
+    // Names the service AND the option, like every sibling error here: a new service/option now
+    // starts with an EMPTY price (no default), so a missing rate is the COMMON way to land here
+    // and "which price?" has to be answerable from the message alone.
+    if (!isValidRate(o.rate))
+      return { error: `${serviceLabel}: “${label}” needs a price — whole dollars ≥ 1.` };
 
     const hasStart = o.startTime !== undefined && o.startTime !== null;
     const hasEnd = o.endTime !== undefined && o.endTime !== null;
@@ -290,6 +294,8 @@ type ServiceBody = {
   questions?: QuestionBody[];
   minNights?: number | null;
   maxNights?: number | null;
+  /** Retired — declared only so a client that still sends it is REJECTED, not silently ignored. */
+  minPetCount?: number | null;
   maxPetCount?: number | null;
   acceptedPetTypes?: string[] | null;
   maxConcurrentPets?: number | null;
@@ -448,6 +454,14 @@ export const adminRoutes = new Hono<AppEnv>()
       if (!isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT))
         return c.json(
           { error: `${meta.Label}: pet count must be a positive number, or blank.` },
+          400,
+        );
+      // MinPetCount is retired: services have only a MAX. Same treatment as maxPerDay below — a
+      // client that still sends one is rejected rather than silently dropped, so a sitter can never
+      // be left believing a minimum they submitted is in force.
+      if (svc.minPetCount != null)
+        return c.json(
+          { error: `${meta.Label}: services no longer have a minimum pet count.` },
           400,
         );
       // Per-service cap (0015; pets everywhere as of 0017): same PATCH idiom, same 1..1000 sanity

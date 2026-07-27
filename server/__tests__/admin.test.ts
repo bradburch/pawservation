@@ -125,6 +125,67 @@ describe('tenant admin', () => {
     expect(config.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(50);
   });
 
+  it('rejects an UNPRICED option ("") and names the service and the option', async () => {
+    const { env } = createTestEnv();
+    // A new service/option now starts with an empty price input (no default price), so '' on the
+    // wire is the common failure — the message has to answer "which price is missing?".
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          displayName: 'Should Not Persist',
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [{ label: 'Puppy Check-in', durationMinutes: 30, rate: '' }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain('Walks'); // the service…
+    expect(error).toContain('Puppy Check-in'); // …and the specific option
+    // Same atomicity as the rate: 0 case above — nothing in the request persists.
+    const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      displayName: string;
+    };
+    expect(config.displayName).toBe('Sunny Paws');
+  });
+
+  it('rejects a retired minPetCount instead of silently ignoring it', async () => {
+    const { env } = createTestEnv();
+    // Same contract as the retired maxPerDay: a client that still sends a minimum must be told it
+    // no longer applies, never left believing a minimum it submitted is in force.
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              minPetCount: 3,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: expect.stringContaining('minimum pet count') as unknown as string,
+    });
+  });
+
   it('capacity edits change availability outcomes (per-service cap)', async () => {
     const { env } = createTestEnv();
     // Seed: Jun 21-24 at Sunny Paws has 1 pet, max 2 -> a 2-pet request conflicts.

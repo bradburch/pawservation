@@ -6,7 +6,7 @@ function AddServiceForm({
   addService,
 }: {
   templates: Settings['templates'];
-  addService: (template: string, label: string) => Promise<void>;
+  addService: (template: string, label: string) => Promise<string | undefined>;
 }) {
   const [template, setTemplate] = useState(templates[0]?.id ?? '');
   const [label, setLabel] = useState('');
@@ -16,8 +16,11 @@ function AddServiceForm({
     if (busy || !label.trim() || !template) return;
     setBusy(true);
     try {
-      await addService(template, label.trim());
-      setLabel('');
+      // Only clear the field on an ACTUAL create. Failures (duplicate name, the 6-service cap)
+      // surface in the save-bar banner and resolve undefined — keep what the sitter typed so they
+      // can edit it and retry instead of retyping it from the error message.
+      const created = await addService(template, label.trim());
+      if (created) setLabel('');
     } finally {
       setBusy(false);
     }
@@ -63,7 +66,8 @@ export function AddServiceTile({
   atCap,
 }: {
   templates: Settings['templates'];
-  addService: (template: string, label: string) => Promise<void>;
+  /** Resolves to the new service's type slug, or undefined if the create failed. */
+  addService: (template: string, label: string) => Promise<string | undefined>;
   expanded: boolean;
   onToggleExpanded: () => void;
   openRef: (el: HTMLButtonElement | null) => void;

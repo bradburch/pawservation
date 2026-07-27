@@ -192,6 +192,8 @@ export function ServiceEditor({
             min={1}
             step={1}
             inputMode="numeric"
+            required
+            aria-invalid={(s.options[0]?.rate ?? '') === ''}
             value={s.options[0]?.rate ?? ''}
             onChange={(e) =>
               setService({
@@ -249,6 +251,8 @@ export function ServiceEditor({
                     min={1}
                     step={1}
                     inputMode="numeric"
+                    required
+                    aria-invalid={o.rate === ''}
                     value={o.rate}
                     onChange={(e) =>
                       setOption({ rate: e.target.value === '' ? '' : Number(e.target.value) })
@@ -317,6 +321,11 @@ export function ServiceEditor({
             Add an option
           </button>
         </div>
+      )}
+      {/* Covers both pricing shapes above. A price left blank blocks the save bar (App.tsx), so say
+          so where the empty input is rather than only in the bar at the bottom of the page. */}
+      {s.options.some((o) => o.rate === '') && (
+        <p className="pb-error">Every option needs a price before you can save.</p>
       )}
 
       <div className="pb-questions">
