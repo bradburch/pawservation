@@ -1035,7 +1035,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Rates &amp; services</h3>
-              <p>Boarding, house-sitting, daycare, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
+              <p>Boarding, house sitting, daycare, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
             </div>
             <div class="feature">
               <h3>Caps &amp; time off</h3>
