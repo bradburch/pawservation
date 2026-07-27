@@ -126,3 +126,47 @@ describe('the reserved email is uncreatable via admin routes', () => {
     expect(raw.prepare(`SELECT Id FROM EndUsers WHERE Email = ?`).all(DEMO_EMAIL)).toEqual([]);
   });
 });
+
+describe('demo pet does not block pet-type deletion', () => {
+  it('DELETE /admin/pet-types/:petType succeeds when only the demo pet uses it', async () => {
+    const { env, raw } = createTestEnv();
+    // Provision demo customer — will create a demo pet with the preferred 'dog' type
+    await demoToken(env, SLUG_C);
+
+    // Verify the demo pet exists and uses 'dog'
+    const demoPet = raw
+      .prepare(
+        `SELECT p.PetType FROM EndUserPets p JOIN EndUsers u ON u.Id = p.EndUserId
+         WHERE u.TenantId = ? AND u.Email = ? AND p.Name = 'Biscuit'`,
+      )
+      .get(TENANT_C, DEMO_EMAIL) as { PetType: string } | undefined;
+    expect(demoPet?.PetType).toBe('dog');
+
+    // Delete the only real customer so 'dog' is only referenced by the demo pet
+    const realCustomers = raw
+      .prepare(`SELECT Id FROM EndUsers WHERE TenantId = ? AND Email != ? AND Status = 'active'`)
+      .all(TENANT_C, DEMO_EMAIL) as { Id: string }[];
+    for (const customer of realCustomers) {
+      // Remove their pets (must delete PetOwners first due to FK)
+      const petIds = raw
+        .prepare(`SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?`)
+        .all(TENANT_C, customer.Id) as { Id: string }[];
+      for (const pet of petIds) {
+        raw.prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ?`).run(TENANT_C, pet.Id);
+      }
+      raw
+        .prepare(`DELETE FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?`)
+        .run(TENANT_C, customer.Id);
+    }
+
+    // Try to delete the 'dog' pet type — before the fix, this will be blocked by the demo pet
+    const deleteRes = await app.request(
+      `/api/${SLUG_C}/admin/pet-types/dog`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_C) },
+      env,
+    );
+    // Before fix: expect(deleteRes.status).toBe(409);
+    // After fix: expect(deleteRes.status).toBe(200);
+    expect(deleteRes.status).toBe(200);
+  });
+});

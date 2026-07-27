@@ -263,10 +263,10 @@ export async function countPetTypeReferences(
 ): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT (SELECT COUNT(*) FROM EndUserPets WHERE TenantId = ? AND PetType = ?)
+      `SELECT (SELECT COUNT(*) FROM EndUserPets WHERE TenantId = ? AND PetType = ? AND EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?))
             + (SELECT COUNT(*) FROM BookingRequests WHERE TenantId = ? AND PetType = ?) AS n`,
     )
-    .bind(tenantId, petType, tenantId, petType)
+    .bind(tenantId, petType, tenantId, DEMO_EMAIL, tenantId, petType)
     .first<{ n: number }>();
   return row?.n ?? 0;
 }
