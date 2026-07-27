@@ -15,7 +15,7 @@ export function isEmailConfigured(env: Env): boolean {
 }
 
 /** Escape a value for interpolation into an HTML email body (tenant-controlled text is untrusted). */
-export function htmlEscape(value: string): string {
+function htmlEscape(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

@@ -213,11 +213,13 @@ export function ClientsSection({
       <h2>
         <IconUsers size={18} /> Your clients
         <Hint label="Clients">
-          Only people on this list can book with you. Adding a client never emails them — send the welcome email from their row when you're ready.
+          Only people on this list can book with you. Adding a client never emails them — send the
+          welcome email from their row when you're ready.
         </Hint>
       </h2>
       <p className="pb-applies">
-        Only clients you add can book. Every client is added together with their first pet, and nothing is emailed until you choose to send a welcome email.
+        Only clients you add can book. Every client is added together with their first pet, and
+        nothing is emailed until you choose to send a welcome email.
       </p>
       <div className="pb-row">
         <input
@@ -259,7 +261,11 @@ export function ClientsSection({
           {busy ? 'Adding…' : 'Add customer'}
         </button>
       </div>
-      {welcomeHint && <p className="pb-applies" role="status">{welcomeHint}</p>}
+      {welcomeHint && (
+        <p className="pb-applies" role="status">
+          {welcomeHint}
+        </p>
+      )}
       {petTypes.length === 0 && (
         <p className="pb-applies">
           Add a pet type in Pet types first — a client can only be added together with a pet.
@@ -301,7 +307,9 @@ export function ClientsSection({
             Imported {importResult.importedCustomers} client
             {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
             {importResult.importedPets === 1 ? '' : 's'}.
-            {importResult.invitesSent > 0 ? ` Sent ${importResult.invitesSent} welcome email(s).` : ''}
+            {importResult.invitesSent > 0
+              ? ` Sent ${importResult.invitesSent} welcome email(s).`
+              : ''}
             {importResult.invitesFailed > 0
               ? ` ${importResult.invitesFailed} welcome email(s) failed to send.`
               : ''}
