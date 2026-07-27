@@ -53,9 +53,13 @@ describe('GET / — landing page', () => {
     expect(body).toContain('data-pawservation-tenant');
   });
 
-  it('has a mailto invite link (invite-only story, no signup flow)', async () => {
+  it('has exactly one on-page invite-request form posting to /request-invite, no mailto anywhere', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/href="mailto:[^"]+"/);
+    expect(body).not.toMatch(/href="mailto:/);
+    expect(body.match(/<form\b/g)?.length).toBe(1);
+    expect(body).toContain('<form class="invite-form" method="post" action="/request-invite">');
+    expect(body).toContain('name="business"');
+    expect(body).toContain('name="website"'); // honeypot field
   });
 
   it('makes no multi-pet pricing claim (the FAQ item is gone; rates ship with pet-mix-rates)', async () => {

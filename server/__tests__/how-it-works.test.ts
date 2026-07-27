@@ -68,7 +68,8 @@ describe('GET /how-it-works — the in-depth tour page', () => {
 
   it('ends with a way to ask for access, since the product is invite-only', async () => {
     const body = await howItWorksBody();
-    expect(body).toMatch(/href="mailto:[^"]+"/);
+    expect(body).not.toMatch(/href="mailto:/);
+    expect(body).toContain('href="/#invite-h"');
   });
 
   it('is truthful about multi-pet pricing — not yet available, never auto-multiplied', async () => {

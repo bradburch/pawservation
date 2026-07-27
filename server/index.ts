@@ -183,7 +183,7 @@ const LANDING_HTML = `<!doctype html>
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="/demo">Try the demo</a>
-              <a class="btn btn-ghost" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
+              <a class="btn btn-ghost" href="#invite-h">Ask for an invite</a>
             </div>
             <p class="note">
               The demo is a made-up sitter&rsquo;s account &mdash; nothing to sign up for, none of
@@ -448,7 +448,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Client accounts and pet profiles</li>
                 <li>Google Calendar sync</li>
               </ul>
-              <a class="btn btn-primary" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
+              <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
               <p class="note">New sitters are added by hand for now &mdash; ask, and we&rsquo;ll email you a sign-up link.</p>
             </div>
             <div class="price-card price-card-soon">
@@ -531,11 +531,60 @@ const LANDING_HTML = `<!doctype html>
         <div class="wrap">
           <div class="cta-panel">
             <h2 id="invite-h">Want in?</h2>
-            <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page.</p>
-            <div class="cta-row">
-              <a class="btn btn-inverse" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
-              <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
-            </div>
+            <p>Pawservation is invite-only while it grows. Tell us about your business and we&rsquo;ll set up your services, rates, and booking page.</p>
+            <form class="invite-form" method="post" action="/request-invite">
+              <div class="invite-field">
+                <label for="inv-business">Business name</label>
+                <input id="inv-business" name="business" type="text" maxlength="120" required />
+              </div>
+              <div class="invite-field">
+                <label for="inv-name">Your name</label>
+                <input id="inv-name" name="name" type="text" maxlength="80" required />
+              </div>
+              <div class="invite-field">
+                <label for="inv-email">Email</label>
+                <input id="inv-email" name="email" type="email" maxlength="254" required />
+              </div>
+              <div class="invite-field">
+                <label for="inv-phone">Phone <span class="invite-optional">(optional)</span></label>
+                <input id="inv-phone" name="phone" type="tel" maxlength="40" />
+              </div>
+              <div class="invite-field">
+                <label for="inv-city">City</label>
+                <input id="inv-city" name="city" type="text" maxlength="80" required />
+              </div>
+              <div class="invite-field">
+                <label for="inv-neighborhoods">Neighborhoods you cover <span class="invite-optional">(optional)</span></label>
+                <input id="inv-neighborhoods" name="neighborhoods" type="text" maxlength="200" />
+              </div>
+              <div class="invite-field invite-field-wide">
+                <label for="inv-services">Services you offer</label>
+                <input id="inv-services" name="services" type="text" maxlength="200" required placeholder="Boarding, dog walking, drop-in visits&hellip;" />
+              </div>
+              <div class="invite-field">
+                <label for="inv-customerCount">Roughly how many clients?</label>
+                <select id="inv-customerCount" name="customerCount" required>
+                  <option value="">Choose one</option>
+                  <option value="0">Just starting out</option>
+                  <option value="1-5">1&ndash;5</option>
+                  <option value="6-15">6&ndash;15</option>
+                  <option value="16-50">16&ndash;50</option>
+                  <option value="50+">50+</option>
+                </select>
+              </div>
+              <div class="invite-field invite-field-wide">
+                <label for="inv-notes">Anything else? <span class="invite-optional">(optional)</span></label>
+                <textarea id="inv-notes" name="notes" maxlength="500" rows="3"></textarea>
+              </div>
+              <div class="invite-hp" aria-hidden="true">
+                <label for="inv-website">Website</label>
+                <input id="inv-website" name="website" type="text" tabindex="-1" autocomplete="off" />
+              </div>
+              <div class="invite-submit">
+                <button class="btn btn-inverse" type="submit">Ask for an invite</button>
+                <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
+              </div>
+            </form>
           </div>
         </div>
       </section>
@@ -972,7 +1021,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="tour-cta-h">That&rsquo;s the whole thing. Want in?</h2>
             <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page &mdash; taking bookings is free, and stays free. Or just poke at the demo first: it&rsquo;s a made-up sitter&rsquo;s account, nothing to sign up for, none of your own details asked for, nothing you can break.</p>
             <div class="cta-row">
-              <a class="btn btn-inverse" href="mailto:bradburch@duck.com?subject=Pawservation%20invite">Ask for an invite</a>
+              <a class="btn btn-inverse" href="/#invite-h">Ask for an invite</a>
               <a class="signin-inverse" href="/demo">Try the demo</a>
               <a class="signin-inverse" href="/#pricing">See pricing</a>
             </div>
