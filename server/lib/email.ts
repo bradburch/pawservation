@@ -10,6 +10,8 @@
  * and the caller falls back to returning the code/link on screen (see routes/auth.ts).
  */
 
+import { parseOwnerEmails } from './owners';
+
 export function isEmailConfigured(env: Env): boolean {
   return Boolean(env.RESEND_API_KEY && env.RESEND_FROM_NOREPLY && env.RESEND_FROM_BOOKING);
 }
@@ -226,6 +228,65 @@ export async function sendResetLink(env: Env, to: string, url: string): Promise<
         `<p style="margin:8px 0 0;">This link expires in 30 minutes. If you didn&#39;t request it, ignore this email &mdash; your password stays as it is.</p>` +
         `<p style="margin:16px 0 0;">New to Pawservation? <a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how it works</a></p>`,
       'Sent by Pawservation',
+    ),
+  });
+}
+
+/** Every field the invite-request form collects (`routes/invite-request.ts`). Required fields
+ * are always present after valibot validation; the rest are omitted from the notification
+ * entirely when blank rather than sent as an empty line. */
+export type InviteRequestFields = {
+  business: string;
+  name: string;
+  email: string;
+  phone?: string;
+  city: string;
+  neighborhoods?: string;
+  services: string;
+  customerCount: string;
+  notes?: string;
+};
+
+/**
+ * Notify the platform owner(s) of a prospective sitter's on-page invite request — the structured
+ * replacement for the old bare `mailto:` link. Recipients are every address in `OWNER_EMAILS`
+ * (one send, multiple `to`, per parseOwnerEmails); sender is RESEND_FROM_NOREPLY (account/platform
+ * mail, not booking mail). Throws if email is not configured, no owners are configured, or Resend
+ * rejects the request — routes/invite-request.ts catches this uniformly and falls back to a
+ * mailto-fallback thanks page rather than a 5xx.
+ */
+export async function sendInviteRequest(env: Env, fields: InviteRequestFields): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  const owners = parseOwnerEmails(env);
+  if (owners.length === 0) throw new Error('No owner recipients configured.');
+
+  // Every field is submitter-controlled → htmlEscape'd for the HTML body. Subject/text are
+  // plain-text JSON fields in Resend's API — no escaping needed there.
+  const rows: [string, string | undefined][] = [
+    ['Business', fields.business],
+    ['Contact name', fields.name],
+    ['Email', fields.email],
+    ['Phone', fields.phone],
+    ['City', fields.city],
+    ['Neighborhoods', fields.neighborhoods],
+    ['Services wanted', fields.services],
+    ['Roughly how many clients', fields.customerCount],
+    ['Notes', fields.notes],
+  ];
+  const present = rows.filter((row): row is [string, string] => Boolean(row[1]));
+
+  await resendPost(env, env.RESEND_FROM_NOREPLY!, {
+    to: owners,
+    subject: `Invite request: ${fields.business} (${fields.city})`,
+    text: present.map(([label, value]) => `${label}: ${value}`).join('\n'),
+    html: emailShell(
+      present
+        .map(
+          ([label, value]) =>
+            `<p style="margin:0 0 8px;"><strong>${htmlEscape(label)}:</strong> ${htmlEscape(value)}</p>`,
+        )
+        .join(''),
+      'Sent by the Pawservation invite-request form',
     ),
   });
 }
