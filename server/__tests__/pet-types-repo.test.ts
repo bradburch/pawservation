@@ -111,6 +111,7 @@ describe('pet-type rows (repo)', () => {
     // fresh tenant scenario instead by disabling sunny-paws' checkin directly, then emptying it.
     await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'checkin', {
       enabled: false,
+      description: null,
       questions: [],
       minNights: null,
       maxNights: null,
@@ -140,6 +141,7 @@ describe('AcceptedPetTypes round-trip (repo)', () => {
     expect(before.AcceptedPetTypes).toBeNull();
     await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
       enabled: true,
+      description: before.Description,
       questions: before.Questions,
       minNights: before.MinNights,
       maxNights: before.MaxNights,

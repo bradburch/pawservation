@@ -26,24 +26,26 @@ INSERT OR REPLACE INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES
 -- Capacity lives on the service rows (0015): Sunny Paws boarding takes 2 pets/day, Happy Tails 4;
 -- everything else is unlimited (NULL). Happy Tails' services accept dogs only ('["dog"]' — the
 -- post-0015 materialized state of its dogs-only acceptance); NULL elsewhere = accepts every type.
+-- A few services carry a short Description (0025) so the demo widget shows that feature; the rest
+-- are NULL, which is the normal "no blurb" state.
 INSERT OR REPLACE INTO TenantServices
-  (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder, MaxConcurrentPets, AcceptedPetTypes) VALUES
-  ('tnt_sunnypaws', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0, 2, NULL),
-  ('tnt_sunnypaws', 'housesitting', 1, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1, NULL, NULL),
-  ('tnt_sunnypaws', 'daycare', 1, 'Daycare', 'sun', 'single', 'day', 0, 'none', 2, NULL, NULL),
-  ('tnt_sunnypaws', 'walk', 1, 'Walk', 'paw', 'single', 'walk', 1, 'none', 3, NULL, NULL),
-  ('tnt_sunnypaws', 'checkin', 1, 'Check-in', 'clipboard', 'single', 'visit', 1, 'none', 4, NULL, NULL),
-  ('tnt_sunnypaws', 'morning-walk', 1, 'Morning walk', 'paw', 'single', 'walk', 1, 'none', 5, NULL, NULL),
-  ('tnt_happytails', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0, 4, '["dog"]'),
-  ('tnt_happytails', 'housesitting', 0, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1, NULL, '["dog"]'),
-  ('tnt_happytails', 'daycare', 1, 'Daycare', 'sun', 'single', 'day', 0, 'none', 2, NULL, '["dog"]'),
-  ('tnt_happytails', 'walk', 1, 'Walk', 'paw', 'single', 'walk', 1, 'none', 3, NULL, '["dog"]'),
-  ('tnt_happytails', 'checkin', 0, 'Check-in', 'clipboard', 'single', 'visit', 1, 'none', 4, NULL, '["dog"]'),
-  ('tnt_pawsandrelax', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0, NULL, NULL),
-  ('tnt_pawsandrelax', 'housesitting', 1, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1, NULL, NULL),
-  ('tnt_pawsandrelax', 'daycare', 0, 'Daycare', 'sun', 'single', 'day', 0, 'none', 2, NULL, NULL),
-  ('tnt_pawsandrelax', 'walk', 1, 'Walk', 'paw', 'single', 'walk', 1, 'none', 3, NULL, NULL),
-  ('tnt_pawsandrelax', 'checkin', 0, 'Check-in', 'clipboard', 'single', 'visit', 1, 'none', 4, NULL, NULL);
+  (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder, MaxConcurrentPets, AcceptedPetTypes, Description) VALUES
+  ('tnt_sunnypaws', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0, 2, NULL, 'Your pet stays at our home with a fenced yard and two walks a day.'),
+  ('tnt_sunnypaws', 'housesitting', 1, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1, NULL, NULL, 'We stay overnight at your place so your pet keeps its own routine.'),
+  ('tnt_sunnypaws', 'daycare', 1, 'Daycare', 'sun', 'single', 'day', 0, 'none', 2, NULL, NULL, 'Drop off in the morning, pick up by 6pm.'),
+  ('tnt_sunnypaws', 'walk', 1, 'Walk', 'paw', 'single', 'walk', 1, 'none', 3, NULL, NULL, NULL),
+  ('tnt_sunnypaws', 'checkin', 1, 'Check-in', 'clipboard', 'single', 'visit', 1, 'none', 4, NULL, NULL, NULL),
+  ('tnt_sunnypaws', 'morning-walk', 1, 'Morning walk', 'paw', 'single', 'walk', 1, 'none', 5, NULL, NULL, NULL),
+  ('tnt_happytails', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0, 4, '["dog"]', 'Small-group boarding for dogs only, four dogs max per day.'),
+  ('tnt_happytails', 'housesitting', 0, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1, NULL, '["dog"]', NULL),
+  ('tnt_happytails', 'daycare', 1, 'Daycare', 'sun', 'single', 'day', 0, 'none', 2, NULL, '["dog"]', NULL),
+  ('tnt_happytails', 'walk', 1, 'Walk', 'paw', 'single', 'walk', 1, 'none', 3, NULL, '["dog"]', 'Neighborhood walks with a photo update when we get back.'),
+  ('tnt_happytails', 'checkin', 0, 'Check-in', 'clipboard', 'single', 'visit', 1, 'none', 4, NULL, '["dog"]', NULL),
+  ('tnt_pawsandrelax', 'boarding', 1, 'Boarding', 'bed', 'range', 'night', 0, 'boarding', 0, NULL, NULL, NULL),
+  ('tnt_pawsandrelax', 'housesitting', 1, 'House sitting', 'home', 'range', 'night', 0, 'housesit', 1, NULL, NULL, NULL),
+  ('tnt_pawsandrelax', 'daycare', 0, 'Daycare', 'sun', 'single', 'day', 0, 'none', 2, NULL, NULL, NULL),
+  ('tnt_pawsandrelax', 'walk', 1, 'Walk', 'paw', 'single', 'walk', 1, 'none', 3, NULL, NULL, NULL),
+  ('tnt_pawsandrelax', 'checkin', 0, 'Check-in', 'clipboard', 'single', 'visit', 1, 'none', 4, NULL, NULL, NULL);
 
 -- Priced options. Non-duration services = single 'standard' option, DurationMinutes NULL.
 -- Walks/check-ins = sitter-defined (duration, price) rows; prices are free-typed (note the sitter's

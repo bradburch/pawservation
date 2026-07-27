@@ -28,6 +28,7 @@ describe('cancellation tiers config round-trip', () => {
     ];
     const ok = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
       enabled: true,
+      description: before.Description,
       questions: before.Questions,
       minNights: before.MinNights,
       maxNights: before.MaxNights,
@@ -53,6 +54,7 @@ describe('cancellation tiers config round-trip', () => {
     const tiers = [{ withinDays: 3, percent: 25 }];
     const setOk = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
       enabled: true,
+      description: before.Description,
       questions: before.Questions,
       minNights: before.MinNights,
       maxNights: before.MaxNights,
@@ -70,6 +72,7 @@ describe('cancellation tiers config round-trip', () => {
 
     const clearOk = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
       enabled: true,
+      description: before.Description,
       questions: before.Questions,
       minNights: before.MinNights,
       maxNights: before.MaxNights,

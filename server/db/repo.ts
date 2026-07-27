@@ -98,9 +98,9 @@ export async function updateTenantUserPasswordHash(
 export async function listServices(db: D1Database, tenantId: string): Promise<TenantService[]> {
   const { results } = await db
     .prepare(
-      `SELECT TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind,
-              SortOrder, Questions, MinNights, MaxNights, MaxPetCount, AcceptedPetTypes,
-              MaxConcurrentPets, CancellationTiers
+      `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
+              CapacityKind, SortOrder, Questions, MinNights, MaxNights, MaxPetCount,
+              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -925,6 +925,8 @@ export async function setServiceConfig(
   serviceType: ServiceType,
   config: {
     enabled: boolean;
+    /** Short widget-facing blurb; null clears it (0025). */
+    description: string | null;
     questions: ServiceQuestion[];
     minNights: number | null;
     maxNights: number | null;
@@ -937,12 +939,13 @@ export async function setServiceConfig(
   const result = await db
     .prepare(
       `UPDATE TenantServices SET
-         Enabled = ?, Questions = ?, MinNights = ?, MaxNights = ?, MaxPetCount = ?,
-         AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
+         Enabled = ?, Description = ?, Questions = ?, MinNights = ?, MaxNights = ?,
+         MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
       config.enabled ? 1 : 0,
+      config.description,
       JSON.stringify(config.questions),
       config.minNights,
       config.maxNights,

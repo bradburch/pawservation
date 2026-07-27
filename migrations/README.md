@@ -4,7 +4,7 @@
 
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
-`0024_walk_rate_unit.sql` (keep this line in step with the highest-numbered migration
+`0025_service_description.sql` (keep this line in step with the highest-numbered migration
 mirrored into `schema.sql`). Use:
 
 ```
@@ -27,15 +27,15 @@ is made to adopt tracked migrations.
 
 Current state:
 
-- **Local dev DB**: `sql/schema.sql` already carries everything through `0024_walk_rate_unit.sql`,
-  so a local DB built **from scratch** (`npm run seed:local` against no existing DB) needs no
-  migrations applied. A local DB seeded before today predates `0020`–`0024` and is on the
-  incremental-apply path below like any other already-provisioned DB — apply `0020`–`0024` with the
-  `--local` commands in the `0020`/`0021`, `0022`/`0023`, and `0024` sections. **`seed:local` alone
-  will NOT repair it**: `schema.sql` is `CREATE … IF NOT EXISTS`, so the old narrow `RateUnit` CHECK
-  survives and `seed.sql`'s `'walk'` rows then fail — see the `seed:local` note in the `0024`
-  section for the two ways out.
-- **Remote DB**: fully migrated through `0023` as of this writing (**`0024` is NOT yet applied
+- **Local dev DB**: `sql/schema.sql` already carries everything through
+  `0025_service_description.sql`, so a local DB built **from scratch** (`npm run seed:local` against
+  no existing DB) needs no migrations applied. A local DB seeded before today predates
+  `0020`–`0025` and is on the incremental-apply path below like any other already-provisioned DB —
+  apply `0020`–`0025` with the `--local` commands in the `0020`/`0021`, `0022`/`0023`, `0024`, and
+  `0025` sections. **`seed:local` alone will NOT repair it**: `schema.sql` is
+  `CREATE … IF NOT EXISTS`, so the old narrow `RateUnit` CHECK survives and `seed.sql`'s `'walk'`
+  rows then fail — see the `seed:local` note in the `0024` section for the two ways out.
+- **Remote DB**: fully migrated through `0024` (applied 2026-07-27) (**`0025` is NOT yet applied
   — see its section below; it must be applied before this branch merges**) — `0001`–`0015` were applied
   by hand 2026-07-20 (verified via read-only schema probes), `0016`–`0019` have since been
   applied by hand as each shipped, most recently `0019` on 2026-07-25, and `0020`–`0023` (below)
@@ -214,7 +214,7 @@ npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE BookingReques
 npx wrangler d1 execute pawbook-db --remote --command "CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey ON BookingRequests (TenantId, EndUserId, IdempotencyKey) WHERE IdempotencyKey IS NOT NULL;"
 ```
 
-### 0024_walk_rate_unit.sql — NOT yet applied to remote
+### 0024_walk_rate_unit.sql — applied to remote 2026-07-27
 
 Adds `'walk'` to the `RateUnit` CHECK on **both** `TenantServices` and `TenantServiceOptions`, then
 moves existing walk services onto it. Walks are priced per **walk**, not per visit; check-ins keep
@@ -243,20 +243,21 @@ be made or read until it is restored.
 pre-`0025` schema (its `OLD_DDL` has no `Description`, correctly for its own era). It therefore
 **cannot** catch this, and is not permission to re-run the file.
 
-#### Apply order across the two in-flight migrations: `0024` **before** `0025`
+#### Apply order: `0024` **before** `0025` — steps 1–3 are done
 
-Both `0024` (this PR) and `0025` (the service-Description PR) are unapplied and each says "apply
-before merging". They are not interchangeable — `0024` must go first, because `0024`'s rebuild
-would eat `Description` if that column already existed. The verified-safe sequence:
+`0024` must precede `0025`, because `0024`'s rebuild would eat `Description` if that column already
+existed. The sequence, and where it stands:
 
-1. Apply `0024` to remote.
-2. Merge the walk-rate-unit PR (**merging to `main` IS the deploy** — see below).
-3. Rebase the `0025` PR on the new `main`.
-4. Apply `0025` to remote.
-5. Merge the `0025` PR.
+1. **Done** (2026-07-27) — applied `0024` to remote: 12 queries, both CHECKs widened, 5 walk
+   services and 9 walk options moved to `'walk'`, both check-ins correctly left on `'visit'`, no
+   false positives, 15 services / 18 options / 4 bookings / 3 tenants all preserved.
+2. **Done** — merged the walk-rate-unit PR (**merging to `main` IS the deploy** — see below).
+3. **Done** — rebased the `0025` PR on the new `main`.
+4. **Remaining** — apply `0025` to remote.
+5. **Remaining** — merge the `0025` PR.
 
-**Apply it against a DB already at `0023`, and not yet at `0025`** — the column lists in the file
-are `sql/schema.sql`'s exact post-`0023` shape.
+`0024` was applied against a DB at `0023` that was not yet at `0025` — the column lists in the file
+are `sql/schema.sql`'s exact post-`0023` shape, which is precisely why it must never run again.
 
 #### `0024` must be on remote BEFORE the merge, or new-sitter onboarding 500s
 
@@ -295,4 +296,30 @@ throw the local DB away and let `seed:local` build it from scratch:
 
 ```
 rm -rf .wrangler/state/v3/d1 && npm run seed:local
+```
+
+### 0025_service_description.sql — ⚠️ NOT YET APPLIED to remote; apply BEFORE merging
+
+Adds `TenantServices.Description` (TEXT, the optional short blurb a sitter writes for one of their
+services, shown to pet owners in the embed widget's service picker; NULL = no blurb). Purely
+additive — a single `ALTER TABLE` adding one optional column, no CHECK constraint (the 200-char
+cap is a product decision enforced in `server/routes/admin.ts`, so changing it must never require
+a table rebuild). Mirrored into `sql/schema.sql` and `sql/seed.sql`, so fresh installs and the
+Vitest harness get it without running this file.
+
+**Apply to the remote DB BEFORE merging the PR.** Unlike `0022`/`0023`, this column is **not**
+unread by the shipping worker: `listServices` in `server/db/repo.ts` `SELECT`s `Description`
+unconditionally, and that query is on the widget's `/config` path and the admin settings page — so
+a missing column **500s both** the moment the new worker goes live. Merging to `main` runs `npx
+wrangler deploy` unconditionally, so the merge _is_ the deploy and there is no window to apply it
+afterwards. Applying ahead of the merge is safe: the currently-deployed worker never reads the
+column, so it just sits there.
+
+**NOT IDEMPOTENT** — plain `ALTER TABLE` fails if re-run against an existing database (the column
+already exists). Apply exactly once per database. It is a single statement, so `--command` carries
+no partial-apply risk:
+
+```
+npx wrangler d1 execute pawbook-db --local  --command "ALTER TABLE TenantServices ADD COLUMN Description TEXT;"
+npx wrangler d1 execute pawbook-db --remote --command "ALTER TABLE TenantServices ADD COLUMN Description TEXT;"
 ```

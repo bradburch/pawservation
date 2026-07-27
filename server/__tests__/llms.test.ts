@@ -14,6 +14,20 @@ describe('llms.txt + JSON-LD', () => {
     expect(body).toContain('/api/sunny-paws/availability');
   });
 
+  it("lists each service's short description, on one line, and omits it when absent", async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE TenantServices SET Description='Overnights at\nyour place.' WHERE TenantId='${TENANT_A}' AND ServiceType='housesitting';`,
+    );
+    raw.exec(
+      `UPDATE TenantServices SET Description=NULL WHERE TenantId='${TENANT_A}' AND ServiceType='boarding';`,
+    );
+    const body = await (await app.request('/embed/sunny-paws/llms.txt', {}, env)).text();
+    // Newlines inside a description must not split one service across two list items.
+    expect(body).toContain('- House sitting ($70/night) — Overnights at your place.');
+    expect(body).toContain('- Boarding ($50/night)\n');
+  });
+
   it('404s for an unknown tenant', async () => {
     const { env } = createTestEnv();
     const res = await app.request('/embed/nope/llms.txt', {}, env);

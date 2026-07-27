@@ -21,7 +21,9 @@ export function buildLlmsTxt(
   for (const svc of services.filter((s) => s.Enabled)) {
     const svcOptions = options.filter((o) => o.ServiceType === svc.ServiceType);
     const rates = svcOptions.map((o) => `$${o.Rate}/${svc.RateUnit}`).join(', ');
-    lines.push(`- ${svc.Label}${rates ? ` (${rates})` : ''}`);
+    // The sitter's own short description, newline-stripped so one service stays one list item.
+    const blurb = svc.Description?.replace(/\s+/g, ' ').trim();
+    lines.push(`- ${svc.Label}${rates ? ` (${rates})` : ''}${blurb ? ` — ${blurb}` : ''}`);
   }
   lines.push(
     '',

@@ -27,6 +27,7 @@ export const publicRoutes = new Hono<AppEnv>()
           type: svc.ServiceType,
           label: svc.Label,
           icon: svc.Icon,
+          description: svc.Description,
           shape: svc.Shape,
           rateUnit: svc.RateUnit,
           hasDuration: Boolean(svc.HasDuration),

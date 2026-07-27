@@ -1277,3 +1277,104 @@ describe('GET /admin/settings exposes the signed-in sitter’s own login email',
     expect(((await res.json()) as { adminEmail: string | null }).adminEmail).toBeNull();
   });
 });
+
+describe('settings — service short description (0025)', () => {
+  /** PUT one service body; every case here only ever varies the description. */
+  const putHousesitting = async (env: Env, description: unknown) =>
+    await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'housesitting',
+              enabled: true,
+              description,
+              options: [{ label: 'Standard', rate: 70 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+
+  const getHousesitting = async (env: Env) => {
+    const get = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { headers: await auth(TENANT_A) },
+      env,
+    );
+    const body = (await get.json()) as { services: { type: string; description: unknown }[] };
+    return body.services.find((s) => s.type === 'housesitting')!;
+  };
+
+  it('saves a description and round-trips it through GET /admin/settings', async () => {
+    const { env } = createTestEnv();
+    expect((await putHousesitting(env, '  Overnights at your place.  ')).status).toBe(204);
+    // Stored trimmed, not as typed.
+    expect((await getHousesitting(env)).description).toBe('Overnights at your place.');
+  });
+
+  it('treats an empty or whitespace-only description as cleared (NULL, never "")', async () => {
+    const { env } = createTestEnv();
+    await putHousesitting(env, 'Something to clear later.');
+    expect((await putHousesitting(env, '')).status).toBe(204);
+    expect((await getHousesitting(env)).description).toBeNull();
+
+    await putHousesitting(env, 'Set again.');
+    expect((await putHousesitting(env, '   \n  ')).status).toBe(204);
+    expect((await getHousesitting(env)).description).toBeNull();
+  });
+
+  it('keeps the current description when the field is absent from the service body (PATCH semantics)', async () => {
+    const { env } = createTestEnv();
+    await putHousesitting(env, 'Kept across an unrelated save.');
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'housesitting',
+              enabled: true,
+              options: [{ label: 'Standard', rate: 75 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
+    expect((await getHousesitting(env)).description).toBe('Kept across an unrelated save.');
+  });
+
+  it('rejects a description over 200 characters with a clear message, persisting nothing', async () => {
+    const { env } = createTestEnv();
+    await putHousesitting(env, 'The short one that must survive.');
+    const res = await putHousesitting(env, 'x'.repeat(201));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      'House sitting: description must be 200 characters or fewer.',
+    );
+    expect((await getHousesitting(env)).description).toBe('The short one that must survive.');
+    // Exactly at the cap is fine — the boundary is inclusive.
+    expect((await putHousesitting(env, 'y'.repeat(200))).status).toBe(204);
+  });
+
+  it('exposes the description on the public widget config', async () => {
+    const { env } = createTestEnv();
+    await putHousesitting(env, 'We stay over so your pet keeps its routine.');
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      services: { type: string; description: string | null }[];
+    };
+    expect(cfg.services.find((s) => s.type === 'housesitting')!.description).toBe(
+      'We stay over so your pet keeps its routine.',
+    );
+    // A service with no blurb reports null rather than omitting the key.
+    expect(cfg.services.find((s) => s.type === 'walk')!.description).toBeNull();
+  });
+});

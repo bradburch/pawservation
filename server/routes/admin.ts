@@ -130,6 +130,12 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
  */
 const MAX_IMPORT_ROWS = 500;
 
+/**
+ * A service's Description is a SHORT blurb under the service name in the widget's picker, not a
+ * body of copy — cap it so one service can't push the whole picker off the page.
+ */
+const MAX_SERVICE_DESCRIPTION = 200;
+
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
   if (value === null || value === undefined) return true;
@@ -321,6 +327,7 @@ function validateQuestionBody(q: QuestionBody): string | null {
 type ServiceBody = {
   type?: string;
   enabled?: boolean;
+  description?: string | null;
   options?: OptionBody[];
   questions?: QuestionBody[];
   minNights?: number | null;
@@ -355,6 +362,17 @@ function patchNullable<T extends number | string>(
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
 }
 
+/**
+ * A service's widget-facing blurb, on the same PATCH terms as `patchNullable`: present in the
+ * service body ⇒ take it (trimmed; `''`/whitespace-only means "cleared" ⇒ NULL), absent ⇒ keep
+ * the service's current value. One function so the length check and the write can never disagree
+ * about what would be stored.
+ */
+function resolveServiceDescription(svc: ServiceBody, current: string | null): string | null {
+  if (!('description' in svc)) return current;
+  return typeof svc.description === 'string' ? svc.description.trim() || null : null;
+}
+
 export const adminRoutes = new Hono<AppEnv>()
   .use('/:slug/admin/*', adminAuth)
 
@@ -383,6 +401,7 @@ export const adminRoutes = new Hono<AppEnv>()
         type: svc.ServiceType,
         label: svc.Label,
         icon: svc.Icon,
+        description: svc.Description,
         hasDuration: Boolean(svc.HasDuration),
         rateUnit: svc.RateUnit,
         shape: svc.Shape,
@@ -479,6 +498,14 @@ export const adminRoutes = new Hono<AppEnv>()
         const qError = validateQuestionBody(q);
         if (qError) return c.json({ error: qError }, 400);
       }
+      const description = resolveServiceDescription(svc, meta.Description);
+      if (description !== null && description.length > MAX_SERVICE_DESCRIPTION)
+        return c.json(
+          {
+            error: `${meta.Label}: description must be ${MAX_SERVICE_DESCRIPTION} characters or fewer.`,
+          },
+          400,
+        );
       if (
         !isNullableLimit(svc.minNights ?? null, DEFENSIVE_MAX_NIGHTS) ||
         !isNullableLimit(svc.maxNights ?? null, DEFENSIVE_MAX_NIGHTS)
@@ -575,6 +602,7 @@ export const adminRoutes = new Hono<AppEnv>()
           : current.Questions;
       const updated = await setServiceConfig(c.env.PAWBOOK_DB, tenant.Id, svcType, {
         enabled: svc.enabled ?? false,
+        description: resolveServiceDescription(svc, current.Description),
         questions,
         minNights: 'minNights' in svc ? (svc.minNights ?? null) : current.MinNights,
         maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,

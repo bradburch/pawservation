@@ -21,6 +21,8 @@ export type ServiceForm = ServiceConstraints & {
   type: string;
   label: string;
   icon: string;
+  /** Short blurb clients see in the widget; null/'' = show nothing (0025). */
+  description: string | null;
   hasDuration: boolean;
   rateUnit: string;
   shape: 'range' | 'single';
@@ -70,6 +72,7 @@ export type SettingsSectionProps = {
 export type ServicePayload = ServiceConstraints & {
   type: string;
   enabled: boolean;
+  description: string | null;
   maxConcurrentPets: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
