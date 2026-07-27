@@ -199,9 +199,9 @@ describe('settings GET/PUT — rows drive pet types', () => {
     const { env } = createTestEnv();
     const settings = await getSettings(env);
     expect(settings.petTypes).toEqual([
-      { petType: 'cat', label: 'Cats' },
-      { petType: 'dog', label: 'Dogs' },
-      { petType: 'rabbit', label: 'Rabbits' },
+      { petType: 'cat', label: 'Cat' },
+      { petType: 'dog', label: 'Dog' },
+      { petType: 'rabbit', label: 'Rabbit' },
     ]);
   });
 
@@ -300,9 +300,9 @@ describe('settings GET/PUT — rows drive pet types', () => {
       services: { type: string; acceptedPetTypes: string[] | null }[];
     };
     expect(cfg.petTypes).toEqual([
-      { slug: 'cat', label: 'Cats' },
-      { slug: 'dog', label: 'Dogs' },
-      { slug: 'rabbit', label: 'Rabbits' },
+      { slug: 'cat', label: 'Cat' },
+      { slug: 'dog', label: 'Dog' },
+      { slug: 'rabbit', label: 'Rabbit' },
     ]);
     expect(cfg.services.find((s) => s.type === 'boarding')?.acceptedPetTypes).toEqual(['dog']);
     expect(cfg.services.find((s) => s.type === 'walk')?.acceptedPetTypes).toBeNull();
@@ -320,8 +320,8 @@ describe('settings GET/PUT — rows drive pet types', () => {
     });
     const settings = await getSettings(env, 'fresh-paws', 'tnt_fresh');
     expect(settings.petTypes).toEqual([
-      { petType: 'cat', label: 'Cats' },
-      { petType: 'dog', label: 'Dogs' },
+      { petType: 'cat', label: 'Cat' },
+      { petType: 'dog', label: 'Dog' },
     ]);
   });
 });

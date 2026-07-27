@@ -56,6 +56,11 @@ export function ServiceCard({
       >
         <span className="pb-svc-title" id={titleId}>
           <ServiceIcon icon={service.icon} />
+          {service.enabled && (
+            <span className="pb-tile-check" aria-hidden="true">
+              ✓
+            </span>
+          )}
           <strong className="pb-truncate">{service.label}</strong>
           {service.custom && <span className="pb-chip">Custom</span>}
         </span>

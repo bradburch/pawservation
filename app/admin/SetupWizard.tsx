@@ -45,7 +45,7 @@ function PresetOptionFields({
     <div>
       <strong>{option.label}</strong>
       <div className="pb-inline">
-        Window (optional)
+        Pickup window (optional)
         <input
           type="time"
           value={option.startTime ?? ''}
@@ -83,6 +83,7 @@ export function SetupWizard({
   connectCalendar,
   onClose,
   onApplied,
+  mode = 'full',
 }: {
   settings: Settings;
   slug: string;
@@ -93,8 +94,12 @@ export function SetupWizard({
   onClose: () => void;
   /** Reloads the dashboard's settings after the wizard writes (same as addService's refresh). */
   onApplied: () => Promise<void>;
+  /** 'full' = profile → services → prices → calendar → done (the auto-open flow for a
+   * brand-new tenant); 'services' = services → prices → done — the Services & Rates
+   * "Quick setup" button, which must not re-walk profile or calendar. */
+  mode?: 'full' | 'services';
 }) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(mode === 'services' ? 2 : 1);
   // The DRAFT prefills a missing contact email with the admin's own login email (the address the
   // sitter signed up with) — profileInitial below keeps the RAW settings value, so the prefill
   // still diffs in profilePutBody and actually gets saved on Next. The sitter SEES it in the
@@ -118,8 +123,6 @@ export function SetupWizard({
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
-  // Presets fully applied in THIS wizard run — an in-place Retry after a failure skips them.
-  const [applied, setApplied] = useState<string[]>([]);
 
   // Opt-in customization (v2 spec): per-preset REPLACEMENT option payloads, edited via the
   // step-3 "Customize" disclosure. Keyed by preset id; absent = the stock preset payload. These
@@ -200,8 +203,8 @@ export function SetupWizard({
    * (`rate: ''` — see ServiceOptionForm; there is no default price). `settings` here is App's
    * STAGED draft, not server state, so an unsaved blank price is visible to the wizard. An
    * already-priced service has its options re-sent VERBATIM by `apply` below, so such an option
-   * would 400 partway through the sequential loop and leave earlier presets applied. The wizard
-   * can neither send it nor invent a price for it, so it blocks on the price step instead.
+   * would 400 the single batched settings PUT and reject the whole run. The wizard can neither
+   * send it nor invent a price for it, so it blocks on the price step instead.
    */
   const unpricedExisting = (ps: PresetState): boolean =>
     ps.existing?.options.some((o) => o.rate === '') ?? false;
@@ -246,57 +249,72 @@ export function SetupWizard({
   const apply = async () => {
     if (applying) return;
     setError('');
-    // Nothing partial: refuse the whole run up front rather than 400-ing mid-loop on a service
-    // whose staged draft has an unpriced option (the Finish button is already disabled for this;
+    // Nothing partial: refuse the whole run up front rather than 400-ing on a service whose
+    // staged draft has an unpriced option (the Finish button is already disabled for this;
     // this guard also covers the in-place Retry path).
     const blocked = chosen.find(unpricedExisting);
     if (blocked) {
       setError(
-        `${blocked.preset.label} has an option with no price yet — set it in Services & rates and save, then run Quick setup.`,
+        `${blocked.preset.label} has an option with no price yet — set it in Services & Rates and save, then run Quick setup.`,
       );
       return;
     }
     setApplying(true);
     try {
-      // Sequential on purpose (spec): a failure stops here with already-applied work intact.
-      for (const ps of chosen) {
-        if (applied.includes(ps.preset.id)) continue;
-        const { preset, existing, alreadyPriced } = ps;
-        let type = existing?.type;
-        if (!type) {
+      // Phase 1 — create every missing service row, in parallel. A created-but-not-priced row
+      // is harmless (disabled, no options, invisible to clients) and a Retry resolves it via
+      // the "already exists" fallback below, so partial creation never strands anything.
+      const results = await Promise.allSettled(
+        chosen.map(async (ps): Promise<{ ps: PresetState; type: string }> => {
+          if (ps.existing) return { ps, type: ps.existing.type };
           try {
             const created = await adminFetch<{ type: string }>(
               token,
               `/api/${slug}/admin/services`,
               {
                 method: 'POST',
-                body: JSON.stringify({ template: preset.template, label: preset.label }),
+                body: JSON.stringify({ template: ps.preset.template, label: ps.preset.label }),
               },
             );
-            type = created.type;
+            return { ps, type: created.type };
           } catch (e) {
             // Slugs are deterministic, so "already exists" means the row appeared since our
             // settings snapshot (an earlier partial run, another tab) — enabling it is exactly
-            // what a re-run should do. Anything else is a real failure.
+            // what a re-run should do. Anything else fails the run, named per preset.
             if (e instanceof Error && e.message.includes('already exists'))
-              type = preset.createdSlug;
-            else throw e;
+              return { ps, type: ps.preset.createdSlug };
+            throw new Error(
+              `${ps.preset.label}: ${e instanceof Error ? e.message : 'could not be created'}`,
+            );
           }
-        }
-        const rate = Number(prices[preset.id]);
-        const options: ServiceOptionForm[] = alreadyPriced
-          ? existing!.options // never overwrite existing options/prices — re-sent verbatim
-          : presetOptions(preset).map((o) => ({ ...o, rate }));
-        // Per-service PATCH semantics: only this service is touched; questions/limits absent
-        // from the body keep their current values server-side.
-        await adminFetch(token, `/api/${slug}/admin/settings`, {
-          method: 'PUT',
-          body: JSON.stringify({ services: [{ type, enabled: true, options }] }),
-        });
-        setApplied((cur) => [...cur, preset.id]);
+        }),
+      );
+      const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failures.length > 0) {
+        // ONE report at the end of the run, covering every failure.
+        setError(failures.map((f) => (f.reason as Error).message).join(' '));
+        return;
       }
+      const fulfilled = results.filter(
+        (r): r is PromiseFulfilledResult<{ ps: PresetState; type: string }> =>
+          r.status === 'fulfilled',
+      );
+      // Phase 2 — ONE settings PUT carrying every chosen service. The server validates the
+      // whole body before writing anything (pinned by the admin.test.ts atomic-validation and
+      // batch-contract tests), so a rejection leaves no service half-applied.
+      const services = fulfilled.map(({ value: { ps, type } }) => {
+        const rate = Number(prices[ps.preset.id]);
+        const options: ServiceOptionForm[] = ps.alreadyPriced
+          ? ps.existing!.options // never overwrite existing options/prices — re-sent verbatim
+          : presetOptions(ps.preset).map((o) => ({ ...o, rate }));
+        return { type, enabled: true, options };
+      });
+      await adminFetch(token, `/api/${slug}/admin/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ services }),
+      });
       await onApplied();
-      setStep(4);
+      goTo(mode === 'services' ? 5 : 4);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
     } finally {
@@ -349,7 +367,14 @@ export function SetupWizard({
                     onClick={() => toggle(preset.id)}
                   >
                     <Icon size={20} />
-                    <strong>{preset.label}</strong>
+                    <strong>
+                      {on && (
+                        <span className="pb-tile-check" aria-hidden="true">
+                          ✓{' '}
+                        </span>
+                      )}
+                      {preset.label}
+                    </strong>
                     <span>
                       {alreadyOn
                         ? 'Already offered'
@@ -370,14 +395,16 @@ export function SetupWizard({
               >
                 Skip for now
               </button>
-              <button
-                type="button"
-                className="pb-wizard-back"
-                disabled={applying}
-                onClick={() => goTo(1)}
-              >
-                Back
-              </button>
+              {mode === 'full' && (
+                <button
+                  type="button"
+                  className="pb-wizard-back"
+                  disabled={applying}
+                  onClick={() => goTo(1)}
+                >
+                  Back
+                </button>
+              )}
               <button type="button" disabled={selected.length === 0} onClick={() => goTo(3)}>
                 Next
               </button>
@@ -390,7 +417,7 @@ export function SetupWizard({
             <h2>Set your prices</h2>
             <p className="pb-hint">
               Whole dollars. Times and capacities are prefilled — change anything later in Services
-              &amp; rates.
+              &amp; Rates.
             </p>
             {chosen.map((ps) => (
               <div key={ps.preset.id} className="pb-wizard-price">
@@ -398,7 +425,7 @@ export function SetupWizard({
                 <span className="pb-hint">{ps.preset.summary}</span>
                 {unpricedExisting(ps) ? (
                   <span className="pb-error">
-                    An option here has no price yet — set it in Services &amp; rates and save first.
+                    An option here has no price yet — set it in Services &amp; Rates and save first.
                   </span>
                 ) : ps.alreadyPriced ? (
                   <span className="pb-hint">Keeps its current pricing</span>
@@ -410,6 +437,10 @@ export function SetupWizard({
                       min={1}
                       step={1}
                       inputMode="numeric"
+                      aria-invalid={
+                        (prices[ps.preset.id] ?? '') !== '' &&
+                        !isValidRate(Number(prices[ps.preset.id]))
+                      }
                       value={prices[ps.preset.id] ?? ''}
                       onChange={(e) =>
                         setPrices((cur) => ({ ...cur, [ps.preset.id]: e.target.value }))
@@ -435,9 +466,13 @@ export function SetupWizard({
                       ))}
                     </details>
                   )}
-                {applied.includes(ps.preset.id) && <span className="pb-wizard-done">Added</span>}
               </div>
             ))}
+            {applying && (
+              <p className="pb-hint" role="status">
+                Setting up your services…
+              </p>
+            )}
             {error && <p className="pb-error">{error}</p>}
             <div className="pb-wizard-nav">
               <button
@@ -517,7 +552,7 @@ export function SetupWizard({
         {step === 5 && (
           <>
             <h2>You&rsquo;re bookable!</h2>
-            <p>Fine-tune options, capacities, and questions anytime in Services &amp; rates.</p>
+            <p>Fine-tune options, capacities, and questions anytime in Services &amp; Rates.</p>
             <p>
               Ready to take bookings from your own site? Grab the snippet under{' '}
               <a href="#embed" onClick={onClose}>

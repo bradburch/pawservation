@@ -1,6 +1,7 @@
 import { NullableNumberField } from './fields.js';
 import type { QuestionForm, ServiceForm, ServiceOptionForm } from '../shared.js';
 import { Hint } from '../Hint';
+import { isValidRate } from '../../../src/shared/index.js';
 
 /** One row of the cancellation-policy editor, mirroring the wire/shared CancellationTier shape. */
 type ServiceEditorTier = { withinDays: number; percent: number };
@@ -52,6 +53,7 @@ function QuestionRow({
     <div className="pb-options">
       <div className="pb-inline">
         <input
+          className="pb-question-input"
           placeholder="Question"
           value={question.label}
           onChange={(e) => onChange({ ...question, label: e.target.value })}
@@ -147,6 +149,10 @@ export function ServiceEditor({
   onDone,
   onDelete,
   petTypes,
+  dirty,
+  saveBlocked,
+  onSave,
+  onFlashSavebar,
 }: {
   service: ServiceForm;
   setService: (next: ServiceForm) => void;
@@ -155,6 +161,14 @@ export function ServiceEditor({
   onDone?: () => void;
   onDelete?: () => void;
   petTypes: { petType: string; label: string }[]; // the tenant's pet-type registry
+  /** True while any staged change is unsaved — enables the inline save + Save-button flash. */
+  dirty?: boolean;
+  /** True while an unpriced option blocks saving. */
+  saveBlocked?: boolean;
+  /** Page-level staged-settings save (the save bar's action), surfaced inline. */
+  onSave?: () => void;
+  /** Pulses the fixed save bar so the sitter can find where changes are committed. */
+  onFlashSavebar?: () => void;
 }) {
   // Cancellation tiers edit through setService like every other field; an emptied list
   // normalizes back to null so "no policy" round-trips as the server's NULL sentinel.
@@ -168,6 +182,9 @@ export function ServiceEditor({
     const last = tiers[tiers.length - 1];
     commitTiers([...tiers, { withinDays: (last?.withinDays ?? 0) + 5, percent: 50 }]);
   };
+  // Boarding is priced/booked per night, daycare-style pools per day — the capacity label
+  // must use the same noun the price does (RateUnit is the single source of that noun).
+  const capUnit = s.rateUnit === 'night' ? 'night' : 'day';
   return (
     <div
       className="pb-svc-editor"
@@ -190,16 +207,24 @@ export function ServiceEditor({
       <h3>Pricing &amp; options</h3>
       {!s.hasDuration ? (
         <div className="pb-inline">
-          <input
-            placeholder="Label"
-            value={s.options[0]?.label ?? 'Standard'}
-            onChange={(e) =>
-              setService({
-                ...s,
-                options: [{ ...(s.options[0] ?? emptyOption()), label: e.target.value }],
-              })
-            }
-          />
+          <label className="pb-optname">
+            <span className="pb-labelrow">
+              Option name{' '}
+              <span className="pb-hint">
+                (what clients see — e.g. &ldquo;Standard {s.label.toLowerCase()}&rdquo;)
+              </span>
+            </span>
+            <input
+              placeholder="Standard"
+              value={s.options[0]?.label ?? 'Standard'}
+              onChange={(e) =>
+                setService({
+                  ...s,
+                  options: [{ ...(s.options[0] ?? emptyOption()), label: e.target.value }],
+                })
+              }
+            />
+          </label>
           $
           <input
             type="number"
@@ -207,7 +232,7 @@ export function ServiceEditor({
             step={1}
             inputMode="numeric"
             required
-            aria-invalid={(s.options[0]?.rate ?? '') === ''}
+            aria-invalid={!isValidRate(s.options[0]?.rate)}
             value={s.options[0]?.rate ?? ''}
             onChange={(e) =>
               setService({
@@ -235,11 +260,19 @@ export function ServiceEditor({
             return (
               <div key={oi}>
                 <div className="pb-inline">
-                  <input
-                    placeholder="Label"
-                    value={o.label}
-                    onChange={(e) => setOption({ label: e.target.value })}
-                  />
+                  <label className="pb-optname">
+                    <span className="pb-labelrow">
+                      Option name{' '}
+                      <span className="pb-hint">
+                        (what clients see — e.g. &ldquo;30 min&rdquo;, &ldquo;Morning walk&rdquo;)
+                      </span>
+                    </span>
+                    <input
+                      placeholder="Standard"
+                      value={o.label}
+                      onChange={(e) => setOption({ label: e.target.value })}
+                    />
+                  </label>
                   {!windowed && (
                     <input
                       type="number"
@@ -266,7 +299,7 @@ export function ServiceEditor({
                     step={1}
                     inputMode="numeric"
                     required
-                    aria-invalid={o.rate === ''}
+                    aria-invalid={!isValidRate(o.rate)}
                     value={o.rate}
                     onChange={(e) =>
                       setOption({ rate: e.target.value === '' ? '' : Number(e.target.value) })
@@ -283,7 +316,7 @@ export function ServiceEditor({
                   </button>
                 </div>
                 <div className="pb-inline">
-                  Window (optional)
+                  Pickup window (optional)
                   <input
                     type="time"
                     value={o.startTime ?? ''}
@@ -298,13 +331,15 @@ export function ServiceEditor({
                     label="Capacity"
                     value={o.capacity}
                     onChange={(capacity) => setOption({ capacity })}
+                    hint={
+                      <Hint label="Capacity">
+                        How many pets this time slot can take. A booking with three dogs uses three
+                        spots. A full slot stops being offered; blank means no limit.
+                      </Hint>
+                    }
                   />
-                  <Hint label="Capacity">
-                    How many pets this time slot can take. A booking with three dogs uses three
-                    spots. A full slot stops being offered; blank means no limit.
-                  </Hint>
                   {windowed && (
-                    <>
+                    <span className="pb-labelrow">
                       <label className="pb-inline">
                         <input
                           type="checkbox"
@@ -317,7 +352,7 @@ export function ServiceEditor({
                         Clients will only see this option on Mondays through Fridays. It appears
                         once the option has a time window.
                       </Hint>
-                    </>
+                    </span>
                   )}
                 </div>
               </div>
@@ -385,17 +420,17 @@ export function ServiceEditor({
       <div className="pb-limits">
         <h3>Booking limits</h3>
         {(s.capacityKind === 'boarding' || s.capacityKind === 'housesit') && (
-          <div className="pb-cap-row">
-            <NullableNumberField
-              label="Pets per day"
-              value={s.maxConcurrentPets}
-              onChange={(maxConcurrentPets) => setService({ ...s, maxConcurrentPets })}
-            />
-            <Hint label="Pets per day">
-              Blank means no limit. Counts every pet in care that day — a booking with three dogs
-              uses three spots.
-            </Hint>
-          </div>
+          <NullableNumberField
+            label={`Pets in care per ${capUnit}`}
+            value={s.maxConcurrentPets}
+            onChange={(maxConcurrentPets) => setService({ ...s, maxConcurrentPets })}
+            hint={
+              <Hint label={`Pets in care per ${capUnit}`}>
+                Blank means no limit. Counts every pet in your care that {capUnit}, across all
+                overlapping stays — a booking with three dogs uses three spots.
+              </Hint>
+            }
+          />
         )}
         {s.shape === 'range' && (
           <>
@@ -486,16 +521,34 @@ export function ServiceEditor({
         })}
       </div>
 
-      {(onDelete !== undefined || onDone !== undefined) && (
+      {(onDelete !== undefined || onDone !== undefined || onSave !== undefined) && (
         <div className="pb-svc-editor-foot">
           {onDelete && (
             <button type="button" className="pb-danger" onClick={onDelete}>
               Delete service
             </button>
           )}
+          {onSave && (
+            <button
+              type="button"
+              className="pb-save-inline"
+              disabled={!dirty || saveBlocked}
+              onClick={onSave}
+            >
+              Save changes
+            </button>
+          )}
           {onDone && (
-            <button type="button" onClick={onDone}>
-              Done
+            <button
+              type="button"
+              onClick={() => {
+                // Collapse is still staging-only; if edits are pending, pulse the save bar so
+                // "Save" visibly hands off to where the commit happens.
+                if (dirty) onFlashSavebar?.();
+                onDone();
+              }}
+            >
+              Save
             </button>
           )}
         </div>

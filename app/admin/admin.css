@@ -191,6 +191,17 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--leaf) 22%, transparent);
 }
 
+/* Invalid numeric input — a rate/limit that is ≤ 0, fractional, or a required price
+   left empty. Driven by aria-invalid so the visual and the screen-reader signal can
+   never disagree. Focus keeps the red ring (declared after :focus, so it wins). */
+.pb-wrap input[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+.pb-wrap input[aria-invalid='true']:focus {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent);
+}
+
 .pb-wrap textarea {
   width: 100%;
   font-family: var(--mono);
@@ -583,6 +594,22 @@ body {
   margin-top: 8px;
 }
 
+/* The question-label input holds a sentence, not a word — give it the full row. */
+.pb-wrap .pb-question-input {
+  flex: 1 1 100%;
+  min-width: min(20rem, 100%);
+}
+
+/* Labeled option-name field inside an option row: the label text sits on its own line
+   above the input without the default 14px label margin unbalancing the row, and the
+   row's other fields align to the input's baseline, not the taller labeled column. */
+.pb-wrap label.pb-optname {
+  margin-bottom: 0;
+}
+.pb-inline:has(.pb-optname) {
+  align-items: flex-end;
+}
+
 .pb-error {
   color: var(--bad);
   font-weight: 600;
@@ -661,6 +688,29 @@ body {
    dashboard bar's text wraps to two lines. */
 .pb-panel .pb-savebar {
   bottom: var(--dash-savebar-h, 0px);
+}
+
+/* Inline "Save changes" (Business, service editor) — same action as the save bar. */
+.pb-inline-save {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Pulse the fixed save bar when an in-content "Save" points the sitter at it. */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-savebar-flash {
+    animation: pb-savebar-pulse 0.5s ease 2;
+  }
+}
+@keyframes pb-savebar-pulse {
+  50% {
+    transform: translateY(-2px);
+    box-shadow:
+      0 0 0 3px var(--leaf),
+      0 -8px 24px -16px rgba(24, 39, 29, 0.7);
+  }
 }
 
 /* ── Login card ────────────────────────────────────────────────── */
@@ -905,9 +955,20 @@ body {
 .pb-wrap button.pb-tile-btn:hover {
   filter: none;
 }
+/* Selected/enabled tile: leaf border reads as 2px (inset ring avoids layout shift) on the
+   sage wash. --leaf #2e6440 vs --sage-wash #f1f5ee ≈ 6.4:1 — comfortably past the 3:1
+   WCAG 1.4.11 non-text minimum the old sage border (≈1.6:1) failed. */
 .pb-wrap .pb-tile-btn.pb-on {
-  border-color: var(--sage);
+  border-color: var(--leaf);
   background: var(--sage-wash);
+  box-shadow: inset 0 0 0 1px var(--leaf);
+}
+
+/* Leading ✓ on a selected tile / enabled service card. Decorative (aria-hidden): the
+   wizard tile's aria-pressed and the service card's switch already announce the state. */
+.pb-tile-check {
+  color: var(--leaf);
+  font-weight: 700;
 }
 /* Wizard-only extras on top of the tile base. */
 .pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {
@@ -927,10 +988,6 @@ body {
   gap: 4px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
-}
-.pb-wizard-done {
-  color: var(--ok);
-  font-size: 0.85em;
 }
 .pb-wizard-custom summary {
   cursor: pointer;
@@ -1042,6 +1099,20 @@ body {
   color: var(--ink);
   border-color: var(--sage);
   background: var(--sage-wash);
+}
+
+/* The inline "Save changes" is the footer's one primary action — brand fill, not ghost. */
+.pb-wrap .pb-svc-editor-foot button.pb-save-inline:not(:disabled) {
+  background: var(--leaf);
+  color: #fff;
+  border-color: var(--leaf);
+  font-weight: 600;
+}
+.pb-wrap .pb-svc-editor-foot button.pb-save-inline:not(:disabled):hover {
+  filter: none;
+  background: var(--deep);
+  border-color: var(--deep);
+  color: #fff;
 }
 /* Un-scoped (button.pb-danger, not just the editor footer's .pb-danger) so any delete/remove
    action tagged .pb-danger gets the red tint — e.g. the pet-type registry's delete button in
@@ -1545,15 +1616,11 @@ body {
   }
 }
 
-/* Field + hint side by side (ServiceEditor's Booking limits caps); the row
-   takes over the label's usual bottom margin. */
-.pb-cap-row {
-  display: flex;
+/* Label text + its `?` hint button as ONE inline row, so the icon sits immediately
+   after the words it explains instead of wrapping under the field. */
+.pb-labelrow {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.pb-cap-row > label {
-  margin-bottom: 0;
+  gap: 6px;
+  flex-wrap: wrap;
 }

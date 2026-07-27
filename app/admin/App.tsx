@@ -325,7 +325,7 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore; group:
   { key: 'clients', label: 'Clients', icon: IconUsers, group: 'primary' },
   { key: 'earnings', label: 'Earnings', icon: IconChartBar, group: 'primary' },
   { key: 'business', label: 'Business', icon: IconStore, group: 'settings' },
-  { key: 'services', label: 'Services & rates', icon: IconTag, group: 'settings' },
+  { key: 'services', label: 'Services & Rates', icon: IconTag, group: 'settings' },
   { key: 'pets', label: 'Pet types', icon: IconPaw, group: 'settings' },
   { key: 'timeoff', label: 'Time off', icon: IconCalendar, group: 'settings' },
   { key: 'apps', label: 'Connected apps', icon: IconPlug, group: 'settings' },
@@ -424,11 +424,17 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const [previewKey, setPreviewKey] = useState(0);
   const [activeSection, setActiveSection] = useState<SectionKey>(sectionFromHash);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardMode, setWizardMode] = useState<'full' | 'services'>('full');
   // Auto-open at most once per dashboard mount, so skipping it doesn't re-trigger on refresh().
   const wizardAutoOpened = useRef(false);
   // Chip deep-link handoff: CalendarSection sets this and navigates to #bookings;
   // BookingsSection scrolls the row into view, flashes it, then clears via onFocusConsumed.
   const [focusBookingId, setFocusBookingId] = useState<string | null>(null);
+
+  // Bumped when an in-content "Save" action wants the sitter's eye on the fixed save bar
+  // (the bar remounts via key, restarting the pulse animation each time).
+  const [savebarFlashKey, setSavebarFlashKey] = useState(0);
+  const flashSavebar = () => setSavebarFlashKey((k) => k + 1);
 
   const dirty = settings !== null && JSON.stringify(settings) !== savedSnapshot;
 
@@ -741,6 +747,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         applyLoaded(s);
         if (!wizardAutoOpened.current && s.services.every((sv) => !sv.enabled)) {
           wizardAutoOpened.current = true;
+          setWizardMode('full');
           setWizardOpen(true);
         }
       })
@@ -792,7 +799,15 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     earnings: (
       <EarningsSection session={session} handleError={handle} clearError={() => setError('')} />
     ),
-    business: <BusinessSection settings={settings} setSettings={setSettings} />,
+    business: (
+      <BusinessSection
+        settings={settings}
+        setSettings={setSettings}
+        dirty={dirty}
+        saveBlocked={unpricedService !== undefined}
+        onSave={save}
+      />
+    ),
     pets: (
       <PetsSection
         settings={settings}
@@ -807,7 +822,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         setSettings={setSettings}
         addService={addService}
         removeService={removeService}
-        openWizard={() => setWizardOpen(true)}
+        openWizard={() => {
+          setWizardMode('services');
+          setWizardOpen(true);
+        }}
+        dirty={dirty}
+        saveBlocked={unpricedService !== undefined}
+        onSave={save}
+        onFlashSavebar={flashSavebar}
       />
     ),
     timeoff: (
@@ -915,7 +937,12 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       </div>
 
       {(dirty || message || error) && (
-        <div className="pb-savebar" role="status" ref={setDashSavebarEl}>
+        <div
+          key={savebarFlashKey}
+          className={savebarFlashKey > 0 ? 'pb-savebar pb-savebar-flash' : 'pb-savebar'}
+          role="status"
+          ref={setDashSavebarEl}
+        >
           {error ? (
             <p className="pb-savebar-error">{error}</p>
           ) : unpricedService ? (
@@ -936,6 +963,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           settings={settings}
           slug={slug}
           token={token}
+          mode={wizardMode}
           connectCalendar={connectCalendarOrThrow}
           onClose={() => setWizardOpen(false)}
           onApplied={async () => {

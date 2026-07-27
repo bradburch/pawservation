@@ -15,11 +15,23 @@ export function ServicesSection({
   addService,
   removeService,
   openWizard,
+  dirty,
+  saveBlocked,
+  onSave,
+  onFlashSavebar,
 }: SettingsSectionProps & {
   /** Resolves to the created service's type slug, or undefined if the POST failed. */
   addService: (template: string, label: string) => Promise<string | undefined>;
   removeService: (type: string) => Promise<void>;
   openWizard: () => void;
+  /** True while the staged settings draft differs from the last save (App's `dirty`). */
+  dirty: boolean;
+  /** True while an unpriced option blocks saving (App hides the save bar's button too). */
+  saveBlocked: boolean;
+  /** The save bar's action, surfaced inline next to the content. */
+  onSave: () => void;
+  /** Pulses the fixed save bar so the sitter's eye lands on it. */
+  onFlashSavebar: () => void;
 }) {
   // Which editor is open: a service type, ADD_KEY, or null. One at a time —
   // expanding another collapses the first. Collapsing never loses edits: all
@@ -40,8 +52,8 @@ export function ServicesSection({
   return (
     <>
       <h2>
-        <IconTag size={18} /> Services &amp; rates
-        <Hint label="Services & rates">
+        <IconTag size={18} /> Services &amp; Rates
+        <Hint label="Services & Rates">
           Each card is one thing clients can book, with its price and rules at a glance. Tap a card
           to edit pricing, questions, and limits; use its switch to offer or pause it.
         </Hint>
@@ -88,6 +100,10 @@ export function ServicesSection({
                   labelledBy={titleId}
                   petTypes={settings.petTypes}
                   onDone={() => collapse(s.type)}
+                  dirty={dirty}
+                  saveBlocked={saveBlocked}
+                  onSave={onSave}
+                  onFlashSavebar={onFlashSavebar}
                   onDelete={
                     s.custom
                       ? () => {

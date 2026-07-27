@@ -4,7 +4,20 @@ import type { SettingsSectionProps } from '../shared.js';
 import { Hint } from '../Hint';
 import { TIMEZONES } from '../timezones.js';
 
-export function BusinessSection({ settings, setSettings }: SettingsSectionProps) {
+export function BusinessSection({
+  settings,
+  setSettings,
+  dirty,
+  saveBlocked,
+  onSave,
+}: SettingsSectionProps & {
+  /** True while the staged settings draft differs from the last save. */
+  dirty: boolean;
+  /** True while an unpriced option elsewhere blocks the settings save. */
+  saveBlocked: boolean;
+  /** The save bar's action, surfaced inline near the fields. */
+  onSave: () => void;
+}) {
   return (
     <>
       <h2>
@@ -67,6 +80,12 @@ export function BusinessSection({ settings, setSettings }: SettingsSectionProps)
           ))}
         </select>
       </label>
+      <div className="pb-inline-save">
+        <button type="button" disabled={!dirty || saveBlocked} onClick={onSave}>
+          Save changes
+        </button>
+        {!dirty && <span className="pb-hint">All changes saved</span>}
+      </div>
     </>
   );
 }

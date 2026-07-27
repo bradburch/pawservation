@@ -16,9 +16,9 @@ export function HelpSection() {
       <p>
         When you first sign in, Quick setup walks you through the basics: your business details, the
         pets you take, what you offer, and your prices. You can re-run it anytime from{' '}
-        <a href="#services">Services &amp; rates</a> — it only adds, never overwrites. Three
+        <a href="#services">Services &amp; Rates</a> — it only adds, never overwrites. Three
         sections finish the picture: <a href="#business">Business</a> holds your contact details,{' '}
-        <a href="#pets">Pet types</a> sets which animals you accept, and Services &amp; rates is
+        <a href="#pets">Pet types</a> sets which animals you accept, and Services &amp; Rates is
         where each service&rsquo;s pricing, questions, and booking limits — including daily caps —
         live. Nothing changes for clients until you save — a dark bar appears at the bottom of the
         screen whenever you have unsaved changes.
