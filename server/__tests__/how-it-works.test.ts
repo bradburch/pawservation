@@ -85,12 +85,53 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     }
   });
 
-  it('links back to the landing sections, the demo, and pricing', async () => {
+  it('links back to the landing page, the demo, and pricing', async () => {
     const body = await howItWorksBody();
     expect(body).toContain('href="/#pricing"');
     expect(body).toContain('href="/#faq"');
     expect(body).toContain('href="/demo"');
     expect(body).toContain('href="/admin"');
+  });
+
+  it('navigates its own sections instead of bouncing back to the landing page', async () => {
+    const body = await howItWorksBody();
+    // A reader who came here for the tour should be able to move around the tour; the old nav
+    // sent every click back to "/", abandoning the page they had just chosen.
+    for (const id of ['services', 'rules', 'booking', 'money', 'calendar', 'embed', 'setup']) {
+      expect(body, id).toContain(`href="#${id}"`);
+      expect(body, id).toContain(`id="${id}"`);
+    }
+    expect(body).not.toContain('href="/#how"');
+    expect(body).not.toContain('href="/#dashboard"');
+  });
+
+  it('is honest that Google Calendar is a mirror, not the record', async () => {
+    const body = await howItWorksBody();
+    // Sync is best-effort (routes/bookings.ts waitUntil + catch): a Google outage must never be
+    // described, or experienced, as losing the booking.
+    expect(body).toContain('the calendar is a mirror');
+    expect(body).toContain('the booking still lands in Pawservation');
+  });
+
+  it('discloses the two things that are not built: repeats, and typing in an old stay', async () => {
+    const body = await howItWorksBody();
+    // No recurring/series support anywhere in the repo, and no admin route creates a booking
+    // (server/routes/admin.ts only inserts 'blocked' sentinel rows).
+    expect(body).toContain('repeat weekly');
+    expect(body).toContain('type an old booking in yourself');
+  });
+
+  it('offers the demo without jargon or a signup scare, everywhere it offers it', async () => {
+    const body = await howItWorksBody();
+    expect(body.match(/nothing to sign up for/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps the under-the-hood section in sitter language', async () => {
+    const body = await howItWorksBody();
+    // The concepts stay; the developer nouns do not. This page is read by pet sitters.
+    for (const jargon of [/idempotenc/i, /machine-readable/i, /llms\.txt/i]) {
+      expect(body, String(jargon)).not.toMatch(jargon);
+    }
   });
 
   it('carries no images (no new weight budget to police)', async () => {

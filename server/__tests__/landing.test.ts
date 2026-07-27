@@ -63,6 +63,25 @@ describe('GET / — landing page', () => {
     expect(body).toContain('multi-pet pricing is on the way');
   });
 
+  it('is honest that an account is one sitter today, with teams behind the unbuilt Pro tier', async () => {
+    const body = await landingBody();
+    expect(body).toContain('Can my whole team use it?');
+    expect(body).toContain('one sitter per account today');
+    expect(body).toContain('which isn&rsquo;t built yet');
+  });
+
+  it('is honest that there is no one-click data export', async () => {
+    const body = await landingBody();
+    // No export route exists anywhere in server/routes — the FAQ must not imply one does.
+    expect(body).toContain('Can I get my data out?');
+    expect(body).toContain('no export button');
+  });
+
+  it('tells visitors the demo costs them nothing to try', async () => {
+    const body = await landingBody();
+    expect(body).toContain('nothing to sign up for');
+  });
+
   it('every image is a same-origin landing screenshot with informative alt text', async () => {
     const body = await landingBody();
     const imgTags = body.match(/<img\b[^>]*>/g) ?? [];
