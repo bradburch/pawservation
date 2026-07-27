@@ -47,7 +47,9 @@ describe('POST /:slug/admin/customers/import', () => {
     expect(body.skippedRows).toEqual([]);
   });
 
-  it('skips a row with no name', async () => {
+  // Name is required to CREATE a client — and only then. See the two tests below it for the rows
+  // that must NOT have to restate a name.
+  it('skips a row with no name for a client who does not exist yet', async () => {
     const { env, raw } = createTestEnv();
     const csv = 'Client Email,Client Name,Pet Name,Pet Type\nnameless@example.com,,Rex,dog\n';
     const { body } = await importCsv(env, csv);
@@ -56,6 +58,43 @@ describe('POST /:slug/admin/customers/import', () => {
     expect(
       raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('nameless@example.com'),
     ).toBeUndefined();
+  });
+
+  // The primary use case: a pet-only row for a client who already exists. Their name is already on
+  // file, so demanding it again here would stop pets importing altogether.
+  it('imports a pet-only row (no name) for a client who already exists', async () => {
+    const { env } = createTestEnv();
+    // jess@example.com is seeded for sunny-paws with Bella + Mochi.
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\njess@example.com,,Comet,dog\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(0);
+    expect(body.importedPets).toBe(1);
+  });
+
+  // …and the same thing for a client created part-way through the very same file: one row per pet,
+  // with the sitter's name typed once on the first row.
+  it('imports a one-row-per-pet file with the name only on the first row', async () => {
+    const { env, raw } = createTestEnv();
+    const csv =
+      'Client Email,Client Name,Pet Name,Pet Type\n' +
+      'multi@example.com,Multi Pet,,\n' +
+      'multi@example.com,,Bella,dog\n' +
+      'multi@example.com,,Mochi,cat\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(1);
+    expect(body.importedPets).toBe(2);
+    // The create happened on row 3, which carried no name of its own — it took the one typed on
+    // row 2, so the client is recorded properly named rather than nameless.
+    const owner = raw
+      .prepare('SELECT Id, Name FROM EndUsers WHERE Email = ?')
+      .get('multi@example.com') as { Id: string; Name: string };
+    expect(owner.Name).toBe('Multi Pet');
+    const pets = raw
+      .prepare('SELECT Name FROM EndUserPets WHERE EndUserId = ? ORDER BY Name')
+      .all(owner.Id) as { Name: string }[];
+    expect(pets.map((p) => p.Name)).toEqual(['Bella', 'Mochi']);
   });
 
   // "No owners without pets": a pet-less row can't stand up a new client any more.
@@ -84,6 +123,35 @@ describe('POST /:slug/admin/customers/import', () => {
     expect(body.importedPets).toBe(1);
   });
 
+  // The verdict on a pet-less row is DEFERRED to the end of the file: a later row may still supply
+  // the pet, and complaining early would report a client as pet-less who ends up owning one.
+  it('does not report a pet-less row that a later row rescues', async () => {
+    const { env } = createTestEnv();
+    const csv =
+      'Client Email,Client Name,Pet Name,Pet Type\n' +
+      'later@example.com,Later,,\n' +
+      'other@example.com,Other,Rex,dog\n' +
+      'later@example.com,Later,Bella,dog\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(2);
+    expect(body.importedPets).toBe(2);
+  });
+
+  // Skips are reported in FILE order even though the pet-less verdict is reached last.
+  it('reports skipped rows in file order', async () => {
+    const { env } = createTestEnv();
+    const csv =
+      'Client Email,Client Name,Pet Name,Pet Type\n' +
+      'petless@example.com,Pet Less,,\n' +
+      'not-an-email,X,Rex,dog\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([
+      { row: 2, reason: 'Every client needs at least one pet' },
+      { row: 3, reason: 'Invalid email address' },
+    ]);
+  });
+
   it('accepts a pet-less row for a pre-existing client who already has pets', async () => {
     const { env } = createTestEnv();
     // jess@example.com is seeded for sunny-paws and already owns Bella + Mochi.
@@ -92,6 +160,39 @@ describe('POST /:slug/admin/customers/import', () => {
     expect(body.skippedRows).toEqual([]);
     expect(body.importedCustomers).toBe(0);
     expect(body.importedPets).toBe(0);
+  });
+
+  // Deceased pets count for NOTHING on both creation paths — they neither block reusing a name nor
+  // satisfy "this client already has a pet". POST /admin/customers reads listEndUserPets (live
+  // only); the import filters DeceasedAt out of the map it dedups against, so the two agree.
+  it("re-imports a deceased pet's name as a new live pet", async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE EndUserPets SET DeceasedAt = '2026-01-01T00:00:00.000Z' WHERE Id = 'pet_sp_bella'`,
+    );
+    const csv =
+      'Client Email,Client Name,Pet Name,Pet Type\njess@example.com,Jess Demo,Bella,dog\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedPets).toBe(1);
+    const live = raw
+      .prepare(
+        `SELECT COUNT(*) AS n FROM EndUserPets
+         WHERE EndUserId = 'eu_sp_jess' AND Name = 'Bella' AND DeceasedAt IS NULL`,
+      )
+      .get() as { n: number };
+    expect(live.n).toBe(1);
+  });
+
+  it('skips a pet-less row for a client whose only pets are deceased', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE EndUserPets SET DeceasedAt = '2026-01-01T00:00:00.000Z' WHERE EndUserId = 'eu_sp_jess'`,
+    );
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\njess@example.com,Jess Demo,,\n';
+    const { body } = await importCsv(env, csv);
+    // A client with no BOOKABLE pet does not satisfy the "already has a pet" escape.
+    expect(body.skippedRows).toEqual([{ row: 2, reason: 'Every client needs at least one pet' }]);
   });
 
   it('reports the row and reason for an invalid email', async () => {

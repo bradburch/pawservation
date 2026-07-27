@@ -278,8 +278,9 @@ export function ClientsSection({
         </a>
       </div>
       <p className="pb-applies">
-        Every CSV row needs a client name and a pet — one row per pet, repeating the email for a
-        client with several pets. Rows missing a name or a pet are skipped and listed back to you.
+        One row per pet, repeating the email for a client with several pets — the name only has to
+        appear once. Every client needs at least one pet: rows that would leave a client with none,
+        or a new client with no name, are skipped and listed back to you.
       </p>
       {importResult && (
         <div className="pb-row">

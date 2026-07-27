@@ -186,6 +186,38 @@ describe('admin customers', () => {
     expect(countPets()).toBe(before + 1);
   });
 
+  // Live pets only, exactly as the CSV import treats them: a deceased pet is neither bookable nor
+  // a reason to refuse its name again. The two creation paths must not drift on this.
+  it("re-uses a deceased pet's name for a new live pet", async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE EndUserPets SET DeceasedAt = '2026-01-01T00:00:00.000Z' WHERE Id = 'pet_sp_bella'`,
+    );
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email: 'jess@example.com',
+          name: 'Jess Demo',
+          petName: 'Bella',
+          petType: 'dog',
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    const live = raw
+      .prepare(
+        `SELECT COUNT(*) AS n FROM EndUserPets
+         WHERE EndUserId = 'eu_sp_jess' AND Name = 'Bella' AND DeceasedAt IS NULL`,
+      )
+      .get() as { n: number };
+    expect(live.n).toBe(1);
+  });
+
   it('refuses to delete a customer with bookings (409)', async () => {
     const { env, raw } = createTestEnv();
     raw.exec(
