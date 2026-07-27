@@ -118,6 +118,7 @@ export function ClientsSection({
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [welcomeHint, setWelcomeHint] = useState<string | null>(null);
 
   /** Matches the old Dashboard run() semantics: clear the error banner at the START of each
    * action (so a stale error from an earlier failure doesn't outlive a later action), run the
@@ -150,14 +151,19 @@ export function ClientsSection({
 
   const addCustomer = () =>
     mutate(async () => {
+      setWelcomeHint(null);
+      const email = custEmail.trim().toLowerCase();
       await adminApi.customers.add(
         slug,
         token,
-        custEmail.trim().toLowerCase(),
+        email,
         custName.trim(),
         custPhone.trim(),
         custPetName.trim(),
         selectedCustPetType,
+      );
+      setWelcomeHint(
+        `${email} added. No email has been sent — use "Send welcome email" on their row when you're ready.`,
       );
       setCustEmail('');
       setCustName('');
@@ -166,6 +172,13 @@ export function ClientsSection({
     });
 
   const removeCustomer = (id: string) => mutate(() => adminApi.customers.remove(slug, token, id));
+
+  const sendWelcome = (cust: Customer) =>
+    mutate(async () => {
+      setWelcomeHint(null);
+      await adminApi.customers.sendWelcome(slug, token, cust.id);
+      setWelcomeHint(`Welcome email sent to ${cust.email}.`);
+    });
 
   const removePet = (endUserId: string, petId: string) =>
     mutate(() => adminApi.customers.removePet(slug, token, endUserId, petId));
@@ -204,12 +217,13 @@ export function ClientsSection({
       <h2>
         <IconUsers size={18} /> Your clients
         <Hint label="Clients">
-          Only people on this list can book with you. Adding someone emails them an invite.
+          Only people on this list can book with you. Adding a client never emails them — send the
+          welcome email from their row when you're ready.
         </Hint>
       </h2>
       <p className="pb-applies">
-        Only clients you invite can book — adding one sends them an invite by email. Every client is
-        added together with their first pet.
+        Only clients you add can book. Every client is added together with their first pet, and
+        nothing is emailed until you choose to send a welcome email.
       </p>
       <div className="pb-row">
         <input
@@ -251,6 +265,11 @@ export function ClientsSection({
           {busy ? 'Adding…' : 'Add customer'}
         </button>
       </div>
+      {welcomeHint && (
+        <p className="pb-applies" role="status">
+          {welcomeHint}
+        </p>
+      )}
       {petTypes.length === 0 && (
         <p className="pb-applies">
           Add a pet type in Pet types first — a client can only be added together with a pet.
@@ -272,7 +291,7 @@ export function ClientsSection({
             checked={sendInvites}
             onChange={(e) => setSendInvites(e.target.checked)}
           />{' '}
-          Send invite emails to new clients
+          Send welcome emails to new clients
         </label>
         <button onClick={() => void runImport()} disabled={!csvFile || importing}>
           {importing ? 'Importing…' : 'Import'}
@@ -292,9 +311,11 @@ export function ClientsSection({
             Imported {importResult.importedCustomers} client
             {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
             {importResult.importedPets === 1 ? '' : 's'}.
-            {importResult.invitesSent > 0 ? ` Sent ${importResult.invitesSent} invite(s).` : ''}
+            {importResult.invitesSent > 0
+              ? ` Sent ${importResult.invitesSent} welcome email(s).`
+              : ''}
             {importResult.invitesFailed > 0
-              ? ` ${importResult.invitesFailed} invite(s) failed to send.`
+              ? ` ${importResult.invitesFailed} welcome email(s) failed to send.`
               : ''}
           </p>
           {importResult.skippedRows.length > 0 && (
@@ -322,6 +343,9 @@ export function ClientsSection({
                   {cust.status.charAt(0).toUpperCase() + cust.status.slice(1)}
                 </span>
               </span>
+              <button onClick={() => void sendWelcome(cust)} disabled={busy}>
+                Send welcome email
+              </button>
               <button onClick={() => void removeCustomer(cust.id)} disabled={busy}>
                 Remove
               </button>

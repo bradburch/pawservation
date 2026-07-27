@@ -325,6 +325,11 @@ export const adminApi = {
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, sendInvites }),
       }),
+    sendWelcome: (slug: string, token: string, id: string) =>
+      request<{ ok: true }>(`/api/${slug}/admin/customers/${id}/welcome`, {
+        method: 'POST',
+        headers: authHeaders(token),
+      }),
   },
   payments: {
     list: (slug: string, token: string, bookingId: string) =>

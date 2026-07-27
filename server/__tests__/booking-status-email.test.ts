@@ -27,6 +27,8 @@ describe('sendBookingStatusEmail', () => {
     expect(body.from).toBe(env.RESEND_FROM_BOOKING); // booking mail, not the no-reply sender
     expect(body.subject).toBe('Your booking with Sunny Paws was confirmed');
     expect(body.html).toContain('2030-03-01 – 2030-03-04');
+    // Footer speaks for the sitter's business.
+    expect(body.html).toContain('on behalf of Sunny Paws');
   });
 
   it('throws when email is not configured', async () => {

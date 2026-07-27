@@ -19,8 +19,12 @@ describe('sendInvite', () => {
     const body = JSON.parse(init.body as string);
     expect(body.to).toBe('guest@example.com');
     expect(body.from).toBe(env.RESEND_FROM_BOOKING); // booking mail, not the no-reply sender
-    expect(body.subject).toContain('Sunny Paws');
+    expect(body.subject).toBe("You're set up to book with Sunny Paws");
+    expect(body.text).toContain('https://w/embed/sunny-paws');
     expect(body.html).toContain('https://w/embed/sunny-paws');
+    // Footer and shell.
+    expect(body.html).toContain('on behalf of Sunny Paws');
+    expect(body.html).toContain('max-width:560px');
   });
 
   it('throws when email is not configured', async () => {

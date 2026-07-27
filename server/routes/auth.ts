@@ -63,7 +63,7 @@ export const authRoutes = new Hono<AppEnv>()
     // unauthenticated account-takeover (anyone knowing the email could read the code).
     if (isEmailConfigured(c.env)) {
       try {
-        await sendLoginCode(c.env, email, code);
+        await sendLoginCode(c.env, email, code, tenant.DisplayName);
       } catch {
         return c.json({ error: 'Could not send your code. Try again shortly.' }, 502);
       }

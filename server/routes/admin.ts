@@ -1039,16 +1039,9 @@ export const adminRoutes = new Hono<AppEnv>()
       );
     }
 
-    // Only send the invite for a freshly-invited customer — skip if the customer is already active
-    // (a re-POST of an existing active customer must not send a confusing "you're invited" email).
-    if (customer.Status === 'invited' && isEmailConfigured(c.env)) {
-      const widgetUrl = new URL(`/embed/${tenant.Slug}`, c.req.url).toString();
-      try {
-        await sendInvite(c.env, email, tenant.DisplayName, widgetUrl);
-      } catch {
-        return c.json({ error: 'Customer saved, but the invite email could not be sent.' }, 502);
-      }
-    }
+    // Deliberately NO email here (WS-C owner decision): creating a client is a data entry, not an
+    // introduction. The welcome mail is the explicit POST /:slug/admin/customers/:id/welcome
+    // below, so the sitter chooses when (and whether) a client first hears from Pawservation.
     return c.json(
       {
         id: customer.Id,
@@ -1059,6 +1052,31 @@ export const adminRoutes = new Hono<AppEnv>()
       },
       201,
     );
+  })
+
+  // The explicit welcome mail (WS-C): re-sendable on demand, tenant-scoped via getEndUserById so a
+  // foreign id is indistinguishable from a missing one. Idempotent in the safe-to-repeat sense —
+  // each call sends one fresh copy; there is no "already sent" state to corrupt.
+  .post('/:slug/admin/customers/:id/welcome', async (c) => {
+    const tenant = c.get('tenant');
+    const customer = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    if (!customer) return c.json({ error: 'Not found.' }, 404);
+    if (!isEmailConfigured(c.env)) {
+      return c.json(
+        {
+          error:
+            "Email isn't set up on this Pawservation instance yet, so welcome emails can't be sent.",
+        },
+        503,
+      );
+    }
+    const widgetUrl = new URL(`/embed/${tenant.Slug}`, c.req.url).toString();
+    try {
+      await sendInvite(c.env, customer.Email, tenant.DisplayName, widgetUrl);
+    } catch {
+      return c.json({ error: 'The welcome email could not be sent. Try again shortly.' }, 502);
+    }
+    return c.json({ ok: true });
   })
 
   .delete('/:slug/admin/customers/:id', async (c) => {
