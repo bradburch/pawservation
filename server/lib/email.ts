@@ -15,12 +15,51 @@ export function isEmailConfigured(env: Env): boolean {
 }
 
 /** Escape a value for interpolation into an HTML email body (tenant-controlled text is untrusted). */
-function htmlEscape(value: string): string {
+export function htmlEscape(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// Brand tokens for the shared mail shell — mirror the admin/landing palette (--leaf, --ink,
+// --soft, --line in app/admin/admin.css). Inline styles only: email clients strip <style>
+// blocks, and a strict no-external-assets rule (no hosted images/fonts) keeps every mail
+// self-contained.
+const EMAIL_ACCENT = '#2e6440';
+const EMAIL_FONTS =
+  "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+/**
+ * Shared HTML shell for every outgoing mail: accent bar, one 🐾 brand line, a 560px column,
+ * system font stack, optional footer. `bodyHtml` is trusted markup built by the senders below
+ * (they escape their own interpolations); `footer` is often tenant-controlled ("on behalf of
+ * {DisplayName}"), so the shell escapes it itself. Exported for unit tests.
+ */
+export function emailShell(bodyHtml: string, footer?: string): string {
+  return (
+    `<div style="margin:0 auto;max-width:560px;font-family:${EMAIL_FONTS};color:#18271d;line-height:1.55;">` +
+    `<div style="height:4px;background:${EMAIL_ACCENT};"></div>` +
+    `<p style="margin:18px 0 0;font-size:14px;font-weight:700;color:${EMAIL_ACCENT};">🐾 Pawservation</p>` +
+    `<div style="margin:20px 0 0;">${bodyHtml}</div>` +
+    (footer
+      ? `<p style="margin:28px 0 12px;padding-top:12px;border-top:1px solid #e3e7e0;font-size:13px;color:#697a6d;">${htmlEscape(footer)}</p>`
+      : '') +
+    `</div>`
+  );
+}
+
+/**
+ * A button-styled link. Escapes both the URL (attribute context, defense-in-depth — all callers
+ * pass server-built URLs) and the label, so call sites cannot forget. Exported for unit tests.
+ */
+export function emailButton(url: string, label: string): string {
+  return (
+    `<p style="margin:20px 0;"><a href="${htmlEscape(url)}" ` +
+    `style="display:inline-block;background:${EMAIL_ACCENT};color:#ffffff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:600;">` +
+    `${htmlEscape(label)}</a></p>`
+  );
 }
 
 async function resendPost(env: Env, from: string, body: Record<string, unknown>): Promise<void> {
