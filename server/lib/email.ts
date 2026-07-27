@@ -127,13 +127,23 @@ export async function sendInvite(
 /** Send a one-time account-setup link. Throws if email is not configured or Resend rejects. */
 export async function sendSignupLink(env: Env, to: string, url: string): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
-  // url is server-built, but escape it for the attribute context as defense-in-depth (per
-  // sendInvite). Subject/text are plain-text JSON fields in Resend's API — no escaping needed.
+  // url is server-built, but escaped for attribute/text context as defense-in-depth. Subject/text
+  // are plain-text JSON fields in Resend's API — no escaping needed.
   await resendPost(env, env.RESEND_FROM_NOREPLY!, {
     to,
     subject: 'Finish setting up your Pawservation account',
-    text: `Finish setting up your Pawservation account: ${url}\n\nThis link expires in 30 minutes. If you didn't request it, ignore this email.`,
-    html: `<p><a href="${htmlEscape(url)}">Finish setting up your Pawservation account</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
+    text:
+      `You're almost there. Pawservation gives your pet-care business its own booking page: clients you choose request stays, walks and visits online, and you confirm or decline each one — your calendar stays yours.\n\n` +
+      `Finish setting up your account: ${url}\n\n` +
+      `This link expires in 30 minutes. If you didn't request it, ignore this email.\n\n` +
+      `See how it works: https://pawservation.com/how-it-works`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">You&#39;re almost there. <strong>Pawservation</strong> gives your pet-care business its own booking page: clients you choose request stays, walks and visits online, and you confirm or decline each one &mdash; your calendar stays yours.</p>` +
+        `${emailButton(url, 'Finish setting up')}` +
+        `<p style="margin:8px 0 0;">This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>` +
+        `<p style="margin:16px 0 0;"><a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how Pawservation works</a></p>`,
+      'Sent by Pawservation',
+    ),
   });
 }
 
@@ -144,32 +154,46 @@ export async function sendSignupLink(env: Env, to: string, url: string): Promise
  */
 export async function sendSitterInvite(env: Env, to: string, url: string): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
-  // url is server-built, but escape it for the attribute context as defense-in-depth (per
-  // sendSignupLink). The fallback origin is derived from the same url. Subject/text are plain-text
-  // JSON fields in Resend's API — no escaping needed.
+  // url and origin are server-built, but escaped for attribute/text context as defense-in-depth.
+  // Subject/text are plain-text JSON fields in Resend's API — no escaping needed.
   const origin = new URL(url).origin;
   await resendPost(env, env.RESEND_FROM_NOREPLY!, {
     to,
-    subject: "You're invited to set up your Pawservation account",
+    subject: "You've been invited to set up your Pawservation account",
     text:
-      `You've been invited to Pawservation. Set up your account here: ${url}\n\n` +
-      `This link expires in 7 days. Link expired? Go to ${origin}/admin, choose "New here" and enter this email address.`,
-    html:
-      `<p>You&#39;ve been invited to Pawservation.</p>` +
-      `<p><a href="${htmlEscape(url)}">Set up your account</a></p>` +
-      `<p>This link expires in 7 days. Link expired? Go to ${htmlEscape(origin)}/admin, choose &ldquo;New here&rdquo; and enter this email address.</p>`,
+      `You've been invited to Pawservation — a booking page for your pet-care business. Clients you choose request stays, walks and visits online; you confirm or decline each one, and your calendar stays yours.\n\n` +
+      `Set up your account here: ${url}\n\n` +
+      `This link expires in 7 days. Link expired? Go to ${origin}/admin, choose "New here" and enter this email address.\n\n` +
+      `See how it works: https://pawservation.com/how-it-works`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">You&#39;ve been invited to <strong>Pawservation</strong> &mdash; a booking page for your pet-care business. Clients you choose request stays, walks and visits online; you confirm or decline each one, and your calendar stays yours.</p>` +
+        `${emailButton(url, 'Set up your account')}` +
+        `<p style="margin:8px 0 0;">This link expires in 7 days. Link expired? Go to <a href="${htmlEscape(origin)}/admin" style="color:#2e6440;">${htmlEscape(origin)}/admin</a>, choose &ldquo;New here&rdquo; and enter this email address.</p>` +
+        `<p style="margin:16px 0 0;"><a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how Pawservation works</a></p>`,
+      'Sent by Pawservation',
+    ),
   });
 }
 
 /** Send a one-time password-reset link. Throws if email is not configured or Resend rejects. */
 export async function sendResetLink(env: Env, to: string, url: string): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
-  // url is server-built, but escape it for the attribute context as defense-in-depth (per
-  // sendInvite/sendSignupLink). Subject/text are plain-text JSON fields in Resend's API.
+  // url is server-built, but escaped for attribute/text context as defense-in-depth. Subject/text
+  // are plain-text JSON fields in Resend's API — no escaping needed.
   await resendPost(env, env.RESEND_FROM_NOREPLY!, {
     to,
     subject: 'Reset your Pawservation password',
-    text: `Reset your Pawservation password: ${url}\n\nThis link expires in 30 minutes. If you didn't request it, ignore this email.`,
-    html: `<p><a href="${htmlEscape(url)}">Reset your Pawservation password</a></p><p>This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>`,
+    text:
+      `Someone asked to reset the password for your Pawservation account — the dashboard where you run your booking page.\n\n` +
+      `Reset your password: ${url}\n\n` +
+      `This link expires in 30 minutes. If you didn't request it, ignore this email — your password stays as it is.\n\n` +
+      `New to Pawservation? See how it works: https://pawservation.com/how-it-works`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">Someone asked to reset the password for your Pawservation account &mdash; the dashboard where you run your booking page.</p>` +
+        `${emailButton(url, 'Reset your password')}` +
+        `<p style="margin:8px 0 0;">This link expires in 30 minutes. If you didn&#39;t request it, ignore this email &mdash; your password stays as it is.</p>` +
+        `<p style="margin:16px 0 0;">New to Pawservation? <a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how it works</a></p>`,
+      'Sent by Pawservation',
+    ),
   });
 }
