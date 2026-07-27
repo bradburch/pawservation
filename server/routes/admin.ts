@@ -20,6 +20,7 @@ import {
   deleteBlockedRange,
   deleteCustomer,
   deletePayment,
+  deletePetGroupRateById,
   deleteService,
   getProviderConnection,
   getTenantUserEmailById,
@@ -27,6 +28,7 @@ import {
   insertInvitedCustomerWithPet,
   insertPayment,
   listAllEndUserPetsByTenant,
+  listAllPetGroupPricing,
   listBlockedRanges,
   listBookingsForTenant,
   listCustomers,
@@ -46,6 +48,7 @@ import {
   setPetDeceased,
   updateBookingStatus,
   updateTenantSettings,
+  upsertPetGroupRate,
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
@@ -98,6 +101,7 @@ import {
 import type { AppEnv, Tenant } from '../types';
 import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
 import {
+  buildGroupKey,
   cancellationFee,
   getPacificDateStr,
   validateCancellationTiers,
@@ -725,6 +729,74 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'That service has bookings — disable it instead.' }, 409);
     await deleteService(c.env.PAWBOOK_DB, tenant.Id, type);
     await invalidateTenantCache(tenant.Slug, c.env);
+    return c.body(null, 204);
+  })
+
+  // ── Pet-group rates: explicit prices for specific animals (PetGroupPricing) ──────────────
+  // Upsert/delete-ONE, deliberately not whole-set replace: group rows scale with the client
+  // base, so a replace-writer would round-trip every client's rows per save and let two tabs
+  // clobber each other. Nothing reads these rows for pricing yet (PR 3); these routes only let
+  // sitters stage rates ahead of enforcement, so no tenant-cache invalidation is needed (the
+  // KV-cached public config carries no rates).
+  .get('/:slug/admin/pet-group-rates', async (c) => {
+    const tenant = c.get('tenant');
+    const rows = await listAllPetGroupPricing(c.env.PAWBOOK_DB, tenant.Id);
+    return c.json({
+      rates: rows.map((r) => ({
+        id: r.Id,
+        serviceType: r.ServiceType,
+        optionKey: r.OptionKey,
+        // GroupKey IS the sorted pet-id list; UUID ids are comma-free, so the split is exact.
+        petIds: r.GroupKey.split(','),
+        rate: r.Rate,
+        updatedAt: r.UpdatedAt,
+      })),
+    });
+  })
+
+  .put('/:slug/admin/pet-group-rates', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ serviceType?: unknown; optionKey?: unknown; petIds?: unknown; rate?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    const serviceType = typeof body.serviceType === 'string' ? body.serviceType : '';
+    const optionKey = typeof body.optionKey === 'string' ? body.optionKey : '';
+    const service = (await listServices(c.env.PAWBOOK_DB, tenant.Id)).find(
+      (s) => s.ServiceType === serviceType,
+    );
+    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
+    const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
+    if (!options.some((o) => o.ServiceType === serviceType && o.OptionKey === optionKey))
+      return c.json({ error: `${service.Label}: unknown option.` }, 400);
+    if (
+      !Array.isArray(body.petIds) ||
+      body.petIds.length === 0 ||
+      body.petIds.length > DEFENSIVE_MAX_PET_COUNT ||
+      !body.petIds.every((p): p is string => typeof p === 'string' && p !== '')
+    )
+      return c.json({ error: 'Pick at least one pet.' }, 400);
+    // A rate may only name this tenant's LIVE pets: a deceased pet is never bookable, so a new
+    // rate naming one is a mistake, not a grandfathering case.
+    const pets = await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const livePetIds = new Set(pets.filter((p) => p.DeceasedAt === null).map((p) => p.Id));
+    for (const petId of body.petIds)
+      if (!livePetIds.has(petId)) return c.json({ error: 'Unknown pet in the list.' }, 400);
+    if (!isValidRate(body.rate))
+      return c.json({ error: 'Rates are whole dollars, at least $1.' }, 400);
+    const { id } = await upsertPetGroupRate(c.env.PAWBOOK_DB, tenant.Id, {
+      serviceType,
+      optionKey,
+      // buildGroupKey dedups + sorts, so selection order can never mint a second row.
+      groupKey: buildGroupKey(body.petIds),
+      rate: body.rate,
+    });
+    return c.json({ id, groupKey: buildGroupKey(body.petIds) });
+  })
+
+  .delete('/:slug/admin/pet-group-rates/:id', async (c) => {
+    const tenant = c.get('tenant');
+    const deleted = await deletePetGroupRateById(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
 
