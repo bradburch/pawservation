@@ -21,7 +21,7 @@ import type {
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
-import { quarterlyBreakdown } from '../../src/shared/index.js';
+import { parseMixKey, quarterlyBreakdown } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
 
 /**
@@ -163,6 +163,15 @@ export async function deleteService(
   serviceType: string,
 ): Promise<void> {
   await db.batch([
+    // Rate rows key on (ServiceType, OptionKey) STRINGS, not FK ids, and a re-created service
+    // re-derives the same slug — leaving rows behind would resurrect old prices on a future
+    // service the sitter never priced. Scrub both rate tables with the service.
+    db
+      .prepare('DELETE FROM PetGroupPricing WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+    db
+      .prepare('DELETE FROM TenantServicePetRates WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
     db
       .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
@@ -299,11 +308,27 @@ export async function deletePetTypeAndScrub(
   petType: string,
 ): Promise<{ disabledServices: string[] }> {
   const services = await listServices(db, tenantId);
+  const mixRows = await listServicePetRates(db, tenantId);
   const statements = [
     db
       .prepare('DELETE FROM TenantPetTypes WHERE TenantId = ? AND PetType = ?')
       .bind(tenantId, petType),
   ];
+  // Mix rates name species by SLUG, and slugs re-derive: re-creating a deleted type under the
+  // same name would resurrect its old mix prices. Scrub every mix that names this species —
+  // exact membership via parseMixKey (null-prototype, so 'constructor' can't fool the read;
+  // never substring-match a MixKey: 'cat' must not scrub 'bobcat'). Pet-id (PetGroupPricing)
+  // rows key on UUIDs that never re-derive, so they are deliberately not touched here.
+  for (const row of mixRows) {
+    if (parseMixKey(row.MixKey)[petType] === undefined) continue;
+    statements.push(
+      db
+        .prepare(
+          'DELETE FROM TenantServicePetRates WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND MixKey = ?',
+        )
+        .bind(tenantId, row.ServiceType, row.OptionKey, row.MixKey),
+    );
+  }
   const disabledServices: string[] = [];
   for (const svc of services) {
     if (!svc.AcceptedPetTypes?.includes(petType)) continue;
@@ -986,7 +1011,18 @@ export async function replaceServiceOptions(
        (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity, WeekdaysOnly)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  // Scrub rate rows for option keys NOT in the incoming set. OptionKeys are DERIVED
+  // (d30/standard/label-slug), so a deleted option re-added later re-derives the SAME key and a
+  // surviving rate row would resurrect at a price the sitter never set for the new option.
+  // Keys still present keep their rates (settings-PUT PATCH semantics for petRates rely on it).
+  const scrubWhere =
+    options.length > 0
+      ? `WHERE TenantId = ? AND ServiceType = ? AND OptionKey NOT IN (${options.map(() => '?').join(', ')})`
+      : 'WHERE TenantId = ? AND ServiceType = ?';
+  const scrubBinds = [tenantId, serviceType, ...options.map((o) => o.optionKey)];
   await db.batch([
+    db.prepare(`DELETE FROM TenantServicePetRates ${scrubWhere}`).bind(...scrubBinds),
+    db.prepare(`DELETE FROM PetGroupPricing ${scrubWhere}`).bind(...scrubBinds),
     db
       .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
