@@ -90,6 +90,38 @@ describe('tenant admin', () => {
     expect(other.displayName).toBe('Happy Tails');
   });
 
+  it('writes multiple services in ONE settings PUT (the wizard batch-apply contract)', async () => {
+    const { env } = createTestEnv();
+    const put = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 61 }],
+            },
+            {
+              type: 'daycare',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 32 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(put.status).toBe(204);
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      services: { type: string; options: { rate: number }[] }[];
+    };
+    expect(cfg.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(61);
+    expect(cfg.services.find((s) => s.type === 'daycare')?.options[0].rate).toBe(32);
+  });
+
   it('rejects a settings PUT with a bad service rate WITHOUT committing the rest (atomic validation)', async () => {
     const { env } = createTestEnv();
     const res = await app.request(

@@ -989,10 +989,6 @@ body {
   padding: 10px 0;
   border-top: 1px solid var(--line);
 }
-.pb-wizard-done {
-  color: var(--ok);
-  font-size: 0.85em;
-}
 .pb-wizard-custom summary {
   cursor: pointer;
   color: var(--soft);
