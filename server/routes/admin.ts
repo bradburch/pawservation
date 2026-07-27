@@ -22,12 +22,13 @@ import {
   deleteService,
   getProviderConnection,
   insertBookingRequest,
-  insertInvitedCustomer,
+  insertInvitedCustomerWithPet,
   insertPayment,
   listAllEndUserPetsByTenant,
   listBlockedRanges,
   listBookingsForTenant,
   listCustomers,
+  listEndUserPets,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetTypes,
@@ -836,20 +837,61 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ customers: withPets });
   })
 
+  // A client is a client-AND-pet relationship: name and at least one pet are required, so a
+  // brand-new customer can never be committed pet-less ("no owners without pets" — the creation
+  // half; removePetOwner's 'last-owner' refusal is the other half).
   .post('/:slug/admin/customers', async (c) => {
     const tenant = c.get('tenant');
-    const body = await c.req
-      .json<{ email?: unknown; name?: unknown; phone?: unknown }>()
-      .catch(() => ({}) as { email?: unknown; name?: unknown; phone?: unknown });
+    type Body = {
+      email?: unknown;
+      name?: unknown;
+      phone?: unknown;
+      petName?: unknown;
+      petType?: unknown;
+    };
+    const body = await c.req.json<Body>().catch(() => ({}) as Body);
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-    const rawName = typeof body.name === 'string' ? body.name.trim() : '';
-    const name = rawName || null;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
     const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
     const phone = rawPhone || null;
+    const petName = typeof body.petName === 'string' ? body.petName.trim() : '';
+    const petType = typeof body.petType === 'string' ? body.petType.trim() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
+    if (!name) return c.json({ error: "Enter the client's name." }, 400);
     if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
+    if (!petName)
+      return c.json({ error: 'Enter a pet name — every client needs at least one pet.' }, 400);
+    // Registry membership only (0015), same rule as the add-pet route: recordable even if no
+    // service currently accepts the type.
+    const known = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
+      (pt) => pt.PetType === petType,
+    );
+    if (!known) return c.json({ error: 'That pet type is not accepted.' }, 400);
 
-    const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name, phone);
+    const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+    let customer;
+    if (existing) {
+      // Idempotent re-POST: never downgrade an active customer to invited, never touch their
+      // stored name/phone. Add the pet only if it's new for them; a repeat of an existing pet is
+      // a no-op, not an error. `listEndUserPets` is LIVE pets only, so a deceased pet's name may
+      // be used again — the CSV import applies that same live-only rule (it filters DeceasedAt out
+      // of the map it dedups against), and the two must not drift.
+      customer = existing;
+      const pets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, existing.Id);
+      if (!pets.some((p) => p.Name.toLowerCase() === petName.toLowerCase()))
+        await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, existing.Id, petName, petType);
+    } else {
+      // One atomic batch — if the pet insert fails, no customer row is left standing.
+      customer = await insertInvitedCustomerWithPet(
+        c.env.PAWBOOK_DB,
+        tenant.Id,
+        email,
+        name,
+        phone,
+        petName,
+        petType,
+      );
+    }
 
     // Only send the invite for a freshly-invited customer — skip if the customer is already active
     // (a re-POST of an existing active customer must not send a confusing "you're invited" email).
@@ -1011,11 +1053,17 @@ export const adminRoutes = new Hono<AppEnv>()
     const knownPetTypes = new Set(
       (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).map((pt) => pt.PetType),
     );
-    const existingPetNames = new Map<string, Set<string>>();
+    // LIVE pets only, keyed by owner id — deceased names are deliberately absent, so this map
+    // answers both of the questions the loop asks of it the same way the manual-add route does
+    // (which reads listEndUserPets, itself live-only): "does this client already own a pet by this
+    // name" and "does this client have a pet at all". A deceased pet is neither bookable nor a
+    // reason to refuse the name again.
+    const livePetNames = new Map<string, Set<string>>();
     for (const pet of await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id)) {
-      const set = existingPetNames.get(pet.EndUserId) ?? new Set<string>();
+      if (pet.DeceasedAt) continue;
+      const set = livePetNames.get(pet.EndUserId) ?? new Set<string>();
       set.add(pet.Name.toLowerCase());
-      existingPetNames.set(pet.EndUserId, set);
+      livePetNames.set(pet.EndUserId, set);
     }
 
     let importedCustomers = 0;
@@ -1024,6 +1072,22 @@ export const adminRoutes = new Hono<AppEnv>()
     let invitesFailed = 0;
     const skippedRows: { row: number; reason: string }[] = [];
     const freshCustomers: string[] = [];
+    // Owner id per email, so the deferred pass below can look a client up whether they existed
+    // before the import or were created part-way through it.
+    const idByEmail = new Map<string, string>();
+    // Pet-less rows are NOT judged as they are read: a later row in the same file may still supply
+    // this client's pet (one row per pet, the blank ones being repeats of the client). Complaining
+    // immediately would report a client as pet-less who ends the import owning pets. Resolved once,
+    // after the whole file — see below.
+    const petLessRows: { row: number; email: string }[] = [];
+    // The name a client was given by ANY earlier row of this file, so the sitter only has to type
+    // it once: in a name-on-the-first-row file the create happens on a LATER row (the first one
+    // carrying a pet), and it takes the name from here rather than from its own blank cell.
+    const nameByEmail = new Map<string, string>();
+    const livePetCount = (email: string) => {
+      const id = idByEmail.get(email);
+      return id ? (livePetNames.get(id)?.size ?? 0) : 0;
+    };
 
     for (const [i, cells] of rows.entries()) {
       const row = i + 2; // 1-indexed against the sitter's file; +1 since the header was sliced off
@@ -1038,19 +1102,33 @@ export const adminRoutes = new Hono<AppEnv>()
         skippedRows.push({ row, reason: 'Invalid email address' });
         continue;
       }
+      const name = rawName.trim();
+      if (name) nameByEmail.set(email, name);
 
       try {
+        // A customer created by an earlier row of THIS file is found here too, so one-row-per-pet
+        // files work: the first row creates customer + pet atomically, later rows just add pets.
         const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
-        const name = rawName.trim() || null;
-        const customer = await insertInvitedCustomer(c.env.PAWBOOK_DB, tenant.Id, email, name);
-        if (!existing) {
-          importedCustomers++;
-          freshCustomers.push(email);
-        }
+        if (existing) idByEmail.set(email, existing.Id);
+        const petSet = existing
+          ? (livePetNames.get(existing.Id) ?? new Set<string>())
+          : new Set<string>();
 
         const petName = rawPetName.trim();
         const petType = rawPetType.trim().toLowerCase();
-        if (!petName && !petType) continue; // client-only row
+        if (!petName && !petType) {
+          petLessRows.push({ row, email });
+          continue;
+        }
+        // Name is required to CREATE a client, and only then: a pet-only row for a client who
+        // already exists must not have to restate the name they already have — that is the normal
+        // shape of a one-row-per-pet file where the sitter filled the name in once. For a client
+        // this file is about to create, a name typed on any earlier row of the file counts.
+        const createName = nameByEmail.get(email) ?? '';
+        if (!existing && !createName) {
+          skippedRows.push({ row, reason: 'Missing name' });
+          continue;
+        }
         if (petName && !petType) {
           skippedRows.push({ row, reason: 'Pet name given without a pet type' });
           continue;
@@ -1063,19 +1141,46 @@ export const adminRoutes = new Hono<AppEnv>()
           skippedRows.push({ row, reason: `'${rawPetType.trim()}' is not one of your pet types` });
           continue;
         }
-        const petSet = existingPetNames.get(customer.Id) ?? new Set<string>();
         if (petSet.has(petName.toLowerCase())) {
           skippedRows.push({ row, reason: 'Pet already exists for this client' });
           continue;
         }
-        await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, customer.Id, petName, petType);
-        petSet.add(petName.toLowerCase());
-        existingPetNames.set(customer.Id, petSet);
+        if (existing) {
+          await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, existing.Id, petName, petType);
+          petSet.add(petName.toLowerCase());
+          livePetNames.set(existing.Id, petSet);
+        } else {
+          // Customer + first pet in one atomic batch — a failed pet insert leaves no customer.
+          const customer = await insertInvitedCustomerWithPet(
+            c.env.PAWBOOK_DB,
+            tenant.Id,
+            email,
+            createName,
+            null,
+            petName,
+            petType,
+          );
+          livePetNames.set(customer.Id, new Set([petName.toLowerCase()]));
+          idByEmail.set(email, customer.Id);
+          importedCustomers++;
+          freshCustomers.push(email);
+        }
         importedPets++;
       } catch {
         skippedRows.push({ row, reason: 'Could not import this row' });
       }
     }
+
+    // The deferred verdict on pet-less rows: only complain about the ones whose client really did
+    // end the import with no live pet. A blank pet on a row for a client who owns pets is just the
+    // canonical repeat-the-email shape and is silently fine.
+    for (const { row, email } of petLessRows) {
+      if (livePetCount(email) === 0)
+        skippedRows.push({ row, reason: 'Every client needs at least one pet' });
+    }
+    // …which means skips are no longer discovered in file order. Sort so the sitter reads them
+    // against their spreadsheet top to bottom (at most one skip per row, so this is total).
+    skippedRows.sort((a, b) => a.row - b.row);
 
     if (sendInvites && isEmailConfigured(c.env)) {
       const widgetUrl = new URL(`/embed/${tenant.Slug}`, c.req.url).toString();

@@ -105,7 +105,14 @@ export function ClientsSection({
   const [custEmail, setCustEmail] = useState('');
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
+  const [custPetName, setCustPetName] = useState('');
+  // Slug of the user's last pick — may go stale if the registry changes; see PetAdder above for
+  // why the valid value is DERIVED (selectedCustPetType) rather than synced back via an effect.
+  const [custPetType, setCustPetType] = useState(petTypes[0]?.petType ?? '');
   const [busy, setBusy] = useState(false);
+  const selectedCustPetType = petTypes.some((pt) => pt.petType === custPetType)
+    ? custPetType
+    : (petTypes[0]?.petType ?? '');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [sendInvites, setSendInvites] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -129,6 +136,14 @@ export function ClientsSection({
     }
   };
 
+  // Every client is added WITH their first pet — the server refuses a pet-less create, so the
+  // form requires name + pet before Add enables.
+  const canAddCustomer =
+    custEmail.trim() !== '' &&
+    custName.trim() !== '' &&
+    custPetName.trim() !== '' &&
+    selectedCustPetType !== '';
+
   const addCustomer = () =>
     mutate(async () => {
       await adminApi.customers.add(
@@ -137,10 +152,13 @@ export function ClientsSection({
         custEmail.trim().toLowerCase(),
         custName.trim(),
         custPhone.trim(),
+        custPetName.trim(),
+        selectedCustPetType,
       );
       setCustEmail('');
       setCustName('');
       setCustPhone('');
+      setCustPetName('');
     });
 
   const removeCustomer = (id: string) => mutate(() => adminApi.customers.remove(slug, token, id));
@@ -186,7 +204,8 @@ export function ClientsSection({
         </Hint>
       </h2>
       <p className="pb-applies">
-        Only clients you invite can book — adding one sends them an invite by email.
+        Only clients you invite can book — adding one sends them an invite by email. Every client is
+        added together with their first pet.
       </p>
       <div className="pb-row">
         <input
@@ -197,7 +216,7 @@ export function ClientsSection({
         />
         <input
           type="text"
-          placeholder="Name (optional)"
+          placeholder="Name"
           value={custName}
           onChange={(e) => setCustName(e.target.value)}
         />
@@ -207,10 +226,32 @@ export function ClientsSection({
           value={custPhone}
           onChange={(e) => setCustPhone(e.target.value)}
         />
-        <button onClick={() => void addCustomer()} disabled={busy}>
+        <input
+          type="text"
+          placeholder="Pet name"
+          value={custPetName}
+          onChange={(e) => setCustPetName(e.target.value)}
+        />
+        <select
+          value={selectedCustPetType}
+          onChange={(e) => setCustPetType(e.target.value)}
+          aria-label="Pet type"
+        >
+          {petTypes.map((pt) => (
+            <option key={pt.petType} value={pt.petType}>
+              {pt.label}
+            </option>
+          ))}
+        </select>
+        <button onClick={() => void addCustomer()} disabled={busy || !canAddCustomer}>
           {busy ? 'Adding…' : 'Add customer'}
         </button>
       </div>
+      {petTypes.length === 0 && (
+        <p className="pb-applies">
+          Add a pet type in Pet types first — a client can only be added together with a pet.
+        </p>
+      )}
       <div className="pb-row">
         <input
           key={fileInputKey}
@@ -236,6 +277,11 @@ export function ClientsSection({
           Download example CSV
         </a>
       </div>
+      <p className="pb-applies">
+        One row per pet, repeating the email for a client with several pets — the name only has to
+        appear once. Every client needs at least one pet: rows that would leave a client with none,
+        or a new client with no name, are skipped and listed back to you.
+      </p>
       {importResult && (
         <div className="pb-row">
           <p>

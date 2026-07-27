@@ -260,11 +260,19 @@ export const adminApi = {
       request<{ customers: Customer[] }>(`/api/${slug}/admin/customers`, {
         headers: authHeaders(token),
       }),
-    add: (slug: string, token: string, email: string, name: string, phone: string) =>
+    add: (
+      slug: string,
+      token: string,
+      email: string,
+      name: string,
+      phone: string,
+      petName: string,
+      petType: string,
+    ) =>
       request<{ id: string; status: string }>(`/api/${slug}/admin/customers`, {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
-        body: JSON.stringify({ email, name, phone }),
+        body: JSON.stringify({ email, name, phone, petName, petType }),
       }),
     remove: (slug: string, token: string, id: string) =>
       request<unknown>(`/api/${slug}/admin/customers/${id}`, {

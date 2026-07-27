@@ -1254,6 +1254,13 @@ export async function getEndUserByEmail(
     .first<EndUser>();
 }
 
+/**
+ * Lookup-or-create a customer with NO pet. NOT a creation path any route may use on its own any
+ * more: a client is a client-and-pet relationship, so both admin creation paths (manual add and
+ * CSV import) go through insertInvitedCustomerWithPet for a new email and addEndUserPet for an
+ * existing one. Retained as a test-seeding helper only — wiring it back into a route would put a
+ * pet-less owner back on the table.
+ */
 export async function insertInvitedCustomer(
   db: D1Database,
   tenantId: string,
@@ -1272,6 +1279,53 @@ export async function insertInvitedCustomer(
     )
     .bind(id, tenantId, email, name, phone, invitedAt)
     .run();
+  return {
+    Id: id,
+    TenantId: tenantId,
+    Email: email,
+    Name: name,
+    Phone: phone,
+    Status: 'invited',
+    InvitedAt: invitedAt,
+  };
+}
+
+/**
+ * Create a customer AND their first pet as ONE atomic batch (createTenantFromSignup precedent;
+ * the test shim's batch is transactional): EndUsers → EndUserPets → PetOwners. "No owners without
+ * pets" is enforced structurally here — if the pet insert throws, the whole batch aborts and no
+ * pet-less customer is left standing. EndUsers' UNIQUE (TenantId, Email) likewise aborts the
+ * batch on a concurrent duplicate create, so the caller must look the customer up first and only
+ * call this for a genuinely new email (use addEndUserPet for an existing customer).
+ */
+export async function insertInvitedCustomerWithPet(
+  db: D1Database,
+  tenantId: string,
+  email: string,
+  name: string,
+  phone: string | null,
+  petName: string,
+  petType: PetType,
+): Promise<EndUser> {
+  const id = crypto.randomUUID();
+  const petId = crypto.randomUUID();
+  const invitedAt = new Date().toISOString();
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status, InvitedAt)
+         VALUES (?, ?, ?, ?, ?, 'invited', ?)`,
+      )
+      .bind(id, tenantId, email, name, phone, invitedAt),
+    db
+      .prepare(
+        `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(petId, tenantId, id, petName, petType),
+    db
+      .prepare(`INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)`)
+      .bind(tenantId, petId, id),
+  ]);
   return {
     Id: id,
     TenantId: tenantId,
