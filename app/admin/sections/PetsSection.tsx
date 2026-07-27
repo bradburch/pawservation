@@ -63,48 +63,51 @@ export function PetsSection({
         Which types each service takes is set per service: use the Accepted pets checkboxes on each
         service&apos;s card under Services. Your clients&apos; individual pets live under Clients.
       </p>
-      {settings.petTypes.map((p) => (
-        <div className="pb-inline" key={p.petType}>
-          <span>{p.label}</span>
-          {editing === p.petType ? (
-            <>
-              <input
-                value={editLabel}
-                aria-label={`New name for ${p.label}`}
-                onChange={(e) => setEditLabel(e.target.value)}
-              />
-              <button type="button" disabled={busy} onClick={() => void submitRename(p.petType)}>
-                Save
-              </button>
-              <button type="button" onClick={() => setEditing(null)}>
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditing(p.petType);
-                  setEditLabel(p.label);
-                }}
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                className="pb-danger"
-                onClick={() => {
-                  if (!window.confirm(`Delete "${p.label}"? This removes it immediately.`)) return;
-                  void removePetType(p.petType);
-                }}
-              >
-                Delete
-              </button>
-            </>
-          )}
-        </div>
-      ))}
+      <div className="pb-pet-types">
+        {settings.petTypes.map((p) => (
+          <div className="pb-inline" key={p.petType}>
+            <span>{p.label}</span>
+            {editing === p.petType ? (
+              <>
+                <input
+                  value={editLabel}
+                  aria-label={`New name for ${p.label}`}
+                  onChange={(e) => setEditLabel(e.target.value)}
+                />
+                <button type="button" disabled={busy} onClick={() => void submitRename(p.petType)}>
+                  Save
+                </button>
+                <button type="button" onClick={() => setEditing(null)}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(p.petType);
+                    setEditLabel(p.label);
+                  }}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  className="pb-danger"
+                  onClick={() => {
+                    if (!window.confirm(`Delete "${p.label}"? This removes it immediately.`))
+                      return;
+                    void removePetType(p.petType);
+                  }}
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
       <div className="pb-inline">
         <input
           type="text"
