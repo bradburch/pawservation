@@ -283,7 +283,7 @@ export function ServiceEditor({
                   </button>
                 </div>
                 <div className="pb-inline">
-                  Window (optional)
+                  Pickup window (optional)
                   <input
                     type="time"
                     value={o.startTime ?? ''}

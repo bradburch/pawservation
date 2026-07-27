@@ -45,7 +45,7 @@ function PresetOptionFields({
     <div>
       <strong>{option.label}</strong>
       <div className="pb-inline">
-        Window (optional)
+        Pickup window (optional)
         <input
           type="time"
           value={option.startTime ?? ''}
@@ -252,7 +252,7 @@ export function SetupWizard({
     const blocked = chosen.find(unpricedExisting);
     if (blocked) {
       setError(
-        `${blocked.preset.label} has an option with no price yet — set it in Services & rates and save, then run Quick setup.`,
+        `${blocked.preset.label} has an option with no price yet — set it in Services & Rates and save, then run Quick setup.`,
       );
       return;
     }
@@ -390,7 +390,7 @@ export function SetupWizard({
             <h2>Set your prices</h2>
             <p className="pb-hint">
               Whole dollars. Times and capacities are prefilled — change anything later in Services
-              &amp; rates.
+              &amp; Rates.
             </p>
             {chosen.map((ps) => (
               <div key={ps.preset.id} className="pb-wizard-price">
@@ -398,7 +398,7 @@ export function SetupWizard({
                 <span className="pb-hint">{ps.preset.summary}</span>
                 {unpricedExisting(ps) ? (
                   <span className="pb-error">
-                    An option here has no price yet — set it in Services &amp; rates and save first.
+                    An option here has no price yet — set it in Services &amp; Rates and save first.
                   </span>
                 ) : ps.alreadyPriced ? (
                   <span className="pb-hint">Keeps its current pricing</span>
@@ -517,7 +517,7 @@ export function SetupWizard({
         {step === 5 && (
           <>
             <h2>You&rsquo;re bookable!</h2>
-            <p>Fine-tune options, capacities, and questions anytime in Services &amp; rates.</p>
+            <p>Fine-tune options, capacities, and questions anytime in Services &amp; Rates.</p>
             <p>
               Ready to take bookings from your own site? Grab the snippet under{' '}
               <a href="#embed" onClick={onClose}>

@@ -325,7 +325,7 @@ const SECTIONS: { key: SectionKey; label: string; icon: typeof IconStore; group:
   { key: 'clients', label: 'Clients', icon: IconUsers, group: 'primary' },
   { key: 'earnings', label: 'Earnings', icon: IconChartBar, group: 'primary' },
   { key: 'business', label: 'Business', icon: IconStore, group: 'settings' },
-  { key: 'services', label: 'Services & rates', icon: IconTag, group: 'settings' },
+  { key: 'services', label: 'Services & Rates', icon: IconTag, group: 'settings' },
   { key: 'pets', label: 'Pet types', icon: IconPaw, group: 'settings' },
   { key: 'timeoff', label: 'Time off', icon: IconCalendar, group: 'settings' },
   { key: 'apps', label: 'Connected apps', icon: IconPlug, group: 'settings' },
