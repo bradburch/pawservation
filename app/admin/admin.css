@@ -955,9 +955,20 @@ body {
 .pb-wrap button.pb-tile-btn:hover {
   filter: none;
 }
+/* Selected/enabled tile: leaf border reads as 2px (inset ring avoids layout shift) on the
+   sage wash. --leaf #2e6440 vs --sage-wash #f1f5ee ≈ 6.4:1 — comfortably past the 3:1
+   WCAG 1.4.11 non-text minimum the old sage border (≈1.6:1) failed. */
 .pb-wrap .pb-tile-btn.pb-on {
-  border-color: var(--sage);
+  border-color: var(--leaf);
   background: var(--sage-wash);
+  box-shadow: inset 0 0 0 1px var(--leaf);
+}
+
+/* Leading ✓ on a selected tile / enabled service card. Decorative (aria-hidden): the
+   wizard tile's aria-pressed and the service card's switch already announce the state. */
+.pb-tile-check {
+  color: var(--leaf);
+  font-weight: 700;
 }
 /* Wizard-only extras on top of the tile base. */
 .pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {

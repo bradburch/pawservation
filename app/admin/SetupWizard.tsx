@@ -349,7 +349,14 @@ export function SetupWizard({
                     onClick={() => toggle(preset.id)}
                   >
                     <Icon size={20} />
-                    <strong>{preset.label}</strong>
+                    <strong>
+                      {on && (
+                        <span className="pb-tile-check" aria-hidden="true">
+                          ✓{' '}
+                        </span>
+                      )}
+                      {preset.label}
+                    </strong>
                     <span>
                       {alreadyOn
                         ? 'Already offered'
