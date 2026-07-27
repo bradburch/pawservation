@@ -191,6 +191,17 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--leaf) 22%, transparent);
 }
 
+/* Invalid numeric input — a rate/limit that is ≤ 0, fractional, or a required price
+   left empty. Driven by aria-invalid so the visual and the screen-reader signal can
+   never disagree. Focus keeps the red ring (declared after :focus, so it wins). */
+.pb-wrap input[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+.pb-wrap input[aria-invalid='true']:focus {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 22%, transparent);
+}
+
 .pb-wrap textarea {
   width: 100%;
   font-family: var(--mono);

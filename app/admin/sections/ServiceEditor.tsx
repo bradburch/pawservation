@@ -1,6 +1,7 @@
 import { NullableNumberField } from './fields.js';
 import type { QuestionForm, ServiceForm, ServiceOptionForm } from '../shared.js';
 import { Hint } from '../Hint';
+import { isValidRate } from '../../../src/shared/index.js';
 
 /** One row of the cancellation-policy editor, mirroring the wire/shared CancellationTier shape. */
 type ServiceEditorTier = { withinDays: number; percent: number };
@@ -207,7 +208,7 @@ export function ServiceEditor({
             step={1}
             inputMode="numeric"
             required
-            aria-invalid={(s.options[0]?.rate ?? '') === ''}
+            aria-invalid={!isValidRate(s.options[0]?.rate)}
             value={s.options[0]?.rate ?? ''}
             onChange={(e) =>
               setService({
@@ -266,7 +267,7 @@ export function ServiceEditor({
                     step={1}
                     inputMode="numeric"
                     required
-                    aria-invalid={o.rate === ''}
+                    aria-invalid={!isValidRate(o.rate)}
                     value={o.rate}
                     onChange={(e) =>
                       setOption({ rate: e.target.value === '' ? '' : Number(e.target.value) })

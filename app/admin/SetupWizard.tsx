@@ -410,6 +410,10 @@ export function SetupWizard({
                       min={1}
                       step={1}
                       inputMode="numeric"
+                      aria-invalid={
+                        (prices[ps.preset.id] ?? '') !== '' &&
+                        !isValidRate(Number(prices[ps.preset.id]))
+                      }
                       value={prices[ps.preset.id] ?? ''}
                       onChange={(e) =>
                         setPrices((cur) => ({ ...cur, [ps.preset.id]: e.target.value }))
