@@ -252,8 +252,7 @@ export function ServiceEditor({
                     <span className="pb-labelrow">
                       Option name{' '}
                       <span className="pb-hint">
-                        (what clients see — e.g. &ldquo;30 min&rdquo;, &ldquo;Morning
-                        walk&rdquo;)
+                        (what clients see — e.g. &ldquo;30 min&rdquo;, &ldquo;Morning walk&rdquo;)
                       </span>
                     </span>
                     <input
@@ -322,8 +321,8 @@ export function ServiceEditor({
                     onChange={(capacity) => setOption({ capacity })}
                     hint={
                       <Hint label="Capacity">
-                        How many pets this time slot can take. A booking with three dogs uses
-                        three spots. A full slot stops being offered; blank means no limit.
+                        How many pets this time slot can take. A booking with three dogs uses three
+                        spots. A full slot stops being offered; blank means no limit.
                       </Hint>
                     }
                   />
