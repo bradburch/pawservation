@@ -424,6 +424,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const [previewKey, setPreviewKey] = useState(0);
   const [activeSection, setActiveSection] = useState<SectionKey>(sectionFromHash);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardMode, setWizardMode] = useState<'full' | 'services'>('full');
   // Auto-open at most once per dashboard mount, so skipping it doesn't re-trigger on refresh().
   const wizardAutoOpened = useRef(false);
   // Chip deep-link handoff: CalendarSection sets this and navigates to #bookings;
@@ -746,6 +747,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         applyLoaded(s);
         if (!wizardAutoOpened.current && s.services.every((sv) => !sv.enabled)) {
           wizardAutoOpened.current = true;
+          setWizardMode('full');
           setWizardOpen(true);
         }
       })
@@ -820,7 +822,10 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         setSettings={setSettings}
         addService={addService}
         removeService={removeService}
-        openWizard={() => setWizardOpen(true)}
+        openWizard={() => {
+          setWizardMode('services');
+          setWizardOpen(true);
+        }}
         dirty={dirty}
         saveBlocked={unpricedService !== undefined}
         onSave={save}
@@ -958,6 +963,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           settings={settings}
           slug={slug}
           token={token}
+          mode={wizardMode}
           connectCalendar={connectCalendarOrThrow}
           onClose={() => setWizardOpen(false)}
           onApplied={async () => {

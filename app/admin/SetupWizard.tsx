@@ -83,6 +83,7 @@ export function SetupWizard({
   connectCalendar,
   onClose,
   onApplied,
+  mode = 'full',
 }: {
   settings: Settings;
   slug: string;
@@ -93,8 +94,12 @@ export function SetupWizard({
   onClose: () => void;
   /** Reloads the dashboard's settings after the wizard writes (same as addService's refresh). */
   onApplied: () => Promise<void>;
+  /** 'full' = profile → services → prices → calendar → done (the auto-open flow for a
+   * brand-new tenant); 'services' = services → prices → done — the Services & Rates
+   * "Quick setup" button, which must not re-walk profile or calendar. */
+  mode?: 'full' | 'services';
 }) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(mode === 'services' ? 2 : 1);
   // The DRAFT prefills a missing contact email with the admin's own login email (the address the
   // sitter signed up with) — profileInitial below keeps the RAW settings value, so the prefill
   // still diffs in profilePutBody and actually gets saved on Next. The sitter SEES it in the
@@ -309,7 +314,7 @@ export function SetupWizard({
         body: JSON.stringify({ services }),
       });
       await onApplied();
-      goTo(4);
+      goTo(mode === 'services' ? 5 : 4);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
     } finally {
@@ -390,14 +395,16 @@ export function SetupWizard({
               >
                 Skip for now
               </button>
-              <button
-                type="button"
-                className="pb-wizard-back"
-                disabled={applying}
-                onClick={() => goTo(1)}
-              >
-                Back
-              </button>
+              {mode === 'full' && (
+                <button
+                  type="button"
+                  className="pb-wizard-back"
+                  disabled={applying}
+                  onClick={() => goTo(1)}
+                >
+                  Back
+                </button>
+              )}
               <button type="button" disabled={selected.length === 0} onClick={() => goTo(3)}>
                 Next
               </button>
