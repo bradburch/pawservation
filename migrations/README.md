@@ -5,7 +5,7 @@
 Fresh databases are provisioned from `sql/schema.sql` + `sql/seed.sql`, **not** from this
 directory — `sql/schema.sql` is the canonical DDL and already includes everything through
 `0025_service_description.sql` (keep this line in step with the highest-numbered migration
-mirrored into `schema.sql`). Use:
+actually mirrored into `schema.sql`). Use:
 
 ```
 npm run seed:local   # wrangler d1 execute pawbook-db --local  --file=./sql/schema.sql && ...seed.sql
@@ -314,6 +314,12 @@ a missing column **500s both** the moment the new worker goes live. Merging to `
 wrangler deploy` unconditionally, so the merge _is_ the deploy and there is no window to apply it
 afterwards. Applying ahead of the merge is safe: the currently-deployed worker never reads the
 column, so it just sits there.
+
+**Apply AFTER `0024`, never before.** `0024` (the sibling walk-rate-unit branch) widens a CHECK
+constraint, which SQLite can only do by **rebuilding the table** and copying a hand-written column
+list forward. Run `0025` first and that rebuild silently drops `Description` and every blurb stored
+in it — no error, and the loss only surfaces as blank descriptions later. Order is `0024` then
+`0025` on every database.
 
 **NOT IDEMPOTENT** — plain `ALTER TABLE` fails if re-run against an existing database (the column
 already exists). Apply exactly once per database. It is a single statement, so `--command` carries

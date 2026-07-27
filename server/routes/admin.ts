@@ -363,10 +363,21 @@ function patchNullable<T extends number | string>(
 }
 
 /**
+ * A `description`, if the client sent one at all, must be text or an explicit `null` (= clear it).
+ * Anything else — a number, an object, `true` — is a client bug, and coercing it would silently
+ * WIPE a stored blurb on a request that never meant to touch it. Reject instead.
+ */
+function isValidDescriptionBody(svc: ServiceBody): boolean {
+  if (!('description' in svc)) return true;
+  return svc.description === null || typeof svc.description === 'string';
+}
+
+/**
  * A service's widget-facing blurb, on the same PATCH terms as `patchNullable`: present in the
  * service body ⇒ take it (trimmed; `''`/whitespace-only means "cleared" ⇒ NULL), absent ⇒ keep
  * the service's current value. One function so the length check and the write can never disagree
- * about what would be stored.
+ * about what would be stored. `isValidDescriptionBody` has already rejected every shape but a
+ * string and an explicit null, so the non-string branch here is only ever the explicit null.
  */
 function resolveServiceDescription(svc: ServiceBody, current: string | null): string | null {
   if (!('description' in svc)) return current;
@@ -498,6 +509,8 @@ export const adminRoutes = new Hono<AppEnv>()
         const qError = validateQuestionBody(q);
         if (qError) return c.json({ error: qError }, 400);
       }
+      if (!isValidDescriptionBody(svc))
+        return c.json({ error: `${meta.Label}: description must be text.` }, 400);
       const description = resolveServiceDescription(svc, meta.Description);
       if (description !== null && description.length > MAX_SERVICE_DESCRIPTION)
         return c.json(

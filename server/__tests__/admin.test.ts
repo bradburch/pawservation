@@ -1365,6 +1365,94 @@ describe('settings — service short description (0025)', () => {
     expect((await putHousesitting(env, 'y'.repeat(200))).status).toBe(204);
   });
 
+  it('rejects a non-string, non-null description instead of silently clearing the stored one', async () => {
+    const { env } = createTestEnv();
+    await putHousesitting(env, 'Must survive a bogus follow-up save.');
+    const res = await putHousesitting(env, 42);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      'House sitting: description must be text.',
+    );
+    // The whole PUT is rejected — coercing 42 to null would have wiped a blurb the request never
+    // meant to touch.
+    expect((await getHousesitting(env)).description).toBe('Must survive a bogus follow-up save.');
+    // An explicit null is still the documented way to clear it.
+    expect((await putHousesitting(env, null)).status).toBe(204);
+    expect((await getHousesitting(env)).description).toBeNull();
+  });
+
+  it('ISOLATION: a description is neither readable nor writable across tenants', async () => {
+    const { env } = createTestEnv();
+    const readBoarding = async (slug: string, tenantId: string) => {
+      const get = await app.request(
+        `/api/${slug}/admin/settings`,
+        { headers: await auth(tenantId) },
+        env,
+      );
+      const body = (await get.json()) as { services: { type: string; description: unknown }[] };
+      return body.services.find((s) => s.type === 'boarding')!.description;
+    };
+    const putBoarding = async (slug: string, tenantId: string, description: string) =>
+      await app.request(
+        `/api/${slug}/admin/settings`,
+        {
+          method: 'PUT',
+          headers: await auth(tenantId, true),
+          body: JSON.stringify({
+            services: [
+              {
+                type: 'boarding',
+                enabled: true,
+                description,
+                options: [{ label: 'Standard', rate: 50 }],
+              },
+            ],
+          }),
+        },
+        env,
+      );
+
+    expect((await putBoarding('sunny-paws', TENANT_A, "Tenant A's private blurb.")).status).toBe(
+      204,
+    );
+
+    // READ: B's own admin view and public config show B's seeded blurb, never A's.
+    expect(await readBoarding('happy-tails', TENANT_B)).toBe(
+      'Small-group boarding for dogs only, four dogs max per day.',
+    );
+    const cfgB = (await (await app.request('/api/happy-tails/config', {}, env)).json()) as {
+      services: { type: string; description: string | null }[];
+    };
+    expect(cfgB.services.find((s) => s.type === 'boarding')!.description).not.toContain('Tenant A');
+
+    // WRITE: A's admin token cannot reach B's settings at all — a real token for the wrong tenant
+    // is authenticated but not authorized, hence 403 rather than 401.
+    const crossWrite = await putBoarding('happy-tails', TENANT_A, 'Overwritten by tenant A.');
+    expect(crossWrite.status).toBe(403);
+    expect(await readBoarding('happy-tails', TENANT_B)).toBe(
+      'Small-group boarding for dogs only, four dogs max per day.',
+    );
+
+    // And B writing its own blurb leaves A's untouched.
+    expect((await putBoarding('happy-tails', TENANT_B, "Tenant B's own blurb.")).status).toBe(204);
+    expect(await readBoarding('sunny-paws', TENANT_A)).toBe("Tenant A's private blurb.");
+  });
+
+  it('surfaces the SEEDED demo descriptions, so a bad seed.sql merge fails CI instead of passing', async () => {
+    const { env } = createTestEnv();
+    const cfg = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      services: { type: string; description: string | null }[];
+    };
+    // Nothing else asserts a seeded description; without this, resolving a seed.sql conflict by
+    // dropping the Description column from the INSERT would keep the suite green.
+    expect(cfg.services.find((s) => s.type === 'boarding')!.description).toBe(
+      'Your pet stays at our home with a fenced yard and two walks a day.',
+    );
+    expect(cfg.services.find((s) => s.type === 'daycare')!.description).toBe(
+      'Drop off in the morning, pick up by 6pm.',
+    );
+  });
+
   it('exposes the description on the public widget config', async () => {
     const { env } = createTestEnv();
     await putHousesitting(env, 'We stay over so your pet keeps its routine.');
