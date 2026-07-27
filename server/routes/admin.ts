@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
   addEndUserPet,
@@ -48,8 +49,10 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { serializeAnalytics } from '../lib/analytics';
 import {
+  backfillCalendarEvents,
   deleteBookingCalendarEvent,
   reconcileIfStale,
+  repointCalendarTarget,
   syncBookingToCalendar,
   updateBookingCalendarEvent,
 } from '../lib/calendar-sync';
@@ -82,7 +85,7 @@ import {
   isValidTimeString,
   minutesBetweenTimes,
 } from '../lib/validation';
-import type { AppEnv } from '../types';
+import type { AppEnv, Tenant } from '../types';
 import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
 import {
   cancellationFee,
@@ -92,6 +95,22 @@ import {
 } from '../../src/shared/index.js';
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Re-create future bookings' events in the currently-targeted calendar. Best-effort and never blocks
+ * the response (waitUntil in production; awaited in tests, which have no ExecutionContext — same
+ * dance as routes/bookings.ts and the OAuth callback).
+ */
+async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise<void> {
+  const task = backfillCalendarEvents(c.env, tenant).catch((err) => {
+    console.error('calendar backfill failed', err);
+  });
+  try {
+    c.executionCtx.waitUntil(task);
+  } catch {
+    await task;
+  }
+}
 
 /**
  * Each pet-bearing row triggers several sequential D1 calls; an unbounded import can exceed
@@ -807,7 +826,19 @@ export const adminRoutes = new Hono<AppEnv>()
       .json<{ calendarId?: unknown }>()
       .catch(() => ({}) as { calendarId?: unknown });
     const raw = typeof body.calendarId === 'string' ? body.calendarId.trim() : '';
-    await setProviderCalendarId(c.env.PAWBOOK_DB, tenant.Id, 'calendar', raw === '' ? null : raw);
+    const next = raw === '' ? null : raw;
+    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    // NULL and the literal 'primary' name the same calendar, so compare through that default: a
+    // save that doesn't actually move the target must not churn every booking's event.
+    if ((conn?.CalendarId ?? 'primary') === (next ?? 'primary')) {
+      await setProviderCalendarId(c.env.PAWBOOK_DB, tenant.Id, 'calendar', next);
+      return c.body(null, 204);
+    }
+    // Real switch: clear the stored event ids with the new target (repointCalendarTarget — without
+    // this, reconciliation would cancel every booking whose event lives in the old calendar), then
+    // re-create future bookings in the new calendar.
+    await repointCalendarTarget(c.env, tenant, next);
+    await backfillInBackground(c, tenant);
     return c.body(null, 204);
   })
 

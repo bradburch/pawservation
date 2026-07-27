@@ -1,11 +1,13 @@
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
+  clearBookingCalendarEventIds,
   getEndUserById,
   getProviderConnection,
   listPetNamesForBooking,
   listSyncedBookingIds,
   listUnsyncedFutureBookings,
   setBookingGCalEventId,
+  setProviderCalendarId,
   setProviderTokens,
   updateBookingStatus,
 } from '../db/repo';
@@ -165,6 +167,26 @@ export async function updateBookingCalendarEvent(
       gcalEventId,
     );
   }
+}
+
+/**
+ * Point this tenant's calendar sync at a different Google calendar (`null` = the account's primary
+ * calendar). Every stored GCalEventId is cleared BEFORE the new target is written, so there is never
+ * an instant where the connection names the new calendar while bookings still hold event ids created
+ * in the old one — that combination is exactly what makes reconcileBookingsWithCalendar cancel real
+ * bookings, since it reads "id absent from the current calendar" as "deleted by hand in Calendar"
+ * (see clearBookingCalendarEventIds for the trade-off this accepts).
+ *
+ * Callers should then run backfillCalendarEvents in the background: with the ids cleared, every
+ * future non-cancelled booking is an unsynced booking again, so it is re-created in the new calendar.
+ */
+export async function repointCalendarTarget(
+  env: Env,
+  tenant: Tenant,
+  calendarId: string | null,
+): Promise<void> {
+  await clearBookingCalendarEventIds(env.PAWBOOK_DB, tenant.Id);
+  await setProviderCalendarId(env.PAWBOOK_DB, tenant.Id, 'calendar', calendarId);
 }
 
 /** Cap on how many bookings one backfill pass creates events for — a sane bound so a sitter with a
