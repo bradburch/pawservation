@@ -68,6 +68,7 @@ import {
   PET_CALENDAR_SUMMARY,
   revokeToken,
 } from '../lib/google-calendar';
+import { DEMO_EMAIL } from '../lib/demo';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
@@ -1003,6 +1004,8 @@ export const adminRoutes = new Hono<AppEnv>()
     const petName = typeof body.petName === 'string' ? body.petName.trim() : '';
     const petType = typeof body.petType === 'string' ? body.petType.trim() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
+    if (email === DEMO_EMAIL)
+      return c.json({ error: 'That email is reserved for the Pawservation demo.' }, 400);
     if (!name) return c.json({ error: "Enter the client's name." }, 400);
     if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
     if (!petName)
@@ -1246,6 +1249,10 @@ export const adminRoutes = new Hono<AppEnv>()
       const email = rawEmail.trim().toLowerCase();
       if (!EMAIL_RE.test(email)) {
         skippedRows.push({ row, reason: 'Invalid email address' });
+        continue;
+      }
+      if (email === DEMO_EMAIL) {
+        skippedRows.push({ row, reason: 'That email is reserved for the Pawservation demo' });
         continue;
       }
       const name = rawName.trim();
