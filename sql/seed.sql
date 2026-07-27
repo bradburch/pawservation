@@ -99,11 +99,13 @@ INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUE
   ('eu_ht_jess', 'tnt_happytails', 'jess@example.com', 'Jess Demo', '(555) 555-0142', 'active'),
   ('eu_pr_jess', 'tnt_pawsandrelax', 'jess@example.com', 'Jess Demo', NULL, 'active');
 
--- Demo pets (sitter-managed). Jess has two at Sunny Paws (dogs+cats), one at Happy Tails (dogs only).
+-- Demo pets (sitter-managed). Jess has two at Sunny Paws (dogs+cats), one at Happy Tails
+-- (dogs only), one at Paws & Relax — EVERY seeded customer owns a pet (client-AND-pet invariant).
 INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Notes) VALUES
   ('pet_sp_bella', 'tnt_sunnypaws', 'eu_sp_jess', 'Bella', 'dog', 'Allergic to chicken — no chicken treats. Pulls on the leash near squirrels.'),
   ('pet_sp_mochi', 'tnt_sunnypaws', 'eu_sp_jess', 'Mochi', 'cat', NULL),
-  ('pet_ht_otis',  'tnt_happytails', 'eu_ht_jess', 'Otis', 'dog', 'Deaf in one ear; approach from the front.');
+  ('pet_ht_otis',  'tnt_happytails', 'eu_ht_jess', 'Otis', 'dog', 'Deaf in one ear; approach from the front.'),
+  ('pet_pr_luna',  'tnt_pawsandrelax', 'eu_pr_jess', 'Luna', 'dog', NULL);
 
 -- Ownership edges (0019). EVERY pet needs a PetOwners row: it is the authoritative owner list that
 -- /me, the booking-time ownership gate, and invoicing accounts read. A pet without one is invisible
@@ -111,7 +113,8 @@ INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Note
 INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES
   ('tnt_sunnypaws', 'pet_sp_bella', 'eu_sp_jess'),
   ('tnt_sunnypaws', 'pet_sp_mochi', 'eu_sp_jess'),
-  ('tnt_happytails', 'pet_ht_otis',  'eu_ht_jess');
+  ('tnt_happytails', 'pet_ht_otis',  'eu_ht_jess'),
+  ('tnt_pawsandrelax', 'pet_pr_luna', 'eu_pr_jess');
 
 -- Existing bookings so availability looks real, tied to the demo customer so the admin list
 -- never shows an anonymous "Unknown customer" row.
