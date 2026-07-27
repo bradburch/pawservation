@@ -59,7 +59,7 @@ describe('GET / — landing page', () => {
     expect(body.match(/<form\b/g)?.length).toBe(1);
     expect(body).toContain('<form class="invite-form" method="post" action="/request-invite">');
     expect(body).toContain('name="business"');
-    expect(body).toContain('name="website"'); // honeypot field
+    expect(body).toContain('name="fax"'); // honeypot field
   });
 
   it('makes no multi-pet pricing claim (the FAQ item is gone; rates ship with pet-mix-rates)', async () => {
