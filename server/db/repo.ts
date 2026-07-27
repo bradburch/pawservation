@@ -2287,10 +2287,10 @@ export async function createTenantFromSignup(
       )
       .bind(claimedAt, args.tenantId, args.email),
     db
-      .prepare("INSERT INTO TenantPetTypes (TenantId, PetType, Label) VALUES (?, 'dog', 'Dogs')")
+      .prepare("INSERT INTO TenantPetTypes (TenantId, PetType, Label) VALUES (?, 'dog', 'Dog')")
       .bind(args.tenantId),
     db
-      .prepare("INSERT INTO TenantPetTypes (TenantId, PetType, Label) VALUES (?, 'cat', 'Cats')")
+      .prepare("INSERT INTO TenantPetTypes (TenantId, PetType, Label) VALUES (?, 'cat', 'Cat')")
       .bind(args.tenantId),
   ]);
   const claimResult = results[2] as { meta: { changes?: number } };

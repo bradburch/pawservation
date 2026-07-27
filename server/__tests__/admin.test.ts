@@ -334,9 +334,9 @@ describe('tenant admin', () => {
     };
     // The registry is untouched by the stale petTypes field — full seeded registry stays.
     expect(cfg.petTypes).toEqual([
-      { slug: 'cat', label: 'Cats' },
-      { slug: 'dog', label: 'Dogs' },
-      { slug: 'rabbit', label: 'Rabbits' },
+      { slug: 'cat', label: 'Cat' },
+      { slug: 'dog', label: 'Dog' },
+      { slug: 'rabbit', label: 'Rabbit' },
     ]);
     const walk = cfg.services.find((s) => s.type === 'walk')!;
     expect(walk.options).toHaveLength(2);

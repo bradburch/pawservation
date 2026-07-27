@@ -20,9 +20,9 @@ describe('pet-type rows (repo)', () => {
     const { env } = createTestEnv();
     const rows = await listPetTypes(env.PAWBOOK_DB, TENANT_A);
     expect(rows.map((r) => ({ petType: r.PetType, label: r.Label }))).toEqual([
-      { petType: 'cat', label: 'Cats' },
-      { petType: 'dog', label: 'Dogs' },
-      { petType: 'rabbit', label: 'Rabbits' },
+      { petType: 'cat', label: 'Cat' },
+      { petType: 'dog', label: 'Dog' },
+      { petType: 'rabbit', label: 'Rabbit' },
     ]);
   });
 
@@ -183,8 +183,8 @@ describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
     expect(ok).toBe(true);
     const rows = await listPetTypes(env.PAWBOOK_DB, 'tnt_fresh');
     expect(rows.map((r) => ({ petType: r.PetType, label: r.Label }))).toEqual([
-      { petType: 'cat', label: 'Cats' },
-      { petType: 'dog', label: 'Dogs' },
+      { petType: 'cat', label: 'Cat' },
+      { petType: 'dog', label: 'Dog' },
     ]);
   });
 

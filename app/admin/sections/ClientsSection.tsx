@@ -136,6 +136,10 @@ export function ClientsSection({
     }
   };
 
+  // Pet rows must show the registry LABEL ("Dog"), not the raw slug ("dog") — the one place
+  // that still bypassed the label map.
+  const labelBySlug = new Map(petTypes.map((pt) => [pt.petType, pt.label]));
+
   // Every client is added WITH their first pet — the server refuses a pet-less create, so the
   // form requires name + pet before Add enables.
   const canAddCustomer =
@@ -325,7 +329,7 @@ export function ClientsSection({
             <ul className="pb-pets">
               {cust.pets.map((p) => (
                 <li key={p.id}>
-                  {p.name} <em>{p.petType}</em>
+                  {p.name} <em>{labelBySlug.get(p.petType) ?? p.petType}</em>
                   {p.deceasedAt ? <span className="pb-chip pb-chip-warn">Deceased</span> : null}
                   {p.notes ? <span className="pb-hint"> — {p.notes}</span> : null}
                   <select

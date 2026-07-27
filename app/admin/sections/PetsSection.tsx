@@ -111,7 +111,7 @@ export function PetsSection({
       <div className="pb-inline">
         <input
           type="text"
-          placeholder="Pet type name (e.g. Rabbits)"
+          placeholder="Pet type name (e.g. Rabbit)"
           value={newLabel}
           onChange={(e) => setNewLabel(e.target.value)}
         />

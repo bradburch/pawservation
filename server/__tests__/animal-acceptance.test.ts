@@ -28,7 +28,7 @@ describe('per-service pet-type acceptance (booking POST)', () => {
     const res = await book(env, token, ['pet_sp_mochi']); // Mochi is a cat
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe(
-      "Boarding doesn't accept cats — Mochi can't join this booking.",
+      "Boarding doesn't accept cat — Mochi can't join this booking.",
     );
   });
 
@@ -67,7 +67,7 @@ describe('per-service pet-type acceptance (booking POST)', () => {
     const excluded = await book(env, token, ['pet_sp_mochi']);
     expect(excluded.status).toBe(400);
     expect(((await excluded.json()) as { error: string }).error).toBe(
-      "Boarding doesn't accept cats — Mochi can't join this booking.",
+      "Boarding doesn't accept cat — Mochi can't join this booking.",
     );
     // A pet whose slug is NOT in the registry at all (corrupt data) hits the membership gate.
     raw.prepare(`UPDATE EndUserPets SET PetType = 'dragon' WHERE Id = 'pet_sp_mochi'`).run();
@@ -112,7 +112,7 @@ describe('per-service pet-type acceptance (booking POST)', () => {
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe(
-      "Boarding doesn't accept cats — Whiskers can't join this booking.",
+      "Boarding doesn't accept cat — Whiskers can't join this booking.",
     );
   });
 });

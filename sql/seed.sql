@@ -84,13 +84,13 @@ INSERT OR REPLACE INTO TenantServiceOptions
 -- end); Happy Tails' cat row stays in the registry but is accepted by NO service (its services
 -- carry '["dog"]' above — demos the acceptance chips); Paws & Relax dogs + cats.
 INSERT OR REPLACE INTO TenantPetTypes (TenantId, PetType, Label) VALUES
-  ('tnt_sunnypaws', 'dog', 'Dogs'),
-  ('tnt_sunnypaws', 'cat', 'Cats'),
-  ('tnt_sunnypaws', 'rabbit', 'Rabbits'),
-  ('tnt_happytails', 'dog', 'Dogs'),
-  ('tnt_happytails', 'cat', 'Cats'),
-  ('tnt_pawsandrelax', 'dog', 'Dogs'),
-  ('tnt_pawsandrelax', 'cat', 'Cats');
+  ('tnt_sunnypaws', 'dog', 'Dog'),
+  ('tnt_sunnypaws', 'cat', 'Cat'),
+  ('tnt_sunnypaws', 'rabbit', 'Rabbit'),
+  ('tnt_happytails', 'dog', 'Dog'),
+  ('tnt_happytails', 'cat', 'Cat'),
+  ('tnt_pawsandrelax', 'dog', 'Dog'),
+  ('tnt_pawsandrelax', 'cat', 'Cat');
 
 -- Demo customers. Invite-only gating means /identify only succeeds for known customers, so the
 -- demo widget (and the existing identify/booking tests) need a seeded, already-active customer.
