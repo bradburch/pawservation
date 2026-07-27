@@ -690,6 +690,29 @@ body {
   bottom: var(--dash-savebar-h, 0px);
 }
 
+/* Inline "Save changes" (Business, service editor) — same action as the save bar. */
+.pb-inline-save {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Pulse the fixed save bar when an in-content "Save" points the sitter at it. */
+@media (prefers-reduced-motion: no-preference) {
+  .pb-savebar-flash {
+    animation: pb-savebar-pulse 0.5s ease 2;
+  }
+}
+@keyframes pb-savebar-pulse {
+  50% {
+    transform: translateY(-2px);
+    box-shadow:
+      0 0 0 3px var(--leaf),
+      0 -8px 24px -16px rgba(24, 39, 29, 0.7);
+  }
+}
+
 /* ── Login card ────────────────────────────────────────────────── */
 .pb-login {
   max-width: 400px;
@@ -1069,6 +1092,20 @@ body {
   color: var(--ink);
   border-color: var(--sage);
   background: var(--sage-wash);
+}
+
+/* The inline "Save changes" is the footer's one primary action — brand fill, not ghost. */
+.pb-wrap .pb-svc-editor-foot button.pb-save-inline:not(:disabled) {
+  background: var(--leaf);
+  color: #fff;
+  border-color: var(--leaf);
+  font-weight: 600;
+}
+.pb-wrap .pb-svc-editor-foot button.pb-save-inline:not(:disabled):hover {
+  filter: none;
+  background: var(--deep);
+  border-color: var(--deep);
+  color: #fff;
 }
 /* Un-scoped (button.pb-danger, not just the editor footer's .pb-danger) so any delete/remove
    action tagged .pb-danger gets the red tint — e.g. the pet-type registry's delete button in

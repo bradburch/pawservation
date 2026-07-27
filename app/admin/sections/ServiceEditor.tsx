@@ -149,6 +149,10 @@ export function ServiceEditor({
   onDone,
   onDelete,
   petTypes,
+  dirty,
+  saveBlocked,
+  onSave,
+  onFlashSavebar,
 }: {
   service: ServiceForm;
   setService: (next: ServiceForm) => void;
@@ -157,6 +161,14 @@ export function ServiceEditor({
   onDone?: () => void;
   onDelete?: () => void;
   petTypes: { petType: string; label: string }[]; // the tenant's pet-type registry
+  /** True while any staged change is unsaved — enables the inline save + Save-button flash. */
+  dirty?: boolean;
+  /** True while an unpriced option blocks saving. */
+  saveBlocked?: boolean;
+  /** Page-level staged-settings save (the save bar's action), surfaced inline. */
+  onSave?: () => void;
+  /** Pulses the fixed save bar so the sitter can find where changes are committed. */
+  onFlashSavebar?: () => void;
 }) {
   // Cancellation tiers edit through setService like every other field; an emptied list
   // normalizes back to null so "no policy" round-trips as the server's NULL sentinel.
@@ -509,16 +521,34 @@ export function ServiceEditor({
         })}
       </div>
 
-      {(onDelete !== undefined || onDone !== undefined) && (
+      {(onDelete !== undefined || onDone !== undefined || onSave !== undefined) && (
         <div className="pb-svc-editor-foot">
           {onDelete && (
             <button type="button" className="pb-danger" onClick={onDelete}>
               Delete service
             </button>
           )}
+          {onSave && (
+            <button
+              type="button"
+              className="pb-save-inline"
+              disabled={!dirty || saveBlocked}
+              onClick={onSave}
+            >
+              Save changes
+            </button>
+          )}
           {onDone && (
-            <button type="button" onClick={onDone}>
-              Done
+            <button
+              type="button"
+              onClick={() => {
+                // Collapse is still staging-only; if edits are pending, pulse the save bar so
+                // "Save" visibly hands off to where the commit happens.
+                if (dirty) onFlashSavebar?.();
+                onDone();
+              }}
+            >
+              Save
             </button>
           )}
         </div>

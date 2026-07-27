@@ -430,6 +430,11 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // BookingsSection scrolls the row into view, flashes it, then clears via onFocusConsumed.
   const [focusBookingId, setFocusBookingId] = useState<string | null>(null);
 
+  // Bumped when an in-content "Save" action wants the sitter's eye on the fixed save bar
+  // (the bar remounts via key, restarting the pulse animation each time).
+  const [savebarFlashKey, setSavebarFlashKey] = useState(0);
+  const flashSavebar = () => setSavebarFlashKey((k) => k + 1);
+
   const dirty = settings !== null && JSON.stringify(settings) !== savedSnapshot;
 
   // A new service/option starts with an EMPTY price the sitter must fill (no default price), so
@@ -792,7 +797,15 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     earnings: (
       <EarningsSection session={session} handleError={handle} clearError={() => setError('')} />
     ),
-    business: <BusinessSection settings={settings} setSettings={setSettings} />,
+    business: (
+      <BusinessSection
+        settings={settings}
+        setSettings={setSettings}
+        dirty={dirty}
+        saveBlocked={unpricedService !== undefined}
+        onSave={save}
+      />
+    ),
     pets: (
       <PetsSection
         settings={settings}
@@ -808,6 +821,10 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         addService={addService}
         removeService={removeService}
         openWizard={() => setWizardOpen(true)}
+        dirty={dirty}
+        saveBlocked={unpricedService !== undefined}
+        onSave={save}
+        onFlashSavebar={flashSavebar}
       />
     ),
     timeoff: (
@@ -915,7 +932,12 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       </div>
 
       {(dirty || message || error) && (
-        <div className="pb-savebar" role="status" ref={setDashSavebarEl}>
+        <div
+          key={savebarFlashKey}
+          className={savebarFlashKey > 0 ? 'pb-savebar pb-savebar-flash' : 'pb-savebar'}
+          role="status"
+          ref={setDashSavebarEl}
+        >
           {error ? (
             <p className="pb-savebar-error">{error}</p>
           ) : unpricedService ? (
