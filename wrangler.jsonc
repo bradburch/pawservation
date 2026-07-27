@@ -8,6 +8,10 @@
   "compatibility_date": "2026-06-05",
   "main": "./server/index.ts",
   "workers_dev": true,
+  // Every `wrangler versions upload` prints a shareable https://<version>-pawbook.<subdomain>.workers.dev
+  // staging URL for that exact worker version, so a version can be reviewed before it's promoted
+  // to the main pawservation.com route. See README.md's "Staging/preview URLs" section.
+  "preview_urls": true,
   // Custom domain for the rebrand. workers_dev stays on so existing embeds (pointed at the
   // *.workers.dev URL) keep working; www can be added the same way later.
   "routes": [{ "pattern": "pawservation.com", "custom_domain": true }],
@@ -44,6 +48,8 @@
       "/setup",
       "/setup.html",
       "/how-it-works",
+      "/request-invite",
+      "/request-invite/thanks",
     ],
   },
 }

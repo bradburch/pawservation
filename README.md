@@ -192,6 +192,14 @@ exception — their seeded end user has no real inbox, so they always get the on
 regardless of email configuration (see `DEMO_TENANT_SLUGS` in `server/routes/auth.ts`).
 Merges to `main` auto-deploy via CI.
 
+### Staging/preview URLs
+
+`wrangler.jsonc` sets `"preview_urls": true`, so every `npx wrangler versions upload` prints a
+shareable `https://<version>-pawbook.<subdomain>.workers.dev` URL for that exact worker version —
+useful for reviewing a change before promoting it to the `pawservation.com` route. `workers_dev`
+stays `true` too (existing embeds point at the `*.workers.dev` URL and must keep working) —
+don't touch it.
+
 ## Provisioning the first sitter
 
 Signup is invite-only and sitter-initiated:
