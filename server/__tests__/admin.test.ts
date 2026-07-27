@@ -149,7 +149,7 @@ describe('tenant admin', () => {
     );
     expect(res.status).toBe(400);
     const { error } = (await res.json()) as { error: string };
-    expect(error).toContain('Walks'); // the service…
+    expect(error).toContain('Walk'); // the service (singular since the rename)…
     expect(error).toContain('Puppy Check-in'); // …and the specific option
     // Same atomicity as the rate: 0 case above — nothing in the request persists.
     const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
