@@ -31,18 +31,67 @@ async function importCsv(
 describe('POST /:slug/admin/customers/import', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  // One row per pet is the canonical CSV shape: the FIRST row for an email creates the client and
+  // their first pet together, later rows for the same email just add pets.
   it('imports clients and pets from a well-formed CSV', async () => {
     const { env } = createTestEnv();
     const csv =
       'Client Email,Client Name,Pet Name,Pet Type\n' +
       'new1@example.com,New One,Fido,dog\n' +
       'new1@example.com,New One,Whiskers,cat\n' +
-      'new2@example.com,New Two,,\n';
+      'new2@example.com,New Two,Rex,dog\n';
     const { status, body } = await importCsv(env, csv);
     expect(status).toBe(200);
     expect(body.importedCustomers).toBe(2);
-    expect(body.importedPets).toBe(2);
+    expect(body.importedPets).toBe(3);
     expect(body.skippedRows).toEqual([]);
+  });
+
+  it('skips a row with no name', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\nnameless@example.com,,Rex,dog\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([{ row: 2, reason: 'Missing name' }]);
+    expect(body.importedCustomers).toBe(0);
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('nameless@example.com'),
+    ).toBeUndefined();
+  });
+
+  // "No owners without pets": a pet-less row can't stand up a new client any more.
+  it('skips a pet-less row for a client who would end up with no pets', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\nsolo@example.com,Solo,,\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([{ row: 2, reason: 'Every client needs at least one pet' }]);
+    expect(body.importedCustomers).toBe(0);
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('solo@example.com'),
+    ).toBeUndefined();
+  });
+
+  // …but a repeated pet-less row is legitimate once that client HAS a pet — whether the pet came
+  // from an earlier row of this same file, or from the database.
+  it('accepts a pet-less row for a client whose pet arrived on an earlier row', async () => {
+    const { env } = createTestEnv();
+    const csv =
+      'Client Email,Client Name,Pet Name,Pet Type\n' +
+      'pair@example.com,Pair,Bella,dog\n' +
+      'pair@example.com,Pair,,\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(1);
+    expect(body.importedPets).toBe(1);
+  });
+
+  it('accepts a pet-less row for a pre-existing client who already has pets', async () => {
+    const { env } = createTestEnv();
+    // jess@example.com is seeded for sunny-paws and already owns Bella + Mochi.
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\njess@example.com,Jess Demo,,\n';
+    const { body } = await importCsv(env, csv);
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(0);
+    expect(body.importedPets).toBe(0);
   });
 
   it('reports the row and reason for an invalid email', async () => {
@@ -53,13 +102,18 @@ describe('POST /:slug/admin/customers/import', () => {
     expect(body.importedCustomers).toBe(0);
   });
 
-  it('skips a disabled/unknown pet type but still creates the client', async () => {
-    const { env } = createTestEnv();
+  // A bad pet type now takes the WHOLE row down: the client can no longer be created pet-less as
+  // a consolation prize.
+  it('skips a disabled/unknown pet type, creating no client either', async () => {
+    const { env, raw } = createTestEnv();
     const csv = 'Client Email,Client Name,Pet Name,Pet Type\nnew3@example.com,X,Ferret,ferret\n';
     const { body } = await importCsv(env, csv);
-    expect(body.importedCustomers).toBe(1);
+    expect(body.importedCustomers).toBe(0);
     expect(body.importedPets).toBe(0);
     expect(body.skippedRows).toEqual([{ row: 2, reason: "'ferret' is not one of your pet types" }]);
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('new3@example.com'),
+    ).toBeUndefined();
   });
 
   it('imports a pet of a custom registry type (rabbit)', async () => {
@@ -92,7 +146,7 @@ describe('POST /:slug/admin/customers/import', () => {
       { row: 2, reason: 'Pet name given without a pet type' },
       { row: 3, reason: 'Pet type given without a pet name' },
     ]);
-    expect(body.importedCustomers).toBe(2);
+    expect(body.importedCustomers).toBe(0); // a half-given pet leaves no client behind
   });
 
   it('dedups a pet appearing twice in the same file, and across a repeated import', async () => {
@@ -119,7 +173,7 @@ describe('POST /:slug/admin/customers/import', () => {
     const csv =
       'Client Email,Client Name,Pet Name,Pet Type\n' +
       'jess@example.com,Jess,,\n' +
-      'brandnew@example.com,New,,\n';
+      'brandnew@example.com,New,Rex,dog\n';
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
@@ -139,7 +193,7 @@ describe('POST /:slug/admin/customers/import', () => {
 
   it('does not fail the request when an invite send fails; counts it instead', async () => {
     const { env } = createTestEnv();
-    const csv = 'Client Email,Client Name,Pet Name,Pet Type\nfailmail@example.com,X,,\n';
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\nfailmail@example.com,X,Rex,dog\n';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
     const envWithEmail = {
       ...env,
@@ -156,7 +210,7 @@ describe('POST /:slug/admin/customers/import', () => {
 
   it('does not send invites when sendInvites is false, even with email configured', async () => {
     const { env } = createTestEnv();
-    const csv = 'Client Email,Client Name,Pet Name,Pet Type\nnoinvite@example.com,X,,\n';
+    const csv = 'Client Email,Client Name,Pet Name,Pet Type\nnoinvite@example.com,X,Rex,dog\n';
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
@@ -219,7 +273,7 @@ describe('POST /:slug/admin/customers/import', () => {
       const actual = await importOriginal<typeof import('../db/repo')>();
       return {
         ...actual,
-        addEndUserPet: vi.fn().mockRejectedValueOnce(new Error('boom')),
+        insertInvitedCustomerWithPet: vi.fn().mockRejectedValueOnce(new Error('boom')),
       };
     });
     vi.resetModules();

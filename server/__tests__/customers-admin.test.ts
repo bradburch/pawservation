@@ -15,7 +15,12 @@ describe('admin customers', () => {
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ email: 'guest@example.com', name: 'Guest' }),
+        body: JSON.stringify({
+          email: 'guest@example.com',
+          name: 'Guest',
+          petName: 'Rex',
+          petType: 'dog',
+        }),
       },
       env,
     );
@@ -48,6 +53,137 @@ describe('admin customers', () => {
       env,
     );
     expect(res.status).toBe(400);
+  });
+
+  // "No owners without pets" at the CREATION boundary: a client is a client-and-pet relationship,
+  // so neither a nameless nor a pet-less create is allowed, and neither may leave a row behind.
+  it('rejects a create with no name (400) and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ email: 'noname@example.com', petName: 'Rex', petType: 'dog' }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: expect.stringMatching(/name/i) as unknown as string,
+    });
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('noname@example.com'),
+    ).toBeUndefined();
+  });
+
+  it('rejects a create with no pet (400) and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ email: 'nopet@example.com', name: 'No Pet' }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: expect.stringMatching(/pet/i) as unknown as string,
+    });
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('nopet@example.com'),
+    ).toBeUndefined();
+  });
+
+  it('rejects a pet type outside the tenant registry (400) and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email: 'ferret@example.com',
+          name: 'Ferret Fan',
+          petName: 'Slinky',
+          petType: 'ferret',
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('ferret@example.com'),
+    ).toBeUndefined();
+  });
+
+  it('creates the customer, the pet and the ownership edge together', async () => {
+    const { env, raw } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const res = await app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email: 'both@example.com',
+          name: 'Both',
+          phone: '(555) 555-0100',
+          petName: 'Bella',
+          petType: 'dog',
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    const pet = raw
+      .prepare('SELECT Id, Name, PetType, EndUserId FROM EndUserPets WHERE EndUserId = ?')
+      .get(id) as { Id: string; Name: string; PetType: string } | undefined;
+    expect(pet).toMatchObject({ Name: 'Bella', PetType: 'dog' });
+    // The PetOwners edge is what every customer-facing pet list reads — a pet without it is
+    // invisible to its own owner.
+    expect(
+      raw.prepare('SELECT * FROM PetOwners WHERE PetId = ? AND EndUserId = ?').get(pet!.Id, id),
+    ).toBeDefined();
+  });
+
+  it('adds only the new pet when re-POSTing an existing customer, and never duplicates one', async () => {
+    const { env, raw } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const post = (petName: string) =>
+      app.request(
+        `/api/${SLUG}/admin/customers`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            email: 'jess@example.com', // seeded, already owns Bella + Mochi
+            name: 'Jess Demo',
+            petName,
+            petType: 'dog',
+          }),
+        },
+        env,
+      );
+    const countPets = () =>
+      (
+        raw
+          .prepare('SELECT COUNT(*) AS n FROM EndUserPets WHERE EndUserId = ?')
+          .get('eu_sp_jess') as { n: number }
+      ).n;
+    const before = countPets();
+
+    expect((await post('Bella')).status).toBe(201); // already owned — no-op, not an error
+    expect(countPets()).toBe(before);
+
+    expect((await post('Comet')).status).toBe(201);
+    expect(countPets()).toBe(before + 1);
   });
 
   it('refuses to delete a customer with bookings (409)', async () => {
@@ -173,7 +309,12 @@ describe('admin customers', () => {
         {
           method: 'POST',
           headers,
-          body: JSON.stringify({ email: 'active@example.com' }),
+          body: JSON.stringify({
+            email: 'active@example.com',
+            name: 'Active',
+            petName: 'Rex',
+            petType: 'dog',
+          }),
         },
         env,
       );

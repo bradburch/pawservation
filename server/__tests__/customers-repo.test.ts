@@ -7,6 +7,7 @@ import {
   deleteCustomer,
   getEndUserByEmail,
   insertInvitedCustomer,
+  insertInvitedCustomerWithPet,
   listCustomers,
   listEndUserPets,
   promoteCustomerActive,
@@ -35,6 +36,63 @@ describe('customer repo', () => {
     );
     expect(again.Id).toBe(a.Id);
     expect(again.Status).toBe('active'); // not downgraded
+  });
+
+  it('inserts a customer, their pet and the ownership edge in one batch', async () => {
+    const { env } = createTestEnv();
+    const c = await insertInvitedCustomerWithPet(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'withpet@example.com',
+      'With Pet',
+      '(555) 555-0111',
+      'Bella',
+      'dog',
+    );
+    expect(c.Status).toBe('invited');
+    // Read back through listEndUserPets, which joins PetOwners — so this also proves the edge.
+    const pets = await listEndUserPets(env.PAWBOOK_DB, TENANT_A, c.Id);
+    expect(pets.map((p) => [p.Name, p.PetType])).toEqual([['Bella', 'dog']]);
+  });
+
+  // The batch is all-or-nothing: a duplicate email aborts on EndUsers' UNIQUE (TenantId, Email),
+  // and the pet/ownership writes must go with it — no orphan pet, no second customer row.
+  it('writes nothing at all when the customer insert aborts the batch', async () => {
+    const { env, raw } = createTestEnv();
+    await insertInvitedCustomerWithPet(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'dupe@example.com',
+      'First',
+      null,
+      'Bella',
+      'dog',
+    );
+    const petsBefore = (raw.prepare('SELECT COUNT(*) AS n FROM EndUserPets').get() as { n: number })
+      .n;
+    await expect(
+      insertInvitedCustomerWithPet(
+        env.PAWBOOK_DB,
+        TENANT_A,
+        'dupe@example.com',
+        'Second',
+        null,
+        'Mochi',
+        'cat',
+      ),
+    ).rejects.toThrow();
+    expect((raw.prepare('SELECT COUNT(*) AS n FROM EndUserPets').get() as { n: number }).n).toBe(
+      petsBefore,
+    );
+    expect(
+      (
+        raw
+          .prepare('SELECT COUNT(*) AS n FROM EndUsers WHERE Email = ?')
+          .get('dupe@example.com') as {
+          n: number;
+        }
+      ).n,
+    ).toBe(1);
   });
 
   it('getEndUserByEmail returns null for unknown', async () => {
