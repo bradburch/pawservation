@@ -1295,8 +1295,8 @@ const LANDING_HTML = `<!doctype html>
  * Both embed snippets are shown as escaped text (&lt;script&gt; / &lt;iframe&gt;).
  *
  * Every claim here is behavior that ships today, and where something is NOT built the page says
- * so out loud (no repeating schedule, no way to type in a stay agreed before signing up, no
- * one-click export). Guardrails are enforced by server/__tests__/how-it-works.test.ts rather
+ * so out loud (no repeating schedule, no way to type in a stay agreed before signing up).
+ * Guardrails are enforced by server/__tests__/how-it-works.test.ts rather
  * than by convention: the page may not use the words "invoice"/"statement"/"SMS"/"AI" (none of
  * those exist), multi-pet pricing must be described as being built and never auto-multiplied,
  * and the developer nouns "idempotency"/"machine-readable"/"llms.txt" are banned from the body
@@ -1414,7 +1414,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">A per-day limit on each option.</p>
-              <p>Eight pets on the morning pack walk and four on the solo walk, counted separately, per date. When an option fills for a day, that day stops being offered for that option.</p>
+              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk &mdash; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Weekdays only, where that&rsquo;s the truth.</p>
@@ -1483,7 +1483,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <ol class="wf-steps">
               <li class="wf-step">
                 <span class="step-no">01</span>
-                <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add an email at a time, or import a CSV &mdash; up to 500 rows in one go, with an example file to copy the columns from.</p>
+                <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add clients one at a time, or import a CSV &mdash; an example file shows the columns to copy.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">02</span>
@@ -1662,7 +1662,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>A &ldquo;no&rdquo; that says why</h3>
-              <p>A refused booking answers with a fixed code as well as a sentence, so other software can understand a &ldquo;no&rdquo; and say why &mdash; &ldquo;those dates are full&rdquo; and &ldquo;that pet isn&rsquo;t yours&rdquo; are told apart without guessing at the wording.</p>
+              <p>A refused booking answers with a fixed code as well as a sentence, so other software can understand a &ldquo;no&rdquo; and say why &mdash; &ldquo;those dates are full&rdquo; and &ldquo;that stay is too long&rdquo; are told apart without guessing at the wording.</p>
             </div>
             <div class="feature">
               <h3>Sent twice, booked once</h3>
