@@ -27,7 +27,7 @@ export function HelpSection() {
       <h3>Taking bookings</h3>
       <p>
         Only people on your client list can book, so start in <a href="#clients">Clients</a>: add
-        each client&rsquo;s email (or import a spreadsheet) and they get an invite. A client&rsquo;s
+        each client&rsquo;s email (or import a spreadsheet), then send them a welcome email from their row whenever you&rsquo;re ready. A client&rsquo;s
         request arrives under &ldquo;Needs your reply&rdquo; — nothing is ever booked without you.
         Confirm and the client gets an email; decline and they hear that too. Pawservation
         won&rsquo;t double-book you: once a day is full, or you&rsquo;ve blocked it as time off,
