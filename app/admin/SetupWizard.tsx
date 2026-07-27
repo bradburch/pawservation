@@ -182,7 +182,19 @@ export function SetupWizard({
     setStep(next);
   };
 
+  /**
+   * True when a preset's EXISTING service carries an option the sitter added but hasn't priced yet
+   * (`rate: ''` — see ServiceOptionForm; there is no default price). `settings` here is App's
+   * STAGED draft, not server state, so an unsaved blank price is visible to the wizard. An
+   * already-priced service has its options re-sent VERBATIM by `apply` below, so such an option
+   * would 400 partway through the sequential loop and leave earlier presets applied. The wizard
+   * can neither send it nor invent a price for it, so it blocks on the price step instead.
+   */
+  const unpricedExisting = (ps: PresetState): boolean =>
+    ps.existing?.options.some((o) => o.rate === '') ?? false;
+
   const priceValid = (ps: PresetState): boolean => {
+    if (unpricedExisting(ps)) return false;
     if (ps.alreadyPriced) return true; // keeps its current pricing — no input to validate
     // Same predicate the server enforces on the options PUT (server/lib/validation.ts re-exports
     // it) — this copy is UX only; the server still validates independently.
@@ -221,6 +233,16 @@ export function SetupWizard({
   const apply = async () => {
     if (applying) return;
     setError('');
+    // Nothing partial: refuse the whole run up front rather than 400-ing mid-loop on a service
+    // whose staged draft has an unpriced option (the Finish button is already disabled for this;
+    // this guard also covers the in-place Retry path).
+    const blocked = chosen.find(unpricedExisting);
+    if (blocked) {
+      setError(
+        `${blocked.preset.label} has an option with no price yet — set it in Services & rates and save, then run Quick setup.`,
+      );
+      return;
+    }
     setApplying(true);
     try {
       // Sequential on purpose (spec): a failure stops here with already-applied work intact.
@@ -361,7 +383,11 @@ export function SetupWizard({
               <div key={ps.preset.id} className="pb-wizard-price">
                 <strong>{ps.preset.label}</strong>
                 <span className="pb-hint">{ps.preset.summary}</span>
-                {ps.alreadyPriced ? (
+                {unpricedExisting(ps) ? (
+                  <span className="pb-error">
+                    An option here has no price yet — set it in Services &amp; rates and save first.
+                  </span>
+                ) : ps.alreadyPriced ? (
                   <span className="pb-hint">Keeps its current pricing</span>
                 ) : (
                   <label className="pb-inline">

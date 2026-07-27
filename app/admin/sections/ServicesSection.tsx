@@ -16,7 +16,8 @@ export function ServicesSection({
   removeService,
   openWizard,
 }: SettingsSectionProps & {
-  addService: (template: string, label: string) => Promise<void>;
+  /** Resolves to the created service's type slug, or undefined if the POST failed. */
+  addService: (template: string, label: string) => Promise<string | undefined>;
   removeService: (type: string) => Promise<void>;
   openWizard: () => void;
 }) {
@@ -108,7 +109,14 @@ export function ServicesSection({
         )}
         <AddServiceTile
           templates={settings.templates}
-          addService={addService}
+          // A fresh service is created disabled, unpriced and unconfigured, so drop the sitter
+          // straight into its editor. `expanded` holds one key at a time, so pointing it at the
+          // new service also collapses the add form.
+          addService={async (template, label) => {
+            const type = await addService(template, label);
+            if (type) setExpanded(type);
+            return type; // undefined on failure — the tile keeps the typed name for a retry
+          }}
           expanded={expanded === ADD_KEY}
           onToggleExpanded={() => toggle(ADD_KEY)}
           openRef={(el) => openRefs.current.set(ADD_KEY, el)}

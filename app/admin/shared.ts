@@ -9,7 +9,13 @@ export type AnySession = Session | OwnerSession;
 
 // `optionKey`/`id` are omitted-until-first-save on the client (the server derives/assigns them),
 // so both forms widen that one field to optional relative to the shared, field-complete shape.
-export type ServiceOptionForm = Omit<ServiceOption, 'optionKey'> & { optionKey?: string };
+// `rate` additionally admits '' — a brand-new option shows an EMPTY price input the sitter must
+// fill (no default price); '' on the wire fails the server's isValidRate, so an unfilled price
+// can never save.
+export type ServiceOptionForm = Omit<ServiceOption, 'optionKey' | 'rate'> & {
+  optionKey?: string;
+  rate: number | '';
+};
 export type QuestionForm = Omit<ServiceQuestion, 'id'> & { id?: string };
 export type ServiceForm = ServiceConstraints & {
   type: string;

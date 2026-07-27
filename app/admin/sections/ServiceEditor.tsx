@@ -24,7 +24,7 @@ function emptyOption(): ServiceOptionForm {
   return {
     label: 'Standard',
     durationMinutes: null,
-    rate: 0,
+    rate: '', // no default price — the sitter must type one before the save can succeed
     startTime: null,
     endTime: null,
     capacity: null,
@@ -126,13 +126,6 @@ function QuestionRow({
           }
         />
       )}
-      {question.type === 'text' && (
-        <input
-          placeholder="Optional pattern (regex, advanced)"
-          value={question.pattern ?? ''}
-          onChange={(e) => onChange({ ...question, pattern: e.target.value || undefined })}
-        />
-      )}
     </div>
   );
 }
@@ -197,11 +190,20 @@ export function ServiceEditor({
           <input
             type="number"
             min={1}
-            value={s.options[0]?.rate ?? 0}
+            step={1}
+            inputMode="numeric"
+            required
+            aria-invalid={(s.options[0]?.rate ?? '') === ''}
+            value={s.options[0]?.rate ?? ''}
             onChange={(e) =>
               setService({
                 ...s,
-                options: [{ ...(s.options[0] ?? emptyOption()), rate: Number(e.target.value) }],
+                options: [
+                  {
+                    ...(s.options[0] ?? emptyOption()),
+                    rate: e.target.value === '' ? '' : Number(e.target.value),
+                  },
+                ],
               })
             }
           />
@@ -247,8 +249,14 @@ export function ServiceEditor({
                   <input
                     type="number"
                     min={1}
+                    step={1}
+                    inputMode="numeric"
+                    required
+                    aria-invalid={o.rate === ''}
                     value={o.rate}
-                    onChange={(e) => setOption({ rate: Number(e.target.value) })}
+                    onChange={(e) =>
+                      setOption({ rate: e.target.value === '' ? '' : Number(e.target.value) })
+                    }
                   />
                   /{s.rateUnit}
                   <button
@@ -306,16 +314,18 @@ export function ServiceEditor({
             onClick={() =>
               setService({
                 ...s,
-                options: [
-                  ...s.options,
-                  { ...emptyOption(), label: '30 min', durationMinutes: 30, rate: 20 },
-                ],
+                options: [...s.options, { ...emptyOption(), label: '30 min', durationMinutes: 30 }],
               })
             }
           >
             Add an option
           </button>
         </div>
+      )}
+      {/* Covers both pricing shapes above. A price left blank blocks the save bar (App.tsx), so say
+          so where the empty input is rather than only in the bar at the bottom of the page. */}
+      {s.options.some((o) => o.rate === '') && (
+        <p className="pb-error">Every option needs a price before you can save.</p>
       )}
 
       <div className="pb-questions">
@@ -387,11 +397,6 @@ export function ServiceEditor({
             />
           </>
         )}
-        <NullableNumberField
-          label="Min pets"
-          value={s.minPetCount}
-          onChange={(minPetCount) => setService({ ...s, minPetCount })}
-        />
         <NullableNumberField
           label="Max pets"
           value={s.maxPetCount}

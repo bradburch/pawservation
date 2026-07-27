@@ -131,22 +131,10 @@ type QuestionBody = {
   required?: boolean;
   min?: number;
   max?: number;
-  pattern?: string;
   options?: string[];
 };
 
 const QUESTION_TYPES = ['text', 'yesno', 'number', 'select'] as const;
-
-/**
- * Heuristic reject for classic catastrophic-backtracking shapes: a quantified group whose body
- * is itself quantified, e.g. `(a+)+` or `([a-zA-Z]+)+`. Not exhaustive — a determined admin could
- * still craft a pathological pattern this misses — but it blocks the textbook ReDoS shapes without
- * requiring a linear-time regex engine. Paired with a runtime input-length cap in
- * src/shared/booking/service-rules.ts as a second safety rail.
- */
-function looksCatastrophic(pattern: string): boolean {
-  return /\([^()]*[+*][^()]*\)[+*]/.test(pattern);
-}
 
 /** Derives a stable OptionKey from a windowed option's label: lowercase, non-alphanumeric runs
  * collapsed to '-', leading/trailing '-' trimmed. "Morning Walk!" -> "morning-walk". */
@@ -208,7 +196,11 @@ function resolveServiceOptions(
         error: `${serviceLabel}: two options are both named “${label}” — give each option a different name.`,
       };
     seenLabels.add(labelKey);
-    if (!isValidRate(o.rate)) return { error: 'Rates must be whole dollars ≥ 1.' };
+    // Names the service AND the option, like every sibling error here: a new service/option now
+    // starts with an EMPTY price (no default), so a missing rate is the COMMON way to land here
+    // and "which price?" has to be answerable from the message alone.
+    if (!isValidRate(o.rate))
+      return { error: `${serviceLabel}: “${label}” needs a price — whole dollars ≥ 1.` };
 
     const hasStart = o.startTime !== undefined && o.startTime !== null;
     const hasEnd = o.endTime !== undefined && o.endTime !== null;
@@ -276,7 +268,7 @@ function resolveServiceOptions(
   return { resolved };
 }
 
-/** Validates a question's DEFINITION (not an answer) — shape/type/options/pattern sanity. */
+/** Validates a question's DEFINITION (not an answer) — shape/type/options sanity. */
 function validateQuestionBody(q: QuestionBody): string | null {
   const label = q.label?.trim();
   if (!label) return 'Every question needs a label.';
@@ -292,15 +284,6 @@ function validateQuestionBody(q: QuestionBody): string | null {
   }
   if (q.type === 'select' && (!Array.isArray(q.options) || q.options.length === 0))
     return `"${label}" needs at least one option.`;
-  if (q.type === 'text' && q.pattern) {
-    try {
-      new RegExp(q.pattern);
-    } catch {
-      return `"${label}" has an invalid pattern.`;
-    }
-    if (looksCatastrophic(q.pattern))
-      return `"${label}": that pattern could hang on certain input — try a simpler one.`;
-  }
   return null;
 }
 
@@ -311,6 +294,7 @@ type ServiceBody = {
   questions?: QuestionBody[];
   minNights?: number | null;
   maxNights?: number | null;
+  /** Retired — declared only so a client that still sends it is REJECTED, not silently ignored. */
   minPetCount?: number | null;
   maxPetCount?: number | null;
   acceptedPetTypes?: string[] | null;
@@ -372,7 +356,6 @@ export const adminRoutes = new Hono<AppEnv>()
         questions: svc.Questions,
         minNights: svc.MinNights,
         maxNights: svc.MaxNights,
-        minPetCount: svc.MinPetCount,
         maxPetCount: svc.MaxPetCount,
         acceptedPetTypes: svc.AcceptedPetTypes,
         cancellationTiers: svc.CancellationTiers,
@@ -468,16 +451,19 @@ export const adminRoutes = new Hono<AppEnv>()
         return c.json({ error: `${meta.Label}: nights must be a positive number, or blank.` }, 400);
       if (svc.minNights != null && svc.maxNights != null && svc.minNights > svc.maxNights)
         return c.json({ error: `${meta.Label}: min nights cannot exceed max nights.` }, 400);
-      if (
-        !isNullableLimit(svc.minPetCount ?? null, DEFENSIVE_MAX_PET_COUNT) ||
-        !isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT)
-      )
+      if (!isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT))
         return c.json(
           { error: `${meta.Label}: pet count must be a positive number, or blank.` },
           400,
         );
-      if (svc.minPetCount != null && svc.maxPetCount != null && svc.minPetCount > svc.maxPetCount)
-        return c.json({ error: `${meta.Label}: min pets cannot exceed max pets.` }, 400);
+      // MinPetCount is retired: services have only a MAX. Same treatment as maxPerDay below — a
+      // client that still sends one is rejected rather than silently dropped, so a sitter can never
+      // be left believing a minimum they submitted is in force.
+      if (svc.minPetCount != null)
+        return c.json(
+          { error: `${meta.Label}: services no longer have a minimum pet count.` },
+          400,
+        );
       // Per-service cap (0015; pets everywhere as of 0017): same PATCH idiom, same 1..1000 sanity
       // rail. MaxConcurrentPets is the pets-per-day cap for BOTH pool kinds.
       if (!isNullableLimit(svc.maxConcurrentPets ?? null, DEFENSIVE_MAX_PET_COUNT))
@@ -549,7 +535,6 @@ export const adminRoutes = new Hono<AppEnv>()
               required: q.required ?? false,
               ...(q.type === 'number' && q.min !== undefined ? { min: q.min } : {}),
               ...(q.type === 'number' && q.max !== undefined ? { max: q.max } : {}),
-              ...(q.type === 'text' && q.pattern ? { pattern: q.pattern } : {}),
               ...(q.type === 'select' ? { options: q.options } : {}),
             }))
           : current.Questions;
@@ -558,7 +543,6 @@ export const adminRoutes = new Hono<AppEnv>()
         questions,
         minNights: 'minNights' in svc ? (svc.minNights ?? null) : current.MinNights,
         maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,
-        minPetCount: 'minPetCount' in svc ? (svc.minPetCount ?? null) : current.MinPetCount,
         maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
         acceptedPetTypes:
           'acceptedPetTypes' in svc ? (svc.acceptedPetTypes ?? null) : current.AcceptedPetTypes,

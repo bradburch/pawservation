@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   Questions TEXT NOT NULL DEFAULT '[]',
   MinNights INTEGER,
   MaxNights INTEGER,
+  -- MinPetCount is RETIRED in place (services have only a max-pets limit): nullable, so nothing
+  -- writes it, and it is deliberately absent from the TenantService type and listServices SELECT —
+  -- the compiler, not a comment, prevents reading it. No migration NULLs it, so an already-
+  -- provisioned DB may still hold values here: they are INERT and no longer enforced on any
+  -- booking. A settings PUT that still sends minPetCount is rejected, not silently dropped.
+  -- Drop the column in a future cleanup migration.
   MinPetCount INTEGER,
   MaxPetCount INTEGER,
   -- JSON array of pet-type slugs this service accepts; NULL = accepts every registry type

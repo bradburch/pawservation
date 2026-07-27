@@ -125,6 +125,67 @@ describe('tenant admin', () => {
     expect(config.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(50);
   });
 
+  it('rejects an UNPRICED option ("") and names the service and the option', async () => {
+    const { env } = createTestEnv();
+    // A new service/option now starts with an empty price input (no default price), so '' on the
+    // wire is the common failure — the message has to answer "which price is missing?".
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          displayName: 'Should Not Persist',
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: [{ label: 'Puppy Check-in', durationMinutes: 30, rate: '' }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain('Walks'); // the service…
+    expect(error).toContain('Puppy Check-in'); // …and the specific option
+    // Same atomicity as the rate: 0 case above — nothing in the request persists.
+    const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      displayName: string;
+    };
+    expect(config.displayName).toBe('Sunny Paws');
+  });
+
+  it('rejects a retired minPetCount instead of silently ignoring it', async () => {
+    const { env } = createTestEnv();
+    // Same contract as the retired maxPerDay: a client that still sends a minimum must be told it
+    // no longer applies, never left believing a minimum it submitted is in force.
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              minPetCount: 3,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: expect.stringContaining('minimum pet count') as unknown as string,
+    });
+  });
+
   it('capacity edits change availability outcomes (per-service cap)', async () => {
     const { env } = createTestEnv();
     // Seed: Jun 21-24 at Sunny Paws has 1 pet, max 2 -> a 2-pet request conflicts.
@@ -725,48 +786,6 @@ describe('tenant admin', () => {
     );
     expect(badRange.status).toBe(400);
 
-    const badPattern = await app.request(
-      '/api/sunny-paws/admin/settings',
-      {
-        method: 'PUT',
-        headers: await auth(TENANT_A, true),
-        body: JSON.stringify({
-          services: [
-            {
-              type: 'boarding',
-              enabled: true,
-              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
-              questions: [{ label: 'Bad pattern', type: 'text', required: false, pattern: '(' }],
-            },
-          ],
-        }),
-      },
-      env,
-    );
-    expect(badPattern.status).toBe(400);
-
-    const catastrophicPattern = await app.request(
-      '/api/sunny-paws/admin/settings',
-      {
-        method: 'PUT',
-        headers: await auth(TENANT_A, true),
-        body: JSON.stringify({
-          services: [
-            {
-              type: 'boarding',
-              enabled: true,
-              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
-              questions: [
-                { label: 'Nested quantifier', type: 'text', required: false, pattern: '(a+)+' },
-              ],
-            },
-          ],
-        }),
-      },
-      env,
-    );
-    expect(catastrophicPattern.status).toBe(400);
-
     const nonNumericMinMax = await app.request(
       '/api/sunny-paws/admin/settings',
       {
@@ -794,6 +813,43 @@ describe('tenant admin', () => {
       services: { type: string; options: { rate: number }[] }[];
     };
     expect(config.services.find((s) => s.type === 'boarding')?.options[0].rate).toBe(50);
+  });
+
+  it('drops a retired question `pattern` instead of rejecting or storing it', async () => {
+    const { env } = createTestEnv();
+    // The regex pattern feature is gone. An older client (or stale draft) that still sends one is
+    // NOT rejected — the key is simply not carried through, so text questions have no format rule.
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              // '(' is not even a valid regex — proof nothing tries to compile it.
+              questions: [{ label: 'Stale pattern', type: 'text', required: false, pattern: '(' }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
+
+    const body = (await (
+      await app.request(
+        '/api/sunny-paws/admin/settings',
+        { headers: await auth(TENANT_A, true) },
+        env,
+      )
+    ).json()) as { services: { type: string; questions: Record<string, unknown>[] }[] };
+    const stored = body.services.find((s) => s.type === 'boarding')!.questions[0];
+    expect(stored.label).toBe('Stale pattern');
+    expect(stored).not.toHaveProperty('pattern');
   });
 
   it('preserves existing questions and constraints when a PUT omits them for a service (patch semantics)', async () => {

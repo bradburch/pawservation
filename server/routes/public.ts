@@ -33,7 +33,6 @@ export const publicRoutes = new Hono<AppEnv>()
           questions: svc.Questions,
           minNights: svc.MinNights,
           maxNights: svc.MaxNights,
-          minPetCount: svc.MinPetCount,
           maxPetCount: svc.MaxPetCount,
           acceptedPetTypes: svc.AcceptedPetTypes,
           cancellationTiers: svc.CancellationTiers,

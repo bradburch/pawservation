@@ -6,7 +6,9 @@
 
 /** Just the option fields the summary needs — ServiceOptionForm (admin) is assignable. */
 export type ServiceSummaryOption = {
-  rate: number;
+  /** '' = added but not priced yet: the admin form holds an empty price input as '' (there is no
+   * default price), and the card must say so rather than print "$0". */
+  rate: number | '';
   startTime: string | null; // 'HH:MM'; null = no fixed window
   endTime: string | null;
   capacity: number | null;
@@ -41,13 +43,17 @@ function nightsWord(n: number): string {
 
 export function serviceSummary(s: ServiceSummaryInput): ServiceSummary {
   const n = s.options.length;
-  const rates = s.options.map((o) => o.rate);
-  // "· N options" belongs in the price line only when every option costs the same.
-  const countInPrice = n > 1 && rates.every((r) => r === rates[0]);
+  // Unpriced options ('') are invisible to the PRICE line — they still count toward the
+  // option-count FACT below, so a half-filled draft reads "No pricing yet · 2 visit lengths".
+  const rates = s.options.map((o) => o.rate).filter((r): r is number => r !== '');
+  const priced = rates.length;
+  // "· N options" belongs in the price line only when every option is priced and costs the same,
+  // so the count it prints is never a number some of whose members have no price.
+  const countInPrice = priced > 1 && priced === n && rates.every((r) => r === rates[0]);
 
   let price: string;
-  if (n === 0) price = 'No pricing yet';
-  else if (n === 1) price = `$${rates[0]}/${s.rateUnit}`;
+  if (priced === 0) price = 'No pricing yet';
+  else if (priced === 1) price = `$${rates[0]}/${s.rateUnit}`;
   else if (countInPrice) price = `$${rates[0]}/${s.rateUnit} · ${n} options`;
   else price = `from $${Math.min(...rates)}/${s.rateUnit}`;
 

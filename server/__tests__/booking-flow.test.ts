@@ -480,4 +480,31 @@ describe('booking flow', () => {
     expect(sentBody.start?.dateTime).toBe('2028-10-02T17:00:00');
     expect(sentBody.end?.dateTime).toBe('2028-10-02T19:00:00');
   });
+
+  it('a stored MinPetCount no longer blocks a single-pet booking (retired in place)', async () => {
+    const { env, raw } = createTestEnv();
+    // MinPetCount is retired but NOT dropped, and no migration NULLs it — so an already-provisioned
+    // DB can still hold a value. Write one directly (nothing in the code can any more) and prove it
+    // is inert: this exact booking used to 400 "requires at least 3 pets".
+    raw
+      .prepare(`UPDATE TenantServices SET MinPetCount = 3 WHERE TenantId = ? AND ServiceType = ?`)
+      .run('tnt_sunnypaws', 'boarding');
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'boarding',
+          startDate: '2028-08-10',
+          endDate: '2028-08-15',
+          petIds: ['pet_sp_bella'], // one pet, against a stored minimum of three
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+  });
 });
