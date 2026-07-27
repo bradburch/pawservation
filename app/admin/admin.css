@@ -402,14 +402,16 @@ body {
 }
 
 /* Row-level / secondary actions (Remove, Delete, Sign out, Add question, the wizard's
-   Back, calendar month nav, owner-console table actions) are quiet ghosts. Every
-   selector is prefixed with .pb-wrap so it outranks the `.pb-wrap button` primary
-   style above. Hint `?` buttons opt out — they have their own circle treatment. */
+   Back, calendar month nav, owner-console table actions, the pet-type registry's
+   Rename/Delete) are quiet ghosts. Every selector is prefixed with .pb-wrap so it
+   outranks the `.pb-wrap button` primary style above. Hint `?` buttons opt out —
+   they have their own circle treatment. */
 .pb-wrap li button:not(:where(.pb-hint-btn)),
 .pb-wrap td button,
 .pb-wrap .pb-options button:not(:where(.pb-hint-btn)),
 .pb-wrap .pb-questions button:not(:where(.pb-hint-btn)),
 .pb-wrap .pb-tiers button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-pet-types button:not(:where(.pb-hint-btn)),
 .pb-wrap .pb-cal-nav button,
 .pb-wrap .pb-wizard-back,
 .pb-wrap .pb-signout {
@@ -438,6 +440,7 @@ body {
 .pb-wrap .pb-options button:not(:where(.pb-hint-btn)):hover,
 .pb-wrap .pb-questions button:not(:where(.pb-hint-btn)):hover,
 .pb-wrap .pb-tiers button:not(:where(.pb-hint-btn)):hover,
+.pb-wrap .pb-pet-types button:not(:where(.pb-hint-btn)):hover,
 .pb-wrap .pb-cal-nav button:hover,
 .pb-wrap .pb-wizard-back:hover,
 .pb-wrap .pb-signout:hover {
@@ -456,6 +459,7 @@ body {
 .pb-wrap .pb-options button:not(:where(.pb-hint-btn)),
 .pb-wrap .pb-questions button:not(:where(.pb-hint-btn)),
 .pb-wrap .pb-tiers button:not(:where(.pb-hint-btn)),
+.pb-wrap .pb-pet-types button:not(:where(.pb-hint-btn)),
 .pb-wrap .pb-cal-nav button,
 .pb-wrap .pb-signout {
   padding: 4px 10px;
