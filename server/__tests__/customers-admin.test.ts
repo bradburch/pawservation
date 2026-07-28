@@ -347,4 +347,110 @@ describe('admin customers', () => {
       vi.restoreAllMocks();
     }
   });
+
+  // The accounts UI (app/admin/sections/ClientsSection.tsx) derives billing accounts from THIS
+  // payload with no extra endpoint, which is only sound because `pets` is a faithful owner<->pet
+  // EDGE list: listAllEndUserPetsByTenant joins PetOwners, so a co-owned pet lands in BOTH owners'
+  // buckets, and — unlike listEndUserPets/listOwnerPetLinks — it does NOT filter deceased pets, so
+  // the card can show a dead pet the union-find never sees. Break either property and the Clients
+  // tab silently mis-groups households; hence this test rather than a comment.
+  it('lists a co-owned pet under BOTH owners, and keeps deceased pets in the payload', async () => {
+    const { env } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+
+    const create = async (email: string, name: string, petName: string) => {
+      const res = await app.request(
+        `/api/${SLUG}/admin/customers`,
+        { method: 'POST', headers, body: JSON.stringify({ email, name, petName, petType: 'dog' }) },
+        env,
+      );
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { id: string }).id;
+    };
+    type Row = {
+      id: string;
+      pets: { id: string; name: string; deceasedAt: string | null }[];
+    };
+    const read = async (): Promise<Row[]> => {
+      const res = await app.request(
+        `/api/${SLUG}/admin/customers`,
+        { headers: await adminHeaders(TENANT_A) },
+        env,
+      );
+      return ((await res.json()) as { customers: Row[] }).customers;
+    };
+
+    const tinaId = await create('tina@example.com', 'Tina', 'Fido');
+    const robId = await create('rob@example.com', 'Rob', 'Rex');
+    const fidoId = (await read()).find((c) => c.id === tinaId)!.pets[0]!.id;
+
+    const link = await app.request(
+      `/api/${SLUG}/admin/pets/${fidoId}/owners`,
+      { method: 'POST', headers, body: JSON.stringify({ endUserId: robId }) },
+      env,
+    );
+    expect(link.status).toBe(204);
+
+    const linked = await read();
+    expect(linked.find((c) => c.id === tinaId)!.pets.map((p) => p.name)).toEqual(['Fido']);
+    expect(
+      linked
+        .find((c) => c.id === robId)!
+        .pets.map((p) => p.name)
+        .sort(),
+    ).toEqual(['Fido', 'Rex']);
+
+    const died = await app.request(
+      `/api/${SLUG}/admin/pets/${fidoId}`,
+      { method: 'PATCH', headers, body: JSON.stringify({ deceased: true }) },
+      env,
+    );
+    expect(died.status).toBe(204);
+
+    const after = await read();
+    for (const ownerId of [tinaId, robId]) {
+      const fido = after.find((c) => c.id === ownerId)!.pets.find((p) => p.id === fidoId);
+      expect(fido?.deceasedAt).toBeTruthy();
+    }
+  });
+
+  // The "no active pets" card exists because THIS is reachable: removing a customer's last pet is
+  // allowed (only booking references refuse it), and the customer is still returned, pet-less.
+  it('still lists a customer whose last pet was removed, with an empty pets array', async () => {
+    const { env } = createTestEnv();
+    const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
+    const add = await app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email: 'solo@example.com',
+          name: 'Solo',
+          petName: 'Only',
+          petType: 'dog',
+        }),
+      },
+      env,
+    );
+    const soloId = ((await add.json()) as { id: string }).id;
+    type Row = { id: string; pets: { id: string }[] };
+    const read = async (): Promise<Row[]> => {
+      const res = await app.request(
+        `/api/${SLUG}/admin/customers`,
+        { headers: await adminHeaders(TENANT_A) },
+        env,
+      );
+      return ((await res.json()) as { customers: Row[] }).customers;
+    };
+    const petId = (await read()).find((c) => c.id === soloId)!.pets[0]!.id;
+
+    const del = await app.request(
+      `/api/${SLUG}/admin/customers/${soloId}/pets/${petId}`,
+      { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(del.status).toBe(204);
+    expect((await read()).find((c) => c.id === soloId)?.pets).toEqual([]);
+  });
 });
