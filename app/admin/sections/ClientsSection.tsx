@@ -118,6 +118,66 @@ function PetAdder({
   );
 }
 
+/**
+ * The client's Venmo handle. Only needed when it differs from the name the sitter has for them —
+ * the Venmo CSV importer matches on the name otherwise — so the label says exactly that and the
+ * field starts empty for almost everybody. Saves explicitly (the dirty/Save affordance the rest of
+ * the dashboard uses) rather than on blur, so a half-typed handle is never written.
+ */
+function VenmoField({
+  customer,
+  slug,
+  token,
+  onSaved,
+  onError,
+  clearError,
+}: {
+  customer: Customer;
+  slug: string;
+  token: string;
+  onSaved: () => void;
+  onError: (e: unknown) => void;
+  clearError: () => void;
+}) {
+  const saved = customer.venmoUsername ?? '';
+  const [value, setValue] = useState(saved);
+  const [busy, setBusy] = useState(false);
+  const dirty = value.trim() !== saved;
+
+  const save = async () => {
+    if (!dirty || busy) return;
+    clearError();
+    setBusy(true);
+    try {
+      const next = value.trim();
+      await adminApi.customers.setVenmo(slug, token, customer.id, next === '' ? null : next);
+      onSaved();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pb-row pb-venmo-field">
+      <label className="pb-inline">
+        Venmo username (if different from their name)
+        <input
+          value={value}
+          placeholder="@their-venmo"
+          maxLength={31}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </label>
+      <button onClick={() => void save()} disabled={!dirty || busy}>
+        {busy ? 'Saving…' : 'Save'}
+      </button>
+      {!dirty && saved !== '' && <span className="pb-hint">Saved</span>}
+    </div>
+  );
+}
+
 /** One (service, option) pair this account's rate editor can price — enabled services only, and
  *  only options that have already been saved (a brand-new option has no optionKey yet). */
 type EnabledOption = {
@@ -629,6 +689,14 @@ export function ClientsSection({
                     <button onClick={() => void removeCustomer(owner.id)} disabled={busy}>
                       Remove client
                     </button>
+                    <VenmoField
+                      customer={owner}
+                      slug={slug}
+                      token={token}
+                      onSaved={onCustomersChanged}
+                      onError={handleError}
+                      clearError={clearError}
+                    />
                   </li>
                 ))}
               </ul>

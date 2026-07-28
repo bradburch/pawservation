@@ -81,6 +81,7 @@ export type Customer = {
   email: string;
   name: string | null;
   phone: string | null;
+  venmoUsername: string | null;
   status: 'invited' | 'active';
   invitedAt?: string | null;
   pets: Pet[];
@@ -301,6 +302,12 @@ export const adminApi = {
       request<unknown>(`/api/${slug}/admin/customers/${id}`, {
         method: 'DELETE',
         headers: authHeaders(token),
+      }),
+    setVenmo: (slug: string, token: string, id: string, venmoUsername: string | null) =>
+      request<unknown>(`/api/${slug}/admin/customers/${id}`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ venmoUsername }),
       }),
     addPet: (
       slug: string,
