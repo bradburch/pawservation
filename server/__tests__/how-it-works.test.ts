@@ -72,10 +72,20 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('href="/#invite-h"');
   });
 
-  it('is truthful about multi-pet pricing — not yet available, never auto-multiplied', async () => {
+  it('describes multi-pet pricing as SHIPPED, and as rates the sitter typed', async () => {
     const body = await howItWorksBody();
-    expect(body).toContain('being built');
-    expect(body).toContain('never auto-multiplied');
+    // >>> These two pins deliberately REPLACE the pre-PR-3 pins `toContain('being built')` and
+    // `toContain('never auto-multiplied')`. The first became false the moment enforcement
+    // shipped; the second was a promise about a feature that did not exist and is now a
+    // property of one that does, so it is re-pinned as behaviour rather than as intent.
+    expect(body).not.toContain('being built');
+    // The two rate kinds a sitter can actually set:
+    expect(body).toContain('two dogs');
+    expect(body).toContain('Fido');
+    // The refusal is stated out loud — the page must not imply a fallback price exists.
+    expect(body).toMatch(/asks? you for a rate|won&rsquo;t quote|no price/i);
+    // And the multiplier is still ruled out, now as a description of shipped behaviour.
+    expect(body).toMatch(/never multiplied|not a multiplier|nothing is multiplied/i);
   });
 
   it('teaches capacity with a worked example and cites two real refusal reasons', async () => {
