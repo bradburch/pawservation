@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
+import { reconcileBookingsWithCalendar } from '../lib/calendar-sync';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
+import type { Tenant } from '../types';
 
 /**
  * Persona scenario tests: Marisol runs Sunny Paws (tnt_sunnypaws / slug sunny-paws), a
@@ -64,6 +67,36 @@ type EventResource = {
   description: string;
   extendedProperties?: { private: Record<string, string> };
 };
+
+const tenant = {
+  Id: TENANT_A,
+  Slug: 'sunny-paws',
+  DisplayName: 'Sunny Paws',
+  Timezone: null,
+} as Tenant;
+
+// reconcile's query window is [today-1, today+180) relative to the real clock — compute "in
+// window" fixtures off actual today, matching calendar-reconcile.test.ts's convention.
+const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
+
+// Task 7's fake-response helpers (calendar-reconcile.test.ts), re-declared locally per that
+// file's own convention rather than importing across test files.
+type FakeEvent = { id?: string; summary?: string; start?: string; end?: string };
+function calendarResponse(events: FakeEvent[]) {
+  return new Response(
+    JSON.stringify({
+      items: events.map((e) => ({
+        id: e.id ?? 'evt_anon',
+        summary: e.summary ?? 'Boarding',
+        status: 'confirmed',
+        updated: '2026-07-27T00:00:00Z',
+        start: { date: e.start },
+        end: { date: e.end },
+      })),
+    }),
+    { status: 200 },
+  );
+}
 
 describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dashboard', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -299,5 +332,38 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     const mine = (await mineRes.json()) as { bookings: { id: string; status: string }[] };
     const mineRow = mine.bookings.find((b) => b.id === booked.id);
     expect(mineRow?.status).toBe('pending');
+  });
+
+  it('7. a hand-kept stay on her calendar blocks a request, then frees it once she deletes it', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const start = addDays(TODAY, 20);
+    const end = addDays(TODAY, 23);
+
+    // Marisol pencils a legacy stay into her calendar by hand — no Pawservation bookingId.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([{ id: 'gev_legacy', summary: 'Neighbor drop-off — Rex', start, end }]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant); // the sweep materializes it
+
+    // A customer's overlapping boarding request is refused.
+    vi.restoreAllMocks();
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const conflictRes = await bookBoarding(env, token, start, end);
+    expect(conflictRes.status).toBe(409);
+    expect(await conflictRes.json()).toMatchObject({ code: 'capacity_conflict' });
+
+    // She deletes the event in Google; the next sweep frees the dates.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([]));
+    await reconcileBookingsWithCalendar(env, tenant);
+
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'evt_marisol_7' }), { status: 200 }),
+    );
+    const okRes = await bookBoarding(env, token, start, end);
+    expect(okRes.status).toBe(201);
+    const booked = (await okRes.json()) as { status: string };
+    expect(booked.status).toBe('pending');
   });
 });
