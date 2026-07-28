@@ -39,6 +39,14 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('Pawbook');
   });
 
+  it('mentions the Venmo CSV import on the Payments card', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/', {}, env)).text();
+    expect(body).toContain('Upload the CSV from Venmo');
+    // Still no data-export claim: this is about importing a file INTO Pawservation.
+    expect(body).not.toContain('export button');
+  });
+
   it('is script-free (safe under the locked CSP) and refuses framing', async () => {
     const { env } = createTestEnv();
     const res = await app.request('/', {}, env);

@@ -148,6 +148,15 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     }
   });
 
+  it('tells sitters they can import the CSV Venmo gives them, and that the file is not kept', async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('Paid on Venmo? Upload the CSV.');
+    expect(body).toContain('read in memory and never stored');
+    // The banned-words test above covers this paragraph too: it may not say "statement" (so not
+    // "Venmo statement") and may not say "invoice".
+    expect(body).not.toMatch(/statement/i);
+  });
+
   it('carries no images (no new weight budget to police)', async () => {
     const body = await howItWorksBody();
     expect(body).not.toContain('<img');
