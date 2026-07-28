@@ -12,7 +12,12 @@ import {
   listServiceOptions,
   listServices,
 } from '../db/repo';
-import { checkAvailability, estimateCost, monthAvailability } from '../lib/availability';
+import {
+  checkAvailability,
+  estimateCost,
+  loadPetSetRates,
+  monthAvailability,
+} from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
 import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
@@ -36,9 +41,79 @@ import type { AppEnv } from '../types';
 export const bookingRoutes = new Hono<AppEnv>()
   // Scoped tightly to the booking paths so the merged middleware never guards public routes.
   .use('/:slug/me', endUserAuth)
+  .use('/:slug/availability', endUserAuth)
   .use('/:slug/availability/month', endUserAuth)
   .use('/:slug/bookings', endUserAuth)
   .use('/:slug/bookings/*', endUserAuth)
+
+  /**
+   * The quote. Authenticated and pet-IDENTIFIED (design spec §5): it receives the caller's real
+   * pet ids, validates every one against the PetOwners authority, and derives both rate keys from
+   * that set — so the quote and the cost later stamped on the booking are computed from the same
+   * pets and cannot diverge. It used to live in `publicRoutes` with a `pets` COUNT; a count can
+   * neither be owned nor looked up, which is exactly why it is gone.
+   */
+  .get('/:slug/availability', async (c) => {
+    const tenant = c.get('tenant');
+    const type = c.req.query('type');
+    const optionKey = c.req.query('option') ?? '';
+    const start = c.req.query('start') ?? '';
+    const end = c.req.query('end') ?? '';
+    // Comma-joined: pet ids are crypto.randomUUID() values and so comma-free by construction —
+    // the same property that makes `buildGroupKey`'s comma join unambiguous.
+    const requestedPetIds = [
+      ...new Set(
+        (c.req.query('petIds') ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    if (typeof type !== 'string' || !type) return c.json({ error: 'Unknown service type.' }, 400);
+    if (requestedPetIds.length === 0) return c.json({ error: 'Choose at least one pet.' }, 400);
+    // Bounds the ownership scan; same defensive cap the booking POST uses.
+    if (!isValidPetCount(requestedPetIds.length)) return c.json({ error: 'Too many pets.' }, 400);
+
+    const [services, options, myPets] = await Promise.all([
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+      // PetOwners-backed: a CO-OWNER may quote a pet they co-own, and a pet outside this
+      // customer's ownership graph is simply not in the list.
+      listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId')),
+    ]);
+
+    const chosen = requestedPetIds.map((id) => myPets.find((p) => p.Id === id));
+    if (chosen.some((p) => !p)) return c.json({ error: 'Unknown pet.' }, 400);
+    const pets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
+
+    const service = services.find((s) => s.ServiceType === type);
+    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
+    if (!service.Enabled) return c.json({ error: 'Service not offered.' }, 400);
+    const serviceOptions = options.filter((o) => o.ServiceType === type);
+    const option = optionKey
+      ? serviceOptions.find((o) => o.OptionKey === optionKey)
+      : serviceOptions[0];
+    if (!option) return c.json({ error: 'Unknown service option.' }, 400);
+
+    const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
+
+    if (service.Shape === 'range') {
+      const rangeError = validateBoardingRange(
+        start,
+        end,
+        service.MaxNights,
+        tenant.Timezone ?? undefined,
+      );
+      if (rangeError) return c.json({ error: rangeError.error }, rangeError.status);
+      return c.json(
+        await checkAvailability(c.env, tenant, service, option, start, end, pets, rates),
+      );
+    }
+    const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
+    if (dateError) return c.json({ error: dateError.error }, dateError.status);
+    return c.json(await checkAvailability(c.env, tenant, service, option, start, '', pets, rates));
+  })
 
   .get('/:slug/availability/month', async (c) => {
     const tenant = c.get('tenant');
@@ -256,6 +331,13 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (constraintsError)
       return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
 
+    // The chosen pets, shaped for pricing/capacity — and the tenant's candidate rate rows for
+    // this service, loaded once and reused by both the stamp below and the capacity check's own
+    // pricing, so the quote, this stamp, and the row that lands in D1 all come from ONE
+    // resolution of ONE pet set.
+    const pricedPets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
+    const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
+
     // Price is computed server-side (never trusted from the client) and is pure — no DB read.
     const estCost = estimateCost(service, option, start, end);
 
@@ -272,7 +354,8 @@ export const bookingRoutes = new Hono<AppEnv>()
         option,
         start,
         end,
-        pets,
+        pricedPets,
+        rates,
         'demo-excludes-no-row',
       );
       if (!demoCheck.available)
@@ -327,7 +410,17 @@ export const bookingRoutes = new Hono<AppEnv>()
 
     let check;
     try {
-      check = await checkAvailability(c.env, tenant, service, option, start, end, pets, id);
+      check = await checkAvailability(
+        c.env,
+        tenant,
+        service,
+        option,
+        start,
+        end,
+        pricedPets,
+        rates,
+        id,
+      );
       if (!check.available) {
         await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
         return c.json(

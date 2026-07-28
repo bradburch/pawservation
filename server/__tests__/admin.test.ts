@@ -18,6 +18,23 @@ async function auth(tenantId: string, json = false): Promise<Record<string, stri
   return h;
 }
 
+/** Authenticated availability quote. Every caller supplies REAL pet ids: there is no pet-count
+ *  param any more, by design (design spec §5). */
+async function quote(
+  env: Env,
+  slug: string,
+  query: string,
+  petIds: string[],
+  email = 'jess@example.com',
+): Promise<Response> {
+  const token = await endUserToken(env, slug, email);
+  return app.request(
+    `/api/${slug}/availability?${query}&petIds=${petIds.join(',')}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    env,
+  );
+}
+
 describe('tenant admin', () => {
   it('rejects missing, malformed, end-user, and wrong-tenant tokens', async () => {
     const { env } = createTestEnv();
@@ -247,11 +264,10 @@ describe('tenant admin', () => {
     const { env } = createTestEnv();
     // Seed: Jun 21-24 at Sunny Paws has 1 pet, max 2 -> a 2-pet request conflicts.
     const before = (await (
-      await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2028-06-21&end=2028-06-24&pets=2',
-        {},
-        env,
-      )
+      await quote(env, 'sunny-paws', 'type=boarding&start=2028-06-21&end=2028-06-24', [
+        'pet_sp_bella',
+        'pet_sp_mochi',
+      ])
     ).json()) as { available: boolean };
     expect(before.available).toBe(false);
 
@@ -275,11 +291,10 @@ describe('tenant admin', () => {
     );
 
     const after = (await (
-      await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2028-06-21&end=2028-06-24&pets=2',
-        {},
-        env,
-      )
+      await quote(env, 'sunny-paws', 'type=boarding&start=2028-06-21&end=2028-06-24', [
+        'pet_sp_bella',
+        'pet_sp_mochi',
+      ])
     ).json()) as { available: boolean };
     expect(after.available).toBe(true);
 
@@ -305,11 +320,7 @@ describe('tenant admin', () => {
       services: { type: string }[];
     };
     expect(config.services.map((s) => s.type)).not.toContain('walk');
-    const avail = await app.request(
-      '/api/sunny-paws/availability?type=walk&start=2028-08-01',
-      {},
-      env,
-    );
+    const avail = await quote(env, 'sunny-paws', 'type=walk&start=2028-08-01', ['pet_sp_bella']);
     expect(avail.status).toBe(400);
   });
 
@@ -328,14 +339,12 @@ describe('tenant admin', () => {
     ).json()) as { id: string };
 
     const walk = (await (
-      await app.request('/api/sunny-paws/availability?type=walk&start=2028-09-01', {}, env)
+      await quote(env, 'sunny-paws', 'type=walk&start=2028-09-01', ['pet_sp_bella'])
     ).json()) as { available: boolean };
     const boarding = (await (
-      await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2028-08-30&end=2028-09-05&pets=1',
-        {},
-        env,
-      )
+      await quote(env, 'sunny-paws', 'type=boarding&start=2028-08-30&end=2028-09-05', [
+        'pet_sp_bella',
+      ])
     ).json()) as { available: boolean };
     expect(walk.available).toBe(false);
     expect(boarding.available).toBe(false);
@@ -346,7 +355,7 @@ describe('tenant admin', () => {
       env,
     );
     const walkAfter = (await (
-      await app.request('/api/sunny-paws/availability?type=walk&start=2028-09-01', {}, env)
+      await quote(env, 'sunny-paws', 'type=walk&start=2028-09-01', ['pet_sp_bella'])
     ).json()) as { available: boolean };
     expect(walkAfter.available).toBe(true);
   });
