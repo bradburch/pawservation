@@ -607,6 +607,12 @@ body {
   color: var(--bp-soft);
 }
 
+.bp-summary-holiday {
+  margin: 2px 0 0;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
 .bp-summary-cost {
   margin: 0 0 8px;
   color: var(--bp-body);

@@ -20,6 +20,8 @@ export type ServiceConfig = ServiceConstraints & {
   questions: ServiceQuestion[];
   acceptedPetTypes: string[] | null;
   cancellationTiers: { withinDays: number; percent: number }[] | null;
+  /** The sitter's holiday rate, for labelling only; null = no holiday pricing. */
+  holidayRate: number | null;
 };
 export type TenantConfig = {
   slug: string;
@@ -61,6 +63,11 @@ export type Availability =
       unit?: 'night' | 'day';
       /** Wire-compat only; always a night count. Prefer `billedUnits`/`unit`. */
       nights?: number;
+      /** How many billed units the SERVER charged at the sitter's holiday rate, and that rate.
+       *  Both absent unless a holiday actually applied. Display only — `estCost` already
+       *  includes them; the widget must never re-derive a total from these. */
+      holidayUnits?: number;
+      holidayRate?: number;
     }
   | { available: false; reason: string };
 

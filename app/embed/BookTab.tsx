@@ -314,6 +314,13 @@ export function BookTab({
                 <p className="bp-summary-cost">
                   Estimated cost <strong>${result.estCost}</strong>
                 </p>
+                {result.holidayUnits != null && result.holidayRate != null && (
+                  <p className="bp-summary-holiday">
+                    Includes {result.holidayUnits} holiday {result.unit ?? 'day'}
+                    {result.holidayUnits === 1 ? '' : 's'} at ${result.holidayRate}
+                    {result.unit ? `/${result.unit}` : ''}.
+                  </p>
+                )}
                 {service?.cancellationTiers && (
                   <p className="bp-summary-policy">
                     Cancellation:{' '}
