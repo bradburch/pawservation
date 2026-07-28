@@ -44,6 +44,7 @@ import {
   removePetOwner,
   renamePetType,
   replaceServiceOptions,
+  replaceServicePetRates,
   setProviderCalendarId,
   setServiceConfig,
   setPetDeceased,
@@ -103,8 +104,11 @@ import type { AppEnv, Tenant } from '../types';
 import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
 import {
   buildGroupKey,
+  buildMixKey,
   cancellationFee,
   getPacificDateStr,
+  parseMixKey,
+  petCountOf,
   validateCancellationTiers,
   DEFAULT_TIMEZONE,
 } from '../../src/shared/index.js';
@@ -162,6 +166,8 @@ type OptionBody = {
   endTime?: string | null;
   capacity?: number | null;
   weekdaysOnly?: boolean;
+  /** Species-count rates for this option. Absent = keep stored rows; present = replace them. */
+  petRates?: { mixKey?: unknown; rate?: unknown }[];
 };
 
 type QuestionBody = {
@@ -327,6 +333,53 @@ function validateQuestionBody(q: QuestionBody): string | null {
   if (q.type === 'select' && (!Array.isArray(q.options) || q.options.length === 0))
     return `"${label}" needs at least one option.`;
   return null;
+}
+
+/**
+ * Validates one option's species-count rates. Keys must be CANONICAL (`buildMixKey ∘ parseMixKey`
+ * is the identity exactly on canonical keys) — the client builds them with the same shared
+ * `buildMixKey`, so a non-canonical key is a client bug, not sitter input. Every species must be
+ * in the service's EFFECTIVE accepted list: a rate for a pet type the service refuses could never
+ * match a legal booking and would only mislead the sitter into thinking it's priced.
+ */
+function validateOptionPetRates(
+  serviceLabel: string,
+  optionLabel: string,
+  petRates: unknown,
+  allowedSpecies: Set<string>,
+): { error: string } | { rates: { mixKey: string; rate: number }[] } {
+  if (!Array.isArray(petRates))
+    return { error: `${serviceLabel}: “${optionLabel}” pet-mix rates must be a list.` };
+  const rates: { mixKey: string; rate: number }[] = [];
+  const seen = new Set<string>();
+  for (const r of petRates) {
+    const mixKey =
+      typeof (r as { mixKey?: unknown })?.mixKey === 'string'
+        ? (r as { mixKey: string }).mixKey
+        : '';
+    const mix = parseMixKey(mixKey);
+    if (mixKey === '' || buildMixKey(mix) !== mixKey)
+      return {
+        error: `${serviceLabel}: “${optionLabel}” has a pet-mix rate with no pets — pick at least one pet for each rate.`,
+      };
+    if (petCountOf(mix) > DEFENSIVE_MAX_PET_COUNT)
+      return { error: `${serviceLabel}: “${optionLabel}” has a pet-mix rate with too many pets.` };
+    for (const slug of Object.keys(mix))
+      if (!allowedSpecies.has(slug))
+        return {
+          error: `${serviceLabel}: “${optionLabel}” has a rate for a pet type this service doesn't accept.`,
+        };
+    const rate = (r as { rate?: unknown }).rate;
+    if (!isValidRate(rate))
+      return {
+        error: `${serviceLabel}: “${optionLabel}” pet-mix rates need a price — whole dollars ≥ 1.`,
+      };
+    if (seen.has(mixKey))
+      return { error: `${serviceLabel}: “${optionLabel}” has two rates for the same pet mix.` };
+    seen.add(mixKey);
+    rates.push({ mixKey, rate });
+  }
+  return { rates };
 }
 
 type ServiceBody = {
@@ -503,6 +556,8 @@ export const adminRoutes = new Hono<AppEnv>()
     if (contactPhone !== null && contactPhone.length > 40)
       return c.json({ error: 'Contact phone is too long.' }, 400);
     const resolvedOptionsByType = new Map<string, ResolvedOption[]>();
+    // svcType -> resolved optionKey -> validated rates; applied after replaceServiceOptions.
+    const petRatesByType = new Map<string, Map<string, { mixKey: string; rate: number }[]>>();
     for (const svc of services) {
       const meta = currentServices.find((s) => s.ServiceType === svc.type);
       if (!meta) return c.json({ error: 'Unknown service type.' }, 400);
@@ -605,6 +660,27 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
+
+      // Species-count rates ride the same PATCH idiom as every other per-service field. The
+      // allowed species set is the EFFECTIVE acceptance (incoming or kept; null = every tenant
+      // slug), so a PUT that narrows acceptance and rates a now-refused species in one request
+      // is rejected as a unit. Index-aligned with `opts`: resolveServiceOptions pushes exactly
+      // one resolved row per input option, in order.
+      const allowedSpecies = new Set(effectiveAccepted ?? [...knownPetSlugs]);
+      const byOption = new Map<string, { mixKey: string; rate: number }[]>();
+      for (let i = 0; i < opts.length; i++) {
+        const o = opts[i];
+        if (!('petRates' in o) || o.petRates === undefined) continue;
+        const outcome = validateOptionPetRates(
+          meta.Label,
+          resolvedOptions.resolved[i].label,
+          o.petRates,
+          allowedSpecies,
+        );
+        if ('error' in outcome) return c.json({ error: outcome.error }, 400);
+        byOption.set(resolvedOptions.resolved[i].optionKey, outcome.rates);
+      }
+      if (byOption.size > 0) petRatesByType.set(svc.type as string, byOption);
     }
 
     await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
@@ -667,6 +743,13 @@ export const adminRoutes = new Hono<AppEnv>()
           weekdaysOnly: o.weekdaysOnly,
         })),
       );
+      // After replaceServiceOptions so its dropped-key scrub runs first; each present option's
+      // set is then replaced wholesale (small per-option sets — the spec's replace pattern for
+      // MIX rates; GROUP rates are the ones that must never be whole-set replaced).
+      const optionRates = petRatesByType.get(svcType);
+      if (optionRates)
+        for (const [optionKey, rates] of optionRates)
+          await replaceServicePetRates(c.env.PAWBOOK_DB, tenant.Id, svcType, optionKey, rates);
     }
 
     // The widget reads tenant config through the KV-cached resolution seam (PRD FR19).
