@@ -33,6 +33,8 @@ import {
   listBookingsForTenant,
   listCustomers,
   listEndUserPets,
+  listOutstandingBookings,
+  listPaymentExternalRefs,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetTypes,
@@ -90,6 +92,12 @@ import {
 } from '../lib/services';
 import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
+import {
+  matchVenmoTxns,
+  parseVenmoCsv,
+  type MatchClient,
+  type OutstandingBooking,
+} from '../lib/venmo';
 import { NONCE_KEY } from './oauth';
 import {
   DEFENSIVE_MAX_NIGHTS,
@@ -133,6 +141,47 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
   } catch {
     await task;
   }
+}
+
+/**
+ * The three tenant-scoped reads the Venmo importer matches against, plus the service labels the
+ * preview prints. Loaded identically by the preview and the confirm step: the confirm re-derives
+ * the whole candidate set rather than trusting what the preview told the browser.
+ */
+async function loadVenmoMatchInputs(
+  env: AppEnv['Bindings'],
+  tenantId: string,
+): Promise<{
+  clients: MatchClient[];
+  outstanding: OutstandingBooking[];
+  alreadyImported: Set<string>;
+}> {
+  const [customers, bookings, refs, services] = await Promise.all([
+    listCustomers(env.PAWBOOK_DB, tenantId),
+    listOutstandingBookings(env.PAWBOOK_DB, tenantId),
+    listPaymentExternalRefs(env.PAWBOOK_DB, tenantId),
+    listServices(env.PAWBOOK_DB, tenantId),
+  ]);
+  const labelByType = new Map(services.map((s) => [s.ServiceType, s.Label]));
+  return {
+    clients: customers.map((u) => ({
+      endUserId: u.Id,
+      label: u.Name || u.Email,
+      name: u.Name,
+      venmoUsername: u.VenmoUsername,
+    })),
+    outstanding: bookings
+      // A booking whose client was removed has nobody to match it to.
+      .filter((b): b is typeof b & { EndUserId: string } => b.EndUserId !== null)
+      .map((b) => ({
+        bookingId: b.BookingId,
+        endUserId: b.EndUserId,
+        label: `${labelByType.get(b.ServiceType) ?? b.ServiceType} starting ${b.StartDate}`,
+        startDate: b.StartDate,
+        balance: b.Expected - b.PaidTotal,
+      })),
+    alreadyImported: new Set(refs),
+  };
 }
 
 /**
@@ -1817,4 +1866,19 @@ export const adminRoutes = new Hono<AppEnv>()
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
     return c.json(serializeAnalytics(data));
+  })
+
+  /**
+   * Read the sitter's Venmo CSV and say what Pawservation THINKS it found. Writes nothing at all —
+   * the file is parsed in memory, matched against this tenant's clients and receivables, and
+   * thrown away with the request. Nothing about the file is stored anywhere.
+   */
+  .post('/:slug/admin/payments/venmo/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req.json<{ csv?: unknown }>().catch(() => ({}) as { csv?: unknown });
+    const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
+    return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
   });
