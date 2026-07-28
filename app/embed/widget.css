@@ -402,9 +402,23 @@ body {
 }
 
 /* Marks a listed US holiday. Purely informational — availability and price come from the
-   server; this only tells the client which days their sitter may price differently. */
-.bp-cal-day.bp-cal-holiday {
-  box-shadow: inset 0 2px 0 0 currentColor;
+   server; this only tells the client which days their sitter may price differently. A ::after
+   dot (not box-shadow) so the marker survives composing with .bp-partial's inset ring and
+   .bp-sel's explicit box-shadow: none — either would otherwise erase a box-shadow-based marker. */
+.bp-book .bp-cal-day.bp-cal-holiday {
+  position: relative;
+}
+
+.bp-book .bp-cal-day.bp-cal-holiday::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
 }
 
 /* The signature: a selected stay reads as one connected band across the days. */
