@@ -355,7 +355,10 @@ describe('google-calendar', () => {
       const fakeBody = {
         items: [
           {
+            id: 'evt_a',
             summary: 'Dog boarding',
+            status: 'confirmed',
+            updated: '2030-05-01T00:00:00Z',
             start: { date: '2030-06-01' },
             end: { date: '2030-06-04' },
             extendedProperties: {
@@ -363,7 +366,10 @@ describe('google-calendar', () => {
             },
           },
           {
+            id: 'evt_b',
             summary: 'Walk',
+            status: 'confirmed',
+            updated: '2030-05-01T00:00:00Z',
             start: { dateTime: '2030-06-05T09:30:00-07:00' },
             end: { dateTime: '2030-06-05T10:30:00-07:00' },
             extendedProperties: {
@@ -386,16 +392,24 @@ describe('google-calendar', () => {
       expect(events).toHaveLength(2);
       // all-day event
       expect(events[0]).toEqual({
+        id: 'evt_a',
         summary: 'Dog boarding',
         start: '2030-06-01',
         end: '2030-06-04',
+        allDay: true,
+        status: 'confirmed',
+        updated: '2030-05-01T00:00:00Z',
         private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
       });
       // timed event — dateTime sliced to date part
       expect(events[1]).toEqual({
+        id: 'evt_b',
         summary: 'Walk',
         start: '2030-06-05',
         end: '2030-06-05',
+        allDay: false,
+        status: 'confirmed',
+        updated: '2030-05-01T00:00:00Z',
         private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
       });
     });
@@ -439,12 +453,86 @@ describe('google-calendar', () => {
     });
 
     it('throws when the response is truncated (nextPageToken present)', async () => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
+      // A fresh Response per call — a real fetch would never hand back the same (already-read)
+      // Response object across pages the way a shared mockResolvedValue instance would.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
       );
       await expect(
         listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z'),
       ).rejects.toThrow('result truncated');
+    });
+  });
+
+  describe('listCalendarEvents — widened projection + pagination', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('surfaces id, status, updated, allDay for both event shapes', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: 'evt_allday',
+                summary: 'Boarding — Rex',
+                status: 'confirmed',
+                updated: '2026-07-27T10:00:00Z',
+                start: { date: '2026-08-01' },
+                end: { date: '2026-08-04' },
+              },
+              {
+                id: 'evt_timed',
+                summary: 'Vet visit',
+                status: 'tentative',
+                updated: '2026-07-27T11:00:00Z',
+                start: { dateTime: '2026-08-02T14:00:00-07:00' },
+                end: { dateTime: '2026-08-02T15:00:00-07:00' },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+      const events = await listCalendarEvents('tok', 'primary', 'a', 'b');
+      expect(events[0]).toMatchObject({
+        id: 'evt_allday',
+        allDay: true,
+        status: 'confirmed',
+        start: '2026-08-01',
+        end: '2026-08-04',
+      });
+      expect(events[1]).toMatchObject({ id: 'evt_timed', allDay: false, end: '2026-08-02' });
+    });
+
+    it('follows nextPageToken and concatenates pages', async () => {
+      const pages = [
+        {
+          items: [{ id: 'e1', start: { date: '2026-08-01' }, end: { date: '2026-08-02' } }],
+          nextPageToken: 'p2',
+        },
+        { items: [{ id: 'e2', start: { date: '2026-08-03' }, end: { date: '2026-08-04' } }] },
+      ];
+      let call = 0;
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(
+          async () => new Response(JSON.stringify(pages[call++]), { status: 200 }),
+        );
+      const events = await listCalendarEvents('tok', 'primary', 'a', 'b');
+      expect(events.map((e) => e.id)).toEqual(['e1', 'e2']);
+      expect(String(spy.mock.calls[1]![0])).toContain('pageToken=p2');
+    });
+
+    it('still fails loudly past the page cap — absence must never be inferred from truncation', async () => {
+      // Fresh Response per call, same reasoning as above.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ items: [], nextPageToken: 'again' }), { status: 200 }),
+      );
+      await expect(listCalendarEvents('tok', 'primary', 'a', 'b')).rejects.toThrow(
+        'result truncated',
+      );
     });
   });
 });

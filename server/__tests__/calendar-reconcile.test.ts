@@ -113,9 +113,12 @@ describe('reconcileBookingsWithCalendar', () => {
     const id = await seedSyncedBooking(env);
     // Simulates a calendar with >2500 events in range: the booking's event would be missing from
     // this (first) page, but listCalendarEvents throws instead of returning an incomplete list —
-    // so reconcileBookingsWithCalendar never reaches the "cancel missing bookings" loop.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
+    // so reconcileBookingsWithCalendar never reaches the "cancel missing bookings" loop. Fresh
+    // Response per call — listCalendarEvents now paginates, so a shared mockResolvedValue
+    // instance would fail on its second read rather than exercising the truncation path.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
     );
     await expect(reconcileBookingsWithCalendar(env, tenant)).rejects.toThrow('result truncated');
     expect(await statusOf(env, id)).toBe('confirmed');
@@ -192,9 +195,11 @@ describe('reconcileIfStale', () => {
     const id = await seedSyncedBooking(env);
     // >2500 events in range: the booking's event would be missing from this (first) page, but
     // listCalendarEvents throws on truncation instead of returning an incomplete list, so the
-    // best-effort wrapper here swallows the error and leaves the booking's status alone.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
+    // best-effort wrapper here swallows the error and leaves the booking's status alone. Fresh
+    // Response per call (see the analogous fix in the truncation test above).
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ items: [], nextPageToken: 'abc' }), { status: 200 }),
     );
     await expect(reconcileIfStale(env, tenant)).resolves.not.toThrow();
     expect(await statusOf(env, id)).toBe('confirmed');

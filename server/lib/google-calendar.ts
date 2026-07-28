@@ -211,10 +211,14 @@ type EventResource = {
 };
 
 export type CalendarEvent = {
+  id: string; // Google event id — the external-row upsert key
   summary: string;
   start: string; // 'YYYY-MM-DD' (all-day) or the date part of a dateTime
-  end: string; // exclusive end date, same normalization
-  private: Record<string, string>; // extendedProperties.private, or {}
+  end: string; // all-day: Google's EXCLUSIVE end date; timed: the date part of the end dateTime
+  allDay: boolean; // start.date present (vs dateTime) — drives end-exclusivity normalization
+  status: string; // 'confirmed' | 'tentative' | 'cancelled' (cancelled filtered by callers)
+  updated: string; // RFC3339 — informational; materialization compares content, not clocks
+  private: Record<string, string>;
 };
 
 function addMinutesToLocal(date: string, time: string, minutes: number): string {
@@ -271,43 +275,65 @@ export function buildEventResource(b: CalendarBooking): EventResource {
     extendedProperties,
   };
 }
+/** Hard cap on pages one pull will follow (~25 000 events). Past it we still THROW rather than
+ * return a partial list: callers infer deletion from absence, and a truncated list would read as
+ * a mass deletion (see the reconcile mass-cancel hazard). */
+const LIST_MAX_PAGES = 10;
+
 export async function listCalendarEvents(
   accessToken: string,
   calendarId: string,
   timeMinISO: string,
   timeMaxISO: string,
 ): Promise<CalendarEvent[]> {
-  const params = new URLSearchParams({
-    timeMin: timeMinISO,
-    timeMax: timeMaxISO,
-    singleEvents: 'true',
-    maxResults: '2500',
-    orderBy: 'startTime',
-  });
-  const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
-  if (!res.ok) throw new Error(`Google listCalendarEvents failed (${res.status})`);
-  const j = (await res.json()) as {
-    items: Array<{
-      summary?: string;
-      start: { date?: string; dateTime?: string };
-      end: { date?: string; dateTime?: string };
-      extendedProperties?: { private?: Record<string, string> };
-    }>;
-    nextPageToken?: string;
-  };
-  // We don't paginate (see module comment / caller docs) — a truncated result must never be
-  // treated as "these events don't exist," since callers use absence to infer deletion. Fail
-  // loudly instead so callers' existing best-effort error handling skips the operation.
-  if (j.nextPageToken) {
-    throw new Error('Google listCalendarEvents: result truncated (more than 2500 events in range)');
+  const events: CalendarEvent[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      timeMin: timeMinISO,
+      timeMax: timeMaxISO,
+      singleEvents: 'true',
+      maxResults: '2500',
+      orderBy: 'startTime',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) throw new Error(`Google listCalendarEvents failed (${res.status})`);
+    const j = (await res.json()) as {
+      items: Array<{
+        id?: string;
+        summary?: string;
+        status?: string;
+        updated?: string;
+        start: { date?: string; dateTime?: string };
+        end: { date?: string; dateTime?: string };
+        extendedProperties?: { private?: Record<string, string> };
+      }>;
+      nextPageToken?: string;
+    };
+    for (const item of j.items ?? []) {
+      events.push({
+        id: item.id ?? '',
+        summary: item.summary ?? '',
+        start: item.start.date ?? item.start.dateTime?.slice(0, 10) ?? '',
+        end: item.end.date ?? item.end.dateTime?.slice(0, 10) ?? '',
+        allDay: Boolean(item.start.date),
+        status: item.status ?? 'confirmed',
+        updated: item.updated ?? '',
+        private: item.extendedProperties?.private ?? {},
+      });
+    }
+    pageToken = j.nextPageToken;
+    if (!pageToken) return events;
   }
-  return (j.items ?? []).map((item) => ({
-    summary: item.summary ?? '',
-    start: item.start.date ?? item.start.dateTime?.slice(0, 10) ?? '',
-    end: item.end.date ?? item.end.dateTime?.slice(0, 10) ?? '',
-    private: item.extendedProperties?.private ?? {},
-  }));
+  // We follow pages up to LIST_MAX_PAGES, but past it we still THROW rather than return a
+  // partial list — a truncated result must never be treated as "these events don't exist,"
+  // since callers use absence to infer deletion. Fail loudly so callers' existing best-effort
+  // error handling skips the operation.
+  throw new Error(
+    `Google listCalendarEvents: result truncated (more than ${LIST_MAX_PAGES} pages in range)`,
+  );
 }
