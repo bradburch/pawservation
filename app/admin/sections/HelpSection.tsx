@@ -40,10 +40,23 @@ export function HelpSection() {
         shows your month: confirmed bookings, requests waiting on you, time off, and events from
         your Google Calendar. Add days off under <a href="#timeoff">Time off</a> — blocked days
         vanish from clients&rsquo; calendars immediately. If you live in Google Calendar, connect it
-        under <a href="#apps">Connected apps</a>: booking requests appear there, cancelled ones are
-        cleared away, and it works the other way too &mdash; a dentist appointment or any other
-        event you keep on that same calendar blocks matching booking requests here automatically, no
-        extra step needed.
+        under <a href="#apps">Connected apps</a>: booking requests appear there and cancelled ones
+        are cleared away.
+      </p>
+      <p>
+        Sync runs both ways, so pick the calendar you connect carefully. Every event on it blocks
+        booking requests for those dates — which is perfect for a calendar you keep pet-sitting on,
+        and a problem on your personal one, where a dentist appointment would quietly close a day
+        you&rsquo;d happily have worked. The fix is one press: in Connected apps, choose
+        &ldquo;Create a pet calendar&rdquo; and Pawservation makes a separate calendar inside your
+        Google account and moves booking sync to it. Your upcoming bookings come across
+        automatically and the rest of your Google account stops being read.
+      </p>
+      <p>
+        Blocking days and busy calendar events stop <em>new</em> requests only — neither one ever
+        changes or cancels a booking you&rsquo;ve already confirmed. And nothing on your calendar
+        can book you: every request lands under <a href="#bookings">Bookings</a> and waits for you
+        to confirm or decline it.
       </p>
 
       <h3>Getting paid</h3>

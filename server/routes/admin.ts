@@ -128,6 +128,7 @@ import {
   buildMixKey,
   cancellationFee,
   getPacificDateStr,
+  isDedicatedCalendarId,
   parseMixKey,
   petCountOf,
   validateCancellationTiers,
@@ -1141,8 +1142,9 @@ export const adminRoutes = new Hono<AppEnv>()
    * Create a dedicated "Pawservation — Pet bookings" calendar inside the sitter's own Google account
    * and make it the sync target, so pet work never lands in her personal calendar. Guards, in order:
    * disabled tenant (read-only), unconfigured server, no live connection, and — so a second press
-   * can't litter the account with duplicate calendars — a connection that already points somewhere
-   * other than `primary`.
+   * can't litter the account with duplicate calendars — a connection that already points at a
+   * DEDICATED calendar (`isDedicatedCalendarId`; a target of NULL, `primary`, or the account's own
+   * email address is personal and still gets the button).
    */
   .post('/:slug/admin/providers/calendar/create-calendar', async (c) => {
     const tenant = c.get('tenant');
@@ -1154,10 +1156,14 @@ export const adminRoutes = new Hono<AppEnv>()
     const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
     if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
       return c.json({ error: 'Connect Google Calendar first, then create the pet calendar.' }, 409);
-    if (conn.CalendarId && conn.CalendarId !== 'primary')
+    // Don't litter the account with duplicate calendars — but only refuse when the target is
+    // already a DEDICATED calendar. NULL, 'primary', and the account's own email address all name
+    // the sitter's PERSONAL calendar, and she is exactly who this button is for; the old
+    // `!== 'primary'` string test locked the last of those three out of the remedy.
+    if (isDedicatedCalendarId(conn.CalendarId))
       return c.json(
         {
-          error: `Bookings already sync to the calendar "${conn.CalendarId}". Clear the calendar ID field first if you want a new pet calendar.`,
+          error: `Bookings already sync to a separate calendar ("${conn.CalendarId}"). Clear the calendar ID field first if you want a new pet calendar.`,
           calendarId: conn.CalendarId,
         },
         409,

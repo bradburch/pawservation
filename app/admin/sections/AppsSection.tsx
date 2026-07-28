@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isPersonalCalendarTarget } from '../../../src/shared/index.js';
 import { adminApi } from '../../shared-ui/api.js';
 import { IconPlug } from '../../shared-ui/icons';
 import type { Settings } from '../shared.js';
@@ -9,10 +10,18 @@ import { Hint } from '../Hint';
 const PET_CALENDAR_NAME = 'Pawservation — Pet bookings';
 
 /**
- * The default way to get a pet-only calendar: Pawservation creates a secondary calendar inside the
- * sitter's own Google account and points booking sync at it. Once a non-primary calendar is the
- * target there is nothing to create, so this renders the current target instead of a button that
- * the server would only reject (it 409s to avoid making a second calendar).
+ * The dedicated-calendar control — and, while sync still points at a personal calendar, the
+ * standing warning that explains why it matters.
+ *
+ * Since PR #88 the connected calendar is READ: every event on it that Pawservation didn't create
+ * blocks booking requests for those dates. A sitter left on the default target ('primary', written
+ * by the OAuth callback) therefore has her dentist appointments deleting her own availability. That
+ * is not a one-shot toast — it stays true until she moves the target — so it renders as a
+ * persistent block directly above the one-click remedy.
+ *
+ * "Personal" is `isPersonalCalendarTarget` from src/shared: NULL, 'primary', and the account's own
+ * email address all name the primary calendar. The server's create-calendar guard asks the same
+ * function the same question, so the button shown here is exactly the button the server will honour.
  */
 function PetCalendarAction({
   slug,
@@ -30,12 +39,15 @@ function PetCalendarAction({
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
 
-  if (calendarId && calendarId !== 'primary') {
+  // Already on a separate calendar: nothing to warn about and nothing to create (the server 409s to
+  // avoid making a second one), so render the current target instead of a button it would reject.
+  if (!isPersonalCalendarTarget(calendarId)) {
     return (
       <p className="pb-hint">
         {created ? `Created “${created}”. ` : ''}Bookings sync to a separate calendar:{' '}
-        <code className="pb-truncate">{calendarId}</code>. Clear the calendar ID below to go back to
-        your main calendar.
+        <code className="pb-truncate">{calendarId}</code>. Only events on that calendar affect your
+        availability — the rest of your Google account is never read. Clear the calendar ID below to
+        go back to your main calendar.
       </p>
     );
   }
@@ -55,15 +67,23 @@ function PetCalendarAction({
   };
 
   return (
-    <div>
-      <button onClick={() => void create()} disabled={busy}>
-        {busy ? 'Creating…' : 'Create a pet calendar'}
-      </button>
-      <small className="pb-hint">
-        Pawservation makes a separate “{PET_CALENDAR_NAME}” calendar in your Google account, so pet
-        work stays out of your personal calendar.
-      </small>
-    </div>
+    <>
+      <p className="pb-warn-note">
+        <strong>Bookings are syncing to your main Google Calendar.</strong>
+        Everything already on it — appointments, reminders, personal events — blocks new booking
+        requests for those dates.
+      </p>
+      <div>
+        <button onClick={() => void create()} disabled={busy}>
+          {busy ? 'Creating…' : 'Create a pet calendar'}
+        </button>
+        <small className="pb-hint">
+          Pawservation makes a separate “{PET_CALENDAR_NAME}” calendar in your Google account and
+          syncs bookings there instead, so only pet work affects your availability. Your upcoming
+          bookings move across automatically, and your personal calendar stops being read.
+        </small>
+      </div>
+    </>
   );
 }
 
@@ -104,7 +124,8 @@ function CalendarIdField({
   return (
     <div className="pb-inline">
       <label>
-        Or use a calendar you already made <span className="pb-hint">(blank = primary)</span>
+        Or use a calendar you already made{' '}
+        <span className="pb-hint">(blank = your main calendar)</span>
         <input
           type="text"
           placeholder="primary"
@@ -112,13 +133,13 @@ function CalendarIdField({
           onChange={(e) => setValue(e.target.value)}
         />
         <small className="pb-hint">
-          Paste the calendar you use for pet-sitting and bookings are written there instead. Find
+          Paste the calendar you keep pet-sitting on and bookings are written there instead. Find
           the ID in Google Calendar → Settings → your calendar → &quot;Integrate calendar&quot; →
-          Calendar ID (like <code>abc123@group.calendar.google.com</code>). Leave blank to use your
-          main calendar. Sync is two-way with the connected calendar: bookings are written out, and
-          any event you add there blocks those dates for new requests (deleting a synced
-          booking&apos;s event cancels that booking, and the client is notified). Calendars other
-          than the connected one are never read.
+          Calendar ID (like <code>abc123@group.calendar.google.com</code>). Make sure it&rsquo;s a
+          calendar you made for pet-sitting, not your main one — sync is two-way with whichever
+          calendar you name here, so everything on it blocks booking requests. Deleting a synced
+          booking&apos;s event there cancels that booking and the client is notified. Calendars
+          other than the connected one are never read.
         </small>
       </label>
       <button onClick={() => void save()} disabled={busy}>
@@ -181,10 +202,26 @@ export function AppsSection({
               />
             </>
           ) : (
-            <button onClick={() => void connectCalendar()}>Connect Google Calendar</button>
+            <>
+              <p className="pb-hint">
+                Bookings will appear on your Google Calendar automatically. One thing to know before
+                you connect: the calendar you connect is also read, so anything already on it — a
+                dentist appointment, a school pickup — blocks booking requests for those dates. Once
+                you&rsquo;re connected, let Pawservation make you a separate pet calendar and only
+                pet work will affect your availability.
+              </p>
+              <button onClick={() => void connectCalendar()}>Connect Google Calendar</button>
+            </>
           )}
         </li>
       </ul>
+      <p className="pb-hint">
+        <strong>How your calendar affects bookings.</strong> Busy events on the connected calendar,
+        and days you mark under <a href="#timeoff">Time off</a>, stop <em>new</em> requests for
+        those dates — they never change a booking you&rsquo;ve already confirmed. And nothing books
+        itself: every request waits under <a href="#bookings">Bookings</a> until you confirm or
+        decline it.
+      </p>
     </>
   );
 }

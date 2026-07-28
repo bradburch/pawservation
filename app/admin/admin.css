@@ -573,6 +573,26 @@ body {
   font-size: 0.92rem;
 }
 
+/* Persistent "you're syncing to your personal calendar" notice on Connected apps. Same warn tokens
+   and same shape as .pb-disabled-banner above — a standing block, not a chip and not a toast,
+   because it stays true for as long as the target is a personal calendar. Not merged with that
+   class: its name states its meaning, and renaming it would churn unrelated code. */
+.pb-warn-note {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: var(--warn);
+  background: var(--warn-wash);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  font-size: 0.88rem;
+}
+
+.pb-warn-note strong {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
 /* Add-a-customer / block-a-range input rows. */
 .pb-row {
   display: flex;
