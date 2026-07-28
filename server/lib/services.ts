@@ -38,6 +38,9 @@ export type ServiceType = string;
  * gets created, and enforces this; UI disabled-states are convenience mirrors only. */
 export const MAX_SERVICES = 6;
 
+/** Owner directive: intake forms stay short — at most this many questions per service. */
+export const MAX_QUESTIONS_PER_SERVICE = 5;
+
 /** 'blocked' is a BookingRequests sentinel (admin time-off), never a bookable service slug. */
 export const RESERVED_SERVICE_SLUGS = ['blocked'];
 

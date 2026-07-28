@@ -1519,3 +1519,111 @@ describe('settings — service short description (0025)', () => {
     expect(cfg.services.find((s) => s.type === 'walk')!.description).toBeNull();
   });
 });
+
+describe('settings PUT caps', () => {
+  const q = (label: string) => ({ label, type: 'yesno', required: false });
+
+  it('rejects a 6th question, accepts 5', async () => {
+    const { env } = createTestEnv();
+    const mk = (n: number) => ({
+      services: [
+        {
+          type: 'walk',
+          enabled: true,
+          options: [{ label: '30 minutes', durationMinutes: 30, rate: 20 }],
+          questions: Array.from({ length: n }, (_, i) => q(`Q${i + 1}`)),
+        },
+      ],
+    });
+    const six = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { method: 'PUT', headers: await auth(TENANT_A, true), body: JSON.stringify(mk(6)) },
+      env,
+    );
+    expect(six.status).toBe(400);
+    expect(((await six.json()) as { error: string }).error).toContain('5 questions');
+    const five = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { method: 'PUT', headers: await auth(TENANT_A, true), body: JSON.stringify(mk(5)) },
+      env,
+    );
+    expect(five.status).toBe(204);
+  });
+
+  it('rejects maxPetCount 16, accepts 15', async () => {
+    const { env } = createTestEnv();
+    const mk = (maxPetCount: number) => ({
+      services: [
+        {
+          type: 'boarding',
+          enabled: true,
+          options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+          maxPetCount,
+          // Seeded boarding pool is 2; raise it so the pool-vs-max check can't mask this test.
+          maxConcurrentPets: 20,
+        },
+      ],
+    });
+    const sixteen = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { method: 'PUT', headers: await auth(TENANT_A, true), body: JSON.stringify(mk(16)) },
+      env,
+    );
+    expect(sixteen.status).toBe(400);
+    expect(((await sixteen.json()) as { error: string }).error).toContain('15');
+    const fifteen = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { method: 'PUT', headers: await auth(TENANT_A, true), body: JSON.stringify(mk(15)) },
+      env,
+    );
+    expect(fifteen.status).toBe(204);
+  });
+
+  it("rejects a daily pool smaller than one booking's max pets — including via PATCH semantics", async () => {
+    const { env } = createTestEnv();
+    const boarding = (extra: Record<string, unknown>) => ({
+      services: [
+        {
+          type: 'boarding',
+          enabled: true,
+          options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+          ...extra,
+        },
+      ],
+    });
+    // Both in one body: pool 2 < maxPetCount 3.
+    const direct = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify(boarding({ maxPetCount: 3, maxConcurrentPets: 2 })),
+      },
+      env,
+    );
+    expect(direct.status).toBe(400);
+    // Equal is fine.
+    const equal = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify(boarding({ maxPetCount: 3, maxConcurrentPets: 3 })),
+      },
+      env,
+    );
+    expect(equal.status).toBe(204);
+    // PATCH case: stored maxPetCount is now 3; lowering only the pool below it must also reject.
+    const patched = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify(boarding({ maxConcurrentPets: 2 })),
+      },
+      env,
+    );
+    expect(patched.status).toBe(400);
+    expect(((await patched.json()) as { error: string }).error).toContain('per day');
+  });
+});

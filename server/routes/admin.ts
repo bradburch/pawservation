@@ -75,6 +75,7 @@ import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
   isTemplateId,
+  MAX_QUESTIONS_PER_SERVICE,
   MAX_SERVICES,
   RESERVED_SERVICE_SLUGS,
   SERVICE_TEMPLATES,
@@ -94,6 +95,7 @@ import {
   isValidDuration,
   isValidRate,
   isValidTimeString,
+  MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
 import type { AppEnv, Tenant } from '../types';
@@ -506,6 +508,13 @@ export const adminRoutes = new Hono<AppEnv>()
       );
       if ('error' in resolvedOptions) return c.json({ error: resolvedOptions.error }, 400);
       resolvedOptionsByType.set(svc.type as string, resolvedOptions.resolved);
+      if ((svc.questions?.length ?? 0) > MAX_QUESTIONS_PER_SERVICE)
+        return c.json(
+          {
+            error: `${meta.Label}: a service can have at most ${MAX_QUESTIONS_PER_SERVICE} questions — shorter forms get answered.`,
+          },
+          400,
+        );
       for (const q of svc.questions ?? []) {
         const qError = validateQuestionBody(q);
         if (qError) return c.json({ error: qError }, 400);
@@ -531,9 +540,11 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
-      if (!isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT))
+      if (!isNullableLimit(svc.maxPetCount ?? null, MAX_PET_COUNT_CAP))
         return c.json(
-          { error: `${meta.Label}: pet count must be a positive number, or blank.` },
+          {
+            error: `${meta.Label}: pet count must be between 1 and ${MAX_PET_COUNT_CAP}, or blank.`,
+          },
           400,
         );
       // MinPetCount is retired: services have only a MAX. Same treatment as maxPerDay below — a
@@ -565,6 +576,19 @@ export const adminRoutes = new Hono<AppEnv>()
       if (svc.maxPerDay != null)
         return c.json(
           { error: `${meta.Label}: that capacity doesn't apply to this service.` },
+          400,
+        );
+      // A daily pool smaller than one booking's own max is a foot-gun: the widget would offer a
+      // pet count the calendar can never seat. Compare the EFFECTIVE values (incoming or stored,
+      // same PATCH semantics as the writes below).
+      const effMaxPetCount = 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : meta.MaxPetCount;
+      const effMaxConcurrent =
+        'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : meta.MaxConcurrentPets;
+      if (effMaxPetCount != null && effMaxConcurrent != null && effMaxConcurrent < effMaxPetCount)
+        return c.json(
+          {
+            error: `${meta.Label}: pets in care per day (${effMaxConcurrent}) can't be lower than the pets allowed on one booking (${effMaxPetCount}).`,
+          },
           400,
         );
       if (svc.cancellationTiers != null && !validateCancellationTiers(svc.cancellationTiers))
