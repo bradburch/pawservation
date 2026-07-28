@@ -233,3 +233,170 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
   const deduped = incoming.filter((t) => (seen.has(t.txnId) ? false : (seen.add(t.txnId), true)));
   return { ok: true, incoming: deduped, ignored, problems };
 }
+
+/** A client, reduced to what matching needs. `label` is what the sitter sees (name or email). */
+export type MatchClient = {
+  endUserId: string;
+  label: string;
+  name: string | null;
+  venmoUsername: string | null;
+};
+
+/** An under-paid booking, reduced to what matching needs. `balance` is expected minus paid. */
+export type OutstandingBooking = {
+  bookingId: string;
+  endUserId: string;
+  label: string;
+  startDate: string; // 'YYYY-MM-DD'
+  balance: number; // whole dollars, > 0
+};
+
+export type PreviewRow = {
+  txnId: string;
+  date: string;
+  amount: number;
+  from: string;
+  note: string;
+};
+export type MatchedRow = PreviewRow & {
+  endUserId: string;
+  clientLabel: string;
+  bookingId: string;
+  bookingLabel: string;
+};
+export type AmbiguousRow = PreviewRow & {
+  endUserId: string;
+  clientLabel: string;
+  candidates: { bookingId: string; label: string; balance: number }[];
+};
+export type UnmatchedRow = PreviewRow & { reason: string };
+
+export type VenmoPreview = {
+  matched: MatchedRow[];
+  ambiguous: AmbiguousRow[];
+  unmatched: UnmatchedRow[];
+  alreadyImported: PreviewRow[];
+};
+
+const dayDiff = (a: string, b: string) =>
+  Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`));
+
+/**
+ * Order one transaction's possible bookings: exact balance first (the overwhelmingly common real
+ * case — a client pays what they owe), then the booking whose start date sits closest to the
+ * payment date, then the later start date, then the id. The last key makes the order TOTAL, so the
+ * same file previews identically every time it is uploaded.
+ *
+ * Only bookings with enough balance left are candidates: Pawservation proposes a partial payment
+ * against a bigger bill happily, but never proposes over-paying a booking.
+ */
+export function rankCandidates(
+  txn: VenmoTxn,
+  bookings: OutstandingBooking[],
+): OutstandingBooking[] {
+  return bookings
+    .filter((b) => b.balance >= txn.amount)
+    .sort((a, b) => {
+      const exact = Number(b.balance === txn.amount) - Number(a.balance === txn.amount);
+      if (exact !== 0) return exact;
+      const near = dayDiff(a.startDate, txn.date) - dayDiff(b.startDate, txn.date);
+      if (near !== 0) return near;
+      if (a.startDate !== b.startDate) return a.startDate < b.startDate ? 1 : -1;
+      return a.bookingId < b.bookingId ? -1 : 1;
+    });
+}
+
+/**
+ * Sort every parsed transaction into one of four buckets. Writes nothing and knows nothing about
+ * D1 — the routes hand it three lists and a set, and the same function runs again on confirm so
+ * the server never has to trust a client's idea of what was matched.
+ */
+export function matchVenmoTxns(input: {
+  txns: VenmoTxn[];
+  clients: MatchClient[];
+  outstanding: OutstandingBooking[];
+  alreadyImported: Set<string>;
+}): VenmoPreview {
+  const { txns, clients, outstanding, alreadyImported } = input;
+
+  // Clients by normalized match key. A key with two clients on it can never be resolved
+  // automatically, so it is kept as a LIST and refused below rather than being silently won by
+  // whichever client sorted first.
+  const byKey = new Map<string, MatchClient[]>();
+  for (const client of clients) {
+    const key = normalizeVenmoName(client.venmoUsername ?? client.name ?? '');
+    if (key === '') continue; // nothing to match on
+    byKey.set(key, [...(byKey.get(key) ?? []), client]);
+  }
+  const bookingsByClient = new Map<string, OutstandingBooking[]>();
+  for (const b of outstanding)
+    bookingsByClient.set(b.endUserId, [...(bookingsByClient.get(b.endUserId) ?? []), b]);
+
+  const preview: VenmoPreview = { matched: [], ambiguous: [], unmatched: [], alreadyImported: [] };
+
+  for (const txn of txns) {
+    const row: PreviewRow = {
+      txnId: txn.txnId,
+      date: txn.date,
+      amount: txn.amount,
+      from: txn.from,
+      note: txn.note,
+    };
+    if (alreadyImported.has(txn.txnId)) {
+      preview.alreadyImported.push(row);
+      continue;
+    }
+    const key = normalizeVenmoName(txn.from);
+    if (key === '') {
+      preview.unmatched.push({ ...row, reason: 'This transaction has no sender name to match on' });
+      continue;
+    }
+    const hits = byKey.get(key) ?? [];
+    if (hits.length === 0) {
+      preview.unmatched.push({
+        ...row,
+        reason: `No client matches the Venmo name “${txn.from}”. Add it to their row in Clients and check the file again.`,
+      });
+      continue;
+    }
+    if (hits.length > 1) {
+      preview.unmatched.push({
+        ...row,
+        reason: `More than one client is set up under the Venmo name “${txn.from}” (${hits
+          .map((h) => h.label)
+          .join(', ')}). Give them different Venmo usernames in Clients.`,
+      });
+      continue;
+    }
+    const client = hits[0];
+    const candidates = rankCandidates(txn, bookingsByClient.get(client.endUserId) ?? []);
+    if (candidates.length === 0) {
+      preview.unmatched.push({
+        ...row,
+        reason: `${client.label} has no unpaid booking of $${txn.amount} or more.`,
+      });
+      continue;
+    }
+    if (candidates.length === 1) {
+      preview.matched.push({
+        ...row,
+        endUserId: client.endUserId,
+        clientLabel: client.label,
+        bookingId: candidates[0].bookingId,
+        bookingLabel: candidates[0].label,
+      });
+      continue;
+    }
+    preview.ambiguous.push({
+      ...row,
+      endUserId: client.endUserId,
+      clientLabel: client.label,
+      candidates: candidates.map((c) => ({
+        bookingId: c.bookingId,
+        label: c.label,
+        balance: c.balance,
+      })),
+    });
+  }
+  return preview;
+}
