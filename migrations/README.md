@@ -23,6 +23,14 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   existing table. If your local DB predates a schema change:
   `rm -rf .wrangler/state/v3/d1 && npm run seed:local`.
 
-There are currently no migration files: the baseline is current.
+## Current migration files
+
+- **`0003_gcal_sync.sql`** (feat/gcal-source-of-truth) — adds `BookingRequests.SyncPending`,
+  `BookingRequests.ExternalSummary`, and the `idx_BookingRequests_External` unique index. Additive
+  and old-worker-safe: safe to pre-apply to prod **before** merging the branch (apply each
+  statement via `wrangler d1 execute pawbook-db --remote --command "…"` — not `--file`, per the
+  remote-migrations gotcha — see `docs/superpowers/plans/2026-07-27-gcal-ops.md` for the exact
+  commands). `0001` and `0002` are reserved by the unmerged venmo/holiday branches respectively;
+  this branch's DDL is appended to `0003` rather than split into new files.
 
 Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.
