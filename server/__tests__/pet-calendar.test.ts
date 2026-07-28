@@ -173,6 +173,37 @@ describe('POST create-calendar', () => {
     expect(urls).toEqual([]); // no Google traffic at all
   });
 
+  it('still creates the pet calendar when the target is the account email (a PRIMARY calendar)', async () => {
+    const { env } = createTestEnv();
+    withGoogleConfigured(env);
+    await connectCalendar(env);
+    // 'dana@gmail.com' is the real id of a primary calendar — what a sitter pastes if she copies
+    // the Calendar ID while standing on her MAIN calendar. She is precisely who this button is
+    // for, so the anti-duplicate guard must not mistake it for a dedicated calendar.
+    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', 'dana@gmail.com');
+    stubGoogle();
+
+    const res = await createCalendarRequest(env);
+    expect(res.status).toBe(200);
+    expect(await calendarIdOf(env)).toBe(NEW_CAL_ID);
+  });
+
+  it('refuses a second calendar however the dedicated id is cased or padded (409)', async () => {
+    const { env } = createTestEnv();
+    withGoogleConfigured(env);
+    await connectCalendar(env);
+    await setProviderCalendarId(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'calendar',
+      '  PAWSERVATION123@GROUP.CALENDAR.GOOGLE.COM  ',
+    );
+    const { urls } = stubGoogle();
+
+    expect((await createCalendarRequest(env)).status).toBe(409);
+    expect(urls).toEqual([]); // no Google traffic at all
+  });
+
   it('409s when Google Calendar is not connected', async () => {
     const { env } = createTestEnv();
     withGoogleConfigured(env);
