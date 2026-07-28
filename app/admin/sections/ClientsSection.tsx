@@ -695,9 +695,8 @@ export function ClientsSection({
                     Rates for specific pets beat species rates beat the base rate.
                   </p>
                   <p className="pb-hint">
-                    This covers the account&rsquo;s full set of{' '}
-                    {livePets.length === 1 ? 'pet' : 'pets'} only. To price only some of them, use
-                    the group editor in Services &amp; Rates.
+                    Covers all of this account&rsquo;s pets together. Pricing a subset of the
+                    account&rsquo;s pets isn&rsquo;t editable in the dashboard yet.
                   </p>
                   {enabledOptions.length === 0 ? (
                     <p className="pb-applies">
