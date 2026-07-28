@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { groupIntoAccounts } from '../../../src/shared/index.js';
+import type { AccountGroup } from '../../../src/shared/index.js';
 import type { Customer, ImportResult, Pet } from '../../shared-ui/api.js';
 import { adminApi } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
@@ -153,6 +154,24 @@ export function ClientsSection({
     }
   };
 
+  /** Owner-level actions span EVERY live pet in the account, so they can fail part-way — and a
+   *  partial link is real state, not a rolled-back attempt. The list is therefore refreshed
+   *  whichever way it goes, and a failure is reported with a count and a next step rather than as
+   *  a bare error. `addPetOwner` is INSERT OR IGNORE server-side, so retrying is safe. */
+  const fanOut = async (
+    calls: Promise<unknown>[],
+    onPartial: (done: number, total: number) => string,
+  ) => {
+    if (busy) return;
+    clearError();
+    setBusy(true);
+    const results = await Promise.allSettled(calls);
+    setBusy(false);
+    onCustomersChanged();
+    const done = results.filter((r) => r.status === 'fulfilled').length;
+    if (done < results.length) handleError(new Error(onPartial(done, results.length)));
+  };
+
   // Pet rows must show the registry LABEL ("Dog"), not the raw slug ("dog") — the one place
   // that still bypassed the label map.
   const labelBySlug = new Map(petTypes.map((pt) => [pt.petType, pt.label]));
@@ -253,6 +272,25 @@ export function ClientsSection({
   // rather than once per client. Owner-level linking lives on the account card (see below).
   const setPetDeceased = (petId: string, deceased: boolean) =>
     mutate(() => adminApi.customers.setPetDeceased(slug, token, petId, deceased));
+
+  const addOwnerToAccount = (group: AccountGroup, endUserId: string) =>
+    void fanOut(
+      group.livePetIds.map((petId) =>
+        adminApi.customers.addPetOwner(slug, token, petId, endUserId),
+      ),
+      (done, total) => `Linked to ${done} of ${total} pets — choose them again to finish.`,
+    );
+
+  /** Only the pets this owner actually owns are unlinked; the server refuses to drop a pet's LAST
+   *  owner (409), which is exactly right and is what the partial message explains. */
+  const removeOwnerFromAccount = (group: AccountGroup, endUserId: string) =>
+    void fanOut(
+      group.livePetIds
+        .filter((petId) => ownerIdsByPet.get(petId)?.has(endUserId))
+        .map((petId) => adminApi.customers.removePetOwner(slug, token, petId, endUserId)),
+      (done, total) =>
+        `Removed from ${done} of ${total} pets — the rest would be left with no owner. Remove those pets, or remove the client.`,
+    );
 
   const runImport = async () => {
     if (!csvFile || importing) return;
@@ -419,6 +457,17 @@ export function ClientsSection({
                     <button onClick={() => void sendWelcome(owner)} disabled={busy}>
                       Send welcome email
                     </button>
+                    <button
+                      onClick={() => removeOwnerFromAccount(group, owner.id)}
+                      disabled={busy || owners.length < 2 || group.livePetIds.length === 0}
+                      title={
+                        owners.length < 2
+                          ? 'The only owner of these pets — remove the client instead.'
+                          : undefined
+                      }
+                    >
+                      Remove from account
+                    </button>
                     <button onClick={() => void removeCustomer(owner.id)} disabled={busy}>
                       Remove client
                     </button>
@@ -447,6 +496,31 @@ export function ClientsSection({
                   ))}
                 </ul>
               )}
+              {group.active && customers.length > owners.length ? (
+                <div className="pb-row pb-add-owner">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) addOwnerToAccount(group, e.target.value);
+                    }}
+                    disabled={busy}
+                    aria-label={`Add owner to ${title}`}
+                  >
+                    <option value="">Add owner to this account…</option>
+                    {customers
+                      .filter((c) => !group.ownerIds.includes(c.id))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {ownerLabel(c)}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="pb-hint">
+                    Links them to every pet on this account. If they already have pets of their own,
+                    the two accounts merge into one.
+                  </span>
+                </div>
+              ) : null}
               {petTypes.length > 0 && owners[0] ? (
                 <PetAdder
                   customer={owners[0]}
