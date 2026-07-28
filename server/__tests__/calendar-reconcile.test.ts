@@ -374,6 +374,44 @@ describe('reconcile v2 — external materialization lifecycle', () => {
       .first();
     expect(b).not.toBeNull();
   });
+
+  // Regression for the `liveIds` comment in reconcileBookingsWithCalendar: MATERIALIZE_LIMIT (200)
+  // caps how many foreign events get a row WRITTEN this pass, but delete-detection must still be
+  // told about every foreign event Google reports — a deferred-but-still-live event's already
+  // materialized row must survive, not be deleted just because this pass didn't (re)write it.
+  it('a deferred-but-live event beyond MATERIALIZE_LIMIT keeps its already-materialized row', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // Pre-seed a row as if an EARLIER reconcile pass had already materialized this event.
+    const deferredId = 'gev_deferred';
+    await env.PAWBOOK_DB.prepare(
+      `INSERT INTO BookingRequests
+         (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, ExternalSummary, Status, SyncPending)
+       VALUES ('ext_deferred', ?, 'external', ?, ?, 1, ?, 'Deferred stay', 'confirmed', 0)`,
+    )
+      .bind(TENANT_A, IN_WINDOW_START, IN_WINDOW_END, deferredId)
+      .run();
+
+    // Google reports 201 foreign events this pass: 200 filler events that exactly fill
+    // MATERIALIZE_LIMIT's write batch, plus the already-materialized one appended LAST so it
+    // falls outside toMaterialize's first-200 slice but is still present in the full liveIds list.
+    const filler = Array.from({ length: 200 }, (_, i) => ({
+      id: `gev_fill_${i}`,
+      summary: `Filler ${i}`,
+    }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([...filler, { id: deferredId, summary: 'Deferred stay' }]),
+    );
+
+    await reconcileBookingsWithCalendar(env, tenant);
+
+    const row = await env.PAWBOOK_DB.prepare(
+      'SELECT Id FROM BookingRequests WHERE TenantId = ? AND GCalEventId = ?',
+    )
+      .bind(TENANT_A, deferredId)
+      .first();
+    expect(row).not.toBeNull(); // NOT deleted, despite not being in this pass's materialize batch
+  });
 });
 
 describe('reconcile v2 — delete-detection now notifies the customer', () => {

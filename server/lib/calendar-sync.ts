@@ -352,7 +352,7 @@ export async function deleteBookingCalendarEvent(
   await clearSyncPending(env.PAWBOOK_DB, tenant.Id, bookingId, expectedStatus);
 }
 
-const CALENDAR_SYNC_TTL_SECONDS = 120;
+export const CALENDAR_SYNC_TTL_SECONDS = 120;
 export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:last`;
 
 /** Cap on how many foreign Google events one reconcile pass MATERIALIZES (writes a row for) — a

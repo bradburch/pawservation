@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { listServiceOptions, listServices } from './db/repo';
+import { runCalendarSweep } from './lib/calendar-cron';
 import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
 import { renderInviteForm } from './lib/invite-form';
 import { tenantMiddleware } from './lib/middleware';
@@ -1031,4 +1032,13 @@ app.onError((err, c) => {
   return c.json({ error: 'Something went wrong.' }, 500);
 });
 
-export default app;
+/**
+ * Module-worker export: `fetch` is the Hono instance's own handler; `scheduled` drives the
+ * calendar sweep (wrangler.jsonc triggers.crons, every 15 minutes). Object.assign keeps the
+ * default export === the Hono app, so every test's `app.request(...)` works unchanged.
+ */
+const scheduled: NonNullable<ExportedHandler<Env>['scheduled']> = (_controller, env, ctx) => {
+  ctx.waitUntil(runCalendarSweep(env));
+};
+
+export default Object.assign(app, { scheduled });

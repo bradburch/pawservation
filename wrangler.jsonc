@@ -18,6 +18,11 @@
   "observability": {
     "enabled": true,
   },
+  // Calendar sweep: outbox re-drive + Google reconcile for every connected tenant.
+  // server/index.ts exports the matching scheduled() handler.
+  "triggers": {
+    "crons": ["*/15 * * * *"],
+  },
   "d1_databases": [
     {
       "binding": "PAWBOOK_DB",

@@ -2372,6 +2372,28 @@ export async function listBookingPetsForUser(
 // Callers normalize emails (trim + lowercase) before every read/write.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** INSTANCE SCOPE — the one calendar-sync exemption to the tenantId-first rule, same class as
+ * the owner-scope functions above: the cron sweep must discover WHICH tenants to sync before any
+ * tenant context exists. Read-only, and every row it returns is then processed through the
+ * ordinary tenant-scoped path. Disabled tenants are excluded — read-only tenants must not sync. */
+export async function listConnectedCalendarTenants(db: D1Database): Promise<Tenant[]> {
+  // Table-qualified TENANT_COLS (same pattern as BOOKING_COLS_QUALIFIED above): the join against
+  // ProviderConnections shares no column names with Tenants today, but qualifying defensively
+  // avoids a silent ambiguous-column break if that ever changes.
+  const cols = TENANT_COLS.split(', ')
+    .map((col) => `t.${col}`)
+    .join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT ${cols} FROM Tenants t
+       JOIN ProviderConnections pc ON pc.TenantId = t.Id
+       WHERE pc.Capability = 'calendar' AND pc.Status = 'connected' AND t.DisabledAt IS NULL
+       ORDER BY t.Id`,
+    )
+    .all<Tenant>();
+  return results;
+}
+
 export async function getOwnerUserByEmail(
   db: D1Database,
   email: string,
