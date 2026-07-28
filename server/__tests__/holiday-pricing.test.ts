@@ -163,4 +163,42 @@ describe('quote/stamp parity across a holiday', () => {
     expect(quote.holidayUnits).toBe(2);
     expect(created.estCost).toBe(quote.estCost);
   });
+
+  it('the booking stamps exactly what the quote said for a SINGLE-DAY service on a holiday', async () => {
+    const { env, raw } = createTestEnv();
+    // Sunny Paws check-in (single-day, 'visit'-billed): d15 option is $12/visit normally.
+    raw
+      .prepare(`UPDATE TenantServices SET HolidayRate = 25 WHERE TenantId = ? AND ServiceType = ?`)
+      .run(TENANT_A, 'checkin');
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const quote = (await (
+      await app.request(
+        '/api/sunny-paws/availability?type=checkin&option=d15&start=2026-12-25',
+        {},
+        env,
+      )
+    ).json()) as { estCost: number; holidayUnits: number };
+
+    const created = (await (
+      await app.request(
+        '/api/sunny-paws/bookings',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'checkin',
+            startDate: '2026-12-25',
+            optionKey: 'd15',
+            petIds: ['pet_sp_bella'],
+          }),
+        },
+        env,
+      )
+    ).json()) as { estCost: number };
+
+    expect(quote.estCost).toBe(25); // holiday rate replaces the $12 base for Christmas Day
+    expect(quote.holidayUnits).toBe(1);
+    expect(created.estCost).toBe(quote.estCost);
+  });
 });

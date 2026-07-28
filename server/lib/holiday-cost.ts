@@ -71,7 +71,7 @@ export function holidayAwareCost(
   holidayRate: number | null,
   split: UnitSplit,
 ): number {
-  if (holidayRate === null) return rate * split.units;
+  if (holidayRate == null) return rate * split.units;
   const holiday = Math.min(Math.max(split.holidayUnits, 0), split.units);
   return rate * (split.units - holiday) + holidayRate * holiday;
 }

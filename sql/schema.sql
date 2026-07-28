@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- (src/shared/util/us-holidays.ts). NULL = no holiday pricing (today's behavior). Same unit as
   -- RateUnit. A STORED rate, never a multiplier and never pet-count-scaled — the price formula
   -- (server/lib/holiday-cost.ts) may only multiply a stored rate by units of time.
-  HolidayRate INTEGER,
+  HolidayRate INTEGER CHECK (HolidayRate IS NULL OR HolidayRate >= 1),
   UNIQUE (TenantId, ServiceType)
 );
 

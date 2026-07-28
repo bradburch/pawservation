@@ -155,7 +155,7 @@ function holidayFields(
   service: TenantService,
   split: UnitSplit,
 ): { holidayUnits?: number; holidayRate?: number } {
-  if (service.HolidayRate === null || split.holidayUnits === 0) return {};
+  if (service.HolidayRate == null || split.holidayUnits === 0) return {};
   return { holidayUnits: split.holidayUnits, holidayRate: service.HolidayRate };
 }
 
@@ -200,6 +200,8 @@ async function checkRange(
   if (rangeHasConflict(startDate, endDateExclusive, request, capacity)) {
     return { available: false, reason: 'Those dates are not available.' };
   }
+  // wire-compat only (see AvailabilityResult.nights) — not reused below, since `split.units`
+  // already carries the billed quantity `unitSplitFor` computed from its own `nightsBetween` call.
   const nights = nightsBetween(startDate, endDateExclusive);
   const unit = billingUnit(service);
   // ONE split, used for both the price and the reported breakdown — same discipline as
@@ -208,9 +210,9 @@ async function checkRange(
   return {
     available: true,
     estCost: holidayAwareCost(option.Rate, service.HolidayRate, split),
-    // The quantity the price was computed from — same unit, same `billableUnits` call as
-    // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
-    billedUnits: billableUnits(nights, unit),
+    // The quantity the price was computed from — literally the same `billableUnits` call
+    // `unitSplitFor` made, so the widget's "4 days" can never sit next to a 3-night price.
+    billedUnits: split.units,
     unit,
     nights, // wire-compat only; see AvailabilityResult
     ...holidayFields(service, split),

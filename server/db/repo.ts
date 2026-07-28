@@ -2362,6 +2362,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
       )
       .bind(tenantId),
     db.prepare('DELETE FROM Payments WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM BookingCharges WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),

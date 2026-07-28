@@ -14,7 +14,11 @@
 --    quote promised and is written exactly once, so total due = EstCost + SUM(charges).
 --    Tenant-keyed, so it is also added to deleteTenantCompletely's child-first delete list.
 
-ALTER TABLE TenantServices ADD COLUMN HolidayRate INTEGER;
+-- CHECK constraints are allowed on SQLite's ALTER TABLE ADD COLUMN (verified against the harness's
+-- node:sqlite engine and reused unchanged for D1's own SQLite) — this enforces the same "whole
+-- dollars, $1 or more, or blank" invariant isValidRate applies at the API layer, at the DB layer
+-- too, on both a fresh install (schema.sql) and an existing DB migrated by hand.
+ALTER TABLE TenantServices ADD COLUMN HolidayRate INTEGER CHECK (HolidayRate IS NULL OR HolidayRate >= 1);
 
 CREATE TABLE IF NOT EXISTS BookingCharges (
   Id TEXT PRIMARY KEY,
