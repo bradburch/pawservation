@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS LoginCodes (
 
 -- Blocked days are rows with ServiceType='blocked' (EndUserId NULL, Status 'confirmed'),
 -- mirroring how production models blocked time as calendar events of type 'blocked'.
+-- Materialized Google events are rows with ServiceType='external' (see calendar-sync.ts).
 CREATE TABLE IF NOT EXISTS BookingRequests (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),

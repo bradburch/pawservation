@@ -23,9 +23,11 @@ import type { Tenant, TenantService, TenantServiceOption } from '../types';
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
 
+// External rows are deliberately blocked-kind (hard stop, no bookend sharing) — a Google event
+// tells us the sitter is busy, not which pool is busy.
 export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
   return rows.map((row) =>
-    row.ServiceType === 'blocked'
+    row.ServiceType === 'blocked' || row.ServiceType === 'external'
       ? { start_date: row.StartDate, end_date: row.EndDate ?? undefined, kind: 'blocked' as const }
       : {
           start_date: row.StartDate,
@@ -229,8 +231,12 @@ export type MonthDay = {
 /**
  * Per-day availability for a calendar month, sourced from D1 — the same authoritative store
  * `checkAvailability` reads via `listCapacityRows`, so the month grid can never show a day as
- * open that the booking check would then reject (or vice versa). Google Calendar is a one-way
- * sync TARGET only (`calendar-sync.ts`); it is never read back here.
+ * open that the booking check would then reject (or vice versa). Google Calendar is never read
+ * at request time. It IS read back — but only by the periodic reconcile (`calendar-sync.ts`),
+ * which materializes foreign events into ServiceType='external' rows; by the time this function
+ * runs, Google's busy days are already ordinary DB rows in `listCapacityRows`. The property that
+ * matters survives: this function and `checkAvailability` read exactly one store, so the grid and
+ * the booking check can never disagree.
  */
 export async function monthAvailability(
   env: Env,

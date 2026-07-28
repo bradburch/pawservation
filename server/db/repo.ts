@@ -445,7 +445,7 @@ export async function listCapacityRows(
        FROM BookingRequests b
        LEFT JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
        WHERE b.TenantId = ? AND b.Status IN ('pending', 'confirmed')
-         AND (b.ServiceType = 'blocked' OR s.CapacityKind IN ('boarding', 'housesit'))
+         AND (b.ServiceType IN ('blocked', 'external') OR s.CapacityKind IN ('boarding', 'housesit'))
          AND b.StartDate < ? AND COALESCE(b.EndDate, b.StartDate) >= ?
          AND (? IS NULL OR b.Id != ?)`,
     )
@@ -635,11 +635,15 @@ export async function listBookingsForTenant(
     PaidTotal: number;
     /** Parsed intake answers; {} for none or unparseable — the admin list renders them. */
     Answers: Record<string, string>;
+    /** Materialized-external-row title from Google (e.g. "Neighbor stay — Rex"); null for a real
+     * booking. Task 8 surfaces it. */
+    ExternalSummary: string | null;
   })[]
 > {
   const { results } = await db
     .prepare(
       `SELECT ${BOOKING_COLS_QUALIFIED}, BookingRequests.Answers AS Answers,
+              BookingRequests.ExternalSummary AS ExternalSummary,
               EndUsers.Email AS Email, EndUsers.Name AS Name,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
@@ -654,7 +658,13 @@ export async function listBookingsForTenant(
     )
     .bind(tenantId, tenantId)
     .all<
-      BookingRow & { Email: string | null; Name: string | null; PaidTotal: number; Answers: string }
+      BookingRow & {
+        Email: string | null;
+        Name: string | null;
+        PaidTotal: number;
+        Answers: string;
+        ExternalSummary: string | null;
+      }
     >();
   return results.map((r) => {
     let answers: Record<string, string> = {};
@@ -698,7 +708,7 @@ export async function updateBookingStatus(
     const result = await db
       .prepare(
         `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
-         WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'confirmed'`,
+         WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'confirmed'`,
       )
       .bind(cancellationFee, tenantId, id)
       .run();
@@ -709,14 +719,14 @@ export async function updateBookingStatus(
       ? await db
           .prepare(
             `UPDATE BookingRequests SET Status = 'declined', SyncPending = 1
-             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'pending'`,
+             WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'pending'`,
           )
           .bind(tenantId, id)
           .run()
       : await db
           .prepare(
             `UPDATE BookingRequests SET Status = ?, SyncPending = 1
-             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
+             WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
                AND Status NOT IN ('cancelled', 'declined')`,
           )
           .bind(status, tenantId, id)
@@ -768,7 +778,7 @@ export async function insertPayment(
       `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note)
        SELECT ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
-       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
+       WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
          AND (Status NOT IN ('cancelled', 'declined') OR CancellationFee IS NOT NULL)`,
     )
     .bind(
@@ -902,7 +912,7 @@ export async function getAnalytics(
            SELECT BookingRequestId, SUM(Amount) AS Total
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
-         WHERE b.TenantId = ? AND b.ServiceType != 'blocked'
+         WHERE b.TenantId = ? AND b.ServiceType NOT IN ('blocked', 'external')
            AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
                    AND COALESCE(paid.Total, 0) < b.EstCost)
                 OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
@@ -1242,6 +1252,7 @@ export async function listSyncedBookingIds(
     .prepare(
       `SELECT Id FROM BookingRequests
        WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
+         AND ServiceType != 'external'
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
@@ -2189,7 +2200,7 @@ export async function listUnsyncedFutureBookings(
     .prepare(
       `SELECT ${BOOKING_SYNC_COLS} ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.GCalEventId IS NULL AND b.Status IN ('pending', 'confirmed')
-         AND b.ServiceType != 'blocked' AND b.StartDate >= ?
+         AND b.ServiceType NOT IN ('blocked', 'external') AND b.StartDate >= ?
        ORDER BY b.StartDate
        LIMIT ?`,
     )
@@ -2349,7 +2360,7 @@ export async function listSitterRoster(
          (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
-              AND b.ServiceType != 'blocked' AND b.CreatedAt >= ?) AS Bookings,
+              AND b.ServiceType NOT IN ('blocked', 'external') AND b.CreatedAt >= ?) AS Bookings,
          (SELECT COALESCE(SUM(p.Amount), 0) FROM Payments p
             WHERE p.TenantId = t.Id AND p.PaidDate >= ?) AS Earned
        FROM Tenants t
