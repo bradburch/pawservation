@@ -13,7 +13,7 @@ export const PAGE_STYLE = /* css */ `
         --panel: #f1f5ee;
         --ink: #18271d;
         --body-c: #415044;
-        --soft: #697a6d;
+        --soft: #5a6a5e;
         --line: #e3e7e0;
         --green: #2e6440;
         --deep: #1d3826;

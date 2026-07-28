@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, setToken } from '../shared-ui/api';
 import { errorMsg, parentOrigin, slug } from './shared';
 
@@ -11,6 +11,13 @@ export function Identify({ onDone }: { onDone: () => void }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const codeRef = useRef<HTMLInputElement>(null);
+
+  // The email→code transition swaps the whole form; without this, focus stays on <body> and a
+  // screen-reader user hears nothing happened.
+  useEffect(() => {
+    if (state.step === 'code') codeRef.current?.focus();
+  }, [state.step]);
 
   const submitEmail = async () => {
     if (busy) return;
@@ -56,6 +63,7 @@ export function Identify({ onDone }: { onDone: () => void }) {
             type="email"
             value={email}
             placeholder="you@example.com"
+            autoComplete="email"
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void submitEmail()}
           />
@@ -63,14 +71,18 @@ export function Identify({ onDone }: { onDone: () => void }) {
         <button onClick={submitEmail} disabled={busy}>
           {busy ? 'Sending…' : 'Email me a code'}
         </button>
-        {error && <p className="bp-error">{error}</p>}
+        {error && (
+          <p className="bp-error" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     );
   }
 
   return (
     <div className="bp-identify">
-      <p className="bp-proto-code">
+      <p className="bp-proto-code" role="status">
         {state.prototypeCode ? (
           <>
             Your code: <strong>{state.prototypeCode}</strong>
@@ -83,21 +95,39 @@ export function Identify({ onDone }: { onDone: () => void }) {
           </>
         )}
       </p>
-      <input
-        className="bp-code"
-        inputMode="numeric"
-        autoComplete="one-time-code"
-        maxLength={6}
-        value={code}
-        placeholder="······"
-        aria-label="6-digit code"
-        onChange={(e) => setCode(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && void submitCode()}
-      />
+      <label className="bp-field">
+        6-digit code
+        <input
+          ref={codeRef}
+          className="bp-code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={6}
+          value={code}
+          placeholder="······"
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void submitCode()}
+        />
+      </label>
       <button onClick={submitCode} disabled={busy}>
         {busy ? 'Verifying…' : 'Verify'}
       </button>
-      {error && <p className="bp-error">{error}</p>}
+      <button
+        type="button"
+        className="bp-linklike"
+        onClick={() => {
+          setCode('');
+          setError('');
+          setState({ step: 'email' });
+        }}
+      >
+        Wrong email? Go back
+      </button>
+      {error && (
+        <p className="bp-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

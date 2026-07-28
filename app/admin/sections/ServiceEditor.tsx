@@ -694,12 +694,12 @@ export function ServiceEditor({
               type="button"
               onClick={() => {
                 // Collapse is still staging-only; if edits are pending, pulse the save bar so
-                // "Save" visibly hands off to where the commit happens.
+                // the hand-off to where the commit happens stays visible.
                 if (dirty) onFlashSavebar?.();
                 onDone();
               }}
             >
-              Save
+              Close
             </button>
           )}
         </div>

@@ -11,7 +11,7 @@
   --card: #ffffff;
   --ink: #18271d;
   --body: #415044;
-  --soft: #697a6d;
+  --soft: #5a6a5e;
   --line: #e3e7e0;
   --sage: #9db2a2;
   --sage-wash: #f1f5ee;
@@ -1246,8 +1246,12 @@ body {
   cursor: pointer;
 }
 
-.pb-wrap .pb-svc-open:hover {
+/* button.pb-svc-open outranks the global `.pb-wrap button:hover` (which paints --deep behind
+   unchanged text — near-invisible contrast); the card face must keep its own colors on hover. */
+.pb-wrap button.pb-svc-open:hover {
   filter: none;
+  background: none;
+  border-color: transparent;
 }
 
 /* Disabled service: content dims; everything stays operable (no disabled attrs). */
