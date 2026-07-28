@@ -141,19 +141,16 @@ const LANDING_HTML = `<!doctype html>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pawservation — booking for pet sitters</title>
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
     <header class="nav">
       <div class="wrap nav-inner">
         <a class="logo" href="/">
-          <svg width="22" height="22" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
-            <ellipse cx="50" cy="63" rx="24" ry="20" />
-            <ellipse cx="18" cy="38" rx="10" ry="13" />
-            <ellipse cx="39" cy="24" rx="10" ry="14" />
-            <ellipse cx="61" cy="24" rx="10" ry="14" />
-            <ellipse cx="82" cy="38" rx="10" ry="13" />
-          </svg>
+          <img src="/brand/paw.svg" width="24" height="20" alt="" />
           Pawservation
         </a>
         <nav class="nav-links" aria-label="Sections">
@@ -602,19 +599,16 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
       name="description"
       content="The full tour of Pawservation: the services you can offer, the rules that protect your calendar, how clients book, and how the money is tracked."
     />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
     <header class="nav">
       <div class="wrap nav-inner">
         <a class="logo" href="/">
-          <svg width="22" height="22" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
-            <ellipse cx="50" cy="63" rx="24" ry="20" />
-            <ellipse cx="18" cy="38" rx="10" ry="13" />
-            <ellipse cx="39" cy="24" rx="10" ry="14" />
-            <ellipse cx="61" cy="24" rx="10" ry="14" />
-            <ellipse cx="82" cy="38" rx="10" ry="13" />
-          </svg>
+          <img src="/brand/paw.svg" width="24" height="20" alt="" />
           Pawservation
         </a>
         <nav class="nav-links" aria-label="Sections">
