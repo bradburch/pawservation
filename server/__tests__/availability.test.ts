@@ -4,7 +4,7 @@ import { countSlotBookings, insertBookingRequest, listSlotBookingCounts } from '
 import { checkAvailability, estimateCost, rowsToCapacityEvents } from '../lib/availability';
 import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
-import { createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 /** A TenantService row cloned from a built-in template, as the migration/seed produces. */
 function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService {
@@ -642,6 +642,27 @@ describe('no inferred pricing — pet count never moves the price', () => {
     // …and `pets` is genuinely READ, not merely unused: 5 > the 4-pet cap is refused. Without this
     // leg the equality above would still pass if the route stopped looking at `pets` altogether.
     expect(five).toEqual({ available: false, reason: 'That exceeds our boarding capacity.' });
+  });
+
+  it('a HOLIDAY rate is also immune to pet count', async () => {
+    const { env, raw } = createTestEnv();
+    // Happy Tails boarding with an explicit holiday rate. The whole point: a holiday rate is a
+    // stored rate x units of TIME. If any future change made the holiday leg pet-aware — a
+    // per-pet holiday surcharge, a "×petCount" on the holiday units — this equality breaks.
+    raw
+      .prepare(`UPDATE TenantServices SET HolidayRate = 90 WHERE TenantId = ? AND ServiceType = ?`)
+      .run(TENANT_B, 'boarding');
+    const dates = 'type=boarding&start=2029-12-24&end=2029-12-27';
+    const quote = async (pets: number) =>
+      (await (
+        await app.request(`/api/happy-tails/availability?${dates}&pets=${pets}`, {}, env)
+      ).json()) as Record<string, unknown>;
+    const [one, three] = await Promise.all([quote(1), quote(3)]);
+    // Dec 24 -> Dec 27 bills nights starting Dec 24, 25, 26; Dec 24 (Eve) and Dec 25 (Day) are
+    // the listed holidays, Dec 26 is not, so 2 of the 3 nights are holiday-priced.
+    expect(one).toMatchObject({ available: true, holidayUnits: 2 });
+    // The WHOLE payload — including estCost, holidayUnits and holidayRate — must be identical.
+    expect(three).toEqual(one);
   });
 });
 

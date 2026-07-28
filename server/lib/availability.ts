@@ -19,6 +19,7 @@ import {
   type CapacityRow,
 } from '../db/repo';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
+import { holidayAwareCost, splitUnits, type UnitSplit } from './holiday-cost';
 
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
@@ -59,6 +60,15 @@ export type AvailabilityResult =
        * read it.
        */
       nights?: number;
+      /**
+       * How many of `billedUnits` fell on a listed US holiday and were charged at `holidayRate`
+       * instead of the base rate, and what that rate was. BOTH are absent unless the service has a
+       * `HolidayRate` AND at least one unit landed on one — so a quote with no holiday looks
+       * exactly like it did before this feature. Display only: the widget renders them next to
+       * `estCost`, which the server already computed. The client still computes no money.
+       */
+      holidayUnits?: number;
+      holidayRate?: number;
     }
   | { available: false; reason: string };
 
@@ -83,6 +93,12 @@ export type AvailabilityResult =
  * Today the guarantee is structural: `petCount` is not a parameter, so it cannot reach the
  * formula. Adding it as one — even "just to read a cap" — is precisely the defect this comment
  * exists to prevent; capacity checks belong in the capacity engine, not the price.
+ *
+ * Holiday units (2026-07-27, WS-H) obey every rule above: a service's optional `HolidayRate` is an
+ * explicit stored rate the sitter typed, charged per UNIT OF TIME that lands on a listed US
+ * holiday. It is not a multiplier, it is not derived from the base rate, and it is not scaled by
+ * pet count. A NULL `HolidayRate` — every service until a sitter sets one — prices identically to
+ * before the feature existed.
  */
 export function estimateCost(
   service: TenantService,
@@ -90,9 +106,34 @@ export function estimateCost(
   startDate: string,
   endDateExclusive: string,
 ): number {
-  if (service.Shape !== 'range') return option.Rate;
+  // Holidays split the SAME units the base formula bills — they never change how many units
+  // there are, only which stored rate each one is charged at. `option.Rate` is the base rate `r`;
+  // when `feat/rate-enforcement` resolves `r` from the pet-set rate tables instead, ONLY that
+  // argument changes — `unitSplitFor` and `holidayAwareCost` compose with any `r`.
+  return holidayAwareCost(
+    option.Rate,
+    service.HolidayRate,
+    unitSplitFor(service, startDate, endDateExclusive),
+  );
+}
+
+/**
+ * The billed units of a booking, partitioned into holiday and normal — the ONE computation of
+ * "which units are holidays". `estimateCost` prices from it and the quote REPORTS from it, so the
+ * breakdown the widget shows and the price it sits next to can never disagree (the same reason
+ * `billedUnits` comes from the same `billableUnits` call the price uses).
+ *
+ * Range services split their `billableUnits` starting at check-in; single-day services are one
+ * unit on the date itself. See `splitUnits` for the night-named-by-its-check-in-date convention.
+ */
+export function unitSplitFor(
+  service: TenantService,
+  startDate: string,
+  endDateExclusive: string,
+): UnitSplit {
+  if (service.Shape !== 'range') return splitUnits(startDate, 1);
   const nights = nightsBetween(startDate, endDateExclusive);
-  return option.Rate * billableUnits(nights, billingUnit(service));
+  return splitUnits(startDate, billableUnits(nights, billingUnit(service)));
 }
 
 /**
@@ -103,6 +144,19 @@ export function estimateCost(
  */
 function billingUnit(service: TenantService): 'night' | 'day' {
   return service.RateUnit === 'day' ? 'day' : 'night';
+}
+
+/**
+ * The optional holiday fields on a quote — present only when a holiday rate actually applied.
+ * Omitting them on an ordinary quote keeps the pre-feature payload byte-identical, which is what
+ * lets the 1-vs-3-pets no-inference lock compare WHOLE payloads with `toEqual`.
+ */
+function holidayFields(
+  service: TenantService,
+  split: UnitSplit,
+): { holidayUnits?: number; holidayRate?: number } {
+  if (service.HolidayRate === null || split.holidayUnits === 0) return {};
+  return { holidayUnits: split.holidayUnits, holidayRate: service.HolidayRate };
 }
 
 async function checkRange(
@@ -148,14 +202,18 @@ async function checkRange(
   }
   const nights = nightsBetween(startDate, endDateExclusive);
   const unit = billingUnit(service);
+  // ONE split, used for both the price and the reported breakdown — same discipline as
+  // `billedUnits` sharing `estimateCost`'s `billableUnits` call.
+  const split = unitSplitFor(service, startDate, endDateExclusive);
   return {
     available: true,
-    estCost: estimateCost(service, option, startDate, endDateExclusive),
+    estCost: holidayAwareCost(option.Rate, service.HolidayRate, split),
     // The quantity the price was computed from — same unit, same `billableUnits` call as
     // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
     billedUnits: billableUnits(nights, unit),
     unit,
     nights, // wire-compat only; see AvailabilityResult
+    ...holidayFields(service, split),
   };
 }
 
@@ -191,7 +249,12 @@ async function checkSingle(
       return { available: false, reason: 'That session is full.' };
     }
   }
-  return { available: true, estCost: estimateCost(service, option, date, date) };
+  const split = unitSplitFor(service, date, date);
+  return {
+    available: true,
+    estCost: holidayAwareCost(option.Rate, service.HolidayRate, split),
+    ...holidayFields(service, split),
+  };
 }
 
 export function checkAvailability(
