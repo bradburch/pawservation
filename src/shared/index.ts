@@ -49,6 +49,11 @@ export {
 } from './service-templates.js';
 export { buildAccounts, type Account, type OwnerPetLink } from './invoicing/accounts.js';
 export {
+  groupIntoAccounts,
+  type AccountGroup,
+  type OwnerPetSets,
+} from './invoicing/account-groups.js';
+export {
   cancellationFee,
   validateCancellationTiers,
   type CancellationTier,

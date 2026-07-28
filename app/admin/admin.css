@@ -515,8 +515,9 @@ body {
   border-bottom: none;
 }
 
-.pb-wrap li.pb-customer {
+.pb-wrap li.pb-account {
   display: block;
+  padding: 14px 0;
 }
 
 /* Status chips: soft pills, sentence case. */
@@ -777,6 +778,30 @@ body {
   outline-offset: 2px;
 }
 
+/* ── Client accounts: one card per household (buildAccounts component) ── */
+.pb-account-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.98rem;
+  color: var(--deep);
+}
+
+.pb-owners {
+  margin: 6px 0 2px;
+}
+
+.pb-owners li {
+  border-bottom: none;
+  padding: 4px 0;
+  gap: 8px;
+}
+
+.pb-add-owner {
+  margin-left: 18px;
+  margin-top: 4px;
+}
+
 .pb-pets {
   margin: 6px 0 6px 18px;
 }
@@ -791,6 +816,25 @@ body {
 .pb-add-pet {
   margin-left: 18px;
   margin-top: 4px;
+}
+
+.pb-account-rates {
+  margin-left: 18px;
+  margin-top: 8px;
+}
+
+.pb-account-rates summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--deep);
+}
+
+.pb-account-rates .pb-row {
+  margin-top: 6px;
+}
+
+.pb-account-rate-row input[type='number'] {
+  flex: 0 1 7rem;
 }
 
 /* ── Payments panel (shared by Bookings rows + Earnings outstanding table) ── */
