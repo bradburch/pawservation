@@ -38,6 +38,7 @@ import {
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
+  listServicePetRates,
   listServices,
   removeEndUserPet,
   removePetOwner,
@@ -393,14 +394,17 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get('/:slug/admin/settings', async (c) => {
     const tenant = c.get('tenant');
-    const [services, options, petTypes, blocked, connections, adminEmail] = await Promise.all([
-      listServices(c.env.PAWBOOK_DB, tenant.Id),
-      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
-      listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
-      listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
-      listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
-      getTenantUserEmailById(c.env.PAWBOOK_DB, tenant.Id, c.get('adminUserId')),
-    ]);
+    const [services, options, petTypes, blocked, connections, adminEmail, mixRates, groupRates] =
+      await Promise.all([
+        listServices(c.env.PAWBOOK_DB, tenant.Id),
+        listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+        listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
+        listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
+        listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
+        getTenantUserEmailById(c.env.PAWBOOK_DB, tenant.Id, c.get('adminUserId')),
+        listServicePetRates(c.env.PAWBOOK_DB, tenant.Id),
+        listAllPetGroupPricing(c.env.PAWBOOK_DB, tenant.Id),
+      ]);
     return c.json({
       disabled: tenant.DisabledAt != null,
       displayName: tenant.DisplayName,
@@ -430,6 +434,11 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers: svc.CancellationTiers,
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
+        // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
+        // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
+        multiPetGroupRateCount: groupRates.filter(
+          (g) => g.ServiceType === svc.ServiceType && g.GroupKey.includes(','),
+        ).length,
         options: options
           .filter((o) => o.ServiceType === svc.ServiceType)
           .map((o) => ({
@@ -441,6 +450,10 @@ export const adminRoutes = new Hono<AppEnv>()
             endTime: o.EndTime,
             capacity: o.Capacity,
             weekdaysOnly: Boolean(o.WeekdaysOnly),
+            // Species-count rates for THIS option ("2 dogs $60"), editable in ServiceEditor.
+            petRates: mixRates
+              .filter((r) => r.ServiceType === svc.ServiceType && r.OptionKey === o.OptionKey)
+              .map((r) => ({ mixKey: r.MixKey, rate: r.Rate })),
           })), // optionKey round-trips back on save so resolveServiceOptions can preserve identity
       })),
       // "Add service" picker: template id + display label of each built-in behavior archetype.
