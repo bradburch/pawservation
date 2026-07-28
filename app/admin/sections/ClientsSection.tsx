@@ -25,7 +25,7 @@ function ownerSortKey(c: Customer): string {
 }
 
 function PetAdder({
-  customer,
+  owners,
   petTypes,
   slug,
   token,
@@ -33,7 +33,8 @@ function PetAdder({
   onError,
   clearError,
 }: {
-  customer: Customer;
+  /** Every owner on the account, first one first — the pet is created under [0] and linked to the rest. */
+  owners: Customer[];
   petTypes: PetType[];
   slug: string;
   token: string;
@@ -58,21 +59,35 @@ function PetAdder({
     : (petTypes[0]?.petType ?? '');
 
   const add = async () => {
-    if (!name.trim() || busy) return;
+    const primary = owners[0];
+    if (!name.trim() || busy || !primary) return;
     clearError();
     setBusy(true);
+    const petName = name.trim();
     try {
-      await adminApi.customers.addPet(
+      const pet = await adminApi.customers.addPet(
         slug,
         token,
-        customer.id,
-        name.trim(),
+        primary.id,
+        petName,
         selectedPetType,
         notes.trim(),
+      );
+      // The route creates the pet under ONE customer. Everyone else on the account has to be
+      // linked explicitly, or a co-owner could not see or book the pet they share.
+      const linked = await Promise.allSettled(
+        owners.slice(1).map((o) => adminApi.customers.addPetOwner(slug, token, pet.id, o.id)),
       );
       setName('');
       setNotes('');
       onAdded();
+      if (linked.some((r) => r.status === 'rejected')) {
+        onError(
+          new Error(
+            `${petName} was added, but not every owner could be linked. Use "Add owner to this account" to finish.`,
+          ),
+        );
+      }
     } catch (e) {
       onError(e);
     } finally {
@@ -315,13 +330,16 @@ export function ClientsSection({
       <h2>
         <IconUsers size={18} /> Your clients
         <Hint label="Clients">
-          Only people on this list can book with you. Adding a client never emails them — send the
-          welcome email from their row when you're ready.
+          Only people on this list can book with you. Clients who share a pet are grouped into one
+          account — add an owner to an account and they get access to all of its pets. Adding a
+          client never emails them — send the welcome email from their row when you're ready.
         </Hint>
       </h2>
       <p className="pb-applies">
-        Only clients you add can book. Every client is added together with their first pet, and
-        nothing is emailed until you choose to send a welcome email.
+        Only clients you add can book. Every client is added together with their first pet — that
+        pair starts an <strong>account</strong>. People who share a pet are one account: they see
+        the same pets and are billed together. Nothing is emailed until you choose to send a welcome
+        email.
       </p>
       <div className="pb-row">
         <input
@@ -360,7 +378,7 @@ export function ClientsSection({
           ))}
         </select>
         <button onClick={() => void addCustomer()} disabled={busy || !canAddCustomer}>
-          {busy ? 'Adding…' : 'Add customer'}
+          {busy ? 'Adding…' : 'Add account'}
         </button>
       </div>
       {welcomeHint && (
@@ -523,7 +541,7 @@ export function ClientsSection({
               ) : null}
               {petTypes.length > 0 && owners[0] ? (
                 <PetAdder
-                  customer={owners[0]}
+                  owners={owners}
                   petTypes={petTypes}
                   slug={slug}
                   token={token}
