@@ -331,15 +331,26 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (constraintsError)
       return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
 
-    // The chosen pets, shaped for pricing/capacity — and the tenant's candidate rate rows for
-    // this service, loaded once and reused by both the stamp below and the capacity check's own
-    // pricing, so the quote, this stamp, and the row that lands in D1 all come from ONE
+    // Price is computed server-side (never trusted from the client) — the request body carries no
+    // cost field at all. The rate rows are read once here and reused by the capacity check's
+    // pricing below, so the quote, this stamp, and the row that lands in D1 all come from ONE
     // resolution of ONE pet set.
     const pricedPets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
     const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
-
-    // Price is computed server-side (never trusted from the client) and is pure — no DB read.
-    const estCost = estimateCost(service, option, start, end);
+    const price = estimateCost(service, option, start, end, pricedPets, rates);
+    if (!price.priced) {
+      // Refused BEFORE the optimistic insert: an unpriced booking must not exist even briefly,
+      // and there is no fallback number to write — a `?? 0` here would be the whole feature
+      // defeated in four characters.
+      return c.json(
+        {
+          error: `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
+          code: 'unpriced_pet_set',
+        },
+        400,
+      );
+    }
+    const estCost = price.cost;
 
     if (isDemo) {
       // Zero-pollution demo: the FULL validation pipeline above already ran; now check capacity
