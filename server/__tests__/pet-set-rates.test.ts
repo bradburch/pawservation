@@ -73,8 +73,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
   it('prefers an exact pet-id rate over a matching species rate', () => {
     const got = resolvePetSetRate({
       ...base,
-      petIds: ['p_a', 'p_b'],
-      petTypes: ['dog', 'dog'],
+      pets: [
+        { id: 'p_a', petType: 'dog' },
+        { id: 'p_b', petType: 'dog' },
+      ],
       groupRates: [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }],
       mixRates: [{ mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' }],
     });
@@ -84,8 +86,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
   it('falls to the species rate when no pet-id rate matches', () => {
     const got = resolvePetSetRate({
       ...base,
-      petIds: ['p_c', 'p_d'],
-      petTypes: ['dog', 'dog'],
+      pets: [
+        { id: 'p_c', petType: 'dog' },
+        { id: 'p_d', petType: 'dog' },
+      ],
       groupRates: [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }],
       mixRates: [{ mixKey: 'dog:2', rate: 35, serviceType: 'walk', optionKey: 'w30' }],
     });
@@ -93,15 +97,17 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
   });
 
   it('returns null when neither matches', () => {
-    expect(resolvePetSetRate({ ...base, petIds: ['p_x'], petTypes: ['bird'] })).toBeNull();
+    expect(resolvePetSetRate({ ...base, pets: [{ id: 'p_x', petType: 'bird' }] })).toBeNull();
   });
 
   it('NEVER scales a one-pet rate to two pets', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b'],
-        petTypes: ['dog', 'dog'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'dog' },
+        ],
         mixRates: [{ mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' }],
       }),
     ).toBeNull();
@@ -111,8 +117,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b'],
-        petTypes: ['dog', 'cat'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'cat' },
+        ],
         mixRates: [
           { mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' },
           { mixKey: 'cat:1', rate: 15, serviceType: 'walk', optionKey: 'w30' },
@@ -131,8 +139,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     ];
     const got = resolvePetSetRate({
       ...base,
-      petIds: ['p_a', 'p_b'],
-      petTypes: ['dog', 'dog'],
+      pets: [
+        { id: 'p_a', petType: 'dog' },
+        { id: 'p_b', petType: 'dog' },
+      ],
       serviceType: 'walk',
       optionKey: 'w30',
       mixRates,
@@ -143,8 +153,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b'],
-        petTypes: ['dog', 'dog'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'dog' },
+        ],
         serviceType: 'walk',
         optionKey: 'w60',
         mixRates,
@@ -155,13 +167,16 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
   it('does not match a subset or superset group', () => {
     const groupRates = [{ groupKey: 'p_a,p_b', rate: 44, serviceType: 'walk', optionKey: 'w30' }];
     expect(
-      resolvePetSetRate({ ...base, petIds: ['p_a'], petTypes: ['dog'], groupRates }),
+      resolvePetSetRate({ ...base, pets: [{ id: 'p_a', petType: 'dog' }], groupRates }),
     ).toBeNull();
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b', 'p_c'],
-        petTypes: ['dog', 'dog', 'dog'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'dog' },
+          { id: 'p_c', petType: 'dog' },
+        ],
         groupRates,
       }),
     ).toBeNull();
@@ -175,8 +190,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b'],
-        petTypes: ['dog', 'dog'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'dog' },
+        ],
         serviceType: 'walk',
         optionKey: 'w30-evening',
         groupRates,
@@ -185,8 +202,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b'],
-        petTypes: ['dog', 'dog'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'dog' },
+        ],
         serviceType: 'walk',
         optionKey: 'w30',
         groupRates,
@@ -201,8 +220,10 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: ['p_a', 'p_b'],
-        petTypes: ['dog', 'dog'],
+        pets: [
+          { id: 'p_a', petType: 'dog' },
+          { id: 'p_b', petType: 'dog' },
+        ],
         serviceType: 'boarding',
         optionKey: 'standard',
         groupRates,
@@ -214,11 +235,58 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     expect(
       resolvePetSetRate({
         ...base,
-        petIds: [],
-        petTypes: [],
+        pets: [],
         mixRates: [{ mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' }],
       }),
     ).toBeNull();
+  });
+});
+
+describe('resolvePetSetRate — one correlated pet array (no id/type desync)', () => {
+  const mixRates = [{ mixKey: 'dog:2', rate: 60, serviceType: 'walk', optionKey: 'd30' }];
+
+  it('a repeated pet is ONE pet on BOTH keys — it cannot manufacture a two-dog match', () => {
+    const res = resolvePetSetRate({
+      pets: [
+        { id: 'p_a', petType: 'dog' },
+        { id: 'p_a', petType: 'dog' },
+      ],
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupRates: [],
+      mixRates,
+    });
+    // Before this change the group key deduped to 'p_a' while the mix key still read 'dog:2',
+    // and this returned the $60 two-dog rate for a single dog.
+    expect(res).toBeNull();
+  });
+
+  it('two DIFFERENT pets of the same species still count as two', () => {
+    const res = resolvePetSetRate({
+      pets: [
+        { id: 'p_a', petType: 'dog' },
+        { id: 'p_b', petType: 'dog' },
+      ],
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupRates: [],
+      mixRates,
+    });
+    expect(res).toEqual({ source: 'mix', rate: 60 });
+  });
+
+  it('dedup keeps the FIRST occurrence, so a corrupt repeat cannot change the species', () => {
+    const res = resolvePetSetRate({
+      pets: [
+        { id: 'p_a', petType: 'dog' },
+        { id: 'p_a', petType: 'cat' },
+      ],
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupRates: [{ groupKey: 'p_a', rate: 15, serviceType: 'walk', optionKey: 'd30' }],
+      mixRates,
+    });
+    expect(res).toEqual({ source: 'group', rate: 15 });
   });
 });
 
