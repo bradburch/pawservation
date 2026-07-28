@@ -632,6 +632,21 @@ body {
   color: var(--bp-bad);
 }
 
+.bp-result.bp-unpriced {
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: var(--bp-sage-wash);
+  border: 1px solid var(--bp-line);
+  display: grid;
+  gap: 6px;
+}
+
+.bp-result.bp-unpriced p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--bp-body);
+}
+
 .bp-error {
   margin: 0;
   color: var(--bp-bad);

@@ -2,18 +2,28 @@ import {
   addDays,
   billableUnits,
   buildCapacity,
+  buildGroupKey,
+  buildMixKey,
   DEFAULT_TIMEZONE,
+  dedupePets,
   getPacificDateStr,
+  mixFromPetTypes,
   nightsBetween,
   rangeHasConflict,
+  resolvePetSetRate,
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
+  type GroupRate,
+  type MixRate,
   type PoolKind,
+  type PricedPet,
 } from '../../src/shared/index.js';
 import {
   listCapacityRows,
   countSlotBookings,
+  listPetGroupPricing,
+  listServicePetRates,
   listSlotBookingCounts,
   listUserBookingDatesInRange,
   type CapacityRow,
@@ -40,6 +50,9 @@ export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
 export type AvailabilityResult =
   | {
       available: true;
+      /** Discriminant. `true` means the sitter has priced this exact pet set (or it is a single
+       *  pet falling back to the option's own rate). See the `priced: false` arm. */
+      priced: true;
       estCost: number;
       /**
        * The quantity `estCost` was actually billed for, in `unit`s — the number the widget shows
@@ -60,39 +73,105 @@ export type AvailabilityResult =
        */
       nights?: number;
     }
+  | {
+      /**
+       * The DATES are fine; the PRICE is not knowable. Two or more pets that the sitter has never
+       * priced as a set — deliberately NOT folded into `available: false`, because the two answers
+       * need different responses from the customer: "wait for a free date" versus "call the sitter
+       * and ask for a rate". There is no cost field on this arm AT ALL, so no caller can coerce a
+       * refusal into $0; `groupKey`/`mixKey` are the exact keys that found no match, so a sitter or
+       * an agent can see which rate is missing.
+       */
+      available: true;
+      priced: false;
+      reason: 'unpriced-pet-set';
+      groupKey: string;
+      mixKey: string;
+    }
   | { available: false; reason: string };
+
+/**
+ * The result of pricing a booking. `priced: false` carries NO cost — the failure cannot be
+ * coerced to a number by any caller, because there is no number on it.
+ *
+ * `billedUnits`/`unit` are absent for single-day services (daycare/walk/check-in): a flat
+ * per-booking charge has no quantity to label. This is the shape the wire has had since PR #65
+ * and a deliberate, documented softening of design spec §4's literal type, which declared both
+ * fields required before the single-day omission existed.
+ */
+export type PriceResult =
+  | { priced: true; cost: number; billedUnits?: number; unit?: 'night' | 'day' }
+  | { priced: false; reason: 'unpriced-pet-set'; groupKey: string; mixKey: string };
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
  * quote and the stored booking cost can't diverge. Range services bill per unit of stay, taking
  * that unit from the service's own `RateUnit` (the same column the widget prints as "/night" or
  * "/day", so the price and its label can never disagree); single-day services (daycare/walk/
- * check-in) are a flat per-booking rate. Pure (no DB), so callers that already know the dates
- * can price a booking without a capacity read.
+ * check-in) are a flat per-booking rate. Pure (no DB) — the candidate rate rows arrive as
+ * arguments, fetched by `loadPetSetRates` — so callers that already know the dates can price a
+ * booking without a capacity read.
  *
  * INVARIANT — no inferred pricing. A price must never come from an algorithm the sitter did not
  * configure:
  *
  * - **Pet count never affects price.** Two dogs for three nights cost the same as one dog for
- *   three nights unless the sitter stored a different rate.
+ *   three nights UNLESS the sitter stored a rate for that exact set — and then the price is that
+ *   stored number, not a function of the count.
  * - The only arithmetic permitted here is over **units of time** (nights, days, per-visit) times
  *   a stored `Rate`. Nothing else may be multiplied, scaled, or surcharged.
  * - A per-pet or per-combination rate requires an explicit stored rate entry the sitter chose. It
  *   must never be inferred (no "×1.5 for the second dog", no per-pet multiplier).
  *
- * Today the guarantee is structural: `petCount` is not a parameter, so it cannot reach the
- * formula. Adding it as one — even "just to read a cap" — is precisely the defect this comment
- * exists to prevent; capacity checks belong in the capacity engine, not the price.
+ * The structural guarantee: the ONLY thing `pets` can do in this function is select a stored rate
+ * by EXACT match (`resolvePetSetRate`, which does no arithmetic of any kind), or, for a single
+ * pet, fall through to the option's own rate. There is no expression anywhere below in which a
+ * pet count is an operand. When no rate matches a set of two or more, the function REFUSES —
+ * inventing a number from the single-pet rate is precisely the defect this comment prevents, and
+ * `server/__tests__/availability.test.ts`'s "a three-dog quote is refused, not tripled" is its
+ * lock.
  */
 export function estimateCost(
   service: TenantService,
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
-): number {
-  if (service.Shape !== 'range') return option.Rate;
+  pets: PricedPet[],
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
+): PriceResult {
+  const distinct = dedupePets(pets);
+  const resolved = resolvePetSetRate({
+    pets: distinct,
+    serviceType: service.ServiceType,
+    optionKey: option.OptionKey,
+    groupRates: rates.groupRates,
+    mixRates: rates.mixRates,
+  });
+
+  let rate: number;
+  if (resolved) {
+    rate = resolved.rate;
+  } else if (distinct.length === 1) {
+    // Spec §2 step 3: a single pet keeps the option's flat rate. This is explicit sitter config,
+    // not inference, and scoping the refusal to 2+ pets is what stops this feature breaking every
+    // booking on deploy (spec §2 "Why single-pet keeps the flat-rate fallback").
+    rate = option.Rate;
+  } else {
+    // Spec §2 step 4. Zero pets lands here too: an empty set has nothing to price, and the routes
+    // reject it earlier — this is the structural backstop, not the user-facing check.
+    return {
+      priced: false,
+      reason: 'unpriced-pet-set',
+      groupKey: buildGroupKey(distinct.map((p) => p.id)),
+      mixKey: buildMixKey(mixFromPetTypes(distinct.map((p) => p.petType))),
+    };
+  }
+
+  if (service.Shape !== 'range') return { priced: true, cost: rate };
   const nights = nightsBetween(startDate, endDateExclusive);
-  return option.Rate * billableUnits(nights, billingUnit(service));
+  const unit = billingUnit(service);
+  const units = billableUnits(nights, unit);
+  return { priced: true, cost: rate * units, billedUnits: units, unit };
 }
 
 /**
@@ -105,6 +184,40 @@ function billingUnit(service: TenantService): 'night' | 'day' {
   return service.RateUnit === 'day' ? 'day' : 'night';
 }
 
+/**
+ * The candidate rate rows for ONE (tenant, service), shaped for `estimateCost`. Async and
+ * DB-touching, deliberately separate from the pure formula: the spec requires `estimateCost` to
+ * take its rows as arguments. Both queries are tenant-scoped in the repo, which is what makes
+ * "tenant A's rates never price tenant B's booking" structural rather than remembered.
+ *
+ * `listServicePetRates` is tenant-WIDE by design; the per-(service, option) filtering happens
+ * inside `resolvePetSetRate`, which is scoped by `serviceType`/`optionKey` on every row.
+ */
+export async function loadPetSetRates(
+  env: Env,
+  tenantId: string,
+  serviceType: string,
+): Promise<{ groupRates: GroupRate[]; mixRates: MixRate[] }> {
+  const [groups, mixes] = await Promise.all([
+    listPetGroupPricing(env.PAWBOOK_DB, tenantId, serviceType),
+    listServicePetRates(env.PAWBOOK_DB, tenantId),
+  ]);
+  return {
+    groupRates: groups.map((r) => ({
+      groupKey: r.GroupKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+    mixRates: mixes.map((r) => ({
+      mixKey: r.MixKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+  };
+}
+
 async function checkRange(
   env: Env,
   tenant: Tenant,
@@ -112,9 +225,13 @@ async function checkRange(
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
-  petCount: number,
+  pets: PricedPet[],
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
+  // Math.max(…, 1) preserves today's behaviour for the (route-unreachable) empty set: capacity
+  // has always been checked for at least one pet.
+  const petCount = Math.max(dedupePets(pets).length, 1);
   const request: CapacityRequest = {
     serviceType: service.ServiceType,
     kind: service.CapacityKind === 'housesit' ? 'housesit' : 'boarding',
@@ -146,16 +263,17 @@ async function checkRange(
   if (rangeHasConflict(startDate, endDateExclusive, request, capacity)) {
     return { available: false, reason: 'Those dates are not available.' };
   }
-  const nights = nightsBetween(startDate, endDateExclusive);
-  const unit = billingUnit(service);
+  const price = estimateCost(service, option, startDate, endDateExclusive, pets, rates);
+  if (!price.priced) return { available: true, ...price };
   return {
     available: true,
-    estCost: estimateCost(service, option, startDate, endDateExclusive),
+    priced: true,
+    estCost: price.cost,
     // The quantity the price was computed from — same unit, same `billableUnits` call as
     // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
-    billedUnits: billableUnits(nights, unit),
-    unit,
-    nights, // wire-compat only; see AvailabilityResult
+    billedUnits: price.billedUnits,
+    unit: price.unit,
+    nights: nightsBetween(startDate, endDateExclusive), // wire-compat only; see AvailabilityResult
   };
 }
 
@@ -165,6 +283,8 @@ async function checkSingle(
   service: TenantService,
   option: TenantServiceOption,
   date: string,
+  pets: PricedPet[],
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
   const rows = await listCapacityRows(
@@ -191,7 +311,9 @@ async function checkSingle(
       return { available: false, reason: 'That session is full.' };
     }
   }
-  return { available: true, estCost: estimateCost(service, option, date, date) };
+  const price = estimateCost(service, option, date, date, pets, rates);
+  if (!price.priced) return { available: true, ...price };
+  return { available: true, priced: true, estCost: price.cost };
 }
 
 export function checkAvailability(
@@ -201,7 +323,8 @@ export function checkAvailability(
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
-  petCount = 1,
+  pets: PricedPet[],
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
   return service.Shape === 'range'
@@ -212,10 +335,11 @@ export function checkAvailability(
         option,
         startDate,
         endDateExclusive,
-        petCount,
+        pets,
+        rates,
         excludeBookingId,
       )
-    : checkSingle(env, tenant, service, option, startDate, excludeBookingId);
+    : checkSingle(env, tenant, service, option, startDate, pets, rates, excludeBookingId);
 }
 
 export type MonthDay = {

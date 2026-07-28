@@ -41,8 +41,16 @@ describe('booking flow', () => {
   });
 
   it('rejects a conflicting submit with 409 (server-side re-validation)', async () => {
-    const { env } = createTestEnv();
+    const { env, raw } = createTestEnv();
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    // This is a capacity conflict test, not a pricing one — seed the mix rate this 2-pet set
+    // needs so the request reaches the capacity check instead of being refused as unpriced.
+    raw
+      .prepare(
+        `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
+         VALUES (?, 'boarding', 'standard', 'cat:1|dog:1', 50)`,
+      )
+      .run(TENANT_A);
     // Seed leaves only 1 boarding slot at Sunny Paws over Jun 20-25; ask for 2 pets.
     const res = await app.request(
       '/api/sunny-paws/bookings',

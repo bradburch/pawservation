@@ -53,6 +53,7 @@ export type MonthDay = {
 export type Availability =
   | {
       available: true;
+      priced: true;
       estCost: number;
       /** Quantity `estCost` was billed for, with its noun. Absent for single-day services
        *  (flat per-booking charge, no quantity). Label from these, never from
@@ -61,6 +62,16 @@ export type Availability =
       unit?: 'night' | 'day';
       /** Wire-compat only; always a night count. Prefer `billedUnits`/`unit`. */
       nights?: number;
+    }
+  | {
+      /** The dates are free but the sitter has never priced this set of pets. The widget shows
+       *  her contact details and blocks submit. It must NEVER compute a substitute price — the
+       *  client does not do money. */
+      available: true;
+      priced: false;
+      reason: 'unpriced-pet-set';
+      groupKey: string;
+      mixKey: string;
     }
   | { available: false; reason: string };
 
@@ -207,8 +218,10 @@ const jsonHeaders = { 'Content-Type': 'application/json' };
 export const api = {
   config: (slug: string) => request<TenantConfig>(`/api/${slug}/config`),
 
-  availability: (slug: string, params: Record<string, string>) =>
-    request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`),
+  availability: (slug: string, token: string, params: Record<string, string>) =>
+    request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`, {
+      headers: authHeaders(token),
+    }),
 
   // `prototypeCode` is only present in dev (no email provider configured); in prod the code is
   // emailed and the response carries only `codeId`.

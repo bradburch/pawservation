@@ -52,7 +52,7 @@ export function ServicesSection({
   /**
    * Coarse spec-§6 check: the service can take 2+ pets (MaxPetCount null or >= 2) yet NO stored
    * rate — species-count with 2+ pets, or specific-pet group with 2+ pets — could price ANY
-   * multi-pet set. Once PR 3 enforces rates, such bookings are refused, so surface it now.
+   * multi-pet set. PR 3 enforces rates, so such bookings are refused — surface it here too.
    */
   const multiPetUnpriced = (s: ServiceForm): boolean =>
     s.enabled &&

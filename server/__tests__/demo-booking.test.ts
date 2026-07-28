@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { insertBookingRequest } from '../db/repo';
 import app from '../index';
-import { createTestEnv, demoToken, endUserToken, TENANT_A } from './helpers';
+import { createTestEnv, demoToken, endUserToken, seedPets, TENANT_A } from './helpers';
 
 const SLUG_C = 'paws-and-relax';
 const TENANT_C = 'tnt_pawsandrelax';
@@ -125,6 +125,44 @@ describe('demo booking POST', () => {
       )
       .all();
     expect(demoRows).toEqual([]);
+  });
+
+  it('an unpriced 2-pet set is refused for the demo user too — same code, same pipeline', async () => {
+    const { env, raw } = createTestEnv();
+    const token = await demoToken(env, SLUG_C);
+    const demoUser = raw
+      .prepare(`SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = 'demo@pawservation.com'`)
+      .get(TENANT_C) as { Id: string };
+    const demoPetId = (
+      raw
+        .prepare(`SELECT Id FROM EndUserPets WHERE TenantId = ? AND EndUserId = ?`)
+        .get(TENANT_C, demoUser.Id) as { Id: string }
+    ).Id;
+    // The demo identity's seeded pet (Biscuit) is a dog; give it a second dog with no dog:2 rate
+    // configured for paws-and-relax boarding — the demo user runs the SAME validation pipeline as
+    // a real customer, so this must refuse identically, before the demo's own zero-persistence
+    // short-circuit ever runs.
+    const [secondPetId] = seedPets(raw, TENANT_C, demoUser.Id, [
+      { id: 'pet_demo_second', petType: 'dog' },
+    ]);
+
+    const res = await book(env, SLUG_C, token, {
+      type: 'boarding',
+      startDate: '2028-09-05',
+      endDate: '2028-09-07',
+      petIds: [demoPetId, secondPetId],
+      answers: {},
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'unpriced_pet_set' });
+    // Nothing was ever going to persist for the demo identity, but confirm no BookingRequests row
+    // exists for this window either way.
+    const rows = raw
+      .prepare(
+        `SELECT COUNT(*) AS n FROM BookingRequests WHERE TenantId = ? AND StartDate = '2028-09-05'`,
+      )
+      .get(TENANT_C) as { n: number };
+    expect(rows.n).toBe(0);
   });
 
   it('real customers on the same tenant still create real bookings', async () => {
