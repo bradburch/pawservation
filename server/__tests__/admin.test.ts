@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
+import { listServices } from '../db/repo';
 import { mintAdminToken, mintToken } from '../lib/token';
 import {
   adminHeaders,
@@ -1625,5 +1626,136 @@ describe('settings PUT caps', () => {
     );
     expect(patched.status).toBe(400);
     expect(((await patched.json()) as { error: string }).error).toContain('per day');
+  });
+
+  it('accepts, echoes, and clears a holidayRate', async () => {
+    const { env } = createTestEnv();
+    const put = async (holidayRate: number | null) =>
+      app.request(
+        '/api/sunny-paws/admin/settings',
+        {
+          method: 'PUT',
+          headers: await auth(TENANT_A, true),
+          body: JSON.stringify({
+            services: [
+              {
+                type: 'boarding',
+                enabled: true,
+                options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+                holidayRate,
+              },
+            ],
+          }),
+        },
+        env,
+      );
+    const read = async () => {
+      const res = await app.request(
+        '/api/sunny-paws/admin/settings',
+        { headers: await auth(TENANT_A, true) },
+        env,
+      );
+      const body = (await res.json()) as {
+        services: { type: string; holidayRate: number | null }[];
+      };
+      return body.services.find((s) => s.type === 'boarding')!.holidayRate;
+    };
+
+    expect((await put(75)).status).toBe(204);
+    expect(await read()).toBe(75);
+    expect((await put(null)).status).toBe(204);
+    expect(await read()).toBeNull(); // explicit null clears it back to "no holiday pricing"
+  });
+
+  it('keeps the current holidayRate when the field is absent (PATCH semantics)', async () => {
+    const { env } = createTestEnv();
+    const body = (services: unknown) => JSON.stringify({ services });
+    await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: body([
+          {
+            type: 'boarding',
+            enabled: true,
+            options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+            holidayRate: 75,
+          },
+        ]),
+      },
+      env,
+    );
+    // Second PUT omits holidayRate entirely — it must NOT be wiped.
+    await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: body([
+          {
+            type: 'boarding',
+            enabled: true,
+            options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+          },
+        ]),
+      },
+      env,
+    );
+    const svc = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+      (s) => s.ServiceType === 'boarding',
+    )!;
+    expect(svc.HolidayRate).toBe(75);
+  });
+
+  it('rejects a holidayRate that is not whole dollars >= 1', async () => {
+    const { env } = createTestEnv();
+    for (const bad of [0, -5, 12.5]) {
+      const res = await app.request(
+        '/api/sunny-paws/admin/settings',
+        {
+          method: 'PUT',
+          headers: await auth(TENANT_A, true),
+          body: JSON.stringify({
+            services: [
+              {
+                type: 'boarding',
+                enabled: true,
+                options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+                holidayRate: bad,
+              },
+            ],
+          }),
+        },
+        env,
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain('Holiday rate');
+    }
+  });
+
+  it('publishes holidayRate on the public config so the widget can label holidays', async () => {
+    const { env } = createTestEnv();
+    await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              holidayRate: 75,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    const res = await app.request('/api/sunny-paws/config', {}, env);
+    const cfg = (await res.json()) as { services: { type: string; holidayRate: number | null }[] };
+    expect(cfg.services.find((s) => s.type === 'boarding')!.holidayRate).toBe(75);
   });
 });

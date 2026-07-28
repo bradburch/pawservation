@@ -401,6 +401,8 @@ type ServiceBody = {
   maxConcurrentPets?: number | null;
   maxPerDay?: number | null;
   cancellationTiers?: CancellationTier[] | null;
+  /** Explicit whole-dollar holiday rate; null clears it. PATCH: absent = keep current. */
+  holidayRate?: number | null;
 };
 type SettingsBody = {
   displayName?: string;
@@ -490,6 +492,7 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers: svc.CancellationTiers,
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
+        holidayRate: svc.HolidayRate,
         // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
         // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
         multiPetGroupRateCount: groupRates.filter(
@@ -670,6 +673,15 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
+      // A holiday rate is an EXPLICIT stored rate, in the service's own unit. It is deliberately
+      // NOT constrained relative to the base rate: charging LESS on a holiday is a real choice
+      // (a sitter running a slow-season promo), and inventing a "must be higher" rule would be
+      // the kind of inferred pricing this codebase refuses.
+      if (svc.holidayRate != null && !isValidRate(svc.holidayRate))
+        return c.json(
+          { error: `${meta.Label}: Holiday rate must be whole dollars, $1 or more (or blank).` },
+          400,
+        );
       // Per-service acceptance list: PATCH semantics (absent = keep current). An explicit list
       // must be a subset of the tenant's slugs; the EFFECTIVE list (incoming or kept) may not be
       // empty on an enabled service — "accepts nothing" is expressed by disabling the service.
@@ -747,7 +759,7 @@ export const adminRoutes = new Hono<AppEnv>()
           'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : current.MaxConcurrentPets,
         cancellationTiers:
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
-        holidayRate: current.HolidayRate,
+        holidayRate: 'holidayRate' in svc ? (svc.holidayRate ?? null) : current.HolidayRate,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.
