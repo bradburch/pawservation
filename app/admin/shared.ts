@@ -1,5 +1,5 @@
 import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
-import { request } from '../shared-ui/api.js';
+import { request, type AdminBooking } from '../shared-ui/api.js';
 
 /** Sitter-dashboard session. `role` mirrors the server's login/session responses. */
 export type Session = { token: string; role: 'admin'; slug: string; displayName: string };
@@ -33,6 +33,8 @@ export type ServiceForm = ServiceConstraints & {
   enabled: boolean;
   capacityKind: 'boarding' | 'housesit' | 'none';
   maxConcurrentPets: number | null;
+  /** Optional explicit holiday rate in the service's own unit; null = no holiday pricing. */
+  holidayRate: number | '' | null;
   /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
    * feeding the "multi-pet but unpriced" warning; never sent back on the PUT. */
   multiPetGroupRateCount: number;
@@ -80,6 +82,7 @@ export type ServicePayload = ServiceConstraints & {
   enabled: boolean;
   description: string | null;
   maxConcurrentPets: number | null;
+  holidayRate: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
   acceptedPetTypes: string[] | null;
@@ -93,6 +96,20 @@ export type SettingsPayload = {
   contactPhone: string | null;
   services: ServicePayload[];
 };
+
+/**
+ * What a client owes on a booking: the stay price (or, on a cancelled row, the assessed
+ * cancellation fee) PLUS every extra charge. The single balance rule for the admin app —
+ * BookingsSection's row summary and the Earnings outstanding table must not each invent one.
+ *
+ * `estCost` is NEVER mutated by a charge. The quote promised a price; extras are separate line
+ * items, summed at read time. Returns null when there is nothing to owe against.
+ */
+export function totalDue(b: AdminBooking): number | null {
+  const base = b.status === 'cancelled' ? b.cancellationFee : b.estCost;
+  if (base == null) return b.chargesTotal > 0 ? b.chargesTotal : null;
+  return base + b.chargesTotal;
+}
 
 export function adminFetch<T>(token: string, path: string, init?: RequestInit): Promise<T> {
   return request<T>(path, {

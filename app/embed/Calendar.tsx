@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { api, isAuthExpired, type MonthDay } from '../shared-ui/api';
 import {
+  holidaysInMonth,
   isWeekend,
   monthGrid,
   shiftMonth as shiftMonthFn,
@@ -107,6 +108,7 @@ export function Calendar({
   };
 
   const cells = monthGrid(month);
+  const holidays = new Map(holidaysInMonth(month).map((h) => [h.date, h.name]));
 
   const hint =
     shape === 'range'
@@ -156,11 +158,13 @@ export function Calendar({
           const d = days.get(date);
           const past = !!(today && date < today);
           const weekend = !!weekdaysOnly && isWeekend(date);
+          const holiday = holidays.get(date) ?? null;
           const cls = ['bp-cal-day'];
           if (past) cls.push('bp-past');
           else if (weekend || d?.status === 'unavailable') cls.push('bp-unavail');
           else if (d?.status === 'partial') cls.push('bp-partial');
           if (d?.mine) cls.push('bp-mine');
+          if (holiday) cls.push('bp-cal-holiday');
           const pos = rangePosition(value, date, shape);
           if (pos !== 'none') cls.push('bp-sel', `bp-sel-${pos === 'middle' ? 'mid' : pos}`);
           return (
@@ -169,7 +173,8 @@ export function Calendar({
               key={i}
               className={cls.join(' ')}
               disabled={past || weekend || d?.status === 'unavailable'}
-              aria-label={`${date}${past ? ', past' : weekend ? ', weekdays only' : d ? ', ' + d.status : ''}${d?.mine ? ', your booking' : ''}`}
+              title={holiday ?? undefined}
+              aria-label={`${date}${past ? ', past' : weekend ? ', weekdays only' : d ? ', ' + d.status : ''}${d?.mine ? ', your booking' : ''}${holiday ? ', ' + holiday : ''}`}
               onClick={() => pick(date, d)}
             >
               {Number(date.slice(-2))}

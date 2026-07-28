@@ -325,6 +325,21 @@ export function BookTab({
                 <p className="bp-summary-cost">
                   Estimated cost <strong>${result.estCost}</strong>
                 </p>
+                {result.holidayUnits != null &&
+                  result.holidayRate != null &&
+                  // Single-day services (walk/visit) never set result.unit — fall back to the
+                  // service's own rateUnit so the noun still comes from one source, never an
+                  // invented default (matches the dates line's rule just above).
+                  (() => {
+                    const unit = result.unit ?? service?.rateUnit;
+                    return (
+                      <p className="bp-summary-holiday">
+                        Includes {result.holidayUnits} holiday {unit}
+                        {result.holidayUnits === 1 ? '' : 's'} at ${result.holidayRate}
+                        {unit ? `/${unit}` : ''}.
+                      </p>
+                    );
+                  })()}
                 {service?.cancellationTiers && (
                   <p className="bp-summary-policy">
                     Cancellation:{' '}

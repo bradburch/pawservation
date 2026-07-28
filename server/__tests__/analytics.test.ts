@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getAnalytics,
+  insertBookingCharge,
   insertBookingRequest,
   insertInvitedCustomer,
   insertPayment,
@@ -10,6 +11,7 @@ import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 import app from '../index';
 import { getPacificDateStr } from '../../src/shared/index.js';
 import { adminHeaders } from './helpers';
+import { serializeAnalytics } from '../lib/analytics';
 
 // Seeded clean-slate tenant (sql/seed.sql): has customers but NO bookings, so outstanding
 // assertions can be exact. TENANT_A/B each carry a seeded confirmed unpaid booking.
@@ -160,6 +162,51 @@ describe('getAnalytics (repo)', () => {
     expect(other.outstanding.map((o) => o.BookingId)).toEqual(['seed_ht_board1']);
   });
 
+  it('counts extra charges in the outstanding balance', async () => {
+    const { env } = createTestEnv();
+    // A confirmed booking paid in full at its quoted price, then a $45 vet visit is added:
+    // it becomes outstanding again for exactly $45.
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 100 });
+    await pay(env, TENANT_C, bookingId, 100);
+    const before = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    expect(before.outstanding.find((o) => o.BookingId === bookingId)).toBeUndefined();
+
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+      bookingRequestId: bookingId,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    const after = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const row = after.outstanding.find((o) => o.BookingId === bookingId)!;
+    expect(row.ChargesTotal).toBe(45);
+    expect(row.EstCost).toBe(100); // the stay price itself is untouched
+    expect(
+      serializeAnalytics(after).outstanding.find((o) => o.bookingId === bookingId)!.balance,
+    ).toBe(45);
+  });
+
+  it('a cancelled booking with a charge but NO assessed CancellationFee still appears, owing the charge', async () => {
+    const { env } = createTestEnv();
+    // Cancelled with no fee assessed (status flipped directly, unlike the assessed-fee path
+    // above) — CancellationFee stays NULL. A $45 vet visit is added afterward. Neither the old
+    // confirmed-arm (wrong status) nor the old cancelled-arm (CancellationFee IS NULL) matched
+    // this row, so it was invisible in Earnings despite genuinely owing $45.
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 400 });
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, bookingId, 'cancelled');
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+      bookingRequestId: bookingId,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const row = analytics.outstanding.find((o) => o.BookingId === bookingId)!;
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ EstCost: 0, ChargesTotal: 45, PaidTotal: 0 });
+    expect(
+      serializeAnalytics(analytics).outstanding.find((o) => o.bookingId === bookingId)!.balance,
+    ).toBe(45);
+  });
+
   it('ytd + quarterly derive from monthly[]; prior-year payment excluded from ytd but present in monthly', async () => {
     const { env } = createTestEnv();
     const b = await makeBooking(env, TENANT_A);
@@ -280,6 +327,7 @@ describe('GET /:slug/admin/analytics (route)', () => {
         serviceType: 'boarding',
         startDate: '2030-01-01',
         estCost: 300,
+        chargesTotal: 0,
         paidTotal: 160,
         balance: 140,
         isCancellationFee: false,

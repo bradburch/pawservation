@@ -206,7 +206,8 @@ export function EarningsView({
                 <span className="pb-truncate">{o.name || o.email || 'Unknown client'}</span> —{' '}
                 {o.serviceType} ({o.startDate})
                 <br />
-                owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost}
+                owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost + o.chargesTotal}
+                {o.chargesTotal > 0 ? `, incl. $${o.chargesTotal} extras` : ''}
                 {o.isCancellationFee ? ' cancellation fee' : ''})
               </span>
               {session && onChanged && handleError && (

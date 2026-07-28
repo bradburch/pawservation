@@ -50,6 +50,7 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     AcceptedPetTypes: null,
     MaxConcurrentPets: null,
     CancellationTiers: null,
+    HolidayRate: null,
     ...over,
   };
 }
@@ -987,6 +988,46 @@ describe('no inferred pricing — an unpriced multi-pet set is REFUSED, never in
       await quote(env, 'happy-tails', dates, ['pet_ht_otis', ...ids])
     ).json()) as Record<string, unknown>;
     expect(five).toEqual({ available: false, reason: 'That exceeds our boarding capacity.' });
+  });
+
+  it('a HOLIDAY rate is also immune to pet count', async () => {
+    const { env, raw } = createTestEnv();
+    // Happy Tails boarding with an explicit holiday rate. The whole point: a holiday rate is a
+    // stored rate x units of TIME. If any future change made the holiday leg pet-aware — a
+    // per-pet holiday surcharge, a "×petCount" on the holiday units — this equality breaks.
+    raw
+      .prepare(`UPDATE TenantServices SET HolidayRate = 90 WHERE TenantId = ? AND ServiceType = ?`)
+      .run(TENANT_B, 'boarding');
+    // An explicit 3-dog rate EQUAL to the single-pet option rate ($40, sql/seed.sql) — real pets,
+    // real petIds (design spec §5: there is no anonymous pet-COUNT any more). Resolving the same
+    // base rate through two different paths (single-pet fallback vs. an explicit stored mix rate)
+    // and getting an IDENTICAL holiday-priced payload is what proves the holiday leg only sees
+    // units of time, never how many pets or which resolution path produced the base rate.
+    const ids = seedPets(raw, TENANT_B, 'eu_ht_jess', [
+      { id: 'pet_ht_pip', petType: 'dog' },
+      { id: 'pet_ht_sam', petType: 'dog' },
+    ]);
+    raw
+      .prepare(
+        `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
+         VALUES (?, 'boarding', 'standard', 'dog:3', 40)`,
+      )
+      .run(TENANT_B);
+    const dates = 'type=boarding&start=2029-12-24&end=2029-12-27';
+    // Sequential, not Promise.all: both calls mint a session token via the same in-memory sqlite
+    // handle (see helpers.ts's `batch`), which cannot run two transactions concurrently.
+    const one = (await (await quote(env, 'happy-tails', dates, ['pet_ht_otis'])).json()) as Record<
+      string,
+      unknown
+    >;
+    const three = (await (
+      await quote(env, 'happy-tails', dates, ['pet_ht_otis', ...ids])
+    ).json()) as Record<string, unknown>;
+    // Dec 24 -> Dec 27 bills nights starting Dec 24, 25, 26; Dec 24 (Eve) and Dec 25 (Day) are
+    // the listed holidays, Dec 26 is not, so 2 of the 3 nights are holiday-priced.
+    expect(one).toMatchObject({ available: true, priced: true, holidayUnits: 2 });
+    // The WHOLE payload — including estCost, holidayUnits and holidayRate — must be identical.
+    expect(three).toEqual(one);
   });
 });
 

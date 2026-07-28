@@ -1,6 +1,7 @@
 import type {
   AllowedSitterRow,
   AnalyticsData,
+  BookingChargeRow,
   BookingRow,
   CancellationTier,
   EndUser,
@@ -101,7 +102,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
               CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount,
-              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers
+              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -838,33 +839,139 @@ export async function listPaymentsForBooking(
 }
 
 /**
+ * Add one extra charge to a booking. Uses insertPayment's INSERT...SELECT...WHERE idiom so the
+ * tenant + existence guard is part of the same statement — a foreign booking id or the 'blocked'
+ * sentinel inserts nothing and returns null (the route 404s on null).
+ *
+ * Deliberately NO status guard beyond 'blocked': a sitter adds "vet visit $45" to a stay that has
+ * already happened, and that stay may since have been cancelled. `EstCost` is never touched —
+ * total due is EstCost + SUM(charges), computed at read time.
+ */
+export async function insertBookingCharge(
+  db: D1Database,
+  tenantId: string,
+  charge: { bookingRequestId: string; label: string; amount: number },
+): Promise<string | null> {
+  const id = crypto.randomUUID();
+  const result = await db
+    .prepare(
+      `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
+       SELECT ?, ?, ?, ?, ?
+       FROM BookingRequests
+       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'`,
+    )
+    .bind(
+      id,
+      tenantId,
+      charge.bookingRequestId,
+      charge.label,
+      charge.amount,
+      tenantId,
+      charge.bookingRequestId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Delete one charge. The WHERE includes BookingRequestId so a charge id paired with the wrong
+ * booking id in the URL reports false (route 404s) instead of silently deleting — deletePayment's
+ * rule, for the same reason. Deleting is the only correction mechanism; there is no edit.
+ */
+export async function deleteBookingCharge(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+  chargeId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM BookingCharges WHERE TenantId = ? AND BookingRequestId = ? AND Id = ?')
+    .bind(tenantId, bookingRequestId, chargeId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+export async function listChargesForBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+): Promise<BookingChargeRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+       FROM BookingCharges WHERE TenantId = ? AND BookingRequestId = ?
+       ORDER BY CreatedAt, Id`,
+    )
+    .bind(tenantId, bookingRequestId)
+    .all<BookingChargeRow>();
+  return results;
+}
+
+/** Every charge for a tenant — ONE read that the admin bookings list groups in JS, rather than
+ *  a per-row query (the PaidTotal subquery's motivation, applied to a list-shaped payload). */
+export async function listChargesForTenant(
+  db: D1Database,
+  tenantId: string,
+): Promise<BookingChargeRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+       FROM BookingCharges WHERE TenantId = ? ORDER BY BookingRequestId, CreatedAt, Id`,
+    )
+    .bind(tenantId)
+    .all<BookingChargeRow>();
+  return results;
+}
+
+/**
  * The four earnings aggregates in one round trip (Promise.all over indexed SELECTs — no KV
  * caching; revisit only if it measurably drags). `today` ('YYYY-MM-DD', tenant-timezone at the
  * route) anchors the 12-month window; months with no payments are zero-filled here in JS.
  * Revenue queries count payments regardless of the booking's later status — cash already
- * received is real revenue; only `outstanding` filters to confirmed (and skips EstCost IS NULL:
- * a booking with no estimate has no computable balance).
+ * received is real revenue; `outstanding` filters to confirmed OR cancelled and applies one
+ * owed-vs-paid predicate to both (see the query below) rather than a separate arm per status, so a
+ * cancelled booking that carries extra charges but no assessed CancellationFee still surfaces
+ * instead of silently disappearing from Earnings while still counting against the client's balance
+ * elsewhere.
  */
 /**
- * What a booking is expected to bring in: EstCost normally, but the assessed CancellationFee for a
- * cancelled one — a cancelled-with-fee booking is a live receivable. SQLite cannot reference a
- * SELECT alias inside an expression, so this is spliced into SELECT, WHERE and ORDER BY rather
- * than aliased once.
+ * The base amount a booking is expected to bring in, on its own: EstCost normally, but the
+ * assessed CancellationFee for a cancelled one — a cancelled-with-fee booking is a live
+ * receivable. COALESCE'd to 0 so a booking with neither (never priced, or cancelled with no fee
+ * assessed) resolves to a real number rather than NULLing out a sum it's added into. SQLite
+ * cannot reference a SELECT alias inside an expression, so this is spliced into SELECT, WHERE and
+ * ORDER BY rather than aliased once.
  */
-const EXPECTED_AMOUNT_SQL =
-  "CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END";
+const BASE_AMOUNT_SQL =
+  "COALESCE(CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END, 0)";
 
 /**
- * A booking is OUTSTANDING when it is live (confirmed, or cancelled with a fee) and under-paid.
- * Shared verbatim by the earnings payload and the Venmo importer's candidate set so the sitter can
- * never be offered a booking the Earnings page does not consider owing. Expects a `paid` subquery
- * aliased in scope.
+ * What a booking TOTALS to owing: the base amount above PLUS any extra charges logged against it
+ * (BookingCharges) — a charge is owed on a stay that happened whether or not it was later
+ * cancelled, and EstCost/CancellationFee are never mutated to absorb it. This is the single
+ * "how much is this booking worth" figure shared by the earnings payload's outstanding predicate
+ * AND the Venmo importer's candidate balances, so a charge logged in the admin panel is never
+ * invisible to either. Expects a `chg` subquery (SUM(BookingCharges.Amount) per booking) aliased
+ * in scope — see `CHARGES_JOIN_SQL`.
+ */
+const EXPECTED_AMOUNT_SQL = `(${BASE_AMOUNT_SQL} + COALESCE(chg.Total, 0))`;
+
+/** The extra-charges LEFT JOIN `EXPECTED_AMOUNT_SQL` depends on. Carries one bind param (tenantId). */
+const CHARGES_JOIN_SQL = `LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM BookingCharges WHERE TenantId = ? GROUP BY BookingRequestId
+       ) chg ON chg.BookingRequestId = b.Id`;
+
+/**
+ * A booking is OUTSTANDING when it is live (confirmed or cancelled — declined rows are never
+ * billed) and under-paid once charges are counted. Shared verbatim by the earnings payload and
+ * the Venmo importer's candidate set so the sitter can never be offered a booking the Earnings
+ * page does not consider owing, and a cancelled booking with no assessed fee but a live charge
+ * still surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
  */
 const OUTSTANDING_WHERE_SQL = `b.ServiceType != 'blocked'
-     AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
-             AND COALESCE(paid.Total, 0) < b.EstCost)
-          OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
-             AND COALESCE(paid.Total, 0) < b.CancellationFee))`;
+     AND b.Status IN ('confirmed', 'cancelled')
+     AND ${EXPECTED_AMOUNT_SQL} > COALESCE(paid.Total, 0)`;
 
 export type OutstandingBookingRow = {
   BookingId: string;
@@ -879,6 +986,8 @@ export type OutstandingBookingRow = {
  * Every under-paid booking for this tenant, carrying the client who owes it — the candidate set the
  * Venmo importer matches a received payment against. Same outstanding predicate as the earnings
  * payload (shared consts above), different projection: EndUserId matters here and nowhere else.
+ * `Expected` already includes extra charges (see `EXPECTED_AMOUNT_SQL`), so a Venmo payment that
+ * covers a booking's quote PLUS a logged charge still matches.
  */
 export async function listOutstandingBookings(
   db: D1Database,
@@ -895,10 +1004,11 @@ export async function listOutstandingBookings(
          SELECT BookingRequestId, SUM(Amount) AS Total
          FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
        ) paid ON paid.BookingRequestId = b.Id
+       ${CHARGES_JOIN_SQL}
        WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
        ORDER BY b.StartDate DESC, b.Id`,
     )
-    .bind(tenantId, tenantId)
+    .bind(tenantId, tenantId, tenantId)
     .all<OutstandingBookingRow>();
   return results;
 }
@@ -961,10 +1071,15 @@ export async function getAnalytics(
       .all<AnalyticsData['topClients'][number]>(),
     db
       .prepare(
-        // Declined rows match neither arm (never confirmed, never carry a fee) and so are never outstanding.
+        // EstCost here is the BASE amount only (quote/fee, no charges) — ChargesTotal is reported
+        // separately so the UI can show the two apart (see serializeAnalytics). The outstanding
+        // predicate and ORDER BY use EXPECTED_AMOUNT_SQL (base + charges) so a cancelled booking
+        // with no assessed fee but a live charge still surfaces here. Declined (and any other
+        // non-confirmed/cancelled) rows are excluded outright — never billed.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
-                ${EXPECTED_AMOUNT_SQL} AS EstCost,
+                ${BASE_AMOUNT_SQL} AS EstCost,
+                COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
@@ -972,10 +1087,11 @@ export async function getAnalytics(
            SELECT BookingRequestId, SUM(Amount) AS Total
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
+         ${CHARGES_JOIN_SQL}
          WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
          ORDER BY (${EXPECTED_AMOUNT_SQL}) - COALESCE(paid.Total, 0) DESC`,
       )
-      .bind(tenantId, tenantId)
+      .bind(tenantId, tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
   ]);
 
@@ -1063,13 +1179,16 @@ export async function setServiceConfig(
     acceptedPetTypes: string[] | null;
     maxConcurrentPets: number | null;
     cancellationTiers: CancellationTier[] | null;
+    /** Explicit holiday rate; null clears it back to "no holiday pricing". */
+    holidayRate: number | null;
   },
 ): Promise<boolean> {
   const result = await db
     .prepare(
       `UPDATE TenantServices SET
          Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
-         MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
+         MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?,
+         HolidayRate = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -1081,6 +1200,7 @@ export async function setServiceConfig(
       config.acceptedPetTypes === null ? null : JSON.stringify(config.acceptedPetTypes),
       config.maxConcurrentPets,
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),
+      config.holidayRate,
       tenantId,
       serviceType,
     )
@@ -2449,6 +2569,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
       )
       .bind(tenantId),
     db.prepare('DELETE FROM Payments WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM BookingCharges WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),

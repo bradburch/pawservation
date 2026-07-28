@@ -15,6 +15,13 @@ export {
   DEFAULT_TIMEZONE,
 } from './util/dates.js';
 export {
+  holidayNameOn,
+  holidaysForYear,
+  holidaysInMonth,
+  US_HOLIDAY_NAMES,
+  type UsHoliday,
+} from './util/us-holidays.js';
+export {
   buildCapacity,
   rangeHasConflict,
   walkHasConflict,

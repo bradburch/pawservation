@@ -7,6 +7,7 @@ import {
   insertBookingRequest,
   listBookingPetsForUser,
   listBookingsForUser,
+  listChargesForTenant,
   listEndUserPets,
   listPetTypes,
   listServiceOptions,
@@ -513,6 +514,15 @@ export const bookingRoutes = new Hono<AppEnv>()
       list.push(pr.Name);
       petsByBooking.set(pr.BookingRequestId, list);
     }
+    // Charges for THIS caller's bookings only — scoped by the tenant read plus the row filter
+    // below, so a charge can never appear under a booking the caller does not own.
+    const chargeRows = await listChargesForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const chargesByBooking = new Map<string, { label: string; amount: number }[]>();
+    for (const ch of chargeRows) {
+      const list = chargesByBooking.get(ch.BookingRequestId) ?? [];
+      list.push({ label: ch.Label, amount: ch.Amount });
+      chargesByBooking.set(ch.BookingRequestId, list);
+    }
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,
@@ -522,6 +532,8 @@ export const bookingRoutes = new Hono<AppEnv>()
         petCount: r.PetCount,
         pets: petsByBooking.get(r.Id) ?? [],
         estCost: r.EstCost,
+        charges: chargesByBooking.get(r.Id) ?? [],
+        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
         cancellationFee: r.CancellationFee,
         status: r.Status,
       })),

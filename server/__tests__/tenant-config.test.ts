@@ -25,6 +25,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: 7,
       cancellationTiers: before.CancellationTiers,
+      holidayRate: before.HolidayRate,
     });
     let after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
@@ -39,11 +40,42 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: null,
       cancellationTiers: before.CancellationTiers,
+      holidayRate: before.HolidayRate,
     });
     after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(after.MaxConcurrentPets).toBeNull();
+  });
+
+  it('carries a nullable HolidayRate on every service, defaulting to NULL', async () => {
+    const { env } = createTestEnv();
+    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(services.length).toBeGreaterThan(0);
+    // NULL = no holiday pricing = today's behavior, for every seeded service.
+    for (const svc of services) expect(svc.HolidayRate).toBeNull();
+  });
+
+  it('round-trips a HolidayRate through setServiceConfig', async () => {
+    const { env } = createTestEnv();
+    const before = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+      (s) => s.ServiceType === 'boarding',
+    )!;
+    await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
+      enabled: Boolean(before.Enabled),
+      description: before.Description,
+      questions: before.Questions,
+      maxNights: before.MaxNights,
+      maxPetCount: before.MaxPetCount,
+      acceptedPetTypes: before.AcceptedPetTypes,
+      maxConcurrentPets: before.MaxConcurrentPets,
+      cancellationTiers: before.CancellationTiers,
+      holidayRate: 75,
+    });
+    const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+      (s) => s.ServiceType === 'boarding',
+    )!;
+    expect(after.HolidayRate).toBe(75);
   });
 
   it('tenant settings round-trip timezone/contact incl. explicit nulls (caps are gone)', async () => {

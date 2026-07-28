@@ -62,6 +62,9 @@ export type TenantService = {
   MaxConcurrentPets: number | null;
   /** Tiered cancel policy; null = no fee (0016). */
   CancellationTiers: CancellationTier[] | null;
+  /** Explicit whole-dollar rate for units landing on a listed US holiday; null = no holiday
+   *  pricing. Same unit as RateUnit. Never a multiplier — see server/lib/holiday-cost.ts. */
+  HolidayRate: number | null;
 };
 
 export type TenantServiceOption = {
@@ -164,6 +167,16 @@ export type PaymentRow = {
   CreatedAt: string;
 };
 
+/** One extra charge on a booking (vet visit, haircut). Amount is whole dollars >= 1. */
+export type BookingChargeRow = {
+  Id: string;
+  TenantId: string;
+  BookingRequestId: string;
+  Label: string;
+  Amount: number;
+  CreatedAt: string;
+};
+
 /** getAnalytics result: raw PascalCase aggregate rows. monthly is exactly 12 entries, oldest
  * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS.
  * Exception: `ytd`/`quarterly` are already in payload (camelCase) shape — the helper emits them
@@ -188,6 +201,7 @@ export type AnalyticsData = {
     StartDate: string;
     Status: string;
     EstCost: number;
+    ChargesTotal: number;
     PaidTotal: number;
   }[];
 };

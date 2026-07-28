@@ -1,7 +1,13 @@
 import { NullableNumberField } from './fields.js';
 import type { QuestionForm, ServiceForm, ServiceOptionForm } from '../shared.js';
 import { Hint } from '../Hint';
-import { buildMixKey, isValidRate, parseMixKey, type PetMix } from '../../../src/shared/index.js';
+import {
+  buildMixKey,
+  isValidRate,
+  parseMixKey,
+  US_HOLIDAY_NAMES,
+  type PetMix,
+} from '../../../src/shared/index.js';
 
 /** One row of the cancellation-policy editor, mirroring the wire/shared CancellationTier shape. */
 type ServiceEditorTier = { withinDays: number; percent: number };
@@ -489,6 +495,39 @@ export function ServiceEditor({
           </button>
         </div>
       )}
+      <div className="pb-inline">
+        <label className="pb-inline">
+          <span className="pb-labelrow">
+            Holiday rate (optional)
+            <Hint label="Holiday rate">
+              An explicit price per {s.rateUnit} for{' '}
+              {s.rateUnit === 'night' ? 'nights that start' : 'days that fall'} on one of these
+              days: {US_HOLIDAY_NAMES.join(', ')}. Leave it blank to charge your normal rate all
+              year. It is a rate you set, not a percentage — set it lower than your normal rate if
+              you like. Your price never changes with the number of pets.
+            </Hint>
+          </span>
+          $
+          <input
+            type="number"
+            min={1}
+            step={1}
+            inputMode="numeric"
+            placeholder="Same as usual"
+            aria-invalid={
+              s.holidayRate !== '' && s.holidayRate != null && !isValidRate(s.holidayRate)
+            }
+            value={s.holidayRate ?? ''}
+            onChange={(e) =>
+              setService({
+                ...s,
+                holidayRate: e.target.value === '' ? null : Number(e.target.value),
+              })
+            }
+          />
+          /{s.rateUnit}
+        </label>
+      </div>
       {/* Covers both pricing shapes above. A price left blank blocks the save bar (App.tsx), so say
           so where the empty input is rather than only in the bar at the bottom of the page. */}
       {s.options.some((o) => o.rate === '') && (

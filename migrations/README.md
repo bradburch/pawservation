@@ -24,8 +24,18 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   `rm -rf .wrangler/state/v3/d1 && npm run seed:local`.
 
 `0001_venmo_import.sql` is the first migration since the baseline (`EndUsers.VenmoUsername` +
-`Payments.ExternalRef` — the Venmo CSV import's idempotency mechanism). It must be applied to the
-remote DB by hand before this branch merges to `main` (merging auto-deploys, so the merge IS the
-deploy).
+`Payments.ExternalRef` — the Venmo CSV import's idempotency mechanism, from `feat/venmo-import`
+#86). It has already been MERGED to `main` and applied to the remote DB.
+
+`0002_holiday_and_charges.sql` adds `TenantServices.HolidayRate` (nullable) and the
+`BookingCharges` table + index (this branch, `feat/holiday-and-extras`). It is additive only (one
+`ALTER TABLE … ADD COLUMN`, one `CREATE TABLE`), so applying it to the remote DB is a no-op for the
+currently-running worker and can safely happen before this branch merges to `main` (merging
+auto-deploys, so the merge IS the deploy).
+
+`0003_*.sql` is reserved for the open Google Calendar work (`#88`) — not yet written. Numbering is
+sequential by merge order from here: each new branch picks up the next unused number as of when it
+branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long as
+every migration that lands on `main` is also applied to the remote DB by hand before that merge.
 
 Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.
