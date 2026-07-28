@@ -7,9 +7,10 @@
 A **multi-tenant, embeddable booking widget for pet-sitting businesses**. A sitter drops
 one `<script>` tag into their website (Squarespace, Wix, plain HTML) and gets a live
 booking calendar; behind it sits a full admin dashboard for running the business. One
-Cloudflare Worker (Hono) serves the JSON API plus four separately-built React bundles,
-backed by D1 (SQLite) and KV. Sitter accounts are **invite-only**, managed from a
-platform-owner console.
+Cloudflare Worker (Hono) serves the JSON API plus four separately-built Vite bundles
+(three React apps — embed, admin, setup — plus a static demo host page), backed by D1
+(SQLite) and KV. Sitter accounts are **invite-only**, managed from a platform-owner
+console.
 
 See [docs/index.md](./docs/index.md) for a project overview, or `CALENDAR_LOGIC.md` for
 the availability/conflict math.
@@ -47,6 +48,16 @@ the availability/conflict math.
   dashboard drops to read-only.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
   sitter admins (PBKDF2, with timing-safe user-enumeration defenses).
+- **Billing accounts** — co-owned pets collapse into one household billing account (union-
+  find over owner↔pet links), so a shared client sees one balance, not one per owner.
+- **Venmo CSV import** — upload a Venmo export to preview matched transactions against
+  outstanding bookings, then confirm to record payments; idempotent by transaction id.
+- **Holiday pricing & one-off charges** — a service can carry a separate stored rate for
+  booked nights that land on a US holiday, and sitters can add one-off extra charges to a
+  booking on top of its base estimate.
+- **Agent/API-readiness** — an `Idempotency-Key` header on booking creation prevents
+  duplicate bookings on retry, error responses carry a stable `code` alongside the message,
+  and each tenant exposes a machine-readable `llms.txt` plus JSON-LD on its embed page.
 - **Zero-dependency core** — booking, capacity, pricing, and date logic in `src/shared/`
   is pure TypeScript shared by server (enforcement) and client (UX).
 
@@ -116,8 +127,8 @@ build, and **auto-deploys to Cloudflare on merge to `main`**.
 
 ```
 server/       Hono Worker — routes, tenant middleware, auth/tokens, availability, db/repo.ts
-app/          Four React apps: embed/ (widget), admin/ (dashboard + owner console),
-              setup/ (signup-link page), shared-ui/ (API client, icons, hooks)
+app/          Three React apps: embed/ (widget), admin/ (dashboard + owner console),
+              setup/ (signup-link page), plus shared-ui/ (API client, icons, hooks)
 src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
 sql/          schema.sql (canonical DDL) + seed.sql (demo tenants)
 migrations/   New incremental DB changes only — empty by design as of 2026-07-27

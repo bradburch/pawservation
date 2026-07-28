@@ -32,12 +32,9 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   `TenantServices.HolidayRate` (nullable) and the `BookingCharges` table + index. Additive only
   (one `ALTER TABLE … ADD COLUMN`, one `CREATE TABLE`). **MERGED** to `main` and applied to the
   remote DB.
-- **`0003_gcal_sync.sql`** (`feat/gcal-source-of-truth`, this branch) — adds
+- **`0003_gcal_sync.sql`** (`feat/gcal-source-of-truth` #88) — adds
   `BookingRequests.SyncPending`, `BookingRequests.ExternalSummary`, and the
-  `idx_BookingRequests_External` unique index. Additive and old-worker-safe: safe to pre-apply to
-  prod **before** merging the branch (apply each statement via `wrangler d1 execute pawbook-db
---remote --command "…"` — not `--file`, per the remote-migrations gotcha — see
-  `docs/superpowers/plans/2026-07-27-gcal-ops.md` for the exact commands).
+  `idx_BookingRequests_External` unique index. **MERGED** to `main` and applied to the remote DB.
 
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long

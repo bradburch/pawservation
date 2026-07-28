@@ -1,6 +1,6 @@
 {
   "name": "pawservation",
-  "description": "Sandboxed prototype: multitenant embeddable booking widget (iframe embed for Wix/Squarespace)",
+  "description": "Multi-tenant, embeddable booking widget for pet-sitting businesses (Cloudflare Workers + D1)",
   "private": true,
   "type": "module",
   "dependencies": {
