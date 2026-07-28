@@ -101,7 +101,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
               CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount,
-              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers
+              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -994,13 +994,16 @@ export async function setServiceConfig(
     acceptedPetTypes: string[] | null;
     maxConcurrentPets: number | null;
     cancellationTiers: CancellationTier[] | null;
+    /** Explicit holiday rate; null clears it back to "no holiday pricing". */
+    holidayRate: number | null;
   },
 ): Promise<boolean> {
   const result = await db
     .prepare(
       `UPDATE TenantServices SET
          Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
-         MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
+         MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?,
+         HolidayRate = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -1012,6 +1015,7 @@ export async function setServiceConfig(
       config.acceptedPetTypes === null ? null : JSON.stringify(config.acceptedPetTypes),
       config.maxConcurrentPets,
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),
+      config.holidayRate,
       tenantId,
       serviceType,
     )

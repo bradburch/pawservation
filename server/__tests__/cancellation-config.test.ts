@@ -35,6 +35,7 @@ describe('cancellation tiers config round-trip', () => {
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: before.MaxConcurrentPets,
       cancellationTiers: tiers,
+      holidayRate: before.HolidayRate,
     });
     expect(ok).toBe(true);
 
@@ -60,6 +61,7 @@ describe('cancellation tiers config round-trip', () => {
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: before.MaxConcurrentPets,
       cancellationTiers: tiers,
+      holidayRate: before.HolidayRate,
     });
     expect(setOk).toBe(true);
 
@@ -77,6 +79,7 @@ describe('cancellation tiers config round-trip', () => {
       acceptedPetTypes: before.AcceptedPetTypes,
       maxConcurrentPets: before.MaxConcurrentPets,
       cancellationTiers: null,
+      holidayRate: before.HolidayRate,
     });
     expect(clearOk).toBe(true);
 

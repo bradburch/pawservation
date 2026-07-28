@@ -23,6 +23,8 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   existing table. If your local DB predates a schema change:
   `rm -rf .wrangler/state/v3/d1 && npm run seed:local`.
 
-There are currently no migration files: the baseline is current.
+`0001_*.sql` lives on the unmerged `feat/venmo-import` branch — this branch's `0002_holiday_and_charges.sql`
+was created while `migrations/` was still empty here, so numbering does not start at `0001` on every
+branch; whichever of the two merges to `main` second should renumber to keep the sequence unbroken.
 
 Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.

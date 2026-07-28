@@ -62,6 +62,9 @@ export type TenantService = {
   MaxConcurrentPets: number | null;
   /** Tiered cancel policy; null = no fee (0016). */
   CancellationTiers: CancellationTier[] | null;
+  /** Explicit whole-dollar rate for units landing on a listed US holiday; null = no holiday
+   *  pricing. Same unit as RateUnit. Never a multiplier — see server/lib/holiday-cost.ts. */
+  HolidayRate: number | null;
 };
 
 export type TenantServiceOption = {

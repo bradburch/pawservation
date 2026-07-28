@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- Tiered cancellation policy (added by 0016); JSON array like
   -- [{"withinDays":2,"percent":100},{"withinDays":7,"percent":50}]. NULL = no fee.
   CancellationTiers TEXT,
+  -- Optional explicit whole-dollar rate for billed units falling on a listed US holiday
+  -- (src/shared/util/us-holidays.ts). NULL = no holiday pricing (today's behavior). Same unit as
+  -- RateUnit. A STORED rate, never a multiplier and never pet-count-scaled — the price formula
+  -- (server/lib/holiday-cost.ts) may only multiply a stored rate by units of time.
+  HolidayRate INTEGER,
   UNIQUE (TenantId, ServiceType)
 );
 
@@ -242,6 +247,21 @@ CREATE TABLE IF NOT EXISTS Payments (
 );
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Date ON Payments (TenantId, PaidDate);
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Booking ON Payments (TenantId, BookingRequestId);
+
+-- One-off extras a sitter adds to a booking after the fact (vet visit, haircut). Deliberately a
+-- separate table rather than an EstCost edit: EstCost is the price the quote promised and is
+-- written exactly once, so total due = EstCost + SUM(charges). Money owed, the sibling of
+-- Payments (money in).
+CREATE TABLE IF NOT EXISTS BookingCharges (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
+  Label TEXT NOT NULL,
+  Amount INTEGER NOT NULL CHECK (Amount >= 1), -- whole dollars, matching EstCost/Rate/Payments
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_BookingCharges_Tenant_Booking
+  ON BookingCharges (TenantId, BookingRequestId);
 
 CREATE TABLE IF NOT EXISTS ProviderConnections (
   Id TEXT PRIMARY KEY,

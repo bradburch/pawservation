@@ -747,6 +747,7 @@ export const adminRoutes = new Hono<AppEnv>()
           'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : current.MaxConcurrentPets,
         cancellationTiers:
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
+        holidayRate: current.HolidayRate,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.
