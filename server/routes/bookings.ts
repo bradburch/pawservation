@@ -27,6 +27,7 @@ import {
   isValidPetCount,
   isValidTimeString,
   validateBoardingRange,
+  validateBookingWindow,
   validateSingleDate,
 } from '../lib/validation';
 import {
@@ -118,6 +119,13 @@ export const bookingRoutes = new Hono<AppEnv>()
         tenant.Timezone ?? undefined,
       );
       if (rangeError) return c.json({ error: rangeError.error }, rangeError.status);
+      const windowError = validateBookingWindow(
+        start,
+        service.MinLeadDays,
+        tenant.MaxAdvanceMonths,
+        tenant.Timezone ?? undefined,
+      );
+      if (windowError) return c.json({ error: windowError.error }, windowError.status);
       // Same rule the POST applies (validateServiceConstraints) — a quote for more pets than the
       // service allows must refuse with the same friendly, structured shape the widget already
       // renders (bp-result.bp-no), not fall through to capacity/pricing.
@@ -135,6 +143,13 @@ export const bookingRoutes = new Hono<AppEnv>()
     }
     const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
     if (dateError) return c.json({ error: dateError.error }, dateError.status);
+    const windowError = validateBookingWindow(
+      start,
+      service.MinLeadDays,
+      tenant.MaxAdvanceMonths,
+      tenant.Timezone ?? undefined,
+    );
+    if (windowError) return c.json({ error: windowError.error }, windowError.status);
     const constraintsError = validateServiceConstraints(
       { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
       { nights: null, petCount: pets.length },
@@ -307,6 +322,17 @@ export const bookingRoutes = new Hono<AppEnv>()
         : validateSingleDate(start, tenant.Timezone ?? undefined);
     if (dateError)
       return c.json({ error: dateError.error, code: dateError.code }, dateError.status);
+
+    // The booking window (0004): per-service minimum notice + the business-wide horizon —
+    // same rule the quote and the month grid enforce, so the three can never disagree.
+    const windowError = validateBookingWindow(
+      start,
+      service.MinLeadDays,
+      tenant.MaxAdvanceMonths,
+      tenant.Timezone ?? undefined,
+    );
+    if (windowError)
+      return c.json({ error: windowError.error, code: windowError.code }, windowError.status);
 
     // Optional customer-chosen arrival time — range stays only. Timed (single-day) services take
     // their clock from the option, so a client-supplied time there is a bug, not a preference.

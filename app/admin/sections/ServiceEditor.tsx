@@ -625,6 +625,34 @@ export function ServiceEditor({
           value={s.maxPetCount}
           onChange={(maxPetCount) => setService({ ...s, maxPetCount })}
         />
+        <label>
+          <span className="pb-labelrow">
+            Days of notice needed <span className="pb-hint">(blank = same-day OK)</span>
+            <Hint label="Days of notice needed">
+              How much warning you need before this service starts. Set it to 1 and clients
+              can&rsquo;t request today — tomorrow is the earliest they can pick. Blank means
+              same-day requests are fine. There&rsquo;s also one business-wide limit on how far
+              AHEAD clients can book, under Business.
+            </Hint>
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={90}
+            aria-label="Days of notice needed (blank = same-day OK)"
+            aria-invalid={
+              s.minLeadDays !== null &&
+              (!Number.isInteger(s.minLeadDays) || s.minLeadDays < 0 || s.minLeadDays > 90)
+            }
+            value={s.minLeadDays ?? ''}
+            onChange={(e) =>
+              setService({
+                ...s,
+                minLeadDays: e.target.value === '' ? null : Number(e.target.value),
+              })
+            }
+          />
+        </label>
       </div>
 
       <div className="pb-limits pb-tiers">

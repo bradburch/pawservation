@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- Optional contact details shown to clients in the booking widget.
   ContactEmail TEXT,
   ContactPhone TEXT,
+  -- Profile-level booking horizon (0004): a request may not START more than this many calendar
+  -- months from today (tenant timezone, day-clamped). NULL = no limit. One value for the whole
+  -- business — the per-service knob is TenantServices.MinLeadDays.
+  MaxAdvanceMonths INTEGER,
   -- NULL = active; timestamp = disabled by the owner (widget dark + admin read-only).
   DisabledAt TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -55,6 +59,9 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   Questions TEXT NOT NULL DEFAULT '[]',
   MaxNights INTEGER,
   MaxPetCount INTEGER,
+  -- Minimum notice in days for this service's START date, evaluated in the tenant's timezone
+  -- (0004). NULL or 0 = same-day requests allowed; 1 = earliest requestable date is tomorrow.
+  MinLeadDays INTEGER,
   -- JSON array of pet-type slugs this service accepts; NULL = accepts every registry type
   -- (null-is-unlimited convention). An empty array is invalid for an ENABLED service.
   AcceptedPetTypes TEXT,

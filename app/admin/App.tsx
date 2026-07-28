@@ -599,12 +599,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         timezone: settings.timezone,
         contactEmail: settings.contactEmail,
         contactPhone: settings.contactPhone,
+        maxAdvanceMonths: settings.maxAdvanceMonths,
         services: settings.services.map((s): ServicePayload => ({
           type: s.type,
           enabled: s.enabled,
           // Whitespace-only means "cleared"; the server trims and stores NULL either way.
           description: s.description?.trim() || null,
           maxConcurrentPets: s.maxConcurrentPets,
+          minLeadDays: s.minLeadDays,
           // '' means the sitter emptied the box — that is "no holiday pricing", i.e. null, not 0.
           holidayRate: s.holidayRate === '' || s.holidayRate == null ? null : s.holidayRate,
           options: s.options.map((o): ServiceOptionForm => ({

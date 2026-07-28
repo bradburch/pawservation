@@ -1,5 +1,6 @@
 import {
   addDays,
+  addMonths,
   billableUnits,
   buildCapacity,
   buildGroupKey,
@@ -507,10 +508,22 @@ export async function monthAvailability(
 
   const cap = buildCapacity(rowsToCapacityEvents(capacityRows));
 
+  // The booking window (0004): days the customer could never request — before the service's
+  // minimum notice or past the business-wide horizon — paint as unavailable, so the grid, the
+  // quote, and the booking POST (all three call validateBookingWindow's rule) can never disagree.
+  const earliestBookable =
+    service.MinLeadDays !== null && service.MinLeadDays > 0
+      ? addDays(today, service.MinLeadDays)
+      : today;
+  const latestBookable =
+    tenant.MaxAdvanceMonths !== null ? addMonths(today, tenant.MaxAdvanceMonths) : null;
+
   const days: MonthDay[] = [];
   for (let i = 0; i < daysInMonth; i++) {
     const date = addDays(monthStart, i);
     const day = cap.get(date);
+    const outsideWindow =
+      date < earliestBookable || (latestBookable !== null && date > latestBookable);
 
     let status: 'available' | 'partial' | 'unavailable';
     let used: number | null;
@@ -534,6 +547,7 @@ export async function monthAvailability(
       max = null;
     }
 
+    if (outsideWindow) status = 'unavailable';
     days.push({ date, status, used, max, mine: mineDays.has(date) });
   }
 
