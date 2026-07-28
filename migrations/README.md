@@ -27,4 +27,8 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
 was created while `migrations/` was still empty here, so numbering does not start at `0001` on every
 branch; whichever of the two merges to `main` second should renumber to keep the sequence unbroken.
 
+`0002_holiday_and_charges.sql` adds `TenantServices.HolidayRate` (nullable) and the `BookingCharges`
+table + index. It is additive only (one `ALTER TABLE … ADD COLUMN`, one `CREATE TABLE`), so applying
+it to the remote DB is a no-op for the currently-running worker and can safely happen before merge.
+
 Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.
