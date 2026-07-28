@@ -1417,6 +1417,64 @@ export async function clearBookingCalendarEventIds(
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
+/** Materialize one Google-owned event as a ServiceType='external' row (insert or update in place;
+ * conflict target = the partial unique index on (TenantId, GCalEventId) WHERE 'external').
+ * These rows are read-only mirrors: EndUserId NULL, EstCost NULL, never priced, never payable,
+ * counted by listCapacityRows as blocked-like. Tenant-scoped. */
+export async function upsertExternalEvent(
+  db: D1Database,
+  tenantId: string,
+  e: { gcalEventId: string; summary: string; startDate: string; endDateExclusive: string },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO BookingRequests
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount,
+          EstCost, GCalEventId, ExternalSummary, Status, SyncPending)
+       VALUES (?, ?, NULL, 'external', ?, ?, NULL, 1, NULL, ?, ?, 'confirmed', 0)
+       ON CONFLICT (TenantId, GCalEventId) WHERE ServiceType = 'external' DO UPDATE SET
+         StartDate = excluded.StartDate, EndDate = excluded.EndDate,
+         ExternalSummary = excluded.ExternalSummary`,
+    )
+    .bind(crypto.randomUUID(), tenantId, e.startDate, e.endDateExclusive, e.gcalEventId, e.summary)
+    .run();
+}
+
+/** Delete external rows overlapping [windowStart, windowEndExclusive) whose Google event no
+ * longer exists there. STRICTLY window-bounded: a row outside the queried window was never
+ * spoken for by the response and must not be touched (same reasoning as listSyncedBookingIds). */
+export async function deleteExternalEventsMissing(
+  db: D1Database,
+  tenantId: string,
+  windowStart: string,
+  windowEndExclusive: string,
+  liveEventIds: string[],
+): Promise<number> {
+  const notIn = liveEventIds.length
+    ? ` AND GCalEventId NOT IN (${liveEventIds.map(() => '?').join(', ')})`
+    : '';
+  const result = await db
+    .prepare(
+      `DELETE FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = 'external'
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?${notIn}`,
+    )
+    .bind(tenantId, windowEndExclusive, windowStart, ...liveEventIds)
+    .run();
+  return (result.meta as { changes?: number }).changes ?? 0;
+}
+
+/** Purge every materialized external row — called when the calendar target changes or the
+ * connection is dropped: the rows mirrored a calendar we no longer read, and read-only rows
+ * with no living source would block capacity forever with no UI to remove them. */
+export async function deleteAllExternalEvents(db: D1Database, tenantId: string): Promise<number> {
+  const result = await db
+    .prepare(`DELETE FROM BookingRequests WHERE TenantId = ? AND ServiceType = 'external'`)
+    .bind(tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes ?? 0;
+}
+
 /** Outbox success path: mark one booking's calendar state as mirrored. Tenant-scoped.
  *
  * `expectedStatus`, when given, guards the clear the same way as setBookingGCalEventId's: a

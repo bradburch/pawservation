@@ -7,7 +7,12 @@ import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/i
 import { adminToken, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 import type { Tenant } from '../types';
 
-const tenant = { Id: TENANT_A, Slug: 'sunny-paws', Timezone: null } as Tenant;
+const tenant = {
+  Id: TENANT_A,
+  Slug: 'sunny-paws',
+  DisplayName: 'Sunny Paws',
+  Timezone: null,
+} as Tenant;
 
 // reconcileBookingsWithCalendar's query window is [today-1, today+180) relative to the *real*
 // clock (no fake timers here), so "in window" fixtures must be computed relative to actual today
@@ -25,19 +30,39 @@ async function connectCalendar(env: Env) {
   });
 }
 
-function calendarListResponse(bookingIds: string[]) {
+type FakeEvent = {
+  id?: string;
+  summary?: string;
+  status?: string;
+  bookingId?: string; // present → a Pawservation event
+  start?: { date?: string; dateTime?: string };
+  end?: { date?: string; dateTime?: string };
+};
+
+function calendarResponse(events: FakeEvent[]) {
   return new Response(
     JSON.stringify({
-      items: bookingIds.map((id) => ({
-        summary: 'Boarding',
-        start: { date: IN_WINDOW_START },
-        end: { date: IN_WINDOW_END },
-        extendedProperties: { private: { pawbook: 'true', category: 'boarding', bookingId: id } },
+      items: events.map((e) => ({
+        id: e.id ?? 'evt_anon',
+        summary: e.summary ?? 'Boarding',
+        status: e.status ?? 'confirmed',
+        updated: '2026-07-27T00:00:00Z',
+        start: e.start ?? { date: IN_WINDOW_START },
+        end: e.end ?? { date: IN_WINDOW_END },
+        ...(e.bookingId
+          ? {
+              extendedProperties: {
+                private: { pawbook: 'true', category: 'boarding', bookingId: e.bookingId },
+              },
+            }
+          : {}),
       })),
     }),
     { status: 200 },
   );
 }
+const calendarListResponse = (bookingIds: string[]) =>
+  calendarResponse(bookingIds.map((id) => ({ bookingId: id })));
 
 async function seedSyncedBooking(
   env: Env,
@@ -222,5 +247,182 @@ describe('GET /:slug/admin/bookings triggers reconciliation', () => {
     );
     const body = (await res.json()) as { bookings: { id: string; status: string }[] };
     expect(body.bookings.find((b) => b.id === id)?.status).toBe('cancelled');
+  });
+});
+
+async function externalRows(env: Env) {
+  const { results } = await env.PAWBOOK_DB.prepare(
+    `SELECT GCalEventId, StartDate, EndDate, ExternalSummary FROM BookingRequests
+     WHERE TenantId = ? AND ServiceType = 'external' ORDER BY StartDate`,
+  )
+    .bind(TENANT_A)
+    .all<{ GCalEventId: string; StartDate: string; EndDate: string; ExternalSummary: string }>();
+  return results;
+}
+
+describe('reconcile v2 — external materialization lifecycle', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('creates, moves, and deletes an external row as Google changes', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // 1: appears
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([{ id: 'gev_1', summary: 'Neighbor stay — Rex' }]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await externalRows(env)).toEqual([
+      {
+        GCalEventId: 'gev_1',
+        StartDate: IN_WINDOW_START,
+        EndDate: IN_WINDOW_END,
+        ExternalSummary: 'Neighbor stay — Rex',
+      },
+    ]);
+    // 2: moved + retitled in Google → same row updated, not duplicated
+    vi.restoreAllMocks();
+    const moved = addDays(IN_WINDOW_START, 5);
+    const movedEnd = addDays(IN_WINDOW_END, 5);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([
+        { id: 'gev_1', summary: 'Rex — moved', start: { date: moved }, end: { date: movedEnd } },
+      ]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await externalRows(env)).toEqual([
+      { GCalEventId: 'gev_1', StartDate: moved, EndDate: movedEnd, ExternalSummary: 'Rex — moved' },
+    ]);
+    // 3: deleted in Google → row gone
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([]));
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await externalRows(env)).toEqual([]);
+  });
+
+  it('a timed external event blocks exactly the day it touches', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([
+        {
+          id: 'gev_t',
+          summary: 'Vet',
+          start: { dateTime: `${IN_WINDOW_START}T14:00:00-07:00` },
+          end: { dateTime: `${IN_WINDOW_START}T15:00:00-07:00` },
+        },
+      ]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    const [row] = await externalRows(env);
+    expect(row).toMatchObject({ StartDate: IN_WINDOW_START, EndDate: addDays(IN_WINDOW_START, 1) });
+  });
+
+  it('never touches an external row outside the queried window', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // A stale row far in the past (outside [today-1, today+180)) — absent from every response.
+    await env.PAWBOOK_DB.prepare(
+      `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, Status, SyncPending)
+       VALUES ('ext_old', ?, 'external', '2020-01-01', '2020-01-03', 1, 'gev_old', 'confirmed', 0)`,
+    )
+      .bind(TENANT_A)
+      .run();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([]));
+    await reconcileBookingsWithCalendar(env, tenant);
+    const row = await env.PAWBOOK_DB.prepare('SELECT Id FROM BookingRequests WHERE Id = ?')
+      .bind('ext_old')
+      .first();
+    expect(row).not.toBeNull();
+  });
+
+  it('skips cancelled-status events and events with no id', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([
+        { id: 'gev_c', summary: 'Ghost', status: 'cancelled' },
+        { id: '', summary: 'No id' },
+      ]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await externalRows(env)).toEqual([]);
+  });
+
+  it('a Pawservation-tagged event is never materialized as external', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedSyncedBooking(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([id]));
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await externalRows(env)).toEqual([]);
+    expect(await statusOf(env, id)).toBe('confirmed');
+  });
+
+  it("tenant isolation: tenant B's identically-named Google event ids never collide with A's rows", async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env); // tenant A only
+    await env.PAWBOOK_DB.prepare(
+      `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, Status, SyncPending)
+       VALUES ('ext_b', 'tnt_happytails', 'external', ?, ?, 1, 'gev_1', 'confirmed', 0)`,
+    )
+      .bind(IN_WINDOW_START, IN_WINDOW_END)
+      .run();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([])); // A's calendar now empty
+    await reconcileBookingsWithCalendar(env, tenant); // deletes A's in-window externals only
+    const b = await env.PAWBOOK_DB.prepare('SELECT Id FROM BookingRequests WHERE Id = ?')
+      .bind('ext_b')
+      .first();
+    expect(b).not.toBeNull();
+  });
+});
+
+describe('reconcile v2 — delete-detection now notifies the customer', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('cancels AND emails when email is configured; cancel stands when the email fails', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // Seed DIRECTLY (not via the API): the API path would fire its own calendar push against the
+    // fetch mock, and a configured RESEND key disables the prototype-code login endUserToken needs.
+    const jess = (await env.PAWBOOK_DB.prepare(
+      "SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = 'jess@example.com'",
+    )
+      .bind(TENANT_A)
+      .first<{ Id: string }>())!;
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: jess.Id,
+      serviceType: 'boarding',
+      startDate: IN_WINDOW_START,
+      endDate: IN_WINDOW_END,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 150,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_gone', null);
+    // Configure email ONLY now, for the reconcile under test.
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 're_test';
+    (env as { RESEND_FROM_BOOKING?: string }).RESEND_FROM_BOOKING = 'book@pawservation.test';
+    (env as { RESEND_FROM_NOREPLY?: string }).RESEND_FROM_NOREPLY = 'noreply@pawservation.test';
+
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input instanceof Request ? input.url : input);
+      calls.push(url);
+      if (url.includes('resend.com')) return new Response('{}', { status: 200 });
+      return calendarListResponse([]); // the event is gone from Google
+    });
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await statusOf(env, id)).toBe('cancelled');
+    expect(calls.some((u) => u.includes('resend.com'))).toBe(true);
+  });
+
+  it('without email configured, the cancel still happens silently', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedSyncedBooking(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await statusOf(env, id)).toBe('cancelled');
   });
 });

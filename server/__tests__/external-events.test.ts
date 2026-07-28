@@ -81,4 +81,21 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     );
     expect(ids).toEqual([]);
   });
+
+  it('is purged when the calendar connection is disconnected', async () => {
+    const { env } = createTestEnv();
+    await seedExternal(env);
+    const res = await app.request(
+      '/api/sunny-paws/admin/providers/calendar/disconnect',
+      { method: 'POST', headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const { results } = await env.PAWBOOK_DB.prepare(
+      "SELECT Id FROM BookingRequests WHERE TenantId = ? AND ServiceType = 'external'",
+    )
+      .bind(TENANT_A)
+      .all();
+    expect(results).toEqual([]);
+  });
 });

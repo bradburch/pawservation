@@ -2,6 +2,9 @@ import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/i
 import {
   clearBookingCalendarEventIds,
   clearSyncPending,
+  deleteAllExternalEvents,
+  deleteExternalEventsMissing,
+  getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
   listPetNamesForBooking,
@@ -12,6 +15,7 @@ import {
   setProviderAccessToken,
   setProviderCalendarId,
   updateBookingStatus,
+  upsertExternalEvent,
 } from '../db/repo';
 import {
   buildEventResource,
@@ -20,7 +24,9 @@ import {
   listCalendarEvents,
   refreshAccessToken,
   updateEvent,
+  type CalendarEvent,
 } from './google-calendar';
+import { isEmailConfigured, sendBookingStatusEmail } from './email';
 import type { ServiceType } from './services';
 import { decryptToken, encryptToken } from './token-crypto';
 import type { BookingRow, Tenant, ProviderConnectionWithTokens } from '../types';
@@ -204,6 +210,8 @@ export async function repointCalendarTarget(
   tenant: Tenant,
   calendarId: string | null,
 ): Promise<void> {
+  // External rows mirror the OLD calendar; the next reconcile re-materializes from the new one.
+  await deleteAllExternalEvents(env.PAWBOOK_DB, tenant.Id);
   await clearBookingCalendarEventIds(env.PAWBOOK_DB, tenant.Id);
   await setProviderCalendarId(env.PAWBOOK_DB, tenant.Id, 'calendar', calendarId);
 }
@@ -346,11 +354,26 @@ export async function deleteBookingCalendarEvent(
 const CALENDAR_SYNC_TTL_SECONDS = 120;
 export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:last`;
 
+/** External-event span → [StartDate, EndDate-exclusive) row dates. All-day events carry Google's
+ * exclusive end already; timed events occupy every calendar day they touch (a 14:00–15:00 visit
+ * blocks that one day; a Fri 18:00 – Sun 09:00 sit blocks Fri/Sat/Sun). A timed event ending at
+ * exactly midnight overcounts its final day by one — accepted: over-blocking is the safe error. */
+function externalSpan(e: CalendarEvent): { startDate: string; endDateExclusive: string } {
+  if (e.allDay) return { startDate: e.start, endDateExclusive: e.end };
+  const lastDay = e.end >= e.start ? e.end : e.start;
+  return { startDate: e.start, endDateExclusive: addDays(lastDay, 1) };
+}
+
 /**
- * Reconciles this tenant's synced bookings against Google Calendar: if a booking's event was
- * deleted directly in Calendar (not through Pawservation), the booking is marked cancelled. Read-only
- * against Google and strictly best-effort — a Calendar failure must never block the dashboard from
- * returning current DB state, same philosophy as syncBookingToCalendar above.
+ * Reconciles this tenant against Google Calendar — Google is authoritative for the window
+ * [today-1, today+180):
+ *  (a) a Pawservation-synced booking whose event is gone from Google is cancelled, and the
+ *      customer is emailed (best-effort, spec decision: notify via sendBookingStatusEmail);
+ *  (b) every foreign event (no private.bookingId) is materialized as a read-only
+ *      ServiceType='external' row — created, moved, and deleted as Google changes — which is how
+ *      pre-existing stays and hand-kept busy days block real capacity without availability ever
+ *      calling Google at request time.
+ * Still read-only against Google and best-effort: a Calendar failure leaves the DB as it was.
  */
 export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): Promise<void> {
   const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
@@ -366,8 +389,10 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
     `${windowStart}T00:00:00Z`,
     `${windowEndExclusive}T00:00:00Z`,
   );
-  const liveBookingIds = new Set(events.map((e) => e.private.bookingId).filter(Boolean));
+  const live = events.filter((e) => e.status !== 'cancelled');
 
+  // (a) Pawservation-originated events missing from Google → cancel + notify.
+  const liveBookingIds = new Set(live.map((e) => e.private.bookingId).filter(Boolean));
   const candidates = await listSyncedBookingIds(
     env.PAWBOOK_DB,
     tenant.Id,
@@ -375,17 +400,50 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
     windowEndExclusive,
   );
   for (const id of candidates) {
-    if (!liveBookingIds.has(id)) {
-      await updateBookingStatus(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    if (liveBookingIds.has(id)) continue;
+    const changed = await updateBookingStatus(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    if (!changed || !isEmailConfigured(env)) continue;
+    try {
+      const bk = await getBookingWithCustomer(env.PAWBOOK_DB, tenant.Id, id);
+      if (bk?.Email) {
+        const whenText = bk.EndDate ? `${bk.StartDate} – ${bk.EndDate}` : bk.StartDate;
+        await sendBookingStatusEmail(env, bk.Email, tenant.DisplayName, 'cancelled', whenText);
+      }
+    } catch (err) {
+      console.error('reconcile-cancel notification failed for booking', id, err);
     }
   }
+
+  // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
+  const liveIds: string[] = [];
+  for (const e of live) {
+    if (e.private.bookingId || !e.id || !e.start || !e.end) continue;
+    liveIds.push(e.id);
+    const span = externalSpan(e);
+    await upsertExternalEvent(env.PAWBOOK_DB, tenant.Id, {
+      gcalEventId: e.id,
+      summary: e.summary,
+      startDate: span.startDate,
+      endDateExclusive: span.endDateExclusive,
+    });
+  }
+  await deleteExternalEventsMissing(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    windowStart,
+    windowEndExclusive,
+    liveIds,
+  );
 }
 
-/** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. */
+/** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. The
+ * dashboard freshness path does the same two-step the cron sweep does — flush the outbox, then
+ * pull — throttled per tenant. */
 export async function reconcileIfStale(env: Env, tenant: Tenant): Promise<void> {
   const key = calendarSyncKey(tenant.Id);
   if (await env.PAWBOOK_CACHE.get(key).catch(() => null)) return;
   try {
+    await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);
   } catch {
     /* best-effort; the dashboard falls back to current DB state */

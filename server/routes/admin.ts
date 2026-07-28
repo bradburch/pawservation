@@ -11,6 +11,7 @@ import {
   countPetTypeReferences,
   createPetType,
   createService,
+  deleteAllExternalEvents,
   deletePetTypeAndScrub,
   getAnalytics,
   getBookingSyncData,
@@ -1052,6 +1053,9 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     await clearProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    // Materialized Google rows have no living source once disconnected — and no UI to remove
+    // read-only rows — so they must not survive to block capacity forever.
+    await deleteAllExternalEvents(c.env.PAWBOOK_DB, tenant.Id);
     return c.json({ status: 'disconnected' });
   })
 
