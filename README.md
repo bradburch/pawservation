@@ -120,7 +120,7 @@ app/          Four React apps: embed/ (widget), admin/ (dashboard + owner consol
               setup/ (signup-link page), shared-ui/ (API client, icons, hooks)
 src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
 sql/          schema.sql (canonical DDL) + seed.sql (demo tenants)
-migrations/   Incremental DB changes for already-provisioned databases
+migrations/   New incremental DB changes only — empty by design as of 2026-07-27
 public/       embed.js loader, demo host script, landing images, CSV import example
 ```
 
@@ -134,29 +134,26 @@ Two invariants worth knowing before you touch code:
 
 ## Database & migrations
 
-`npm run deploy` ships worker code **only** — it never touches the database. The two
-lifecycles:
+`npm run deploy` ships worker code **only** — it never touches the database. Baseline
+doctrine (re-baselined 2026-07-27 — full detail in `migrations/README.md`, keep the two
+consistent):
 
-- **Fresh install:** provision from `sql/schema.sql` (+ optional demo `sql/seed.sql`) via
-  `npm run seed:local` / `seed:remote`. The schema already includes everything through
-  `migrations/0023_booking_idempotency.sql`; do not replay migration files on top.
-- **Already-provisioned DB:** apply new files in `migrations/` **by hand**, in order,
-  before (or with) the deploy that needs them — otherwise the new code 500s on missing
-  columns:
-
-  ```bash
-  npx wrangler d1 execute pawbook-db --remote --file=./migrations/0007_booking_lifecycle.sql
-  # ...one command per file, in numeric order (use --local for the dev DB)
-  ```
-
-**Current remote state:** the production DB is fully migrated through `0023` (see
-`migrations/README.md` for the exact history and state).
+- **`sql/schema.sql` IS the baseline.** Every database — local, remote, and the Vitest
+  harness — is expected to match it exactly. `npm run seed:local` / `seed:remote` apply
+  `sql/schema.sql` (+ optional demo `sql/seed.sql`) directly; there is nothing to replay
+  on top.
+- **`migrations/` is empty by design** as of 2026-07-27. The incremental history that
+  built the old schema (`0001`–`0025`) was deleted in the re-baseline; it lives in git
+  (`git log -- migrations/`), not on disk.
+- **New schema changes:** add a file to `migrations/` starting at **`0001_*.sql`**
+  (numbering restarts from the new baseline) **and** mirror the change into
+  `sql/schema.sql` in the same branch — the test suite only sees what `schema.sql` has.
+  Apply new migration files to the remote DB **by hand** before (or with) the deploy that
+  needs them, e.g. `npx wrangler d1 execute pawbook-db --remote --file
+./migrations/0001_*.sql` — otherwise the new code 500s on missing columns.
 
 Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
-against existing DBs — no real DB here has a `d1_migrations` tracking table, and
-re-running `0002` against live data is destructive. When you change the schema, add a
-`migrations/` file **and** update `sql/schema.sql` to match (tests run against
-`schema.sql`).
+against existing DBs — no real DB here has a `d1_migrations` tracking table.
 
 ## Deploying
 

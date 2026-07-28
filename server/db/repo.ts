@@ -2125,7 +2125,7 @@ export async function listBookingPetsForUser(
 // These are the ONLY functions exempt from the tenantId-first rule: both tables
 // gate entry INTO the tenancy model (platform-owner accounts and the signup
 // allowlist), so they cannot themselves be tenant rows. D1 access still lives
-// only in this module. See migrations/0013_invite_signup_owner_console.sql.
+// only in this module.
 // Callers normalize emails (trim + lowercase) before every read/write.
 // ─────────────────────────────────────────────────────────────────────────────
 

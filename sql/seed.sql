@@ -22,10 +22,10 @@ INSERT OR REPLACE INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES
 -- Which services each tenant offers. Every tenant gets a row per built-in template (rows, not
 -- code, are the service list); Enabled mirrors what each demo sitter actually offers. Sunny Paws
 -- also has a CUSTOM service ('morning-walk', cloned from the walk template) to demo custom services.
--- Capacity lives on the service rows (0015): Sunny Paws boarding takes 2 pets/day, Happy Tails 4;
--- everything else is unlimited (NULL). Happy Tails' services accept dogs only ('["dog"]' — the
--- post-0015 materialized state of its dogs-only acceptance); NULL elsewhere = accepts every type.
--- A few services carry a short Description (0025) so the demo widget shows that feature; the rest
+-- Capacity lives on the service rows: Sunny Paws boarding takes 2 pets/day, Happy Tails 4;
+-- everything else is unlimited (NULL). Happy Tails' services accept dogs only ('["dog"]' —
+-- the materialized state of its dogs-only acceptance); NULL elsewhere = accepts every type.
+-- A few services carry a short Description so the demo widget shows that feature; the rest
 -- are NULL, which is the normal "no blurb" state.
 INSERT OR REPLACE INTO TenantServices
   (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder, MaxConcurrentPets, AcceptedPetTypes, Description) VALUES

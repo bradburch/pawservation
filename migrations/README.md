@@ -24,3 +24,5 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   `rm -rf .wrangler/state/v3/d1 && npm run seed:local`.
 
 There are currently no migration files: the baseline is current.
+
+Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.

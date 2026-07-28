@@ -41,5 +41,5 @@ Server: **http://localhost:8787** (landing → /admin, /demo; widget at /embed/:
 
 - Local D1/KV state lives under `.wrangler/` per checkout — a fresh worktree has none until `seed:local` runs.
 - Re-running `seed:local` resets all data (INSERT OR REPLACE seed; schema is IF NOT EXISTS).
-- Do NOT use `npm run migrate:*` against existing DBs without the baselining procedure in `migrations/README.md` (migration 0002 is destructive on re-run).
+- Do NOT use `npm run migrate:*` against existing DBs — `sql/schema.sql` is the baseline (re-baselined 2026-07-27); `migrations/` is empty by design and no real DB has a `d1_migrations` tracking table. See `migrations/README.md`.
 - Widget auth tokens are per-slug in sessionStorage; admin token in localStorage — a stale admin session survives reloads via `GET /api/admin/session`.

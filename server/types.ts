@@ -58,7 +58,7 @@ export type TenantService = {
   MaxPetCount: number | null;
   /** Pet-type slugs this service accepts; null = accepts every enabled type. */
   AcceptedPetTypes: string[] | null;
-  /** Pets per day cap for boarding and housesit pool services; null = unlimited; 0017 folds housesit MaxPerDay in. */
+  /** Pets per day cap for boarding and housesit pool services; null = unlimited (housesit's separate MaxPerDay column was folded into this one and later dropped). */
   MaxConcurrentPets: number | null;
   /** Tiered cancel policy; null = no fee (0016). */
   CancellationTiers: CancellationTier[] | null;
@@ -82,8 +82,8 @@ export type TenantServiceOption = {
 
 /**
  * One explicit rate for a specific set of pets. GroupKey is the sorted pet-id list; OptionKey
- * pins duration (see migrations/0020_pet_group_pricing.sql), so there is no DurationMinutes here
- * and no RateUnit — the billing unit comes from TenantServices.RateUnit.
+ * pins duration, so there is no DurationMinutes here and no RateUnit — the billing unit comes
+ * from TenantServices.RateUnit.
  */
 export type PetGroupPricingRow = {
   Id: string;
