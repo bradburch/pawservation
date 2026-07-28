@@ -50,6 +50,9 @@ export function MineTab() {
               ? b.pets.join(', ')
               : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`}
             {b.estCost != null ? ` · est. $${b.estCost}` : ''}
+            {b.chargesTotal > 0
+              ? ` · plus $${b.chargesTotal} (${b.charges.map((ch) => ch.label).join(', ')})`
+              : ''}
             {b.status === 'cancelled' && b.cancellationFee != null
               ? ` · cancellation fee $${b.cancellationFee}`
               : ''}

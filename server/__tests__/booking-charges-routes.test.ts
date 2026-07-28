@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { insertBookingRequest } from '../db/repo';
-import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
+import { insertBookingCharge, insertBookingRequest, insertInvitedCustomer } from '../db/repo';
+import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed' = 'confirmed') =>
   insertBookingRequest(env.PAWBOOK_DB, tenantId, {
@@ -163,5 +163,62 @@ describe('admin booking-charge routes', () => {
       env,
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe('GET /:slug/bookings/mine exposes charges', () => {
+  it("shows a booking's charges to the customer who owns it, and never another customer's", async () => {
+    const { env } = createTestEnv();
+    // seed_sp_board1 is jess@example.com's seeded confirmed sunny-paws booking (sql/seed.sql).
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: 'seed_sp_board1',
+      label: 'Vet visit',
+      amount: 45,
+    });
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/bookings/mine',
+      { headers: { authorization: `Bearer ${token}` } },
+      env,
+    );
+    const { bookings } = (await res.json()) as {
+      bookings: {
+        id: string;
+        charges: { label: string; amount: number }[];
+        chargesTotal: number;
+      }[];
+    };
+    const row = bookings.find((b) => b.id === 'seed_sp_board1')!;
+    expect(row.chargesTotal).toBe(45);
+    expect(row.charges).toEqual([{ label: 'Vet visit', amount: 45 }]);
+
+    // A second sunny-paws customer, with their own booking, must never see jess's charge.
+    const other = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'other@example.com',
+      'Other Customer',
+    );
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: other.Id,
+      serviceType: 'boarding',
+      startDate: '2030-01-01',
+      endDate: '2030-01-03',
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 100,
+      status: 'confirmed',
+    });
+    const otherToken = await endUserToken(env, 'sunny-paws', 'other@example.com');
+    const otherRes = await app.request(
+      '/api/sunny-paws/bookings/mine',
+      { headers: { authorization: `Bearer ${otherToken}` } },
+      env,
+    );
+    const { bookings: otherBookings } = (await otherRes.json()) as {
+      bookings: { id: string; charges: unknown[]; chargesTotal: number }[];
+    };
+    expect(otherBookings.find((b) => b.id === 'seed_sp_board1')).toBeUndefined();
+    expect(otherBookings.every((b) => b.chargesTotal === 0)).toBe(true);
   });
 });

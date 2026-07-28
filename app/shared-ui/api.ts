@@ -78,6 +78,10 @@ export type Booking = {
   endDate: string | null;
   petCount: number;
   estCost: number | null;
+  /** Extras the sitter added after the fact. `estCost` excludes them by design; what the client
+   *  owes is `estCost + chargesTotal`. */
+  charges: { label: string; amount: number }[];
+  chargesTotal: number;
   cancellationFee: number | null;
   status: string;
   pets: string[];
