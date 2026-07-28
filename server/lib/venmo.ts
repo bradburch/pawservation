@@ -307,6 +307,20 @@ export function rankCandidates(
 }
 
 /**
+ * Resolve a Venmo `From` name to exactly one client. Returns `null` for an empty normalized key,
+ * no matching client, or MORE THAN ONE matching client — a collision is refused, never guessed
+ * at. This is the ONLY place that decision is made: `matchVenmoTxns` (preview) and the confirm
+ * route in `routes/admin.ts` both call this, so a name that resolves ambiguously in one can never
+ * silently resolve — to a different client, via last-writer-wins or otherwise — in the other.
+ */
+export function resolveMatchClient(clients: MatchClient[], from: string): MatchClient | null {
+  const key = normalizeVenmoName(from);
+  if (key === '') return null;
+  const hits = clients.filter((c) => normalizeVenmoName(c.venmoUsername ?? c.name ?? '') === key);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
  * Sort every parsed transaction into one of four buckets. Writes nothing and knows nothing about
  * D1 — the routes hand it three lists and a set, and the same function runs again on confirm so
  * the server never has to trust a client's idea of what was matched.
@@ -319,15 +333,6 @@ export function matchVenmoTxns(input: {
 }): VenmoPreview {
   const { txns, clients, outstanding, alreadyImported } = input;
 
-  // Clients by normalized match key. A key with two clients on it can never be resolved
-  // automatically, so it is kept as a LIST and refused below rather than being silently won by
-  // whichever client sorted first.
-  const byKey = new Map<string, MatchClient[]>();
-  for (const client of clients) {
-    const key = normalizeVenmoName(client.venmoUsername ?? client.name ?? '');
-    if (key === '') continue; // nothing to match on
-    byKey.set(key, [...(byKey.get(key) ?? []), client]);
-  }
   const bookingsByClient = new Map<string, OutstandingBooking[]>();
   for (const b of outstanding)
     bookingsByClient.set(b.endUserId, [...(bookingsByClient.get(b.endUserId) ?? []), b]);
@@ -351,24 +356,25 @@ export function matchVenmoTxns(input: {
       preview.unmatched.push({ ...row, reason: 'This transaction has no sender name to match on' });
       continue;
     }
-    const hits = byKey.get(key) ?? [];
-    if (hits.length === 0) {
+    const client = resolveMatchClient(clients, txn.from);
+    if (!client) {
+      // resolveMatchClient collapses "no hit" and "collision" into one null — recover which one
+      // this was purely to phrase the sitter-facing reason; the pass/fail decision above is
+      // already final and comes from the one shared resolver.
+      const hits = clients.filter(
+        (c) => normalizeVenmoName(c.venmoUsername ?? c.name ?? '') === key,
+      );
       preview.unmatched.push({
         ...row,
-        reason: `No client matches the Venmo name “${txn.from}”. Add it to their row in Clients and check the file again.`,
+        reason:
+          hits.length === 0
+            ? `No client matches the Venmo name “${txn.from}”. Add it to their row in Clients and check the file again.`
+            : `More than one client is set up under the Venmo name “${txn.from}” (${hits
+                .map((h) => h.label)
+                .join(', ')}). Give them different Venmo usernames in Clients.`,
       });
       continue;
     }
-    if (hits.length > 1) {
-      preview.unmatched.push({
-        ...row,
-        reason: `More than one client is set up under the Venmo name “${txn.from}” (${hits
-          .map((h) => h.label)
-          .join(', ')}). Give them different Venmo usernames in Clients.`,
-      });
-      continue;
-    }
-    const client = hits[0];
     const candidates = rankCandidates(txn, bookingsByClient.get(client.endUserId) ?? []);
     if (candidates.length === 0) {
       preview.unmatched.push({

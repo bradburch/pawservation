@@ -96,9 +96,9 @@ import {
   isVenmoTxnId,
   MAX_VENMO_ROWS,
   matchVenmoTxns,
-  normalizeVenmoName,
   parseVenmoCsv,
   rankCandidates,
+  resolveMatchClient,
   type MatchClient,
   type OutstandingBooking,
 } from '../lib/venmo';
@@ -1919,9 +1919,6 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
     const txnById = new Map(parsed.incoming.map((t) => [t.txnId, t]));
-    const byClient = new Map<string, MatchClient>();
-    for (const client of inputs.clients)
-      byClient.set(normalizeVenmoName(client.venmoUsername ?? client.name ?? ''), client);
 
     const skipped: { txnId: string; reason: string }[] = [];
     let imported = 0;
@@ -1938,7 +1935,9 @@ export const adminRoutes = new Hono<AppEnv>()
         continue;
       }
       // Re-rank from THIS request's data; the browser's idea of the candidates is never trusted.
-      const client = byClient.get(normalizeVenmoName(txn.from));
+      // resolveMatchClient is the SAME function the preview uses — a name that's ambiguous there
+      // is refused here too, never silently resolved by whichever client happened to sort last.
+      const client = resolveMatchClient(inputs.clients, txn.from);
       const candidates = client
         ? rankCandidates(
             txn,

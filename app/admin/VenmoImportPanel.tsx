@@ -30,6 +30,12 @@ export function VenmoImportPanel({
   const [choices, setChoices] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<VenmoImportResult | null>(null);
+  // The server's skip list carries only a txnId + reason. Snapshotted from `preview` right before
+  // `record()` calls `reset()` (which nulls `preview` out) so a skipped row can still be shown as
+  // "$99 from Jess Demo — reason" instead of a bare txnId-less reason.
+  const [chosenInfo, setChosenInfo] = useState<Map<string, { amount: number; from: string }>>(
+    new Map(),
+  );
 
   const reset = () => {
     setCsv(null);
@@ -80,6 +86,17 @@ export function VenmoImportPanel({
     clearError();
     setBusy(true);
     try {
+      // Capture amount + sender for every chosen txn BEFORE reset() clears `preview` — this is
+      // the only place left that still knows what a skipped txnId was.
+      const rows = preview ? [...preview.matched, ...preview.ambiguous] : [];
+      setChosenInfo(
+        new Map(
+          chosen.flatMap(({ txnId }) => {
+            const row = rows.find((r) => r.txnId === txnId);
+            return row ? [[txnId, { amount: row.amount, from: row.clientLabel }] as const] : [];
+          }),
+        ),
+      );
       setResult(await adminApi.payments.venmoImport(session.slug, session.token, csv, chosen));
       reset();
       await onImported();
@@ -113,6 +130,7 @@ export function VenmoImportPanel({
           type="file"
           accept=".csv"
           aria-label="Venmo CSV"
+          disabled={busy}
           onChange={(e) => {
             const file = e.target.files?.[0];
             setFileName(file?.name ?? '');
@@ -133,7 +151,10 @@ export function VenmoImportPanel({
           {result.totalAmount}.
           {result.skipped.length > 0
             ? ` ${result.skipped.length} skipped: ${result.skipped
-                .map((s) => s.reason)
+                .map((s) => {
+                  const info = chosenInfo.get(s.txnId);
+                  return info ? `$${info.amount} from ${info.from} — ${s.reason}` : s.reason;
+                })
                 .join('; ')}.`
             : ''}
         </p>

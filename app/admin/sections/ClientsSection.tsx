@@ -142,14 +142,17 @@ function VenmoField({
   const saved = customer.venmoUsername ?? '';
   const [value, setValue] = useState(saved);
   const [busy, setBusy] = useState(false);
-  const dirty = value.trim() !== saved;
+  // The server stores the handle '@'-less and trimmed (routes/admin.ts PATCH), so the dirty check
+  // has to match that normalization too — otherwise typing "@jess" saves as "jess" but the field
+  // never settles clean, since `value` still has the '@' the round trip stripped.
+  const dirty = value.trim().replace(/^@+/, '') !== saved;
 
   const save = async () => {
     if (!dirty || busy) return;
     clearError();
     setBusy(true);
     try {
-      const next = value.trim();
+      const next = value.trim().replace(/^@+/, '');
       await adminApi.customers.setVenmo(slug, token, customer.id, next === '' ? null : next);
       onSaved();
     } catch (e) {
@@ -670,6 +673,14 @@ export function ClientsSection({
                         {owner.status.charAt(0).toUpperCase() + owner.status.slice(1)}
                       </span>
                     </span>
+                    <VenmoField
+                      customer={owner}
+                      slug={slug}
+                      token={token}
+                      onSaved={onCustomersChanged}
+                      onError={handleError}
+                      clearError={clearError}
+                    />
                     <button onClick={() => void sendWelcome(owner)} disabled={busy}>
                       Send welcome email
                     </button>
@@ -689,14 +700,6 @@ export function ClientsSection({
                     <button onClick={() => void removeCustomer(owner.id)} disabled={busy}>
                       Remove client
                     </button>
-                    <VenmoField
-                      customer={owner}
-                      slug={slug}
-                      token={token}
-                      onSaved={onCustomersChanged}
-                      onError={handleError}
-                      clearError={clearError}
-                    />
                   </li>
                 ))}
               </ul>

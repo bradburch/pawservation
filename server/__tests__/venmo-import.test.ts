@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { insertPayment } from '../db/repo';
+import { insertInvitedCustomer, insertPayment } from '../db/repo';
 import app from '../index';
 import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -243,5 +243,80 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     // An explicit count, not a for-loop over possibly-zero rows, so this can't pass vacuously.
     const rows = raw.prepare('SELECT TenantId, BookingRequestId FROM Payments').all();
     expect(rows).toHaveLength(0);
+  });
+
+  it('refuses a blank-From transaction even when a nameless client sits on the empty match key', async () => {
+    // Both a blank `From` and a client with no Name/VenmoUsername normalize to the SAME empty
+    // key. The hand-built Map this route used to build had no empty-key guard, so it would
+    // silently resolve the blank transaction onto this nameless client's own receivable.
+    const { env, raw } = createTestEnv();
+    const nameless = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'nameless@example.com',
+      null,
+    );
+    raw.exec(
+      `INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, EstCost, Status)
+       VALUES ('bk_nameless', '${TENANT_A}', '${nameless.Id}', 'boarding', '2028-06-20', 1, 250, 'confirmed')`,
+    );
+    const csv = VENMO_CSV.replace(
+      'Boarding for Bella,Jess Demo,Sunny Paws',
+      'Boarding for Bella,,Sunny Paws',
+    );
+    const res = await post(env, 'payments/venmo/import', {
+      csv,
+      choices: [{ txnId: '4139874112233445566', bookingId: 'bk_nameless' }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [
+        {
+          txnId: '4139874112233445566',
+          reason: 'That booking is no longer a match for this payment',
+        },
+      ],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('refuses to record a payment when two clients collide on one normalized Venmo key', async () => {
+    // eu_sp_jess ("Jess Demo") and this new client both normalize to "jessdemo". A hand-built
+    // last-writer-wins Map would silently resolve "Jess Demo" onto whichever client sorted last
+    // (by Email, per listCustomers) and happily pay THEIR booking instead of refusing outright.
+    const { env, raw } = createTestEnv();
+    const imposter = await insertInvitedCustomer(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      'zzcollide@example.com',
+      null,
+    );
+    await app.request(
+      `/api/sunny-paws/admin/customers/${imposter.Id}`,
+      {
+        method: 'PATCH',
+        headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venmoUsername: 'Jess-Demo' }),
+      },
+      env,
+    );
+    raw.exec(
+      `INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, PetCount, EstCost, Status)
+       VALUES ('bk_imposter', '${TENANT_A}', '${imposter.Id}', 'boarding', '2028-06-20', 1, 250, 'confirmed')`,
+    );
+    const res = await post(env, 'payments/venmo/import', {
+      csv: VENMO_CSV,
+      choices: [{ txnId: '4139874112233445566', bookingId: 'bk_imposter' }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [
+        {
+          txnId: '4139874112233445566',
+          reason: 'That booking is no longer a match for this payment',
+        },
+      ],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
   });
 });
