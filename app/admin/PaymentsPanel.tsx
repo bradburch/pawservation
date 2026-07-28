@@ -115,7 +115,11 @@ export function PaymentsPanel({
                 ${p.amount} · {p.method} · {p.paidDate}
                 {p.note ? ` — ${p.note}` : ''}
               </span>
-              <button disabled={busyId === p.id} onClick={() => void remove(p.id)}>
+              <button
+                disabled={busyId === p.id}
+                onClick={() => void remove(p.id)}
+                aria-label={`Delete the $${p.amount} ${p.method} payment`}
+              >
                 Delete
               </button>
             </li>

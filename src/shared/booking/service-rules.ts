@@ -110,8 +110,13 @@ export function validatePetTypeAcceptance(
 ): string | null {
   if (accepted === null) return null;
   for (const pet of pets) {
-    if (!accepted.includes(pet.petType))
-      return `${serviceLabel} doesn't accept ${labelOf(pet.petType).toLowerCase()} — ${pet.name} can't join this booking.`;
+    if (!accepted.includes(pet.petType)) {
+      // Registry labels are singular ("Cat"), so pluralize for the sentence — naive add-s is
+      // right for every seeded label (cats, dogs, birds); a label already ending in s keeps it.
+      const label = labelOf(pet.petType).toLowerCase();
+      const plural = label.endsWith('s') ? label : `${label}s`;
+      return `${serviceLabel} doesn't accept ${plural} — ${pet.name} can't join this booking.`;
+    }
   }
   return null;
 }

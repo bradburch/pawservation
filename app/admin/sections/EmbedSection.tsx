@@ -16,9 +16,51 @@ function CopyableSnippet({ value }: { value: string }) {
   };
   return (
     <div>
-      <textarea readOnly rows={3} value={value} onFocus={(e) => e.target.select()} />
+      <textarea
+        readOnly
+        rows={3}
+        aria-label="Embed code"
+        value={value}
+        onFocus={(e) => e.target.select()}
+      />
       <button type="button" onClick={() => void copy()}>
         {copied ? 'Copied!' : 'Copy the code'}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The no-website path Help promises: a copyable direct URL to the hosted booking page. Built
+ * client-side from the page's own origin — the same origin the embed preview iframe below loads
+ * from, so it is always the address this deployment actually serves.
+ */
+function DirectLink({ slug }: { slug: string }) {
+  const [copied, setCopied] = useState(false);
+  const url = `${window.location.origin}/embed/${encodeURIComponent(slug)}`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 5000);
+    } catch {
+      /* clipboard denied — the input still selects on focus for manual copy */
+    }
+  };
+  return (
+    <div className="pb-row">
+      <p>
+        <strong>No website?</strong> Send clients this link — it opens the same booking page on its
+        own:
+      </p>
+      <input
+        readOnly
+        aria-label="Direct link to your booking page"
+        value={url}
+        onFocus={(e) => e.target.select()}
+      />
+      <button type="button" onClick={() => void copy()}>
+        {copied ? 'Copied!' : 'Copy the link'}
       </button>
     </div>
   );
@@ -131,13 +173,15 @@ export function EmbedSection({
         </Hint>
       </h2>
       <p className="pb-applies">
-        A live preview of your widget — exactly what customers see, with your saved branding. Save
-        settings to refresh it.
+        A live preview of your widget with your saved branding. Save settings to refresh it. (If
+        you&rsquo;ve signed in as a customer in this browser, the preview shows that session — a
+        first-time visitor sees the sign-in screen instead.)
       </p>
       {everActive && (
         <>
           <WidgetPreview slug={session.slug} reloadKey={previewKey} />
           <Snippets session={session} />
+          <DirectLink slug={session.slug} />
         </>
       )}
     </>

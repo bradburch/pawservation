@@ -4,12 +4,16 @@ import { IconClipboardCheck } from '../../shared-ui/icons';
 import { ChargesPanel } from '../ChargesPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { totalDue, type ServiceForm, type Session } from '../shared.js';
+import { formatFriendlyDate } from '../../../src/shared/index.js';
 import { Hint } from '../Hint';
 
 /** Renders the dates for one row: single date (+ time, for timed services), or a range with the
- * customer's optional arrival time. */
+ * customer's optional arrival time. Humanized ("Jul 29 – 31" not "2026-07-29 – 2026-07-31") —
+ * this is the sitter's densest view, and it was the last surface still speaking raw ISO. */
 function formatWhen(b: AdminBooking): string {
-  const range = b.endDate ? `${b.startDate} – ${b.endDate}` : b.startDate;
+  const range = b.endDate
+    ? `${formatFriendlyDate(b.startDate)} – ${formatFriendlyDate(b.endDate)}`
+    : formatFriendlyDate(b.startDate);
   if (!b.startTime) return range;
   return b.endDate ? `${range}, arriving ${b.startTime}` : `${range} at ${b.startTime}`;
 }
@@ -140,10 +144,15 @@ function BookingList({
             className="pb-confirm"
             disabled={busyId === b.id}
             onClick={() => void setStatus(b, 'confirmed')}
+            aria-label={`Confirm ${b.customerName ?? 'this booking'}, ${formatWhen(b)}`}
           >
             Confirm
           </button>
-          <button disabled={busyId === b.id} onClick={() => void setStatus(b, 'declined')}>
+          <button
+            disabled={busyId === b.id}
+            onClick={() => void setStatus(b, 'declined')}
+            aria-label={`Decline ${b.customerName ?? 'this booking'}, ${formatWhen(b)}`}
+          >
             Decline
           </button>
         </>
@@ -189,6 +198,7 @@ function BookingList({
             <>
               {Object.keys(b.answers).length > 0 && (
                 <dl className="pb-answers">
+                  <div className="pb-answers-title">Their answers</div>
                   {Object.entries(b.answers).map(([qid, answer]) => (
                     <div key={qid}>
                       <dt>{questionLabel(b.type, qid)}</dt>

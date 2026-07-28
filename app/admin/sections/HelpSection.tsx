@@ -14,24 +14,26 @@ export function HelpSection() {
 
       <h3>Getting set up</h3>
       <p>
-        When you first sign in, Quick setup walks you through the basics: your business details, the
-        pets you take, what you offer, and your prices. You can re-run it anytime from{' '}
+        When you first sign in, Quick setup walks you through the basics: your business details,
+        what you offer, and your prices. You can re-run it anytime from{' '}
         <a href="#services">Services &amp; Rates</a> — it only adds, never overwrites. Three
         sections finish the picture: <a href="#business">Business</a> holds your contact details,{' '}
         <a href="#pets">Pet types</a> sets which animals you accept, and Services &amp; Rates is
         where each service&rsquo;s pricing, questions, and booking limits — including daily caps —
-        live. Nothing changes for clients until you save — a dark bar appears at the bottom of the
-        screen whenever you have unsaved changes.
+        live. Settings changes reach clients only when you save — a dark bar appears at the bottom
+        of the screen whenever you have unsaved changes. (Time off and client changes apply
+        immediately; they have no save step.)
       </p>
 
       <h3>Taking bookings</h3>
       <p>
         Only people on your client list can book, so start in <a href="#clients">Clients</a>: add
-        each client&rsquo;s email (or import a spreadsheet), then send them a welcome email from
-        their row whenever you&rsquo;re ready. A client&rsquo;s request arrives under &ldquo;Needs
-        your reply&rdquo; — nothing is ever booked without you. Confirm and the client gets an
-        email; decline and they hear that too. Pawservation won&rsquo;t double-book you: once a day
-        is full, or you&rsquo;ve blocked it as time off, clients simply can&rsquo;t pick it.
+        each client together with their first pet (or import a spreadsheet), then send them a
+        welcome email from their row whenever you&rsquo;re ready. A client&rsquo;s request arrives
+        under &ldquo;Needs your reply&rdquo; — nothing is ever booked without you. Confirm and the
+        client gets an email; decline and they hear that too. Pawservation won&rsquo;t double-book
+        you: once a day is full, or you&rsquo;ve blocked it as time off, clients simply can&rsquo;t
+        pick it.
       </p>
 
       <h3>Your calendar and Google Calendar</h3>
@@ -53,10 +55,10 @@ export function HelpSection() {
         automatically and the rest of your Google account stops being read.
       </p>
       <p>
-        Blocking days and busy calendar events stop <em>new</em> requests only — neither one ever
-        changes or cancels a booking you&rsquo;ve already confirmed. And nothing on your calendar
-        can book you: every request lands under <a href="#bookings">Bookings</a> and waits for you
-        to confirm or decline it.
+        Blocking days and calendar events stop <em>new</em> requests only — neither one ever changes
+        or cancels a booking you&rsquo;ve already confirmed. And nothing on your calendar can book
+        you: every request lands under <a href="#bookings">Bookings</a> and waits for you to confirm
+        or decline it.
       </p>
 
       <h3>Getting paid</h3>

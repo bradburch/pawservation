@@ -344,7 +344,15 @@ export function OwnerConsole({
                       <table>
                         <thead>
                           <tr>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'name'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -353,7 +361,15 @@ export function OwnerConsole({
                                 Sitter{sortIndicator(sort, 'name')}
                               </button>
                             </th>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'clients'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -362,7 +378,15 @@ export function OwnerConsole({
                                 Clients{sortIndicator(sort, 'clients')}
                               </button>
                             </th>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'bookings'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -371,7 +395,15 @@ export function OwnerConsole({
                                 Bookings{sortIndicator(sort, 'bookings')}
                               </button>
                             </th>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'earned'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"

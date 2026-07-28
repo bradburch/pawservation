@@ -140,6 +140,16 @@ describe('validatePetTypeAcceptance', () => {
     ).toBe("Boarding doesn't accept cats — Mochi can't join this booking.");
   });
 
+  it('pluralizes a SINGULAR registry label — the shape real tenants store ("Cat", "Dog")', () => {
+    // The seeded registry inserts singular labels; a plural-only stub here once masked
+    // "Boarding doesn't accept cat" reaching real customers.
+    expect(
+      validatePetTypeAcceptance(['dog'], 'Boarding', [{ name: 'Mochi', petType: 'cat' }], (slug) =>
+        slug === 'cat' ? 'Cat' : 'Dog',
+      ),
+    ).toBe("Boarding doesn't accept cats — Mochi can't join this booking.");
+  });
+
   it('passes when every pet is on the list; empty list rejects everything', () => {
     expect(
       validatePetTypeAcceptance(
@@ -165,6 +175,6 @@ describe('validatePetTypeAcceptance', () => {
         [{ name: 'Ziggy', petType: 'axolotl' }],
         (slug) => slug,
       ),
-    ).toBe("Boarding doesn't accept axolotl — Ziggy can't join this booking.");
+    ).toBe("Boarding doesn't accept axolotls — Ziggy can't join this booking.");
   });
 });

@@ -76,7 +76,12 @@ export function TimeOffSection({
         {blocked.map((b) => (
           <li key={b.id}>
             {formatBlockRange(b.startDate, b.endDate)}
-            <button onClick={() => void removeBlock(b.id)}>Remove</button>
+            <button
+              onClick={() => void removeBlock(b.id)}
+              aria-label={`Remove time off ${formatBlockRange(b.startDate, b.endDate)}`}
+            >
+              Remove
+            </button>
           </li>
         ))}
       </ul>
@@ -102,10 +107,10 @@ export function TimeOffSection({
       <p className="pb-hint">
         <strong>How unavailable days work.</strong> Blocking days stops <em>new</em> requests for
         those dates — clients simply can&rsquo;t pick them. It never changes a booking you&rsquo;ve
-        already confirmed, and it never cancels anything. Busy events on a connected Google Calendar
-        work the same way (see <a href="#apps">Connected apps</a>). And nothing is ever booked
-        without you: every request waits under <a href="#bookings">Bookings</a> until you confirm or
-        decline it.
+        already confirmed, and it never cancels anything. Events on a connected Google Calendar work
+        the same way (see <a href="#apps">Connected apps</a>). And nothing is ever booked without
+        you: every request waits under <a href="#bookings">Bookings</a> until you confirm or decline
+        it.
       </p>
     </>
   );

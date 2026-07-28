@@ -1,5 +1,5 @@
 // Booking, date, and pricing core — pure TypeScript with no runtime dependencies.
-export { formatShortDate, formatBlockRange } from './util/date-format.js';
+export { formatShortDate, formatFriendlyDate, formatBlockRange } from './util/date-format.js';
 export {
   serviceSummary,
   type ServiceSummary,

@@ -98,8 +98,17 @@ function PetAdder({
 
   return (
     <div className="pb-row pb-add-pet">
-      <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
-      <select value={selectedPetType} onChange={(e) => setPetType(e.target.value)}>
+      <input
+        placeholder="Pet name"
+        aria-label="Pet name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <select
+        value={selectedPetType}
+        aria-label="Pet type"
+        onChange={(e) => setPetType(e.target.value)}
+      >
         {petTypes.map((pt) => (
           <option key={pt.petType} value={pt.petType}>
             {pt.label}
@@ -108,6 +117,7 @@ function PetAdder({
       </select>
       <input
         placeholder="Care notes (feeding, meds, quirks — optional)"
+        aria-label="Care notes (optional)"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
       />
@@ -608,6 +618,7 @@ export function ClientsSection({
           key={fileInputKey}
           type="file"
           accept=".csv"
+          aria-label="Client CSV file"
           onChange={(e) => {
             setCsvFile(e.target.files?.[0] ?? null);
             setImportResult(null);
@@ -640,10 +651,10 @@ export function ClientsSection({
             {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
             {importResult.importedPets === 1 ? '' : 's'}.
             {importResult.invitesSent > 0
-              ? ` Sent ${importResult.invitesSent} welcome email(s).`
+              ? ` Sent ${importResult.invitesSent} welcome email${importResult.invitesSent === 1 ? '' : 's'}.`
               : ''}
             {importResult.invitesFailed > 0
-              ? ` ${importResult.invitesFailed} welcome email(s) failed to send.`
+              ? ` ${importResult.invitesFailed} welcome email${importResult.invitesFailed === 1 ? '' : 's'} failed to send.`
               : ''}
           </p>
           {importResult.skippedRows.length > 0 && (

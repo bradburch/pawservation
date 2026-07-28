@@ -127,6 +127,7 @@ import {
   buildGroupKey,
   buildMixKey,
   cancellationFee,
+  formatFriendlyDate,
   getPacificDateStr,
   isDedicatedCalendarId,
   parseMixKey,
@@ -186,7 +187,7 @@ async function loadVenmoMatchInputs(
       .map((b) => ({
         bookingId: b.BookingId,
         endUserId: b.EndUserId,
-        label: `${labelByType.get(b.ServiceType) ?? b.ServiceType} starting ${b.StartDate}`,
+        label: `${labelByType.get(b.ServiceType) ?? b.ServiceType} starting ${formatFriendlyDate(b.StartDate)}`,
         startDate: b.StartDate,
         balance: b.Expected - b.PaidTotal,
       })),

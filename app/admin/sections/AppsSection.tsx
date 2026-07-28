@@ -80,7 +80,8 @@ function PetCalendarAction({
         <small className="pb-hint">
           Pawservation makes a separate “{PET_CALENDAR_NAME}” calendar in your Google account and
           syncs bookings there instead, so only pet work affects your availability. Your upcoming
-          bookings move across automatically, and your personal calendar stops being read.
+          bookings are added to it automatically — the copies already on your main calendar stay
+          there until you remove them — and your personal calendar stops being read.
         </small>
       </div>
     </>
@@ -173,7 +174,7 @@ export function AppsSection({
         <IconPlug size={18} /> Connected apps
         <Hint label="Connected apps">
           Link Pawservation to tools you already use. With Google Calendar connected, bookings
-          appear on your calendar automatically — and busy events on that calendar block new booking
+          appear on your calendar automatically — and events on that calendar block new booking
           requests here.
         </Hint>
       </h2>
@@ -216,11 +217,11 @@ export function AppsSection({
         </li>
       </ul>
       <p className="pb-hint">
-        <strong>How your calendar affects bookings.</strong> Busy events on the connected calendar,
-        and days you mark under <a href="#timeoff">Time off</a>, stop <em>new</em> requests for
-        those dates — they never change a booking you&rsquo;ve already confirmed. And nothing books
-        itself: every request waits under <a href="#bookings">Bookings</a> until you confirm or
-        decline it.
+        <strong>How your calendar affects bookings.</strong> Events on the connected calendar (even
+        ones marked free), and days you mark under <a href="#timeoff">Time off</a>, stop{' '}
+        <em>new</em> requests for those dates — they never change a booking you&rsquo;ve already
+        confirmed. And nothing books itself: every request waits under{' '}
+        <a href="#bookings">Bookings</a> until you confirm or decline it.
       </p>
     </>
   );

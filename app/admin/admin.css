@@ -178,8 +178,8 @@ body {
 }
 
 .pb-wrap input[type='checkbox'] {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   accent-color: var(--ink);
 }
 
@@ -195,7 +195,10 @@ body {
    left empty. Driven by aria-invalid so the visual and the screen-reader signal can
    never disagree. Focus keeps the red ring (declared after :focus, so it wins). */
 .pb-wrap input[aria-invalid='true'] {
-  border-color: var(--bad);
+  /* Hue + weight: a doubled border keeps the signal visible for users who can't rely on the
+     red alone (1.4.1) without adding layout shift (padding absorbs the extra pixel). */
+  border: 2px solid var(--bad);
+  padding: 9px 11px;
 }
 .pb-wrap input[aria-invalid='true']:focus {
   border-color: var(--bad);
@@ -1237,7 +1240,7 @@ body {
   gap: 4px;
   width: 100%;
   min-height: 0;
-  padding: 12px 52px 12px 12px; /* right inset clears the switch */
+  padding: 12px 60px 12px 12px; /* right inset clears the switch */
   background: none;
   border: none;
   border-radius: 10px;
@@ -1299,8 +1302,8 @@ body {
   z-index: 1;
   appearance: none;
   -webkit-appearance: none;
-  width: 34px;
-  height: 20px;
+  width: 40px;
+  height: 24px;
   margin: 0;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1531,8 +1534,8 @@ body {
 .pb-wrap .pb-cal-chip {
   display: block;
   width: 100%;
-  min-height: 0;
-  padding: 1px 5px;
+  min-height: 24px;
+  padding: 3px 5px;
   text-align: left;
   border: 1px solid var(--ink);
   border-radius: 6px;
@@ -1556,8 +1559,8 @@ body {
 .pb-wrap .pb-cal-more {
   background: none;
   border: none;
-  min-height: 0;
-  padding: 0 5px;
+  min-height: 24px;
+  padding: 2px 5px;
   text-align: left;
   color: var(--soft);
   font-family: var(--sans);
@@ -1609,8 +1612,8 @@ body {
 
 .pb-cal-key {
   display: inline-block;
-  width: 14px;
-  height: 10px;
+  width: 18px;
+  height: 13px;
   border-radius: 4px;
   margin-right: 5px;
 }
@@ -1629,14 +1632,16 @@ body {
 }
 
 .pb-cal-key-external {
+  /* Visible hatch (sage on wash) — the old page-on-transparent stripes vanished at swatch
+     size, leaving this indistinguishable from the pending swatch's dashed border. */
   background: repeating-linear-gradient(
     -45deg,
-    var(--page),
-    var(--page) 3px,
-    transparent 3px,
-    transparent 6px
+    var(--sage-wash),
+    var(--sage-wash) 3px,
+    var(--sage) 3px,
+    var(--sage) 5px
   );
-  border: 1px dashed var(--soft);
+  border: 1px solid var(--soft);
 }
 
 .pb-cal-sync {
@@ -1771,12 +1776,23 @@ body {
   flex-wrap: wrap;
 }
 
-/* Intake Q&A inside the expanded booking row (BookingsSection). */
+/* Intake Q&A inside the expanded booking row (BookingsSection). Full-width on purpose: in the
+   row's flex flow the block otherwise sits IN the header line and shoves Confirm/Decline ~370px
+   left the moment a row expands — right out from under the pointer. */
 .pb-answers {
+  flex-basis: 100%;
+  width: 100%;
   margin: 0.5rem 0;
   padding: 0.5rem 0.75rem;
   background: #f6f6f4;
   border-radius: 6px;
+}
+.pb-answers-title {
+  display: block;
+  font-weight: 700;
+  font-size: 0.85em;
+  color: var(--ink);
+  margin-bottom: 4px;
 }
 .pb-answers dt {
   font-weight: 600;
@@ -1847,4 +1863,11 @@ body {
   padding: 12px 20px 16px;
   background: var(--card);
   border-top: 1px solid var(--line);
+}
+
+/* Anchored headings land below the sticky topbar instead of underneath it. */
+.pb-wrap h2,
+.pb-wrap h3,
+.pb-account-card {
+  scroll-margin-top: 96px;
 }
