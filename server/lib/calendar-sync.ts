@@ -1,5 +1,6 @@
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
+  chunkArray,
   clearBookingCalendarEventIds,
   clearSyncPending,
   deleteAllExternalEvents,
@@ -15,7 +16,7 @@ import {
   setProviderAccessToken,
   setProviderCalendarId,
   updateBookingStatus,
-  upsertExternalEvent,
+  upsertExternalEventStatement,
 } from '../db/repo';
 import {
   buildEventResource,
@@ -354,6 +355,20 @@ export async function deleteBookingCalendarEvent(
 const CALENDAR_SYNC_TTL_SECONDS = 120;
 export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:last`;
 
+/** Cap on how many foreign Google events one reconcile pass MATERIALIZES (writes a row for) — a
+ * shared calendar can trivially carry thousands of events, and reconcileIfStale runs synchronously
+ * on a user-facing GET (the dashboard load), so an unbounded per-event awaited-write loop there is
+ * a real latency/DoS surface. Same bound philosophy as BACKFILL_LIMIT. Deliberately does NOT
+ * shrink the set used for delete-detection (see `liveIds` below) — capping WRITES is safe because
+ * a deferred event is picked up next pass; capping the deletion truth set would risk deleting a
+ * row for an event that is still live in Google, just not yet (re)materialized. */
+const MATERIALIZE_LIMIT = 200;
+
+/** Chunk size for the db.batch() calls that write materialized external rows — each statement
+ * only binds 6 params (nowhere near D1's per-statement cap), so this is purely about keeping one
+ * batch a reasonable size rather than one enormous batch or one D1 round trip per event. */
+const MATERIALIZE_BATCH_SIZE = 50;
+
 /** External-event span → [StartDate, EndDate-exclusive) row dates. All-day events carry Google's
  * exclusive end already; timed events occupy every calendar day they touch (a 14:00–15:00 visit
  * blocks that one day; a Fri 18:00 – Sun 09:00 sit blocks Fri/Sat/Sun). A timed event ending at
@@ -402,7 +417,14 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   for (const id of candidates) {
     if (liveBookingIds.has(id)) continue;
     const changed = await updateBookingStatus(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
-    if (!changed || !isEmailConfigured(env)) continue;
+    if (!changed) continue;
+    // Nothing left to push: the event that triggered this cancel is already gone from Google.
+    // Clear SyncPending in the same flow (updateBookingStatus's cancel UPDATE sets it) — otherwise
+    // the next outbox redrive derives a delete for an event Google already purged. deleteEvent
+    // treats a 404/410 there as success today, but before that fix a 404 threw and retried
+    // forever, wedging an OUTBOX_LIMIT slot every sweep for an event that was never coming back.
+    await clearSyncPending(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    if (!isEmailConfigured(env)) continue;
     try {
       const bk = await getBookingWithCustomer(env.PAWBOOK_DB, tenant.Id, id);
       if (bk?.Email) {
@@ -415,17 +437,31 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   }
 
   // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
-  const liveIds: string[] = [];
-  for (const e of live) {
-    if (e.private.bookingId || !e.id || !e.start || !e.end) continue;
-    liveIds.push(e.id);
-    const span = externalSpan(e);
-    await upsertExternalEvent(env.PAWBOOK_DB, tenant.Id, {
-      gcalEventId: e.id,
-      summary: e.summary,
-      startDate: span.startDate,
-      endDateExclusive: span.endDateExclusive,
+  const foreign = live.filter((e) => !e.private.bookingId && e.id && e.start && e.end);
+  // `liveIds` covers EVERY foreign event Google reports, not just the ones materialized this pass
+  // — deleteExternalEventsMissing must never be told an event is gone just because MATERIALIZE_LIMIT
+  // deferred writing its row.
+  const liveIds = foreign.map((e) => e.id);
+  const toMaterialize = foreign.slice(0, MATERIALIZE_LIMIT);
+  if (foreign.length > MATERIALIZE_LIMIT) {
+    // Not silent, not lost: every un-materialized event is still "live" above, so the next
+    // reconcile pass (Google is polled repeatedly) picks up where this one left off.
+    console.error(
+      `reconcile: ${foreign.length} foreign events for tenant ${tenant.Id} exceeds ` +
+        `MATERIALIZE_LIMIT (${MATERIALIZE_LIMIT}) — remainder deferred to the next pass`,
+    );
+  }
+  for (const chunk of chunkArray(toMaterialize, MATERIALIZE_BATCH_SIZE)) {
+    const statements = chunk.map((e) => {
+      const span = externalSpan(e);
+      return upsertExternalEventStatement(env.PAWBOOK_DB, tenant.Id, {
+        gcalEventId: e.id,
+        summary: e.summary,
+        startDate: span.startDate,
+        endDateExclusive: span.endDateExclusive,
+      });
     });
+    await env.PAWBOOK_DB.batch(statements);
   }
   await deleteExternalEventsMissing(
     env.PAWBOOK_DB,

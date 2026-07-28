@@ -175,8 +175,13 @@ export async function deleteEvent(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
   );
-  // 410 Gone = already deleted; treat as success.
-  if (!res.ok && res.status !== 410) throw new Error(`Google deleteEvent failed (${res.status})`);
+  // 410 Gone = already deleted; 404 Not Found = the id no longer resolves at all (Google's DELETE
+  // can answer either depending on how the event went away). Both mean "gone" — the same "already
+  // gone is success" treatment updateEvent gives 404/410 above — so both are success here too.
+  // Getting this wrong wedges the outbox: a caller retrying a "delete" for an event Google already
+  // purged would otherwise throw on every redrive forever instead of clearing SyncPending once.
+  if (!res.ok && res.status !== 410 && res.status !== 404)
+    throw new Error(`Google deleteEvent failed (${res.status})`);
 }
 
 export async function revokeToken(token: string): Promise<void> {
@@ -318,6 +323,16 @@ export async function listCalendarEvents(
       events.push({
         id: item.id ?? '',
         summary: item.summary ?? '',
+        // All-day events carry `date` directly — no timezone ambiguity, unaffected by the note
+        // below. A TIMED event's date here is sliced from Google's own `dateTime` string, which
+        // Google renders in the CALENDAR's configured timezone (or the event's explicit
+        // `timeZone`) — NOT necessarily the tenant's `Timezone` setting. A timed event within a
+        // few hours of local midnight can, in principle, land on a different calendar day than
+        // the tenant would compute. Accepted for now: this only feeds externalSpan's materialized
+        // 'external' rows, and reconcile re-derives every row from Google's response on every
+        // pass, so a wrong day self-heals on the next reconcile rather than sticking — the same
+        // "over-block is the safe error" trade-off externalSpan already documents for a timed
+        // event's midnight-end case.
         start: item.start.date ?? item.start.dateTime?.slice(0, 10) ?? '',
         end: item.end.date ?? item.end.dateTime?.slice(0, 10) ?? '',
         allDay: Boolean(item.start.date),

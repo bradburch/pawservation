@@ -1403,6 +1403,11 @@ export async function setBookingGCalEventId(
  * or those few stray events, by hand. Upgrade path if orphan cleanup is ever wanted: add a nullable
  * BookingRequests.GCalCalendarId written alongside GCalEventId, and this function becomes "delete
  * the events whose GCalCalendarId differs from the new target, then clear".
+ *
+ * Excludes ServiceType='external' rows: those are purged wholesale by deleteAllExternalEvents,
+ * called first by repointCalendarTarget. The exclusion here removes the hidden order-dependency —
+ * without it, NULLing an external row's GCalEventId (its upsert conflict target, see
+ * upsertExternalEvent) ahead of the purge would corrupt the row instead of just deleting it.
  */
 export async function clearBookingCalendarEventIds(
   db: D1Database,
@@ -1410,23 +1415,40 @@ export async function clearBookingCalendarEventIds(
 ): Promise<number> {
   const result = await db
     .prepare(
-      'UPDATE BookingRequests SET GCalEventId = NULL WHERE TenantId = ? AND GCalEventId IS NOT NULL',
+      `UPDATE BookingRequests SET GCalEventId = NULL
+       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND ServiceType != 'external'`,
     )
     .bind(tenantId)
     .run();
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
-/** Materialize one Google-owned event as a ServiceType='external' row (insert or update in place;
- * conflict target = the partial unique index on (TenantId, GCalEventId) WHERE 'external').
- * These rows are read-only mirrors: EndUserId NULL, EstCost NULL, never priced, never payable,
- * counted by listCapacityRows as blocked-like. Tenant-scoped. */
-export async function upsertExternalEvent(
+/** Split `items` into groups of at most `size` — pure and exported so chunking arithmetic (e.g.
+ * an off-by-one that would let a group exceed D1's ~100-bound-parameter-per-statement cap) is
+ * unit-tested directly rather than only inferred from an HTTP-level failure. */
+export function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) throw new Error('chunkArray: size must be positive');
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+/** Bound applied to every chunked DELETE in deleteExternalEventsMissing: 1 (tenantId) + up to
+ * this many ids stays safely under D1's 100-bound-parameter-per-statement cap. */
+const DELETE_CHUNK_SIZE = 90;
+
+/** Build (but don't run) the upsert statement for one materialized external row — the same
+ * write upsertExternalEvent performs, exposed separately so a caller materializing many events in
+ * one reconcile pass can batch several statements per db.batch() round trip instead of one D1
+ * call per event. Conflict target = the partial unique index on (TenantId, GCalEventId) WHERE
+ * ServiceType = 'external'. These rows are read-only mirrors: EndUserId NULL, EstCost NULL, never
+ * priced, never payable, counted by listCapacityRows as blocked-like. Tenant-scoped. */
+export function upsertExternalEventStatement(
   db: D1Database,
   tenantId: string,
   e: { gcalEventId: string; summary: string; startDate: string; endDateExclusive: string },
-): Promise<void> {
-  await db
+): D1PreparedStatement {
+  return db
     .prepare(
       `INSERT INTO BookingRequests
          (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount,
@@ -1436,13 +1458,32 @@ export async function upsertExternalEvent(
          StartDate = excluded.StartDate, EndDate = excluded.EndDate,
          ExternalSummary = excluded.ExternalSummary`,
     )
-    .bind(crypto.randomUUID(), tenantId, e.startDate, e.endDateExclusive, e.gcalEventId, e.summary)
-    .run();
+    .bind(crypto.randomUUID(), tenantId, e.startDate, e.endDateExclusive, e.gcalEventId, e.summary);
+}
+
+/** Materialize one Google-owned event as a ServiceType='external' row (insert or update in
+ * place). Single-event convenience wrapper around upsertExternalEventStatement — see it for the
+ * write's shape and invariants. Tenant-scoped. */
+export async function upsertExternalEvent(
+  db: D1Database,
+  tenantId: string,
+  e: { gcalEventId: string; summary: string; startDate: string; endDateExclusive: string },
+): Promise<void> {
+  await upsertExternalEventStatement(db, tenantId, e).run();
 }
 
 /** Delete external rows overlapping [windowStart, windowEndExclusive) whose Google event no
  * longer exists there. STRICTLY window-bounded: a row outside the queried window was never
- * spoken for by the response and must not be touched (same reasoning as listSyncedBookingIds). */
+ * spoken for by the response and must not be touched (same reasoning as listSyncedBookingIds).
+ *
+ * Deliberately does NOT do `WHERE GCalEventId NOT IN (?, ?, …)` bound directly to `liveEventIds`:
+ * D1 caps bound parameters at 100 per statement, and a busy shared calendar can easily report
+ * more than ~97 live events in the window, which would make that single statement throw mid-
+ * reconcile — silently wedging delete-detection for every tenant with a big enough calendar.
+ * Instead: pull the in-window external rows' (Id, GCalEventId) — one query, no per-id binding —
+ * diff against `liveEventIds` in JS (a Set, so this stays O(n)), and delete the stale ones by Id
+ * in DELETE_CHUNK_SIZE-bounded chunks, each safely under the 100-param cap regardless of how many
+ * events Google reports. */
 export async function deleteExternalEventsMissing(
   db: D1Database,
   tenantId: string,
@@ -1450,18 +1491,28 @@ export async function deleteExternalEventsMissing(
   windowEndExclusive: string,
   liveEventIds: string[],
 ): Promise<number> {
-  const notIn = liveEventIds.length
-    ? ` AND GCalEventId NOT IN (${liveEventIds.map(() => '?').join(', ')})`
-    : '';
-  const result = await db
+  const { results } = await db
     .prepare(
-      `DELETE FROM BookingRequests
+      `SELECT Id, GCalEventId FROM BookingRequests
        WHERE TenantId = ? AND ServiceType = 'external'
-         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?${notIn}`,
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
-    .bind(tenantId, windowEndExclusive, windowStart, ...liveEventIds)
-    .run();
-  return (result.meta as { changes?: number }).changes ?? 0;
+    .bind(tenantId, windowEndExclusive, windowStart)
+    .all<{ Id: string; GCalEventId: string }>();
+
+  const live = new Set(liveEventIds);
+  const staleIds = results.filter((r) => !live.has(r.GCalEventId)).map((r) => r.Id);
+
+  let deleted = 0;
+  for (const chunk of chunkArray(staleIds, DELETE_CHUNK_SIZE)) {
+    const placeholders = chunk.map(() => '?').join(', ');
+    const result = await db
+      .prepare(`DELETE FROM BookingRequests WHERE TenantId = ? AND Id IN (${placeholders})`)
+      .bind(tenantId, ...chunk)
+      .run();
+    deleted += (result.meta as { changes?: number }).changes ?? 0;
+  }
+  return deleted;
 }
 
 /** Purge every materialized external row — called when the calendar target changes or the
