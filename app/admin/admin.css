@@ -515,8 +515,9 @@ body {
   border-bottom: none;
 }
 
-.pb-wrap li.pb-customer {
+.pb-wrap li.pb-account {
   display: block;
+  padding: 14px 0;
 }
 
 /* Status chips: soft pills, sentence case. */
@@ -775,6 +776,30 @@ body {
 :focus-visible {
   outline: 3px solid var(--leaf);
   outline-offset: 2px;
+}
+
+/* ── Client accounts: one card per household (buildAccounts component) ── */
+.pb-account-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.98rem;
+  color: var(--deep);
+}
+
+.pb-owners {
+  margin: 6px 0 2px;
+}
+
+.pb-owners li {
+  border-bottom: none;
+  padding: 4px 0;
+  gap: 8px;
+}
+
+.pb-add-owner {
+  margin-left: 18px;
+  margin-top: 4px;
 }
 
 .pb-pets {
