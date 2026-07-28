@@ -125,6 +125,9 @@ export type AdminBooking = {
   answers: Record<string, string>;
   estCost: number | null;
   paidTotal: number;
+  charges: BookingCharge[];
+  /** SUM(charges). Total due is `estCost + chargesTotal` — estCost itself is never mutated. */
+  chargesTotal: number;
   status: string;
   cancellationFee: number | null;
   feeIfCancelledToday: number | null;
@@ -138,6 +141,9 @@ export type Payment = {
   paidDate: string;
   note: string | null;
 };
+
+/** One extra charge on a booking — additive; it never changes the booking's estCost. */
+export type BookingCharge = { id: string; label: string; amount: number };
 
 export type AnalyticsPayload = {
   tiles: {
@@ -380,6 +386,31 @@ export const adminApi = {
       ),
     remove: (slug: string, token: string, bookingId: string, paymentId: string) =>
       request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+      }),
+  },
+  charges: {
+    list: (slug: string, token: string, bookingId: string) =>
+      request<{ charges: BookingCharge[] }>(`/api/${slug}/admin/bookings/${bookingId}/charges`, {
+        headers: authHeaders(token),
+      }),
+    add: (
+      slug: string,
+      token: string,
+      bookingId: string,
+      charge: { label: string; amount: number },
+    ) =>
+      request<{ charge: BookingCharge; chargesTotal: number }>(
+        `/api/${slug}/admin/bookings/${bookingId}/charges`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(charge),
+        },
+      ),
+    remove: (slug: string, token: string, bookingId: string, chargeId: string) =>
+      request<void>(`/api/${slug}/admin/bookings/${bookingId}/charges/${chargeId}`, {
         method: 'DELETE',
         headers: authHeaders(token),
       }),

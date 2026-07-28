@@ -18,12 +18,14 @@ import {
   getEndUserById,
   getEndUserByEmail,
   deleteBlockedRange,
+  deleteBookingCharge,
   deleteCustomer,
   deletePayment,
   deletePetGroupRateById,
   deleteService,
   getProviderConnection,
   getTenantUserEmailById,
+  insertBookingCharge,
   insertBookingRequest,
   insertInvitedCustomerWithPet,
   insertPayment,
@@ -31,6 +33,8 @@ import {
   listAllPetGroupPricing,
   listBlockedRanges,
   listBookingsForTenant,
+  listChargesForBooking,
+  listChargesForTenant,
   listCustomers,
   listEndUserPets,
   listPaymentsForBooking,
@@ -147,6 +151,10 @@ const MAX_IMPORT_ROWS = 500;
  * body of copy — cap it so one service can't push the whole picker off the page.
  */
 const MAX_SERVICE_DESCRIPTION = 200;
+
+/** Charge names are a short line item ("Vet visit"), not a note — the ledger row must stay
+ *  readable inside a booking row on a phone. */
+const MAX_CHARGE_LABEL = 60;
 
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
@@ -1585,6 +1593,15 @@ export const adminRoutes = new Hono<AppEnv>()
       ]),
     );
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+    // ONE read for the whole list, grouped in JS — a charge is an additive line item, so it can
+    // never change EstCost; total due is EstCost + chargesTotal, derived by every reader.
+    const chargeRows = await listChargesForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const chargesByBooking = new Map<string, typeof chargeRows>();
+    for (const ch of chargeRows) {
+      const list = chargesByBooking.get(ch.BookingRequestId) ?? [];
+      list.push(ch);
+      chargesByBooking.set(ch.BookingRequestId, list);
+    }
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,
@@ -1599,6 +1616,12 @@ export const adminRoutes = new Hono<AppEnv>()
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
+        charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
+          id: ch.Id,
+          label: ch.Label,
+          amount: ch.Amount,
+        })),
+        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.Amount, 0),
         status: r.Status,
         cancellationFee: r.CancellationFee,
         feeIfCancelledToday:
@@ -1775,6 +1798,62 @@ export const adminRoutes = new Hono<AppEnv>()
       tenant.Id,
       c.req.param('id'),
       c.req.param('paymentId'),
+    );
+    if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+
+  .post('/:slug/admin/bookings/:id/charges', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    const body = await c.req
+      .json<{ label?: unknown; amount?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    const label = typeof body.label === 'string' ? body.label.trim() : '';
+    if (!label) return c.json({ error: 'Give the charge a name.' }, 400);
+    if (label.length > MAX_CHARGE_LABEL)
+      return c.json({ error: `Name must be ${MAX_CHARGE_LABEL} characters or fewer.` }, 400);
+    // Same predicate as a payment amount and a rate: whole dollars >= 1.
+    if (!isValidRate(body.amount))
+      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    const chargeId = await insertBookingCharge(c.env.PAWBOOK_DB, tenant.Id, {
+      bookingRequestId: bookingId,
+      label,
+      amount: body.amount,
+    });
+    // Guard refused: foreign booking or the 'blocked' sentinel.
+    if (!chargeId) return c.json({ error: 'Not found.' }, 404);
+    const charges = await listChargesForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const created = charges.find((ch) => ch.Id === chargeId);
+    if (!created) return c.json({ error: 'Not found.' }, 404);
+    return c.json(
+      {
+        charge: { id: created.Id, label: created.Label, amount: created.Amount },
+        chargesTotal: charges.reduce((sum, ch) => sum + ch.Amount, 0),
+      },
+      201,
+    );
+  })
+
+  .get('/:slug/admin/bookings/:id/charges', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    // Same existence guard the payments GET uses: a foreign booking or the sentinel 404s.
+    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
+    const rows = await listChargesForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    return c.json({
+      charges: rows.map((ch) => ({ id: ch.Id, label: ch.Label, amount: ch.Amount })),
+    });
+  })
+
+  .delete('/:slug/admin/bookings/:id/charges/:chargeId', async (c) => {
+    const tenant = c.get('tenant');
+    const deleted = await deleteBookingCharge(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      c.req.param('chargeId'),
     );
     if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);

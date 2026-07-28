@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { insertBookingRequest } from '../db/repo';
+import { insertBookingCharge, insertBookingRequest } from '../db/repo';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 /** Books one dog (Bella, sunny-paws) for a 2-night boarding stay via the real customer flow. */
@@ -302,5 +302,34 @@ describe('admin booking lifecycle', () => {
       q_feeding: 'Twice a day',
     });
     expect(list.bookings.find((b) => b.id === bare.id)?.answers).toEqual({});
+  });
+
+  it('reports charges and chargesTotal on each booking row', async () => {
+    const { env } = createTestEnv();
+    const charged = (await (await bookBoarding(env, '2029-01-01', '2029-01-03')).json()) as {
+      id: string;
+    };
+    const untouchedBooking = (await (
+      await bookBoarding(env, '2029-02-01', '2029-02-03')
+    ).json()) as { id: string };
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: charged.id,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { bookings } = (await res.json()) as {
+      bookings: { id: string; estCost: number | null; charges: unknown[]; chargesTotal: number }[];
+    };
+    const row = bookings.find((b) => b.id === charged.id)!;
+    expect(row.chargesTotal).toBe(45);
+    expect(row.charges).toEqual([expect.objectContaining({ label: 'Vet visit', amount: 45 })]);
+    // EstCost is NEVER mutated by a charge — total due is derived, not stored.
+    const untouched = bookings.find((b) => b.id === untouchedBooking.id)!;
+    expect(untouched.chargesTotal).toBe(0);
   });
 });
