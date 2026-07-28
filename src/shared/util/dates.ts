@@ -63,6 +63,23 @@ export function addDays(dateStr: string, days: number): string {
 }
 
 /**
+ * `dateStr` plus `months` calendar months, day-clamped: Jan 31 + 1 month = the LAST day of
+ * February, never a rollover into March. Pure UTC field arithmetic on a date-only string —
+ * used by the booking-horizon rule (Tenants.MaxAdvanceMonths), where "8 months ahead" must
+ * mean the same calendar date a human expects.
+ */
+export function addMonths(dateStr: string, months: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const total = y * 12 + (m - 1) + months;
+  const year = Math.floor(total / 12);
+  const month = total % 12; // 0-based
+  // Day 0 of the NEXT month = last day of the target month.
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const date = new Date(Date.UTC(year, month, Math.min(d, lastDay)));
+  return date.toISOString().slice(0, 10);
+}
+
+/**
  * Today (or `date`) as a `YYYY-MM-DD` string in the given `timezone` (defaults to
  * DEFAULT_TIMEZONE — the instance business timezone). All "is this in the past / what
  * day is it" checks across the chat agent, MCP server, and booking service must use this

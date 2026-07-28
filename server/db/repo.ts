@@ -34,7 +34,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, DisabledAt';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, DisabledAt';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -101,7 +101,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
   const { results } = await db
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
-              CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount,
+              CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount, MinLeadDays,
               AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
@@ -1161,12 +1161,14 @@ export async function updateTenantSettings(
     timezone: string | null;
     contactEmail?: string | null;
     contactPhone?: string | null;
+    /** Booking horizon in months (0004); null = no limit. */
+    maxAdvanceMonths?: number | null;
   },
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, Timezone = ?,
-         ContactEmail = ?, ContactPhone = ? WHERE Id = ?`,
+         ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ? WHERE Id = ?`,
     )
     .bind(
       settings.displayName,
@@ -1174,6 +1176,7 @@ export async function updateTenantSettings(
       settings.timezone,
       settings.contactEmail ?? null,
       settings.contactPhone ?? null,
+      settings.maxAdvanceMonths ?? null,
       tenantId,
     )
     .run();
@@ -1195,6 +1198,8 @@ export async function setServiceConfig(
     questions: ServiceQuestion[];
     maxNights: number | null;
     maxPetCount: number | null;
+    /** Minimum notice in days (0004); null clears back to "same-day OK". */
+    minLeadDays: number | null;
     acceptedPetTypes: string[] | null;
     maxConcurrentPets: number | null;
     cancellationTiers: CancellationTier[] | null;
@@ -1206,8 +1211,8 @@ export async function setServiceConfig(
     .prepare(
       `UPDATE TenantServices SET
          Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
-         MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?,
-         HolidayRate = ?
+         MaxPetCount = ?, MinLeadDays = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?,
+         CancellationTiers = ?, HolidayRate = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -1216,6 +1221,7 @@ export async function setServiceConfig(
       JSON.stringify(config.questions),
       config.maxNights,
       config.maxPetCount,
+      config.minLeadDays,
       config.acceptedPetTypes === null ? null : JSON.stringify(config.acceptedPetTypes),
       config.maxConcurrentPets,
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),

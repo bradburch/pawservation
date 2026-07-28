@@ -33,6 +33,8 @@ export type ServiceForm = ServiceConstraints & {
   enabled: boolean;
   capacityKind: 'boarding' | 'housesit' | 'none';
   maxConcurrentPets: number | null;
+  /** Minimum notice in days for this service's start date; null = same-day requests OK (0004). */
+  minLeadDays: number | null;
   /** Optional explicit holiday rate in the service's own unit; null = no holiday pricing. */
   holidayRate: number | '' | null;
   /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
@@ -50,6 +52,8 @@ export type Settings = {
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  /** Booking horizon in months for the whole business; null = no limit (0004). */
+  maxAdvanceMonths: number | null;
   /** The authenticated admin's own login email — wizard prefill for a missing contactEmail. */
   adminEmail: string | null;
   petTypes: { petType: string; label: string }[];
@@ -82,6 +86,7 @@ export type ServicePayload = ServiceConstraints & {
   enabled: boolean;
   description: string | null;
   maxConcurrentPets: number | null;
+  minLeadDays: number | null;
   holidayRate: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
@@ -94,6 +99,7 @@ export type SettingsPayload = {
   timezone: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  maxAdvanceMonths: number | null;
   services: ServicePayload[];
 };
 

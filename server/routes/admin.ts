@@ -118,6 +118,8 @@ import {
   isValidDuration,
   isValidRate,
   isValidTimeString,
+  MAX_ADVANCE_MONTHS_CAP,
+  MAX_LEAD_DAYS_CAP,
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
@@ -465,6 +467,8 @@ type ServiceBody = {
   /** Retired — declared only so a client that still sends it is REJECTED, not silently ignored. */
   minPetCount?: number | null;
   maxPetCount?: number | null;
+  /** Minimum notice in days for the start date (0004); 0/null = same-day OK. PATCH: absent = keep. */
+  minLeadDays?: number | null;
   acceptedPetTypes?: string[] | null;
   maxConcurrentPets?: number | null;
   maxPerDay?: number | null;
@@ -478,6 +482,8 @@ type SettingsBody = {
   timezone?: string | null;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  /** Booking horizon in months, profile-level (0004); null = no limit. PATCH: absent = keep. */
+  maxAdvanceMonths?: number | null;
   services?: ServiceBody[];
 };
 
@@ -488,7 +494,7 @@ type SettingsBody = {
  */
 function patchNullable<T extends number | string>(
   body: SettingsBody,
-  key: 'timezone' | 'contactEmail' | 'contactPhone',
+  key: 'timezone' | 'contactEmail' | 'contactPhone' | 'maxAdvanceMonths',
   current: T | null,
 ): T | null {
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
@@ -539,6 +545,7 @@ export const adminRoutes = new Hono<AppEnv>()
       timezone: tenant.Timezone,
       contactEmail: tenant.ContactEmail,
       contactPhone: tenant.ContactPhone,
+      maxAdvanceMonths: tenant.MaxAdvanceMonths,
       // The signed-in sitter's own login email — never a client-settable field; the setup wizard
       // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
       adminEmail,
@@ -555,6 +562,7 @@ export const adminRoutes = new Hono<AppEnv>()
         enabled: Boolean(svc.Enabled),
         questions: svc.Questions,
         maxNights: svc.MaxNights,
+        minLeadDays: svc.MinLeadDays,
         maxPetCount: svc.MaxPetCount,
         acceptedPetTypes: svc.AcceptedPetTypes,
         cancellationTiers: svc.CancellationTiers,
@@ -604,6 +612,23 @@ export const adminRoutes = new Hono<AppEnv>()
     const contactEmail = rawContactEmail?.trim() || null;
     const rawContactPhone = patchNullable<string>(body, 'contactPhone', tenant.ContactPhone);
     const contactPhone = rawContactPhone?.trim() || null;
+    const maxAdvanceMonths = patchNullable<number>(
+      body,
+      'maxAdvanceMonths',
+      tenant.MaxAdvanceMonths,
+    );
+    if (
+      maxAdvanceMonths !== null &&
+      (!Number.isInteger(maxAdvanceMonths) ||
+        maxAdvanceMonths < 1 ||
+        maxAdvanceMonths > MAX_ADVANCE_MONTHS_CAP)
+    )
+      return c.json(
+        {
+          error: `Booking horizon must be between 1 and ${MAX_ADVANCE_MONTHS_CAP} months, or blank for no limit.`,
+        },
+        400,
+      );
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
     // included in a service's body ⇒ take it; absent ⇒ keep that service's current value. Without
@@ -687,6 +712,18 @@ export const adminRoutes = new Hono<AppEnv>()
         return c.json(
           {
             error: `${meta.Label}: pet count must be between 1 and ${MAX_PET_COUNT_CAP}, or blank.`,
+          },
+          400,
+        );
+      if (
+        svc.minLeadDays != null &&
+        (!Number.isInteger(svc.minLeadDays) ||
+          svc.minLeadDays < 0 ||
+          svc.minLeadDays > MAX_LEAD_DAYS_CAP)
+      )
+        return c.json(
+          {
+            error: `${meta.Label}: days of notice must be between 0 and ${MAX_LEAD_DAYS_CAP}, or blank.`,
           },
           400,
         );
@@ -798,6 +835,7 @@ export const adminRoutes = new Hono<AppEnv>()
       timezone,
       contactEmail,
       contactPhone,
+      maxAdvanceMonths,
     });
     for (const svc of services) {
       const svcType = svc.type as string;
@@ -821,6 +859,7 @@ export const adminRoutes = new Hono<AppEnv>()
         questions,
         maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,
         maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
+        minLeadDays: 'minLeadDays' in svc ? (svc.minLeadDays ?? null) : current.MinLeadDays,
         acceptedPetTypes:
           'acceptedPetTypes' in svc ? (svc.acceptedPetTypes ?? null) : current.AcceptedPetTypes,
         maxConcurrentPets:

@@ -80,6 +80,35 @@ export function BusinessSection({
           ))}
         </select>
       </label>
+      <label>
+        <span className="pb-labelrow">
+          How far ahead clients can book <span className="pb-hint">(months, blank = no limit)</span>
+          <Hint label="How far ahead clients can book">
+            One limit for your whole business. Set it to 8 and nobody can request a date more than 8
+            months from today — days past that simply can&rsquo;t be picked. Each service can also
+            require notice (&ldquo;days of notice needed&rdquo; under Services &amp; Rates).
+          </Hint>
+        </span>
+        <input
+          type="number"
+          min={1}
+          max={24}
+          aria-label="How far ahead clients can book, in months (blank = no limit)"
+          aria-invalid={
+            settings.maxAdvanceMonths !== null &&
+            (!Number.isInteger(settings.maxAdvanceMonths) ||
+              settings.maxAdvanceMonths < 1 ||
+              settings.maxAdvanceMonths > 24)
+          }
+          value={settings.maxAdvanceMonths ?? ''}
+          onChange={(e) =>
+            setSettings({
+              ...settings,
+              maxAdvanceMonths: e.target.value === '' ? null : Number(e.target.value),
+            })
+          }
+        />
+      </label>
       <div className="pb-inline-save">
         <button type="button" disabled={!dirty || saveBlocked} onClick={onSave}>
           Save changes

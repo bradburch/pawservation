@@ -47,6 +47,7 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     Questions: [],
     MaxNights: null,
     MaxPetCount: null,
+    MinLeadDays: null,
     AcceptedPetTypes: null,
     MaxConcurrentPets: null,
     CancellationTiers: null,
@@ -64,6 +65,7 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     Timezone: null,
     ContactEmail: null,
     ContactPhone: null,
+    MaxAdvanceMonths: null,
     DisabledAt: null,
     ...over,
   };

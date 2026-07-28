@@ -12,6 +12,9 @@ export type Tenant = {
   Timezone: string | null; // null = DEFAULT_TIMEZONE
   ContactEmail: string | null; // shown to clients in the booking widget
   ContactPhone: string | null; // shown to clients in the booking widget
+  /** Booking horizon in calendar months (0004): a request may not START further out than this.
+   *  null = no limit. Profile-level — one value for the whole business. */
+  MaxAdvanceMonths: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
 };
 
@@ -56,6 +59,8 @@ export type TenantService = {
   // No MinNights and no MinPetCount: both columns are DROPPED (2026-07-27 re-baseline) — the
   // minimum stay is structurally 1 night and services have only a max-pets limit.
   MaxPetCount: number | null;
+  /** Minimum notice in days for this service's start date (0004); null or 0 = same-day OK. */
+  MinLeadDays: number | null;
   /** Pet-type slugs this service accepts; null = accepts every enabled type. */
   AcceptedPetTypes: string[] | null;
   /** Pets per day cap for boarding and housesit pool services; null = unlimited (housesit's separate MaxPerDay column was folded into this one and later dropped). */

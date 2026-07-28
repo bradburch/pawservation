@@ -8,6 +8,7 @@ export {
 } from './util/service-summary.js';
 export {
   addDays,
+  addMonths,
   isWeekend,
   nightsBetween,
   getPacificDateStr,

@@ -1,5 +1,8 @@
 import {
+  addDays,
+  addMonths,
   DATE_RE,
+  formatFriendlyDate,
   getPacificDateStr,
   nightsBetween,
   PAYMENT_METHODS,
@@ -31,6 +34,11 @@ export const DEFENSIVE_MAX_PET_COUNT = 1000;
 /** Business cap (unlike the DEFENSIVE rails above): the most pets one booking may carry,
  * enforced on the admin settings PUT for MaxPetCount. */
 export const MAX_PET_COUNT_CAP = 15;
+
+/** Sanity rail for TenantServices.MinLeadDays: 0..90 days of notice (0 = same-day OK). */
+export const MAX_LEAD_DAYS_CAP = 90;
+/** Sanity rail for Tenants.MaxAdvanceMonths: 1..24 months of booking horizon. */
+export const MAX_ADVANCE_MONTHS_CAP = 24;
 
 /** True for a whole number in [1, DEFENSIVE_MAX_PET_COUNT]. */
 export function isValidPetCount(value: unknown): value is number {
@@ -96,6 +104,40 @@ export function validateBoardingRange(
       code: 'stay_too_long',
       status: 400,
     };
+  return null;
+}
+
+/**
+ * The booking window (0004): a request's START date must give the service its minimum notice
+ * (`TenantServices.MinLeadDays`) and stay inside the business-wide horizon
+ * (`Tenants.MaxAdvanceMonths`). Both NULL = unlimited; lead days 0 = same-day allowed. "Today"
+ * is the tenant's timezone, the same clock every other past/future check here uses. Runs AFTER
+ * the shape validators, so `start` is already a real, non-past date at every call site — the
+ * quote, the month grid painter, and the booking POST must all agree on this rule.
+ */
+export function validateBookingWindow(
+  start: string,
+  minLeadDays: number | null,
+  maxAdvanceMonths: number | null,
+  timezone?: string,
+): DateRangeError | null {
+  const today = getPacificDateStr(undefined, timezone);
+  if (minLeadDays !== null && minLeadDays > 0 && start < addDays(today, minLeadDays)) {
+    const earliest = addDays(today, minLeadDays);
+    return {
+      error: `This service needs ${minLeadDays} day${minLeadDays === 1 ? '' : 's'} of notice — the earliest date you can request is ${formatFriendlyDate(earliest)}.`,
+      code: 'too_soon',
+      status: 400,
+    };
+  }
+  if (maxAdvanceMonths !== null && start > addMonths(today, maxAdvanceMonths)) {
+    const latest = addMonths(today, maxAdvanceMonths);
+    return {
+      error: `Requests open up ${maxAdvanceMonths} month${maxAdvanceMonths === 1 ? '' : 's'} ahead — the latest date you can request is ${formatFriendlyDate(latest)}.`,
+      code: 'too_far_ahead',
+      status: 400,
+    };
+  }
   return null;
 }
 

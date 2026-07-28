@@ -35,6 +35,11 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
 - **`0003_gcal_sync.sql`** (`feat/gcal-source-of-truth` #88) — adds
   `BookingRequests.SyncPending`, `BookingRequests.ExternalSummary`, and the
   `idx_BookingRequests_External` unique index. **MERGED** to `main` and applied to the remote DB.
+- **`0004_booking_window.sql`** (`feat/booking-window`) — adds `TenantServices.MinLeadDays`
+  (per-service minimum notice in days) and `Tenants.MaxAdvanceMonths` (profile-level booking
+  horizon in months). Both nullable, NULL = unlimited. Additive only (two
+  `ALTER TABLE … ADD COLUMN`s). Must be applied to the remote DB **before** the branch merges —
+  the new worker's `listServices`/`TENANT_COLS` SELECTs name both columns.
 
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long
