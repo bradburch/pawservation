@@ -1621,7 +1621,11 @@ export const adminRoutes = new Hono<AppEnv>()
       if (status !== 'cancelled')
         return c.json({ error: 'A cancellation fee applies only when cancelling.' }, 400);
       const bk = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
-      if (!bk) return c.json({ error: 'Not found.' }, 404);
+      // Same existence guard as the payments route: the 'blocked'/'external' sentinels 404 rather
+      // than falling through to the 400 below, which would otherwise let an external row's id be
+      // distinguished from a genuinely unknown id (an existence oracle).
+      if (!bk || bk.ServiceType === 'blocked' || bk.ServiceType === 'external')
+        return c.json({ error: 'Not found.' }, 404);
       if (bk.Status !== 'confirmed' || bk.EstCost == null)
         return c.json({ error: 'A fee needs a confirmed booking with an estimated cost.' }, 400);
       const svc = (await listServices(c.env.PAWBOOK_DB, tenant.Id)).find(

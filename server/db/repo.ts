@@ -1472,25 +1472,18 @@ export async function upsertExternalEvent(
   await upsertExternalEventStatement(db, tenantId, e).run();
 }
 
-/** Delete external rows overlapping [windowStart, windowEndExclusive) whose Google event no
- * longer exists there. STRICTLY window-bounded: a row outside the queried window was never
- * spoken for by the response and must not be touched (same reasoning as listSyncedBookingIds).
- *
- * Deliberately does NOT do `WHERE GCalEventId NOT IN (?, ?, …)` bound directly to `liveEventIds`:
- * D1 caps bound parameters at 100 per statement, and a busy shared calendar can easily report
- * more than ~97 live events in the window, which would make that single statement throw mid-
- * reconcile — silently wedging delete-detection for every tenant with a big enough calendar.
- * Instead: pull the in-window external rows' (Id, GCalEventId) — one query, no per-id binding —
- * diff against `liveEventIds` in JS (a Set, so this stays O(n)), and delete the stale ones by Id
- * in DELETE_CHUNK_SIZE-bounded chunks, each safely under the 100-param cap regardless of how many
- * events Google reports. */
-export async function deleteExternalEventsMissing(
+/** The in-window external rows' (Id, GCalEventId) — the read reconcileBookingsWithCalendar now
+ * hoists to a single call, feeding BOTH the materialize-priority partition (an event already
+ * holding a row is a re-upsert, not a new write) and deleteExternalEventsMissing (below), which
+ * used to run this exact query itself. STRICTLY window-bounded: a row outside the queried window
+ * was never spoken for by the response and must not be touched (same reasoning as
+ * listSyncedBookingIds). */
+export async function listExternalEventRowsInWindow(
   db: D1Database,
   tenantId: string,
   windowStart: string,
   windowEndExclusive: string,
-  liveEventIds: string[],
-): Promise<number> {
+): Promise<{ Id: string; GCalEventId: string }[]> {
   const { results } = await db
     .prepare(
       `SELECT Id, GCalEventId FROM BookingRequests
@@ -1499,9 +1492,29 @@ export async function deleteExternalEventsMissing(
     )
     .bind(tenantId, windowEndExclusive, windowStart)
     .all<{ Id: string; GCalEventId: string }>();
+  return results;
+}
 
+/** Deletes in-window external rows whose Google event is no longer live. Takes the caller's
+ * already-fetched `existingRows` (listExternalEventRowsInWindow) rather than re-querying, so one
+ * reconcile pass reads the in-window external rows exactly once and reuses them for both the
+ * materialize-priority partition and this delete.
+ *
+ * Deliberately does NOT do `WHERE GCalEventId NOT IN (?, ?, …)` bound directly to `liveEventIds`:
+ * D1 caps bound parameters at 100 per statement, and a busy shared calendar can easily report
+ * more than ~97 live events in the window, which would make that single statement throw mid-
+ * reconcile — silently wedging delete-detection for every tenant with a big enough calendar.
+ * Instead: diff `existingRows` against `liveEventIds` in JS (a Set, so this stays O(n)), and
+ * delete the stale ones by Id in DELETE_CHUNK_SIZE-bounded chunks, each safely under the 100-param
+ * cap regardless of how many events Google reports. */
+export async function deleteExternalEventsMissing(
+  db: D1Database,
+  tenantId: string,
+  existingRows: { Id: string; GCalEventId: string }[],
+  liveEventIds: string[],
+): Promise<number> {
   const live = new Set(liveEventIds);
-  const staleIds = results.filter((r) => !live.has(r.GCalEventId)).map((r) => r.Id);
+  const staleIds = existingRows.filter((r) => !live.has(r.GCalEventId)).map((r) => r.Id);
 
   let deleted = 0;
   for (const chunk of chunkArray(staleIds, DELETE_CHUNK_SIZE)) {

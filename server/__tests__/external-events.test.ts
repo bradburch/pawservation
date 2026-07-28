@@ -4,6 +4,7 @@ import {
   chunkArray,
   deleteExternalEventsMissing,
   insertPayment,
+  listExternalEventRowsInWindow,
   listSyncedBookingIds,
   listUnsyncedFutureBookings,
   updateBookingStatus,
@@ -201,11 +202,16 @@ describe('deleteExternalEventsMissing — D1 100-bound-parameter cap', () => {
     }
 
     const bindCounts = spyOnDeleteBindCounts(env);
-    const deleted = await deleteExternalEventsMissing(
+    const existingRows = await listExternalEventRowsInWindow(
       env.PAWBOOK_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
+    );
+    const deleted = await deleteExternalEventsMissing(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      existingRows,
       liveIds,
     );
 
@@ -236,13 +242,13 @@ describe('deleteExternalEventsMissing — D1 100-bound-parameter cap', () => {
     }
 
     const bindCounts = spyOnDeleteBindCounts(env);
-    const deleted = await deleteExternalEventsMissing(
+    const existingRows = await listExternalEventRowsInWindow(
       env.PAWBOOK_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
-      [],
     );
+    const deleted = await deleteExternalEventsMissing(env.PAWBOOK_DB, TENANT_A, existingRows, []);
 
     expect(deleted).toBe(200);
     expect(bindCounts).toHaveLength(3);

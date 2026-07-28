@@ -8,6 +8,7 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
+  listExternalEventRowsInWindow,
   listPetNamesForBooking,
   listSyncedBookingIds,
   listSyncPendingBookings,
@@ -361,7 +362,15 @@ export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:
  * a real latency/DoS surface. Same bound philosophy as BACKFILL_LIMIT. Deliberately does NOT
  * shrink the set used for delete-detection (see `liveIds` below) — capping WRITES is safe because
  * a deferred event is picked up next pass; capping the deletion truth set would risk deleting a
- * row for an event that is still live in Google, just not yet (re)materialized. */
+ * row for an event that is still live in Google, just not yet (re)materialized.
+ *
+ * Progress under overflow is real, not FIFO-on-the-same-prefix: `foreign` is partitioned into
+ * events with NO existing row (never yet materialized) and events that already have one (a
+ * re-upsert, e.g. picking up a move), and the not-yet-materialized ones are ordered FIRST into the
+ * slice this pass writes. So a backlog larger than MATERIALIZE_LIMIT strictly shrinks pass over
+ * pass — event #201 is guaranteed to get a row by the second pass instead of never, because pass 2
+ * no longer has to re-spend budget re-writing the same first 200 (those absorb only the leftover
+ * budget, if any, after every not-yet-materialized event is written). */
 const MATERIALIZE_LIMIT = 200;
 
 /** Chunk size for the db.batch() calls that write materialized external rows — each statement
@@ -442,13 +451,33 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   // — deleteExternalEventsMissing must never be told an event is gone just because MATERIALIZE_LIMIT
   // deferred writing its row.
   const liveIds = foreign.map((e) => e.id);
-  const toMaterialize = foreign.slice(0, MATERIALIZE_LIMIT);
+
+  // Hoisted once: the in-window external rows already on file. Feeds BOTH the materialize-priority
+  // partition just below and deleteExternalEventsMissing, so this pass reads them exactly once.
+  const existingRows = await listExternalEventRowsInWindow(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    windowStart,
+    windowEndExclusive,
+  );
+  const existingIds = new Set(existingRows.map((r) => r.GCalEventId));
+
+  // Real progress under MATERIALIZE_LIMIT overflow: events with no row yet go FIRST, so a backlog
+  // strictly shrinks pass over pass instead of the same first-N being rewritten forever while #N+1
+  // never materializes. Already-materialized events (a possible move/retitle) only spend whatever
+  // budget the not-yet-materialized ones didn't need.
+  const notYetMaterialized = foreign.filter((e) => !existingIds.has(e.id));
+  const alreadyMaterialized = foreign.filter((e) => existingIds.has(e.id));
+  const toMaterialize = [...notYetMaterialized, ...alreadyMaterialized].slice(0, MATERIALIZE_LIMIT);
   if (foreign.length > MATERIALIZE_LIMIT) {
     // Not silent, not lost: every un-materialized event is still "live" above, so the next
-    // reconcile pass (Google is polled repeatedly) picks up where this one left off.
+    // reconcile pass (Google is polled repeatedly) picks up where this one left off, and this
+    // pass's priority order guarantees the backlog of never-yet-written events shrinks by up to
+    // MATERIALIZE_LIMIT every pass rather than stalling on the same prefix.
     console.error(
       `reconcile: ${foreign.length} foreign events for tenant ${tenant.Id} exceeds ` +
-        `MATERIALIZE_LIMIT (${MATERIALIZE_LIMIT}) — remainder deferred to the next pass`,
+        `MATERIALIZE_LIMIT (${MATERIALIZE_LIMIT}) — ${notYetMaterialized.length} not yet ` +
+        `materialized this pass, prioritized for the next one`,
     );
   }
   for (const chunk of chunkArray(toMaterialize, MATERIALIZE_BATCH_SIZE)) {
@@ -463,13 +492,7 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
     });
     await env.PAWBOOK_DB.batch(statements);
   }
-  await deleteExternalEventsMissing(
-    env.PAWBOOK_DB,
-    tenant.Id,
-    windowStart,
-    windowEndExclusive,
-    liveIds,
-  );
+  await deleteExternalEventsMissing(env.PAWBOOK_DB, tenant.Id, existingRows, liveIds);
 }
 
 /** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. The

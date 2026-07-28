@@ -37,12 +37,13 @@ export function HelpSection() {
       <h3>Your calendar and Google Calendar</h3>
       <p>
         The <a href="#calendar">Calendar</a> section — the first thing you see when you sign in —
-        shows your month: confirmed bookings, requests waiting on you, and time off. Add days off
-        under <a href="#timeoff">Time off</a> — blocked days vanish from clients&rsquo; calendars
-        immediately. If you live in Google Calendar, connect it under{' '}
-        <a href="#apps">Connected apps</a>: booking requests appear there, and cancelled ones are
-        cleared away. One thing to know: the sync is one-way. A dentist appointment on your Google
-        Calendar won&rsquo;t block bookings — enter it as time off if you need the day held.
+        shows your month: confirmed bookings, requests waiting on you, time off, and events from
+        your Google Calendar. Add days off under <a href="#timeoff">Time off</a> — blocked days
+        vanish from clients&rsquo; calendars immediately. If you live in Google Calendar, connect it
+        under <a href="#apps">Connected apps</a>: booking requests appear there, cancelled ones are
+        cleared away, and it works the other way too &mdash; a dentist appointment or any other
+        event you keep on that same calendar blocks matching booking requests here automatically, no
+        extra step needed.
       </p>
 
       <h3>Getting paid</h3>

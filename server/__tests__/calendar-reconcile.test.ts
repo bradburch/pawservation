@@ -412,6 +412,39 @@ describe('reconcile v2 — external materialization lifecycle', () => {
       .first();
     expect(row).not.toBeNull(); // NOT deleted, despite not being in this pass's materialize batch
   });
+
+  // Regression: MATERIALIZE_LIMIT overflow must make real progress, not rewrite the same first-200
+  // prefix forever while event #201 never gets a row. Not-yet-materialized events are prioritized
+  // over already-materialized ones, so a 250-event backlog fully drains by the second pass, and an
+  // already-materialized event that moved still picks up its update once budget allows.
+  it('MATERIALIZE_LIMIT overflow makes real progress: 250 foreign events all have rows by pass two, and a moved already-materialized event still updates', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+
+    const events = Array.from({ length: 250 }, (_, i) => ({
+      id: `gev_ov_${i}`,
+      summary: `Event ${i}`,
+    }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse(events));
+    await reconcileBookingsWithCalendar(env, tenant); // pass 1: writes the first 200 (none had a row yet)
+    expect(await externalRows(env)).toHaveLength(200);
+
+    // Pass 2: same 250 events, but gev_ov_0 (materialized in pass 1) has moved in Google.
+    vi.restoreAllMocks();
+    const moved = addDays(IN_WINDOW_START, 7);
+    const movedEnd = addDays(IN_WINDOW_END, 7);
+    const eventsPass2 = events.map((e) =>
+      e.id === 'gev_ov_0' ? { ...e, start: { date: moved }, end: { date: movedEnd } } : e,
+    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse(eventsPass2));
+    await reconcileBookingsWithCalendar(env, tenant); // pass 2: the 50 stragglers get priority
+
+    const rowsAfterPass2 = await externalRows(env);
+    expect(rowsAfterPass2).toHaveLength(250); // every foreign event now has a row — progress was real
+
+    const movedRow = rowsAfterPass2.find((r) => r.GCalEventId === 'gev_ov_0');
+    expect(movedRow).toMatchObject({ StartDate: moved, EndDate: movedEnd }); // update applied, budget permitting
+  });
 });
 
 describe('reconcile v2 — delete-detection now notifies the customer', () => {

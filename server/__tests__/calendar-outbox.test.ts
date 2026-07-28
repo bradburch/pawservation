@@ -132,6 +132,18 @@ describe('calendar outbox — write side', () => {
     expect(s).toMatchObject({ Status: 'declined', SyncPending: 1 });
   });
 
+  // The assessed-cancellation branch (cancellationFee != null) is a separate SQL statement from
+  // the plain cancel above — it must carry the same SyncPending=1 write, or a fee-cancelled
+  // booking's calendar event would silently never get deleted.
+  it('cancelling WITH an assessed cancellation fee also marks the row pending', async () => {
+    const { env } = createTestEnv();
+    const id = await seedBooking(env, 'confirmed');
+    await clearFlag(env, id);
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled', 25);
+    const s = await syncState(env, id);
+    expect(s).toMatchObject({ Status: 'cancelled', SyncPending: 1 });
+  });
+
   it('a successful update-push and delete-push clear the flag; failures leave it set', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);

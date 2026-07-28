@@ -860,7 +860,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>If Google is down</h3>
-              <p>Your dashboard is the record; the calendar is a mirror of it. If Google can&rsquo;t be reached, the booking still lands in Pawservation, and a background sweep keeps retrying until the event lands in Google too. Edits made in Google flow back the same way. Worst case, the mirror lags a few minutes &mdash; it never loses a frame.</p>
+              <p>Your dashboard is the record; the calendar is a mirror of it. If Google can&rsquo;t be reached, the booking still lands in Pawservation, and a background sweep keeps retrying until the event lands in Google too. Worst case, the mirror lags a few minutes &mdash; it never loses a frame.</p>
             </div>
           </div>
         </div>

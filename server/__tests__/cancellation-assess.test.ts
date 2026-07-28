@@ -217,4 +217,24 @@ describe('cancellation fee assessment at cancel time', () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'Not found.' });
   });
+
+  it('404s (not 400) when chargeFee targets a materialized external row — no existence oracle', async () => {
+    const { env, raw } = createTestEnv();
+    seedTiers(raw);
+    raw.exec(
+      `INSERT INTO BookingRequests
+         (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, Status, SyncPending)
+       VALUES ('ext_row_1', 'tnt_sunnypaws', 'external', '2029-01-10', '2029-01-13', 1, 'gev_1', 'confirmed', 0)`,
+    );
+
+    const res = await postStatus(env, TENANT_A, 'ext_row_1', {
+      status: 'cancelled',
+      chargeFee: true,
+    });
+    // Before the fix this was a 400 ("needs a confirmed booking with an estimated cost"), which
+    // distinguishes "exists but isn't billable" from "doesn't exist at all" — an existence oracle
+    // for read-only rows the sitter never created and has no UI to act on.
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Not found.' });
+  });
 });
