@@ -513,18 +513,27 @@ export function SetupWizard({
                 connect a calendar later from Connected apps.
               </p>
             ) : settings.calendar.status === 'connected' ? (
-              <p>
-                <span className="pb-chip pb-chip-ok">Connected</span> New bookings will sync to your
-                Google Calendar automatically.
-              </p>
+              <>
+                <p>
+                  <span className="pb-chip pb-chip-ok">Connected</span> New bookings will sync to
+                  your Google Calendar automatically.
+                </p>
+                <p className="pb-hint">
+                  One more step worth doing: right now bookings sync to your main calendar, and
+                  everything already on it blocks booking requests. In Connected apps, press
+                  &ldquo;Create a pet calendar&rdquo; and Pawservation makes a separate one — then
+                  only pet work affects your availability.
+                </p>
+              </>
             ) : (
               <>
                 <p>
-                  Connect Google Calendar so new bookings land on the calendar you already use — or,
-                  from Connected apps afterwards, on a separate pet calendar Pawservation makes for
-                  you. Whichever calendar you connect, anything already on it blocks matching
-                  booking requests — the pet calendar keeps that to pet stuff instead of your whole
-                  personal calendar.
+                  Connect Google Calendar and new bookings land on it automatically. The calendar
+                  you connect is also read, so anything already on it — appointments, reminders,
+                  personal events — blocks booking requests for those dates. That&rsquo;s why, right
+                  after you connect, you should go to Connected apps and press &ldquo;Create a pet
+                  calendar&rdquo;: Pawservation makes a separate one in your Google account so only
+                  pet work affects your availability.
                 </p>
                 <button
                   type="button"
