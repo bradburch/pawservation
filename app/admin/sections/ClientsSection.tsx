@@ -619,7 +619,9 @@ export function ClientsSection({
                       title={
                         owners.length < 2
                           ? 'The only owner of these pets — remove the client instead.'
-                          : undefined
+                          : group.livePetIds.length === 0
+                            ? 'This account has no active pets — there is nothing to unlink.'
+                            : undefined
                       }
                     >
                       Remove from account
@@ -696,11 +698,12 @@ export function ClientsSection({
                   </p>
                   <p className="pb-hint">
                     Covers all of this account&rsquo;s pets together. Pricing a subset of the
-                    account&rsquo;s pets isn&rsquo;t editable in the dashboard yet.
+                    account&rsquo;s pets isn&rsquo;t editable in the dashboard yet. Changing this
+                    account&rsquo;s pets clears its saved rate.
                   </p>
                   {enabledOptions.length === 0 ? (
                     <p className="pb-applies">
-                      No enabled services have a saved price yet — nothing to override.
+                      No enabled services with saved options yet — save your services first.
                     </p>
                   ) : (
                     enabledOptions.map((option) => {
