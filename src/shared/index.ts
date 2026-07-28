@@ -22,6 +22,11 @@ export {
   type UsHoliday,
 } from './util/us-holidays.js';
 export {
+  isDedicatedCalendarId,
+  isPersonalCalendarTarget,
+  SECONDARY_CALENDAR_SUFFIX,
+} from './util/calendar-target.js';
+export {
   buildCapacity,
   rangeHasConflict,
   walkHasConflict,
