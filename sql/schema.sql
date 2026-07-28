@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
 -- see buildGroupKey in src/shared/pricing/pet-set-rates.ts. The billing unit comes from
 -- TenantServices.RateUnit. Written one row at a time by the admin pet-group-rate routes
 -- (upsert/delete-one — group rows scale with the client base); exact-match only, read for
--- pricing by NOTHING until PR 3 of the pet-set-rates design.
+-- pricing by loadPetSetRates (server/lib/availability.ts), which feeds estimateCost — see
+-- CLAUDE.md's pet-set-rates paragraph.
 CREATE TABLE IF NOT EXISTS PetGroupPricing (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
@@ -119,7 +120,9 @@ CREATE TABLE IF NOT EXISTS PetGroupPricing (
 -- MixKey is species-sorted 'slug:count' joined by '|' — see buildMixKey in
 -- src/shared/pricing/pet-set-rates.ts. Keyed per option (duration already pinned), so unlike
 -- PetGroupPricing this needs no RateUnit/DurationMinutes. Exact-match only; written by the
--- admin settings PUT (per-option replace); read for pricing by NOTHING until PR 3.
+-- admin settings PUT (per-option replace); read for pricing by loadPetSetRates
+-- (server/lib/availability.ts), which feeds estimateCost — see CLAUDE.md's pet-set-rates
+-- paragraph.
 CREATE TABLE IF NOT EXISTS TenantServicePetRates (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   ServiceType TEXT NOT NULL,

@@ -20,9 +20,10 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
 
 - **Real product surface area, not a toy CRUD app** — multi-tenant isolation, capacity
   and conflict rules, per-service booking constraints, pet co-ownership, CSV bulk import,
-  payment/earnings tracking, two-way Google Calendar sync (bookings pushed out with retry;
-  busy events, edits, and deletions on the connected calendar read back on a 15-minute
-  sweep), and owner-console sitter
+  payment/earnings tracking (Venmo CSV reconciliation, holiday pricing, one-off booking
+  charges, multi-owner billing accounts), two-way Google Calendar sync (bookings pushed
+  out with retry; busy events, edits, and deletions on the connected calendar read back on
+  a 15-minute sweep), and owner-console sitter
   lifecycle management (disable/remove), all shipped as incremental, reviewed PRs.
 - **Edge-native architecture** — Cloudflare Workers (Hono) + D1 (SQLite) + KV, chosen for
   low-latency global delivery of a widget that lives on third-party sites.
@@ -34,15 +35,14 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
   book are easy to test in isolation and can't be broken by a transitive dependency update.
 - **Two real auth flows** — passwordless email-code sessions for customers and password +
   JWT sessions for tenant admins, including invite-only customer lists.
-- **Tested like it matters** — 86 test files backed by in-memory SQLite (`node:sqlite`),
+- **Tested like it matters** — 115 test files backed by in-memory SQLite (`node:sqlite`),
   gating a CI pipeline that runs typecheck, lint, format, test, and build on every PR
   before an automatic deploy to Cloudflare on merge to `main`.
 - **Security-conscious by habit** — a documented [`SECURITY.md`](../SECURITY.md) policy,
   and commit history that includes dedicated security-review passes (closing
   prototype-pollution and race-condition findings) rather than shipping and forgetting.
 - **Design-first workflow** — every non-trivial feature (calendar OAuth, custom services,
-  CSV import, earnings analytics) started as a written design spec before code, visible in
-  [`docs/superpowers/specs`](./superpowers/specs).
+  CSV import, earnings analytics) starts as a written design spec before code.
 
 ## Tech stack
 
