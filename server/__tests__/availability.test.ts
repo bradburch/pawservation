@@ -292,11 +292,36 @@ function opt(over: Partial<TenantServiceOption>): TenantServiceOption {
   };
 }
 
+/** A single pet with no stored rate — the common case exercised through this file's direct
+ *  `checkAvailability`/`estimateCost` calls, which still falls through to the option's flat rate
+ *  (spec §2 step 3). Distinct fixture pets for the multi-pet capacity-only tests below, since
+ *  those exercise the capacity fast path / conflict check, which returns before pricing runs. */
+const onePet = [{ id: 'p_avail_1', petType: 'dog' }];
+const twoPets = [
+  { id: 'p_avail_1', petType: 'dog' },
+  { id: 'p_avail_2', petType: 'dog' },
+];
+const threePets = [
+  { id: 'p_avail_1', petType: 'dog' },
+  { id: 'p_avail_2', petType: 'dog' },
+  { id: 'p_avail_3', petType: 'dog' },
+];
+const noRates = { groupRates: [], mixRates: [] };
+
 describe('checkAvailability', () => {
   it('single-visit cost is the picked option price (no nights math)', async () => {
     const { env } = createTestEnv();
     const t = tenant();
-    const res = await checkAvailability(env, t, svc('walk'), opt({ Rate: 35 }), '2028-08-01', '');
+    const res = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      opt({ Rate: 35 }),
+      '2028-08-01',
+      '',
+      onePet,
+      noRates,
+    );
     expect(res).toMatchObject({ available: true, estCost: 35 });
   });
 
@@ -309,7 +334,16 @@ describe('checkAvailability', () => {
       DurationMinutes: null,
       Rate: 50,
     });
-    const res = await checkAvailability(env, t, svc('boarding'), o, '2028-08-10', '2028-08-13', 1);
+    const res = await checkAvailability(
+      env,
+      t,
+      svc('boarding'),
+      o,
+      '2028-08-10',
+      '2028-08-13',
+      onePet,
+      noRates,
+    );
     expect(res).toMatchObject({ available: true, estCost: 150, nights: 3 });
   });
 
@@ -330,7 +364,8 @@ describe('checkAvailability', () => {
       o,
       '2028-06-21',
       '2028-06-23',
-      2,
+      twoPets,
+      noRates,
     );
     expect(res).toMatchObject({ available: false });
     expect(SERVICE_TEMPLATES.housesitting.shape).toBe('range');
@@ -398,10 +433,28 @@ describe('checkAvailability', () => {
     });
     raw.prepare('UPDATE BookingRequests SET Status = ? WHERE Id = ?').run('cancelled', cancelledId);
 
-    const full = await checkAvailability(env, t, svc('walk'), slotOption, '2028-09-01', '');
+    const full = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-01',
+      '',
+      onePet,
+      noRates,
+    );
     expect(full).toMatchObject({ available: false });
 
-    const otherDate = await checkAvailability(env, t, svc('walk'), slotOption, '2028-09-02', '');
+    const otherDate = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-02',
+      '',
+      onePet,
+      noRates,
+    );
     expect(otherDate).toMatchObject({ available: true });
   });
 
@@ -422,7 +475,16 @@ describe('checkAvailability', () => {
       estCost: null,
       status: 'confirmed',
     });
-    const partial = await checkAvailability(env, t, svc('walk'), slotOption, '2028-09-01', '');
+    const partial = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-01',
+      '',
+      onePet,
+      noRates,
+    );
     expect(partial).toMatchObject({ available: true });
 
     // A second 2-pet booking fills the 4-pet slot → full.
@@ -437,7 +499,16 @@ describe('checkAvailability', () => {
       estCost: null,
       status: 'confirmed',
     });
-    const full = await checkAvailability(env, t, svc('walk'), slotOption, '2028-09-01', '');
+    const full = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-01',
+      '',
+      onePet,
+      noRates,
+    );
     expect(full).toMatchObject({ available: false });
   });
 
@@ -463,13 +534,158 @@ describe('checkAvailability', () => {
       status: 'confirmed',
     });
     // A 1-pet sit overlapping mid-range: 2 + 1 > 2 → blocked.
-    const blocked = await checkAvailability(env, t, service, o, '2028-08-11', '2028-08-13', 1);
+    const blocked = await checkAvailability(
+      env,
+      t,
+      service,
+      o,
+      '2028-08-11',
+      '2028-08-13',
+      onePet,
+      noRates,
+    );
     expect(blocked).toMatchObject({ available: false });
 
     // A 3-pet sit against a cap of 2 fails the fast path even on empty dates.
-    const overCap = await checkAvailability(env, t, service, o, '2028-08-20', '2028-08-22', 3);
+    const overCap = await checkAvailability(
+      env,
+      t,
+      service,
+      o,
+      '2028-08-20',
+      '2028-08-22',
+      threePets,
+      noRates,
+    );
     expect(overCap).toMatchObject({ available: false });
     expect((overCap as { reason: string }).reason).toBe('That exceeds our house-sitting capacity.');
+  });
+});
+
+describe('estimateCost — PriceResult, and the refusal arm', () => {
+  const bella = { id: 'pet_sp_bella', petType: 'dog' };
+  const mochi = { id: 'pet_sp_mochi', petType: 'cat' };
+  const noRates = { groupRates: [], mixRates: [] };
+
+  it('one pet with no stored rate falls back to the option rate — today unchanged', () => {
+    const res = estimateCost(
+      svc('boarding'),
+      opt({ Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella],
+      noRates,
+    );
+    expect(res).toEqual({ priced: true, cost: 150, billedUnits: 3, unit: 'night' });
+  });
+
+  it('TWO pets with no stored rate REFUSE — no price, and never a coerced 0', () => {
+    const res = estimateCost(
+      svc('boarding'),
+      opt({ Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella, mochi],
+      noRates,
+    );
+    expect(res.priced).toBe(false);
+    expect(res).toMatchObject({
+      reason: 'unpriced-pet-set',
+      groupKey: 'pet_sp_bella,pet_sp_mochi',
+      mixKey: 'cat:1|dog:1',
+    });
+    expect(res).not.toHaveProperty('cost');
+  });
+
+  it('a species-mix rate prices the exact set — and is NOT multiplied by anything', () => {
+    const res = estimateCost(
+      svc('boarding'),
+      opt({ ServiceType: 'boarding', OptionKey: 'standard', Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella, { id: 'p_rex', petType: 'dog' }],
+      {
+        groupRates: [],
+        mixRates: [{ mixKey: 'dog:2', rate: 70, serviceType: 'boarding', optionKey: 'standard' }],
+      },
+    );
+    // $70/night for the PAIR × 3 nights. Not 2 × $70, not $50 + $70, not $50 × 2.
+    expect(res).toEqual({ priced: true, cost: 210, billedUnits: 3, unit: 'night' });
+  });
+
+  it('a pet-id group rate BEATS a species rate for the same set', () => {
+    const res = estimateCost(
+      svc('boarding'),
+      opt({ ServiceType: 'boarding', OptionKey: 'standard', Rate: 50 }),
+      '2028-08-10',
+      '2028-08-11',
+      [bella, mochi],
+      {
+        groupRates: [
+          {
+            groupKey: 'pet_sp_bella,pet_sp_mochi',
+            rate: 65,
+            serviceType: 'boarding',
+            optionKey: 'standard',
+          },
+        ],
+        mixRates: [
+          { mixKey: 'cat:1|dog:1', rate: 80, serviceType: 'boarding', optionKey: 'standard' },
+        ],
+      },
+    );
+    expect(res).toEqual({ priced: true, cost: 65, billedUnits: 1, unit: 'night' });
+  });
+
+  it('a rate for ANOTHER option of the same service never leaks in', () => {
+    const res = estimateCost(
+      svc('walk'),
+      opt({ OptionKey: 'd60', Rate: 35 }),
+      '2028-08-01',
+      '2028-08-01',
+      [bella, { id: 'p_rex', petType: 'dog' }],
+      {
+        groupRates: [],
+        mixRates: [{ mixKey: 'dog:2', rate: 55, serviceType: 'walk', optionKey: 'd30' }],
+      },
+    );
+    expect(res.priced).toBe(false);
+  });
+
+  it('a single-day service carries a price but no quantity — the flat charge is unchanged', () => {
+    const res = estimateCost(
+      svc('walk'),
+      opt({ Rate: 20 }),
+      '2028-08-01',
+      '2028-08-01',
+      [bella],
+      noRates,
+    );
+    expect(res).toEqual({ priced: true, cost: 20 });
+  });
+
+  it('an EMPTY pet set is refused, never priced at the option rate', () => {
+    const res = estimateCost(
+      svc('walk'),
+      opt({ Rate: 20 }),
+      '2028-08-01',
+      '2028-08-01',
+      [],
+      noRates,
+    );
+    expect(res).toMatchObject({ priced: false, groupKey: '', mixKey: '' });
+  });
+
+  it('a repeated pet id is ONE pet, so it keeps the single-pet fallback', () => {
+    const res = estimateCost(
+      svc('walk'),
+      opt({ Rate: 20 }),
+      '2028-08-01',
+      '2028-08-01',
+      [bella, bella],
+      noRates,
+    );
+    expect(res).toEqual({ priced: true, cost: 20 });
   });
 });
 
@@ -477,14 +693,29 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
   // THE test that must never break: every service that exists today is night-billed, so this
   // change must not move a single price. Numbers are the seeded rates (sql/seed.sql).
   it('regression lock — night-unit range services bill exactly nights, at the seeded rates', () => {
-    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-13')).toBe(150); // 3 nights
-    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2028-06-21', '2028-06-24')).toBe(120); // Happy Tails
-    expect(estimateCost(svc('housesitting'), opt({ Rate: 70 }), '2028-08-10', '2028-08-15')).toBe(
-      350,
-    ); // 5 nights
-    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-11')).toBe(50); // 1 night
+    expect(
+      estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-13', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 150 }); // 3 nights
+    expect(
+      estimateCost(svc('boarding'), opt({ Rate: 40 }), '2028-06-21', '2028-06-24', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 120 }); // Happy Tails
+    expect(
+      estimateCost(
+        svc('housesitting'),
+        opt({ Rate: 70 }),
+        '2028-08-10',
+        '2028-08-15',
+        onePet,
+        noRates,
+      ),
+    ).toMatchObject({ priced: true, cost: 350 }); // 5 nights
+    expect(
+      estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-11', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 50 }); // 1 night
     // Degenerate 0-night range still bills the 1-night floor (billableUnits' Math.max(1, …)).
-    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-10')).toBe(50);
+    expect(
+      estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-10', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 50 });
     // Both built-in range templates are night-billed — the premise of the lock above.
     expect(SERVICE_TEMPLATES.boarding.rateUnit).toBe('night');
     expect(SERVICE_TEMPLATES.housesitting.rateUnit).toBe('night');
@@ -493,22 +724,34 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
   it('a day-unit range service bills nights + 1 (the departure day is chargeable)', () => {
     const dayBoarding = svc('boarding', { ServiceType: 'day-boarding', RateUnit: 'day' });
     // Apr 10 → Apr 13 is 3 nights = 4 chargeable DAYS at $30 → $120, not $90.
-    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-13')).toBe(120);
+    expect(
+      estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-13', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 120 });
     // A same-day day-unit range is 1 day, never 2.
-    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-10')).toBe(30);
+    expect(
+      estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-10', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 30 });
   });
 
   it('single-shape services return the flat option rate whatever their RateUnit', () => {
-    expect(estimateCost(svc('walk'), opt({ Rate: 20 }), '2028-08-01', '')).toBe(20);
-    expect(estimateCost(svc('checkin'), opt({ Rate: 12 }), '2028-08-01', '')).toBe(12);
+    expect(
+      estimateCost(svc('walk'), opt({ Rate: 20 }), '2028-08-01', '', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 20 });
+    expect(
+      estimateCost(svc('checkin'), opt({ Rate: 12 }), '2028-08-01', '', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 12 });
     // daycare is the shape:'single' + rateUnit:'day' pairing — flat rate, no nights math.
-    expect(estimateCost(svc('daycare'), opt({ Rate: 40 }), '2028-08-01', '')).toBe(40);
+    expect(
+      estimateCost(svc('daycare'), opt({ Rate: 40 }), '2028-08-01', '', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 40 });
   });
 
   it('an unexpected RateUnit on a range service falls back to per-night (never inflates a bill)', () => {
     // 'visit' can only reach a range service through bad data; the mapping must be total.
     const odd = svc('boarding', { RateUnit: 'visit' });
-    expect(estimateCost(odd, opt({ Rate: 50 }), '2028-08-10', '2028-08-13')).toBe(150); // 3 nights, not 4
+    expect(
+      estimateCost(odd, opt({ Rate: 50 }), '2028-08-10', '2028-08-13', onePet, noRates),
+    ).toMatchObject({ priced: true, cost: 150 }); // 3 nights, not 4
   });
 });
 
@@ -528,7 +771,8 @@ describe('the quote’s quantity is unit-aware (billedUnits + unit)', () => {
       opt({ ...RANGE_OPT, Rate: 50 }),
       '2028-08-10',
       '2028-08-13',
-      1,
+      onePet,
+      noRates,
     );
     // `nights` is untouched, and the new quantity equals it — today's behavior, restated.
     expect(res).toMatchObject({ available: true, estCost: 150, nights: 3, billedUnits: 3 });
@@ -544,7 +788,8 @@ describe('the quote’s quantity is unit-aware (billedUnits + unit)', () => {
       opt({ ...RANGE_OPT, ServiceType: 'day-boarding', Rate: 30 }),
       '2029-04-10',
       '2029-04-13',
-      1,
+      onePet,
+      noRates,
     );
     // 3 nights = 4 chargeable days. `nights` keeps its own meaning (3) for wire compatibility.
     expect(res).toMatchObject({ available: true, estCost: 120, nights: 3, billedUnits: 4 });
@@ -591,7 +836,8 @@ describe('the quote’s quantity is unit-aware (billedUnits + unit)', () => {
         opt({ ...RANGE_OPT, ServiceType: c.service.ServiceType, Rate: c.rate }),
         c.start,
         c.end,
-        1,
+        onePet,
+        noRates,
       );
       expect(res.available).toBe(true);
       const ok = res as { estCost: number; billedUnits?: number; unit?: string };
@@ -609,6 +855,8 @@ describe('the quote’s quantity is unit-aware (billedUnits + unit)', () => {
       opt({ Rate: 20 }),
       '2028-08-01',
       '',
+      onePet,
+      noRates,
     );
     expect(res).toMatchObject({ available: true, estCost: 20 });
     // Deliberately absent (like `nights`): there is no quantity to bill, so there is nothing
