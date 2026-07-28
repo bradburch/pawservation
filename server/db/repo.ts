@@ -1347,6 +1347,15 @@ export async function clearProviderConnection(
  * event). Returns whether a row actually changed — false means another writer won the race, so the
  * caller must clean up the Google event it just created rather than orphan it. `IS` is null-safe,
  * so binding NULL matches only an unset GCalEventId. Tenant-scoped like every repo function.
+ *
+ * `expectedStatus`, when given, guards ONLY the SyncPending clear (not the id write): an in-flight
+ * push that lands after an intervening status change (e.g. a create racing a concurrent cancel)
+ * must not clear the flag the status change just set, or the push that status change still needs
+ * would be silently masked. The event id is still recorded either way — never orphaning the event
+ * Google now has — so the next outbox sweep sees a fresh row (current Status + the just-stored
+ * GCalEventId) and derives the correct follow-up op from it. Omitted (undefined binds NULL, and
+ * `? IS NULL` short-circuits the CASE true) for every caller that isn't re-driving a batch, where
+ * this race is negligible.
  */
 export async function setBookingGCalEventId(
   db: D1Database,
@@ -1354,12 +1363,16 @@ export async function setBookingGCalEventId(
   bookingId: string,
   eventId: string,
   expectedOld: string | null,
+  expectedStatus?: BookingRow['Status'],
 ): Promise<boolean> {
+  const guard = expectedStatus ?? null;
   const result = await db
     .prepare(
-      'UPDATE BookingRequests SET GCalEventId = ?, SyncPending = 0 WHERE TenantId = ? AND Id = ? AND GCalEventId IS ?',
+      `UPDATE BookingRequests
+       SET GCalEventId = ?, SyncPending = CASE WHEN ? IS NULL OR Status = ? THEN 0 ELSE SyncPending END
+       WHERE TenantId = ? AND Id = ? AND GCalEventId IS ?`,
     )
-    .bind(eventId, tenantId, bookingId, expectedOld)
+    .bind(eventId, guard, guard, tenantId, bookingId, expectedOld)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
 }
@@ -1393,15 +1406,26 @@ export async function clearBookingCalendarEventIds(
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
-/** Outbox success path: mark one booking's calendar state as mirrored. Tenant-scoped. */
+/** Outbox success path: mark one booking's calendar state as mirrored. Tenant-scoped.
+ *
+ * `expectedStatus`, when given, guards the clear the same way as setBookingGCalEventId's: a
+ * push that started under one Status must not clear the flag if the row's Status has since
+ * changed underneath it, or the follow-up push that change needs would be masked. Omitted for
+ * callers outside a re-drive batch, where the race window is negligible. */
 export async function clearSyncPending(
   db: D1Database,
   tenantId: string,
   bookingId: string,
+  expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
+  const guard = expectedStatus ?? null;
   await db
-    .prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE TenantId = ? AND Id = ?')
-    .bind(tenantId, bookingId)
+    .prepare(
+      `UPDATE BookingRequests
+       SET SyncPending = CASE WHEN ? IS NULL OR Status = ? THEN 0 ELSE SyncPending END
+       WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(guard, guard, tenantId, bookingId)
     .run();
 }
 
@@ -2171,6 +2195,33 @@ export async function listUnsyncedFutureBookings(
     )
     .bind(tenantId, today, limit)
     .all<BookingSyncRow>();
+  return results;
+}
+
+/** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings
+ * only ('blocked' is never synced; 'external' is Google-owned). Bounded to StartDate >= fromDate
+ * so ancient never-synced history doesn't churn every sweep, soonest first. Status here can be
+ * any of the four — the caller derives create/update/delete from Status + GCalEventId. */
+export async function listSyncPendingBookings(
+  db: D1Database,
+  tenantId: string,
+  fromDate: string,
+  limit: number,
+): Promise<
+  (Omit<BookingSyncRow, 'Status'> & { Status: BookingRow['Status']; GCalEventId: string | null })[]
+> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${BOOKING_SYNC_COLS}, b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
+       WHERE b.TenantId = ? AND b.SyncPending = 1
+         AND b.ServiceType NOT IN ('blocked', 'external') AND b.StartDate >= ?
+       ORDER BY b.StartDate
+       LIMIT ?`,
+    )
+    .bind(tenantId, fromDate, limit)
+    .all<
+      Omit<BookingSyncRow, 'Status'> & { Status: BookingRow['Status']; GCalEventId: string | null }
+    >();
   return results;
 }
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import {
   deleteBookingCalendarEvent,
+  redriveCalendarOutbox,
   syncBookingToCalendar,
   updateBookingCalendarEvent,
 } from '../lib/calendar-sync';
@@ -167,3 +168,107 @@ async function clearFlag(env: Env, id: string) {
     .bind(id)
     .run();
 }
+
+describe('redriveCalendarOutbox', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('re-drives a failed create: event created, id stored, flag cleared', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedBooking(env, 'pending'); // born SyncPending=1, GCalEventId NULL
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_redriven' }), { status: 200 }));
+    await redriveCalendarOutbox(env, tenant);
+    expect(spy).toHaveBeenCalled();
+    expect(await syncState(env, id)).toMatchObject({
+      SyncPending: 0,
+      GCalEventId: 'evt_redriven',
+    });
+  });
+
+  it('re-drives a failed delete for a cancelled booking, and clears without a call when there is no event', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const withEvent = await seedBooking(env);
+    await env.PAWBOOK_DB.prepare("UPDATE BookingRequests SET GCalEventId = 'evt_x' WHERE Id = ?")
+      .bind(withEvent)
+      .run();
+    const withoutEvent = await seedBooking(env, 'pending');
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, withEvent, 'cancelled');
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, withoutEvent, 'declined');
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    await redriveCalendarOutbox(env, tenant);
+    expect((await syncState(env, withEvent)).SyncPending).toBe(0);
+    expect((await syncState(env, withoutEvent)).SyncPending).toBe(0);
+    // Only ONE Google call: the DELETE for withEvent. withoutEvent had nothing to delete.
+    expect(spy.mock.calls.filter(([u]) => String(u).includes('/events/')).length).toBe(1);
+  });
+
+  it('a failing row stays pending and does not stop the rest of the batch', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const first = await seedBooking(env, 'pending');
+    const second = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: addDays(TODAY, 20),
+      endDate: addDays(TODAY, 22),
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 100,
+      status: 'pending',
+    });
+    let call = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      ++call === 1
+        ? new Response('', { status: 500 })
+        : new Response(JSON.stringify({ id: `evt_${call}` }), { status: 200 }),
+    );
+    await redriveCalendarOutbox(env, tenant);
+    expect((await syncState(env, first)).SyncPending).toBe(1); // earliest StartDate goes first, fails
+    expect((await syncState(env, second)).SyncPending).toBe(0);
+  });
+
+  it('no connection → no Google calls, rows stay pending for a future connect', async () => {
+    const { env } = createTestEnv();
+    const id = await seedBooking(env, 'pending');
+    const spy = vi.spyOn(globalThis, 'fetch');
+    await redriveCalendarOutbox(env, tenant);
+    expect(spy).not.toHaveBeenCalled();
+    expect((await syncState(env, id)).SyncPending).toBe(1);
+  });
+
+  it('a status change landing mid-create is not masked: the flag stays set and the next sweep cleans up correctly', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedBooking(env, 'pending'); // SyncPending=1, GCalEventId NULL
+
+    // Simulate an admin cancelling the booking WHILE the create's Google round-trip is in flight:
+    // the mock performs the status change itself before resolving the create response.
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => {
+      await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled');
+      return new Response(JSON.stringify({ id: 'evt_raced' }), { status: 200 });
+    });
+    await redriveCalendarOutbox(env, tenant);
+
+    // The create's CAS-guarded clear must NOT have masked the cancel's own pending flag — the id
+    // is still recorded (so the event isn't orphaned), but SyncPending stays set for a redrive.
+    expect(await syncState(env, id)).toMatchObject({
+      SyncPending: 1,
+      GCalEventId: 'evt_raced',
+      Status: 'cancelled',
+    });
+
+    // Next sweep sees fresh state (cancelled + a known event id) and deletes it, clearing cleanly.
+    vi.restoreAllMocks();
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    await redriveCalendarOutbox(env, tenant);
+    expect(spy.mock.calls[0]?.[0]).toContain('evt_raced');
+    expect((await syncState(env, id)).SyncPending).toBe(0);
+  });
+});

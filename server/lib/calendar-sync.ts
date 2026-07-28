@@ -6,6 +6,7 @@ import {
   getProviderConnection,
   listPetNamesForBooking,
   listSyncedBookingIds,
+  listSyncPendingBookings,
   listUnsyncedFutureBookings,
   setBookingGCalEventId,
   setProviderAccessToken,
@@ -22,7 +23,7 @@ import {
 } from './google-calendar';
 import type { ServiceType } from './services';
 import { decryptToken, encryptToken } from './token-crypto';
-import type { Tenant, ProviderConnectionWithTokens } from '../types';
+import type { BookingRow, Tenant, ProviderConnectionWithTokens } from '../types';
 
 export type SyncInput = {
   bookingId: string;
@@ -103,6 +104,7 @@ async function persistEventIdOrCleanup(
   bookingId: string,
   eventId: string,
   expectedOld: string | null,
+  expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
   const stuck = await setBookingGCalEventId(
     env.PAWBOOK_DB,
@@ -110,6 +112,7 @@ async function persistEventIdOrCleanup(
     bookingId,
     eventId,
     expectedOld,
+    expectedStatus,
   );
   if (!stuck) {
     await deleteEvent(accessToken, calendarId, eventId).catch(() => {});
@@ -130,7 +133,18 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
   const calendarId = conn.CalendarId ?? 'primary';
   const resource = await resourceForBooking(env, tenant, b);
   const { id } = await createEvent(accessToken, calendarId, resource);
-  await persistEventIdOrCleanup(env, tenant, accessToken, calendarId, b.bookingId, id, null);
+  // b.status guards the SyncPending clear: if a concurrent status change lands before this create
+  // completes, the row is left pending for that change's own push (see setBookingGCalEventId).
+  await persistEventIdOrCleanup(
+    env,
+    tenant,
+    accessToken,
+    calendarId,
+    b.bookingId,
+    id,
+    null,
+    b.status,
+  );
 }
 
 /**
@@ -167,9 +181,11 @@ export async function updateBookingCalendarEvent(
       b.bookingId,
       id,
       gcalEventId,
+      b.status,
     );
   }
-  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, b.bookingId);
+  // Same guard as the create path: don't clear a flag a concurrent status change re-set.
+  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, b.bookingId, b.status);
 }
 
 /**
@@ -236,6 +252,70 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
   }
 }
 
+/** Cap on outbox rows one sweep re-drives per tenant — same bound philosophy as BACKFILL_LIMIT. */
+const OUTBOX_LIMIT = 100;
+
+/**
+ * Re-drive every pending calendar push for this tenant. The op is derived from row state
+ * (terminal status + event id → delete; no event id → create; otherwise → update), so a row can
+ * never replay a stale intent — it always pushes the row's CURRENT state (as of the batch fetch).
+ * Per-row best-effort: a Google failure leaves that row pending for the next sweep and moves on.
+ * This function plus the SyncPending write-ahead flag is the "no event exists only in
+ * Pawservation" guarantee: while a connection exists, every state change either cleared the flag
+ * (push landed) or will be retried here until it does.
+ *
+ * A batch's rows are processed sequentially, each awaiting its own Google round-trip, so a row's
+ * Status can legitimately change (via a concurrent request) between this function reading it and
+ * that row's push landing. syncBookingToCalendar / updateBookingCalendarEvent /
+ * deleteBookingCalendarEvent all guard their SyncPending clear on Status-unchanged for exactly
+ * this reason: a clear from a stale push must not mask the push the newer status change still
+ * needs. When the guard blocks a clear, the row's GCalEventId is still recorded, so the next sweep
+ * re-derives the correct op (e.g. a delete for an event this sweep just created) from fresh state.
+ */
+export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<void> {
+  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
+
+  const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const rows = await listSyncPendingBookings(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    addDays(today, -1),
+    OUTBOX_LIMIT,
+  );
+  for (const r of rows) {
+    try {
+      if (r.Status === 'cancelled' || r.Status === 'declined') {
+        if (r.GCalEventId) {
+          await deleteBookingCalendarEvent(env, tenant, r.GCalEventId, r.Id, r.Status);
+        } else {
+          await clearSyncPending(env.PAWBOOK_DB, tenant.Id, r.Id, r.Status); // never had an event
+        }
+        continue;
+      }
+      const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+      const input: SyncInput = {
+        bookingId: r.Id,
+        endUserId: r.EndUserId,
+        serviceType: r.ServiceType,
+        serviceLabel: r.ServiceLabel,
+        startDate: r.StartDate,
+        endDate: r.EndDate,
+        startTime: r.StartTime,
+        durationMinutes: r.DurationMinutes,
+        petCount: r.PetCount,
+        petNames,
+        estCost: r.EstCost,
+        status: r.Status,
+      };
+      if (r.GCalEventId) await updateBookingCalendarEvent(env, tenant, r.GCalEventId, input);
+      else await syncBookingToCalendar(env, tenant, input);
+    } catch (err) {
+      console.error('calendar outbox re-drive failed for booking', r.Id, err);
+    }
+  }
+}
+
 /**
  * Best-effort: delete the Google Calendar event for a booking that was cancelled or declined in
  * the dashboard. Callers run this via executionCtx.waitUntil and swallow rejections — mirroring
@@ -244,18 +324,23 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
  * removed by hand in Calendar) as success. The booking keeps its GCalEventId as a historical
  * record; reconciliation ignores it because listSyncedBookingIds excludes cancelled bookings.
  * Clearing SyncPending here is what retires the delete from the outbox.
+ *
+ * `expectedStatus`, when given, guards that clear the same way as syncBookingToCalendar's — used
+ * by the outbox re-drive, where a batch's per-row Google round-trips give a real window for the
+ * booking's Status to move again before this delete lands.
  */
 export async function deleteBookingCalendarEvent(
   env: Env,
   tenant: Tenant,
   gcalEventId: string,
   bookingId: string,
+  expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
   const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   await deleteEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId);
-  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, bookingId);
+  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, bookingId, expectedStatus);
 }
 
 const CALENDAR_SYNC_TTL_SECONDS = 120;
