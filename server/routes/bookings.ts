@@ -394,7 +394,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         pets: petsByBooking.get(r.Id) ?? [],
         estCost: r.EstCost,
         cancellationFee: r.CancellationFee,
-        status: r.Declined ? 'declined' : r.Status,
+        status: r.Status,
       })),
     });
   });

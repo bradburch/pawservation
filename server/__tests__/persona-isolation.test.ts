@@ -344,7 +344,7 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
       env,
     );
     expect(res.status).toBe(200);
-    expect(await statusOf(env, idB)).toBe('cancelled'); // declined == cancelled + Declined flag
+    expect(await statusOf(env, idB)).toBe('declined');
 
     // Exactly the DELETE to B's calendar with B's token fired.
     const deleteCalls = spy.mock.calls.filter(

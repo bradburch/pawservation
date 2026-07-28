@@ -1423,7 +1423,7 @@ export const adminRoutes = new Hono<AppEnv>()
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
-        status: r.Declined ? 'declined' : r.Status,
+        status: r.Status,
         cancellationFee: r.CancellationFee,
         feeIfCancelledToday:
           r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)

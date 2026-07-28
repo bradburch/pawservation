@@ -36,7 +36,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, DisabledAt';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, CancellationFee, GCalEventId, Status, Declined, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -574,7 +574,7 @@ export async function listBookingsForUser(
 ): Promise<BookingRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS}, Declined
+      `SELECT ${BOOKING_COLS}
        FROM BookingRequests
        WHERE TenantId = ? AND EndUserId = ?
        ORDER BY StartDate DESC`,
@@ -641,13 +641,12 @@ export async function listBookingsForTenant(
 
 /**
  * Sitter-driven lifecycle transition. The guard is entirely in SQL so it's atomic with the write:
- * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' is
- * terminal — once cancelled, no further transition matches. Confirming an already-confirmed row
- * still matches (harmless no-op). Returns whether a row actually changed.
+ * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' and
+ * 'declined' are both terminal — once set, no further transition matches. Confirming an
+ * already-confirmed row still matches (harmless no-op). Returns whether a row actually changed.
  *
- * 'declined' is a sitter's "no" to a still-pending request: stored as Status 'cancelled' with the
- * Declined flag set (the Status CHECK can't grow a value without a table rebuild), and only valid
- * from 'pending' — a confirmed booking is cancelled, never declined.
+ * 'declined' is a sitter's "no" to a still-pending request — a first-class Status value — and is
+ * only valid from 'pending': a confirmed booking is cancelled, never declined.
  */
 export async function updateBookingStatus(
   db: D1Database,
@@ -672,7 +671,7 @@ export async function updateBookingStatus(
     status === 'declined'
       ? await db
           .prepare(
-            `UPDATE BookingRequests SET Status = 'cancelled', Declined = 1
+            `UPDATE BookingRequests SET Status = 'declined'
              WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'pending'`,
           )
           .bind(tenantId, id)
@@ -680,7 +679,8 @@ export async function updateBookingStatus(
       : await db
           .prepare(
             `UPDATE BookingRequests SET Status = ?
-             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
+               AND Status NOT IN ('cancelled', 'declined')`,
           )
           .bind(status, tenantId, id)
           .run();
@@ -710,7 +710,7 @@ export async function getBookingWithCustomer(
  * either not cancelled OR cancelled with an assessed CancellationFee — the guard lives in the SQL
  * (INSERT ... SELECT ... WHERE) so it is atomic with the write, like updateBookingStatus's guarded
  * UPDATE. 'pending' is deliberately allowed: deposits are commonly collected before a booking is
- * confirmed. A cancelled booking normally refuses payment, but one carrying a cancellation fee is a
+ * confirmed. A cancelled or declined booking normally refuses payment, but one carrying a cancellation fee is a
  * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
  * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
  */
@@ -732,7 +732,7 @@ export async function insertPayment(
        SELECT ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
-         AND (Status != 'cancelled' OR CancellationFee IS NOT NULL)`,
+         AND (Status NOT IN ('cancelled', 'declined') OR CancellationFee IS NOT NULL)`,
     )
     .bind(
       id,
@@ -854,6 +854,7 @@ export async function getAnalytics(
         // cancelled one — a cancelled-with-fee booking is a live receivable. Aliased EstCost so the
         // route/UI shape is unchanged. SQLite can't reference the alias inside an expression, so the
         // CASE is repeated verbatim in ORDER BY.
+        // Declined rows match neither arm (never confirmed, never carry a fee) and so are never outstanding.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
                 CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END AS EstCost,
@@ -1177,7 +1178,7 @@ export async function listSyncedBookingIds(
   const { results } = await db
     .prepare(
       `SELECT Id FROM BookingRequests
-       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status != 'cancelled'
+       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)

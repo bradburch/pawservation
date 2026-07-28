@@ -198,10 +198,9 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- Fee assessed at cancel time, whole dollars, matches EstCost (added by 0016). NULL = none assessed.
   CancellationFee INTEGER,
   Answers TEXT NOT NULL DEFAULT '{}', -- JSON {questionId: answer}; questions defined on TenantServices
-  Status TEXT NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending', 'confirmed', 'cancelled')),
-  -- 1 when a pending request was declined by the sitter (stored as Status 'cancelled' + this
-  -- flag; widening the CHECK above would require a table rebuild on existing databases).
-  Declined INTEGER NOT NULL DEFAULT 0,
+  -- 'declined' is the sitter's "no" to a still-pending request; a confirmed booking is
+  -- cancelled, never declined. Both are terminal.
+  Status TEXT NOT NULL DEFAULT 'pending' CHECK (Status IN ('pending', 'confirmed', 'cancelled', 'declined')),
   Source TEXT, -- attribution channel: 'mcp', 'voice', etc.; NULL = embed widget (0022)
   IdempotencyKey TEXT, -- replay-protection key, unique per (TenantId, EndUserId) (0023)
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))

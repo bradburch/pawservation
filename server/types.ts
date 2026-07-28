@@ -147,10 +147,7 @@ export type BookingRow = {
   EstCost: number | null;
   /** Fee assessed at cancel time, whole dollars; null = none assessed (0016). */
   CancellationFee: number | null;
-  Status: 'pending' | 'confirmed' | 'cancelled';
-  // 1 = the cancellation was the sitter declining a pending request. Optional because only the
-  // booking-list queries select it; capacity/availability queries never need it.
-  Declined?: number;
+  Status: 'pending' | 'confirmed' | 'cancelled' | 'declined';
   /** Attribution channel: 'mcp', 'voice', etc.; null = embed widget (0022). Optional: only selected where displayed. */
   Source?: string | null;
   CreatedAt: string;
