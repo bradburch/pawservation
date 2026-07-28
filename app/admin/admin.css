@@ -1624,3 +1624,21 @@ body {
   gap: 6px;
   flex-wrap: wrap;
 }
+
+/* Intake Q&A inside the expanded booking row (BookingsSection). */
+.pb-answers {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #f6f6f4;
+  border-radius: 6px;
+}
+.pb-answers dt {
+  font-weight: 600;
+  font-size: 0.85em;
+}
+.pb-answers dd {
+  margin: 0 0 0.4rem;
+}
+.pb-answers div:last-child dd {
+  margin-bottom: 0;
+}

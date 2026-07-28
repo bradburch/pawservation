@@ -793,6 +793,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         clearError={() => setError('')}
         focusId={focusBookingId}
         onFocusConsumed={() => setFocusBookingId(null)}
+        services={settings.services}
       />
     ),
     earnings: (

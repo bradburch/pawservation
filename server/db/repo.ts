@@ -593,10 +593,19 @@ export async function listBookingsForUser(
 export async function listBookingsForTenant(
   db: D1Database,
   tenantId: string,
-): Promise<(BookingRow & { Email: string | null; Name: string | null; PaidTotal: number })[]> {
+): Promise<
+  (BookingRow & {
+    Email: string | null;
+    Name: string | null;
+    PaidTotal: number;
+    /** Parsed intake answers; {} for none or unparseable — the admin list renders them. */
+    Answers: Record<string, string>;
+  })[]
+> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name,
+      `SELECT ${BOOKING_COLS_QUALIFIED}, BookingRequests.Answers AS Answers,
+              EndUsers.Email AS Email, EndUsers.Name AS Name,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
        LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
@@ -609,8 +618,25 @@ export async function listBookingsForTenant(
        ORDER BY BookingRequests.StartDate DESC, BookingRequests.CreatedAt DESC`,
     )
     .bind(tenantId, tenantId)
-    .all<BookingRow & { Email: string | null; Name: string | null; PaidTotal: number }>();
-  return results;
+    .all<
+      BookingRow & { Email: string | null; Name: string | null; PaidTotal: number; Answers: string }
+    >();
+  return results.map((r) => {
+    let answers: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(r.Answers) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        answers = Object.fromEntries(
+          Object.entries(parsed as Record<string, unknown>).filter(
+            (entry): entry is [string, string] => typeof entry[1] === 'string',
+          ),
+        );
+      }
+    } catch {
+      /* stored garbage renders as "no answers", never a 500 */
+    }
+    return { ...r, Answers: answers };
+  });
 }
 
 /**

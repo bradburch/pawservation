@@ -104,6 +104,8 @@ export type AdminBooking = {
   startTime: string | null;
   optionKey: string | null;
   petCount: number;
+  /** Intake answers keyed by question id; {} when the customer answered nothing. */
+  answers: Record<string, string>;
   estCost: number | null;
   paidTotal: number;
   status: string;

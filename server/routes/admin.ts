@@ -1420,6 +1420,7 @@ export const adminRoutes = new Hono<AppEnv>()
         startTime: r.StartTime,
         optionKey: r.OptionKey,
         petCount: r.PetCount,
+        answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
         status: r.Declined ? 'declined' : r.Status,
