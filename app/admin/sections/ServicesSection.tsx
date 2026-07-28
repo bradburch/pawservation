@@ -1,4 +1,5 @@
 import { Fragment, useRef, useState } from 'react';
+import { parseMixKey, petCountOf } from '../../../src/shared/index.js';
 import { IconTag } from '../../shared-ui/icons';
 import { Hint } from '../Hint';
 import { AddServiceTile } from './AddServiceTile.js';
@@ -48,6 +49,18 @@ export function ServicesSection({
   };
 
   const labelBySlug = new Map(settings.petTypes.map((p) => [p.petType, p.label]));
+  /**
+   * Coarse spec-§6 check: the service can take 2+ pets (MaxPetCount null or >= 2) yet NO stored
+   * rate — species-count with 2+ pets, or specific-pet group with 2+ pets — could price ANY
+   * multi-pet set. Once PR 3 enforces rates, such bookings are refused, so surface it now.
+   */
+  const multiPetUnpriced = (s: ServiceForm): boolean =>
+    s.enabled &&
+    (s.maxPetCount === null || s.maxPetCount >= 2) &&
+    s.multiPetGroupRateCount === 0 &&
+    !s.options.some((o) =>
+      o.petRates.some((r) => r.mixKey !== '' && petCountOf(parseMixKey(r.mixKey)) >= 2),
+    );
 
   return (
     <>
@@ -91,6 +104,7 @@ export function ServicesSection({
                 onToggleExpanded={() => toggle(s.type)}
                 openRef={(el) => openRefs.current.set(s.type, el)}
                 acceptedPetLabels={s.acceptedPetTypes?.map((t) => labelBySlug.get(t) ?? t) ?? null}
+                multiPetUnpriced={multiPetUnpriced(s)}
               />
               {expanded === s.type && (
                 <ServiceEditor

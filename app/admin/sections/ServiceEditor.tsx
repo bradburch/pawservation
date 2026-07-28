@@ -1,7 +1,7 @@
 import { NullableNumberField } from './fields.js';
 import type { QuestionForm, ServiceForm, ServiceOptionForm } from '../shared.js';
 import { Hint } from '../Hint';
-import { isValidRate } from '../../../src/shared/index.js';
+import { buildMixKey, isValidRate, parseMixKey, type PetMix } from '../../../src/shared/index.js';
 
 /** One row of the cancellation-policy editor, mirroring the wire/shared CancellationTier shape. */
 type ServiceEditorTier = { withinDays: number; percent: number };
@@ -131,6 +131,123 @@ function QuestionRow({
             })
           }
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Species-count rates for one service, per option: "1 dog $40, 2 dogs $60" (spec §6). Rows are
+ * composed from the service's ACCEPTED pet types; the canonical mixKey is built client-side with
+ * the same shared buildMixKey the server validates against — key construction only, never a
+ * price computation. All edits flow through setService into the staged draft; the save bar
+ * commits. An unfilled row ('' rate or empty mix) blocks saving via App's unpricedService.
+ */
+function PetRatesEditor({
+  service: s,
+  setService,
+  petTypes,
+}: {
+  service: ServiceForm;
+  setService: (next: ServiceForm) => void;
+  petTypes: { petType: string; label: string }[];
+}) {
+  const accepted = petTypes.filter(
+    (pt) => s.acceptedPetTypes === null || s.acceptedPetTypes.includes(pt.petType),
+  );
+  const setOptionRates = (oi: number, petRates: ServiceOptionForm['petRates']) => {
+    const options = [...s.options];
+    options[oi] = { ...options[oi], petRates };
+    setService({ ...s, options });
+  };
+  // Null-prototype copy: species slugs are sitter-controlled and 'constructor' is reachable —
+  // a {...mix} spread would hand back a plain object whose reads fall through to
+  // Object.prototype. parseMixKey already returns null-proto; keep it that way when updating.
+  const withCount = (mix: PetMix, slug: string, count: number): PetMix => {
+    const next: PetMix = Object.assign(Object.create(null) as PetMix, mix);
+    next[slug] = count;
+    return next;
+  };
+  return (
+    <div className="pb-limits">
+      <h3>
+        Multi-pet rates
+        <Hint label="Multi-pet rates">
+          An exact price for an exact set of pets — e.g. 1 dog $40, 2 dogs $60. These apply to every
+          client. There is never a per-pet multiplier: a set you haven&rsquo;t priced has no price.
+        </Hint>
+      </h3>
+      <p className="pb-hint">Rates for specific pets beat species rates beat the base rate.</p>
+      {s.options.map((o, oi) => (
+        <div key={o.optionKey ?? `new-${oi}`}>
+          {s.options.length > 1 && <strong>{o.label}</strong>}
+          {o.petRates.map((r, ri) => {
+            const mix = parseMixKey(r.mixKey);
+            const setRow = (next: { mixKey: string; rate: number | '' }) =>
+              setOptionRates(
+                oi,
+                o.petRates.map((row, k) => (k === ri ? next : row)),
+              );
+            return (
+              <div className="pb-inline" key={ri}>
+                {accepted.map((pt) => (
+                  <label className="pb-inline" key={pt.petType}>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      aria-label={`${pt.label} count, rate ${ri + 1} of ${o.label}`}
+                      value={mix[pt.petType] ?? 0}
+                      onChange={(e) =>
+                        setRow({
+                          ...r,
+                          mixKey: buildMixKey(withCount(mix, pt.petType, Number(e.target.value))),
+                        })
+                      }
+                    />
+                    {pt.label}
+                  </label>
+                ))}
+                $
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  required
+                  aria-invalid={!isValidRate(r.rate)}
+                  aria-label={`Price, rate ${ri + 1} of ${o.label}`}
+                  value={r.rate}
+                  onChange={(e) =>
+                    setRow({ ...r, rate: e.target.value === '' ? '' : Number(e.target.value) })
+                  }
+                />
+                /{s.rateUnit}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOptionRates(
+                      oi,
+                      o.petRates.filter((_, k) => k !== ri),
+                    )
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setOptionRates(oi, [...o.petRates, { mixKey: '', rate: '' }])}
+          >
+            Add a pet-mix rate
+          </button>
+        </div>
+      ))}
+      {s.options.some((o) => o.petRates.some((r) => r.mixKey === '')) && (
+        <p className="pb-error">Each pet-mix rate needs at least one pet.</p>
       )}
     </div>
   );
@@ -377,6 +494,7 @@ export function ServiceEditor({
       {s.options.some((o) => o.rate === '') && (
         <p className="pb-error">Every option needs a price before you can save.</p>
       )}
+      <PetRatesEditor service={s} setService={setService} petTypes={petTypes} />
 
       <div className="pb-questions">
         <h3>Questions</h3>
