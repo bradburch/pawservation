@@ -147,6 +147,9 @@ CREATE TABLE IF NOT EXISTS EndUsers (
   Email TEXT NOT NULL,
   Name TEXT,
   Phone TEXT,
+  -- Only needed when the client's Venmo handle differs from the name above; NULL = match on Name.
+  -- Read exclusively by the Venmo CSV importer (server/lib/venmo.ts).
+  VenmoUsername TEXT,
   InvitedAt TEXT,
   Status TEXT NOT NULL DEFAULT 'active' CHECK (Status IN ('invited', 'active')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -243,10 +246,18 @@ CREATE TABLE IF NOT EXISTS Payments (
   Method TEXT NOT NULL CHECK (Method IN ('cash', 'venmo', 'zelle', 'paypal', 'check', 'card', 'other')),
   PaidDate TEXT NOT NULL, -- 'YYYY-MM-DD', sitter-entered (defaults to today in the UI)
   Note TEXT,
+  -- Venmo transaction id when this payment came from a CSV import; NULL for hand-recorded ones.
+  -- Deliberately absent from PaymentRow and from every payments wire payload: it is written by the
+  -- importer and read only in aggregate, so the type system prevents anything else trusting it.
+  ExternalRef TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Date ON Payments (TenantId, PaidDate);
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Booking ON Payments (TenantId, BookingRequestId);
+-- Idempotent re-import: a transaction id this tenant already recorded cannot be inserted twice.
+-- PARTIAL so the NULLs of hand-recorded payments are unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_Payments_Tenant_ExternalRef
+  ON Payments (TenantId, ExternalRef) WHERE ExternalRef IS NOT NULL;
 
 -- One-off extras a sitter adds to a booking after the fact (vet visit, haircut). Deliberately a
 -- separate table rather than an EstCost edit: EstCost is the price the quote promised and is

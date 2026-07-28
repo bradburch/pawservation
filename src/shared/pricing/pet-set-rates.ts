@@ -19,6 +19,14 @@
 export type PetMix = Record<string, number>;
 
 /**
+ * One pet, as resolution sees it: an id and a species slug that CANNOT drift apart. Resolution
+ * takes this single array rather than parallel `petIds`/`petTypes` arrays — two arrays could
+ * disagree in length or in order, and a repeated id deduped on one side but not the other let a
+ * one-pet booking match a two-dog rate.
+ */
+export type PricedPet = { id: string; petType: string };
+
+/**
  * A stored pet-id rate, reduced to what resolution needs. `PetGroupPricing` rows are queried
  * per-service (`listPetGroupPricing(db, tenantId, serviceType)`) but a service can have several
  * options sharing a duration (`server/routes/admin.ts:252-255` — "two 30-minute check-ins with
@@ -92,7 +100,7 @@ export function parseMixKey(mixKey: string): PetMix {
  * on `GroupRate`/the stored row) already pins duration, since two options of one service may
  * share a duration and a suffix here could not distinguish them.
  *
- * Deduping happens HERE, not at the caller: a caller that accepts client-supplied `petIds` may
+ * Deduping happens here AND in `dedupePets`: a caller that accepts client-supplied `petIds` may
  * validate only set membership (every id belongs to this customer), not uniqueness, and a
  * repeated id must never be allowed to manufacture a phantom multi-pet set (`['p_a','p_a']`
  * matching a 2-pet rate for what is really a single pet).
@@ -110,20 +118,21 @@ export function buildGroupKey(petIds: string[]): string {
  * match — required because both `GroupRate` and `MixRate` rows are drawn from queries that can
  * span more than one option (see their doc comments).
  *
- * Callers must derive `petTypes` from the SAME deduped pet set as `petIds` (`buildGroupKey`
- * dedups `petIds` internally, but `petTypes` is a separate array this function does not dedup
- * against `petIds` — a caller that lets duplicate ids leak into `petTypes` can still manufacture
- * a phantom multi-pet mix even though the group-key side is now safe).
+ * `pets` is deduplicated by `id` ONCE, here, and BOTH keys are derived from that one deduped
+ * list — so the pet-id key and the species key can never describe different sets. Callers may
+ * pass a client-supplied list that was validated for membership (every pet belongs to this
+ * customer) without also being validated for uniqueness; a repeat is a repeat of the same
+ * animal, never a second one. Dedup keeps the FIRST occurrence of an id.
  */
 export function resolvePetSetRate(args: {
-  petIds: string[];
-  petTypes: string[];
+  pets: PricedPet[];
   serviceType: string;
   optionKey: string;
   groupRates: GroupRate[];
   mixRates: MixRate[];
 }): RateResolution {
-  const groupKey = buildGroupKey(args.petIds);
+  const distinct = dedupePets(args.pets);
+  const groupKey = buildGroupKey(distinct.map((p) => p.id));
   if (groupKey) {
     const hit = args.groupRates.find(
       (r) =>
@@ -133,7 +142,7 @@ export function resolvePetSetRate(args: {
     );
     if (hit) return { source: 'group', rate: hit.rate };
   }
-  const mixKey = buildMixKey(mixFromPetTypes(args.petTypes));
+  const mixKey = buildMixKey(mixFromPetTypes(distinct.map((p) => p.petType)));
   if (mixKey) {
     const hit = args.mixRates.find(
       (r) =>
@@ -142,4 +151,20 @@ export function resolvePetSetRate(args: {
     if (hit) return { source: 'mix', rate: hit.rate };
   }
   return null;
+}
+
+/**
+ * The one deduplication in the price path: by pet id, first occurrence wins. Exported because
+ * `estimateCost` needs the same deduped count to decide "one pet" vs "two or more" — deciding it
+ * from a raw `pets.length` would let `['p_a','p_a']` be refused as a two-pet set.
+ */
+export function dedupePets(pets: PricedPet[]): PricedPet[] {
+  const seen = new Set<string>();
+  const out: PricedPet[] = [];
+  for (const p of pets) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    out.push(p);
+  }
+  return out;
 }

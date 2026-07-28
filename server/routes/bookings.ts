@@ -13,7 +13,12 @@ import {
   listServiceOptions,
   listServices,
 } from '../db/repo';
-import { checkAvailability, estimateCost, monthAvailability } from '../lib/availability';
+import {
+  checkAvailability,
+  estimateCost,
+  loadPetSetRates,
+  monthAvailability,
+} from '../lib/availability';
 import { syncBookingToCalendar } from '../lib/calendar-sync';
 import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
@@ -37,9 +42,107 @@ import type { AppEnv } from '../types';
 export const bookingRoutes = new Hono<AppEnv>()
   // Scoped tightly to the booking paths so the merged middleware never guards public routes.
   .use('/:slug/me', endUserAuth)
+  .use('/:slug/availability', endUserAuth)
   .use('/:slug/availability/month', endUserAuth)
   .use('/:slug/bookings', endUserAuth)
   .use('/:slug/bookings/*', endUserAuth)
+
+  /**
+   * The quote. Authenticated and pet-IDENTIFIED (design spec §5): it receives the caller's real
+   * pet ids, validates every one against the PetOwners authority, and derives both rate keys from
+   * that set — so the quote and the cost later stamped on the booking are computed from the same
+   * pets and cannot diverge. It used to live in `publicRoutes` with a `pets` COUNT; a count can
+   * neither be owned nor looked up, which is exactly why it is gone.
+   */
+  .get('/:slug/availability', async (c) => {
+    const tenant = c.get('tenant');
+    const type = c.req.query('type');
+    const optionKey = c.req.query('option') ?? '';
+    const start = c.req.query('start') ?? '';
+    const end = c.req.query('end') ?? '';
+    // Comma-joined: pet ids are crypto.randomUUID() values and so comma-free by construction —
+    // the same property that makes `buildGroupKey`'s comma join unambiguous.
+    const requestedPetIds = [
+      ...new Set(
+        (c.req.query('petIds') ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    if (typeof type !== 'string' || !type) return c.json({ error: 'Unknown service type.' }, 400);
+    if (requestedPetIds.length === 0) return c.json({ error: 'Choose at least one pet.' }, 400);
+    // Bounds the ownership scan; same defensive cap the booking POST uses.
+    if (!isValidPetCount(requestedPetIds.length)) return c.json({ error: 'Too many pets.' }, 400);
+
+    const [services, options, myPets, acceptedTypes] = await Promise.all([
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+      // PetOwners-backed: a CO-OWNER may quote a pet they co-own, and a pet outside this
+      // customer's ownership graph is simply not in the list.
+      listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId')),
+      listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
+    ]);
+
+    const chosen = requestedPetIds.map((id) => myPets.find((p) => p.Id === id));
+    if (chosen.some((p) => !p)) return c.json({ error: 'Unknown pet.' }, 400);
+    const pets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
+
+    const service = services.find((s) => s.ServiceType === type);
+    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
+    if (!service.Enabled) return c.json({ error: 'Service not offered.' }, 400);
+    const serviceOptions = options.filter((o) => o.ServiceType === type);
+    const option = optionKey
+      ? serviceOptions.find((o) => o.OptionKey === optionKey)
+      : serviceOptions[0];
+    if (!option) return c.json({ error: 'Unknown service option.' }, 400);
+
+    // Mirrors the POST's acceptance gate (validatePetTypeAcceptance, run before pricing there
+    // too): a cat quoted against a dogs-only service must get the acceptance message, not
+    // "unpriced-pet-set" — the two are different refusals and the customer needs the right one.
+    const labelBySlug = new Map(acceptedTypes.map((r) => [r.PetType, r.Label]));
+    const acceptanceError = validatePetTypeAcceptance(
+      service.AcceptedPetTypes,
+      service.Label,
+      chosen.map((p) => ({ name: p!.Name, petType: p!.PetType })),
+      (petSlug) => labelBySlug.get(petSlug) ?? petSlug,
+    );
+    if (acceptanceError) return c.json({ error: acceptanceError }, 400);
+
+    if (service.Shape === 'range') {
+      const rangeError = validateBoardingRange(
+        start,
+        end,
+        service.MaxNights,
+        tenant.Timezone ?? undefined,
+      );
+      if (rangeError) return c.json({ error: rangeError.error }, rangeError.status);
+      // Same rule the POST applies (validateServiceConstraints) — a quote for more pets than the
+      // service allows must refuse with the same friendly, structured shape the widget already
+      // renders (bp-result.bp-no), not fall through to capacity/pricing.
+      const constraintsError = validateServiceConstraints(
+        { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
+        { nights: nightsBetween(start, end), petCount: pets.length },
+      );
+      if (constraintsError) return c.json({ error: constraintsError }, 400);
+      // Read only once date/constraint validation has passed, saving two D1 reads on the 400
+      // paths above — behavior is identical since checkAvailability is the only consumer.
+      const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
+      return c.json(
+        await checkAvailability(c.env, tenant, service, option, start, end, pets, rates),
+      );
+    }
+    const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
+    if (dateError) return c.json({ error: dateError.error }, dateError.status);
+    const constraintsError = validateServiceConstraints(
+      { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
+      { nights: null, petCount: pets.length },
+    );
+    if (constraintsError) return c.json({ error: constraintsError }, 400);
+    const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
+    return c.json(await checkAvailability(c.env, tenant, service, option, start, '', pets, rates));
+  })
 
   .get('/:slug/availability/month', async (c) => {
     const tenant = c.get('tenant');
@@ -257,8 +360,26 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (constraintsError)
       return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
 
-    // Price is computed server-side (never trusted from the client) and is pure — no DB read.
-    const { cost: estCost } = estimateCost(service, option, start, end);
+    // Price is computed server-side (never trusted from the client) — the request body carries no
+    // cost field at all. The rate rows are read once here and reused by the capacity check's
+    // pricing below, so the quote, this stamp, and the row that lands in D1 all come from ONE
+    // resolution of ONE pet set.
+    const pricedPets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
+    const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
+    const price = estimateCost(service, option, start, end, pricedPets, rates);
+    if (!price.priced) {
+      // Refused BEFORE the optimistic insert: an unpriced booking must not exist even briefly,
+      // and there is no fallback number to write — a `?? 0` here would be the whole feature
+      // defeated in four characters.
+      return c.json(
+        {
+          error: `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
+          code: 'unpriced_pet_set',
+        },
+        400,
+      );
+    }
+    const estCost = price.cost;
 
     if (isDemo) {
       // Zero-pollution demo: the FULL validation pipeline above already ran; now check capacity
@@ -273,7 +394,8 @@ export const bookingRoutes = new Hono<AppEnv>()
         option,
         start,
         end,
-        pets,
+        pricedPets,
+        rates,
         'demo-excludes-no-row',
       );
       if (!demoCheck.available)
@@ -328,7 +450,17 @@ export const bookingRoutes = new Hono<AppEnv>()
 
     let check;
     try {
-      check = await checkAvailability(c.env, tenant, service, option, start, end, pets, id);
+      check = await checkAvailability(
+        c.env,
+        tenant,
+        service,
+        option,
+        start,
+        end,
+        pricedPets,
+        rates,
+        id,
+      );
       if (!check.available) {
         await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
         return c.json(

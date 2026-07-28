@@ -1,9 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { checkAvailability, estimateCost, unitSplitFor } from '../lib/availability';
+import type { PriceResult } from '../lib/availability';
 import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import { createTestEnv, endUserToken, TENANT_A } from './helpers';
+
+/** Every quote here is single-pet and rate-less by design: the single-pet fallback
+ *  (`distinct.length === 1` in `estimateCost`) resolves to `option.Rate` with no stored pet-set
+ *  rate needed, so these numbers are identical to what they were before pet-set rates existed. */
+const onePet = [{ id: 'p_holiday_1', petType: 'dog' }];
+const noRates = { groupRates: [], mixRates: [] };
+
+/** Unwraps a `priced: true` result's cost, failing loudly if a test accidentally hits the
+ *  refusal arm — every case in this file is a single pet, which is never refused. */
+function costOf(result: PriceResult): number {
+  if (!result.priced) throw new Error(`expected a priced result, got a refusal: ${result.reason}`);
+  return result.cost;
+}
 
 /** Same factories as availability.test.ts — copy that file's `svc`, `tenant`, and `opt` helpers
  *  verbatim so the two money suites describe the same rows. */
@@ -51,42 +65,68 @@ function opt(over: Partial<TenantServiceOption> = {}): TenantServiceOption {
 describe('estimateCost — holiday units priced at the stored HolidayRate', () => {
   it('is UNCHANGED when HolidayRate is NULL (the compatibility lock)', () => {
     // Dec 23 -> Dec 27 spans Christmas Eve AND Christmas Day, and still costs 4 x $40.
-    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2026-12-23', '2026-12-27').cost).toBe(
-      160,
-    );
+    expect(
+      costOf(
+        estimateCost(
+          svc('boarding'),
+          opt({ Rate: 40 }),
+          '2026-12-23',
+          '2026-12-27',
+          onePet,
+          noRates,
+        ),
+      ),
+    ).toBe(160);
   });
 
   it('prices only the holiday nights at the holiday rate', () => {
     const s = svc('boarding', { HolidayRate: 75 });
     // Nights begin Dec 23, 24, 25, 26 -> two holidays: 2 x $40 + 2 x $75 = $230.
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-27').cost).toBe(230);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-27', onePet, noRates)),
+    ).toBe(230);
   });
 
   it('names a night by its CHECK-IN date, so Dec 24 -> Dec 25 is ONE holiday night', () => {
     const s = svc('boarding', { HolidayRate: 75 });
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-24', '2026-12-25').cost).toBe(75);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-24', '2026-12-25', onePet, noRates)),
+    ).toBe(75);
     // The mirror: checking in ON Christmas Day and out on the 26th is also one holiday night.
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-25', '2026-12-26').cost).toBe(75);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-25', '2026-12-26', onePet, noRates)),
+    ).toBe(75);
     // …and checking out ON a holiday does NOT make the last night a holiday night.
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-24').cost).toBe(40);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-24', onePet, noRates)),
+    ).toBe(40);
   });
 
   it('prices a single-day service by the date itself', () => {
     const s = svc('walk', { HolidayRate: 40 });
-    expect(estimateCost(s, opt({ Rate: 20 }), '2026-07-04', '2026-07-04').cost).toBe(40);
-    expect(estimateCost(s, opt({ Rate: 20 }), '2026-07-05', '2026-07-05').cost).toBe(20);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 20 }), '2026-07-04', '2026-07-04', onePet, noRates)),
+    ).toBe(40);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 20 }), '2026-07-05', '2026-07-05', onePet, noRates)),
+    ).toBe(20);
   });
 
   it('includes the departure day for a DAY-billed range service', () => {
     // billableUnits = nights + 1, so Jul 3 -> Jul 4 is 2 days: Jul 3 (normal) + Jul 4 (holiday).
     const s = svc('boarding', { RateUnit: 'day', HolidayRate: 60 });
     expect(unitSplitFor(s, '2026-07-03', '2026-07-04')).toEqual({ units: 2, holidayUnits: 1 });
-    expect(estimateCost(s, opt({ Rate: 30 }), '2026-07-03', '2026-07-04').cost).toBe(90);
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 30 }), '2026-07-03', '2026-07-04', onePet, noRates)),
+    ).toBe(90);
   });
 
   it('accepts a holiday rate BELOW the base rate', () => {
     const s = svc('boarding', { HolidayRate: 25 });
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-07-03', '2026-07-05').cost).toBe(65); // 40 + 25
+    // 40 + 25
+    expect(
+      costOf(estimateCost(s, opt({ Rate: 40 }), '2026-07-03', '2026-07-05', onePet, noRates)),
+    ).toBe(65);
   });
 });
 
@@ -100,10 +140,12 @@ describe('the quote reports the holiday breakdown it priced with', () => {
       opt({ Rate: 40 }),
       '2026-12-23',
       '2026-12-27',
-      1,
+      onePet,
+      noRates,
     );
     expect(res).toMatchObject({
       available: true,
+      priced: true,
       estCost: 230,
       billedUnits: 4,
       unit: 'night',
@@ -121,7 +163,8 @@ describe('the quote reports the holiday breakdown it priced with', () => {
       opt({ Rate: 40 }),
       '2026-03-02',
       '2026-03-05',
-      1,
+      onePet,
+      noRates,
     )) as Record<string, unknown>;
     expect(res.estCost).toBe(120);
     expect(res.holidayUnits).toBeUndefined();
@@ -139,8 +182,8 @@ describe('quote/stamp parity across a holiday', () => {
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const quote = (await (
       await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2026-12-23&end=2026-12-27&pets=1',
-        {},
+        '/api/sunny-paws/availability?type=boarding&start=2026-12-23&end=2026-12-27&petIds=pet_sp_bella',
+        { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
     ).json()) as { estCost: number; holidayUnits: number };
@@ -176,8 +219,8 @@ describe('quote/stamp parity across a holiday', () => {
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const quote = (await (
       await app.request(
-        '/api/sunny-paws/availability?type=checkin&option=d15&start=2026-12-25',
-        {},
+        '/api/sunny-paws/availability?type=checkin&option=d15&start=2026-12-25&petIds=pet_sp_bella',
+        { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
     ).json()) as { estCost: number; holidayUnits: number };

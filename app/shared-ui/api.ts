@@ -55,6 +55,7 @@ export type MonthDay = {
 export type Availability =
   | {
       available: true;
+      priced: true;
       estCost: number;
       /** Quantity `estCost` was billed for, with its noun. Absent for single-day services
        *  (flat per-booking charge, no quantity). Label from these, never from
@@ -68,6 +69,16 @@ export type Availability =
        *  includes them; the widget must never re-derive a total from these. */
       holidayUnits?: number;
       holidayRate?: number;
+    }
+  | {
+      /** The dates are free but the sitter has never priced this set of pets. The widget shows
+       *  her contact details and blocks submit. It must NEVER compute a substitute price — the
+       *  client does not do money. */
+      available: true;
+      priced: false;
+      reason: 'unpriced-pet-set';
+      groupKey: string;
+      mixKey: string;
     }
   | { available: false; reason: string };
 
@@ -92,6 +103,7 @@ export type Customer = {
   email: string;
   name: string | null;
   phone: string | null;
+  venmoUsername: string | null;
   status: 'invited' | 'active';
   invitedAt?: string | null;
   pets: Pet[];
@@ -148,6 +160,36 @@ export type Payment = {
 
 /** One extra charge on a booking — additive; it never changes the booking's estCost. */
 export type BookingCharge = { id: string; label: string; amount: number };
+
+export type VenmoPreviewRow = {
+  txnId: string;
+  date: string;
+  amount: number;
+  from: string;
+  note: string;
+};
+export type VenmoPreview = {
+  matched: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    bookingId: string;
+    bookingLabel: string;
+  })[];
+  ambiguous: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    candidates: { bookingId: string; label: string; balance: number }[];
+  })[];
+  unmatched: (VenmoPreviewRow & { reason: string })[];
+  alreadyImported: VenmoPreviewRow[];
+  ignored: number;
+  problems: { row: number; reason: string }[];
+};
+export type VenmoImportResult = {
+  imported: number;
+  totalAmount: number;
+  skipped: { txnId: string; reason: string }[];
+};
 
 export type AnalyticsPayload = {
   tiles: {
@@ -225,8 +267,10 @@ const jsonHeaders = { 'Content-Type': 'application/json' };
 export const api = {
   config: (slug: string) => request<TenantConfig>(`/api/${slug}/config`),
 
-  availability: (slug: string, params: Record<string, string>) =>
-    request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`),
+  availability: (slug: string, token: string, params: Record<string, string>) =>
+    request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`, {
+      headers: authHeaders(token),
+    }),
 
   // `prototypeCode` is only present in dev (no email provider configured); in prod the code is
   // emailed and the response carries only `codeId`.
@@ -320,6 +364,12 @@ export const adminApi = {
         method: 'DELETE',
         headers: authHeaders(token),
       }),
+    setVenmo: (slug: string, token: string, id: string, venmoUsername: string | null) =>
+      request<unknown>(`/api/${slug}/admin/customers/${id}`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ venmoUsername }),
+      }),
     addPet: (
       slug: string,
       token: string,
@@ -393,6 +443,23 @@ export const adminApi = {
       request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
         method: 'DELETE',
         headers: authHeaders(token),
+      }),
+    venmoPreview: (slug: string, token: string, csv: string) =>
+      request<VenmoPreview>(`/api/${slug}/admin/payments/venmo/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv }),
+      }),
+    venmoImport: (
+      slug: string,
+      token: string,
+      csv: string,
+      choices: { txnId: string; bookingId: string }[],
+    ) =>
+      request<VenmoImportResult>(`/api/${slug}/admin/payments/venmo/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, choices }),
       }),
   },
   charges: {

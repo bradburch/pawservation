@@ -1724,3 +1724,18 @@ body {
 .pb-answers div:last-child dd {
   margin-bottom: 0;
 }
+
+/* Venmo CSV import (Earnings) — a bordered block so the upload/preview flow reads as one unit,
+   and the inline Venmo field on a client row. */
+.pb-venmo-import {
+  margin: 24px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.pb-venmo-import h4 {
+  margin: 16px 0 6px;
+}
+.pb-venmo-field {
+  margin-top: 8px;
+}

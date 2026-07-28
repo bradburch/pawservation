@@ -54,6 +54,7 @@ const pay = (
     method: 'cash',
     paidDate,
     note: null,
+    externalRef: null,
   });
 
 describe('getAnalytics (repo)', () => {

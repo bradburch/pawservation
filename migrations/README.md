@@ -23,17 +23,19 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   existing table. If your local DB predates a schema change:
   `rm -rf .wrangler/state/v3/d1 && npm run seed:local`.
 
-`0001_*.sql` lives on the unmerged `feat/venmo-import` branch — this branch's `0002_holiday_and_charges.sql`
-was created while `migrations/` was still empty here, so numbering does not start at `0001` on every
-branch. `0001` and `0002` don't collide (they're two different files, two unrelated additive changes),
-so no renumber is actually needed either way: if `feat/venmo-import` merges first, `main` gets `0001`
-then `0002` and the sequence is already in order. If this branch merges first, `main` gets `0002` with
-no `0001` yet — a leading gap, not a collision — and it closes itself, in order, the moment
-`feat/venmo-import` merges and brings `0001` in. Either merge order is fine; nothing here needs manual
-renumbering.
+`0001_venmo_import.sql` is the first migration since the baseline (`EndUsers.VenmoUsername` +
+`Payments.ExternalRef` — the Venmo CSV import's idempotency mechanism, from `feat/venmo-import`
+#86). It has already been MERGED to `main` and applied to the remote DB.
 
-`0002_holiday_and_charges.sql` adds `TenantServices.HolidayRate` (nullable) and the `BookingCharges`
-table + index. It is additive only (one `ALTER TABLE … ADD COLUMN`, one `CREATE TABLE`), so applying
-it to the remote DB is a no-op for the currently-running worker and can safely happen before merge.
+`0002_holiday_and_charges.sql` adds `TenantServices.HolidayRate` (nullable) and the
+`BookingCharges` table + index (this branch, `feat/holiday-and-extras`). It is additive only (one
+`ALTER TABLE … ADD COLUMN`, one `CREATE TABLE`), so applying it to the remote DB is a no-op for the
+currently-running worker and can safely happen before this branch merges to `main` (merging
+auto-deploys, so the merge IS the deploy).
+
+`0003_*.sql` is reserved for the open Google Calendar work (`#88`) — not yet written. Numbering is
+sequential by merge order from here: each new branch picks up the next unused number as of when it
+branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long as
+every migration that lands on `main` is also applied to the remote DB by hand before that merge.
 
 Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { adminApi, type AnalyticsPayload } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
+import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
 import { Hint } from '../Hint';
 
@@ -77,11 +78,13 @@ export function EarningsView({
   session,
   onChanged,
   handleError,
+  clearError,
 }: {
   data: AnalyticsPayload;
   session?: Session;
   onChanged?: () => void;
   handleError?: (e: unknown) => void;
+  clearError?: () => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -183,6 +186,15 @@ export function EarningsView({
         </ul>
       )}
 
+      {session && onChanged && handleError && clearError && (
+        <VenmoImportPanel
+          session={session}
+          onImported={onChanged}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+
       <h3>Outstanding balances</h3>
       {data.outstanding.length === 0 ? (
         <p className="pb-hint">No outstanding balances.</p>
@@ -278,6 +290,12 @@ export function EarningsSection({
     );
 
   return (
-    <EarningsView data={data} session={session} onChanged={reload} handleError={handleError} />
+    <EarningsView
+      data={data}
+      session={session}
+      onChanged={reload}
+      handleError={handleError}
+      clearError={clearError}
+    />
   );
 }

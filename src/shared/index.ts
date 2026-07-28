@@ -35,6 +35,7 @@ export { isValidRate } from './pricing/rate.js';
 export {
   buildGroupKey,
   buildMixKey,
+  dedupePets,
   mixFromPetTypes,
   parseMixKey,
   petCountOf,
@@ -42,6 +43,7 @@ export {
   type GroupRate,
   type MixRate,
   type PetMix,
+  type PricedPet,
   type RateResolution,
 } from './pricing/pet-set-rates.js';
 export {
