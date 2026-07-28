@@ -72,6 +72,10 @@ export function ChargesPanel({
 
   const remove = async (chargeId: string) => {
     if (busyId) return;
+    // Money rows get a confirm — same rule as cancel-with-fee in BookingsSection.
+    const ch = charges?.find((c) => c.id === chargeId);
+    const what = ch ? `"${ch.label}" ($${ch.amount})` : 'this charge';
+    if (!window.confirm(`Delete ${what}? This changes what the client owes.`)) return;
     setBusyId(chargeId);
     try {
       await adminApi.charges.remove(session.slug, session.token, bookingId, chargeId);

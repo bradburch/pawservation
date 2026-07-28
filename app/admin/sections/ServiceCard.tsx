@@ -1,4 +1,4 @@
-import { serviceSummary } from '../../../src/shared/index.js';
+import { isValidRate, serviceSummary } from '../../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../../shared-ui/icons';
 import type { ServiceForm } from '../shared.js';
 
@@ -69,6 +69,9 @@ export function ServiceCard({
         </span>
         <span className={`pb-svc-price${service.options.length === 0 ? ' pb-svc-price-soft' : ''}`}>
           {price}
+          {service.holidayRate != null && isValidRate(service.holidayRate) && (
+            <span className="pb-svc-holiday"> · ${service.holidayRate} holidays</span>
+          )}
         </span>
         {service.enabled ? (
           facts && <span className="pb-hint">{facts}</span>
@@ -76,9 +79,9 @@ export function ServiceCard({
           <span className="pb-hint">Not offered — turn on to take bookings</span>
         )}
         {multiPetUnpriced && (
-          <span className="pb-error">
-            No multi-pet rate — bookings with two or more pets are refused until you add one.
-          </span>
+          // One quiet line, not a five-line red block: this repeats on every card, and at
+          // full red it drowned out the name and price it sat under.
+          <span className="pb-svc-note">Multi-pet bookings need a rate — add one inside</span>
         )}
       </button>
     </div>

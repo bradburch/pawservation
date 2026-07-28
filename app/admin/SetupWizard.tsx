@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { isValidRate, SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { ApiError } from '../shared-ui/api.js';
@@ -48,11 +48,13 @@ function PresetOptionFields({
         Pickup window (optional)
         <input
           type="time"
+          aria-label="Pickup window start"
           value={option.startTime ?? ''}
           onChange={(e) => onChange({ ...option, startTime: e.target.value || null })}
         />
         <input
           type="time"
+          aria-label="Pickup window end"
           value={option.endTime ?? ''}
           onChange={(e) => onChange({ ...option, endTime: e.target.value || null })}
         />
@@ -165,6 +167,18 @@ export function SetupWizard({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [applying, onClose]);
+
+  // Modal focus + scroll: move focus INTO the dialog on open (it otherwise stays on the
+  // launcher behind the overlay) and stop the page scrolling underneath it.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    panelRef.current?.focus();
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
 
   const states: PresetState[] = SERVICE_PRESETS.map((preset) => {
     const existing = settings.services.find((s) => preset.matchTypes.includes(s.type));
@@ -326,11 +340,20 @@ export function SetupWizard({
 
   return (
     <div className="pb-wizard-overlay" role="dialog" aria-modal="true" aria-label="Quick setup">
-      <div className="pb-wizard pb-card">
+      <div className="pb-wizard pb-card" ref={panelRef} tabIndex={-1}>
+        {step <= 4 && (
+          <p className="pb-wizard-step">
+            Step {mode === 'services' ? step - 1 : step} of {mode === 'services' ? 3 : 4}
+          </p>
+        )}
         {step === 1 && (
           <>
             <WizardProfileStep draft={profileDraft} setDraft={setProfileDraft} />
-            {error && <p className="pb-error">{error}</p>}
+            {error && (
+              <p className="pb-error" role="alert">
+                {error}
+              </p>
+            )}
             <div className="pb-wizard-nav">
               <button
                 type="button"
@@ -426,7 +449,7 @@ export function SetupWizard({
                 <strong>{ps.preset.label}</strong>
                 <span className="pb-hint">{ps.preset.summary}</span>
                 {unpricedExisting(ps) ? (
-                  <span className="pb-error">
+                  <span className="pb-error" role="alert">
                     An option here has no price yet — set it in Services &amp; Rates and save first.
                   </span>
                 ) : ps.alreadyPriced ? (
@@ -475,7 +498,11 @@ export function SetupWizard({
                 Setting up your services…
               </p>
             )}
-            {error && <p className="pb-error">{error}</p>}
+            {error && (
+              <p className="pb-error" role="alert">
+                {error}
+              </p>
+            )}
             <div className="pb-wizard-nav">
               <button
                 type="button"
@@ -544,7 +571,11 @@ export function SetupWizard({
                 </button>
               </>
             )}
-            {error && <p className="pb-error">{error}</p>}
+            {error && (
+              <p className="pb-error" role="alert">
+                {error}
+              </p>
+            )}
             <div className="pb-wizard-nav">
               {settings.calendar.status === 'connected' ? (
                 <button type="button" onClick={() => goTo(5)}>
@@ -552,7 +583,7 @@ export function SetupWizard({
                 </button>
               ) : (
                 <button type="button" className="pb-wizard-skip" onClick={() => goTo(5)}>
-                  Skip
+                  Skip for now
                 </button>
               )}
               <button type="button" className="pb-wizard-back" onClick={() => goTo(3)}>
@@ -564,8 +595,17 @@ export function SetupWizard({
 
         {step === 5 && (
           <>
-            <h2>You&rsquo;re bookable!</h2>
+            <h2>Services saved!</h2>
             <p>Fine-tune options, capacities, and questions anytime in Services &amp; Rates.</p>
+            <p>
+              {/* Booking is invite-only, so a sitter with zero clients is NOT bookable yet —
+                  the one step that makes her bookable is adding a client. Say so here. */}
+              One step left before anyone can book: add your first client under{' '}
+              <a href="#clients" onClick={onClose}>
+                Clients
+              </a>{' '}
+              — only people on that list can book with you.
+            </p>
             <p>
               Ready to take bookings from your own site? Grab the snippet under{' '}
               <a href="#embed" onClick={onClose}>

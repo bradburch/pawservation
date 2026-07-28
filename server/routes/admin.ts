@@ -1324,6 +1324,9 @@ export const adminRoutes = new Hono<AppEnv>()
     // Deliberately NO email here (WS-C owner decision): creating a client is a data entry, not an
     // introduction. The welcome mail is the explicit POST /:slug/admin/customers/:id/welcome
     // below, so the sitter chooses when (and whether) a client first hears from Pawservation.
+    // `created` tells the dashboard whether this made a new client or appended a pet to an
+    // existing one — the two must not read as the same outcome (a typed name/phone is discarded
+    // on the append path, and the sitter deserves to know that).
     return c.json(
       {
         id: customer.Id,
@@ -1331,6 +1334,7 @@ export const adminRoutes = new Hono<AppEnv>()
         name: customer.Name,
         phone: customer.Phone,
         status: customer.Status,
+        created: !existing,
       },
       201,
     );

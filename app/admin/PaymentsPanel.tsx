@@ -83,6 +83,10 @@ export function PaymentsPanel({
 
   const remove = async (paymentId: string) => {
     if (busyId) return;
+    // Money rows get a confirm — same rule as cancel-with-fee in BookingsSection.
+    const p = payments?.find((row) => row.id === paymentId);
+    const what = p ? `the $${p.amount} payment` : 'this payment';
+    if (!window.confirm(`Delete ${what}? This changes what the client owes.`)) return;
     setBusyId(paymentId);
     try {
       await adminApi.payments.remove(session.slug, session.token, bookingId, paymentId);

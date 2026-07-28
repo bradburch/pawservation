@@ -62,11 +62,13 @@ function QuestionRow({
         <input
           className="pb-question-input"
           placeholder="Question"
+          aria-label="Question text"
           value={question.label}
           onChange={(e) => onChange({ ...question, label: e.target.value })}
         />
         <select
           value={question.type}
+          aria-label="Answer type"
           onChange={(e) => onChange({ ...question, type: e.target.value as QuestionForm['type'] })}
         >
           {QUESTION_TYPES.map((t) => (
@@ -84,13 +86,21 @@ function QuestionRow({
           Required
         </label>
         {onMoveUp && (
-          <button type="button" onClick={onMoveUp}>
-            ↑
+          <button
+            type="button"
+            aria-label={`Move "${question.label || 'question'}" up`}
+            onClick={onMoveUp}
+          >
+            <span aria-hidden="true">↑</span>
           </button>
         )}
         {onMoveDown && (
-          <button type="button" onClick={onMoveDown}>
-            ↓
+          <button
+            type="button"
+            aria-label={`Move "${question.label || 'question'}" down`}
+            onClick={onMoveDown}
+          >
+            <span aria-hidden="true">↓</span>
           </button>
         )}
         <button type="button" onClick={onRemove}>
@@ -102,6 +112,7 @@ function QuestionRow({
           <input
             type="number"
             placeholder="min"
+            aria-label="Lowest allowed answer"
             value={question.min ?? ''}
             onChange={(e) =>
               onChange({
@@ -113,6 +124,7 @@ function QuestionRow({
           <input
             type="number"
             placeholder="max"
+            aria-label="Highest allowed answer"
             value={question.max ?? ''}
             onChange={(e) =>
               onChange({
@@ -126,6 +138,7 @@ function QuestionRow({
       {question.type === 'select' && (
         <input
           placeholder="Options, comma-separated"
+          aria-label="Choices, comma-separated"
           value={(question.options ?? []).join(', ')}
           onChange={(e) =>
             onChange({
@@ -185,8 +198,8 @@ function PetRatesEditor({
       </h3>
       <p className="pb-hint">Rates for specific pets beat species rates beat the base rate.</p>
       {s.options.map((o, oi) => (
-        <div key={o.optionKey ?? `new-${oi}`}>
-          {s.options.length > 1 && <strong>{o.label}</strong>}
+        <div className="pb-mix-option" key={o.optionKey ?? `new-${oi}`}>
+          {s.options.length > 1 && <strong className="pb-mix-option-label">{o.label}</strong>}
           {o.petRates.map((r, ri) => {
             const mix = parseMixKey(r.mixKey);
             const setRow = (next: { mixKey: string; rate: number | '' }) =>
@@ -253,7 +266,9 @@ function PetRatesEditor({
         </div>
       ))}
       {s.options.some((o) => o.petRates.some((r) => r.mixKey === '')) && (
-        <p className="pb-error">Each pet-mix rate needs at least one pet.</p>
+        <p className="pb-error" role="alert">
+          Each pet-mix rate needs at least one pet.
+        </p>
       )}
     </div>
   );
@@ -357,6 +372,7 @@ export function ServiceEditor({
             inputMode="numeric"
             required
             aria-invalid={!isValidRate(s.options[0]?.rate)}
+            aria-label={`Price in dollars per ${s.rateUnit}`}
             value={s.options[0]?.rate ?? ''}
             onChange={(e) =>
               setService({
@@ -402,6 +418,7 @@ export function ServiceEditor({
                       type="number"
                       min={1}
                       placeholder="min"
+                      aria-label="Length in minutes"
                       value={o.durationMinutes ?? 0}
                       onChange={(e) => {
                         const durationMinutes = Number(e.target.value);
@@ -424,6 +441,7 @@ export function ServiceEditor({
                     inputMode="numeric"
                     required
                     aria-invalid={!isValidRate(o.rate)}
+                    aria-label={`Price in dollars per ${s.rateUnit} for ${o.label || 'this option'}`}
                     value={o.rate}
                     onChange={(e) =>
                       setOption({ rate: e.target.value === '' ? '' : Number(e.target.value) })
@@ -443,11 +461,13 @@ export function ServiceEditor({
                   Pickup window (optional)
                   <input
                     type="time"
+                    aria-label="Pickup window start"
                     value={o.startTime ?? ''}
                     onChange={(e) => setOption({ startTime: e.target.value || null })}
                   />
                   <input
                     type="time"
+                    aria-label="Pickup window end"
                     value={o.endTime ?? ''}
                     onChange={(e) => setOption({ endTime: e.target.value || null })}
                   />
@@ -513,7 +533,8 @@ export function ServiceEditor({
             min={1}
             step={1}
             inputMode="numeric"
-            placeholder="Same as usual"
+            placeholder="Usual rate"
+            aria-label={`Holiday rate in dollars per ${s.rateUnit}, optional`}
             aria-invalid={
               s.holidayRate !== '' && s.holidayRate != null && !isValidRate(s.holidayRate)
             }
@@ -531,7 +552,9 @@ export function ServiceEditor({
       {/* Covers both pricing shapes above. A price left blank blocks the save bar (App.tsx), so say
           so where the empty input is rather than only in the bar at the bottom of the page. */}
       {s.options.some((o) => o.rate === '') && (
-        <p className="pb-error">Every option needs a price before you can save.</p>
+        <p className="pb-error" role="alert">
+          Every option needs a price before you can save.
+        </p>
       )}
       <PetRatesEditor service={s} setService={setService} petTypes={petTypes} />
 
@@ -617,6 +640,7 @@ export function ServiceEditor({
             <input
               type="number"
               min={0}
+              aria-label={`Tier ${i + 1}: days before the start date`}
               value={t.withinDays}
               onChange={(e) => updateTier(i, { ...t, withinDays: Number(e.target.value) })}
             />{' '}
@@ -625,6 +649,7 @@ export function ServiceEditor({
               type="number"
               min={1}
               max={100}
+              aria-label={`Tier ${i + 1}: fee as percent of cost`}
               value={t.percent}
               onChange={(e) => updateTier(i, { ...t, percent: Number(e.target.value) })}
             />
