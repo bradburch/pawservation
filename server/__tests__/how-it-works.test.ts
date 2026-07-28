@@ -183,7 +183,7 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // The single decorative brand mark in the nav is the one allowed image; screenshots and
     // other weight stay banned.
     for (const tag of imgTags) {
-      expect(tag).toContain('src="/favicon.svg"');
+      expect(tag).toContain('src="/brand/calendar.svg"');
     }
   });
 

@@ -150,7 +150,7 @@ const LANDING_HTML = `<!doctype html>
     <header class="nav">
       <div class="wrap nav-inner">
         <a class="logo" href="/">
-          <img src="/favicon.svg" width="26" height="26" alt="" />
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
         <nav class="nav-links" aria-label="Sections">
@@ -542,7 +542,7 @@ const LANDING_HTML = `<!doctype html>
         <div class="foot-grid">
           <div class="foot-brand">
             <a class="logo" href="/">
-              <img src="/favicon.svg" width="26" height="26" alt="" />
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
             <p>Booking for pet-sitting businesses, embedded on your own website.</p>
@@ -602,7 +602,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
     <header class="nav">
       <div class="wrap nav-inner">
         <a class="logo" href="/">
-          <img src="/favicon.svg" width="26" height="26" alt="" />
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
         <nav class="nav-links" aria-label="Sections">
@@ -982,7 +982,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         <div class="foot-grid">
           <div class="foot-brand">
             <a class="logo" href="/">
-              <img src="/favicon.svg" width="26" height="26" alt="" />
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
             <p>Booking for pet-sitting businesses, embedded on your own website.</p>

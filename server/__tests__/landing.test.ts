@@ -109,7 +109,7 @@ describe('GET / — landing page', () => {
     for (const tag of imgTags) {
       const src = /src="([^"]+)"/.exec(tag)?.[1];
       const alt = /alt="([^"]*)"/.exec(tag)?.[1];
-      if (src === '/favicon.svg') {
+      if (src === '/brand/calendar.svg') {
         // The nav brand mark is DECORATIVE next to the visible "Pawservation" text — its alt
         // must be empty so screen readers don't hear the name twice.
         expect(alt, tag).toBe('');
