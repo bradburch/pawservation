@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { insertPayment } from '../db/repo';
 import app from '../index';
 import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -143,6 +144,29 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
   });
 
+  it('skips gracefully, not 500s, when the ExternalRef was already written outside the CSV round-trip', async () => {
+    // A row with this txn's ExternalRef already exists (written directly via the repo, not by a
+    // prior confirm-import call) — proves the unique-index replay path degrades to a skip rather
+    // than an unhandled throw, whichever branch of the route actually catches it.
+    const { env, raw } = createTestEnv();
+    const preInserted = await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: 'seed_sp_board1',
+      amount: 250,
+      method: 'venmo',
+      paidDate: '2026-07-03',
+      note: 'pre-existing',
+      externalRef: '4139874112233445566',
+    });
+    expect(preInserted).not.toBeNull();
+    const res = await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ txnId: '4139874112233445566', reason: 'Already imported' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
+  });
+
   it('ignores a dollar figure in the body — money comes from the file, never the client', async () => {
     const { env, raw } = createTestEnv();
     await post(env, 'payments/venmo/import', {
@@ -198,12 +222,26 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
 
   it('does not let one tenant import against another tenant’s booking', async () => {
     const { env, raw } = createTestEnv();
-    await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices }, TENANT_B, 'happy-tails');
-    // Happy Tails' own Jess owes $400, so the payment lands on THEIR booking or not at all.
+    const res = await post(
+      env,
+      'payments/venmo/import',
+      { csv: VENMO_CSV, choices },
+      TENANT_B,
+      'happy-tails',
+    );
+    // `choices` names Sunny Paws' own booking id ('seed_sp_board1'), which is not among Happy
+    // Tails' candidates — refused entirely, not silently redirected to a Happy Tails booking.
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [
+        {
+          txnId: '4139874112233445566',
+          reason: 'That booking is no longer a match for this payment',
+        },
+      ],
+    });
+    // An explicit count, not a for-loop over possibly-zero rows, so this can't pass vacuously.
     const rows = raw.prepare('SELECT TenantId, BookingRequestId FROM Payments').all();
-    for (const r of rows as { TenantId: string; BookingRequestId: string }[]) {
-      expect(r.TenantId).toBe(TENANT_B);
-      expect(r.BookingRequestId).not.toBe('seed_sp_board1');
-    }
+    expect(rows).toHaveLength(0);
   });
 });

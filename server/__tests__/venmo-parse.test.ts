@@ -127,7 +127,7 @@ describe('sanitizeCell', () => {
     );
     expect(sanitizeCell('  @sum(1)  ')).toBe("'@sum(1)");
     expect(sanitizeCell('-2+3')).toBe("'-2+3");
-    expect(sanitizeCell('walks for\nBella')).toBe('walks for Bella');
+    expect(sanitizeCell('walks' + String.fromCharCode(7) + ' for\nBella')).toBe('walks for Bella');
   });
 
   it('is applied to display text only — an amount cell is parsed raw', () => {
