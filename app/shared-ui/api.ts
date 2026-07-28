@@ -170,6 +170,7 @@ export type AnalyticsPayload = {
     serviceType: string;
     startDate: string;
     estCost: number;
+    chargesTotal: number;
     paidTotal: number;
     balance: number;
     isCancellationFee: boolean;

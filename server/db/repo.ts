@@ -909,7 +909,8 @@ export async function listChargesForTenant(
  * route) anchors the 12-month window; months with no payments are zero-filled here in JS.
  * Revenue queries count payments regardless of the booking's later status — cash already
  * received is real revenue; only `outstanding` filters to confirmed (and skips EstCost IS NULL:
- * a booking with no estimate has no computable balance).
+ * a booking with no estimate has no computable balance — in practice only legacy rows, since
+ * every real booking is stamped at creation).
  */
 export async function getAnalytics(
   db: D1Database,
@@ -971,12 +972,15 @@ export async function getAnalytics(
       .prepare(
         // Expected amount is EstCost for confirmed bookings, but the assessed CancellationFee for a
         // cancelled one — a cancelled-with-fee booking is a live receivable. Aliased EstCost so the
-        // route/UI shape is unchanged. SQLite can't reference the alias inside an expression, so the
-        // CASE is repeated verbatim in ORDER BY.
+        // route/UI shape is unchanged. Extra charges (BookingCharges) are ADDED to whichever
+        // applies: a charge is owed on a stay that happened whether or not it was later cancelled,
+        // and EstCost itself is never mutated. SQLite can't reference an alias inside an
+        // expression, so the CASE is repeated verbatim in ORDER BY.
         // Declined rows match neither arm (never confirmed, never carry a fee) and so are never outstanding.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
                 CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END AS EstCost,
+                COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
@@ -984,15 +988,19 @@ export async function getAnalytics(
            SELECT BookingRequestId, SUM(Amount) AS Total
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
+         LEFT JOIN (
+           SELECT BookingRequestId, SUM(Amount) AS Total
+           FROM BookingCharges WHERE TenantId = ? GROUP BY BookingRequestId
+         ) chg ON chg.BookingRequestId = b.Id
          WHERE b.TenantId = ? AND b.ServiceType != 'blocked'
            AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
-                   AND COALESCE(paid.Total, 0) < b.EstCost)
+                   AND COALESCE(paid.Total, 0) < b.EstCost + COALESCE(chg.Total, 0))
                 OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
-                   AND COALESCE(paid.Total, 0) < b.CancellationFee))
+                   AND COALESCE(paid.Total, 0) < b.CancellationFee + COALESCE(chg.Total, 0)))
          ORDER BY (CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END)
-                  - COALESCE(paid.Total, 0) DESC`,
+                  + COALESCE(chg.Total, 0) - COALESCE(paid.Total, 0) DESC`,
       )
-      .bind(tenantId, tenantId)
+      .bind(tenantId, tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
   ]);
 

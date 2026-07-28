@@ -200,6 +200,7 @@ export type AnalyticsData = {
     StartDate: string;
     Status: string;
     EstCost: number;
+    ChargesTotal: number;
     PaidTotal: number;
   }[];
 };
