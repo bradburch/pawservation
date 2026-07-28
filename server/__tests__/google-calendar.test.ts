@@ -329,6 +329,27 @@ describe('google-calendar', () => {
     expect(r.extendedProperties?.private.status).toBe('confirmed');
   });
 
+  it('keeps a range booking all-day and notes the arrival time in the description', () => {
+    const r = buildEventResource({
+      serviceLabel: 'Boarding',
+      category: 'boarding',
+      bookingId: 'bk1',
+      startDate: '2028-06-20',
+      endDate: '2028-06-25',
+      startTime: '14:30',
+      durationMinutes: null,
+      petCount: 1,
+      petNames: ['Bella'],
+      estCost: 250,
+      customerEmail: 'jess@example.com',
+      status: 'confirmed',
+      timezone: 'America/Los_Angeles',
+    });
+    expect(r.start).toEqual({ date: '2028-06-20' });
+    expect(r.end).toEqual({ date: '2028-06-25' });
+    expect(r.description).toContain('Arrival: 14:30');
+  });
+
   describe('listCalendarEvents', () => {
     it('normalizes an all-day event and a timed event', async () => {
       const fakeBody = {

@@ -233,6 +233,7 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   const summary = `${b.status === 'pending' ? '[REQUEST] ' : ''}${b.serviceLabel} — ${petsText}`;
   const lines = [`Service: ${b.serviceLabel}`, `Pets: ${petsText}`];
   if (b.customerEmail) lines.push(`Customer: ${b.customerEmail}`);
+  if (b.startTime && b.endDate) lines.push(`Arrival: ${b.startTime}`);
   if (b.estCost != null) lines.push(`Estimated cost: $${b.estCost}`);
   if (b.status === 'pending')
     lines.push('Requested via Pawservation — confirm or decline in your dashboard.');
@@ -248,7 +249,9 @@ export function buildEventResource(b: CalendarBooking): EventResource {
     },
   };
 
-  if (b.startTime) {
+  // Timed branch is for single-day services only: a RANGE booking with an arrival time must stay
+  // an all-day multi-day event (the timed branch would collapse it to a 60-minute block).
+  if (b.startTime && !b.endDate) {
     const startDateTime = `${b.startDate}T${b.startTime}:00`;
     const endDateTime = addMinutesToLocal(b.startDate, b.startTime, b.durationMinutes ?? 60);
     return {
