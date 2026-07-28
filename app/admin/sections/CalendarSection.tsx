@@ -20,7 +20,10 @@ import { PendingRequestsList } from './BookingsSection';
  * than re-implementing the row here (see the spec's deep-link rationale).
  */
 
-type DayEntry = { kind: 'timeoff' } | { kind: 'booking'; booking: AdminBooking; label: string };
+type DayEntry =
+  | { kind: 'timeoff' }
+  | { kind: 'booking'; booking: AdminBooking; label: string }
+  | { kind: 'external'; label: string };
 
 /** Customer first name → email → 'Guest'. */
 function whoLabel(b: AdminBooking): string {
@@ -75,6 +78,13 @@ export function buildMonthEntries(
     .filter((b) => b.status !== 'cancelled' && b.status !== 'declined')
     .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? ''));
   for (const b of active) {
+    if (b.external) {
+      paintDays(map, b.startDate, b.endDate, month, {
+        kind: 'external',
+        label: b.externalSummary ?? 'Busy (Google Calendar)',
+      });
+      continue;
+    }
     paintDays(map, b.startDate, b.endDate, month, {
       kind: 'booking',
       booking: b,
@@ -134,6 +144,11 @@ function DayCell({
         entry.kind === 'timeoff' ? (
           <span key={`t-${j}`} className="pb-cal-timeoff">
             Time off
+          </span>
+        ) : entry.kind === 'external' ? (
+          // Materialized Google event: read-only, no click-through — not a Bookings row to open.
+          <span key={`x-${j}`} className="pb-cal-external" title={entry.label}>
+            {entry.label}
           </span>
         ) : (
           <button

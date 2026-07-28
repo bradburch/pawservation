@@ -114,6 +114,10 @@ export type AdminBooking = {
   startTime: string | null;
   optionKey: string | null;
   petCount: number;
+  /** True for a materialized Google Calendar event: read-only, blocks capacity, no customer. */
+  external: boolean;
+  /** The Google event's title, for calendar display. Null unless external. */
+  externalSummary: string | null;
   /** Intake answers keyed by question id; {} when the customer answered nothing. */
   answers: Record<string, string>;
   estCost: number | null;

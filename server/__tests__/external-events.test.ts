@@ -133,6 +133,21 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
     expect(rows.find((r) => r.Id === id)).toBeUndefined();
   });
+
+  it('admin bookings GET carries external rows flagged, with the Google summary as the label', async () => {
+    const { env } = createTestEnv();
+    const id = await seedExternal(env);
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const body = (await res.json()) as {
+      bookings: { id: string; external?: boolean; externalSummary?: string | null }[];
+    };
+    const row = body.bookings.find((b) => b.id === id);
+    expect(row).toMatchObject({ external: true, externalSummary: 'Neighbor stay — Rex' });
+  });
 });
 
 /** Spies on every `db.prepare(...)` call matching the chunked-DELETE SQL and records how many

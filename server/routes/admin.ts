@@ -1587,6 +1587,8 @@ export const adminRoutes = new Hono<AppEnv>()
         startTime: r.StartTime,
         optionKey: r.OptionKey,
         petCount: r.PetCount,
+        external: r.ServiceType === 'external',
+        externalSummary: r.ExternalSummary,
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
