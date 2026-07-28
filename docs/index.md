@@ -20,7 +20,9 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
 
 - **Real product surface area, not a toy CRUD app** — multi-tenant isolation, capacity
   and conflict rules, per-service booking constraints, pet co-ownership, CSV bulk import,
-  payment/earnings tracking, two-way Google Calendar sync, and owner-console sitter
+  payment/earnings tracking, two-way Google Calendar sync (bookings pushed out with retry;
+  busy events, edits, and deletions on the connected calendar read back on a 15-minute
+  sweep), and owner-console sitter
   lifecycle management (disable/remove), all shipped as incremental, reviewed PRs.
 - **Edge-native architecture** — Cloudflare Workers (Hono) + D1 (SQLite) + KV, chosen for
   low-latency global delivery of a widget that lives on third-party sites.

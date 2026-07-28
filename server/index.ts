@@ -374,7 +374,7 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep living in Google Calendar.</p>
-                <p>Connect it once and bookings appear there, updating when you confirm. The sync runs one way, Pawservation to Google &mdash; it writes your bookings and leaves the rest of your calendar alone, so something you keep only in Google won&rsquo;t block a request unless you enter it as time off.</p>
+                <p>Connect it once and bookings appear there, updating when you confirm. The sync runs both ways &mdash; it writes your bookings out, and something you add to that calendar by hand blocks matching requests here too. Every other calendar in your account is left alone.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep the website you already have.</p>
@@ -515,7 +515,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Can it double-book me?</h3>
-              <p><strong>No.</strong> Your caps and time off hold the day, and a full day isn&rsquo;t offered. One caveat: Google Calendar sync is one-way, so being busy elsewhere won&rsquo;t block a request unless you enter it as time off.</p>
+              <p><strong>No.</strong> Your caps and time off hold the day, and a full day isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways.</p>
             </div>
             <div class="qa-item">
               <h3>Can anyone book, or just my clients?</h3>
@@ -855,12 +855,12 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>The credentials that let us write to your calendar are stored encrypted, and you can disconnect whenever you like.</p>
             </div>
             <div class="feature">
-              <h3>One way, on purpose</h3>
-              <p>Pawservation writes your bookings and leaves the rest of your calendar alone. Something you keep only in Google won&rsquo;t block a request unless you enter it as time off.</p>
+              <h3>It reads your calendar, too</h3>
+              <p>Bookings flow out to the connected calendar &mdash; and busy events you keep there flow back. Add a stay by hand in Google and Pawservation blocks those dates automatically; move or delete it and the block follows. Every other calendar in your account is never read and never touched.</p>
             </div>
             <div class="feature">
               <h3>If Google is down</h3>
-              <p>Your dashboard is the record; the calendar is a mirror of it. If Google can&rsquo;t be reached, the booking still lands in Pawservation &mdash; nothing is lost, the mirror just misses a frame.</p>
+              <p>Your dashboard is the record; the calendar is a mirror of it. If Google can&rsquo;t be reached, the booking still lands in Pawservation, and a background sweep keeps retrying until the event lands in Google too. Edits made in Google flow back the same way. Worst case, the mirror lags a few minutes &mdash; it never loses a frame.</p>
             </div>
           </div>
         </div>
@@ -931,8 +931,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           </div>
           <div class="wf-math">
             <h3 class="wf-h">What about the stays you&rsquo;ve already agreed to?</h3>
-            <p>Straight answer: you can&rsquo;t type an old booking in yourself. Bookings only arrive through your booking page, so for a stay you agreed to before you joined, have the client send the request &mdash; it takes them a minute, and then your caps, your calendar, and what you&rsquo;re owed all match reality.</p>
-            <p>If you&rsquo;d rather not ask them, block those dates as time off instead. The stay won&rsquo;t be tracked, but nothing else can be booked over the top of it.</p>
+            <p>Straight answer: you can&rsquo;t type an old booking in yourself. But if the stay is already on the calendar you connected, you&rsquo;re done &mdash; Pawservation reads that calendar and blocks those dates automatically, so nothing can be double-booked over it.</p>
+            <p>Want the stay tracked properly &mdash; caps, records, what you&rsquo;re owed? Have the client send the request through your booking page. It takes them a minute, and then your calendar and your books match reality.</p>
           </div>
         </div>
       </section>

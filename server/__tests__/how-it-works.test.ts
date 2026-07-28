@@ -121,10 +121,20 @@ describe('GET /how-it-works — the in-depth tour page', () => {
 
   it('is honest that Google Calendar is a mirror, not the record', async () => {
     const body = await howItWorksBody();
-    // Sync is best-effort (routes/bookings.ts waitUntil + catch): a Google outage must never be
-    // described, or experienced, as losing the booking.
+    // Pushes retry until they land (outbox + cron): an outage delays the mirror, never loses it.
     expect(body).toContain('the calendar is a mirror');
     expect(body).toContain('the booking still lands in Pawservation');
+    expect(body).toContain('keeps retrying until the event lands');
+  });
+
+  it('is truthful that the connected calendar is read back and blocks dates', async () => {
+    const body = await howItWorksBody();
+    // WS-G: external events on the connected calendar are materialized and block capacity.
+    expect(body).toContain('blocks those dates automatically');
+    expect(body).not.toContain('One way, on purpose');
+    expect(body).not.toContain('unless you enter it as time off');
+    // The old stays-section workaround ("block those dates as time off instead") is retired.
+    expect(body).toContain('type an old booking in yourself'); // still true, still disclosed
   });
 
   it('discloses the two things that are not built: repeats, and typing in an old stay', async () => {
