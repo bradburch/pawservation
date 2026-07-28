@@ -98,8 +98,17 @@ function PetAdder({
 
   return (
     <div className="pb-row pb-add-pet">
-      <input placeholder="Pet name" value={name} onChange={(e) => setName(e.target.value)} />
-      <select value={selectedPetType} onChange={(e) => setPetType(e.target.value)}>
+      <input
+        placeholder="Pet name"
+        aria-label="Pet name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <select
+        value={selectedPetType}
+        aria-label="Pet type"
+        onChange={(e) => setPetType(e.target.value)}
+      >
         {petTypes.map((pt) => (
           <option key={pt.petType} value={pt.petType}>
             {pt.label}
@@ -108,6 +117,7 @@ function PetAdder({
       </select>
       <input
         placeholder="Care notes (feeding, meds, quirks — optional)"
+        aria-label="Care notes (optional)"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
       />
@@ -301,11 +311,11 @@ export function ClientsSection({
   const [custPetName, setCustPetName] = useState('');
   // Slug of the user's last pick — may go stale if the registry changes; see PetAdder above for
   // why the valid value is DERIVED (selectedCustPetType) rather than synced back via an effect.
-  const [custPetType, setCustPetType] = useState(petTypes[0]?.petType ?? '');
+  // Starts EMPTY on purpose: defaulting to the first type (alphabetically "Cat") silently made
+  // every unattended add a cat. The sitter must choose.
+  const [custPetType, setCustPetType] = useState('');
   const [busy, setBusy] = useState(false);
-  const selectedCustPetType = petTypes.some((pt) => pt.petType === custPetType)
-    ? custPetType
-    : (petTypes[0]?.petType ?? '');
+  const selectedCustPetType = petTypes.some((pt) => pt.petType === custPetType) ? custPetType : '';
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [sendInvites, setSendInvites] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -454,7 +464,7 @@ export function ClientsSection({
     mutate(async () => {
       setWelcomeHint(null);
       const email = custEmail.trim().toLowerCase();
-      await adminApi.customers.add(
+      const res = await adminApi.customers.add(
         slug,
         token,
         email,
@@ -463,8 +473,12 @@ export function ClientsSection({
         custPetName.trim(),
         selectedCustPetType,
       );
+      // The append path keeps the client's stored name/phone and only adds the pet — saying
+      // "added" there would misreport what happened to what the sitter just typed.
       setWelcomeHint(
-        `${email} added. No email has been sent — use "Send welcome email" on their row when you're ready.`,
+        res.created
+          ? `${email} added. No email has been sent — use "Send welcome email" on their row when you're ready.`
+          : `${email} already exists — ${custPetName.trim()} was added to their account. Their stored name and phone were kept.`,
       );
       setCustEmail('');
       setCustName('');
@@ -545,25 +559,29 @@ export function ClientsSection({
       <div className="pb-row">
         <input
           type="email"
-          placeholder="customer@email.com"
+          placeholder="client@email.com"
+          aria-label="Client email"
           value={custEmail}
           onChange={(e) => setCustEmail(e.target.value)}
         />
         <input
           type="text"
           placeholder="Name"
+          aria-label="Client name"
           value={custName}
           onChange={(e) => setCustName(e.target.value)}
         />
         <input
           type="tel"
           placeholder="Phone (optional)"
+          aria-label="Client phone (optional)"
           value={custPhone}
           onChange={(e) => setCustPhone(e.target.value)}
         />
         <input
           type="text"
           placeholder="Pet name"
+          aria-label="Pet name"
           value={custPetName}
           onChange={(e) => setCustPetName(e.target.value)}
         />
@@ -572,6 +590,9 @@ export function ClientsSection({
           onChange={(e) => setCustPetType(e.target.value)}
           aria-label="Pet type"
         >
+          <option value="" disabled>
+            Pet type…
+          </option>
           {petTypes.map((pt) => (
             <option key={pt.petType} value={pt.petType}>
               {pt.label}
@@ -597,6 +618,7 @@ export function ClientsSection({
           key={fileInputKey}
           type="file"
           accept=".csv"
+          aria-label="Client CSV file"
           onChange={(e) => {
             setCsvFile(e.target.files?.[0] ?? null);
             setImportResult(null);
@@ -629,10 +651,10 @@ export function ClientsSection({
             {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
             {importResult.importedPets === 1 ? '' : 's'}.
             {importResult.invitesSent > 0
-              ? ` Sent ${importResult.invitesSent} welcome email(s).`
+              ? ` Sent ${importResult.invitesSent} welcome email${importResult.invitesSent === 1 ? '' : 's'}.`
               : ''}
             {importResult.invitesFailed > 0
-              ? ` ${importResult.invitesFailed} welcome email(s) failed to send.`
+              ? ` ${importResult.invitesFailed} welcome email${importResult.invitesFailed === 1 ? '' : 's'} failed to send.`
               : ''}
           </p>
           {importResult.skippedRows.length > 0 && (
@@ -751,15 +773,26 @@ export function ClientsSection({
                 </div>
               ) : null}
               {petTypes.length > 0 && owners[0] ? (
-                <PetAdder
-                  owners={owners}
-                  petTypes={petTypes}
-                  slug={slug}
-                  token={token}
-                  onAdded={onCustomersChanged}
-                  onError={handleError}
-                  clearError={clearError}
-                />
+                <>
+                  {!group.active && (
+                    // A memorial account has no live pets; adding one makes it a live account
+                    // again. That's a legitimate action (a client gets a new pet), but it must
+                    // not happen silently — say what the add will do before it does it.
+                    <p className="pb-hint">
+                      Adding a pet makes this a live account again — it returns to the client list
+                      and can book.
+                    </p>
+                  )}
+                  <PetAdder
+                    owners={owners}
+                    petTypes={petTypes}
+                    slug={slug}
+                    token={token}
+                    onAdded={onCustomersChanged}
+                    onError={handleError}
+                    clearError={clearError}
+                  />
+                </>
               ) : null}
               {group.active && (
                 <details className="pb-account-rates">

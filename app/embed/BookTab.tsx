@@ -5,7 +5,7 @@ import {
   validatePetTypeAcceptance,
   validateServiceConstraints,
 } from '../../src/shared/index.js';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Calendar } from './Calendar';
 import {
   api,
@@ -43,6 +43,9 @@ export function BookTab({
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
+  // Guards against a stale availability response landing after the inputs changed: only the
+  // newest in-flight check may write its result.
+  const checkSeq = useRef(0);
 
   const selectedOption = service?.options.find((o) => o.optionKey === optionKey);
   const petTypeLabels = new Map(config.petTypes.map((p) => [p.slug, p.label]));
@@ -105,6 +108,7 @@ export function BookTab({
       return;
     }
     setChecking(true);
+    const seq = ++checkSeq.current;
     try {
       const params: Record<string, string> = {
         type,
@@ -115,15 +119,16 @@ export function BookTab({
         petIds: selectedPets.join(','),
       };
       if (service?.shape === 'range') params.end = end;
-      setResult(await api.availability(slug, token, params));
+      const res = await api.availability(slug, token, params);
+      if (seq === checkSeq.current) setResult(res);
     } catch (e) {
       if (isAuthExpired(e)) {
         onAuthExpired();
         return;
       }
-      setError(errorMsg(e));
+      if (seq === checkSeq.current) setError(errorMsg(e));
     } finally {
-      setChecking(false);
+      if (seq === checkSeq.current) setChecking(false);
     }
   };
 
@@ -188,13 +193,22 @@ export function BookTab({
               key={s.type}
               type="button"
               className={`bp-service-card${type === s.type ? ' bp-selected' : ''}`}
+              aria-pressed={type === s.type}
               onClick={() => onServiceChange(s.type)}
             >
               <span className="bp-service-emoji" aria-hidden="true">
                 <Icon />
               </span>
               <span className="bp-service-text">
-                <span className="bp-service-label">{s.label}</span>
+                <span className="bp-service-label">
+                  {s.label}
+                  {/* Selection must not be color-only: the selected card also gets a check. */}
+                  {type === s.type && (
+                    <span className="bp-service-check" aria-hidden="true">
+                      <IconCheck size={13} />
+                    </span>
+                  )}
+                </span>
                 {s.description && <span className="bp-service-desc">{s.description}</span>}
               </span>
             </button>
@@ -295,7 +309,9 @@ export function BookTab({
           </fieldset>
           {service && service.questions.length > 0 && (
             <fieldset className="bp-questions">
-              <legend>A few questions</legend>
+              <legend>
+                {service.questions.length === 1 ? 'One quick question' : 'A few questions'}
+              </legend>
               {service.questions.map((q) => (
                 <QuestionField
                   key={q.id}
@@ -377,7 +393,9 @@ export function BookTab({
                 <p>
                   {config.contactEmail || config.contactPhone ? (
                     <>
-                      Ask about a rate for these {selectedPets.length} pets at{' '}
+                      Ask about a rate for{' '}
+                      {selectedPets.length === 1 ? 'this pet' : `these ${selectedPets.length} pets`}{' '}
+                      at{' '}
                       {config.contactEmail ? (
                         <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
                       ) : null}
@@ -387,8 +405,14 @@ export function BookTab({
                       ) : null}
                       {'. '}
                     </>
-                  ) : null}
-                  You can also book one pet at a time.
+                  ) : (
+                    // No contact details on file — without this line the card is a dead end.
+                    <>
+                      Mention it to {config.displayName} next time you talk so they can set a
+                      rate.{' '}
+                    </>
+                  )}
+                  You can also book one pet at a time — just untick the others above.
                 </p>
               </div>
             ) : (
@@ -402,6 +426,21 @@ export function BookTab({
       {/* Rendered outside the details panel: submitting resets the dates, which unmounts
           the panel — a confirmation inside it would vanish before it was ever seen. */}
       {confirmation && <p className="bp-confirm">{confirmation}</p>}
+      {/* Always-mounted live region so screen readers hear the outcome of "Check availability"
+          and "Send request" — the visual cards above are plain DOM insertions and say nothing. */}
+      <div className="bp-sr-only" role="status" aria-live="polite">
+        {error
+          ? error
+          : confirmation
+            ? confirmation
+            : result
+              ? result.available && result.priced
+                ? `Available. Estimated cost $${result.estCost}.`
+                : result.available
+                  ? `Available, but ${config.displayName} hasn't set a price for this group of pets.`
+                  : (result.reason ?? 'Not available for those dates.')
+              : ''}
+      </div>
     </div>
   );
 }

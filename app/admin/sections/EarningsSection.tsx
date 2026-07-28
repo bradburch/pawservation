@@ -4,6 +4,7 @@ import { IconChartBar } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
+import { formatFriendlyDate } from '../../../src/shared/index.js';
 import { Hint } from '../Hint';
 
 const NO_PAYMENTS = 'No payments recorded yet.';
@@ -121,7 +122,7 @@ export function EarningsView({
         </div>
         <div className="pb-tile">
           <strong>{data.tiles.outstandingCount}</strong>
-          <span>Unpaid bookings</span>
+          <span>{data.tiles.outstandingCount === 1 ? 'Unpaid booking' : 'Unpaid bookings'}</span>
         </div>
       </div>
 
@@ -204,7 +205,7 @@ export function EarningsView({
             <li key={o.bookingId}>
               <span className="pb-truncate-block" title={o.name || o.email || 'Unknown client'}>
                 <span className="pb-truncate">{o.name || o.email || 'Unknown client'}</span> —{' '}
-                {o.serviceType} ({o.startDate})
+                {o.serviceType} ({formatFriendlyDate(o.startDate)})
                 <br />
                 owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost + o.chargesTotal}
                 {o.chargesTotal > 0 ? `, incl. $${o.chargesTotal} extras` : ''}

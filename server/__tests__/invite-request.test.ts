@@ -164,7 +164,9 @@ describe('POST /request-invite', () => {
     expect(res.headers.get('Content-Type')).toContain('text/html');
     const html = await res.text();
     expect(html).not.toContain('<script');
-    expect(html).toContain('Please fill in every required field');
+    // The 400 page now NAMES the offending field rather than the old generic line.
+    expect(html).toContain('Business name');
+    expect(html).toContain('Please fix this field, then try again:');
     expect(html).toContain('<form class="invite-form" method="post" action="/request-invite">');
     // The city that WAS submitted survives, pre-filled.
     expect(html).toContain(`value="${VALID_FIELDS.city}"`);
@@ -201,7 +203,7 @@ describe('POST /request-invite', () => {
     const res = await postInvite(env, { ...VALID_FIELDS, email: 'notanemail' });
     expect(res.status).toBe(400);
     const html = await res.text();
-    expect(html).toContain('Please fill in every required field');
+    expect(html).toContain('Email (not a valid address)');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

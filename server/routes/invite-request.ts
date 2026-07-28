@@ -37,11 +37,26 @@ const THANKS_PATH = '/request-invite/thanks';
 const THANKS_FALLBACK_PATH = `${THANKS_PATH}?fallback=1`;
 const FALLBACK_OWNER_EMAIL = 'bradburch@duck.com';
 
-/** A single friendly line for every 400 case (missing field, bad email, or an unparsable body
- * alike) — deliberately not field-specific; the values themselves are re-echoed in the form
- * below rather than described one by one. */
+/** The generic 400 line, shown when the body was unparsable and no per-field detail exists. */
 const INVALID_MESSAGE =
   'Please fill in every required field with a valid email address, then try again.';
+
+/** Names the required fields that are missing or invalid, so the 400 page can say WHICH ones
+ * to fix instead of making the visitor re-check all nine. Mirrors InviteRequestBody's rules for
+ * the required fields only (optional fields can't 400 on emptiness). */
+function invalidFields(values: InviteFormValues): string[] {
+  const bad: string[] = [];
+  if (!values.business?.trim()) bad.push('Business name');
+  if (!values.name?.trim()) bad.push('Your name');
+  const email = values.email?.trim() ?? '';
+  if (!email) bad.push('Email');
+  else if (!EMAIL_RE.test(email) || email.length > 254) bad.push('Email (not a valid address)');
+  if (!values.city?.trim()) bad.push('City');
+  if (!values.services?.trim()) bad.push('Services you offer');
+  if (!CUSTOMER_COUNTS.includes(values.customerCount as (typeof CUSTOMER_COUNTS)[number]))
+    bad.push('How many customers');
+  return bad;
+}
 
 /** `raw` is Hono's parsed-body shape: each key is a string, a File (multipart), or — when the
  * same key is submitted more than once — an array of either. Only plain strings are ever safe to
@@ -78,6 +93,11 @@ function isHoneypotFilled(value: unknown): boolean {
 }
 
 function renderErrorPage(values: InviteFormValues): string {
+  const problems = invalidFields(values);
+  const detail =
+    problems.length > 0
+      ? `Please fix ${problems.length === 1 ? 'this field' : 'these fields'}, then try again: ${problems.join(', ')}.`
+      : INVALID_MESSAGE;
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -89,9 +109,10 @@ function renderErrorPage(values: InviteFormValues): string {
   <body>
     <main class="wrap" style="padding:96px 0;">
       <div class="cta-panel" style="max-width:640px;margin:0 auto;">
-        <h2>Couldn&rsquo;t send that</h2>
-        <p class="note" style="color:#c4d2c6;margin:0 auto 20px;font-size:1rem;">${INVALID_MESSAGE}</p>
+        <h1 style="font-size:1.6rem;margin:0 0 8px;">Couldn&rsquo;t send that</h1>
+        <p class="note" style="color:#c4d2c6;margin:0 auto 20px;font-size:1rem;">${detail}</p>
         ${renderInviteForm(values)}
+        <p class="note" style="margin:20px auto 0;"><a href="/" style="color:#c4d2c6;">&larr; Back to the homepage</a></p>
       </div>
     </main>
   </body>

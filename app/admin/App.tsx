@@ -1,4 +1,12 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   adminApi,
   ApiError,
@@ -296,7 +304,11 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
           </>
         )}
       </div>
-      {error && <p className="pb-error">{error}</p>}
+      {error && (
+        <p className="pb-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -384,6 +396,7 @@ function SettingsMenu({ activeSection }: { activeSection: SectionKey }) {
         className={`pb-navtab pb-navdrop-trigger${groupActive ? ' pb-navtab-active' : ''}`}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-current={groupActive ? 'true' : undefined}
         onClick={() => setOpen((o) => !o)}
       >
         Settings
@@ -425,6 +438,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   const [activeSection, setActiveSection] = useState<SectionKey>(sectionFromHash);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<'full' | 'services'>('full');
+  // The per-account rate editor writes real PetGroupPricing rows keyed by (serviceType,
+  // optionKey), so it must only ever see SAVED services — handing it the draft would let a
+  // toggled-but-unsaved option persist a rate the server-side config doesn't have.
+  const savedServices = useMemo(
+    () =>
+      savedSnapshot ? (JSON.parse(savedSnapshot) as Settings).services : (settings?.services ?? []),
+    [savedSnapshot, settings],
+  );
   // Auto-open at most once per dashboard mount, so skipping it doesn't re-trigger on refresh().
   const wizardAutoOpened = useRef(false);
   // Chip deep-link handoff: CalendarSection sets this and navigates to #bookings;
@@ -859,7 +880,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       <ClientsSection
         customers={customers ?? []}
         petTypes={settings.petTypes}
-        services={settings.services}
+        services={savedServices}
         slug={slug}
         token={token}
         onCustomersChanged={reloadCustomers}

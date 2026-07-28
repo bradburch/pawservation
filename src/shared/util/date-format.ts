@@ -21,6 +21,25 @@ export function formatShortDate(dateStr: string): string {
 }
 
 /**
+ * "Jun 7" for a date in the current year, "Jun 7, 2028" otherwise. For lists that mix years
+ * (a customer's bookings, the admin's outstanding balances): hiding the year there made a
+ * 2028 booking above a next-month one read as a broken sort order.
+ */
+export function formatFriendlyDate(dateStr: string): string {
+  try {
+    const thisYear = new Date().toLocaleDateString('en-US', {
+      timeZone: PACIFIC,
+      year: 'numeric',
+    });
+    return dateStr.slice(0, 4) === thisYear
+      ? fmt(dateStr, { month: 'short', day: 'numeric' })
+      : fmt(dateStr, { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+/**
  * Humanize an end-EXCLUSIVE blocked date range for display, e.g.
  * `('2028-07-03', '2028-07-05')` → "Jul 3 – 4, 2028 · 2 days".
  * A null end (or end = start + 1) is a single day: "Jul 3, 2028 · 1 day".

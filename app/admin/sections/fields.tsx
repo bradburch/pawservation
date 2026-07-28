@@ -27,6 +27,9 @@ export function NullableNumberField({
         type="number"
         min={1}
         aria-invalid={invalid}
+        // Explicit name: without it the accessible name is computed from the whole label's
+        // contents, which includes the Hint toggletip's entire prose.
+        aria-label={`${label} (blank = no limit)`}
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
       />

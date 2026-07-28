@@ -12,7 +12,7 @@
   --bp-card: #ffffff;
   --bp-ink: #18271d;
   --bp-body: #415044;
-  --bp-soft: #697a6d;
+  --bp-soft: #5a6a5e;
   --bp-line: #e3e7e0;
   --bp-sage: #9db2a2;
   --bp-sage-wash: #f1f5ee;
@@ -259,7 +259,7 @@ body {
 
 .bp-service-desc {
   max-width: 28ch;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1.3;
@@ -335,7 +335,7 @@ body {
 
 .bp-cal-weekday {
   text-align: center;
-  font-size: 0.62rem;
+  font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -586,7 +586,7 @@ body {
 }
 
 .bp-pet-chip:has(input:focus-visible) {
-  outline: 3px solid color-mix(in srgb, var(--bp-accent) 45%, transparent);
+  outline: 3px solid var(--bp-accent);
   outline-offset: 2px;
 }
 
@@ -756,7 +756,7 @@ body {
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--bp-accent) 45%, transparent);
+  outline: 3px solid var(--bp-accent);
   outline-offset: 2px;
 }
 
@@ -782,4 +782,45 @@ body {
 .bp-pet-hint {
   font-size: 0.78em;
   color: var(--bp-soft);
+}
+
+/* Links inside widget prose (the unpriced-set contact card) — without this they fall through
+   to the UA default blue/purple, off-brand and unthemed. */
+.bp-widget a {
+  color: var(--bp-accent);
+}
+
+/* The selected service card's non-color cue. */
+.bp-service-check {
+  display: inline-flex;
+  margin-left: 5px;
+  color: var(--bp-accent);
+  vertical-align: middle;
+}
+
+/* Visually hidden, still read by screen readers — the widget's live announcement region. */
+.bp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Quiet text-style action ("Wrong email? Go back") — outranks the filled .bp-identify button. */
+.bp-identify button.bp-linklike {
+  background: none;
+  border: none;
+  color: var(--bp-soft);
+  font-weight: 500;
+  text-decoration: underline;
+  min-height: 44px;
+}
+.bp-identify button.bp-linklike:hover {
+  color: var(--bp-ink);
+  filter: none;
 }

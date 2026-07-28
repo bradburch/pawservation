@@ -236,7 +236,7 @@ describe('availability API — regression guards', () => {
     ]);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("Boarding doesn't accept cat — Mochi can't join this booking.");
+    expect(body.error).toBe("Boarding doesn't accept cats — Mochi can't join this booking.");
   });
 });
 

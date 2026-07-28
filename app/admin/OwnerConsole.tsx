@@ -276,7 +276,11 @@ export function OwnerConsole({
                 ← Back to roster
               </button>
               <h2>{selected.displayName}</h2>
-              {dashError && <p className="pb-error">{dashError}</p>}
+              {dashError && (
+                <p className="pb-error" role="alert">
+                  {dashError}
+                </p>
+              )}
               {detail === null ? <p>Loading…</p> : <EarningsView data={detail} />}
             </>
           ) : (
@@ -304,7 +308,11 @@ export function OwnerConsole({
                 ))}
               </div>
 
-              {dashError && <p className="pb-error">{dashError}</p>}
+              {dashError && (
+                <p className="pb-error" role="alert">
+                  {dashError}
+                </p>
+              )}
 
               {roster === null ? (
                 <p>Loading…</p>
@@ -336,7 +344,15 @@ export function OwnerConsole({
                       <table>
                         <thead>
                           <tr>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'name'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -345,7 +361,15 @@ export function OwnerConsole({
                                 Sitter{sortIndicator(sort, 'name')}
                               </button>
                             </th>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'clients'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -354,7 +378,15 @@ export function OwnerConsole({
                                 Clients{sortIndicator(sort, 'clients')}
                               </button>
                             </th>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'bookings'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -363,7 +395,15 @@ export function OwnerConsole({
                                 Bookings{sortIndicator(sort, 'bookings')}
                               </button>
                             </th>
-                            <th>
+                            <th
+                              aria-sort={
+                                sort.key === 'earned'
+                                  ? sort.dir === 'asc'
+                                    ? 'ascending'
+                                    : 'descending'
+                                  : undefined
+                              }
+                            >
                               <button
                                 type="button"
                                 className="pb-linklike"
@@ -478,7 +518,11 @@ export function OwnerConsole({
           <button onClick={add} disabled={busy}>
             {busy ? 'Adding…' : 'Add'}
           </button>
-          {error && <p className="pb-error">{error}</p>}
+          {error && (
+            <p className="pb-error" role="alert">
+              {error}
+            </p>
+          )}
           {note &&
             (note.entry.claimedAt ? (
               <p>{note.entry.email} already has an account.</p>
@@ -491,7 +535,7 @@ export function OwnerConsole({
             ) : note.emailSent ? (
               <p className="pb-ok">Invite sent to {note.entry.email}.</p>
             ) : (
-              <p className="pb-error">
+              <p className="pb-error" role="alert">
                 Added {note.entry.email}, but the invite email couldn&rsquo;t be sent — re-add to
                 retry.
               </p>

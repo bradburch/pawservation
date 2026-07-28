@@ -358,7 +358,7 @@ export const adminApi = {
       petName: string,
       petType: string,
     ) =>
-      request<{ id: string; status: string }>(`/api/${slug}/admin/customers`, {
+      request<{ id: string; status: string; created: boolean }>(`/api/${slug}/admin/customers`, {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ email, name, phone, petName, petType }),

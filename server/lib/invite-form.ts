@@ -43,23 +43,23 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
   return `<form class="invite-form" method="post" action="/request-invite">
               <div class="invite-field">
                 <label for="inv-business">Business name</label>
-                <input id="inv-business" name="business" type="text" maxlength="120" required value="${esc(values.business)}" />
+                <input id="inv-business" name="business" type="text" maxlength="120" required autocomplete="organization" value="${esc(values.business)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-name">Your name</label>
-                <input id="inv-name" name="name" type="text" maxlength="80" required value="${esc(values.name)}" />
+                <input id="inv-name" name="name" type="text" maxlength="80" required autocomplete="name" value="${esc(values.name)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-email">Email</label>
-                <input id="inv-email" name="email" type="email" maxlength="254" required value="${esc(values.email)}" />
+                <input id="inv-email" name="email" type="email" maxlength="254" required autocomplete="email" value="${esc(values.email)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-phone">Phone <span class="invite-optional">(optional)</span></label>
-                <input id="inv-phone" name="phone" type="tel" maxlength="40" value="${esc(values.phone)}" />
+                <input id="inv-phone" name="phone" type="tel" maxlength="40" autocomplete="tel" value="${esc(values.phone)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-city">City</label>
-                <input id="inv-city" name="city" type="text" maxlength="80" required value="${esc(values.city)}" />
+                <input id="inv-city" name="city" type="text" maxlength="80" required autocomplete="address-level2" value="${esc(values.city)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-neighborhoods">Neighborhoods you cover <span class="invite-optional">(optional)</span></label>

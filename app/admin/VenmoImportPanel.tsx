@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { adminApi, type VenmoImportResult, type VenmoPreview } from '../shared-ui/api.js';
+import { formatFriendlyDate } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
@@ -180,7 +181,8 @@ export function VenmoImportPanel({
                         checked={choices.get(m.txnId) === m.bookingId}
                         onChange={() => toggle(m.txnId, m.bookingId)}
                       />{' '}
-                      ${m.amount} from {m.clientLabel} on {m.date} &rarr; {m.bookingLabel}
+                      ${m.amount} from {m.clientLabel} on {formatFriendlyDate(m.date)} &rarr;{' '}
+                      {m.bookingLabel}
                       {m.note ? ` — “${m.note}”` : ''}
                     </label>
                   </li>
@@ -195,7 +197,7 @@ export function VenmoImportPanel({
               <ul>
                 {preview.ambiguous.map((a) => (
                   <li key={a.txnId}>
-                    ${a.amount} from {a.clientLabel} on {a.date}
+                    ${a.amount} from {a.clientLabel} on {formatFriendlyDate(a.date)}
                     {a.note ? ` — “${a.note}”` : ''}
                     <select
                       value={choices.get(a.txnId) ?? ''}
@@ -228,7 +230,8 @@ export function VenmoImportPanel({
               <ul>
                 {preview.unmatched.map((u) => (
                   <li key={u.txnId} className="pb-hint">
-                    ${u.amount} from {u.from || 'an unnamed sender'} on {u.date} &mdash; {u.reason}
+                    ${u.amount} from {u.from || 'an unnamed sender'} on {formatFriendlyDate(u.date)}{' '}
+                    &mdash; {u.reason}
                   </li>
                 ))}
               </ul>
@@ -247,10 +250,10 @@ export function VenmoImportPanel({
 
           <p className="pb-hint">
             {preview.alreadyImported.length > 0
-              ? `${preview.alreadyImported.length} payment(s) in this file were imported before and are left alone. `
+              ? `${preview.alreadyImported.length} ${preview.alreadyImported.length === 1 ? 'payment' : 'payments'} in this file ${preview.alreadyImported.length === 1 ? 'was' : 'were'} imported before and ${preview.alreadyImported.length === 1 ? 'is' : 'are'} left alone. `
               : ''}
             {preview.ignored > 0
-              ? `${preview.ignored} row(s) weren't client payments coming in (bank transfers, pending or cancelled) and were skipped.`
+              ? `${preview.ignored} ${preview.ignored === 1 ? "row wasn't a" : "rows weren't"} client payment${preview.ignored === 1 ? '' : 's'} coming in (bank transfers, pending or cancelled) and ${preview.ignored === 1 ? 'was' : 'were'} skipped.`
               : ''}
           </p>
 
