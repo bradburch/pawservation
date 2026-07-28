@@ -150,7 +150,7 @@ const LANDING_HTML = `<!doctype html>
     <header class="nav">
       <div class="wrap nav-inner">
         <a class="logo" href="/">
-          <img src="/brand/paw.svg" width="24" height="20" alt="" />
+          <img src="/favicon.svg" width="26" height="26" alt="" />
           Pawservation
         </a>
         <nav class="nav-links" aria-label="Sections">
@@ -542,13 +542,7 @@ const LANDING_HTML = `<!doctype html>
         <div class="foot-grid">
           <div class="foot-brand">
             <a class="logo" href="/">
-              <svg width="20" height="20" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
-                <ellipse cx="50" cy="63" rx="24" ry="20" />
-                <ellipse cx="18" cy="38" rx="10" ry="13" />
-                <ellipse cx="39" cy="24" rx="10" ry="14" />
-                <ellipse cx="61" cy="24" rx="10" ry="14" />
-                <ellipse cx="82" cy="38" rx="10" ry="13" />
-              </svg>
+              <img src="/favicon.svg" width="26" height="26" alt="" />
               Pawservation
             </a>
             <p>Booking for pet-sitting businesses, embedded on your own website.</p>
@@ -608,7 +602,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
     <header class="nav">
       <div class="wrap nav-inner">
         <a class="logo" href="/">
-          <img src="/brand/paw.svg" width="24" height="20" alt="" />
+          <img src="/favicon.svg" width="26" height="26" alt="" />
           Pawservation
         </a>
         <nav class="nav-links" aria-label="Sections">
@@ -988,13 +982,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         <div class="foot-grid">
           <div class="foot-brand">
             <a class="logo" href="/">
-              <svg width="20" height="20" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
-                <ellipse cx="50" cy="63" rx="24" ry="20" />
-                <ellipse cx="18" cy="38" rx="10" ry="13" />
-                <ellipse cx="39" cy="24" rx="10" ry="14" />
-                <ellipse cx="61" cy="24" rx="10" ry="14" />
-                <ellipse cx="82" cy="38" rx="10" ry="13" />
-              </svg>
+              <img src="/favicon.svg" width="26" height="26" alt="" />
               Pawservation
             </a>
             <p>Booking for pet-sitting businesses, embedded on your own website.</p>

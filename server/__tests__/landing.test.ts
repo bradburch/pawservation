@@ -102,14 +102,14 @@ describe('GET / — landing page', () => {
     expect(body).toContain('nothing to sign up for');
   });
 
-  it('every image is a same-origin landing screenshot with informative alt text (brand paw excepted)', async () => {
+  it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {
     const body = await landingBody();
     const imgTags = body.match(/<img\b[^>]*>/g) ?? [];
     expect(imgTags.length).toBeGreaterThanOrEqual(4);
     for (const tag of imgTags) {
       const src = /src="([^"]+)"/.exec(tag)?.[1];
       const alt = /alt="([^"]*)"/.exec(tag)?.[1];
-      if (src === '/brand/paw.svg') {
+      if (src === '/favicon.svg') {
         // The nav brand mark is DECORATIVE next to the visible "Pawservation" text — its alt
         // must be empty so screen readers don't hear the name twice.
         expect(alt, tag).toBe('');

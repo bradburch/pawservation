@@ -177,13 +177,13 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).not.toMatch(/statement/i);
   });
 
-  it('carries no images beyond the nav brand paw (no new weight budget to police)', async () => {
+  it('carries no images beyond the brand calendar mark (no new weight budget to police)', async () => {
     const body = await howItWorksBody();
     const imgTags = body.match(/<img\b[^>]*>/g) ?? [];
     // The single decorative brand mark in the nav is the one allowed image; screenshots and
     // other weight stay banned.
     for (const tag of imgTags) {
-      expect(tag).toContain('src="/brand/paw.svg"');
+      expect(tag).toContain('src="/favicon.svg"');
     }
   });
 
