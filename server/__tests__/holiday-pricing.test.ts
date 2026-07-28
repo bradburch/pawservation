@@ -51,40 +51,42 @@ function opt(over: Partial<TenantServiceOption> = {}): TenantServiceOption {
 describe('estimateCost — holiday units priced at the stored HolidayRate', () => {
   it('is UNCHANGED when HolidayRate is NULL (the compatibility lock)', () => {
     // Dec 23 -> Dec 27 spans Christmas Eve AND Christmas Day, and still costs 4 x $40.
-    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2026-12-23', '2026-12-27')).toBe(160);
+    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2026-12-23', '2026-12-27').cost).toBe(
+      160,
+    );
   });
 
   it('prices only the holiday nights at the holiday rate', () => {
     const s = svc('boarding', { HolidayRate: 75 });
     // Nights begin Dec 23, 24, 25, 26 -> two holidays: 2 x $40 + 2 x $75 = $230.
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-27')).toBe(230);
+    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-27').cost).toBe(230);
   });
 
   it('names a night by its CHECK-IN date, so Dec 24 -> Dec 25 is ONE holiday night', () => {
     const s = svc('boarding', { HolidayRate: 75 });
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-24', '2026-12-25')).toBe(75);
+    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-24', '2026-12-25').cost).toBe(75);
     // The mirror: checking in ON Christmas Day and out on the 26th is also one holiday night.
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-25', '2026-12-26')).toBe(75);
+    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-25', '2026-12-26').cost).toBe(75);
     // …and checking out ON a holiday does NOT make the last night a holiday night.
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-24')).toBe(40);
+    expect(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-24').cost).toBe(40);
   });
 
   it('prices a single-day service by the date itself', () => {
     const s = svc('walk', { HolidayRate: 40 });
-    expect(estimateCost(s, opt({ Rate: 20 }), '2026-07-04', '2026-07-04')).toBe(40);
-    expect(estimateCost(s, opt({ Rate: 20 }), '2026-07-05', '2026-07-05')).toBe(20);
+    expect(estimateCost(s, opt({ Rate: 20 }), '2026-07-04', '2026-07-04').cost).toBe(40);
+    expect(estimateCost(s, opt({ Rate: 20 }), '2026-07-05', '2026-07-05').cost).toBe(20);
   });
 
   it('includes the departure day for a DAY-billed range service', () => {
     // billableUnits = nights + 1, so Jul 3 -> Jul 4 is 2 days: Jul 3 (normal) + Jul 4 (holiday).
     const s = svc('boarding', { RateUnit: 'day', HolidayRate: 60 });
     expect(unitSplitFor(s, '2026-07-03', '2026-07-04')).toEqual({ units: 2, holidayUnits: 1 });
-    expect(estimateCost(s, opt({ Rate: 30 }), '2026-07-03', '2026-07-04')).toBe(90);
+    expect(estimateCost(s, opt({ Rate: 30 }), '2026-07-03', '2026-07-04').cost).toBe(90);
   });
 
   it('accepts a holiday rate BELOW the base rate', () => {
     const s = svc('boarding', { HolidayRate: 25 });
-    expect(estimateCost(s, opt({ Rate: 40 }), '2026-07-03', '2026-07-05')).toBe(65); // 40 + 25
+    expect(estimateCost(s, opt({ Rate: 40 }), '2026-07-03', '2026-07-05').cost).toBe(65); // 40 + 25
   });
 });
 

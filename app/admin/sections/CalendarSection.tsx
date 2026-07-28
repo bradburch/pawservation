@@ -136,7 +136,7 @@ function DayCell({
       <span className="pb-cal-daynum">
         {Number(date.slice(8))}
         {holiday && (
-          <span className="pb-cal-holimark" title={holiday} aria-label={holiday}>
+          <span className="pb-cal-holimark" role="img" title={holiday} aria-label={holiday}>
             ★
           </span>
         )}

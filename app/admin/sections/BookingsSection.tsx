@@ -39,13 +39,16 @@ function paidText(b: AdminBooking): string | null {
 }
 
 /** Fee state for a cancelled row that had a cancellation fee assessed. Mirrors paidText's
- * "paid $X of $Y" shape but measured against the fee owed (plus any extras), so a sitter
- * reviewing the row sees the amount and how much of it has been collected. Takes precedence
- * over paidText on those rows. */
+ * "paid $X of $Y" shape, so a sitter reviewing the row sees the amount and how much of it has
+ * been collected. Takes precedence over paidText on those rows. The fee itself and any extra
+ * charges are stated separately (EarningsSection's honest phrasing) rather than pre-summed —
+ * "fee $100 + $45 extras", never a single merged "$145" that reads as if it were the fee. */
 function feeText(b: AdminBooking): string | null {
   if (b.status !== 'cancelled' || b.cancellationFee == null) return null;
-  const due = totalDue(b) ?? b.cancellationFee;
-  return b.paidTotal > 0 ? `paid $${b.paidTotal} of fee $${due}` : `fee $${due}`;
+  const extras = b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : '';
+  return b.paidTotal > 0
+    ? `paid $${b.paidTotal} of fee $${b.cancellationFee}${extras}`
+    : `fee $${b.cancellationFee}${extras}`;
 }
 
 type ListProps = {

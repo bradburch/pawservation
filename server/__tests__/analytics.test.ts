@@ -184,6 +184,28 @@ describe('getAnalytics (repo)', () => {
     ).toBe(45);
   });
 
+  it('a cancelled booking with a charge but NO assessed CancellationFee still appears, owing the charge', async () => {
+    const { env } = createTestEnv();
+    // Cancelled with no fee assessed (status flipped directly, unlike the assessed-fee path
+    // above) — CancellationFee stays NULL. A $45 vet visit is added afterward. Neither the old
+    // confirmed-arm (wrong status) nor the old cancelled-arm (CancellationFee IS NULL) matched
+    // this row, so it was invisible in Earnings despite genuinely owing $45.
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 400 });
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, bookingId, 'cancelled');
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+      bookingRequestId: bookingId,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const row = analytics.outstanding.find((o) => o.BookingId === bookingId)!;
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ EstCost: 0, ChargesTotal: 45, PaidTotal: 0 });
+    expect(
+      serializeAnalytics(analytics).outstanding.find((o) => o.bookingId === bookingId)!.balance,
+    ).toBe(45);
+  });
+
   it('ytd + quarterly derive from monthly[]; prior-year payment excluded from ytd but present in monthly', async () => {
     const { env } = createTestEnv();
     const b = await makeBooking(env, TENANT_A);

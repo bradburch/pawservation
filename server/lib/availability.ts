@@ -72,6 +72,9 @@ export type AvailabilityResult =
     }
   | { available: false; reason: string };
 
+/** `estimateCost`'s return: the price AND the split it was priced from, one call, one source. */
+export type PriceResult = { cost: number; split: UnitSplit };
+
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
  * quote and the stored booking cost can't diverge. Range services bill per unit of stay, taking
@@ -79,6 +82,10 @@ export type AvailabilityResult =
  * "/day", so the price and its label can never disagree); single-day services (daycare/walk/
  * check-in) are a flat per-booking rate. Pure (no DB), so callers that already know the dates
  * can price a booking without a capacity read.
+ *
+ * Returns the split alongside the cost (rather than just a number) so every caller that needs
+ * BOTH — the two quote sites in this file price AND report the holiday breakdown from the exact
+ * same computation — gets them from one call instead of recomputing the formula a second time.
  *
  * INVARIANT — no inferred pricing. A price must never come from an algorithm the sitter did not
  * configure:
@@ -105,23 +112,23 @@ export function estimateCost(
   option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
-): number {
+): PriceResult {
   // Holidays split the SAME units the base formula bills — they never change how many units
   // there are, only which stored rate each one is charged at. `option.Rate` is the base rate `r`;
   // when `feat/rate-enforcement` resolves `r` from the pet-set rate tables instead, ONLY that
   // argument changes — `unitSplitFor` and `holidayAwareCost` compose with any `r`.
-  return holidayAwareCost(
-    option.Rate,
-    service.HolidayRate,
-    unitSplitFor(service, startDate, endDateExclusive),
-  );
+  const split = unitSplitFor(service, startDate, endDateExclusive);
+  return { cost: holidayAwareCost(option.Rate, service.HolidayRate, split), split };
 }
 
 /**
  * The billed units of a booking, partitioned into holiday and normal — the ONE computation of
- * "which units are holidays". `estimateCost` prices from it and the quote REPORTS from it, so the
- * breakdown the widget shows and the price it sits next to can never disagree (the same reason
- * `billedUnits` comes from the same `billableUnits` call the price uses).
+ * "which units are holidays". `estimateCost` calls this once, prices from the result, and returns
+ * that SAME split back to its caller, so the breakdown the widget shows and the price it sits next
+ * to can never disagree (the same reason `billedUnits` comes from the same `billableUnits` call
+ * the price uses). `estimateCost`'s own callers must not call this a second time — they read
+ * `.split` off `estimateCost`'s result instead; it stays exported for the rare direct caller that
+ * needs the split without a price (there is none in this file today).
  *
  * Range services split their `billableUnits` starting at check-in; single-day services are one
  * unit on the date itself. See `splitUnits` for the night-named-by-its-check-in-date convention.
@@ -204,12 +211,12 @@ async function checkRange(
   // already carries the billed quantity `unitSplitFor` computed from its own `nightsBetween` call.
   const nights = nightsBetween(startDate, endDateExclusive);
   const unit = billingUnit(service);
-  // ONE split, used for both the price and the reported breakdown — same discipline as
-  // `billedUnits` sharing `estimateCost`'s `billableUnits` call.
-  const split = unitSplitFor(service, startDate, endDateExclusive);
+  // ONE call — estimateCost prices AND splits, and both the estCost and the reported breakdown
+  // below come from this single result, so no site recomputes the formula.
+  const { cost, split } = estimateCost(service, option, startDate, endDateExclusive);
   return {
     available: true,
-    estCost: holidayAwareCost(option.Rate, service.HolidayRate, split),
+    estCost: cost,
     // The quantity the price was computed from — literally the same `billableUnits` call
     // `unitSplitFor` made, so the widget's "4 days" can never sit next to a 3-night price.
     billedUnits: split.units,
@@ -251,10 +258,11 @@ async function checkSingle(
       return { available: false, reason: 'That session is full.' };
     }
   }
-  const split = unitSplitFor(service, date, date);
+  // ONE call — see checkRange's comment above for why this replaces a direct holidayAwareCost call.
+  const { cost, split } = estimateCost(service, option, date, date);
   return {
     available: true,
-    estCost: holidayAwareCost(option.Rate, service.HolidayRate, split),
+    estCost: cost,
     ...holidayFields(service, split),
   };
 }

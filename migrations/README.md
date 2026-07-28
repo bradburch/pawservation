@@ -25,7 +25,12 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
 
 `0001_*.sql` lives on the unmerged `feat/venmo-import` branch — this branch's `0002_holiday_and_charges.sql`
 was created while `migrations/` was still empty here, so numbering does not start at `0001` on every
-branch; whichever of the two merges to `main` second should renumber to keep the sequence unbroken.
+branch. `0001` and `0002` don't collide (they're two different files, two unrelated additive changes),
+so no renumber is actually needed either way: if `feat/venmo-import` merges first, `main` gets `0001`
+then `0002` and the sequence is already in order. If this branch merges first, `main` gets `0002` with
+no `0001` yet — a leading gap, not a collision — and it closes itself, in order, the moment
+`feat/venmo-import` merges and brings `0001` in. Either merge order is fine; nothing here needs manual
+renumbering.
 
 `0002_holiday_and_charges.sql` adds `TenantServices.HolidayRate` (nullable) and the `BookingCharges`
 table + index. It is additive only (one `ALTER TABLE … ADD COLUMN`, one `CREATE TABLE`), so applying

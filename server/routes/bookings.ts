@@ -258,7 +258,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
 
     // Price is computed server-side (never trusted from the client) and is pure — no DB read.
-    const estCost = estimateCost(service, option, start, end);
+    const { cost: estCost } = estimateCost(service, option, start, end);
 
     if (isDemo) {
       // Zero-pollution demo: the FULL validation pipeline above already ran; now check capacity

@@ -106,7 +106,11 @@ export function ChargesPanel({
               <span>
                 {ch.label} · ${ch.amount}
               </span>
-              <button disabled={busyId === ch.id} onClick={() => void remove(ch.id)}>
+              <button
+                disabled={busyId === ch.id}
+                onClick={() => void remove(ch.id)}
+                aria-label={`Delete ${ch.label}`}
+              >
                 Delete
               </button>
             </li>

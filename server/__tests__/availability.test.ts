@@ -478,14 +478,22 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
   // THE test that must never break: every service that exists today is night-billed, so this
   // change must not move a single price. Numbers are the seeded rates (sql/seed.sql).
   it('regression lock — night-unit range services bill exactly nights, at the seeded rates', () => {
-    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-13')).toBe(150); // 3 nights
-    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2028-06-21', '2028-06-24')).toBe(120); // Happy Tails
-    expect(estimateCost(svc('housesitting'), opt({ Rate: 70 }), '2028-08-10', '2028-08-15')).toBe(
-      350,
-    ); // 5 nights
-    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-11')).toBe(50); // 1 night
+    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-13').cost).toBe(
+      150,
+    ); // 3 nights
+    expect(estimateCost(svc('boarding'), opt({ Rate: 40 }), '2028-06-21', '2028-06-24').cost).toBe(
+      120,
+    ); // Happy Tails
+    expect(
+      estimateCost(svc('housesitting'), opt({ Rate: 70 }), '2028-08-10', '2028-08-15').cost,
+    ).toBe(350); // 5 nights
+    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-11').cost).toBe(
+      50,
+    ); // 1 night
     // Degenerate 0-night range still bills the 1-night floor (billableUnits' Math.max(1, …)).
-    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-10')).toBe(50);
+    expect(estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-10').cost).toBe(
+      50,
+    );
     // Both built-in range templates are night-billed — the premise of the lock above.
     expect(SERVICE_TEMPLATES.boarding.rateUnit).toBe('night');
     expect(SERVICE_TEMPLATES.housesitting.rateUnit).toBe('night');
@@ -494,22 +502,22 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
   it('a day-unit range service bills nights + 1 (the departure day is chargeable)', () => {
     const dayBoarding = svc('boarding', { ServiceType: 'day-boarding', RateUnit: 'day' });
     // Apr 10 → Apr 13 is 3 nights = 4 chargeable DAYS at $30 → $120, not $90.
-    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-13')).toBe(120);
+    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-13').cost).toBe(120);
     // A same-day day-unit range is 1 day, never 2.
-    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-10')).toBe(30);
+    expect(estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-10').cost).toBe(30);
   });
 
   it('single-shape services return the flat option rate whatever their RateUnit', () => {
-    expect(estimateCost(svc('walk'), opt({ Rate: 20 }), '2028-08-01', '')).toBe(20);
-    expect(estimateCost(svc('checkin'), opt({ Rate: 12 }), '2028-08-01', '')).toBe(12);
+    expect(estimateCost(svc('walk'), opt({ Rate: 20 }), '2028-08-01', '').cost).toBe(20);
+    expect(estimateCost(svc('checkin'), opt({ Rate: 12 }), '2028-08-01', '').cost).toBe(12);
     // daycare is the shape:'single' + rateUnit:'day' pairing — flat rate, no nights math.
-    expect(estimateCost(svc('daycare'), opt({ Rate: 40 }), '2028-08-01', '')).toBe(40);
+    expect(estimateCost(svc('daycare'), opt({ Rate: 40 }), '2028-08-01', '').cost).toBe(40);
   });
 
   it('an unexpected RateUnit on a range service falls back to per-night (never inflates a bill)', () => {
     // 'visit' can only reach a range service through bad data; the mapping must be total.
     const odd = svc('boarding', { RateUnit: 'visit' });
-    expect(estimateCost(odd, opt({ Rate: 50 }), '2028-08-10', '2028-08-13')).toBe(150); // 3 nights, not 4
+    expect(estimateCost(odd, opt({ Rate: 50 }), '2028-08-10', '2028-08-13').cost).toBe(150); // 3 nights, not 4
   });
 });
 
