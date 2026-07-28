@@ -190,9 +190,10 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   StartDate TEXT NOT NULL,
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
-  PetType TEXT, -- tenant pet-type slug (first selected pet); NULL for blocked. No pricing/capacity effect.
-  PetCount INTEGER NOT NULL DEFAULT 1 CHECK (PetCount >= 1), -- fresh-install only; existing DBs enforce this in app code (validation.ts)
-  StartTime TEXT, -- 'HH:MM' wall-clock for timed bookings (walk/check-in); NULL = all-day event
+  PetCount INTEGER NOT NULL DEFAULT 1 CHECK (PetCount >= 1),
+  -- 'HH:MM' wall-clock. Timed services (walk/check-in): the option's slot time. Range services:
+  -- the customer's optional arrival time. NULL = all-day / not given.
+  StartTime TEXT,
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
   EstCost INTEGER,
   -- Fee assessed at cancel time, whole dollars, matches EstCost (added by 0016). NULL = none assessed.
@@ -233,6 +234,7 @@ CREATE TABLE IF NOT EXISTS BookingRequestPets (
   PetId TEXT NOT NULL REFERENCES EndUserPets(Id),
   PRIMARY KEY (BookingRequestId, PetId)
 );
+CREATE INDEX IF NOT EXISTS idx_BookingRequestPets_Pet ON BookingRequestPets (PetId);
 
 -- Owner<->pet edges (0019). AUTHORITATIVE ownership: /me, the booking-time ownership gate, and
 -- union-find invoicing accounts all read this, not EndUserPets.EndUserId (which stays as the

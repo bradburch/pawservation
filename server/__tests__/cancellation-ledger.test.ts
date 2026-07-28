@@ -26,7 +26,6 @@ const makeBooking = (
     startDate: over.startDate ?? '2030-01-01',
     endDate: '2030-01-03',
     optionKey: 'standard',
-    petType: 'dog',
     petCount: 1,
     estCost: over.estCost !== undefined ? over.estCost : 100,
     status: over.status ?? 'confirmed',

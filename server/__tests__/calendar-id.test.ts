@@ -156,7 +156,6 @@ describe('switching the target calendar', () => {
       startDate: IN_WINDOW_START,
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 150,
       status: 'confirmed',

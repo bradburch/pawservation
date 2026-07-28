@@ -832,7 +832,6 @@ export const adminRoutes = new Hono<AppEnv>()
       startDate: start,
       endDate: end,
       optionKey: null,
-      petType: null,
       petCount: 1,
       estCost: null,
       status: 'confirmed',

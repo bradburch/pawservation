@@ -140,7 +140,6 @@ export type BookingRow = {
   StartDate: string;
   EndDate: string | null;
   OptionKey: string | null;
-  PetType: PetType | null;
   PetCount: number;
   StartTime: string | null;
   GCalEventId: string | null;

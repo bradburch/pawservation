@@ -92,7 +92,6 @@ describe('demo booking POST', () => {
       startDate: '2028-06-20',
       endDate: '2028-06-25',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       startTime: null,
       estCost: 250,

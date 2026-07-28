@@ -13,7 +13,7 @@ import {
   setServiceAcceptedPetTypes,
   setServiceConfig,
 } from '../db/repo';
-import { ALLOWED_EMAIL, createTestEnv, TENANT_A } from './helpers';
+import { ALLOWED_EMAIL, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 describe('pet-type rows (repo)', () => {
   it('listPetTypes returns Label, ordered by PetType', async () => {
@@ -44,26 +44,33 @@ describe('pet-type rows (repo)', () => {
     expect(await renamePetType(env.PAWBOOK_DB, TENANT_A, 'dragon', 'Dragons')).toBe(false);
   });
 
-  it('countPetTypeReferences counts customer pets AND bookings of any status', async () => {
-    const { env } = createTestEnv();
-    // Seeded: Bella + Otis are dogs (Bella in TENANT_A), and seeded pending bookings carry
-    // PetType 'dog' — but scope is per-tenant.
+  it('countPetTypeReferences counts pets AND pet-linked bookings, tenant-scoped', async () => {
+    const { env, raw } = createTestEnv();
     expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(0);
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
-      endUserId: null,
+    raw.exec(
+      `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+       VALUES ('pet_rab', '${TENANT_A}', 'eu_sp_jess', 'Thumper', 'rabbit')`,
+    );
+    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(1);
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess',
       serviceType: 'boarding',
       startDate: '2029-05-01',
       endDate: '2029-05-03',
       optionKey: 'standard',
-      petType: 'rabbit',
       petCount: 1,
       estCost: null,
       status: 'confirmed',
     });
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(1);
-    // Cancelled history still counts (the countBookingsForService rule).
-    // Seeded dog references: pets Bella + bookings seed_sp_pend1/seed_sp_pend2 (PetType 'dog').
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'dog')).toBeGreaterThanOrEqual(3);
+    raw.exec(
+      `INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('${id}', 'pet_rab')`,
+    );
+    // Pet (1) + the booking that references it through BookingRequestPets (1).
+    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(2);
+    // Tenant isolation: TENANT_B has no rabbits and must not see TENANT_A's.
+    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_B, 'rabbit')).toBe(0);
+    // Seeded dog reference: Bella (a TENANT_A pet) alone keeps 'dog' undeletable.
+    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'dog')).toBeGreaterThanOrEqual(1);
   });
 
   it('deletePetType removes the row; unknown reports false', async () => {

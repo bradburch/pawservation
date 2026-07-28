@@ -166,8 +166,6 @@ export const bookingRoutes = new Hono<AppEnv>()
           400,
         );
     }
-    const petType = chosen[0]!.PetType;
-
     // The service's OWN restriction — the single behavioral gate. A type is bookable iff some
     // enabled service accepts it, enforced per booking by that service's list (NULL = accepts
     // every registry type). Checks EVERY selected pet, not the denormalized single PetType.
@@ -306,7 +304,6 @@ export const bookingRoutes = new Hono<AppEnv>()
         startDate: start,
         endDate,
         optionKey: option.OptionKey,
-        petType,
         petCount: pets,
         startTime: bookingStartTime,
         estCost,

@@ -128,10 +128,10 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
   ('seed_ht_block1', 'tnt_happytails', NULL, 'blocked', '2028-07-03', '2028-07-05', 1, NULL, 'confirmed');
 
 -- Pending requests so the admin "Needs your reply" list has real work in it on a fresh seed.
-INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Status) VALUES
-  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', '2026-08-10', NULL, 'd30', 'dog', 1, '09:00', 20, 'pending'),
-  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', '2026-08-20', '2026-08-23', NULL, 'dog', 1, NULL, 150, 'pending'),
-  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', '2026-08-12', NULL, 'd60', 'dog', 1, '15:00', 40, 'pending');
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
+  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', '2026-08-10', NULL, 'd30', 1, '09:00', 20, 'pending'),
+  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', '2026-08-20', '2026-08-23', NULL, 1, NULL, 150, 'pending'),
+  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', '2026-08-12', NULL, 'd60', 1, '15:00', 40, 'pending');
 
 INSERT OR REPLACE INTO ProviderConnections (Id, TenantId, Capability, Provider, Status) VALUES
   ('seed_sp_cal', 'tnt_sunnypaws', 'calendar', 'google-calendar', 'disconnected'),

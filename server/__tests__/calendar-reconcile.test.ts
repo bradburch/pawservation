@@ -52,7 +52,6 @@ async function seedSyncedBooking(
     startDate: dates.startDate,
     endDate: dates.endDate,
     optionKey: 'standard',
-    petType: 'dog',
     petCount: 1,
     estCost: 150,
     status: 'confirmed',

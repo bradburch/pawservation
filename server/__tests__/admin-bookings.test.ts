@@ -162,7 +162,6 @@ describe('admin booking lifecycle', () => {
       startDate: '2030-06-01',
       endDate: '2030-06-03',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 100,
       status: 'confirmed',

@@ -36,7 +36,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, DisabledAt';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -256,6 +256,13 @@ export async function deletePetType(
 /** Customer pets + bookings of ANY status referencing the slug — history included, mirroring
  * countBookingsForService's rule, so deletion never orphans a slug that admin lists and CSV
  * exports would otherwise render as a bare token. */
+/** Customer pets + bookings referencing the slug via their linked pets (any status — history
+ * included, mirroring countBookingsForService's rule, so deletion never orphans a slug the admin
+ * list and CSV export would render as a bare token). A booking references a slug through
+ * BookingRequestPets → EndUserPets.PetType; BookingRequests carries no denormalized copy. The
+ * demo shadow customer's pet(s) are excluded from both halves — the demo identity must never
+ * block a real pet-type deletion (its booking POSTs never persist a row anyway, but the pet
+ * itself does, so the exclusion still matters for the direct pet count). */
 export async function countPetTypeReferences(
   db: D1Database,
   tenantId: string,
@@ -263,10 +270,16 @@ export async function countPetTypeReferences(
 ): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT (SELECT COUNT(*) FROM EndUserPets WHERE TenantId = ? AND PetType = ? AND EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?))
-            + (SELECT COUNT(*) FROM BookingRequests WHERE TenantId = ? AND PetType = ?) AS n`,
+      `SELECT (SELECT COUNT(*) FROM EndUserPets
+                WHERE TenantId = ? AND PetType = ?
+                  AND EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?))
+            + (SELECT COUNT(DISTINCT brp.BookingRequestId)
+                 FROM BookingRequestPets brp
+                 JOIN EndUserPets p ON p.Id = brp.PetId
+                WHERE p.TenantId = ? AND p.PetType = ?
+                  AND p.EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?)) AS n`,
     )
-    .bind(tenantId, petType, tenantId, DEMO_EMAIL, tenantId, petType)
+    .bind(tenantId, petType, tenantId, DEMO_EMAIL, tenantId, petType, tenantId, DEMO_EMAIL)
     .first<{ n: number }>();
   return row?.n ?? 0;
 }
@@ -500,7 +513,6 @@ export async function insertBookingRequest(
     startDate: string;
     endDate: string | null;
     optionKey: string | null;
-    petType: PetType | null;
     petCount: number;
     startTime?: string | null;
     estCost: number | null;
@@ -514,8 +526,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -525,7 +537,6 @@ export async function insertBookingRequest(
       row.startDate,
       row.endDate,
       row.optionKey,
-      row.petType,
       row.petCount,
       row.startTime ?? null,
       row.estCost,

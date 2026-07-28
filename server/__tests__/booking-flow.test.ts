@@ -286,11 +286,15 @@ describe('booking flow', () => {
     expect(booked.status).toBe('pending');
 
     const row = raw
-      .prepare('SELECT OptionKey, PetType, ServiceType FROM BookingRequests WHERE Id = ?')
-      .get(booked.id) as { OptionKey: string; PetType: string; ServiceType: string } | undefined;
+      .prepare('SELECT OptionKey, ServiceType FROM BookingRequests WHERE Id = ?')
+      .get(booked.id) as { OptionKey: string; ServiceType: string } | undefined;
     expect(row?.OptionKey).toBe('d60');
-    expect(row?.PetType).toBe('dog');
     expect(row?.ServiceType).toBe('walk');
+    // The pet link lives in BookingRequestPets, not a denormalized column.
+    const petRow = raw
+      .prepare('SELECT PetId FROM BookingRequestPets WHERE BookingRequestId = ?')
+      .get(booked.id) as { PetId: string } | undefined;
+    expect(petRow?.PetId).toBe('pet_sp_bella');
   });
 
   it('books a dog walk at happy-tails (Otis is an accepted species)', async () => {
