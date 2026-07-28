@@ -20,6 +20,7 @@ import {
   deleteBlockedRange,
   deleteCustomer,
   deletePayment,
+  deletePetGroupRateById,
   deleteService,
   getProviderConnection,
   getTenantUserEmailById,
@@ -27,6 +28,7 @@ import {
   insertInvitedCustomerWithPet,
   insertPayment,
   listAllEndUserPetsByTenant,
+  listAllPetGroupPricing,
   listBlockedRanges,
   listBookingsForTenant,
   listCustomers,
@@ -36,16 +38,19 @@ import {
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
+  listServicePetRates,
   listServices,
   removeEndUserPet,
   removePetOwner,
   renamePetType,
   replaceServiceOptions,
+  replaceServicePetRates,
   setProviderCalendarId,
   setServiceConfig,
   setPetDeceased,
   updateBookingStatus,
   updateTenantSettings,
+  upsertPetGroupRate,
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
@@ -101,8 +106,12 @@ import {
 import type { AppEnv, Tenant } from '../types';
 import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
 import {
+  buildGroupKey,
+  buildMixKey,
   cancellationFee,
   getPacificDateStr,
+  parseMixKey,
+  petCountOf,
   validateCancellationTiers,
   DEFAULT_TIMEZONE,
 } from '../../src/shared/index.js';
@@ -160,6 +169,8 @@ type OptionBody = {
   endTime?: string | null;
   capacity?: number | null;
   weekdaysOnly?: boolean;
+  /** Species-count rates for this option. Absent = keep stored rows; present = replace them. */
+  petRates?: { mixKey?: unknown; rate?: unknown }[];
 };
 
 type QuestionBody = {
@@ -327,6 +338,53 @@ function validateQuestionBody(q: QuestionBody): string | null {
   return null;
 }
 
+/**
+ * Validates one option's species-count rates. Keys must be CANONICAL (`buildMixKey ∘ parseMixKey`
+ * is the identity exactly on canonical keys) — the client builds them with the same shared
+ * `buildMixKey`, so a non-canonical key is a client bug, not sitter input. Every species must be
+ * in the service's EFFECTIVE accepted list: a rate for a pet type the service refuses could never
+ * match a legal booking and would only mislead the sitter into thinking it's priced.
+ */
+function validateOptionPetRates(
+  serviceLabel: string,
+  optionLabel: string,
+  petRates: unknown,
+  allowedSpecies: Set<string>,
+): { error: string } | { rates: { mixKey: string; rate: number }[] } {
+  if (!Array.isArray(petRates))
+    return { error: `${serviceLabel}: “${optionLabel}” pet-mix rates must be a list.` };
+  const rates: { mixKey: string; rate: number }[] = [];
+  const seen = new Set<string>();
+  for (const r of petRates) {
+    const mixKey =
+      typeof (r as { mixKey?: unknown })?.mixKey === 'string'
+        ? (r as { mixKey: string }).mixKey
+        : '';
+    const mix = parseMixKey(mixKey);
+    if (mixKey === '' || buildMixKey(mix) !== mixKey)
+      return {
+        error: `${serviceLabel}: “${optionLabel}” has a pet-mix rate with no pets — pick at least one pet for each rate.`,
+      };
+    if (petCountOf(mix) > DEFENSIVE_MAX_PET_COUNT)
+      return { error: `${serviceLabel}: “${optionLabel}” has a pet-mix rate with too many pets.` };
+    for (const slug of Object.keys(mix))
+      if (!allowedSpecies.has(slug))
+        return {
+          error: `${serviceLabel}: “${optionLabel}” has a rate for a pet type this service doesn't accept.`,
+        };
+    const rate = (r as { rate?: unknown }).rate;
+    if (!isValidRate(rate))
+      return {
+        error: `${serviceLabel}: “${optionLabel}” pet-mix rates need a price — whole dollars ≥ 1.`,
+      };
+    if (seen.has(mixKey))
+      return { error: `${serviceLabel}: “${optionLabel}” has two rates for the same pet mix.` };
+    seen.add(mixKey);
+    rates.push({ mixKey, rate });
+  }
+  return { rates };
+}
+
 type ServiceBody = {
   type?: string;
   enabled?: boolean;
@@ -393,14 +451,17 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get('/:slug/admin/settings', async (c) => {
     const tenant = c.get('tenant');
-    const [services, options, petTypes, blocked, connections, adminEmail] = await Promise.all([
-      listServices(c.env.PAWBOOK_DB, tenant.Id),
-      listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
-      listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
-      listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
-      listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
-      getTenantUserEmailById(c.env.PAWBOOK_DB, tenant.Id, c.get('adminUserId')),
-    ]);
+    const [services, options, petTypes, blocked, connections, adminEmail, mixRates, groupRates] =
+      await Promise.all([
+        listServices(c.env.PAWBOOK_DB, tenant.Id),
+        listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+        listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
+        listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
+        listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
+        getTenantUserEmailById(c.env.PAWBOOK_DB, tenant.Id, c.get('adminUserId')),
+        listServicePetRates(c.env.PAWBOOK_DB, tenant.Id),
+        listAllPetGroupPricing(c.env.PAWBOOK_DB, tenant.Id),
+      ]);
     return c.json({
       disabled: tenant.DisabledAt != null,
       displayName: tenant.DisplayName,
@@ -429,6 +490,11 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers: svc.CancellationTiers,
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
+        // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
+        // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
+        multiPetGroupRateCount: groupRates.filter(
+          (g) => g.ServiceType === svc.ServiceType && g.GroupKey.includes(','),
+        ).length,
         options: options
           .filter((o) => o.ServiceType === svc.ServiceType)
           .map((o) => ({
@@ -440,6 +506,10 @@ export const adminRoutes = new Hono<AppEnv>()
             endTime: o.EndTime,
             capacity: o.Capacity,
             weekdaysOnly: Boolean(o.WeekdaysOnly),
+            // Species-count rates for THIS option ("2 dogs $60"), editable in ServiceEditor.
+            petRates: mixRates
+              .filter((r) => r.ServiceType === svc.ServiceType && r.OptionKey === o.OptionKey)
+              .map((r) => ({ mixKey: r.MixKey, rate: r.Rate })),
           })), // optionKey round-trips back on save so resolveServiceOptions can preserve identity
       })),
       // "Add service" picker: template id + display label of each built-in behavior archetype.
@@ -489,6 +559,8 @@ export const adminRoutes = new Hono<AppEnv>()
     if (contactPhone !== null && contactPhone.length > 40)
       return c.json({ error: 'Contact phone is too long.' }, 400);
     const resolvedOptionsByType = new Map<string, ResolvedOption[]>();
+    // svcType -> resolved optionKey -> validated rates; applied after replaceServiceOptions.
+    const petRatesByType = new Map<string, Map<string, { mixKey: string; rate: number }[]>>();
     for (const svc of services) {
       const meta = currentServices.find((s) => s.ServiceType === svc.type);
       if (!meta) return c.json({ error: 'Unknown service type.' }, 400);
@@ -617,6 +689,27 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
+
+      // Species-count rates ride the same PATCH idiom as every other per-service field. The
+      // allowed species set is the EFFECTIVE acceptance (incoming or kept; null = every tenant
+      // slug), so a PUT that narrows acceptance and rates a now-refused species in one request
+      // is rejected as a unit. Index-aligned with `opts`: resolveServiceOptions pushes exactly
+      // one resolved row per input option, in order.
+      const allowedSpecies = new Set(effectiveAccepted ?? [...knownPetSlugs]);
+      const byOption = new Map<string, { mixKey: string; rate: number }[]>();
+      for (let i = 0; i < opts.length; i++) {
+        const o = opts[i];
+        if (!('petRates' in o) || o.petRates === undefined) continue;
+        const outcome = validateOptionPetRates(
+          meta.Label,
+          resolvedOptions.resolved[i].label,
+          o.petRates,
+          allowedSpecies,
+        );
+        if ('error' in outcome) return c.json({ error: outcome.error }, 400);
+        byOption.set(resolvedOptions.resolved[i].optionKey, outcome.rates);
+      }
+      if (byOption.size > 0) petRatesByType.set(svc.type as string, byOption);
     }
 
     await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
@@ -674,6 +767,13 @@ export const adminRoutes = new Hono<AppEnv>()
           weekdaysOnly: o.weekdaysOnly,
         })),
       );
+      // After replaceServiceOptions so its dropped-key scrub runs first; each present option's
+      // set is then replaced wholesale (small per-option sets — the spec's replace pattern for
+      // MIX rates; GROUP rates are the ones that must never be whole-set replaced).
+      const optionRates = petRatesByType.get(svcType);
+      if (optionRates)
+        for (const [optionKey, rates] of optionRates)
+          await replaceServicePetRates(c.env.PAWBOOK_DB, tenant.Id, svcType, optionKey, rates);
     }
 
     // The widget reads tenant config through the KV-cached resolution seam (PRD FR19).
@@ -749,6 +849,74 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'That service has bookings — disable it instead.' }, 409);
     await deleteService(c.env.PAWBOOK_DB, tenant.Id, type);
     await invalidateTenantCache(tenant.Slug, c.env);
+    return c.body(null, 204);
+  })
+
+  // ── Pet-group rates: explicit prices for specific animals (PetGroupPricing) ──────────────
+  // Upsert/delete-ONE, deliberately not whole-set replace: group rows scale with the client
+  // base, so a replace-writer would round-trip every client's rows per save and let two tabs
+  // clobber each other. Nothing reads these rows for pricing yet (PR 3); these routes only let
+  // sitters stage rates ahead of enforcement, so no tenant-cache invalidation is needed (the
+  // KV-cached public config carries no rates).
+  .get('/:slug/admin/pet-group-rates', async (c) => {
+    const tenant = c.get('tenant');
+    const rows = await listAllPetGroupPricing(c.env.PAWBOOK_DB, tenant.Id);
+    return c.json({
+      rates: rows.map((r) => ({
+        id: r.Id,
+        serviceType: r.ServiceType,
+        optionKey: r.OptionKey,
+        // GroupKey IS the sorted pet-id list; UUID ids are comma-free, so the split is exact.
+        petIds: r.GroupKey.split(','),
+        rate: r.Rate,
+        updatedAt: r.UpdatedAt,
+      })),
+    });
+  })
+
+  .put('/:slug/admin/pet-group-rates', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ serviceType?: unknown; optionKey?: unknown; petIds?: unknown; rate?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    const serviceType = typeof body.serviceType === 'string' ? body.serviceType : '';
+    const optionKey = typeof body.optionKey === 'string' ? body.optionKey : '';
+    const service = (await listServices(c.env.PAWBOOK_DB, tenant.Id)).find(
+      (s) => s.ServiceType === serviceType,
+    );
+    if (!service) return c.json({ error: 'Unknown service type.' }, 400);
+    const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
+    if (!options.some((o) => o.ServiceType === serviceType && o.OptionKey === optionKey))
+      return c.json({ error: `${service.Label}: unknown option.` }, 400);
+    if (
+      !Array.isArray(body.petIds) ||
+      body.petIds.length === 0 ||
+      body.petIds.length > DEFENSIVE_MAX_PET_COUNT ||
+      !body.petIds.every((p): p is string => typeof p === 'string' && p !== '')
+    )
+      return c.json({ error: 'Pick at least one pet.' }, 400);
+    // A rate may only name this tenant's LIVE pets: a deceased pet is never bookable, so a new
+    // rate naming one is a mistake, not a grandfathering case.
+    const pets = await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const livePetIds = new Set(pets.filter((p) => p.DeceasedAt === null).map((p) => p.Id));
+    for (const petId of body.petIds)
+      if (!livePetIds.has(petId)) return c.json({ error: 'Unknown pet in the list.' }, 400);
+    if (!isValidRate(body.rate))
+      return c.json({ error: 'Rates are whole dollars, at least $1.' }, 400);
+    const { id } = await upsertPetGroupRate(c.env.PAWBOOK_DB, tenant.Id, {
+      serviceType,
+      optionKey,
+      // buildGroupKey dedups + sorts, so selection order can never mint a second row.
+      groupKey: buildGroupKey(body.petIds),
+      rate: body.rate,
+    });
+    return c.json({ id, groupKey: buildGroupKey(body.petIds) });
+  })
+
+  .delete('/:slug/admin/pet-group-rates/:id', async (c) => {
+    const tenant = c.get('tenant');
+    const deleted = await deletePetGroupRateById(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
 

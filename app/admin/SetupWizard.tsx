@@ -207,7 +207,9 @@ export function SetupWizard({
    * send it nor invent a price for it, so it blocks on the price step instead.
    */
   const unpricedExisting = (ps: PresetState): boolean =>
-    ps.existing?.options.some((o) => o.rate === '') ?? false;
+    ps.existing?.options.some(
+      (o) => o.rate === '' || o.petRates.some((r) => r.rate === '' || r.mixKey === ''),
+    ) ?? false;
 
   const priceValid = (ps: PresetState): boolean => {
     if (unpricedExisting(ps)) return false;
@@ -306,7 +308,7 @@ export function SetupWizard({
         const rate = Number(prices[ps.preset.id]);
         const options: ServiceOptionForm[] = ps.alreadyPriced
           ? ps.existing!.options // never overwrite existing options/prices — re-sent verbatim
-          : presetOptions(ps.preset).map((o) => ({ ...o, rate }));
+          : presetOptions(ps.preset).map((o) => ({ ...o, rate, petRates: [] }));
         return { type, enabled: true, options };
       });
       await adminFetch(token, `/api/${slug}/admin/settings`, {

@@ -21,7 +21,7 @@ import type {
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
-import { quarterlyBreakdown } from '../../src/shared/index.js';
+import { parseMixKey, quarterlyBreakdown } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
@@ -164,6 +164,15 @@ export async function deleteService(
   serviceType: string,
 ): Promise<void> {
   await db.batch([
+    // Rate rows key on (ServiceType, OptionKey) STRINGS, not FK ids, and a re-created service
+    // re-derives the same slug — leaving rows behind would resurrect old prices on a future
+    // service the sitter never priced. Scrub both rate tables with the service.
+    db
+      .prepare('DELETE FROM PetGroupPricing WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+    db
+      .prepare('DELETE FROM TenantServicePetRates WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
     db
       .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
@@ -310,11 +319,27 @@ export async function deletePetTypeAndScrub(
   petType: string,
 ): Promise<{ disabledServices: string[] }> {
   const services = await listServices(db, tenantId);
+  const mixRows = await listServicePetRates(db, tenantId);
   const statements = [
     db
       .prepare('DELETE FROM TenantPetTypes WHERE TenantId = ? AND PetType = ?')
       .bind(tenantId, petType),
   ];
+  // Mix rates name species by SLUG, and slugs re-derive: re-creating a deleted type under the
+  // same name would resurrect its old mix prices. Scrub every mix that names this species —
+  // exact membership via parseMixKey (null-prototype, so 'constructor' can't fool the read;
+  // never substring-match a MixKey: 'cat' must not scrub 'bobcat'). Pet-id (PetGroupPricing)
+  // rows key on UUIDs that never re-derive, so they are deliberately not touched here.
+  for (const row of mixRows) {
+    if (parseMixKey(row.MixKey)[petType] === undefined) continue;
+    statements.push(
+      db
+        .prepare(
+          'DELETE FROM TenantServicePetRates WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND MixKey = ?',
+        )
+        .bind(tenantId, row.ServiceType, row.OptionKey, row.MixKey),
+    );
+  }
   const disabledServices: string[] = [];
   for (const svc of services) {
     if (!svc.AcceptedPetTypes?.includes(petType)) continue;
@@ -1016,7 +1041,18 @@ export async function replaceServiceOptions(
        (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity, WeekdaysOnly)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  // Scrub rate rows for option keys NOT in the incoming set. OptionKeys are DERIVED
+  // (d30/standard/label-slug), so a deleted option re-added later re-derives the SAME key and a
+  // surviving rate row would resurrect at a price the sitter never set for the new option.
+  // Keys still present keep their rates (settings-PUT PATCH semantics for petRates rely on it).
+  const scrubWhere =
+    options.length > 0
+      ? `WHERE TenantId = ? AND ServiceType = ? AND OptionKey NOT IN (${options.map(() => '?').join(', ')})`
+      : 'WHERE TenantId = ? AND ServiceType = ?';
+  const scrubBinds = [tenantId, serviceType, ...options.map((o) => o.optionKey)];
   await db.batch([
+    db.prepare(`DELETE FROM TenantServicePetRates ${scrubWhere}`).bind(...scrubBinds),
+    db.prepare(`DELETE FROM PetGroupPricing ${scrubWhere}`).bind(...scrubBinds),
     db
       .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
@@ -1042,9 +1078,9 @@ const PET_GROUP_COLS = 'Id, TenantId, ServiceType, OptionKey, GroupKey, Rate, Up
 const PET_MIX_COLS = 'TenantId, ServiceType, OptionKey, MixKey, Rate';
 
 /**
- * Pet-id rates for one service (across every option — the admin editor is per-service, §6 of the
- * design spec, not per-option). Exact-match resolution happens in src/shared, scoped by
- * OptionKey on each returned row.
+ * Pet-id rates for one service (across every option). Written one row at a time via
+ * upsertPetGroupRate; exact-match resolution happens in src/shared, scoped by OptionKey on each
+ * row.
  */
 export async function listPetGroupPricing(
   db: D1Database,
@@ -1061,43 +1097,63 @@ export async function listPetGroupPricing(
   return results ?? [];
 }
 
-/**
- * Replace the pet-id rate set for ONE service — delete-then-insert. Empty list clears it.
- *
- * Scoped to (tenantId, serviceType), NOT additionally to OptionKey, even though the table is now
- * keyed per option: the admin editor this backs is per-service (§6 of the design spec), so one
- * call always supplies the COMPLETE set of group rows for that service, spanning whatever options
- * it has rates for. Each row carries its own `optionKey`, so narrowing the DELETE further would
- * gain nothing (the caller-supplied set already IS the full service-scoped set) while adding a
- * spurious per-option parameter this call site has no single value for. Contrast
- * `replaceServicePetRates`, whose editor is explicitly per (service, option) and therefore scopes
- * its DELETE to match.
- */
-export async function replacePetGroupPricing(
+/** Every pet-id rate for a tenant, across services — the admin GET route and settings-GET
+ * warning count read this. Per-service resolution reads keep using `listPetGroupPricing`. */
+export async function listAllPetGroupPricing(
   db: D1Database,
   tenantId: string,
-  serviceType: string,
-  rows: {
-    id: string;
-    optionKey: string;
-    groupKey: string;
-    rate: number;
-  }[],
-): Promise<void> {
-  await db.batch([
-    db
-      .prepare('DELETE FROM PetGroupPricing WHERE TenantId = ? AND ServiceType = ?')
-      .bind(tenantId, serviceType),
-    ...rows.map((r) =>
-      db
-        .prepare(
-          `INSERT INTO PetGroupPricing
-             (Id, TenantId, ServiceType, OptionKey, GroupKey, Rate)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(r.id, tenantId, serviceType, r.optionKey, r.groupKey, r.rate),
-    ),
-  ]);
+): Promise<PetGroupPricingRow[]> {
+  const { results } = await db
+    .prepare(`SELECT ${PET_GROUP_COLS} FROM PetGroupPricing WHERE TenantId = ?`)
+    .bind(tenantId)
+    .all<PetGroupPricingRow>();
+  return results ?? [];
+}
+
+/**
+ * Upsert ONE pet-id rate, keyed by UNIQUE(TenantId, ServiceType, OptionKey, GroupKey).
+ *
+ * Deliberately NOT a whole-set replace: group rows scale with the CLIENT BASE (one per priced
+ * pet set per client), so a replace-writer would force every editor save to round-trip every
+ * client's rows and let two tabs clobber each other. One row in, one row out.
+ * Rate validity (whole dollars >= 1) is enforced at the admin route; CHECK (Rate > 0) backstops.
+ */
+export async function upsertPetGroupRate(
+  db: D1Database,
+  tenantId: string,
+  args: { serviceType: string; optionKey: string; groupKey: string; rate: number },
+): Promise<{ id: string }> {
+  await db
+    .prepare(
+      `INSERT INTO PetGroupPricing (Id, TenantId, ServiceType, OptionKey, GroupKey, Rate)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (TenantId, ServiceType, OptionKey, GroupKey)
+       DO UPDATE SET Rate = excluded.Rate, UpdatedAt = datetime('now')`,
+    )
+    .bind(crypto.randomUUID(), tenantId, args.serviceType, args.optionKey, args.groupKey, args.rate)
+    .run();
+  // The row now exists either way; read back the stable Id (kept across updates) for the caller.
+  const row = await db
+    .prepare(
+      `SELECT Id FROM PetGroupPricing
+        WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND GroupKey = ?`,
+    )
+    .bind(tenantId, args.serviceType, args.optionKey, args.groupKey)
+    .first<{ Id: string }>();
+  return { id: row!.Id };
+}
+
+/** Delete one pet-id rate by row id. Tenant-scoped; false = no such row for this tenant. */
+export async function deletePetGroupRateById(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM PetGroupPricing WHERE Id = ? AND TenantId = ?')
+    .bind(id, tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /** Every species-count rate for a tenant. Callers filter by service/option in memory. */

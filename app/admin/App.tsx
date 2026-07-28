@@ -443,7 +443,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // service. This is a PRESENCE check on an input, not a price computation — the client still never
   // computes money, and the server re-validates every rate at its trust boundary regardless.
   // Only ever true of an unsaved draft: the server never persists a rate this shape.
-  const unpricedService = settings?.services.find((s) => s.options.some((o) => o.rate === ''));
+  // A new option OR pet-mix rate row starts unfilled ('' rate / empty mix), so an incomplete row
+  // is the COMMON way a save would fail. Stop it before the round-trip and name the service.
+  // Presence checks on inputs, not price computation — the client still never computes money.
+  const unpricedService = settings?.services.find((s) =>
+    s.options.some(
+      (o) => o.rate === '' || o.petRates.some((r) => r.rate === '' || r.mixKey === ''),
+    ),
+  );
 
   // The dashboard's own wrapper element, captured via callback ref (not useRef + an empty-deps
   // effect) because it doesn't exist on the first render — this component returns the "Loading…"
@@ -586,6 +593,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             endTime: o.endTime,
             capacity: o.capacity,
             weekdaysOnly: o.weekdaysOnly,
+            petRates: o.petRates,
           })),
           questions: s.questions,
           maxNights: s.maxNights,
@@ -947,7 +955,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             <p className="pb-savebar-error">{error}</p>
           ) : unpricedService ? (
             <p className="pb-savebar-error">
-              Add a price for every option in {unpricedService.label} to save.
+              Add a price for every option and pet-mix rate in {unpricedService.label} to save.
             </p>
           ) : dirty ? (
             <p>You have unsaved changes.</p>

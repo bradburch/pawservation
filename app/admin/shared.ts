@@ -15,6 +15,9 @@ export type AnySession = Session | OwnerSession;
 export type ServiceOptionForm = Omit<ServiceOption, 'optionKey' | 'rate'> & {
   optionKey?: string;
   rate: number | '';
+  /** Species-count rates for this option ("2 dogs $60"). `''` rate = unfilled draft row —
+   * blocks the save exactly like an unpriced option; the server rejects it independently. */
+  petRates: { mixKey: string; rate: number | '' }[];
 };
 export type QuestionForm = Omit<ServiceQuestion, 'id'> & { id?: string };
 export type ServiceForm = ServiceConstraints & {
@@ -30,6 +33,9 @@ export type ServiceForm = ServiceConstraints & {
   enabled: boolean;
   capacityKind: 'boarding' | 'housesit' | 'none';
   maxConcurrentPets: number | null;
+  /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
+   * feeding the "multi-pet but unpriced" warning; never sent back on the PUT. */
+  multiPetGroupRateCount: number;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
   acceptedPetTypes: string[] | null;
