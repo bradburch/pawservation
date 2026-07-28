@@ -8,10 +8,13 @@ import {
   getEndUserByEmail,
   insertInvitedCustomer,
   insertInvitedCustomerWithPet,
+  insertPayment,
   listCustomers,
   listEndUserPets,
+  listPaymentExternalRefs,
   promoteCustomerActive,
   removePetOwner,
+  setEndUserVenmoUsername,
 } from '../db/repo';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -358,5 +361,90 @@ describe('deleteCustomer under co-ownership', () => {
 
     expect(petRow(raw, pet.Id)).toEqual({ Id: pet.Id, EndUserId: creator.Id });
     expect(ownerCount(raw, pet.Id)).toBe(1);
+  });
+});
+
+describe('VenmoUsername', () => {
+  it('round-trips through the customer read path and clears back to NULL', async () => {
+    const { env } = createTestEnv();
+    expect(
+      await setEndUserVenmoUsername(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess', 'Jess-Demo-1'),
+    ).toBe(true);
+    expect(
+      (await getEndUserByEmail(env.PAWBOOK_DB, TENANT_A, 'jess@example.com'))?.VenmoUsername,
+    ).toBe('Jess-Demo-1');
+    await setEndUserVenmoUsername(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess', null);
+    expect(
+      (await getEndUserByEmail(env.PAWBOOK_DB, TENANT_A, 'jess@example.com'))?.VenmoUsername,
+    ).toBeNull();
+  });
+
+  it('refuses a customer belonging to another tenant', async () => {
+    const { env } = createTestEnv();
+    // eu_sp_jess is Sunny Paws'; asking as Happy Tails must change nothing.
+    expect(await setEndUserVenmoUsername(env.PAWBOOK_DB, TENANT_B, 'eu_sp_jess', 'stolen')).toBe(
+      false,
+    );
+    expect(
+      (await getEndUserByEmail(env.PAWBOOK_DB, TENANT_A, 'jess@example.com'))?.VenmoUsername,
+    ).toBeNull();
+  });
+});
+
+describe('Payments.ExternalRef', () => {
+  it('is unique per tenant and lists back for the importer', async () => {
+    const { env } = createTestEnv();
+    const first = await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: 'seed_sp_board1',
+      amount: 100,
+      method: 'venmo',
+      paidDate: '2026-07-03',
+      note: 'Venmo import',
+      externalRef: '4139874112233445566',
+    });
+    expect(first).not.toBeNull();
+    expect(await listPaymentExternalRefs(env.PAWBOOK_DB, TENANT_A)).toEqual([
+      '4139874112233445566',
+    ]);
+    // The partial unique index — not a convention — is what makes a replay impossible.
+    await expect(
+      insertPayment(env.PAWBOOK_DB, TENANT_A, {
+        bookingRequestId: 'seed_sp_board1',
+        amount: 100,
+        method: 'venmo',
+        paidDate: '2026-07-03',
+        note: 'Venmo import',
+        externalRef: '4139874112233445566',
+      }),
+    ).rejects.toThrow(/UNIQUE constraint failed/);
+    // …but the SAME transaction id in ANOTHER tenant is a different transaction entirely.
+    expect(
+      await insertPayment(env.PAWBOOK_DB, TENANT_B, {
+        bookingRequestId: 'seed_ht_board1',
+        amount: 100,
+        method: 'venmo',
+        paidDate: '2026-07-03',
+        note: 'Venmo import',
+        externalRef: '4139874112233445566',
+      }),
+    ).not.toBeNull();
+    expect(await listPaymentExternalRefs(env.PAWBOOK_DB, TENANT_A)).toHaveLength(1);
+  });
+
+  it('leaves hand-recorded payments unconstrained (many NULLs are fine)', async () => {
+    const { env } = createTestEnv();
+    for (const amount of [10, 20, 30]) {
+      expect(
+        await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+          bookingRequestId: 'seed_sp_board1',
+          amount,
+          method: 'cash',
+          paidDate: '2026-07-03',
+          note: null,
+          externalRef: null,
+        }),
+      ).not.toBeNull();
+    }
+    expect(await listPaymentExternalRefs(env.PAWBOOK_DB, TENANT_A)).toEqual([]);
   });
 });

@@ -746,6 +746,11 @@ export async function getBookingWithCustomer(
  * confirmed. A cancelled or declined booking normally refuses payment, but one carrying a cancellation fee is a
  * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
  * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
+ *
+ * `externalRef` carries the Venmo transaction id for imported payments (NULL for hand-recorded
+ * ones). A replay violates the partial unique index and THROWS rather than returning null — the
+ * importer catches it with isUniqueViolation and reports the row as already imported; the null
+ * return still means only "the booking guard refused".
  */
 export async function insertPayment(
   db: D1Database,
@@ -756,13 +761,14 @@ export async function insertPayment(
     method: PaymentMethod;
     paidDate: string;
     note: string | null;
+    externalRef: string | null;
   },
 ): Promise<string | null> {
   const id = crypto.randomUUID();
   const result = await db
     .prepare(
-      `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note)
-       SELECT ?, ?, ?, ?, ?, ?, ?
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
          AND (Status NOT IN ('cancelled', 'declined') OR CancellationFee IS NOT NULL)`,
@@ -775,11 +781,25 @@ export async function insertPayment(
       payment.method,
       payment.paidDate,
       payment.note,
+      payment.externalRef,
       tenantId,
       payment.bookingRequestId,
     )
     .run();
   return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Every Venmo transaction id this tenant has already imported. Read whole rather than probed per
+ * row: the importer needs the set up front to render an "already imported" bucket in its preview,
+ * and a tenant's payment count is prototype-scale.
+ */
+export async function listPaymentExternalRefs(db: D1Database, tenantId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare('SELECT ExternalRef FROM Payments WHERE TenantId = ? AND ExternalRef IS NOT NULL')
+    .bind(tenantId)
+    .all<{ ExternalRef: string }>();
+  return results.map((r) => r.ExternalRef);
 }
 
 /**
@@ -1389,7 +1409,7 @@ export async function clearBookingCalendarEventIds(
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
-const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
+const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, VenmoUsername, Status, InvitedAt';
 
 export async function getEndUserById(
   db: D1Database,
@@ -1444,6 +1464,7 @@ export async function insertInvitedCustomer(
     Email: email,
     Name: name,
     Phone: phone,
+    VenmoUsername: null,
     Status: 'invited',
     InvitedAt: invitedAt,
   };
@@ -1491,6 +1512,7 @@ export async function insertInvitedCustomerWithPet(
     Email: email,
     Name: name,
     Phone: phone,
+    VenmoUsername: null,
     Status: 'invited',
     InvitedAt: invitedAt,
   };
@@ -1544,6 +1566,7 @@ export async function ensureDemoCustomer(
     Email: email,
     Name: 'Demo Visitor',
     Phone: null,
+    VenmoUsername: null,
     Status: 'active',
     InvitedAt: invitedAt,
   };
@@ -1722,6 +1745,25 @@ export async function promoteCustomerActive(
     .prepare("UPDATE EndUsers SET Status = 'active' WHERE TenantId = ? AND Id = ?")
     .bind(tenantId, endUserId)
     .run();
+}
+
+/**
+ * Set (or clear) the client's Venmo handle. The value is stored '@'-less and is used for exactly
+ * one thing: matching a row of an uploaded Venmo CSV to this client. NULL means "match on Name",
+ * which is the common case — hence the field's label in the admin UI. Returns whether a row
+ * changed, so the route can 404 an unknown or foreign id (the WHERE is the tenant guard).
+ */
+export async function setEndUserVenmoUsername(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  venmoUsername: string | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE EndUsers SET VenmoUsername = ? WHERE TenantId = ? AND Id = ?')
+    .bind(venmoUsername, tenantId, endUserId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**

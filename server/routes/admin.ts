@@ -1715,6 +1715,7 @@ export const adminRoutes = new Hono<AppEnv>()
       method: body.method,
       paidDate: body.paidDate,
       note,
+      externalRef: null,
     });
     // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);

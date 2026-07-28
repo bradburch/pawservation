@@ -116,6 +116,7 @@ export type EndUser = {
   Email: string;
   Name: string | null;
   Phone: string | null;
+  VenmoUsername: string | null; // NULL = match Venmo rows on Name (see server/lib/venmo.ts)
   Status: 'invited' | 'active';
   InvitedAt: string | null;
 };
