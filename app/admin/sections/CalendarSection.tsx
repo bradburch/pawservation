@@ -306,6 +306,12 @@ export function CalendarSection({
             </span>
           </div>
 
+          <p className="pb-hint">
+            Time off and events from your Google Calendar stop <em>new</em> requests for those days;
+            bookings you&rsquo;ve already confirmed stay exactly as they are. Nothing books itself —
+            every request waits for you to confirm or decline it.
+          </p>
+
           <p className="pb-hint pb-cal-sync">
             {settings.calendar.status === 'connected' ? (
               'Synced with your Google Calendar.'

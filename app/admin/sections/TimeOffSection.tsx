@@ -67,7 +67,8 @@ export function TimeOffSection({
         <IconCalendar size={18} /> Time off
         <Hint label="Time off">
           Days you don&rsquo;t want bookings. Blocked days disappear from clients&rsquo; calendars
-          immediately — no save needed.
+          immediately — no save needed — and they only stop <em>new</em> requests. A booking
+          you&rsquo;ve already confirmed is never cancelled by blocking a day.
         </Hint>
       </h2>
       <p className="pb-applies">Changes here apply immediately.</p>
@@ -97,6 +98,14 @@ export function TimeOffSection({
         {blockStart && blockEnd && blockEnd < blockStart
           ? ' The last day must be on or after the first day.'
           : ''}
+      </p>
+      <p className="pb-hint">
+        <strong>How unavailable days work.</strong> Blocking days stops <em>new</em> requests for
+        those dates — clients simply can&rsquo;t pick them. It never changes a booking you&rsquo;ve
+        already confirmed, and it never cancels anything. Busy events on a connected Google Calendar
+        work the same way (see <a href="#apps">Connected apps</a>). And nothing is ever booked
+        without you: every request waits under <a href="#bookings">Bookings</a> until you confirm or
+        decline it.
       </p>
     </>
   );
