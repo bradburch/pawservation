@@ -52,7 +52,6 @@ export type TenantService = {
   CapacityKind: CapacityKind;
   SortOrder: number;
   Questions: ServiceQuestion[];
-  MinNights: number | null;
   MaxNights: number | null;
   // No MinPetCount: the column is retired in place (see sql/schema.sql) — services have only a
   // max-pets limit. Omitting it here makes reading the retired column a type error.

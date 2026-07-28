@@ -331,6 +331,7 @@ type ServiceBody = {
   description?: string | null;
   options?: OptionBody[];
   questions?: QuestionBody[];
+  /** Removed — declared only so a client that still sends it is REJECTED, not silently ignored. */
   minNights?: number | null;
   maxNights?: number | null;
   /** Retired — declared only so a client that still sends it is REJECTED, not silently ignored. */
@@ -420,7 +421,6 @@ export const adminRoutes = new Hono<AppEnv>()
         custom: !isTemplateId(svc.ServiceType),
         enabled: Boolean(svc.Enabled),
         questions: svc.Questions,
-        minNights: svc.MinNights,
         maxNights: svc.MaxNights,
         maxPetCount: svc.MaxPetCount,
         acceptedPetTypes: svc.AcceptedPetTypes,
@@ -520,13 +520,17 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
-      if (
-        !isNullableLimit(svc.minNights ?? null, DEFENSIVE_MAX_NIGHTS) ||
-        !isNullableLimit(svc.maxNights ?? null, DEFENSIVE_MAX_NIGHTS)
-      )
+      if (!isNullableLimit(svc.maxNights ?? null, DEFENSIVE_MAX_NIGHTS))
         return c.json({ error: `${meta.Label}: nights must be a positive number, or blank.` }, 400);
-      if (svc.minNights != null && svc.maxNights != null && svc.minNights > svc.maxNights)
-        return c.json({ error: `${meta.Label}: min nights cannot exceed max nights.` }, 400);
+      // MinNights is removed: the minimum stay is structurally 1 night. Same treatment as
+      // minPetCount below — a client that still sends one is rejected, not silently dropped.
+      if (svc.minNights != null)
+        return c.json(
+          {
+            error: `${meta.Label}: services no longer have a minimum stay — the minimum is 1 night.`,
+          },
+          400,
+        );
       if (!isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT))
         return c.json(
           { error: `${meta.Label}: pet count must be a positive number, or blank.` },
@@ -618,7 +622,6 @@ export const adminRoutes = new Hono<AppEnv>()
         enabled: svc.enabled ?? false,
         description: resolveServiceDescription(svc, current.Description),
         questions,
-        minNights: 'minNights' in svc ? (svc.minNights ?? null) : current.MinNights,
         maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,
         maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
         acceptedPetTypes:

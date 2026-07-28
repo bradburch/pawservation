@@ -103,7 +103,7 @@ describe('booking flow', () => {
     expect(res.status).toBe(400);
   });
 
-  it('persists valid answers and enforces the min-nights constraint', async () => {
+  it('persists valid answers to a booking', async () => {
     const { env } = createTestEnv();
     const adminHeaders = {
       Authorization: `Bearer ${await adminToken(TENANT_A)}`,
@@ -121,7 +121,6 @@ describe('booking flow', () => {
               enabled: true,
               options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
               questions: [{ label: 'Is your dog crate-trained?', type: 'yesno', required: true }],
-              minNights: 3,
             },
           ],
         }),
@@ -135,25 +134,8 @@ describe('booking flow', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
 
-    // Below the 3-night minimum → rejected.
-    const tooShort = await app.request(
-      '/api/sunny-paws/bookings',
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'boarding',
-          startDate: '2028-08-10',
-          endDate: '2028-08-11',
-          petIds: ['pet_sp_bella'],
-          answers: { [questionId]: 'yes' },
-        }),
-      },
-      env,
-    );
-    expect(tooShort.status).toBe(400);
-
-    // Meets the minimum and answers the required question → succeeds.
+    // Answers the required question → succeeds. There is no minimum-nights constraint —
+    // the minimum stay is structurally 1 night.
     const ok = await app.request(
       '/api/sunny-paws/bookings',
       {

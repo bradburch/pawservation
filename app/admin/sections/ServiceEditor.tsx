@@ -433,18 +433,11 @@ export function ServiceEditor({
           />
         )}
         {s.shape === 'range' && (
-          <>
-            <NullableNumberField
-              label="Min nights"
-              value={s.minNights}
-              onChange={(minNights) => setService({ ...s, minNights })}
-            />
-            <NullableNumberField
-              label="Max nights"
-              value={s.maxNights}
-              onChange={(maxNights) => setService({ ...s, maxNights })}
-            />
-          </>
+          <NullableNumberField
+            label="Max nights"
+            value={s.maxNights}
+            onChange={(maxNights) => setService({ ...s, maxNights })}
+          />
         )}
         <NullableNumberField
           label="Max pets"

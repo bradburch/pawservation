@@ -588,7 +588,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             weekdaysOnly: o.weekdaysOnly,
           })),
           questions: s.questions,
-          minNights: s.minNights,
           maxNights: s.maxNights,
           maxPetCount: s.maxPetCount,
           acceptedPetTypes: s.acceptedPetTypes,

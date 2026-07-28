@@ -22,7 +22,6 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     CapacityKind: tpl.capacityKind,
     SortOrder: 0,
     Questions: [],
-    MinNights: null,
     MaxNights: null,
     MaxPetCount: null,
     AcceptedPetTypes: null,

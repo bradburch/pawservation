@@ -17,7 +17,6 @@ function svc(over: Partial<ServiceSummaryInput> = {}): ServiceSummaryInput {
     rateUnit: 'visit',
     options: [],
     questions: [],
-    minNights: null,
     maxNights: null,
     ...over,
   };
@@ -95,17 +94,9 @@ describe('serviceSummary facts line', () => {
     ).toBe('2 options');
   });
 
-  it('min nights only → "Min 2 nights" (singular for 1)', () => {
-    expect(serviceSummary(svc({ minNights: 2 })).facts).toBe('Min 2 nights');
-    expect(serviceSummary(svc({ minNights: 1 })).facts).toBe('Min 1 night');
-  });
-
-  it('max nights only → "Max 14 nights"', () => {
-    expect(serviceSummary(svc({ maxNights: 14 })).facts).toBe('Max 14 nights');
-  });
-
-  it('min and max nights → "2–14 nights"', () => {
-    expect(serviceSummary(svc({ minNights: 2, maxNights: 14 })).facts).toBe('2–14 nights');
+  it('max nights → "up to 14 nights" (singular for 1)', () => {
+    expect(serviceSummary(svc({ maxNights: 14 })).facts).toBe('up to 14 nights');
+    expect(serviceSummary(svc({ maxNights: 1 })).facts).toBe('up to 1 night');
   });
 
   it('question count → "3 questions" / "1 question"', () => {
@@ -115,7 +106,7 @@ describe('serviceSummary facts line', () => {
 
   it('caps at two fragments in priority order (window, capacity beat nights/questions)', () => {
     const s = svc({
-      minNights: 2,
+      maxNights: 2,
       questions: [1, 2],
       options: [opt({ startTime: '09:00', endTime: '17:00', capacity: 8 })],
     });
@@ -125,11 +116,11 @@ describe('serviceSummary facts line', () => {
   it('nights then questions when nothing higher-priority applies', () => {
     const s = svc({
       rateUnit: 'night',
-      minNights: 2,
+      maxNights: 2,
       questions: [1, 2, 3],
       options: [opt({ rate: 55 })],
     });
-    expect(serviceSummary(s).facts).toBe('Min 2 nights · 3 questions');
+    expect(serviceSummary(s).facts).toBe('up to 2 nights · 3 questions');
   });
 });
 

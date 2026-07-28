@@ -65,11 +65,7 @@ export function BookTab({
   const nights = service?.shape === 'range' && start && end ? nightsBetween(start, end) : null;
   const constraintsError = service
     ? validateServiceConstraints(
-        {
-          minNights: service.minNights,
-          maxNights: service.maxNights,
-          maxPetCount: service.maxPetCount,
-        },
+        { maxNights: service.maxNights, maxPetCount: service.maxPetCount },
         { nights, petCount: selectedPets.length },
       )
     : null;

@@ -218,6 +218,31 @@ describe('tenant admin', () => {
     });
   });
 
+  it('rejects a settings PUT that still sends minNights (no silent drop)', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              minNights: 2,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('minimum');
+  });
+
   it('capacity edits change availability outcomes (per-service cap)', async () => {
     const { env } = createTestEnv();
     // Seed: Jun 21-24 at Sunny Paws has 1 pet, max 2 -> a 2-pet request conflicts.
@@ -717,7 +742,6 @@ describe('tenant admin', () => {
                   options: ['am', 'pm'],
                 },
               ],
-              minNights: 2,
               maxNights: 14,
             },
           ],
@@ -734,7 +758,6 @@ describe('tenant admin', () => {
         type: string;
         shape: string;
         questions: { id: string; label: string; type: string }[];
-        minNights: number | null;
         maxNights: number | null;
       }[];
     };
@@ -743,15 +766,15 @@ describe('tenant admin', () => {
     expect(boarding.questions).toHaveLength(2);
     expect(boarding.questions[0].label).toBe('Is your dog crate-trained?');
     expect(boarding.questions[0].id).toBeTruthy(); // server-assigned stable id
-    expect(boarding.minNights).toBe(2);
     expect(boarding.maxNights).toBe(14);
 
     const config = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
-      services: { type: string; questions: { label: string }[]; minNights: number | null }[];
+      services: { type: string; questions: { label: string }[]; maxNights: number | null }[];
     };
     const publicBoarding = config.services.find((s) => s.type === 'boarding')!;
     expect(publicBoarding.questions).toHaveLength(2);
-    expect(publicBoarding.minNights).toBe(2);
+    expect(publicBoarding.maxNights).toBe(14);
+    expect('minNights' in publicBoarding).toBe(false);
   });
 
   it('rejects malformed question definitions without persisting anything', async () => {
@@ -797,7 +820,8 @@ describe('tenant admin', () => {
     );
     expect(badSelect.status).toBe(400);
 
-    const badRange = await app.request(
+    // minNights is rejected outright now — this doubles as the nothing-persisted proof below.
+    const sendsMinNights = await app.request(
       '/api/sunny-paws/admin/settings',
       {
         method: 'PUT',
@@ -816,7 +840,7 @@ describe('tenant admin', () => {
       },
       env,
     );
-    expect(badRange.status).toBe(400);
+    expect(sendsMinNights.status).toBe(400);
 
     const nonNumericMinMax = await app.request(
       '/api/sunny-paws/admin/settings',
@@ -898,7 +922,6 @@ describe('tenant admin', () => {
               enabled: true,
               options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
               questions: [{ label: 'Is your dog crate-trained?', type: 'yesno', required: true }],
-              minNights: 2,
               maxNights: 14,
             },
           ],
@@ -933,7 +956,6 @@ describe('tenant admin', () => {
       services: {
         type: string;
         questions: { label: string }[];
-        minNights: number | null;
         maxNights: number | null;
         options: { rate: number }[];
       }[];
@@ -944,7 +966,6 @@ describe('tenant admin', () => {
     // ...but questions/constraints, which the partial PUT never mentioned, survived untouched.
     expect(boarding.questions).toHaveLength(1);
     expect(boarding.questions[0].label).toBe('Is your dog crate-trained?');
-    expect(boarding.minNights).toBe(2);
     expect(boarding.maxNights).toBe(14);
   });
 

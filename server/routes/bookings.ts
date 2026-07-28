@@ -224,11 +224,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (answersError) return c.json({ error: answersError, code: 'invalid_answers' }, 400);
 
     const constraintsError = validateServiceConstraints(
-      {
-        minNights: service.MinNights,
-        maxNights: service.MaxNights,
-        maxPetCount: service.MaxPetCount,
-      },
+      { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
       { nights, petCount: pets },
     );
     if (constraintsError)

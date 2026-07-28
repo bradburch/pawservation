@@ -16,7 +16,6 @@ export type ServiceQuestion = {
 // Questions JSON may still hold a `pattern` key; it parses fine and is simply ignored.
 
 export type ServiceConstraints = {
-  minNights: number | null;
   maxNights: number | null;
   maxPetCount: number | null;
 };
@@ -85,9 +84,8 @@ export function validateServiceConstraints(
   booking: { nights: number | null; petCount: number },
 ): string | null {
   const { nights, petCount } = booking;
+  // There is deliberately no minimum-nights constraint: the minimum stay is structurally 1.
   if (nights !== null) {
-    if (constraints.minNights !== null && nights < constraints.minNights)
-      return `This service requires at least ${constraints.minNights} night${constraints.minNights === 1 ? '' : 's'}.`;
     if (constraints.maxNights !== null && nights > constraints.maxNights)
       return `This service allows at most ${constraints.maxNights} night${constraints.maxNights === 1 ? '' : 's'}.`;
   }
