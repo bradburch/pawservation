@@ -172,7 +172,7 @@ consistent):
   only sees what `schema.sql` has. Apply new migration files to the remote DB **by
   hand** before (or with) the deploy that needs them, e.g. `npx wrangler d1 execute
 pawbook-db --remote --file ./migrations/NNNN_*.sql` — otherwise the new code 500s on
-missing columns.
+  missing columns.
 
 Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
 against existing DBs — no real DB here has a `d1_migrations` tracking table.
