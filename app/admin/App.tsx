@@ -584,6 +584,8 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           // Whitespace-only means "cleared"; the server trims and stores NULL either way.
           description: s.description?.trim() || null,
           maxConcurrentPets: s.maxConcurrentPets,
+          // '' means the sitter emptied the box — that is "no holiday pricing", i.e. null, not 0.
+          holidayRate: s.holidayRate === '' || s.holidayRate == null ? null : s.holidayRate,
           options: s.options.map((o): ServiceOptionForm => ({
             optionKey: o.optionKey,
             label: o.label,

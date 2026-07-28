@@ -33,6 +33,8 @@ export type ServiceForm = ServiceConstraints & {
   enabled: boolean;
   capacityKind: 'boarding' | 'housesit' | 'none';
   maxConcurrentPets: number | null;
+  /** Optional explicit holiday rate in the service's own unit; null = no holiday pricing. */
+  holidayRate: number | '' | null;
   /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
    * feeding the "multi-pet but unpriced" warning; never sent back on the PUT. */
   multiPetGroupRateCount: number;
@@ -80,6 +82,7 @@ export type ServicePayload = ServiceConstraints & {
   enabled: boolean;
   description: string | null;
   maxConcurrentPets: number | null;
+  holidayRate: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
   acceptedPetTypes: string[] | null;
