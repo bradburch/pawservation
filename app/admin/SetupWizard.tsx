@@ -522,7 +522,9 @@ export function SetupWizard({
                 <p>
                   Connect Google Calendar so new bookings land on the calendar you already use — or,
                   from Connected apps afterwards, on a separate pet calendar Pawservation makes for
-                  you.
+                  you. Whichever calendar you connect, anything already on it blocks matching
+                  booking requests — the pet calendar keeps that to pet stuff instead of your whole
+                  personal calendar.
                 </p>
                 <button
                   type="button"

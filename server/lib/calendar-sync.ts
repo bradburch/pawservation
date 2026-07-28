@@ -1,15 +1,23 @@
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
+  chunkArray,
   clearBookingCalendarEventIds,
+  clearSyncPending,
+  deleteAllExternalEvents,
+  deleteExternalEventsMissing,
+  getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
+  listExternalEventRowsInWindow,
   listPetNamesForBooking,
   listSyncedBookingIds,
+  listSyncPendingBookings,
   listUnsyncedFutureBookings,
   setBookingGCalEventId,
   setProviderAccessToken,
   setProviderCalendarId,
   updateBookingStatus,
+  upsertExternalEventStatement,
 } from '../db/repo';
 import {
   buildEventResource,
@@ -18,10 +26,12 @@ import {
   listCalendarEvents,
   refreshAccessToken,
   updateEvent,
+  type CalendarEvent,
 } from './google-calendar';
+import { isEmailConfigured, sendBookingStatusEmail } from './email';
 import type { ServiceType } from './services';
 import { decryptToken, encryptToken } from './token-crypto';
-import type { Tenant, ProviderConnectionWithTokens } from '../types';
+import type { BookingRow, Tenant, ProviderConnectionWithTokens } from '../types';
 
 export type SyncInput = {
   bookingId: string;
@@ -102,6 +112,7 @@ async function persistEventIdOrCleanup(
   bookingId: string,
   eventId: string,
   expectedOld: string | null,
+  expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
   const stuck = await setBookingGCalEventId(
     env.PAWBOOK_DB,
@@ -109,6 +120,7 @@ async function persistEventIdOrCleanup(
     bookingId,
     eventId,
     expectedOld,
+    expectedStatus,
   );
   if (!stuck) {
     await deleteEvent(accessToken, calendarId, eventId).catch(() => {});
@@ -129,7 +141,18 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
   const calendarId = conn.CalendarId ?? 'primary';
   const resource = await resourceForBooking(env, tenant, b);
   const { id } = await createEvent(accessToken, calendarId, resource);
-  await persistEventIdOrCleanup(env, tenant, accessToken, calendarId, b.bookingId, id, null);
+  // b.status guards the SyncPending clear: if a concurrent status change lands before this create
+  // completes, the row is left pending for that change's own push (see setBookingGCalEventId).
+  await persistEventIdOrCleanup(
+    env,
+    tenant,
+    accessToken,
+    calendarId,
+    b.bookingId,
+    id,
+    null,
+    b.status,
+  );
 }
 
 /**
@@ -166,8 +189,11 @@ export async function updateBookingCalendarEvent(
       b.bookingId,
       id,
       gcalEventId,
+      b.status,
     );
   }
+  // Same guard as the create path: don't clear a flag a concurrent status change re-set.
+  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, b.bookingId, b.status);
 }
 
 /**
@@ -186,6 +212,8 @@ export async function repointCalendarTarget(
   tenant: Tenant,
   calendarId: string | null,
 ): Promise<void> {
+  // External rows mirror the OLD calendar; the next reconcile re-materializes from the new one.
+  await deleteAllExternalEvents(env.PAWBOOK_DB, tenant.Id);
   await clearBookingCalendarEventIds(env.PAWBOOK_DB, tenant.Id);
   await setProviderCalendarId(env.PAWBOOK_DB, tenant.Id, 'calendar', calendarId);
 }
@@ -234,6 +262,70 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
   }
 }
 
+/** Cap on outbox rows one sweep re-drives per tenant — same bound philosophy as BACKFILL_LIMIT. */
+const OUTBOX_LIMIT = 100;
+
+/**
+ * Re-drive every pending calendar push for this tenant. The op is derived from row state
+ * (terminal status + event id → delete; no event id → create; otherwise → update), so a row can
+ * never replay a stale intent — it always pushes the row's CURRENT state (as of the batch fetch).
+ * Per-row best-effort: a Google failure leaves that row pending for the next sweep and moves on.
+ * This function plus the SyncPending write-ahead flag is the "no event exists only in
+ * Pawservation" guarantee: while a connection exists, every state change either cleared the flag
+ * (push landed) or will be retried here until it does.
+ *
+ * A batch's rows are processed sequentially, each awaiting its own Google round-trip, so a row's
+ * Status can legitimately change (via a concurrent request) between this function reading it and
+ * that row's push landing. syncBookingToCalendar / updateBookingCalendarEvent /
+ * deleteBookingCalendarEvent all guard their SyncPending clear on Status-unchanged for exactly
+ * this reason: a clear from a stale push must not mask the push the newer status change still
+ * needs. When the guard blocks a clear, the row's GCalEventId is still recorded, so the next sweep
+ * re-derives the correct op (e.g. a delete for an event this sweep just created) from fresh state.
+ */
+export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<void> {
+  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
+
+  const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const rows = await listSyncPendingBookings(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    addDays(today, -1),
+    OUTBOX_LIMIT,
+  );
+  for (const r of rows) {
+    try {
+      if (r.Status === 'cancelled' || r.Status === 'declined') {
+        if (r.GCalEventId) {
+          await deleteBookingCalendarEvent(env, tenant, r.GCalEventId, r.Id, r.Status);
+        } else {
+          await clearSyncPending(env.PAWBOOK_DB, tenant.Id, r.Id, r.Status); // never had an event
+        }
+        continue;
+      }
+      const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+      const input: SyncInput = {
+        bookingId: r.Id,
+        endUserId: r.EndUserId,
+        serviceType: r.ServiceType,
+        serviceLabel: r.ServiceLabel,
+        startDate: r.StartDate,
+        endDate: r.EndDate,
+        startTime: r.StartTime,
+        durationMinutes: r.DurationMinutes,
+        petCount: r.PetCount,
+        petNames,
+        estCost: r.EstCost,
+        status: r.Status,
+      };
+      if (r.GCalEventId) await updateBookingCalendarEvent(env, tenant, r.GCalEventId, input);
+      else await syncBookingToCalendar(env, tenant, input);
+    } catch (err) {
+      console.error('calendar outbox re-drive failed for booking', r.Id, err);
+    }
+  }
+}
+
 /**
  * Best-effort: delete the Google Calendar event for a booking that was cancelled or declined in
  * the dashboard. Callers run this via executionCtx.waitUntil and swallow rejections — mirroring
@@ -241,26 +333,71 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
  * must stand regardless of what Google does. deleteEvent treats 410 Gone (already deleted, e.g.
  * removed by hand in Calendar) as success. The booking keeps its GCalEventId as a historical
  * record; reconciliation ignores it because listSyncedBookingIds excludes cancelled bookings.
+ * Clearing SyncPending here is what retires the delete from the outbox.
+ *
+ * `expectedStatus`, when given, guards that clear the same way as syncBookingToCalendar's — used
+ * by the outbox re-drive, where a batch's per-row Google round-trips give a real window for the
+ * booking's Status to move again before this delete lands.
  */
 export async function deleteBookingCalendarEvent(
   env: Env,
   tenant: Tenant,
   gcalEventId: string,
+  bookingId: string,
+  expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
   const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   await deleteEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId);
+  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, bookingId, expectedStatus);
 }
 
-const CALENDAR_SYNC_TTL_SECONDS = 120;
+export const CALENDAR_SYNC_TTL_SECONDS = 120;
 export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:last`;
 
+/** Cap on how many foreign Google events one reconcile pass MATERIALIZES (writes a row for) — a
+ * shared calendar can trivially carry thousands of events, and reconcileIfStale runs synchronously
+ * on a user-facing GET (the dashboard load), so an unbounded per-event awaited-write loop there is
+ * a real latency/DoS surface. Same bound philosophy as BACKFILL_LIMIT. Deliberately does NOT
+ * shrink the set used for delete-detection (see `liveIds` below) — capping WRITES is safe because
+ * a deferred event is picked up next pass; capping the deletion truth set would risk deleting a
+ * row for an event that is still live in Google, just not yet (re)materialized.
+ *
+ * Progress under overflow is real, not FIFO-on-the-same-prefix: `foreign` is partitioned into
+ * events with NO existing row (never yet materialized) and events that already have one (a
+ * re-upsert, e.g. picking up a move), and the not-yet-materialized ones are ordered FIRST into the
+ * slice this pass writes. So a backlog larger than MATERIALIZE_LIMIT strictly shrinks pass over
+ * pass — event #201 is guaranteed to get a row by the second pass instead of never, because pass 2
+ * no longer has to re-spend budget re-writing the same first 200 (those absorb only the leftover
+ * budget, if any, after every not-yet-materialized event is written). */
+const MATERIALIZE_LIMIT = 200;
+
+/** Chunk size for the db.batch() calls that write materialized external rows — each statement
+ * only binds 6 params (nowhere near D1's per-statement cap), so this is purely about keeping one
+ * batch a reasonable size rather than one enormous batch or one D1 round trip per event. */
+const MATERIALIZE_BATCH_SIZE = 50;
+
+/** External-event span → [StartDate, EndDate-exclusive) row dates. All-day events carry Google's
+ * exclusive end already; timed events occupy every calendar day they touch (a 14:00–15:00 visit
+ * blocks that one day; a Fri 18:00 – Sun 09:00 sit blocks Fri/Sat/Sun). A timed event ending at
+ * exactly midnight overcounts its final day by one — accepted: over-blocking is the safe error. */
+function externalSpan(e: CalendarEvent): { startDate: string; endDateExclusive: string } {
+  if (e.allDay) return { startDate: e.start, endDateExclusive: e.end };
+  const lastDay = e.end >= e.start ? e.end : e.start;
+  return { startDate: e.start, endDateExclusive: addDays(lastDay, 1) };
+}
+
 /**
- * Reconciles this tenant's synced bookings against Google Calendar: if a booking's event was
- * deleted directly in Calendar (not through Pawservation), the booking is marked cancelled. Read-only
- * against Google and strictly best-effort — a Calendar failure must never block the dashboard from
- * returning current DB state, same philosophy as syncBookingToCalendar above.
+ * Reconciles this tenant against Google Calendar — Google is authoritative for the window
+ * [today-1, today+180):
+ *  (a) a Pawservation-synced booking whose event is gone from Google is cancelled, and the
+ *      customer is emailed (best-effort, spec decision: notify via sendBookingStatusEmail);
+ *  (b) every foreign event (no private.bookingId) is materialized as a read-only
+ *      ServiceType='external' row — created, moved, and deleted as Google changes — which is how
+ *      pre-existing stays and hand-kept busy days block real capacity without availability ever
+ *      calling Google at request time.
+ * Still read-only against Google and best-effort: a Calendar failure leaves the DB as it was.
  */
 export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): Promise<void> {
   const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
@@ -276,8 +413,10 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
     `${windowStart}T00:00:00Z`,
     `${windowEndExclusive}T00:00:00Z`,
   );
-  const liveBookingIds = new Set(events.map((e) => e.private.bookingId).filter(Boolean));
+  const live = events.filter((e) => e.status !== 'cancelled');
 
+  // (a) Pawservation-originated events missing from Google → cancel + notify.
+  const liveBookingIds = new Set(live.map((e) => e.private.bookingId).filter(Boolean));
   const candidates = await listSyncedBookingIds(
     env.PAWBOOK_DB,
     tenant.Id,
@@ -285,17 +424,85 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
     windowEndExclusive,
   );
   for (const id of candidates) {
-    if (!liveBookingIds.has(id)) {
-      await updateBookingStatus(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    if (liveBookingIds.has(id)) continue;
+    const changed = await updateBookingStatus(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    if (!changed) continue;
+    // Nothing left to push: the event that triggered this cancel is already gone from Google.
+    // Clear SyncPending in the same flow (updateBookingStatus's cancel UPDATE sets it) — otherwise
+    // the next outbox redrive derives a delete for an event Google already purged. deleteEvent
+    // treats a 404/410 there as success today, but before that fix a 404 threw and retried
+    // forever, wedging an OUTBOX_LIMIT slot every sweep for an event that was never coming back.
+    await clearSyncPending(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    if (!isEmailConfigured(env)) continue;
+    try {
+      const bk = await getBookingWithCustomer(env.PAWBOOK_DB, tenant.Id, id);
+      if (bk?.Email) {
+        const whenText = bk.EndDate ? `${bk.StartDate} – ${bk.EndDate}` : bk.StartDate;
+        await sendBookingStatusEmail(env, bk.Email, tenant.DisplayName, 'cancelled', whenText);
+      }
+    } catch (err) {
+      console.error('reconcile-cancel notification failed for booking', id, err);
     }
   }
+
+  // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
+  const foreign = live.filter((e) => !e.private.bookingId && e.id && e.start && e.end);
+  // `liveIds` covers EVERY foreign event Google reports, not just the ones materialized this pass
+  // — deleteExternalEventsMissing must never be told an event is gone just because MATERIALIZE_LIMIT
+  // deferred writing its row.
+  const liveIds = foreign.map((e) => e.id);
+
+  // Hoisted once: the in-window external rows already on file. Feeds BOTH the materialize-priority
+  // partition just below and deleteExternalEventsMissing, so this pass reads them exactly once.
+  const existingRows = await listExternalEventRowsInWindow(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    windowStart,
+    windowEndExclusive,
+  );
+  const existingIds = new Set(existingRows.map((r) => r.GCalEventId));
+
+  // Real progress under MATERIALIZE_LIMIT overflow: events with no row yet go FIRST, so a backlog
+  // strictly shrinks pass over pass instead of the same first-N being rewritten forever while #N+1
+  // never materializes. Already-materialized events (a possible move/retitle) only spend whatever
+  // budget the not-yet-materialized ones didn't need.
+  const notYetMaterialized = foreign.filter((e) => !existingIds.has(e.id));
+  const alreadyMaterialized = foreign.filter((e) => existingIds.has(e.id));
+  const toMaterialize = [...notYetMaterialized, ...alreadyMaterialized].slice(0, MATERIALIZE_LIMIT);
+  if (foreign.length > MATERIALIZE_LIMIT) {
+    // Not silent, not lost: every un-materialized event is still "live" above, so the next
+    // reconcile pass (Google is polled repeatedly) picks up where this one left off, and this
+    // pass's priority order guarantees the backlog of never-yet-written events shrinks by up to
+    // MATERIALIZE_LIMIT every pass rather than stalling on the same prefix.
+    console.error(
+      `reconcile: ${foreign.length} foreign events for tenant ${tenant.Id} exceeds ` +
+        `MATERIALIZE_LIMIT (${MATERIALIZE_LIMIT}) — ${notYetMaterialized.length} not yet ` +
+        `materialized this pass, prioritized for the next one`,
+    );
+  }
+  for (const chunk of chunkArray(toMaterialize, MATERIALIZE_BATCH_SIZE)) {
+    const statements = chunk.map((e) => {
+      const span = externalSpan(e);
+      return upsertExternalEventStatement(env.PAWBOOK_DB, tenant.Id, {
+        gcalEventId: e.id,
+        summary: e.summary,
+        startDate: span.startDate,
+        endDateExclusive: span.endDateExclusive,
+      });
+    });
+    await env.PAWBOOK_DB.batch(statements);
+  }
+  await deleteExternalEventsMissing(env.PAWBOOK_DB, tenant.Id, existingRows, liveIds);
 }
 
-/** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. */
+/** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. The
+ * dashboard freshness path does the same two-step the cron sweep does — flush the outbox, then
+ * pull — throttled per tenant. */
 export async function reconcileIfStale(env: Env, tenant: Tenant): Promise<void> {
   const key = calendarSyncKey(tenant.Id);
   if (await env.PAWBOOK_CACHE.get(key).catch(() => null)) return;
   try {
+    await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);
   } catch {
     /* best-effort; the dashboard falls back to current DB state */

@@ -282,14 +282,17 @@ export function BookingsSection({
   focusId?: string | null;
   onFocusConsumed?: () => void;
 }) {
-  const rest = (bookings ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);
+  // External rows (materialized Google Calendar events) have no actions, no payments, no
+  // customer — they belong on the calendar only, never in this list.
+  const real = bookings === null ? null : bookings.filter((b) => !b.external);
+  const rest = (real ?? []).filter((b) => b.status !== 'pending').sort(byStartDate);
 
   // Scoped querySelector (not getElementById): CalendarSection's PendingRequestsList renders the
   // same rows with the same data-booking-id in its own (hidden) panel — a document-wide lookup
   // could match that hidden copy instead of this section's row.
   const listWrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!focusId || bookings === null) return;
+    if (!focusId || real === null) return;
     const el = listWrapRef.current?.querySelector<HTMLElement>(
       `[data-booking-id="${CSS.escape(focusId)}"]`,
     );
@@ -299,7 +302,7 @@ export function BookingsSection({
       window.setTimeout(() => el.classList.remove('pb-focus-flash'), 2000);
     }
     onFocusConsumed?.();
-  }, [focusId, bookings, onFocusConsumed]);
+  }, [focusId, real, onFocusConsumed]);
 
   return (
     <div ref={listWrapRef}>
@@ -310,14 +313,14 @@ export function BookingsSection({
           Confirming or declining emails the client automatically.
         </Hint>
       </h2>
-      {bookings === null ? (
+      {real === null ? (
         <p>Loading…</p>
-      ) : bookings.length === 0 ? (
+      ) : real.length === 0 ? (
         <p className="pb-hint">No bookings yet.</p>
       ) : (
         <>
           <PendingRequestsList
-            bookings={bookings}
+            bookings={real}
             session={session}
             reloadBookings={reloadBookings}
             handleError={handleError}

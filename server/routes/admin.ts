@@ -11,6 +11,7 @@ import {
   countPetTypeReferences,
   createPetType,
   createService,
+  deleteAllExternalEvents,
   deletePetTypeAndScrub,
   getAnalytics,
   getBookingSyncData,
@@ -1130,6 +1131,9 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     await clearProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    // Materialized Google rows have no living source once disconnected — and no UI to remove
+    // read-only rows — so they must not survive to block capacity forever.
+    await deleteAllExternalEvents(c.env.PAWBOOK_DB, tenant.Id);
     return c.json({ status: 'disconnected' });
   })
 
@@ -1706,6 +1710,8 @@ export const adminRoutes = new Hono<AppEnv>()
         startTime: r.StartTime,
         optionKey: r.OptionKey,
         petCount: r.PetCount,
+        external: r.ServiceType === 'external',
+        externalSummary: r.ExternalSummary,
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
@@ -1744,7 +1750,11 @@ export const adminRoutes = new Hono<AppEnv>()
       if (status !== 'cancelled')
         return c.json({ error: 'A cancellation fee applies only when cancelling.' }, 400);
       const bk = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
-      if (!bk) return c.json({ error: 'Not found.' }, 404);
+      // Same existence guard as the payments route: the 'blocked'/'external' sentinels 404 rather
+      // than falling through to the 400 below, which would otherwise let an external row's id be
+      // distinguished from a genuinely unknown id (an existence oracle).
+      if (!bk || bk.ServiceType === 'blocked' || bk.ServiceType === 'external')
+        return c.json({ error: 'Not found.' }, 404);
       if (bk.Status !== 'confirmed' || bk.EstCost == null)
         return c.json({ error: 'A fee needs a confirmed booking with an estimated cost.' }, 400);
       const svc = (await listServices(c.env.PAWBOOK_DB, tenant.Id)).find(
@@ -1795,7 +1805,7 @@ export const adminRoutes = new Hono<AppEnv>()
     } else if (booking?.GCalEventId) {
       // Cancel/decline: delete the synced Google event. The booking keeps its GCalEventId as a
       // historical record; reconciliation ignores cancelled and declined rows.
-      calendarTask = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId);
+      calendarTask = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId, id);
     }
 
     if (calendarTask) {
@@ -1869,10 +1879,12 @@ export const adminRoutes = new Hono<AppEnv>()
   .get('/:slug/admin/bookings/:id/payments', async (c) => {
     const tenant = c.get('tenant');
     const bookingId = c.req.param('id');
-    // Same existence guard as POST/DELETE: foreign booking or the 'blocked' sentinel 404s. Unlike
-    // POST, a cancelled booking is still viewable here — DELETE is the correction mechanism for it.
+    // Same existence guard as POST/DELETE: foreign booking or the 'blocked'/'external' sentinels
+    // 404. Unlike POST, a cancelled booking is still viewable here — DELETE is the correction
+    // mechanism for it.
     const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
-    if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
+    if (!booking || booking.ServiceType === 'blocked' || booking.ServiceType === 'external')
+      return c.json({ error: 'Not found.' }, 404);
     const rows = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
     return c.json({
       payments: rows.map((p) => ({

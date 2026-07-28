@@ -1545,6 +1545,32 @@ body {
   color: var(--ink);
 }
 
+/* Materialized Google Calendar events on the admin month grid: visibly foreign, not clickable. */
+.pb-cal-external {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 1px 5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 500;
+  border-radius: 6px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--page),
+    var(--page) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  color: var(--soft);
+  border: 1px dashed currentColor;
+  cursor: default;
+}
+
 .pb-cal-legend {
   display: flex;
   align-items: center;
@@ -1574,6 +1600,17 @@ body {
 .pb-cal-key-timeoff {
   background: color-mix(in srgb, var(--bad) 12%, var(--card));
   border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+}
+
+.pb-cal-key-external {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--page),
+    var(--page) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  border: 1px dashed var(--soft);
 }
 
 .pb-cal-sync {
@@ -1617,6 +1654,7 @@ body {
 
   .pb-wrap .pb-cal-chip,
   .pb-cal-timeoff,
+  .pb-cal-external,
   .pb-wrap .pb-cal-more {
     font-size: 0.6rem;
     padding: 0 3px;

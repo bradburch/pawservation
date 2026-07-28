@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { setProviderTokens } from '../db/repo';
-import { syncBookingToCalendar } from '../lib/calendar-sync';
+import { redriveCalendarOutbox, syncBookingToCalendar } from '../lib/calendar-sync';
 import { encryptToken } from '../lib/token-crypto';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_B, TEST_SECRET } from './helpers';
 import { DEFAULT_TIMEZONE } from '../../src/shared/index.js';
@@ -297,6 +297,73 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
       const body = bearerBody(init);
       expect(body.start).toEqual({ date: '2028-11-20' });
       expect(body.end).toEqual({ date: '2028-11-21' }); // start + 1 day, exclusive-end convention
+    });
+  });
+
+  describe('5. offline backlog drains on connect', () => {
+    it('bookings taken while disconnected pile up SyncPending=1 silently, then one redrive pass on connect creates their events and clears the flags', async () => {
+      const { env, raw } = createTestEnv();
+      const token = await endUserToken(env, 'happy-tails', 'jess@example.com');
+
+      // Two visits booked while Dana is still disconnected — nothing errors, no Google traffic.
+      const spy = vi.spyOn(globalThis, 'fetch');
+      const bookOne = await app.request(
+        '/api/happy-tails/bookings',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'walk',
+            optionKey: 'group-8-9',
+            startDate: '2028-11-06',
+            petIds: ['pet_ht_otis'],
+          }),
+        },
+        env,
+      );
+      const bookTwo = await app.request(
+        '/api/happy-tails/bookings',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'walk',
+            optionKey: 'group-8-9',
+            startDate: '2028-11-07',
+            petIds: ['pet_ht_otis'],
+          }),
+        },
+        env,
+      );
+      expect(bookOne.status).toBe(201);
+      expect(bookTwo.status).toBe(201);
+      expect(spy).not.toHaveBeenCalled();
+
+      const idOne = ((await bookOne.json()) as { id: string }).id;
+      const idTwo = ((await bookTwo.json()) as { id: string }).id;
+      const syncState = async (id: string) =>
+        (await raw
+          .prepare(`SELECT SyncPending, GCalEventId FROM BookingRequests WHERE Id = ?`)
+          .get(id)) as { SyncPending: number; GCalEventId: string | null };
+      expect(await syncState(idOne)).toEqual({ SyncPending: 1, GCalEventId: null });
+      expect(await syncState(idTwo)).toEqual({ SyncPending: 1, GCalEventId: null });
+
+      // Dana connects her calendar now — the outbox shares this connect-later path with backfill.
+      await connectCalendar(env, TENANT_B, '2031-01-01T00:00:00Z');
+      let call = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        call += 1;
+        return new Response(JSON.stringify({ id: `evt_backlog_${call}` }), { status: 200 });
+      });
+      const tenant = { Id: TENANT_B, Slug: 'happy-tails', Timezone: null } as Tenant;
+      await redriveCalendarOutbox(env, tenant); // one pass
+
+      const afterOne = await syncState(idOne);
+      const afterTwo = await syncState(idTwo);
+      expect(afterOne.SyncPending).toBe(0);
+      expect(afterOne.GCalEventId).toBeTruthy();
+      expect(afterTwo.SyncPending).toBe(0);
+      expect(afterTwo.GCalEventId).toBeTruthy();
     });
   });
 });
