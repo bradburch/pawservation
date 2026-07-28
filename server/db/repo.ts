@@ -845,6 +845,64 @@ export async function listPaymentsForBooking(
  * received is real revenue; only `outstanding` filters to confirmed (and skips EstCost IS NULL:
  * a booking with no estimate has no computable balance).
  */
+/**
+ * What a booking is expected to bring in: EstCost normally, but the assessed CancellationFee for a
+ * cancelled one — a cancelled-with-fee booking is a live receivable. SQLite cannot reference a
+ * SELECT alias inside an expression, so this is spliced into SELECT, WHERE and ORDER BY rather
+ * than aliased once.
+ */
+const EXPECTED_AMOUNT_SQL =
+  "CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END";
+
+/**
+ * A booking is OUTSTANDING when it is live (confirmed, or cancelled with a fee) and under-paid.
+ * Shared verbatim by the earnings payload and the Venmo importer's candidate set so the sitter can
+ * never be offered a booking the Earnings page does not consider owing. Expects a `paid` subquery
+ * aliased in scope.
+ */
+const OUTSTANDING_WHERE_SQL = `b.ServiceType != 'blocked'
+     AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
+             AND COALESCE(paid.Total, 0) < b.EstCost)
+          OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
+             AND COALESCE(paid.Total, 0) < b.CancellationFee))`;
+
+export type OutstandingBookingRow = {
+  BookingId: string;
+  EndUserId: string | null;
+  ServiceType: string;
+  StartDate: string;
+  Expected: number;
+  PaidTotal: number;
+};
+
+/**
+ * Every under-paid booking for this tenant, carrying the client who owes it — the candidate set the
+ * Venmo importer matches a received payment against. Same outstanding predicate as the earnings
+ * payload (shared consts above), different projection: EndUserId matters here and nowhere else.
+ */
+export async function listOutstandingBookings(
+  db: D1Database,
+  tenantId: string,
+): Promise<OutstandingBookingRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
+              b.StartDate AS StartDate,
+              ${EXPECTED_AMOUNT_SQL} AS Expected,
+              COALESCE(paid.Total, 0) AS PaidTotal
+       FROM BookingRequests b
+       LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+       ) paid ON paid.BookingRequestId = b.Id
+       WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
+       ORDER BY b.StartDate DESC, b.Id`,
+    )
+    .bind(tenantId, tenantId)
+    .all<OutstandingBookingRow>();
+  return results;
+}
+
 export async function getAnalytics(
   db: D1Database,
   tenantId: string,
@@ -903,14 +961,10 @@ export async function getAnalytics(
       .all<AnalyticsData['topClients'][number]>(),
     db
       .prepare(
-        // Expected amount is EstCost for confirmed bookings, but the assessed CancellationFee for a
-        // cancelled one — a cancelled-with-fee booking is a live receivable. Aliased EstCost so the
-        // route/UI shape is unchanged. SQLite can't reference the alias inside an expression, so the
-        // CASE is repeated verbatim in ORDER BY.
         // Declined rows match neither arm (never confirmed, never carry a fee) and so are never outstanding.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
-                CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END AS EstCost,
+                ${EXPECTED_AMOUNT_SQL} AS EstCost,
                 COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
@@ -918,13 +972,8 @@ export async function getAnalytics(
            SELECT BookingRequestId, SUM(Amount) AS Total
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
-         WHERE b.TenantId = ? AND b.ServiceType != 'blocked'
-           AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
-                   AND COALESCE(paid.Total, 0) < b.EstCost)
-                OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
-                   AND COALESCE(paid.Total, 0) < b.CancellationFee))
-         ORDER BY (CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END)
-                  - COALESCE(paid.Total, 0) DESC`,
+         WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
+         ORDER BY (${EXPECTED_AMOUNT_SQL}) - COALESCE(paid.Total, 0) DESC`,
       )
       .bind(tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
