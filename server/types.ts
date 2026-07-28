@@ -166,6 +166,16 @@ export type PaymentRow = {
   CreatedAt: string;
 };
 
+/** One extra charge on a booking (vet visit, haircut). Amount is whole dollars >= 1. */
+export type BookingChargeRow = {
+  Id: string;
+  TenantId: string;
+  BookingRequestId: string;
+  Label: string;
+  Amount: number;
+  CreatedAt: string;
+};
+
 /** getAnalytics result: raw PascalCase aggregate rows. monthly is exactly 12 entries, oldest
  * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS.
  * Exception: `ytd`/`quarterly` are already in payload (camelCase) shape — the helper emits them

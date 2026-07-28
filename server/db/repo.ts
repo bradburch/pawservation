@@ -1,6 +1,7 @@
 import type {
   AllowedSitterRow,
   AnalyticsData,
+  BookingChargeRow,
   BookingRow,
   CancellationTier,
   EndUser,
@@ -814,6 +815,91 @@ export async function listPaymentsForBooking(
     )
     .bind(tenantId, bookingRequestId)
     .all<PaymentRow>();
+  return results;
+}
+
+/**
+ * Add one extra charge to a booking. Uses insertPayment's INSERT...SELECT...WHERE idiom so the
+ * tenant + existence guard is part of the same statement — a foreign booking id or the 'blocked'
+ * sentinel inserts nothing and returns null (the route 404s on null).
+ *
+ * Deliberately NO status guard beyond 'blocked': a sitter adds "vet visit $45" to a stay that has
+ * already happened, and that stay may since have been cancelled. `EstCost` is never touched —
+ * total due is EstCost + SUM(charges), computed at read time.
+ */
+export async function insertBookingCharge(
+  db: D1Database,
+  tenantId: string,
+  charge: { bookingRequestId: string; label: string; amount: number },
+): Promise<string | null> {
+  const id = crypto.randomUUID();
+  const result = await db
+    .prepare(
+      `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
+       SELECT ?, ?, ?, ?, ?
+       FROM BookingRequests
+       WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'`,
+    )
+    .bind(
+      id,
+      tenantId,
+      charge.bookingRequestId,
+      charge.label,
+      charge.amount,
+      tenantId,
+      charge.bookingRequestId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Delete one charge. The WHERE includes BookingRequestId so a charge id paired with the wrong
+ * booking id in the URL reports false (route 404s) instead of silently deleting — deletePayment's
+ * rule, for the same reason. Deleting is the only correction mechanism; there is no edit.
+ */
+export async function deleteBookingCharge(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+  chargeId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM BookingCharges WHERE TenantId = ? AND BookingRequestId = ? AND Id = ?')
+    .bind(tenantId, bookingRequestId, chargeId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+export async function listChargesForBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+): Promise<BookingChargeRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+       FROM BookingCharges WHERE TenantId = ? AND BookingRequestId = ?
+       ORDER BY CreatedAt, Id`,
+    )
+    .bind(tenantId, bookingRequestId)
+    .all<BookingChargeRow>();
+  return results;
+}
+
+/** Every charge for a tenant — ONE read that the admin bookings list groups in JS, rather than
+ *  a per-row query (the PaidTotal subquery's motivation, applied to a list-shaped payload). */
+export async function listChargesForTenant(
+  db: D1Database,
+  tenantId: string,
+): Promise<BookingChargeRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+       FROM BookingCharges WHERE TenantId = ? ORDER BY BookingRequestId, CreatedAt, Id`,
+    )
+    .bind(tenantId)
+    .all<BookingChargeRow>();
   return results;
 }
 
