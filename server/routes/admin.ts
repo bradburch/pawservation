@@ -48,6 +48,7 @@ import {
   setProviderCalendarId,
   setServiceConfig,
   setPetDeceased,
+  setEndUserVenmoUsername,
   updateBookingStatus,
   updateTenantSettings,
   upsertPetGroupRate,
@@ -147,6 +148,9 @@ const MAX_IMPORT_ROWS = 500;
  * body of copy — cap it so one service can't push the whole picker off the page.
  */
 const MAX_SERVICE_DESCRIPTION = 200;
+
+/** Venmo's own handle limit. Capped here so a hostile PATCH can't park a novel on a client row. */
+const MAX_VENMO_USERNAME = 30;
 
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
@@ -1167,6 +1171,7 @@ export const adminRoutes = new Hono<AppEnv>()
       email: u.Email,
       name: u.Name,
       phone: u.Phone,
+      venmoUsername: u.VenmoUsername,
       status: u.Status,
       invitedAt: u.InvitedAt,
       pets: byUser.get(u.Id) ?? [],
@@ -1386,6 +1391,41 @@ export const adminRoutes = new Hono<AppEnv>()
       tenant.Id,
       c.req.param('petId'),
       body.deceased,
+    );
+    if (!updated) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+  /**
+   * The client's Venmo handle, and nothing else — a deliberately single-field PATCH rather than a
+   * general customer editor, so this branch adds one write and one validation surface. Stored
+   * '@'-less and trimmed; blank clears it (a sitter who filled it in by mistake must be able to
+   * empty the field, and NULL is the meaningful "match on their name" default).
+   */
+  .patch('/:slug/admin/customers/:id', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ venmoUsername?: unknown }>()
+      .catch(() => ({}) as { venmoUsername?: unknown });
+    if (!('venmoUsername' in body)) return c.json({ error: 'Nothing to update.' }, 400);
+    const raw = body.venmoUsername;
+    if (raw !== null && typeof raw !== 'string')
+      return c.json({ error: 'Venmo username must be text.' }, 400);
+    const handle = raw === null ? '' : raw.trim().replace(/^@+/, '');
+    if (handle.length > MAX_VENMO_USERNAME)
+      return c.json(
+        { error: `A Venmo username is at most ${MAX_VENMO_USERNAME} characters.` },
+        400,
+      );
+    if (handle !== '' && !/^[A-Za-z0-9_-]+$/.test(handle))
+      return c.json(
+        { error: 'A Venmo username can only contain letters, numbers, dashes and underscores.' },
+        400,
+      );
+    const updated = await setEndUserVenmoUsername(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      handle === '' ? null : handle,
     );
     if (!updated) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
