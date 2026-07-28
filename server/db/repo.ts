@@ -746,6 +746,11 @@ export async function getBookingWithCustomer(
  * confirmed. A cancelled or declined booking normally refuses payment, but one carrying a cancellation fee is a
  * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
  * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
+ *
+ * `externalRef` carries the Venmo transaction id for imported payments (NULL for hand-recorded
+ * ones). A replay violates the partial unique index and THROWS rather than returning null — the
+ * importer catches it with isUniqueViolation and reports the row as already imported; the null
+ * return still means only "the booking guard refused".
  */
 export async function insertPayment(
   db: D1Database,
@@ -756,13 +761,14 @@ export async function insertPayment(
     method: PaymentMethod;
     paidDate: string;
     note: string | null;
+    externalRef: string | null;
   },
 ): Promise<string | null> {
   const id = crypto.randomUUID();
   const result = await db
     .prepare(
-      `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note)
-       SELECT ?, ?, ?, ?, ?, ?, ?
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
          AND (Status NOT IN ('cancelled', 'declined') OR CancellationFee IS NOT NULL)`,
@@ -775,11 +781,25 @@ export async function insertPayment(
       payment.method,
       payment.paidDate,
       payment.note,
+      payment.externalRef,
       tenantId,
       payment.bookingRequestId,
     )
     .run();
   return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Every Venmo transaction id this tenant has already imported. Read whole rather than probed per
+ * row: the importer needs the set up front to render an "already imported" bucket in its preview,
+ * and a tenant's payment count is prototype-scale.
+ */
+export async function listPaymentExternalRefs(db: D1Database, tenantId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare('SELECT ExternalRef FROM Payments WHERE TenantId = ? AND ExternalRef IS NOT NULL')
+    .bind(tenantId)
+    .all<{ ExternalRef: string }>();
+  return results.map((r) => r.ExternalRef);
 }
 
 /**
@@ -825,6 +845,64 @@ export async function listPaymentsForBooking(
  * received is real revenue; only `outstanding` filters to confirmed (and skips EstCost IS NULL:
  * a booking with no estimate has no computable balance).
  */
+/**
+ * What a booking is expected to bring in: EstCost normally, but the assessed CancellationFee for a
+ * cancelled one — a cancelled-with-fee booking is a live receivable. SQLite cannot reference a
+ * SELECT alias inside an expression, so this is spliced into SELECT, WHERE and ORDER BY rather
+ * than aliased once.
+ */
+const EXPECTED_AMOUNT_SQL =
+  "CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END";
+
+/**
+ * A booking is OUTSTANDING when it is live (confirmed, or cancelled with a fee) and under-paid.
+ * Shared verbatim by the earnings payload and the Venmo importer's candidate set so the sitter can
+ * never be offered a booking the Earnings page does not consider owing. Expects a `paid` subquery
+ * aliased in scope.
+ */
+const OUTSTANDING_WHERE_SQL = `b.ServiceType != 'blocked'
+     AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
+             AND COALESCE(paid.Total, 0) < b.EstCost)
+          OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
+             AND COALESCE(paid.Total, 0) < b.CancellationFee))`;
+
+export type OutstandingBookingRow = {
+  BookingId: string;
+  EndUserId: string | null;
+  ServiceType: string;
+  StartDate: string;
+  Expected: number;
+  PaidTotal: number;
+};
+
+/**
+ * Every under-paid booking for this tenant, carrying the client who owes it — the candidate set the
+ * Venmo importer matches a received payment against. Same outstanding predicate as the earnings
+ * payload (shared consts above), different projection: EndUserId matters here and nowhere else.
+ */
+export async function listOutstandingBookings(
+  db: D1Database,
+  tenantId: string,
+): Promise<OutstandingBookingRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
+              b.StartDate AS StartDate,
+              ${EXPECTED_AMOUNT_SQL} AS Expected,
+              COALESCE(paid.Total, 0) AS PaidTotal
+       FROM BookingRequests b
+       LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+       ) paid ON paid.BookingRequestId = b.Id
+       WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
+       ORDER BY b.StartDate DESC, b.Id`,
+    )
+    .bind(tenantId, tenantId)
+    .all<OutstandingBookingRow>();
+  return results;
+}
+
 export async function getAnalytics(
   db: D1Database,
   tenantId: string,
@@ -883,14 +961,10 @@ export async function getAnalytics(
       .all<AnalyticsData['topClients'][number]>(),
     db
       .prepare(
-        // Expected amount is EstCost for confirmed bookings, but the assessed CancellationFee for a
-        // cancelled one — a cancelled-with-fee booking is a live receivable. Aliased EstCost so the
-        // route/UI shape is unchanged. SQLite can't reference the alias inside an expression, so the
-        // CASE is repeated verbatim in ORDER BY.
         // Declined rows match neither arm (never confirmed, never carry a fee) and so are never outstanding.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
-                CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END AS EstCost,
+                ${EXPECTED_AMOUNT_SQL} AS EstCost,
                 COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
@@ -898,13 +972,8 @@ export async function getAnalytics(
            SELECT BookingRequestId, SUM(Amount) AS Total
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
-         WHERE b.TenantId = ? AND b.ServiceType != 'blocked'
-           AND ((b.Status = 'confirmed' AND b.EstCost IS NOT NULL
-                   AND COALESCE(paid.Total, 0) < b.EstCost)
-                OR (b.Status = 'cancelled' AND b.CancellationFee IS NOT NULL
-                   AND COALESCE(paid.Total, 0) < b.CancellationFee))
-         ORDER BY (CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END)
-                  - COALESCE(paid.Total, 0) DESC`,
+         WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
+         ORDER BY (${EXPECTED_AMOUNT_SQL}) - COALESCE(paid.Total, 0) DESC`,
       )
       .bind(tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
@@ -1389,7 +1458,7 @@ export async function clearBookingCalendarEventIds(
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
-const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
+const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, VenmoUsername, Status, InvitedAt';
 
 export async function getEndUserById(
   db: D1Database,
@@ -1444,6 +1513,7 @@ export async function insertInvitedCustomer(
     Email: email,
     Name: name,
     Phone: phone,
+    VenmoUsername: null,
     Status: 'invited',
     InvitedAt: invitedAt,
   };
@@ -1491,6 +1561,7 @@ export async function insertInvitedCustomerWithPet(
     Email: email,
     Name: name,
     Phone: phone,
+    VenmoUsername: null,
     Status: 'invited',
     InvitedAt: invitedAt,
   };
@@ -1544,6 +1615,7 @@ export async function ensureDemoCustomer(
     Email: email,
     Name: 'Demo Visitor',
     Phone: null,
+    VenmoUsername: null,
     Status: 'active',
     InvitedAt: invitedAt,
   };
@@ -1722,6 +1794,25 @@ export async function promoteCustomerActive(
     .prepare("UPDATE EndUsers SET Status = 'active' WHERE TenantId = ? AND Id = ?")
     .bind(tenantId, endUserId)
     .run();
+}
+
+/**
+ * Set (or clear) the client's Venmo handle. The value is stored '@'-less and is used for exactly
+ * one thing: matching a row of an uploaded Venmo CSV to this client. NULL means "match on Name",
+ * which is the common case — hence the field's label in the admin UI. Returns whether a row
+ * changed, so the route can 404 an unknown or foreign id (the WHERE is the tenant guard).
+ */
+export async function setEndUserVenmoUsername(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  venmoUsername: string | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE EndUsers SET VenmoUsername = ? WHERE TenantId = ? AND Id = ?')
+    .bind(venmoUsername, tenantId, endUserId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**

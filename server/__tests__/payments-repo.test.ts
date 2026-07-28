@@ -28,6 +28,7 @@ const pay = (env: Env, tenantId: string, bookingRequestId: string, amount = 50) 
     method: 'cash',
     paidDate: '2026-07-01',
     note: null,
+    externalRef: null,
   });
 
 describe('payments repo', () => {
@@ -40,6 +41,7 @@ describe('payments repo', () => {
       method: 'venmo',
       paidDate: '2026-07-02',
       note: 'deposit',
+      externalRef: null,
     });
     expect(paymentId).not.toBeNull();
     const rows = await listPaymentsForBooking(env.PAWBOOK_DB, TENANT_A, bookingId);
@@ -123,6 +125,7 @@ describe('payments repo', () => {
       method: 'cash',
       paidDate: '2026-06-01',
       note: null,
+      externalRef: null,
     });
     await insertPayment(env.PAWBOOK_DB, TENANT_A, {
       bookingRequestId: bookingId,
@@ -130,6 +133,7 @@ describe('payments repo', () => {
       method: 'zelle',
       paidDate: '2026-07-01',
       note: null,
+      externalRef: null,
     });
     await pay(env, TENANT_A, otherBookingId, 999);
     const rows = await listPaymentsForBooking(env.PAWBOOK_DB, TENANT_A, bookingId);

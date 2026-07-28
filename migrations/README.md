@@ -23,6 +23,9 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   existing table. If your local DB predates a schema change:
   `rm -rf .wrangler/state/v3/d1 && npm run seed:local`.
 
-There are currently no migration files: the baseline is current.
+`0001_venmo_import.sql` is the first migration since the baseline (`EndUsers.VenmoUsername` +
+`Payments.ExternalRef` — the Venmo CSV import's idempotency mechanism). It must be applied to the
+remote DB by hand before this branch merges to `main` (merging auto-deploys, so the merge IS the
+deploy).
 
 Pre-2026-07-27 migration numbers cited in code comments (e.g. "0015", "0019") refer to the deleted historical series in git history, not to files under the new numbering.

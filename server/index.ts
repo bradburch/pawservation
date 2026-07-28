@@ -338,7 +338,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Payments</h3>
-              <p>Cash, Venmo, Zelle, PayPal, check &mdash; log deposits and partials, see what&rsquo;s outstanding.</p>
+              <p>Cash, Venmo, Zelle, PayPal, check &mdash; log deposits and partials, see what&rsquo;s outstanding. Upload the CSV from Venmo and match a month of payments to clients in one pass.</p>
             </div>
             <div class="feature">
               <h3>Earnings</h3>
@@ -810,6 +810,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <div class="wf-pair">
               <p class="wf-keep">Record payments as they land.</p>
               <p>Cash, Venmo, Zelle, PayPal, check, card, or something else entirely. Log as many part-payments against one booking as it takes &mdash; a deposit now and the rest later &mdash; each with its own date and note.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Paid on Venmo? Upload the CSV.</p>
+              <p>Download the CSV Venmo gives you for a month and drop it into Earnings. Pawservation reads the payments that came in, lines each one up with the client who sent it by their Venmo name, and shows you every match before anything is recorded &mdash; you approve what&rsquo;s right and fix what isn&rsquo;t. The file is read in memory and never stored, and uploading the same one twice records nothing twice.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Pawservation records payments. It never processes them.</p>

@@ -38,6 +38,7 @@ const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: numbe
     method: 'cash',
     paidDate: '2026-07-01',
     note: null,
+    externalRef: null,
   });
 
 /** Seeds a two-tier cancellation policy on sunny-paws' boarding service. */

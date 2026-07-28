@@ -92,6 +92,7 @@ export type Customer = {
   email: string;
   name: string | null;
   phone: string | null;
+  venmoUsername: string | null;
   status: 'invited' | 'active';
   invitedAt?: string | null;
   pets: Pet[];
@@ -141,6 +142,36 @@ export type Payment = {
   method: string;
   paidDate: string;
   note: string | null;
+};
+
+export type VenmoPreviewRow = {
+  txnId: string;
+  date: string;
+  amount: number;
+  from: string;
+  note: string;
+};
+export type VenmoPreview = {
+  matched: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    bookingId: string;
+    bookingLabel: string;
+  })[];
+  ambiguous: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    candidates: { bookingId: string; label: string; balance: number }[];
+  })[];
+  unmatched: (VenmoPreviewRow & { reason: string })[];
+  alreadyImported: VenmoPreviewRow[];
+  ignored: number;
+  problems: { row: number; reason: string }[];
+};
+export type VenmoImportResult = {
+  imported: number;
+  totalAmount: number;
+  skipped: { txnId: string; reason: string }[];
 };
 
 export type AnalyticsPayload = {
@@ -315,6 +346,12 @@ export const adminApi = {
         method: 'DELETE',
         headers: authHeaders(token),
       }),
+    setVenmo: (slug: string, token: string, id: string, venmoUsername: string | null) =>
+      request<unknown>(`/api/${slug}/admin/customers/${id}`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ venmoUsername }),
+      }),
     addPet: (
       slug: string,
       token: string,
@@ -388,6 +425,23 @@ export const adminApi = {
       request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
         method: 'DELETE',
         headers: authHeaders(token),
+      }),
+    venmoPreview: (slug: string, token: string, csv: string) =>
+      request<VenmoPreview>(`/api/${slug}/admin/payments/venmo/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv }),
+      }),
+    venmoImport: (
+      slug: string,
+      token: string,
+      csv: string,
+      choices: { txnId: string; bookingId: string }[],
+    ) =>
+      request<VenmoImportResult>(`/api/${slug}/admin/payments/venmo/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, choices }),
       }),
   },
   analytics: {
