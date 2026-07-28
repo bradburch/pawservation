@@ -857,6 +857,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       <ClientsSection
         customers={customers ?? []}
         petTypes={settings.petTypes}
+        services={settings.services}
         slug={slug}
         token={token}
         onCustomersChanged={reloadCustomers}

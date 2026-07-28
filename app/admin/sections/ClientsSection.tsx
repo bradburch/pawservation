@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { groupIntoAccounts } from '../../../src/shared/index.js';
+import { useEffect, useState } from 'react';
+import { buildGroupKey, groupIntoAccounts, isValidRate } from '../../../src/shared/index.js';
 import type { AccountGroup } from '../../../src/shared/index.js';
-import type { Customer, ImportResult, Pet } from '../../shared-ui/api.js';
+import type { Customer, ImportResult, Pet, PetGroupRate } from '../../shared-ui/api.js';
 import { adminApi } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
 import { Hint } from '../Hint';
+import type { ServiceForm } from '../shared.js';
 
 /** The full pet-type registry entry (slug + display label), same shape as `Settings.petTypes`. */
 type PetType = { petType: string; label: string };
@@ -117,9 +118,105 @@ function PetAdder({
   );
 }
 
+/** One (service, option) pair this account's rate editor can price — enabled services only, and
+ *  only options that have already been saved (a brand-new option has no optionKey yet). */
+type EnabledOption = {
+  serviceType: string;
+  serviceLabel: string;
+  rateUnit: string;
+  optionKey: string;
+  optionLabel: string;
+};
+
+function enabledOptionsFor(services: ServiceForm[]): EnabledOption[] {
+  return services
+    .filter((s) => s.enabled)
+    .flatMap((s) =>
+      s.options
+        .filter((o) => o.optionKey !== undefined)
+        .map((o) => ({
+          serviceType: s.type,
+          serviceLabel: s.label,
+          rateUnit: s.rateUnit,
+          optionKey: o.optionKey as string,
+          optionLabel: o.label,
+        })),
+    );
+}
+
+/**
+ * One row of the account-card rate editor: an optional override rate for THIS account's full
+ * live pet set, for one (service, option). Writes go straight to the PetGroupPricing routes —
+ * unlike the staged Services-section draft, there is no save bar here, so Save/Clear act
+ * immediately. Keyed by the caller on the override's id (or 'new') so a save/clear round trip
+ * remounts this row and its local `value` picks up the fresh server state instead of going stale.
+ */
+function AccountRateRow({
+  slug,
+  token,
+  group,
+  option,
+  override,
+  busy,
+  mutateRates,
+}: {
+  slug: string;
+  token: string;
+  group: AccountGroup;
+  option: EnabledOption;
+  override?: PetGroupRate;
+  busy: boolean;
+  mutateRates: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [value, setValue] = useState<number | ''>(override?.rate ?? '');
+
+  const save = () =>
+    mutateRates(() =>
+      adminApi.petGroupRates.upsert(slug, token, {
+        serviceType: option.serviceType,
+        optionKey: option.optionKey,
+        petIds: group.livePetIds,
+        rate: value === '' ? 0 : value, // isValidRate gates the button below; 0 never ships
+      }),
+    );
+  const clearOverride = () => {
+    if (!override) return;
+    void mutateRates(() => adminApi.petGroupRates.remove(slug, token, override.id));
+  };
+
+  return (
+    <div className="pb-row pb-account-rate-row">
+      <span>
+        {option.serviceLabel} — {option.optionLabel}
+      </span>
+      <input
+        type="number"
+        min={1}
+        step={1}
+        inputMode="numeric"
+        aria-label={`${option.serviceLabel} ${option.optionLabel} rate for this account`}
+        aria-invalid={value !== '' && !isValidRate(value)}
+        placeholder="Base rate applies"
+        value={value}
+        onChange={(e) => setValue(e.target.value === '' ? '' : Number(e.target.value))}
+      />
+      <span className="pb-hint">/{option.rateUnit}</span>
+      <button type="button" onClick={() => void save()} disabled={busy || !isValidRate(value)}>
+        {override ? 'Update' : 'Save'}
+      </button>
+      {override && (
+        <button type="button" onClick={clearOverride} disabled={busy}>
+          Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ClientsSection({
   customers,
   petTypes,
+  services,
   slug,
   token,
   onCustomersChanged,
@@ -128,6 +225,7 @@ export function ClientsSection({
 }: {
   customers: Customer[];
   petTypes: PetType[];
+  services: ServiceForm[];
   slug: string;
   token: string;
   onCustomersChanged: () => void;
@@ -186,6 +284,46 @@ export function ClientsSection({
     const done = results.filter((r) => r.status === 'fulfilled').length;
     if (done < results.length) handleError(new Error(onPartial(done, results.length)));
   };
+
+  // ── Account-card rate editor (PetGroupPricing) ──────────────────────────────────────────
+  // Loaded once for the whole section (every account's editor reads the same list, filtered
+  // client-side by groupKey) rather than per-card, to avoid one fetch per account.
+  const [groupRates, setGroupRates] = useState<PetGroupRate[] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    adminApi.petGroupRates
+      .list(slug, token)
+      .then((res) => {
+        if (active) setGroupRates(res.rates);
+      })
+      .catch((e) => {
+        if (active) handleError(e);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, token]);
+
+  /** Same shape as `mutate` above, but refreshes the rate list instead of the customer list —
+   *  a rate save/clear never changes who's on an account. */
+  const mutateRates = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    clearError();
+    setBusy(true);
+    try {
+      await fn();
+      const { rates } = await adminApi.petGroupRates.list(slug, token);
+      setGroupRates(rates);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enabledOptions = enabledOptionsFor(services);
 
   // Pet rows must show the registry LABEL ("Dog"), not the raw slug ("dog") — the one place
   // that still bypassed the label map.
@@ -550,6 +688,46 @@ export function ClientsSection({
                   clearError={clearError}
                 />
               ) : null}
+              {group.active && (
+                <details className="pb-account-rates">
+                  <summary>Rates for this account</summary>
+                  <p className="pb-hint">
+                    Rates for specific pets beat species rates beat the base rate.
+                  </p>
+                  <p className="pb-hint">
+                    This covers the account&rsquo;s full set of{' '}
+                    {livePets.length === 1 ? 'pet' : 'pets'} only. To price only some of them, use
+                    the group editor in Services &amp; Rates.
+                  </p>
+                  {enabledOptions.length === 0 ? (
+                    <p className="pb-applies">
+                      No enabled services have a saved price yet — nothing to override.
+                    </p>
+                  ) : (
+                    enabledOptions.map((option) => {
+                      const key = buildGroupKey(group.livePetIds);
+                      const override = groupRates?.find(
+                        (r) =>
+                          r.serviceType === option.serviceType &&
+                          r.optionKey === option.optionKey &&
+                          buildGroupKey(r.petIds) === key,
+                      );
+                      return (
+                        <AccountRateRow
+                          key={`${option.serviceType}:${option.optionKey}:${override?.id ?? 'new'}`}
+                          slug={slug}
+                          token={token}
+                          group={group}
+                          option={option}
+                          override={override}
+                          busy={busy}
+                          mutateRates={mutateRates}
+                        />
+                      );
+                    })
+                  )}
+                </details>
+              )}
             </li>
           );
         })}

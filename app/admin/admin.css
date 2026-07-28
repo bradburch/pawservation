@@ -818,6 +818,25 @@ body {
   margin-top: 4px;
 }
 
+.pb-account-rates {
+  margin-left: 18px;
+  margin-top: 8px;
+}
+
+.pb-account-rates summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--deep);
+}
+
+.pb-account-rates .pb-row {
+  margin-top: 6px;
+}
+
+.pb-account-rate-row input[type='number'] {
+  flex: 0 1 7rem;
+}
+
 /* ── Payments panel (shared by Bookings rows + Earnings outstanding table) ── */
 .pb-payments {
   width: 100%;

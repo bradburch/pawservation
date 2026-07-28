@@ -86,6 +86,16 @@ export type Customer = {
   pets: Pet[];
 };
 
+/** One stored specific-pets rate (PetGroupPricing row), wire shape from the admin routes. */
+export type PetGroupRate = {
+  id: string;
+  serviceType: string;
+  optionKey: string;
+  petIds: string[];
+  rate: number;
+  updatedAt: string;
+};
+
 export type ImportResult = {
   importedCustomers: number;
   importedPets: number;
@@ -415,6 +425,29 @@ export const adminApi = {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ calendarId }),
+      }),
+  },
+  // Explicit prices for a specific set of pets (PetGroupPricing) — upsert/delete-ONE, mirroring
+  // server/routes/admin.ts's routes 1:1. Consumed by the account-card rate editor.
+  petGroupRates: {
+    list: (slug: string, token: string) =>
+      request<{ rates: PetGroupRate[] }>(`/api/${slug}/admin/pet-group-rates`, {
+        headers: authHeaders(token),
+      }),
+    upsert: (
+      slug: string,
+      token: string,
+      body: { serviceType: string; optionKey: string; petIds: string[]; rate: number },
+    ) =>
+      request<{ id: string; groupKey: string }>(`/api/${slug}/admin/pet-group-rates`, {
+        method: 'PUT',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify(body),
+      }),
+    remove: (slug: string, token: string, id: string) =>
+      request<unknown>(`/api/${slug}/admin/pet-group-rates/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
       }),
   },
 };
