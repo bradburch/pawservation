@@ -20,7 +20,6 @@ export type ServiceSummaryInput = {
   rateUnit: string;
   options: readonly ServiceSummaryOption[];
   questions: readonly unknown[]; // only the count is used
-  minNights: number | null;
   maxNights: number | null;
   /** Labels of an explicit accepted-pets list; null/undefined = accepts all (no fact shown). */
   acceptedPetLabels?: string[] | null;
@@ -70,12 +69,8 @@ export function serviceSummary(s: ServiceSummaryInput): ServiceSummary {
     const lengths = s.rateUnit === 'visit' || s.rateUnit === 'walk';
     facts.push(`${n} ${lengths ? `${s.rateUnit} lengths` : 'options'}`);
   }
-  if (s.minNights !== null && s.maxNights !== null) {
-    facts.push(`${s.minNights}–${s.maxNights} nights`);
-  } else if (s.minNights !== null) {
-    facts.push(`Min ${s.minNights} ${nightsWord(s.minNights)}`);
-  } else if (s.maxNights !== null) {
-    facts.push(`Max ${s.maxNights} ${nightsWord(s.maxNights)}`);
+  if (s.maxNights !== null) {
+    facts.push(`up to ${s.maxNights} ${nightsWord(s.maxNights)}`);
   }
   const q = s.questions.length;
   if (q > 0) facts.push(`${q} ${q === 1 ? 'question' : 'questions'}`);

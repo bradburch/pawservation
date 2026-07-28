@@ -25,7 +25,6 @@ async function seedBooking(
     startDate: '2030-03-01',
     endDate: '2030-03-04',
     optionKey: null,
-    petType: 'dog',
     petCount: 1,
     estCost: 150,
     status,

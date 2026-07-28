@@ -17,7 +17,12 @@ import { syncBookingToCalendar } from '../lib/calendar-sync';
 import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
-import { isValidPetCount, validateBoardingRange, validateSingleDate } from '../lib/validation';
+import {
+  isValidPetCount,
+  isValidTimeString,
+  validateBoardingRange,
+  validateSingleDate,
+} from '../lib/validation';
 import {
   addDays,
   isWeekend,
@@ -86,6 +91,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         optionKey?: string;
         petIds?: unknown;
         answers?: unknown;
+        startTime?: unknown;
       }>()
       .catch(() => ({}) as Record<string, never>);
     const type = body.type;
@@ -104,6 +110,8 @@ export const bookingRoutes = new Hono<AppEnv>()
             ),
           )
         : {};
+    const rawStartTime =
+      typeof body.startTime === 'string' && body.startTime !== '' ? body.startTime : null;
 
     const tenantId = tenant.Id;
     const endUserId = c.get('endUserId');
@@ -158,8 +166,6 @@ export const bookingRoutes = new Hono<AppEnv>()
           400,
         );
     }
-    const petType = chosen[0]!.PetType;
-
     // The service's OWN restriction — the single behavioral gate. A type is bookable iff some
     // enabled service accepts it, enforced per booking by that service's list (NULL = accepts
     // every registry type). Checks EVERY selected pet, not the denormalized single PetType.
@@ -198,6 +204,26 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (dateError)
       return c.json({ error: dateError.error, code: dateError.code }, dateError.status);
 
+    // Optional customer-chosen arrival time — range stays only. Timed (single-day) services take
+    // their clock from the option, so a client-supplied time there is a bug, not a preference.
+    if (rawStartTime !== null) {
+      if (shape !== 'range')
+        return c.json(
+          { error: 'An arrival time only applies to multi-day stays.', code: 'invalid_start_time' },
+          400,
+        );
+      if (!isValidTimeString(rawStartTime))
+        return c.json(
+          {
+            error: 'Arrival time must look like 14:30 (24-hour HH:MM).',
+            code: 'invalid_start_time',
+          },
+          400,
+        );
+    }
+    // One resolved value feeds BOTH the insert and the calendar sync so they can never disagree.
+    const bookingStartTime = shape === 'range' ? rawStartTime : option.StartTime;
+
     // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. The flag is
     // settable on ANY option, including range-shaped services (boarding/housesitting) — a stay
     // can start and end on weekdays yet still cross a weekend in between — so every date in the
@@ -224,11 +250,7 @@ export const bookingRoutes = new Hono<AppEnv>()
     if (answersError) return c.json({ error: answersError, code: 'invalid_answers' }, 400);
 
     const constraintsError = validateServiceConstraints(
-      {
-        minNights: service.MinNights,
-        maxNights: service.MaxNights,
-        maxPetCount: service.MaxPetCount,
-      },
+      { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
       { nights, petCount: pets },
     );
     if (constraintsError)
@@ -282,9 +304,8 @@ export const bookingRoutes = new Hono<AppEnv>()
         startDate: start,
         endDate,
         optionKey: option.OptionKey,
-        petType,
         petCount: pets,
-        startTime: option.StartTime,
+        startTime: bookingStartTime,
         estCost,
         status: 'pending',
         answers,
@@ -332,7 +353,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       serviceLabel: service.Label,
       startDate: start,
       endDate,
-      startTime: option.StartTime,
+      startTime: bookingStartTime,
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       petNames: chosen.map((p) => p!.Name),
@@ -370,7 +391,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         pets: petsByBooking.get(r.Id) ?? [],
         estCost: r.EstCost,
         cancellationFee: r.CancellationFee,
-        status: r.Declined ? 'declined' : r.Status,
+        status: r.Status,
       })),
     });
   });

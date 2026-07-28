@@ -28,6 +28,10 @@ export const DEFENSIVE_MAX_NIGHTS = 3650;
 /** Safety rail (NOT a business cap): input sanity bound on a single request's pet count. */
 export const DEFENSIVE_MAX_PET_COUNT = 1000;
 
+/** Business cap (unlike the DEFENSIVE rails above): the most pets one booking may carry,
+ * enforced on the admin settings PUT for MaxPetCount. */
+export const MAX_PET_COUNT_CAP = 15;
+
 /** True for a whole number in [1, DEFENSIVE_MAX_PET_COUNT]. */
 export function isValidPetCount(value: unknown): value is number {
   return (

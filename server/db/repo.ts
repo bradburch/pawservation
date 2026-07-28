@@ -36,7 +36,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, DisabledAt';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetType, PetCount, EstCost, CancellationFee, GCalEventId, Status, Declined, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -100,7 +100,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
   const { results } = await db
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
-              CapacityKind, SortOrder, Questions, MinNights, MaxNights, MaxPetCount,
+              CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount,
               AcceptedPetTypes, MaxConcurrentPets, CancellationTiers
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
@@ -262,9 +262,13 @@ export async function deletePetType(
   return (result.meta as { changes?: number }).changes !== 0;
 }
 
-/** Customer pets + bookings of ANY status referencing the slug — history included, mirroring
- * countBookingsForService's rule, so deletion never orphans a slug that admin lists and CSV
- * exports would otherwise render as a bare token. */
+/** Customer pets + bookings referencing the slug via their linked pets (any status — history
+ * included, mirroring countBookingsForService's rule, so deletion never orphans a slug the admin
+ * list and CSV export would render as a bare token). A booking references a slug through
+ * BookingRequestPets → EndUserPets.PetType; BookingRequests carries no denormalized copy. The
+ * demo shadow customer's pet(s) are excluded from both halves — the demo identity must never
+ * block a real pet-type deletion (its booking POSTs never persist a row anyway, but the pet
+ * itself does, so the exclusion still matters for the direct pet count). */
 export async function countPetTypeReferences(
   db: D1Database,
   tenantId: string,
@@ -272,10 +276,16 @@ export async function countPetTypeReferences(
 ): Promise<number> {
   const row = await db
     .prepare(
-      `SELECT (SELECT COUNT(*) FROM EndUserPets WHERE TenantId = ? AND PetType = ? AND EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?))
-            + (SELECT COUNT(*) FROM BookingRequests WHERE TenantId = ? AND PetType = ?) AS n`,
+      `SELECT (SELECT COUNT(*) FROM EndUserPets
+                WHERE TenantId = ? AND PetType = ?
+                  AND EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?))
+            + (SELECT COUNT(DISTINCT brp.BookingRequestId)
+                 FROM BookingRequestPets brp
+                 JOIN EndUserPets p ON p.Id = brp.PetId
+                WHERE p.TenantId = ? AND p.PetType = ?
+                  AND p.EndUserId NOT IN (SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?)) AS n`,
     )
-    .bind(tenantId, petType, tenantId, DEMO_EMAIL, tenantId, petType)
+    .bind(tenantId, petType, tenantId, DEMO_EMAIL, tenantId, petType, tenantId, DEMO_EMAIL)
     .first<{ n: number }>();
   return row?.n ?? 0;
 }
@@ -525,7 +535,6 @@ export async function insertBookingRequest(
     startDate: string;
     endDate: string | null;
     optionKey: string | null;
-    petType: PetType | null;
     petCount: number;
     startTime?: string | null;
     estCost: number | null;
@@ -539,8 +548,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetType, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -550,7 +559,6 @@ export async function insertBookingRequest(
       row.startDate,
       row.endDate,
       row.optionKey,
-      row.petType,
       row.petCount,
       row.startTime ?? null,
       row.estCost,
@@ -599,7 +607,7 @@ export async function listBookingsForUser(
 ): Promise<BookingRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS}, Declined
+      `SELECT ${BOOKING_COLS}
        FROM BookingRequests
        WHERE TenantId = ? AND EndUserId = ?
        ORDER BY StartDate DESC`,
@@ -618,10 +626,19 @@ export async function listBookingsForUser(
 export async function listBookingsForTenant(
   db: D1Database,
   tenantId: string,
-): Promise<(BookingRow & { Email: string | null; Name: string | null; PaidTotal: number })[]> {
+): Promise<
+  (BookingRow & {
+    Email: string | null;
+    Name: string | null;
+    PaidTotal: number;
+    /** Parsed intake answers; {} for none or unparseable — the admin list renders them. */
+    Answers: Record<string, string>;
+  })[]
+> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS_QUALIFIED}, EndUsers.Email AS Email, EndUsers.Name AS Name,
+      `SELECT ${BOOKING_COLS_QUALIFIED}, BookingRequests.Answers AS Answers,
+              EndUsers.Email AS Email, EndUsers.Name AS Name,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
        LEFT JOIN EndUsers ON EndUsers.Id = BookingRequests.EndUserId
@@ -634,19 +651,35 @@ export async function listBookingsForTenant(
        ORDER BY BookingRequests.StartDate DESC, BookingRequests.CreatedAt DESC`,
     )
     .bind(tenantId, tenantId)
-    .all<BookingRow & { Email: string | null; Name: string | null; PaidTotal: number }>();
-  return results;
+    .all<
+      BookingRow & { Email: string | null; Name: string | null; PaidTotal: number; Answers: string }
+    >();
+  return results.map((r) => {
+    let answers: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(r.Answers) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        answers = Object.fromEntries(
+          Object.entries(parsed as Record<string, unknown>).filter(
+            (entry): entry is [string, string] => typeof entry[1] === 'string',
+          ),
+        );
+      }
+    } catch {
+      /* stored garbage renders as "no answers", never a 500 */
+    }
+    return { ...r, Answers: answers };
+  });
 }
 
 /**
  * Sitter-driven lifecycle transition. The guard is entirely in SQL so it's atomic with the write:
- * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' is
- * terminal — once cancelled, no further transition matches. Confirming an already-confirmed row
- * still matches (harmless no-op). Returns whether a row actually changed.
+ * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' and
+ * 'declined' are both terminal — once set, no further transition matches. Confirming an
+ * already-confirmed row still matches (harmless no-op). Returns whether a row actually changed.
  *
- * 'declined' is a sitter's "no" to a still-pending request: stored as Status 'cancelled' with the
- * Declined flag set (the Status CHECK can't grow a value without a table rebuild), and only valid
- * from 'pending' — a confirmed booking is cancelled, never declined.
+ * 'declined' is a sitter's "no" to a still-pending request — a first-class Status value — and is
+ * only valid from 'pending': a confirmed booking is cancelled, never declined.
  */
 export async function updateBookingStatus(
   db: D1Database,
@@ -671,7 +704,7 @@ export async function updateBookingStatus(
     status === 'declined'
       ? await db
           .prepare(
-            `UPDATE BookingRequests SET Status = 'cancelled', Declined = 1
+            `UPDATE BookingRequests SET Status = 'declined'
              WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'pending'`,
           )
           .bind(tenantId, id)
@@ -679,7 +712,8 @@ export async function updateBookingStatus(
       : await db
           .prepare(
             `UPDATE BookingRequests SET Status = ?
-             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status != 'cancelled'`,
+             WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
+               AND Status NOT IN ('cancelled', 'declined')`,
           )
           .bind(status, tenantId, id)
           .run();
@@ -709,7 +743,7 @@ export async function getBookingWithCustomer(
  * either not cancelled OR cancelled with an assessed CancellationFee — the guard lives in the SQL
  * (INSERT ... SELECT ... WHERE) so it is atomic with the write, like updateBookingStatus's guarded
  * UPDATE. 'pending' is deliberately allowed: deposits are commonly collected before a booking is
- * confirmed. A cancelled booking normally refuses payment, but one carrying a cancellation fee is a
+ * confirmed. A cancelled or declined booking normally refuses payment, but one carrying a cancellation fee is a
  * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
  * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
  */
@@ -731,7 +765,7 @@ export async function insertPayment(
        SELECT ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
-         AND (Status != 'cancelled' OR CancellationFee IS NOT NULL)`,
+         AND (Status NOT IN ('cancelled', 'declined') OR CancellationFee IS NOT NULL)`,
     )
     .bind(
       id,
@@ -853,6 +887,7 @@ export async function getAnalytics(
         // cancelled one — a cancelled-with-fee booking is a live receivable. Aliased EstCost so the
         // route/UI shape is unchanged. SQLite can't reference the alias inside an expression, so the
         // CASE is repeated verbatim in ORDER BY.
+        // Declined rows match neither arm (never confirmed, never carry a fee) and so are never outstanding.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
                 CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END AS EstCost,
@@ -954,7 +989,6 @@ export async function setServiceConfig(
     /** Short widget-facing blurb; null clears it (0025). */
     description: string | null;
     questions: ServiceQuestion[];
-    minNights: number | null;
     maxNights: number | null;
     maxPetCount: number | null;
     acceptedPetTypes: string[] | null;
@@ -965,7 +999,7 @@ export async function setServiceConfig(
   const result = await db
     .prepare(
       `UPDATE TenantServices SET
-         Enabled = ?, Description = ?, Questions = ?, MinNights = ?, MaxNights = ?,
+         Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
          MaxPetCount = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?, CancellationTiers = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
@@ -973,7 +1007,6 @@ export async function setServiceConfig(
       config.enabled ? 1 : 0,
       config.description,
       JSON.stringify(config.questions),
-      config.minNights,
       config.maxNights,
       config.maxPetCount,
       config.acceptedPetTypes === null ? null : JSON.stringify(config.acceptedPetTypes),
@@ -995,7 +1028,6 @@ export async function replaceServiceOptions(
     label: string;
     durationMinutes: number | null;
     rate: number;
-    rateUnit: RateUnit;
     startTime: string | null;
     endTime: string | null;
     capacity: number | null;
@@ -1004,13 +1036,10 @@ export async function replaceServiceOptions(
 ): Promise<void> {
   // DELETE-then-INSERT as ONE atomic, single-round-trip batch: a mid-write failure can no longer
   // leave the service's options half-wiped, and N options cost one trip instead of N+1.
-  // NB: RateUnit here is the RETIRED per-option copy (see sql/schema.sql) — read by nothing and
-  // absent from TenantServiceOption; it is bound only because the column is NOT NULL with no
-  // DEFAULT. This input type is the write shape, deliberately separate from the read type.
   const insert = db.prepare(
     `INSERT INTO TenantServiceOptions
-       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity, WeekdaysOnly)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity, WeekdaysOnly)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   // Scrub rate rows for option keys NOT in the incoming set. OptionKeys are DERIVED
   // (d30/standard/label-slug), so a deleted option re-added later re-derives the SAME key and a
@@ -1036,7 +1065,6 @@ export async function replaceServiceOptions(
         o.label,
         o.durationMinutes,
         o.rate,
-        o.rateUnit,
         o.startTime,
         o.endTime,
         o.capacity,
@@ -1209,7 +1237,7 @@ export async function listSyncedBookingIds(
   const { results } = await db
     .prepare(
       `SELECT Id FROM BookingRequests
-       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status != 'cancelled'
+       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
@@ -1361,20 +1389,18 @@ export async function clearBookingCalendarEventIds(
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
+const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
+
 export async function getEndUserById(
   db: D1Database,
   tenantId: string,
   id: string,
 ): Promise<EndUser | null> {
   return await db
-    .prepare(
-      'SELECT Id, TenantId, Email, Name, Status, InvitedAt FROM EndUsers WHERE TenantId = ? AND Id = ?',
-    )
+    .prepare(`SELECT ${ENDUSER_COLS} FROM EndUsers WHERE TenantId = ? AND Id = ?`)
     .bind(tenantId, id)
     .first<EndUser>();
 }
-
-const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
 
 export async function getEndUserByEmail(
   db: D1Database,
@@ -2155,7 +2181,7 @@ export async function listBookingPetsForUser(
 // These are the ONLY functions exempt from the tenantId-first rule: both tables
 // gate entry INTO the tenancy model (platform-owner accounts and the signup
 // allowlist), so they cannot themselves be tenant rows. D1 access still lives
-// only in this module. See migrations/0013_invite_signup_owner_console.sql.
+// only in this module.
 // Callers normalize emails (trim + lowercase) before every read/write.
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -16,7 +16,6 @@ describe('booking lifecycle repo', () => {
       startDate: '2030-01-01',
       endDate: '2030-01-03',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 100,
       status: 'pending',
@@ -27,7 +26,6 @@ describe('booking lifecycle repo', () => {
       startDate: '2030-01-02',
       endDate: '2030-01-04',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 100,
       status: 'pending',
@@ -37,10 +35,10 @@ describe('booking lifecycle repo', () => {
     expect(rows.every((r) => r.TenantId === TENANT_A)).toBe(true);
     // Verify non-blocked filtering: no 'blocked' service types
     expect(rows.every((r) => r.ServiceType !== 'blocked')).toBe(true);
-    // Verify the created booking is in the list and has Declined=0
+    // Verify the created booking is in the list, still pending
     const createdRow = rows.find((r) => r.Id === a1)!;
     expect(createdRow).toBeDefined();
-    expect(createdRow.Declined).toBe(0);
+    expect(createdRow.Status).toBe('pending');
   });
 
   it('confirms a pending booking, then blocks re-declining it; cancel is terminal', async () => {
@@ -51,7 +49,6 @@ describe('booking lifecycle repo', () => {
       startDate: '2030-02-01',
       endDate: '2030-02-03',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 100,
       status: 'pending',
@@ -62,7 +59,7 @@ describe('booking lifecycle repo', () => {
     expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed')).toBe(false);
   });
 
-  it('declining a pending booking sets Status=cancelled and Declined=1', async () => {
+  it("declining a pending booking sets Status='declined', which is terminal", async () => {
     const { env } = createTestEnv();
     const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
@@ -70,15 +67,15 @@ describe('booking lifecycle repo', () => {
       startDate: '2030-03-01',
       endDate: null,
       optionKey: 'd30',
-      petType: 'dog',
       petCount: 1,
       estCost: 20,
       status: 'pending',
     });
     expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined')).toBe(true);
     const row = (await listBookingsForTenant(env.PAWBOOK_DB, TENANT_A)).find((r) => r.Id === id)!;
-    expect(row.Status).toBe('cancelled');
-    expect(row.Declined).toBe(1);
+    expect(row.Status).toBe('declined');
+    // Terminal: a declined request can't be quietly revived.
+    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed')).toBe(false);
   });
 
   it('will not update a booking that belongs to another tenant', async () => {
@@ -89,7 +86,6 @@ describe('booking lifecycle repo', () => {
       startDate: '2030-04-01',
       endDate: '2030-04-03',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 100,
       status: 'pending',

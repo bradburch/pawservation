@@ -125,7 +125,6 @@ describe('POST create-calendar', () => {
       startDate: addDays(today, 10),
       endDate: addDays(today, 13),
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 150,
       status: 'confirmed',

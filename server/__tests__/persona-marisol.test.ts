@@ -255,14 +255,12 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     expect(init.method).toBe('DELETE');
     expect(url).toContain(`/calendars/${CALENDAR_ID}/events/evt_marisol_3`);
 
-    // Under the hood a decline is stored as Status='cancelled' + Declined=1 (updateBookingStatus
-    // in server/db/repo.ts) — the API/dashboard-facing 'declined' status is derived from that
-    // combination (see admin.ts's `r.Declined ? 'declined' : r.Status`).
+    // A decline is stored directly as Status='declined' (updateBookingStatus's pending-only
+    // guard); the API surfaces the same string, so storage and wire can no longer disagree.
     const rowAfter = raw
-      .prepare(`SELECT Status, Declined, GCalEventId FROM BookingRequests WHERE Id = ?`)
-      .get(id) as { Status: string; Declined: number; GCalEventId: string };
-    expect(rowAfter.Status).toBe('cancelled');
-    expect(rowAfter.Declined).toBe(1);
+      .prepare(`SELECT Status, GCalEventId FROM BookingRequests WHERE Id = ?`)
+      .get(id) as { Status: string; GCalEventId: string };
+    expect(rowAfter.Status).toBe('declined');
     // GCalEventId is retained as a historical record even though the live event is gone.
     expect(rowAfter.GCalEventId).toBe('evt_marisol_3');
   });

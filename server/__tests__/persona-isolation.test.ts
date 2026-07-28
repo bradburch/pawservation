@@ -96,7 +96,6 @@ async function seedSynced(env: Env, tenantId: string, endUserId: string, eventId
     startDate: IN_WINDOW_START,
     endDate: IN_WINDOW_END,
     optionKey: 'standard',
-    petType: 'dog',
     petCount: 1,
     estCost: 150,
     status: 'confirmed',
@@ -140,7 +139,6 @@ describe('Scenario 1: event creation uses each tenant’s own bearer token + cal
       startDate: IN_WINDOW_START,
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 150,
       status: 'pending',
@@ -151,7 +149,6 @@ describe('Scenario 1: event creation uses each tenant’s own bearer token + cal
       startDate: IN_WINDOW_START,
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 150,
       status: 'pending',
@@ -299,7 +296,6 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
       startDate: IN_WINDOW_START,
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 150,
       status: 'pending',
@@ -344,7 +340,7 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
       env,
     );
     expect(res.status).toBe(200);
-    expect(await statusOf(env, idB)).toBe('cancelled'); // declined == cancelled + Declined flag
+    expect(await statusOf(env, idB)).toBe('declined');
 
     // Exactly the DELETE to B's calendar with B's token fired.
     const deleteCalls = spy.mock.calls.filter(

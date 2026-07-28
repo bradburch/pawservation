@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
-import type { Session } from '../shared.js';
+import type { ServiceForm, Session } from '../shared.js';
 import { Hint } from '../Hint';
 
-/** Renders the dates for one row: single date (+ time, for timed services) or a range. */
+/** Renders the dates for one row: single date (+ time, for timed services), or a range with the
+ * customer's optional arrival time. */
 function formatWhen(b: AdminBooking): string {
   const range = b.endDate ? `${b.startDate} – ${b.endDate}` : b.startDate;
-  return b.startTime ? `${range} at ${b.startTime}` : range;
+  if (!b.startTime) return range;
+  return b.endDate ? `${range}, arriving ${b.startTime}` : `${range} at ${b.startTime}`;
 }
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
@@ -50,6 +52,7 @@ type ListProps = {
   reloadBookings: () => void;
   handleError: (e: unknown) => void;
   clearError: () => void;
+  services: ServiceForm[];
 };
 
 /**
@@ -63,10 +66,16 @@ function BookingList({
   reloadBookings,
   handleError,
   clearError,
+  services,
 }: ListProps & { items: AdminBooking[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+
+  const questionLabel = (type: string, qid: string): string => {
+    const svc = services.find((s) => s.type === type);
+    return svc?.questions.find((q) => q.id === qid)?.label ?? qid;
+  };
 
   const setStatus = async (b: AdminBooking, status: 'confirmed' | 'declined' | 'cancelled') => {
     if (busyId) return;
@@ -138,9 +147,9 @@ function BookingList({
           Cancel
         </button>
       )}
-      {(isActive(b) || b.paidTotal > 0) && (
+      {(isActive(b) || b.paidTotal > 0 || Object.keys(b.answers).length > 0) && (
         <button onClick={() => setOpenId(openId === b.id ? null : b.id)}>
-          {openId === b.id ? 'Close' : 'Payments'}
+          {openId === b.id ? 'Close' : 'Details'}
         </button>
       )}
     </span>
@@ -162,15 +171,28 @@ function BookingList({
           {paid && <> · {paid}</>}
         </span>
         {actionsFor(b)}
-        {(isActive(b) || b.paidTotal > 0) && openId === b.id && (
-          <PaymentsPanel
-            session={session}
-            bookingId={b.id}
-            onChanged={async () => reloadBookings()}
-            handleError={handleError}
-            allowRecord={isActive(b)}
-          />
-        )}
+        {(isActive(b) || b.paidTotal > 0 || Object.keys(b.answers).length > 0) &&
+          openId === b.id && (
+            <>
+              {Object.keys(b.answers).length > 0 && (
+                <dl className="pb-answers">
+                  {Object.entries(b.answers).map(([qid, answer]) => (
+                    <div key={qid}>
+                      <dt>{questionLabel(b.type, qid)}</dt>
+                      <dd>{answer}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              <PaymentsPanel
+                session={session}
+                bookingId={b.id}
+                onChanged={async () => reloadBookings()}
+                handleError={handleError}
+                allowRecord={isActive(b)}
+              />
+            </>
+          )}
       </li>
     );
   };
@@ -201,6 +223,7 @@ export function PendingRequestsList({
   reloadBookings,
   handleError,
   clearError,
+  services,
 }: ListProps & { bookings: AdminBooking[] }) {
   const pending = bookings.filter((b) => b.status === 'pending').sort(byStartDate);
   return (
@@ -217,6 +240,7 @@ export function PendingRequestsList({
           reloadBookings={reloadBookings}
           handleError={handleError}
           clearError={clearError}
+          services={services}
         />
       )}
     </>
@@ -231,6 +255,7 @@ export function BookingsSection({
   clearError,
   focusId,
   onFocusConsumed,
+  services,
 }: ListProps & {
   bookings: AdminBooking[] | null;
   /** Chip deep-link from CalendarSection: scroll this booking's row into view and flash it. */
@@ -277,6 +302,7 @@ export function BookingsSection({
             reloadBookings={reloadBookings}
             handleError={handleError}
             clearError={clearError}
+            services={services}
           />
           {rest.length > 0 && (
             <>
@@ -287,6 +313,7 @@ export function BookingsSection({
                 reloadBookings={reloadBookings}
                 handleError={handleError}
                 clearError={clearError}
+                services={services}
               />
             </>
           )}

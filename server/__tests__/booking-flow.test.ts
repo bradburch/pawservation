@@ -103,7 +103,7 @@ describe('booking flow', () => {
     expect(res.status).toBe(400);
   });
 
-  it('persists valid answers and enforces the min-nights constraint', async () => {
+  it('persists valid answers to a booking', async () => {
     const { env } = createTestEnv();
     const adminHeaders = {
       Authorization: `Bearer ${await adminToken(TENANT_A)}`,
@@ -121,7 +121,6 @@ describe('booking flow', () => {
               enabled: true,
               options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
               questions: [{ label: 'Is your dog crate-trained?', type: 'yesno', required: true }],
-              minNights: 3,
             },
           ],
         }),
@@ -135,25 +134,8 @@ describe('booking flow', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
 
-    // Below the 3-night minimum → rejected.
-    const tooShort = await app.request(
-      '/api/sunny-paws/bookings',
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'boarding',
-          startDate: '2028-08-10',
-          endDate: '2028-08-11',
-          petIds: ['pet_sp_bella'],
-          answers: { [questionId]: 'yes' },
-        }),
-      },
-      env,
-    );
-    expect(tooShort.status).toBe(400);
-
-    // Meets the minimum and answers the required question → succeeds.
+    // Answers the required question → succeeds. There is no minimum-nights constraint —
+    // the minimum stay is structurally 1 night.
     const ok = await app.request(
       '/api/sunny-paws/bookings',
       {
@@ -304,11 +286,15 @@ describe('booking flow', () => {
     expect(booked.status).toBe('pending');
 
     const row = raw
-      .prepare('SELECT OptionKey, PetType, ServiceType FROM BookingRequests WHERE Id = ?')
-      .get(booked.id) as { OptionKey: string; PetType: string; ServiceType: string } | undefined;
+      .prepare('SELECT OptionKey, ServiceType FROM BookingRequests WHERE Id = ?')
+      .get(booked.id) as { OptionKey: string; ServiceType: string } | undefined;
     expect(row?.OptionKey).toBe('d60');
-    expect(row?.PetType).toBe('dog');
     expect(row?.ServiceType).toBe('walk');
+    // The pet link lives in BookingRequestPets, not a denormalized column.
+    const petRow = raw
+      .prepare('SELECT PetId FROM BookingRequestPets WHERE BookingRequestId = ?')
+      .get(booked.id) as { PetId: string } | undefined;
+    expect(petRow?.PetId).toBe('pet_sp_bella');
   });
 
   it('books a dog walk at happy-tails (Otis is an accepted species)', async () => {
@@ -383,8 +369,8 @@ describe('booking flow', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'opt_sp_morning',
@@ -394,7 +380,6 @@ describe('booking flow', () => {
         'Morning Walk',
         180,
         25,
-        'visit',
         '11:00',
         '14:00',
         2,
@@ -432,8 +417,8 @@ describe('booking flow', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'opt_sp_evening',
@@ -443,7 +428,6 @@ describe('booking flow', () => {
         'Evening Walk',
         120,
         30,
-        'visit',
         '17:00',
         '19:00',
         null,
@@ -479,32 +463,5 @@ describe('booking flow', () => {
     expect(res.status).toBe(201);
     expect(sentBody.start?.dateTime).toBe('2028-10-02T17:00:00');
     expect(sentBody.end?.dateTime).toBe('2028-10-02T19:00:00');
-  });
-
-  it('a stored MinPetCount no longer blocks a single-pet booking (retired in place)', async () => {
-    const { env, raw } = createTestEnv();
-    // MinPetCount is retired but NOT dropped, and no migration NULLs it — so an already-provisioned
-    // DB can still hold a value. Write one directly (nothing in the code can any more) and prove it
-    // is inert: this exact booking used to 400 "requires at least 3 pets".
-    raw
-      .prepare(`UPDATE TenantServices SET MinPetCount = 3 WHERE TenantId = ? AND ServiceType = ?`)
-      .run('tnt_sunnypaws', 'boarding');
-
-    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const res = await app.request(
-      '/api/sunny-paws/bookings',
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'boarding',
-          startDate: '2028-08-10',
-          endDate: '2028-08-15',
-          petIds: ['pet_sp_bella'], // one pet, against a stored minimum of three
-        }),
-      },
-      env,
-    );
-    expect(res.status).toBe(201);
   });
 });

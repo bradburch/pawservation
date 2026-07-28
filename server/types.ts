@@ -52,14 +52,13 @@ export type TenantService = {
   CapacityKind: CapacityKind;
   SortOrder: number;
   Questions: ServiceQuestion[];
-  MinNights: number | null;
   MaxNights: number | null;
-  // No MinPetCount: the column is retired in place (see sql/schema.sql) — services have only a
-  // max-pets limit. Omitting it here makes reading the retired column a type error.
+  // No MinNights and no MinPetCount: both columns are DROPPED (2026-07-27 re-baseline) — the
+  // minimum stay is structurally 1 night and services have only a max-pets limit.
   MaxPetCount: number | null;
   /** Pet-type slugs this service accepts; null = accepts every enabled type. */
   AcceptedPetTypes: string[] | null;
-  /** Pets per day cap for boarding and housesit pool services; null = unlimited; 0017 folds housesit MaxPerDay in. */
+  /** Pets per day cap for boarding and housesit pool services; null = unlimited (housesit's separate MaxPerDay column was folded into this one and later dropped). */
   MaxConcurrentPets: number | null;
   /** Tiered cancel policy; null = no fee (0016). */
   CancellationTiers: CancellationTier[] | null;
@@ -73,9 +72,8 @@ export type TenantServiceOption = {
   Label: string;
   DurationMinutes: number | null;
   Rate: number;
-  // No RateUnit: the TenantServiceOptions copy is retired and not selected (see sql/schema.sql).
-  // The billing unit lives on TenantService.RateUnit; omitting it here makes reading the wrong
-  // column a type error rather than a convention.
+  // No RateUnit: the billing unit lives on TenantService.RateUnit only (the per-option column is
+  // dropped); omitting it here makes reading the wrong source a type error.
   StartTime: string | null; // 'HH:MM'; NULL = no fixed window
   EndTime: string | null; // 'HH:MM'; NULL = no fixed window
   Capacity: number | null; // max concurrent bookings/date; NULL = unlimited
@@ -84,8 +82,8 @@ export type TenantServiceOption = {
 
 /**
  * One explicit rate for a specific set of pets. GroupKey is the sorted pet-id list; OptionKey
- * pins duration (see migrations/0020_pet_group_pricing.sql), so there is no DurationMinutes here
- * and no RateUnit — the billing unit comes from TenantServices.RateUnit.
+ * pins duration, so there is no DurationMinutes here and no RateUnit — the billing unit comes
+ * from TenantServices.RateUnit.
  */
 export type PetGroupPricingRow = {
   Id: string;
@@ -141,18 +139,15 @@ export type BookingRow = {
   StartDate: string;
   EndDate: string | null;
   OptionKey: string | null;
-  PetType: PetType | null;
   PetCount: number;
   StartTime: string | null;
   GCalEventId: string | null;
   EstCost: number | null;
   /** Fee assessed at cancel time, whole dollars; null = none assessed (0016). */
   CancellationFee: number | null;
-  Status: 'pending' | 'confirmed' | 'cancelled';
-  // 1 = the cancellation was the sitter declining a pending request. Optional because only the
-  // booking-list queries select it; capacity/availability queries never need it.
-  Declined?: number;
-  /** Attribution channel: 'mcp', 'voice', etc.; null = embed widget (0022). Optional: only selected where displayed. */
+  Status: 'pending' | 'confirmed' | 'cancelled' | 'declined';
+  /** Attribution channel stamped at insert ('mcp', 'voice', …); null = embed widget. Write-only
+   * today — no query selects it; it exists for the out-of-tree booking MCP and future reporting. */
   Source?: string | null;
   CreatedAt: string;
 };
@@ -201,7 +196,7 @@ export type ProviderConnection = {
   TenantId: string;
   Capability: string;
   Provider: string;
-  Status: 'disconnected' | 'connected-stub' | 'connected'; // 'connected-stub' is a legacy value from the removed stub-provider flow; no code path writes it anymore
+  Status: 'disconnected' | 'connected';
   ConnectedAt: string | null;
   CalendarId: string | null;
 };

@@ -280,6 +280,7 @@ export function CalendarSection({
             reloadBookings={reloadBookings}
             handleError={handleError}
             clearError={clearError}
+            services={settings.services}
           />
         </>
       )}

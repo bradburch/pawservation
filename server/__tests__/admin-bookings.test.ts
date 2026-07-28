@@ -162,7 +162,6 @@ describe('admin booking lifecycle', () => {
       startDate: '2030-06-01',
       endDate: '2030-06-03',
       optionKey: 'standard',
-      petType: 'dog',
       petCount: 1,
       estCost: 100,
       status: 'confirmed',
@@ -266,5 +265,42 @@ describe('admin booking lifecycle', () => {
     // ...and the same booking now succeeds, since capacity is back to 1/2.
     const retry = await bookBoarding(env, start, end, ['pet_sp_bella']);
     expect(retry.status).toBe(201);
+  });
+
+  it("GET returns each booking's intake answers (round-trip; {} when none)", async () => {
+    const { env } = createTestEnv();
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const withAnswers = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: 'boarding',
+          startDate: '2028-11-01',
+          endDate: '2028-11-03',
+          petIds: ['pet_sp_bella'],
+          answers: { q_feeding: 'Twice a day' },
+        }),
+      },
+      env,
+    );
+    expect(withAnswers.status).toBe(201);
+    const created = (await withAnswers.json()) as { id: string };
+    const bare = (await (await bookBoarding(env, '2028-12-01', '2028-12-03')).json()) as {
+      id: string;
+    };
+
+    const list = (await (
+      await app.request(
+        '/api/sunny-paws/admin/bookings',
+        { headers: await adminHeaders(TENANT_A) },
+        env,
+      )
+    ).json()) as { bookings: { id: string; answers: Record<string, string> }[] };
+    expect(list.bookings.find((b) => b.id === created.id)?.answers).toEqual({
+      q_feeding: 'Twice a day',
+    });
+    expect(list.bookings.find((b) => b.id === bare.id)?.answers).toEqual({});
   });
 });

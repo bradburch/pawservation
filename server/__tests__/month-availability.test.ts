@@ -17,7 +17,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-10',
       endDate: '2026-10-11',
       optionKey: null,
-      petType: null,
       petCount: 1,
       estCost: null,
       status: 'confirmed',
@@ -29,7 +28,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-20',
       endDate: '2026-10-21',
       optionKey: null,
-      petType: 'dog',
       petCount: 1,
       estCost: null,
       status: 'confirmed',
@@ -71,7 +69,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-10',
       endDate: '2026-10-11',
       optionKey: null,
-      petType: null,
       petCount: 1,
       estCost: null,
       status: 'confirmed',
@@ -82,7 +79,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-20',
       endDate: '2026-10-21',
       optionKey: null,
-      petType: 'dog',
       petCount: 1,
       estCost: null,
       status: 'confirmed',
@@ -132,7 +128,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-05',
       endDate: '2026-10-06',
       optionKey: null,
-      petType: 'dog',
       petCount: 2,
       estCost: null,
       status: 'confirmed',
@@ -159,8 +154,8 @@ describe('GET /api/:slug/availability/month', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'opt_test_morning',
@@ -170,7 +165,6 @@ describe('GET /api/:slug/availability/month', () => {
         'Morning Walk',
         180,
         25,
-        'visit',
         '11:00',
         '14:00',
         1,
@@ -181,7 +175,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-05',
       endDate: null,
       optionKey: 'morning-walk',
-      petType: null,
       petCount: 1,
       startTime: '11:00',
       estCost: null,
@@ -222,8 +215,8 @@ describe('GET /api/:slug/availability/month', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'opt_test_afternoon',
@@ -233,7 +226,6 @@ describe('GET /api/:slug/availability/month', () => {
         'Afternoon Walk',
         180,
         25,
-        'visit',
         '11:00',
         '14:00',
         null,
@@ -244,7 +236,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-10-15',
       endDate: null,
       optionKey: 'afternoon-walk',
-      petType: 'dog',
       petCount: 1,
       startTime: '11:00',
       estCost: null,
@@ -281,7 +272,6 @@ describe('GET /api/:slug/availability/month', () => {
         startDate: '2026-11-12',
         endDate: null,
         optionKey: 'd30',
-        petType: null,
         petCount: 2,
         startTime: null,
         estCost: null,
@@ -318,7 +308,6 @@ describe('GET /api/:slug/availability/month', () => {
       startDate: '2026-11-05',
       endDate: '2026-11-06',
       optionKey: 'standard',
-      petType: null,
       petCount: 2,
       estCost: null,
       status: 'confirmed',

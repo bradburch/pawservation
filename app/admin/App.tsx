@@ -596,7 +596,6 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
             petRates: o.petRates,
           })),
           questions: s.questions,
-          minNights: s.minNights,
           maxNights: s.maxNights,
           maxPetCount: s.maxPetCount,
           acceptedPetTypes: s.acceptedPetTypes,
@@ -802,6 +801,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         clearError={() => setError('')}
         focusId={focusBookingId}
         onFocusConsumed={() => setFocusBookingId(null)}
+        services={settings.services}
       />
     ),
     earnings: (

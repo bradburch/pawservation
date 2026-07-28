@@ -80,6 +80,7 @@ import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
   isTemplateId,
+  MAX_QUESTIONS_PER_SERVICE,
   MAX_SERVICES,
   RESERVED_SERVICE_SLUGS,
   SERVICE_TEMPLATES,
@@ -99,6 +100,7 @@ import {
   isValidDuration,
   isValidRate,
   isValidTimeString,
+  MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
 import type { AppEnv, Tenant } from '../types';
@@ -389,6 +391,7 @@ type ServiceBody = {
   description?: string | null;
   options?: OptionBody[];
   questions?: QuestionBody[];
+  /** Removed — declared only so a client that still sends it is REJECTED, not silently ignored. */
   minNights?: number | null;
   maxNights?: number | null;
   /** Retired — declared only so a client that still sends it is REJECTED, not silently ignored. */
@@ -481,7 +484,6 @@ export const adminRoutes = new Hono<AppEnv>()
         custom: !isTemplateId(svc.ServiceType),
         enabled: Boolean(svc.Enabled),
         questions: svc.Questions,
-        minNights: svc.MinNights,
         maxNights: svc.MaxNights,
         maxPetCount: svc.MaxPetCount,
         acceptedPetTypes: svc.AcceptedPetTypes,
@@ -578,6 +580,13 @@ export const adminRoutes = new Hono<AppEnv>()
       );
       if ('error' in resolvedOptions) return c.json({ error: resolvedOptions.error }, 400);
       resolvedOptionsByType.set(svc.type as string, resolvedOptions.resolved);
+      if ((svc.questions?.length ?? 0) > MAX_QUESTIONS_PER_SERVICE)
+        return c.json(
+          {
+            error: `${meta.Label}: a service can have at most ${MAX_QUESTIONS_PER_SERVICE} questions — shorter forms get answered.`,
+          },
+          400,
+        );
       for (const q of svc.questions ?? []) {
         const qError = validateQuestionBody(q);
         if (qError) return c.json({ error: qError }, 400);
@@ -592,16 +601,22 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
-      if (
-        !isNullableLimit(svc.minNights ?? null, DEFENSIVE_MAX_NIGHTS) ||
-        !isNullableLimit(svc.maxNights ?? null, DEFENSIVE_MAX_NIGHTS)
-      )
+      if (!isNullableLimit(svc.maxNights ?? null, DEFENSIVE_MAX_NIGHTS))
         return c.json({ error: `${meta.Label}: nights must be a positive number, or blank.` }, 400);
-      if (svc.minNights != null && svc.maxNights != null && svc.minNights > svc.maxNights)
-        return c.json({ error: `${meta.Label}: min nights cannot exceed max nights.` }, 400);
-      if (!isNullableLimit(svc.maxPetCount ?? null, DEFENSIVE_MAX_PET_COUNT))
+      // MinNights is removed: the minimum stay is structurally 1 night. Same treatment as
+      // minPetCount below — a client that still sends one is rejected, not silently dropped.
+      if (svc.minNights != null)
         return c.json(
-          { error: `${meta.Label}: pet count must be a positive number, or blank.` },
+          {
+            error: `${meta.Label}: services no longer have a minimum stay — the minimum is 1 night.`,
+          },
+          400,
+        );
+      if (!isNullableLimit(svc.maxPetCount ?? null, MAX_PET_COUNT_CAP))
+        return c.json(
+          {
+            error: `${meta.Label}: pet count must be between 1 and ${MAX_PET_COUNT_CAP}, or blank.`,
+          },
           400,
         );
       // MinPetCount is retired: services have only a MAX. Same treatment as maxPerDay below — a
@@ -633,6 +648,19 @@ export const adminRoutes = new Hono<AppEnv>()
       if (svc.maxPerDay != null)
         return c.json(
           { error: `${meta.Label}: that capacity doesn't apply to this service.` },
+          400,
+        );
+      // A daily pool smaller than one booking's own max is a foot-gun: the widget would offer a
+      // pet count the calendar can never seat. Compare the EFFECTIVE values (incoming or stored,
+      // same PATCH semantics as the writes below).
+      const effMaxPetCount = 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : meta.MaxPetCount;
+      const effMaxConcurrent =
+        'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : meta.MaxConcurrentPets;
+      if (effMaxPetCount != null && effMaxConcurrent != null && effMaxConcurrent < effMaxPetCount)
+        return c.json(
+          {
+            error: `${meta.Label}: pets in care per day (${effMaxConcurrent}) can't be lower than the pets allowed on one booking (${effMaxPetCount}).`,
+          },
           400,
         );
       if (svc.cancellationTiers != null && !validateCancellationTiers(svc.cancellationTiers))
@@ -711,7 +739,6 @@ export const adminRoutes = new Hono<AppEnv>()
         enabled: svc.enabled ?? false,
         description: resolveServiceDescription(svc, current.Description),
         questions,
-        minNights: 'minNights' in svc ? (svc.minNights ?? null) : current.MinNights,
         maxNights: 'maxNights' in svc ? (svc.maxNights ?? null) : current.MaxNights,
         maxPetCount: 'maxPetCount' in svc ? (svc.maxPetCount ?? null) : current.MaxPetCount,
         acceptedPetTypes:
@@ -734,10 +761,6 @@ export const adminRoutes = new Hono<AppEnv>()
           label: o.label,
           durationMinutes: o.durationMinutes,
           rate: o.rate,
-          // Copied down from the parent service row only to satisfy the column's NOT NULL
-          // constraint — TenantServiceOptions.RateUnit is retired and read by nothing (every price
-          // reads TenantServices.RateUnit). Never authoritative; never client-settable.
-          rateUnit: current.RateUnit,
           startTime: o.startTime,
           endTime: o.endTime,
           capacity: o.capacity,
@@ -973,7 +996,6 @@ export const adminRoutes = new Hono<AppEnv>()
       startDate: start,
       endDate: end,
       optionKey: null,
-      petType: null,
       petCount: 1,
       estCost: null,
       status: 'confirmed',
@@ -1561,9 +1583,10 @@ export const adminRoutes = new Hono<AppEnv>()
         startTime: r.StartTime,
         optionKey: r.OptionKey,
         petCount: r.PetCount,
+        answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
-        status: r.Declined ? 'declined' : r.Status,
+        status: r.Status,
         cancellationFee: r.CancellationFee,
         feeIfCancelledToday:
           r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
@@ -1642,7 +1665,7 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     } else if (booking?.GCalEventId) {
       // Cancel/decline: delete the synced Google event. The booking keeps its GCalEventId as a
-      // historical record; reconciliation ignores cancelled rows.
+      // historical record; reconciliation ignores cancelled and declined rows.
       calendarTask = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId);
     }
 

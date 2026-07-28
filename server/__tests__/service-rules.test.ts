@@ -76,26 +76,23 @@ describe('validateAnswers', () => {
 });
 
 describe('validateServiceConstraints', () => {
-  const noLimits = { minNights: null, maxNights: null, maxPetCount: null };
+  const noLimits = { maxNights: null, maxPetCount: null };
 
   it('passes when every constraint is null (auto pass-through)', () => {
     expect(validateServiceConstraints(noLimits, { nights: 1, petCount: 50 })).toBeNull();
   });
 
-  it('enforces min/max nights at the boundary', () => {
-    const c = { ...noLimits, minNights: 2, maxNights: 5 };
-    expect(validateServiceConstraints(c, { nights: 2, petCount: 1 })).toBeNull();
+  it('enforces max nights at the boundary (there is no minimum — 1 night always passes)', () => {
+    const c = { ...noLimits, maxNights: 5 };
+    expect(validateServiceConstraints(c, { nights: 1, petCount: 1 })).toBeNull();
     expect(validateServiceConstraints(c, { nights: 5, petCount: 1 })).toBeNull();
-    expect(validateServiceConstraints(c, { nights: 1, petCount: 1 })).toBe(
-      'This service requires at least 2 nights.',
-    );
     expect(validateServiceConstraints(c, { nights: 6, petCount: 1 })).toBe(
       'This service allows at most 5 nights.',
     );
   });
 
   it('ignores night constraints for non-range services (nights: null)', () => {
-    const c = { ...noLimits, minNights: 2 };
+    const c = { ...noLimits, maxNights: 2 };
     expect(validateServiceConstraints(c, { nights: null, petCount: 1 })).toBeNull();
   });
 

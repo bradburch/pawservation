@@ -17,7 +17,6 @@ const opt = (optionKey: string, rate: number) => ({
   label: optionKey,
   durationMinutes: 30,
   rate,
-  rateUnit: 'walk' as const,
   startTime: null,
   endTime: null,
   capacity: null,
