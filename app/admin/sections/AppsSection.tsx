@@ -115,8 +115,8 @@ function CalendarIdField({
           Paste the calendar you use for pet-sitting and bookings are written there instead. Find
           the ID in Google Calendar → Settings → your calendar → &quot;Integrate calendar&quot; →
           Calendar ID (like <code>abc123@group.calendar.google.com</code>). Leave blank to use your
-          main calendar. Sync is two-way with the connected calendar: bookings are written out,
-          and any event you add there blocks those dates for new requests (deleting a synced
+          main calendar. Sync is two-way with the connected calendar: bookings are written out, and
+          any event you add there blocks those dates for new requests (deleting a synced
           booking&apos;s event cancels that booking, and the client is notified). Calendars other
           than the connected one are never read.
         </small>
@@ -152,8 +152,8 @@ export function AppsSection({
         <IconPlug size={18} /> Connected apps
         <Hint label="Connected apps">
           Link Pawservation to tools you already use. With Google Calendar connected, bookings
-          appear on your calendar automatically — and busy events on that calendar block new
-          booking requests here.
+          appear on your calendar automatically — and busy events on that calendar block new booking
+          requests here.
         </Hint>
       </h2>
       <ul>
