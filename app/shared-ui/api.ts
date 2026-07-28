@@ -133,6 +133,36 @@ export type Payment = {
   note: string | null;
 };
 
+export type VenmoPreviewRow = {
+  txnId: string;
+  date: string;
+  amount: number;
+  from: string;
+  note: string;
+};
+export type VenmoPreview = {
+  matched: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    bookingId: string;
+    bookingLabel: string;
+  })[];
+  ambiguous: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    candidates: { bookingId: string; label: string; balance: number }[];
+  })[];
+  unmatched: (VenmoPreviewRow & { reason: string })[];
+  alreadyImported: VenmoPreviewRow[];
+  ignored: number;
+  problems: { row: number; reason: string }[];
+};
+export type VenmoImportResult = {
+  imported: number;
+  totalAmount: number;
+  skipped: { txnId: string; reason: string }[];
+};
+
 export type AnalyticsPayload = {
   tiles: {
     thisMonth: number;
@@ -382,6 +412,23 @@ export const adminApi = {
       request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
         method: 'DELETE',
         headers: authHeaders(token),
+      }),
+    venmoPreview: (slug: string, token: string, csv: string) =>
+      request<VenmoPreview>(`/api/${slug}/admin/payments/venmo/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv }),
+      }),
+    venmoImport: (
+      slug: string,
+      token: string,
+      csv: string,
+      choices: { txnId: string; bookingId: string }[],
+    ) =>
+      request<VenmoImportResult>(`/api/${slug}/admin/payments/venmo/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, choices }),
       }),
   },
   analytics: {

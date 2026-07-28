@@ -1,0 +1,247 @@
+import { useState } from 'react';
+import { adminApi, type VenmoImportResult, type VenmoPreview } from '../shared-ui/api.js';
+import type { Session } from './shared.js';
+import { Hint } from './Hint';
+
+/**
+ * Upload the CSV Venmo gives you, see what Pawservation thinks each received payment belongs to,
+ * fix what it got wrong, and record the lot.
+ *
+ * The file text lives in this component's state for exactly as long as the sitter is deciding: the
+ * confirm request sends it back so the SERVER re-reads every amount and date (the browser posts
+ * only which transaction goes on which booking), and both are dropped the moment the import
+ * finishes. Nothing about the file is stored anywhere, which is what the copy below promises.
+ */
+export function VenmoImportPanel({
+  session,
+  onImported,
+  handleError,
+  clearError,
+}: {
+  session: Session;
+  onImported: () => void | Promise<void>;
+  handleError: (e: unknown) => void;
+  clearError: () => void;
+}) {
+  const [csv, setCsv] = useState<string | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [fileKey, setFileKey] = useState(0);
+  const [preview, setPreview] = useState<VenmoPreview | null>(null);
+  const [choices, setChoices] = useState<Map<string, string>>(new Map());
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<VenmoImportResult | null>(null);
+
+  const reset = () => {
+    setCsv(null);
+    setFileName('');
+    setPreview(null);
+    setChoices(new Map());
+    setFileKey((k) => k + 1);
+  };
+
+  const chosen = [...choices.entries()].map(([txnId, bookingId]) => ({ txnId, bookingId }));
+  const chosenTotal = preview
+    ? chosen.reduce((sum, { txnId }) => {
+        const row = [...preview.matched, ...preview.ambiguous].find((r) => r.txnId === txnId);
+        return sum + (row?.amount ?? 0);
+      }, 0)
+    : 0;
+
+  const check = async (file: File) => {
+    clearError();
+    setResult(null);
+    setBusy(true);
+    try {
+      const text = await file.text();
+      const next = await adminApi.payments.venmoPreview(session.slug, session.token, text);
+      setCsv(text);
+      setPreview(next);
+      // Everything Pawservation is sure about starts ticked; ambiguous rows start unticked so the
+      // sitter has to make the choice rather than accept a guess.
+      setChoices(new Map(next.matched.map((m) => [m.txnId, m.bookingId])));
+    } catch (e) {
+      reset();
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = (txnId: string, bookingId: string) =>
+    setChoices((prev) => {
+      const next = new Map(prev);
+      if (next.get(txnId) === bookingId) next.delete(txnId);
+      else next.set(txnId, bookingId);
+      return next;
+    });
+
+  const record = async () => {
+    if (!csv || chosen.length === 0 || busy) return;
+    clearError();
+    setBusy(true);
+    try {
+      setResult(await adminApi.payments.venmoImport(session.slug, session.token, csv, chosen));
+      reset();
+      await onImported();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pb-venmo-import">
+      <h3>
+        Import from Venmo
+        <Hint label="Importing from Venmo">
+          Download your transaction CSV from Venmo and upload it here. Pawservation reads the
+          payments that came in, works out which client sent each one, and shows you everything
+          before a single payment is recorded.
+        </Hint>
+      </h3>
+      <p className="pb-applies">
+        Files are checked and read in memory &mdash; we never store them. Payments are matched to
+        clients by the Venmo name they came from. If a client pays under a handle that isn&rsquo;t
+        their name, put it on their row in Clients (&ldquo;Venmo username (if different from their
+        name)&rdquo;) and check the file again.
+      </p>
+
+      <div className="pb-row">
+        <input
+          key={fileKey}
+          type="file"
+          accept=".csv"
+          aria-label="Venmo CSV"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            setFileName(file?.name ?? '');
+            if (file) void check(file);
+          }}
+        />
+        {busy && <span className="pb-hint">Working&hellip;</span>}
+        {preview && (
+          <button onClick={reset} disabled={busy}>
+            Start over
+          </button>
+        )}
+      </div>
+
+      {result && (
+        <p className="pb-applies" role="status">
+          Recorded {result.imported} payment{result.imported === 1 ? '' : 's'} totalling $
+          {result.totalAmount}.
+          {result.skipped.length > 0
+            ? ` ${result.skipped.length} skipped: ${result.skipped
+                .map((s) => s.reason)
+                .join('; ')}.`
+            : ''}
+        </p>
+      )}
+
+      {preview && (
+        <>
+          {preview.matched.length + preview.ambiguous.length === 0 && (
+            <p className="pb-hint">
+              Nothing in {fileName} needs recording &mdash; see below for why.
+            </p>
+          )}
+
+          {preview.matched.length > 0 && (
+            <>
+              <h4>Ready to record</h4>
+              <ul>
+                {preview.matched.map((m) => (
+                  <li key={m.txnId}>
+                    <label className="pb-inline">
+                      <input
+                        type="checkbox"
+                        checked={choices.get(m.txnId) === m.bookingId}
+                        onChange={() => toggle(m.txnId, m.bookingId)}
+                      />{' '}
+                      ${m.amount} from {m.clientLabel} on {m.date} &rarr; {m.bookingLabel}
+                      {m.note ? ` — “${m.note}”` : ''}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {preview.ambiguous.length > 0 && (
+            <>
+              <h4>Which booking?</h4>
+              <ul>
+                {preview.ambiguous.map((a) => (
+                  <li key={a.txnId}>
+                    ${a.amount} from {a.clientLabel} on {a.date}
+                    {a.note ? ` — “${a.note}”` : ''}
+                    <select
+                      value={choices.get(a.txnId) ?? ''}
+                      aria-label={`Booking for the $${a.amount} payment from ${a.clientLabel}`}
+                      onChange={(e) =>
+                        setChoices((prev) => {
+                          const next = new Map(prev);
+                          if (e.target.value === '') next.delete(a.txnId);
+                          else next.set(a.txnId, e.target.value);
+                          return next;
+                        })
+                      }
+                    >
+                      <option value="">Don&rsquo;t record this one</option>
+                      {a.candidates.map((candidate) => (
+                        <option key={candidate.bookingId} value={candidate.bookingId}>
+                          {candidate.label} (${candidate.balance} owing)
+                        </option>
+                      ))}
+                    </select>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {preview.unmatched.length > 0 && (
+            <>
+              <h4>Couldn&rsquo;t place these</h4>
+              <ul>
+                {preview.unmatched.map((u) => (
+                  <li key={u.txnId} className="pb-hint">
+                    ${u.amount} from {u.from || 'an unnamed sender'} on {u.date} &mdash; {u.reason}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {preview.problems.length > 0 && (
+            <ul>
+              {preview.problems.map((p) => (
+                <li key={p.row} className="pb-hint">
+                  Row {p.row}: {p.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <p className="pb-hint">
+            {preview.alreadyImported.length > 0
+              ? `${preview.alreadyImported.length} payment(s) in this file were imported before and are left alone. `
+              : ''}
+            {preview.ignored > 0
+              ? `${preview.ignored} row(s) weren't client payments coming in (bank transfers, pending or cancelled) and were skipped.`
+              : ''}
+          </p>
+
+          <div className="pb-row">
+            <button onClick={() => void record()} disabled={busy || chosen.length === 0}>
+              {busy
+                ? 'Recording…'
+                : `Record ${chosen.length} payment${chosen.length === 1 ? '' : 's'} ($${chosenTotal})`}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
