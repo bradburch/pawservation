@@ -104,3 +104,106 @@ describe('POST /:slug/admin/payments/venmo/preview', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('POST /:slug/admin/payments/venmo/import', () => {
+  const choices = [{ txnId: '4139874112233445566', bookingId: 'seed_sp_board1' }];
+
+  it('records the confirmed rows with the amounts the SERVER read from the file', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ imported: 1, totalAmount: 250, skipped: [] });
+    const row = raw
+      .prepare('SELECT Amount, Method, PaidDate, Note, ExternalRef FROM Payments')
+      .get() as Record<string, unknown>;
+    expect(row).toMatchObject({
+      Amount: 250,
+      Method: 'venmo',
+      PaidDate: '2026-07-03',
+      ExternalRef: '4139874112233445566',
+    });
+    expect(String(row.Note)).toContain('Boarding for Bella');
+  });
+
+  it('is idempotent: re-uploading the same file records nothing twice', async () => {
+    const { env, raw } = createTestEnv();
+    await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices });
+    // Second pass: the preview now reports it as already imported…
+    const preview = (await (
+      await post(env, 'payments/venmo/preview', { csv: VENMO_CSV })
+    ).json()) as { matched: unknown[]; alreadyImported: { txnId: string }[] };
+    expect(preview.matched).toEqual([]);
+    expect(preview.alreadyImported.map((r) => r.txnId)).toEqual(['4139874112233445566']);
+    // …and a replayed confirm is refused by the unique index, not by a note substring.
+    const again = await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices });
+    expect(await again.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ txnId: '4139874112233445566', reason: 'Already imported' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
+  });
+
+  it('ignores a dollar figure in the body — money comes from the file, never the client', async () => {
+    const { env, raw } = createTestEnv();
+    await post(env, 'payments/venmo/import', {
+      csv: VENMO_CSV,
+      choices: [{ ...choices[0], amount: 999999, paidDate: '1999-01-01', method: 'cash' }],
+    });
+    expect(raw.prepare('SELECT Amount, Method, PaidDate FROM Payments').get()).toMatchObject({
+      Amount: 250,
+      Method: 'venmo',
+      PaidDate: '2026-07-03',
+    });
+  });
+
+  it('refuses a booking that is not one of that transaction’s candidates', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/venmo/import', {
+      csv: VENMO_CSV,
+      // seed_ht_board1 belongs to another tenant entirely; seed_sp_pend1 is pending, not owing.
+      choices: [{ txnId: '4139874112233445566', bookingId: 'seed_ht_board1' }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [
+        {
+          txnId: '4139874112233445566',
+          reason: 'That booking is no longer a match for this payment',
+        },
+      ],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('skips a transaction that is not in the file it was sent with', async () => {
+    const { env } = createTestEnv();
+    const res = await post(env, 'payments/venmo/import', {
+      csv: VENMO_CSV,
+      choices: [{ txnId: 'not-in-this-file', bookingId: 'seed_sp_board1' }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ txnId: 'not-in-this-file', reason: 'That transaction is not in this file' }],
+    });
+  });
+
+  it('400s a malformed choices list', async () => {
+    const { env } = createTestEnv();
+    expect((await post(env, 'payments/venmo/import', { csv: VENMO_CSV })).status).toBe(400);
+    expect(
+      (await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices: [{ txnId: 5 }] }))
+        .status,
+    ).toBe(400);
+  });
+
+  it('does not let one tenant import against another tenant’s booking', async () => {
+    const { env, raw } = createTestEnv();
+    await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices }, TENANT_B, 'happy-tails');
+    // Happy Tails' own Jess owes $400, so the payment lands on THEIR booking or not at all.
+    const rows = raw.prepare('SELECT TenantId, BookingRequestId FROM Payments').all();
+    for (const r of rows as { TenantId: string; BookingRequestId: string }[]) {
+      expect(r.TenantId).toBe(TENANT_B);
+      expect(r.BookingRequestId).not.toBe('seed_sp_board1');
+    }
+  });
+});

@@ -93,8 +93,12 @@ import {
 import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
 import {
+  isVenmoTxnId,
+  MAX_VENMO_ROWS,
   matchVenmoTxns,
+  normalizeVenmoName,
   parseVenmoCsv,
+  rankCandidates,
   type MatchClient,
   type OutstandingBooking,
 } from '../lib/venmo';
@@ -1881,4 +1885,92 @@ export const adminRoutes = new Hono<AppEnv>()
     const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
     const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
     return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
+  })
+
+  /**
+   * Record the rows the sitter approved. The CSV comes back with the request and is parsed and
+   * matched AGAIN from scratch: the body supplies only which transaction goes on which booking, so
+   * every dollar figure, date and note is the server's own reading of the file. A bookingId is
+   * honoured only when it is one of the candidates this request just ranked — the preview is not a
+   * token of trust. The file itself is still never stored.
+   */
+  .post('/:slug/admin/payments/venmo/import', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ csv?: unknown; choices?: unknown }>()
+      .catch(() => ({}) as { csv?: unknown; choices?: unknown });
+    if (!Array.isArray(body.choices) || body.choices.length === 0)
+      return c.json({ error: 'Choose at least one payment to record.' }, 400);
+    if (body.choices.length > MAX_VENMO_ROWS)
+      return c.json({ error: `Record ${MAX_VENMO_ROWS} payments or fewer at a time.` }, 400);
+    const choices: { txnId: string; bookingId: string }[] = [];
+    for (const raw of body.choices) {
+      const choice = raw as { txnId?: unknown; bookingId?: unknown };
+      if (
+        !isVenmoTxnId(choice.txnId) ||
+        typeof choice.bookingId !== 'string' ||
+        choice.bookingId === ''
+      )
+        return c.json({ error: 'That list of payments is malformed.' }, 400);
+      choices.push({ txnId: choice.txnId, bookingId: choice.bookingId });
+    }
+
+    const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const txnById = new Map(parsed.incoming.map((t) => [t.txnId, t]));
+    const byClient = new Map<string, MatchClient>();
+    for (const client of inputs.clients)
+      byClient.set(normalizeVenmoName(client.venmoUsername ?? client.name ?? ''), client);
+
+    const skipped: { txnId: string; reason: string }[] = [];
+    let imported = 0;
+    let totalAmount = 0;
+
+    for (const { txnId, bookingId } of choices) {
+      const txn = txnById.get(txnId);
+      if (!txn) {
+        skipped.push({ txnId, reason: 'That transaction is not in this file' });
+        continue;
+      }
+      if (inputs.alreadyImported.has(txnId)) {
+        skipped.push({ txnId, reason: 'Already imported' });
+        continue;
+      }
+      // Re-rank from THIS request's data; the browser's idea of the candidates is never trusted.
+      const client = byClient.get(normalizeVenmoName(txn.from));
+      const candidates = client
+        ? rankCandidates(
+            txn,
+            inputs.outstanding.filter((b) => b.endUserId === client.endUserId),
+          )
+        : [];
+      if (!candidates.some((candidate) => candidate.bookingId === bookingId)) {
+        skipped.push({ txnId, reason: 'That booking is no longer a match for this payment' });
+        continue;
+      }
+      const note = `Venmo import — ${txn.from}${txn.note ? `: ${txn.note}` : ''} (txn ${txn.txnId})`;
+      try {
+        const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
+          bookingRequestId: bookingId,
+          amount: txn.amount,
+          method: 'venmo',
+          paidDate: txn.date,
+          note: note.slice(0, 300),
+          externalRef: txn.txnId,
+        });
+        if (!paymentId) {
+          skipped.push({ txnId, reason: 'That booking can no longer take a payment' });
+          continue;
+        }
+        imported++;
+        totalAmount += txn.amount;
+      } catch (err) {
+        // The partial unique index caught a replay that slipped past the pre-read (a concurrent
+        // import of the same file). Idempotency is the index's job, and it did it.
+        if (isUniqueViolation(err)) skipped.push({ txnId, reason: 'Already imported' });
+        else throw err;
+      }
+    }
+    return c.json({ imported, totalAmount, skipped });
   });
