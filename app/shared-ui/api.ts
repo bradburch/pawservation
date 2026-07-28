@@ -20,6 +20,8 @@ export type ServiceConfig = ServiceConstraints & {
   questions: ServiceQuestion[];
   acceptedPetTypes: string[] | null;
   cancellationTiers: { withinDays: number; percent: number }[] | null;
+  /** The sitter's holiday rate, for labelling only; null = no holiday pricing. */
+  holidayRate: number | null;
 };
 export type TenantConfig = {
   slug: string;
@@ -53,6 +55,7 @@ export type MonthDay = {
 export type Availability =
   | {
       available: true;
+      priced: true;
       estCost: number;
       /** Quantity `estCost` was billed for, with its noun. Absent for single-day services
        *  (flat per-booking charge, no quantity). Label from these, never from
@@ -61,6 +64,21 @@ export type Availability =
       unit?: 'night' | 'day';
       /** Wire-compat only; always a night count. Prefer `billedUnits`/`unit`. */
       nights?: number;
+      /** How many billed units the SERVER charged at the sitter's holiday rate, and that rate.
+       *  Both absent unless a holiday actually applied. Display only — `estCost` already
+       *  includes them; the widget must never re-derive a total from these. */
+      holidayUnits?: number;
+      holidayRate?: number;
+    }
+  | {
+      /** The dates are free but the sitter has never priced this set of pets. The widget shows
+       *  her contact details and blocks submit. It must NEVER compute a substitute price — the
+       *  client does not do money. */
+      available: true;
+      priced: false;
+      reason: 'unpriced-pet-set';
+      groupKey: string;
+      mixKey: string;
     }
   | { available: false; reason: string };
 
@@ -71,6 +89,10 @@ export type Booking = {
   endDate: string | null;
   petCount: number;
   estCost: number | null;
+  /** Extras the sitter added after the fact. `estCost` excludes them by design; what the client
+   *  owes is `estCost + chargesTotal`. */
+  charges: { label: string; amount: number }[];
+  chargesTotal: number;
   cancellationFee: number | null;
   status: string;
   pets: string[];
@@ -81,6 +103,7 @@ export type Customer = {
   email: string;
   name: string | null;
   phone: string | null;
+  venmoUsername: string | null;
   status: 'invited' | 'active';
   invitedAt?: string | null;
   pets: Pet[];
@@ -122,6 +145,9 @@ export type AdminBooking = {
   answers: Record<string, string>;
   estCost: number | null;
   paidTotal: number;
+  charges: BookingCharge[];
+  /** SUM(charges). Total due is `estCost + chargesTotal` — estCost itself is never mutated. */
+  chargesTotal: number;
   status: string;
   cancellationFee: number | null;
   feeIfCancelledToday: number | null;
@@ -134,6 +160,39 @@ export type Payment = {
   method: string;
   paidDate: string;
   note: string | null;
+};
+
+/** One extra charge on a booking — additive; it never changes the booking's estCost. */
+export type BookingCharge = { id: string; label: string; amount: number };
+
+export type VenmoPreviewRow = {
+  txnId: string;
+  date: string;
+  amount: number;
+  from: string;
+  note: string;
+};
+export type VenmoPreview = {
+  matched: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    bookingId: string;
+    bookingLabel: string;
+  })[];
+  ambiguous: (VenmoPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    candidates: { bookingId: string; label: string; balance: number }[];
+  })[];
+  unmatched: (VenmoPreviewRow & { reason: string })[];
+  alreadyImported: VenmoPreviewRow[];
+  ignored: number;
+  problems: { row: number; reason: string }[];
+};
+export type VenmoImportResult = {
+  imported: number;
+  totalAmount: number;
+  skipped: { txnId: string; reason: string }[];
 };
 
 export type AnalyticsPayload = {
@@ -161,6 +220,7 @@ export type AnalyticsPayload = {
     serviceType: string;
     startDate: string;
     estCost: number;
+    chargesTotal: number;
     paidTotal: number;
     balance: number;
     isCancellationFee: boolean;
@@ -211,8 +271,10 @@ const jsonHeaders = { 'Content-Type': 'application/json' };
 export const api = {
   config: (slug: string) => request<TenantConfig>(`/api/${slug}/config`),
 
-  availability: (slug: string, params: Record<string, string>) =>
-    request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`),
+  availability: (slug: string, token: string, params: Record<string, string>) =>
+    request<Availability>(`/api/${slug}/availability?${new URLSearchParams(params)}`, {
+      headers: authHeaders(token),
+    }),
 
   // `prototypeCode` is only present in dev (no email provider configured); in prod the code is
   // emailed and the response carries only `codeId`.
@@ -306,6 +368,12 @@ export const adminApi = {
         method: 'DELETE',
         headers: authHeaders(token),
       }),
+    setVenmo: (slug: string, token: string, id: string, venmoUsername: string | null) =>
+      request<unknown>(`/api/${slug}/admin/customers/${id}`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ venmoUsername }),
+      }),
     addPet: (
       slug: string,
       token: string,
@@ -377,6 +445,48 @@ export const adminApi = {
       ),
     remove: (slug: string, token: string, bookingId: string, paymentId: string) =>
       request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+      }),
+    venmoPreview: (slug: string, token: string, csv: string) =>
+      request<VenmoPreview>(`/api/${slug}/admin/payments/venmo/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv }),
+      }),
+    venmoImport: (
+      slug: string,
+      token: string,
+      csv: string,
+      choices: { txnId: string; bookingId: string }[],
+    ) =>
+      request<VenmoImportResult>(`/api/${slug}/admin/payments/venmo/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, choices }),
+      }),
+  },
+  charges: {
+    list: (slug: string, token: string, bookingId: string) =>
+      request<{ charges: BookingCharge[] }>(`/api/${slug}/admin/bookings/${bookingId}/charges`, {
+        headers: authHeaders(token),
+      }),
+    add: (
+      slug: string,
+      token: string,
+      bookingId: string,
+      charge: { label: string; amount: number },
+    ) =>
+      request<{ charge: BookingCharge; chargesTotal: number }>(
+        `/api/${slug}/admin/bookings/${bookingId}/charges`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(charge),
+        },
+      ),
+    remove: (slug: string, token: string, bookingId: string, chargeId: string) =>
+      request<void>(`/api/${slug}/admin/bookings/${bookingId}/charges/${chargeId}`, {
         method: 'DELETE',
         headers: authHeaders(token),
       }),

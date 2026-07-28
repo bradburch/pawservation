@@ -7,13 +7,30 @@ import {
   listServices,
   setServiceConfig,
 } from '../db/repo';
-import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
+import { adminToken, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 /** Admin Bearer headers for a tenant, optionally with a JSON content type. */
 async function auth(tenantId: string, json = false): Promise<Record<string, string>> {
   const h: Record<string, string> = { Authorization: `Bearer ${await adminToken(tenantId)}` };
   if (json) h['Content-Type'] = 'application/json';
   return h;
+}
+
+/** Authenticated availability quote. Every caller supplies REAL pet ids: there is no pet-count
+ *  param any more, by design (design spec §5). */
+async function quote(
+  env: Env,
+  slug: string,
+  query: string,
+  petIds: string[],
+  email = 'jess@example.com',
+): Promise<Response> {
+  const token = await endUserToken(env, slug, email);
+  return app.request(
+    `/api/${slug}/availability?${query}&petIds=${petIds.join(',')}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+    env,
+  );
 }
 
 async function createSvc(
@@ -189,7 +206,7 @@ describe('custom services — booking', () => {
     expect(mw).toMatchObject({ label: 'Morning walk', icon: 'paw', hasDuration: true });
 
     const avail = (await (
-      await app.request('/api/sunny-paws/availability?type=morning-walk&start=2028-08-01', {}, env)
+      await quote(env, 'sunny-paws', 'type=morning-walk&start=2028-08-01', ['pet_sp_bella'])
     ).json()) as { available: boolean; estCost: number };
     expect(avail).toMatchObject({ available: true, estCost: 18 });
   });
@@ -228,11 +245,10 @@ describe('custom services — booking', () => {
     // Built-in boarding (own seeded MaxConcurrentPets=2, zero existing bookings) is UNAFFECTED:
     // each service is its own pool since the 0015 per-service rework, so a 2-pet request still fits.
     const independent = (await (
-      await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2029-01-11&end=2029-01-13&pets=2',
-        {},
-        env,
-      )
+      await quote(env, 'sunny-paws', 'type=boarding&start=2029-01-11&end=2029-01-13', [
+        'pet_sp_bella',
+        'pet_sp_mochi',
+      ])
     ).json()) as { available: boolean };
     expect(independent.available).toBe(true);
   });
@@ -301,6 +317,7 @@ describe('custom services — deletion', () => {
       acceptedPetTypes: null,
       maxConcurrentPets: null,
       cancellationTiers: null,
+      holidayRate: null,
     });
     expect(updated).toBe(false);
   });

@@ -401,6 +401,26 @@ body {
   background: color-mix(in srgb, var(--bp-ink) 10%, transparent);
 }
 
+/* Marks a listed US holiday. Purely informational — availability and price come from the
+   server; this only tells the client which days their sitter may price differently. A ::after
+   dot (not box-shadow) so the marker survives composing with .bp-partial's inset ring and
+   .bp-sel's explicit box-shadow: none — either would otherwise erase a box-shadow-based marker. */
+.bp-book .bp-cal-day.bp-cal-holiday {
+  position: relative;
+}
+
+.bp-book .bp-cal-day.bp-cal-holiday::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+
 /* The signature: a selected stay reads as one connected band across the days. */
 .bp-book .bp-cal-day.bp-sel {
   background: var(--bp-accent);
@@ -607,6 +627,12 @@ body {
   color: var(--bp-soft);
 }
 
+.bp-summary-holiday {
+  margin: 2px 0 0;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
 .bp-summary-cost {
   margin: 0 0 8px;
   color: var(--bp-body);
@@ -630,6 +656,21 @@ body {
 .bp-result.bp-no p {
   margin: 0;
   color: var(--bp-bad);
+}
+
+.bp-result.bp-unpriced {
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: var(--bp-sage-wash);
+  border: 1px solid var(--bp-line);
+  display: grid;
+  gap: 6px;
+}
+
+.bp-result.bp-unpriced p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--bp-body);
 }
 
 .bp-error {

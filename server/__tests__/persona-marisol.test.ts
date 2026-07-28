@@ -30,10 +30,20 @@ async function connectCalendar(env: Env): Promise<void> {
 
 async function bookBoarding(
   env: Env,
+  raw: ReturnType<typeof createTestEnv>['raw'],
   token: string,
   startDate: string,
   endDate: string,
 ): Promise<Response> {
+  // Bella (dog) + Mochi (cat) is a 2-pet set — since rate enforcement, that needs an explicit
+  // stored rate or the booking is refused as unpriced. This scenario is about calendar sync, not
+  // pricing, so seed the mix rate the sitter would have configured for exactly this pair.
+  raw
+    .prepare(
+      `INSERT OR REPLACE INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
+       VALUES (?, 'boarding', 'standard', 'cat:1|dog:1', 50)`,
+    )
+    .run(TENANT_A);
   return app.request(
     '/api/sunny-paws/bookings',
     {
@@ -114,7 +124,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     });
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const res = await bookBoarding(env, token, '2029-04-01', '2029-04-04'); // 3 nights, $50/night
+    const res = await bookBoarding(env, raw, token, '2029-04-01', '2029-04-04'); // 3 nights, $50/night
     expect(res.status).toBe(201);
     const booked = (await res.json()) as { id: string; estCost: number; status: string };
     expect(booked.status).toBe('pending');
@@ -157,7 +167,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     );
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const bookRes = await bookBoarding(env, token, '2029-04-10', '2029-04-13');
+    const bookRes = await bookBoarding(env, raw, token, '2029-04-10', '2029-04-13');
     const { id } = (await bookRes.json()) as { id: string };
 
     const rowBefore = raw
@@ -199,7 +209,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
       throw new Error(`unexpected fetch to ${String(url)}`);
     });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const bookRes = await bookBoarding(env, token, '2029-07-01', '2029-07-04');
+    const bookRes = await bookBoarding(env, raw, token, '2029-07-01', '2029-07-04');
     const { id } = (await bookRes.json()) as { id: string };
     expect(
       (
@@ -240,7 +250,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     );
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const bookRes = await bookBoarding(env, token, '2029-08-01', '2029-08-04');
+    const bookRes = await bookBoarding(env, raw, token, '2029-08-01', '2029-08-04');
     const { id } = (await bookRes.json()) as { id: string };
 
     // The PATCH on confirm fails (Google 500), but the booking is already confirmed in the DB and
@@ -263,7 +273,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     );
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const bookRes = await bookBoarding(env, token, '2029-05-01', '2029-05-04');
+    const bookRes = await bookBoarding(env, raw, token, '2029-05-01', '2029-05-04');
     const { id } = (await bookRes.json()) as { id: string };
     const rowBefore = raw
       .prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id = ?`)
@@ -310,7 +320,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     });
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const res = await bookBoarding(env, token, '2029-06-01', '2029-06-04');
+    const res = await bookBoarding(env, raw, token, '2029-06-01', '2029-06-04');
 
     expect(res.status).toBe(201);
     const booked = (await res.json()) as { id: string; status: string };
@@ -335,7 +345,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
   });
 
   it('7. a hand-kept stay on her calendar blocks a request, then frees it once she deletes it', async () => {
-    const { env } = createTestEnv();
+    const { env, raw } = createTestEnv();
     await connectCalendar(env);
     const start = addDays(TODAY, 20);
     const end = addDays(TODAY, 23);
@@ -349,7 +359,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     // A customer's overlapping boarding request is refused.
     vi.restoreAllMocks();
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const conflictRes = await bookBoarding(env, token, start, end);
+    const conflictRes = await bookBoarding(env, raw, token, start, end);
     expect(conflictRes.status).toBe(409);
     expect(await conflictRes.json()).toMatchObject({ code: 'capacity_conflict' });
 
@@ -361,7 +371,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ id: 'evt_marisol_7' }), { status: 200 }),
     );
-    const okRes = await bookBoarding(env, token, start, end);
+    const okRes = await bookBoarding(env, raw, token, start, end);
     expect(okRes.status).toBe(201);
     const booked = (await okRes.json()) as { status: string };
     expect(booked.status).toBe('pending');

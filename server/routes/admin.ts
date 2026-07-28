@@ -19,12 +19,14 @@ import {
   getEndUserById,
   getEndUserByEmail,
   deleteBlockedRange,
+  deleteBookingCharge,
   deleteCustomer,
   deletePayment,
   deletePetGroupRateById,
   deleteService,
   getProviderConnection,
   getTenantUserEmailById,
+  insertBookingCharge,
   insertBookingRequest,
   insertInvitedCustomerWithPet,
   insertPayment,
@@ -32,8 +34,12 @@ import {
   listAllPetGroupPricing,
   listBlockedRanges,
   listBookingsForTenant,
+  listChargesForBooking,
+  listChargesForTenant,
   listCustomers,
   listEndUserPets,
+  listOutstandingBookings,
+  listPaymentExternalRefs,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetTypes,
@@ -49,6 +55,7 @@ import {
   setProviderCalendarId,
   setServiceConfig,
   setPetDeceased,
+  setEndUserVenmoUsername,
   updateBookingStatus,
   updateTenantSettings,
   upsertPetGroupRate,
@@ -90,6 +97,16 @@ import {
 } from '../lib/services';
 import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
+import {
+  isVenmoTxnId,
+  MAX_VENMO_ROWS,
+  matchVenmoTxns,
+  parseVenmoCsv,
+  rankCandidates,
+  resolveMatchClient,
+  type MatchClient,
+  type OutstandingBooking,
+} from '../lib/venmo';
 import { NONCE_KEY } from './oauth';
 import {
   DEFENSIVE_MAX_NIGHTS,
@@ -136,6 +153,47 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
 }
 
 /**
+ * The three tenant-scoped reads the Venmo importer matches against, plus the service labels the
+ * preview prints. Loaded identically by the preview and the confirm step: the confirm re-derives
+ * the whole candidate set rather than trusting what the preview told the browser.
+ */
+async function loadVenmoMatchInputs(
+  env: AppEnv['Bindings'],
+  tenantId: string,
+): Promise<{
+  clients: MatchClient[];
+  outstanding: OutstandingBooking[];
+  alreadyImported: Set<string>;
+}> {
+  const [customers, bookings, refs, services] = await Promise.all([
+    listCustomers(env.PAWBOOK_DB, tenantId),
+    listOutstandingBookings(env.PAWBOOK_DB, tenantId),
+    listPaymentExternalRefs(env.PAWBOOK_DB, tenantId),
+    listServices(env.PAWBOOK_DB, tenantId),
+  ]);
+  const labelByType = new Map(services.map((s) => [s.ServiceType, s.Label]));
+  return {
+    clients: customers.map((u) => ({
+      endUserId: u.Id,
+      label: u.Name || u.Email,
+      name: u.Name,
+      venmoUsername: u.VenmoUsername,
+    })),
+    outstanding: bookings
+      // A booking whose client was removed has nobody to match it to.
+      .filter((b): b is typeof b & { EndUserId: string } => b.EndUserId !== null)
+      .map((b) => ({
+        bookingId: b.BookingId,
+        endUserId: b.EndUserId,
+        label: `${labelByType.get(b.ServiceType) ?? b.ServiceType} starting ${b.StartDate}`,
+        startDate: b.StartDate,
+        balance: b.Expected - b.PaidTotal,
+      })),
+    alreadyImported: new Set(refs),
+  };
+}
+
+/**
  * Each pet-bearing row triggers several sequential D1 calls; an unbounded import can exceed
  * Workers' subrequest/CPU ceiling mid-loop, which aborts outside the per-row try/catch and
  * returns a bare 500 with no partial-import report. Cap row count so oversized files fail fast
@@ -148,6 +206,13 @@ const MAX_IMPORT_ROWS = 500;
  * body of copy — cap it so one service can't push the whole picker off the page.
  */
 const MAX_SERVICE_DESCRIPTION = 200;
+
+/** Charge names are a short line item ("Vet visit"), not a note — the ledger row must stay
+ *  readable inside a booking row on a phone. */
+const MAX_CHARGE_LABEL = 60;
+
+/** Venmo's own handle limit. Capped here so a hostile PATCH can't park a novel on a client row. */
+const MAX_VENMO_USERNAME = 30;
 
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
@@ -402,6 +467,8 @@ type ServiceBody = {
   maxConcurrentPets?: number | null;
   maxPerDay?: number | null;
   cancellationTiers?: CancellationTier[] | null;
+  /** Explicit whole-dollar holiday rate; null clears it. PATCH: absent = keep current. */
+  holidayRate?: number | null;
 };
 type SettingsBody = {
   displayName?: string;
@@ -491,6 +558,7 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers: svc.CancellationTiers,
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
+        holidayRate: svc.HolidayRate,
         // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
         // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
         multiPetGroupRateCount: groupRates.filter(
@@ -671,6 +739,15 @@ export const adminRoutes = new Hono<AppEnv>()
           },
           400,
         );
+      // A holiday rate is an EXPLICIT stored rate, in the service's own unit. It is deliberately
+      // NOT constrained relative to the base rate: charging LESS on a holiday is a real choice
+      // (a sitter running a slow-season promo), and inventing a "must be higher" rule would be
+      // the kind of inferred pricing this codebase refuses.
+      if (svc.holidayRate != null && !isValidRate(svc.holidayRate))
+        return c.json(
+          { error: `${meta.Label}: Holiday rate must be whole dollars, $1 or more (or blank).` },
+          400,
+        );
       // Per-service acceptance list: PATCH semantics (absent = keep current). An explicit list
       // must be a subset of the tenant's slugs; the EFFECTIVE list (incoming or kept) may not be
       // empty on an enabled service — "accepts nothing" is expressed by disabling the service.
@@ -748,6 +825,7 @@ export const adminRoutes = new Hono<AppEnv>()
           'maxConcurrentPets' in svc ? (svc.maxConcurrentPets ?? null) : current.MaxConcurrentPets,
         cancellationTiers:
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
+        holidayRate: 'holidayRate' in svc ? (svc.holidayRate ?? null) : current.HolidayRate,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.
@@ -1171,6 +1249,7 @@ export const adminRoutes = new Hono<AppEnv>()
       email: u.Email,
       name: u.Name,
       phone: u.Phone,
+      venmoUsername: u.VenmoUsername,
       status: u.Status,
       invitedAt: u.InvitedAt,
       pets: byUser.get(u.Id) ?? [],
@@ -1394,6 +1473,41 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!updated) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
+  /**
+   * The client's Venmo handle, and nothing else — a deliberately single-field PATCH rather than a
+   * general customer editor, so this branch adds one write and one validation surface. Stored
+   * '@'-less and trimmed; blank clears it (a sitter who filled it in by mistake must be able to
+   * empty the field, and NULL is the meaningful "match on their name" default).
+   */
+  .patch('/:slug/admin/customers/:id', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ venmoUsername?: unknown }>()
+      .catch(() => ({}) as { venmoUsername?: unknown });
+    if (!('venmoUsername' in body)) return c.json({ error: 'Nothing to update.' }, 400);
+    const raw = body.venmoUsername;
+    if (raw !== null && typeof raw !== 'string')
+      return c.json({ error: 'Venmo username must be text.' }, 400);
+    const handle = raw === null ? '' : raw.trim().replace(/^@+/, '');
+    if (handle.length > MAX_VENMO_USERNAME)
+      return c.json(
+        { error: `A Venmo username is at most ${MAX_VENMO_USERNAME} characters.` },
+        400,
+      );
+    if (handle !== '' && !/^[A-Za-z0-9_-]+$/.test(handle))
+      return c.json(
+        { error: 'A Venmo username can only contain letters, numbers, dashes and underscores.' },
+        400,
+      );
+    const updated = await setEndUserVenmoUsername(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      handle === '' ? null : handle,
+    );
+    if (!updated) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
   .post('/:slug/admin/customers/import', async (c) => {
     const tenant = c.get('tenant');
     const body = await c.req
@@ -1576,6 +1690,15 @@ export const adminRoutes = new Hono<AppEnv>()
       ]),
     );
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+    // ONE read for the whole list, grouped in JS — a charge is an additive line item, so it can
+    // never change EstCost; total due is EstCost + chargesTotal, derived by every reader.
+    const chargeRows = await listChargesForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const chargesByBooking = new Map<string, typeof chargeRows>();
+    for (const ch of chargeRows) {
+      const list = chargesByBooking.get(ch.BookingRequestId) ?? [];
+      list.push(ch);
+      chargesByBooking.set(ch.BookingRequestId, list);
+    }
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,
@@ -1592,6 +1715,12 @@ export const adminRoutes = new Hono<AppEnv>()
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
+        charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
+          id: ch.Id,
+          label: ch.Label,
+          amount: ch.Amount,
+        })),
+        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.Amount, 0),
         status: r.Status,
         cancellationFee: r.CancellationFee,
         feeIfCancelledToday:
@@ -1725,6 +1854,7 @@ export const adminRoutes = new Hono<AppEnv>()
       method: body.method,
       paidDate: body.paidDate,
       note,
+      externalRef: null,
     });
     // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
@@ -1779,6 +1909,62 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.body(null, 204);
   })
 
+  .post('/:slug/admin/bookings/:id/charges', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    const body = await c.req
+      .json<{ label?: unknown; amount?: unknown }>()
+      .catch(() => ({}) as Record<string, never>);
+    const label = typeof body.label === 'string' ? body.label.trim() : '';
+    if (!label) return c.json({ error: 'Give the charge a name.' }, 400);
+    if (label.length > MAX_CHARGE_LABEL)
+      return c.json({ error: `Name must be ${MAX_CHARGE_LABEL} characters or fewer.` }, 400);
+    // Same predicate as a payment amount and a rate: whole dollars >= 1.
+    if (!isValidRate(body.amount))
+      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    const chargeId = await insertBookingCharge(c.env.PAWBOOK_DB, tenant.Id, {
+      bookingRequestId: bookingId,
+      label,
+      amount: body.amount,
+    });
+    // Guard refused: foreign booking or the 'blocked' sentinel.
+    if (!chargeId) return c.json({ error: 'Not found.' }, 404);
+    const charges = await listChargesForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const created = charges.find((ch) => ch.Id === chargeId);
+    if (!created) return c.json({ error: 'Not found.' }, 404);
+    return c.json(
+      {
+        charge: { id: created.Id, label: created.Label, amount: created.Amount },
+        chargesTotal: charges.reduce((sum, ch) => sum + ch.Amount, 0),
+      },
+      201,
+    );
+  })
+
+  .get('/:slug/admin/bookings/:id/charges', async (c) => {
+    const tenant = c.get('tenant');
+    const bookingId = c.req.param('id');
+    // Same existence guard the payments GET uses: a foreign booking or the sentinel 404s.
+    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
+    const rows = await listChargesForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    return c.json({
+      charges: rows.map((ch) => ({ id: ch.Id, label: ch.Label, amount: ch.Amount })),
+    });
+  })
+
+  .delete('/:slug/admin/bookings/:id/charges/:chargeId', async (c) => {
+    const tenant = c.get('tenant');
+    const deleted = await deleteBookingCharge(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      c.req.param('id'),
+      c.req.param('chargeId'),
+    );
+    if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    return c.body(null, 204);
+  })
+
   // Earnings dashboard payload. All aggregation is SQL (getAnalytics); the tiles are derived
   // here in JS from the aggregates — no extra queries, no KV caching (prototype-scale D1).
   .get('/:slug/admin/analytics', async (c) => {
@@ -1788,4 +1974,106 @@ export const adminRoutes = new Hono<AppEnv>()
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
     return c.json(serializeAnalytics(data));
+  })
+
+  /**
+   * Read the sitter's Venmo CSV and say what Pawservation THINKS it found. Writes nothing at all —
+   * the file is parsed in memory, matched against this tenant's clients and receivables, and
+   * thrown away with the request. Nothing about the file is stored anywhere.
+   */
+  .post('/:slug/admin/payments/venmo/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req.json<{ csv?: unknown }>().catch(() => ({}) as { csv?: unknown });
+    const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
+    return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
+  })
+
+  /**
+   * Record the rows the sitter approved. The CSV comes back with the request and is parsed and
+   * matched AGAIN from scratch: the body supplies only which transaction goes on which booking, so
+   * every dollar figure, date and note is the server's own reading of the file. A bookingId is
+   * honoured only when it is one of the candidates this request just ranked — the preview is not a
+   * token of trust. The file itself is still never stored.
+   */
+  .post('/:slug/admin/payments/venmo/import', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ csv?: unknown; choices?: unknown }>()
+      .catch(() => ({}) as { csv?: unknown; choices?: unknown });
+    if (!Array.isArray(body.choices) || body.choices.length === 0)
+      return c.json({ error: 'Choose at least one payment to record.' }, 400);
+    if (body.choices.length > MAX_VENMO_ROWS)
+      return c.json({ error: `Record ${MAX_VENMO_ROWS} payments or fewer at a time.` }, 400);
+    const choices: { txnId: string; bookingId: string }[] = [];
+    for (const raw of body.choices) {
+      const choice = raw as { txnId?: unknown; bookingId?: unknown };
+      if (
+        !isVenmoTxnId(choice.txnId) ||
+        typeof choice.bookingId !== 'string' ||
+        choice.bookingId === ''
+      )
+        return c.json({ error: 'That list of payments is malformed.' }, 400);
+      choices.push({ txnId: choice.txnId, bookingId: choice.bookingId });
+    }
+
+    const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const txnById = new Map(parsed.incoming.map((t) => [t.txnId, t]));
+
+    const skipped: { txnId: string; reason: string }[] = [];
+    let imported = 0;
+    let totalAmount = 0;
+
+    for (const { txnId, bookingId } of choices) {
+      const txn = txnById.get(txnId);
+      if (!txn) {
+        skipped.push({ txnId, reason: 'That transaction is not in this file' });
+        continue;
+      }
+      if (inputs.alreadyImported.has(txnId)) {
+        skipped.push({ txnId, reason: 'Already imported' });
+        continue;
+      }
+      // Re-rank from THIS request's data; the browser's idea of the candidates is never trusted.
+      // resolveMatchClient is the SAME function the preview uses — a name that's ambiguous there
+      // is refused here too, never silently resolved by whichever client happened to sort last.
+      const client = resolveMatchClient(inputs.clients, txn.from);
+      const candidates = client
+        ? rankCandidates(
+            txn,
+            inputs.outstanding.filter((b) => b.endUserId === client.endUserId),
+          )
+        : [];
+      if (!candidates.some((candidate) => candidate.bookingId === bookingId)) {
+        skipped.push({ txnId, reason: 'That booking is no longer a match for this payment' });
+        continue;
+      }
+      const note = `Venmo import — ${txn.from}${txn.note ? `: ${txn.note}` : ''} (txn ${txn.txnId})`;
+      try {
+        const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
+          bookingRequestId: bookingId,
+          amount: txn.amount,
+          method: 'venmo',
+          paidDate: txn.date,
+          note: note.slice(0, 300),
+          externalRef: txn.txnId,
+        });
+        if (!paymentId) {
+          skipped.push({ txnId, reason: 'That booking can no longer take a payment' });
+          continue;
+        }
+        imported++;
+        totalAmount += txn.amount;
+      } catch (err) {
+        // The partial unique index caught a replay that slipped past the pre-read (a concurrent
+        // import of the same file). Idempotency is the index's job, and it did it.
+        if (isUniqueViolation(err)) skipped.push({ txnId, reason: 'Already imported' });
+        else throw err;
+      }
+    }
+    return c.json({ imported, totalAmount, skipped });
   });

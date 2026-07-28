@@ -339,7 +339,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Payments</h3>
-              <p>Cash, Venmo, Zelle, PayPal, check &mdash; log deposits and partials, see what&rsquo;s outstanding.</p>
+              <p>Cash, Venmo, Zelle, PayPal, check &mdash; log deposits and partials, see what&rsquo;s outstanding. Upload the CSV from Venmo and match a month of payments to clients in one pass.</p>
             </div>
             <div class="feature">
               <h3>Earnings</h3>
@@ -587,7 +587,8 @@ const LANDING_HTML = `<!doctype html>
  * so out loud (no repeating schedule, no way to type in a stay agreed before signing up).
  * Guardrails are enforced by server/__tests__/how-it-works.test.ts rather
  * than by convention: the page may not use the words "invoice"/"statement"/"SMS"/"AI" (none of
- * those exist), multi-pet pricing must be described as being built and never auto-multiplied,
+ * those exist), multi-pet pricing must be described as SHIPPED — rates the sitter typed, with an
+ * unpriced group refused rather than inferred, and nothing ever multiplied —
  * and the developer nouns "idempotency"/"machine-readable"/"llms.txt" are banned from the body
  * copy — the concepts stay, in the language a pet sitter uses.
  */
@@ -812,12 +813,20 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>Cash, Venmo, Zelle, PayPal, check, card, or something else entirely. Log as many part-payments against one booking as it takes &mdash; a deposit now and the rest later &mdash; each with its own date and note.</p>
             </div>
             <div class="wf-pair">
+              <p class="wf-keep">Paid on Venmo? Upload the CSV.</p>
+              <p>Download the CSV Venmo gives you for a month and drop it into Earnings. Pawservation reads the payments that came in, lines each one up with the client who sent it by their Venmo name, and shows you every match before anything is recorded &mdash; you approve what&rsquo;s right and fix what isn&rsquo;t. The file is read in memory and never stored, and uploading the same one twice records nothing twice.</p>
+            </div>
+            <div class="wf-pair">
               <p class="wf-keep">Pawservation records payments. It never processes them.</p>
               <p>The money goes from your client to you by whatever means you already use. Nothing routes through us, so there is no cut taken and no fee on your earnings. An earnings view totals up what you&rsquo;ve recorded.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Charging more for a second dog is being built.</p>
-              <p>Today the price doesn&rsquo;t depend on how many pets are on the booking &mdash; one dog or three, the same dates cost the same. Multi-pet rates are coming as rates <em>you</em> set explicitly &mdash; price &ldquo;two dogs&rdquo; as its own line if you want to &mdash; and never auto-multiplied from the single-pet price.</p>
+              <p class="wf-keep">Two dogs can cost more than one &mdash; because you said so, not because we multiplied.</p>
+              <p>Set a rate for a combination and that combination has a price. On your walk, one dog might be $40 and two dogs $60 &mdash; two numbers you typed, not $40 doubled. Set them once per service and they apply to every client. If a group of pets has no rate yet, we don&rsquo;t invent one: the client sees the dates are free, but the widget asks you for a rate before it will book them &mdash; no price is guessed, and nothing is multiplied, ever.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">One client can keep an old price.</p>
+              <p>Tina and Rob have walked Fido with you since before you raised your rates, and you&rsquo;d rather not raise theirs. Put a $20 walk on Fido&rsquo;s account and Fido&rsquo;s walks stay $20 while everyone else&rsquo;s are $40. A rate on a specific animal wins over a rate for &ldquo;two dogs&rdquo;, which wins over your ordinary rate for the service &mdash; so the narrower promise is always the one that holds.</p>
             </div>
           </div>
         </div>

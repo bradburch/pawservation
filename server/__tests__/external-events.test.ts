@@ -54,7 +54,9 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     await seedExternal(env);
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      `/api/sunny-paws/availability?type=boarding&start=${addDays(EXT_START, 1)}&end=${EXT_END}`,
+      // A single pet (Bella) needs no explicit pet-set rate — the option's flat Rate covers it —
+      // this scenario is about the external row blocking capacity, not pricing.
+      `/api/sunny-paws/availability?type=boarding&start=${addDays(EXT_START, 1)}&end=${EXT_END}&petIds=pet_sp_bella`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
@@ -84,6 +86,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
         method: 'cash',
         paidDate: TODAY,
         note: null,
+        externalRef: null,
       }),
     ).resolves.toBeNull(); // match insertPayment's actual "not payable" contract at HEAD
   });

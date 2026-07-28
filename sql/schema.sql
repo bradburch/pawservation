@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- Tiered cancellation policy (added by 0016); JSON array like
   -- [{"withinDays":2,"percent":100},{"withinDays":7,"percent":50}]. NULL = no fee.
   CancellationTiers TEXT,
+  -- Optional explicit whole-dollar rate for billed units falling on a listed US holiday
+  -- (src/shared/util/us-holidays.ts). NULL = no holiday pricing (today's behavior). Same unit as
+  -- RateUnit. A STORED rate, never a multiplier and never pet-count-scaled — the price formula
+  -- (server/lib/holiday-cost.ts) may only multiply a stored rate by units of time.
+  HolidayRate INTEGER CHECK (HolidayRate IS NULL OR HolidayRate >= 1),
   UNIQUE (TenantId, ServiceType)
 );
 
@@ -142,6 +147,9 @@ CREATE TABLE IF NOT EXISTS EndUsers (
   Email TEXT NOT NULL,
   Name TEXT,
   Phone TEXT,
+  -- Only needed when the client's Venmo handle differs from the name above; NULL = match on Name.
+  -- Read exclusively by the Venmo CSV importer (server/lib/venmo.ts).
+  VenmoUsername TEXT,
   InvitedAt TEXT,
   Status TEXT NOT NULL DEFAULT 'active' CHECK (Status IN ('invited', 'active')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -251,10 +259,33 @@ CREATE TABLE IF NOT EXISTS Payments (
   Method TEXT NOT NULL CHECK (Method IN ('cash', 'venmo', 'zelle', 'paypal', 'check', 'card', 'other')),
   PaidDate TEXT NOT NULL, -- 'YYYY-MM-DD', sitter-entered (defaults to today in the UI)
   Note TEXT,
+  -- Venmo transaction id when this payment came from a CSV import; NULL for hand-recorded ones.
+  -- Deliberately absent from PaymentRow and from every payments wire payload: it is written by the
+  -- importer and read only in aggregate, so the type system prevents anything else trusting it.
+  ExternalRef TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Date ON Payments (TenantId, PaidDate);
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Booking ON Payments (TenantId, BookingRequestId);
+-- Idempotent re-import: a transaction id this tenant already recorded cannot be inserted twice.
+-- PARTIAL so the NULLs of hand-recorded payments are unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_Payments_Tenant_ExternalRef
+  ON Payments (TenantId, ExternalRef) WHERE ExternalRef IS NOT NULL;
+
+-- One-off extras a sitter adds to a booking after the fact (vet visit, haircut). Deliberately a
+-- separate table rather than an EstCost edit: EstCost is the price the quote promised and is
+-- written exactly once, so total due = EstCost + SUM(charges). Money owed, the sibling of
+-- Payments (money in).
+CREATE TABLE IF NOT EXISTS BookingCharges (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
+  Label TEXT NOT NULL,
+  Amount INTEGER NOT NULL CHECK (Amount >= 1), -- whole dollars, matching EstCost/Rate/Payments
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_BookingCharges_Tenant_Booking
+  ON BookingCharges (TenantId, BookingRequestId);
 
 CREATE TABLE IF NOT EXISTS ProviderConnections (
   Id TEXT PRIMARY KEY,

@@ -99,17 +99,28 @@ export function BookTab({
       setError('Choose at least one pet.');
       return;
     }
+    const token = getToken(slug);
+    if (!token) {
+      onAuthExpired();
+      return;
+    }
     setChecking(true);
     try {
       const params: Record<string, string> = {
         type,
         option: optionKey,
         start,
-        pets: String(selectedPets.length),
+        // Real pet ids, not a count: the server prices the set the customer actually chose, and
+        // there is no count for a client to inflate. Ids are UUIDs, so a comma join is safe.
+        petIds: selectedPets.join(','),
       };
       if (service?.shape === 'range') params.end = end;
-      setResult(await api.availability(slug, params));
+      setResult(await api.availability(slug, token, params));
     } catch (e) {
+      if (isAuthExpired(e)) {
+        onAuthExpired();
+        return;
+      }
       setError(errorMsg(e));
     } finally {
       setChecking(false);
@@ -299,7 +310,7 @@ export function BookTab({
             {checking ? 'Checking…' : 'Check availability'}
           </button>
           {result &&
-            (result.available ? (
+            (result.available && result.priced ? (
               <div className="bp-summary">
                 <p className="bp-summary-dates">
                   {formatShortDate(start)}
@@ -314,6 +325,21 @@ export function BookTab({
                 <p className="bp-summary-cost">
                   Estimated cost <strong>${result.estCost}</strong>
                 </p>
+                {result.holidayUnits != null &&
+                  result.holidayRate != null &&
+                  // Single-day services (walk/visit) never set result.unit — fall back to the
+                  // service's own rateUnit so the noun still comes from one source, never an
+                  // invented default (matches the dates line's rule just above).
+                  (() => {
+                    const unit = result.unit ?? service?.rateUnit;
+                    return (
+                      <p className="bp-summary-holiday">
+                        Includes {result.holidayUnits} holiday {unit}
+                        {result.holidayUnits === 1 ? '' : 's'} at ${result.holidayRate}
+                        {unit ? `/${unit}` : ''}.
+                      </p>
+                    );
+                  })()}
                 {service?.cancellationTiers && (
                   <p className="bp-summary-policy">
                     Cancellation:{' '}
@@ -338,6 +364,32 @@ export function BookTab({
                     {questionsError ?? constraintsError ?? acceptanceError}
                   </p>
                 )}
+              </div>
+            ) : result.available ? (
+              // The dates are free but the sitter never priced this pet set. There is no "Send
+              // request" button in this arm at all — submit is blocked structurally, not by a
+              // disabled attribute, because there is nothing here that computes a price to send.
+              <div className="bp-result bp-unpriced">
+                <p>
+                  Those dates are free — but {config.displayName} hasn&rsquo;t set a price for this
+                  group of pets yet.
+                </p>
+                <p>
+                  {config.contactEmail || config.contactPhone ? (
+                    <>
+                      Ask about a rate for these {selectedPets.length} pets at{' '}
+                      {config.contactEmail ? (
+                        <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
+                      ) : null}
+                      {config.contactEmail && config.contactPhone ? ' or ' : null}
+                      {config.contactPhone ? (
+                        <a href={`tel:${config.contactPhone}`}>{config.contactPhone}</a>
+                      ) : null}
+                      {'. '}
+                    </>
+                  ) : null}
+                  You can also book one pet at a time.
+                </p>
               </div>
             ) : (
               <div className="bp-result bp-no">

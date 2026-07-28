@@ -849,6 +849,22 @@ body {
   align-items: flex-end;
 }
 
+/* ── Charges panel (extra line items on a booking, mounted above the payments panel) ── */
+.pb-charges {
+  width: 100%;
+  border-top: 1px dashed var(--line);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.pb-charges h4 {
+  margin-top: 6px;
+}
+
+.pb-charges .pb-row {
+  align-items: flex-end;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pb-wrap button {
     transition: none;
@@ -1440,6 +1456,28 @@ body {
   box-shadow: 0 0 0 2px var(--leaf);
 }
 
+/* Holiday: a corner star plus a hairline top edge. Deliberately quiet and NON-COLOR-CODED —
+   the star is the cue, so it reads for colorblind users and never competes with the
+   time-off / confirmed / pending day-state tints, which carry booking meaning. */
+.pb-cal-cell.pb-cal-holiday {
+  border-top: 2px solid color-mix(in srgb, var(--leaf) 45%, var(--line));
+}
+
+.pb-cal-holimark {
+  margin-left: 3px;
+  font-size: 0.7rem;
+  color: var(--leaf);
+}
+
+.pb-cal-key-holiday {
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--leaf);
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
 .pb-cal-daynum {
   font-size: 0.75rem;
   font-weight: 600;
@@ -1723,4 +1761,19 @@ body {
 }
 .pb-answers div:last-child dd {
   margin-bottom: 0;
+}
+
+/* Venmo CSV import (Earnings) — a bordered block so the upload/preview flow reads as one unit,
+   and the inline Venmo field on a client row. */
+.pb-venmo-import {
+  margin: 24px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.pb-venmo-import h4 {
+  margin: 16px 0 6px;
+}
+.pb-venmo-field {
+  margin-top: 8px;
 }

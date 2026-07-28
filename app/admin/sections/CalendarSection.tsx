@@ -3,6 +3,7 @@ import {
   addDays,
   DEFAULT_TIMEZONE,
   getPacificDateStr,
+  holidaysInMonth,
   isWeekend,
   monthGrid,
   shiftMonth,
@@ -110,11 +111,13 @@ function DayCell({
   date,
   entries,
   isToday,
+  holiday,
   onOpenBooking,
 }: {
   date: string;
   entries: DayEntry[];
   isToday: boolean;
+  holiday: string | null;
   onOpenBooking: (id: string) => void;
 }) {
   // Day-state tint, one per cell by priority: time off (not available, red family)
@@ -136,10 +139,18 @@ function DayCell({
     'pb-cal-cell' +
     (isWeekend(date) ? ' pb-cal-weekend' : '') +
     state +
+    (holiday ? ' pb-cal-holiday' : '') +
     (isToday ? ' pb-cal-today' : '');
   return (
     <div className={cellClass}>
-      <span className="pb-cal-daynum">{Number(date.slice(8))}</span>
+      <span className="pb-cal-daynum">
+        {Number(date.slice(8))}
+        {holiday && (
+          <span className="pb-cal-holimark" role="img" title={holiday} aria-label={holiday}>
+            ★
+          </span>
+        )}
+      </span>
       {entries.slice(0, MAX_PER_CELL).map((entry, j) =>
         entry.kind === 'timeoff' ? (
           <span key={`t-${j}`} className="pb-cal-timeoff">
@@ -204,6 +215,14 @@ export function CalendarSection({
     [bookings, settings.blocked, settings.services, month],
   );
 
+  // A holiday is a property of the DAY, not an entry inside it — keeping it out of
+  // buildMonthEntries stops it counting against MAX_PER_CELL and leaves the "Nothing booked this
+  // month yet" empty state meaning what it says.
+  const holidayByDay = useMemo(
+    () => new Map(holidaysInMonth(month).map((h) => [h.date, h.name])),
+    [month],
+  );
+
   const cells = monthGrid(month);
 
   return (
@@ -257,6 +276,7 @@ export function CalendarSection({
                   date={date}
                   entries={entriesByDay.get(date) ?? []}
                   isToday={date === today}
+                  holiday={holidayByDay.get(date) ?? null}
                   onOpenBooking={onOpenBooking}
                 />
               ),
@@ -265,7 +285,7 @@ export function CalendarSection({
 
           {entriesByDay.size === 0 && <p className="pb-hint">Nothing booked this month yet.</p>}
 
-          {/* Plain-words legend for the four visual styles above — also the text route to the
+          {/* Plain-words legend for the visual styles above — also the text route to the
               hatched external style's meaning for first-time/touch/keyboard users, since the
               span itself carries no click-through or focus stop (see DayCell). */}
           <div className="pb-cal-legend">
@@ -280,6 +300,9 @@ export function CalendarSection({
             </span>
             <span>
               <span className="pb-cal-key pb-cal-key-external" /> From your Google Calendar
+            </span>
+            <span>
+              <span className="pb-cal-key pb-cal-key-holiday">★</span> Holiday
             </span>
           </div>
 

@@ -15,6 +15,13 @@ export {
   DEFAULT_TIMEZONE,
 } from './util/dates.js';
 export {
+  holidayNameOn,
+  holidaysForYear,
+  holidaysInMonth,
+  US_HOLIDAY_NAMES,
+  type UsHoliday,
+} from './util/us-holidays.js';
+export {
   buildCapacity,
   rangeHasConflict,
   walkHasConflict,
@@ -28,6 +35,7 @@ export { isValidRate } from './pricing/rate.js';
 export {
   buildGroupKey,
   buildMixKey,
+  dedupePets,
   mixFromPetTypes,
   parseMixKey,
   petCountOf,
@@ -35,6 +43,7 @@ export {
   type GroupRate,
   type MixRate,
   type PetMix,
+  type PricedPet,
   type RateResolution,
 } from './pricing/pet-set-rates.js';
 export {

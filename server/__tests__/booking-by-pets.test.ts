@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { createTestEnv, endUserToken } from './helpers';
+import { createTestEnv, endUserToken, TENANT_A } from './helpers';
 import { addEndUserPet } from '../db/repo';
 
 const req = (env: Env, path: string, init: RequestInit) => app.request(path, init, env);
 
 describe('booking by petIds', () => {
   it('returns the caller name+pets and books with them', async () => {
-    const { env } = createTestEnv();
+    const { env, raw } = createTestEnv();
+    // Bella (dog) + Mochi (cat) is a 2-pet set — needs an explicit stored rate under rate
+    // enforcement. This test is about the petIds→petCount/pets wiring, not pricing, so seed the
+    // mix rate the sitter would have configured for exactly this pair.
+    raw
+      .prepare(
+        `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
+         VALUES (?, 'boarding', 'standard', 'cat:1|dog:1', 50)`,
+      )
+      .run(TENANT_A);
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const me = (await (
       await req(env, '/api/sunny-paws/me', { headers: { Authorization: `Bearer ${token}` } })

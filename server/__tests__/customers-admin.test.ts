@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { adminHeaders, createTestEnv, TENANT_A } from './helpers';
+import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 const SLUG = 'sunny-paws';
 
@@ -452,5 +452,65 @@ describe('admin customers', () => {
     );
     expect(del.status).toBe(204);
     expect((await read()).find((c) => c.id === soloId)?.pets).toEqual([]);
+  });
+});
+
+describe('PATCH /:slug/admin/customers/:id — Venmo username', () => {
+  const patch = (env: Env, id: string, body: unknown, tenant = TENANT_A, slug = 'sunny-paws') =>
+    adminHeaders(tenant).then((headers) =>
+      app.request(
+        `/api/${slug}/admin/customers/${id}`,
+        {
+          method: 'PATCH',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        env,
+      ),
+    );
+
+  it('stores the handle @-less and surfaces it on the customers list', async () => {
+    const { env } = createTestEnv();
+    expect((await patch(env, 'eu_sp_jess', { venmoUsername: '  @Jess-Demo-1 ' })).status).toBe(204);
+    const res = await app.request(
+      '/api/sunny-paws/admin/customers',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { customers } = (await res.json()) as {
+      customers: { id: string; venmoUsername: string | null }[];
+    };
+    expect(customers.find((c) => c.id === 'eu_sp_jess')?.venmoUsername).toBe('Jess-Demo-1');
+  });
+
+  it('clears back to null on an empty string as well as an explicit null', async () => {
+    const { env } = createTestEnv();
+    await patch(env, 'eu_sp_jess', { venmoUsername: 'Jess-Demo-1' });
+    expect((await patch(env, 'eu_sp_jess', { venmoUsername: '   ' })).status).toBe(204);
+    const res = await app.request(
+      '/api/sunny-paws/admin/customers',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { customers } = (await res.json()) as {
+      customers: { id: string; venmoUsername: string | null }[];
+    };
+    expect(customers.find((c) => c.id === 'eu_sp_jess')?.venmoUsername).toBeNull();
+  });
+
+  it('rejects a handle with characters Venmo does not allow, and one that is too long', async () => {
+    const { env } = createTestEnv();
+    expect((await patch(env, 'eu_sp_jess', { venmoUsername: 'jess demo' })).status).toBe(400);
+    expect((await patch(env, 'eu_sp_jess', { venmoUsername: 'a'.repeat(31) })).status).toBe(400);
+    expect((await patch(env, 'eu_sp_jess', { venmoUsername: 42 })).status).toBe(400);
+    expect((await patch(env, 'eu_sp_jess', {})).status).toBe(400);
+  });
+
+  it('404s a customer that belongs to another tenant', async () => {
+    const { env } = createTestEnv();
+    // eu_sp_jess is Sunny Paws'; Happy Tails' admin must not be able to touch them.
+    expect(
+      (await patch(env, 'eu_sp_jess', { venmoUsername: 'nope' }, TENANT_B, 'happy-tails')).status,
+    ).toBe(404);
   });
 });

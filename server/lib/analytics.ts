@@ -13,8 +13,10 @@ export function serializeAnalytics(data: AnalyticsData) {
     serviceType: o.ServiceType,
     startDate: o.StartDate,
     estCost: o.EstCost,
+    chargesTotal: o.ChargesTotal,
     paidTotal: o.PaidTotal,
-    balance: o.EstCost - o.PaidTotal,
+    // Total due is the stay price (or fee) PLUS extra charges; EstCost stays the quoted price.
+    balance: o.EstCost + o.ChargesTotal - o.PaidTotal,
     // The subquery's EstCost is aliased from CancellationFee on a cancelled row, so the UI
     // needs this flag to label the amount as a fee rather than a live booking balance.
     isCancellationFee: o.Status === 'cancelled',

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
+import { ChargesPanel } from '../ChargesPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
-import type { ServiceForm, Session } from '../shared.js';
+import { totalDue, type ServiceForm, type Session } from '../shared.js';
 import { Hint } from '../Hint';
 
 /** Renders the dates for one row: single date (+ time, for timed services), or a range with the
@@ -26,23 +27,28 @@ function chipClass(status: string): string {
   return '';
 }
 
-/** Payment state for a row; null for unpaid rows. 'paid in full' covers overpayment/tips
- * (paidTotal > estCost). Shown for cancelled/declined rows too, so a sitter reviewing a refund
- * case can still see the amount. */
+/** Payment state for a row; null for unpaid rows with nothing owing. 'paid in full' covers
+ * overpayment/tips. Measured against `totalDue` — the stay price PLUS any extra charges — so a
+ * booking with a $45 vet visit on it does not read "paid in full" at the stay price. Shown for
+ * cancelled/declined rows too, so a sitter reviewing a refund case can still see the amount. */
 function paidText(b: AdminBooking): string | null {
-  if (b.paidTotal === 0) return null;
-  if (b.estCost == null) return `paid $${b.paidTotal}`;
-  return b.paidTotal >= b.estCost ? 'paid in full' : `paid $${b.paidTotal} of $${b.estCost}`;
+  const due = totalDue(b);
+  if (b.paidTotal === 0) return due != null && b.chargesTotal > 0 ? `owes $${due}` : null;
+  if (due == null) return `paid $${b.paidTotal}`;
+  return b.paidTotal >= due ? 'paid in full' : `paid $${b.paidTotal} of $${due}`;
 }
 
 /** Fee state for a cancelled row that had a cancellation fee assessed. Mirrors paidText's
- * "paid $X of $Y" shape but measured against the fee owed, so a sitter reviewing the row sees
- * the amount and how much of it has been collected. Takes precedence over paidText on those rows. */
+ * "paid $X of $Y" shape, so a sitter reviewing the row sees the amount and how much of it has
+ * been collected. Takes precedence over paidText on those rows. The fee itself and any extra
+ * charges are stated separately (EarningsSection's honest phrasing) rather than pre-summed —
+ * "fee $100 + $45 extras", never a single merged "$145" that reads as if it were the fee. */
 function feeText(b: AdminBooking): string | null {
   if (b.status !== 'cancelled' || b.cancellationFee == null) return null;
+  const extras = b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : '';
   return b.paidTotal > 0
-    ? `paid $${b.paidTotal} of fee $${b.cancellationFee}`
-    : `fee $${b.cancellationFee}`;
+    ? `paid $${b.paidTotal} of fee $${b.cancellationFee}${extras}`
+    : `fee $${b.cancellationFee}${extras}`;
 }
 
 type ListProps = {
@@ -147,7 +153,10 @@ function BookingList({
           Cancel
         </button>
       )}
-      {(isActive(b) || b.paidTotal > 0 || Object.keys(b.answers).length > 0) && (
+      {(isActive(b) ||
+        b.paidTotal > 0 ||
+        b.chargesTotal > 0 ||
+        Object.keys(b.answers).length > 0) && (
         <button onClick={() => setOpenId(openId === b.id ? null : b.id)}>
           {openId === b.id ? 'Close' : 'Details'}
         </button>
@@ -163,7 +172,8 @@ function BookingList({
           {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
           <br />
           {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
-          {b.estCost != null ? ` · $${b.estCost}` : ''}{' '}
+          {b.estCost != null ? ` · $${b.estCost}` : ''}
+          {b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : ''}{' '}
           {/* Capitalized to match the client-status chips ("Active"/"Pending") in Clients. */}
           <span className={`pb-chip${chipClass(b.status)}`}>
             {b.status.charAt(0).toUpperCase() + b.status.slice(1)}
@@ -171,7 +181,10 @@ function BookingList({
           {paid && <> · {paid}</>}
         </span>
         {actionsFor(b)}
-        {(isActive(b) || b.paidTotal > 0 || Object.keys(b.answers).length > 0) &&
+        {(isActive(b) ||
+          b.paidTotal > 0 ||
+          b.chargesTotal > 0 ||
+          Object.keys(b.answers).length > 0) &&
           openId === b.id && (
             <>
               {Object.keys(b.answers).length > 0 && (
@@ -184,6 +197,13 @@ function BookingList({
                   ))}
                 </dl>
               )}
+              <ChargesPanel
+                session={session}
+                bookingId={b.id}
+                onChanged={async () => reloadBookings()}
+                handleError={handleError}
+                allowAdd={isActive(b)}
+              />
               <PaymentsPanel
                 session={session}
                 bookingId={b.id}

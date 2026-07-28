@@ -38,6 +38,7 @@ describe('admin payment routes', () => {
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,
+      externalRef: null,
     });
     const res = await postPayment(env, bookingId, goodBody);
     expect(res.status).toBe(201);
