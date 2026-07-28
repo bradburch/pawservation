@@ -265,7 +265,9 @@ export function CalendarSection({
 
           {entriesByDay.size === 0 && <p className="pb-hint">Nothing booked this month yet.</p>}
 
-          {/* Plain-words legend for the three visual styles above. */}
+          {/* Plain-words legend for the four visual styles above — also the text route to the
+              hatched external style's meaning for first-time/touch/keyboard users, since the
+              span itself carries no click-through or focus stop (see DayCell). */}
           <div className="pb-cal-legend">
             <span>
               <span className="pb-cal-key pb-cal-key-confirmed" /> Confirmed
@@ -275,6 +277,9 @@ export function CalendarSection({
             </span>
             <span>
               <span className="pb-cal-key pb-cal-key-timeoff" /> Time off
+            </span>
+            <span>
+              <span className="pb-cal-key pb-cal-key-external" /> From your Google Calendar
             </span>
           </div>
 

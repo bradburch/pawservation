@@ -1564,6 +1564,17 @@ body {
   border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
 }
 
+.pb-cal-key-external {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--page),
+    var(--page) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  border: 1px dashed var(--soft);
+}
+
 .pb-cal-sync {
   margin-top: 6px;
 }
