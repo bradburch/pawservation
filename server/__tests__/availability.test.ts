@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { countSlotBookings, insertBookingRequest, listSlotBookingCounts } from '../db/repo';
+import {
+  countSlotBookings,
+  insertBookingRequest,
+  listSlotBookingCounts,
+  setServiceAcceptedPetTypes,
+} from '../db/repo';
 import { checkAvailability, estimateCost, rowsToCapacityEvents } from '../lib/availability';
 import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
@@ -201,6 +206,38 @@ describe('availability API — regression guards', () => {
     ]);
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('Stays are limited to 3 nights.');
+  });
+
+  it('the public quote enforces the service MaxPetCount — same rule, same refusal shape as the booking POST', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `UPDATE TenantServices SET MaxPetCount = 1 WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'boarding'`,
+      )
+      .run();
+    const res = await quote(env, 'sunny-paws', 'type=boarding&start=2027-06-01&end=2027-06-03', [
+      'pet_sp_bella',
+      'pet_sp_mochi',
+    ]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe('service_constraint');
+    expect(body.error).toBe('This service allows at most 1 pet.');
+  });
+
+  it('the public quote runs pet-type acceptance before pricing — a cat against a dogs-only service gets the acceptance message, not unpriced-pet-set', async () => {
+    const { env } = createTestEnv();
+    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'boarding', ['dog']);
+    // Bella (dog) + Mochi (cat), no dog+cat mix rate seeded: absent the acceptance gate, this
+    // 2-pet set would fall through to estimateCost and get refused as unpriced-pet-set instead.
+    const res = await quote(env, 'sunny-paws', 'type=boarding&start=2027-06-01&end=2027-06-03', [
+      'pet_sp_bella',
+      'pet_sp_mochi',
+    ]);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe('pet_type_not_accepted');
+    expect(body.error).toBe("Boarding doesn't accept cat — Mochi can't join this booking.");
   });
 });
 

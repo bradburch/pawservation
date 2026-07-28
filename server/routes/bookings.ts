@@ -75,12 +75,13 @@ export const bookingRoutes = new Hono<AppEnv>()
     // Bounds the ownership scan; same defensive cap the booking POST uses.
     if (!isValidPetCount(requestedPetIds.length)) return c.json({ error: 'Too many pets.' }, 400);
 
-    const [services, options, myPets] = await Promise.all([
+    const [services, options, myPets, acceptedTypes] = await Promise.all([
       listServices(c.env.PAWBOOK_DB, tenant.Id),
       listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
       // PetOwners-backed: a CO-OWNER may quote a pet they co-own, and a pet outside this
       // customer's ownership graph is simply not in the list.
       listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId')),
+      listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
     ]);
 
     const chosen = requestedPetIds.map((id) => myPets.find((p) => p.Id === id));
@@ -96,6 +97,19 @@ export const bookingRoutes = new Hono<AppEnv>()
       : serviceOptions[0];
     if (!option) return c.json({ error: 'Unknown service option.' }, 400);
 
+    // Mirrors the POST's acceptance gate (validatePetTypeAcceptance, run before pricing there
+    // too): a cat quoted against a dogs-only service must get the acceptance message, not
+    // "unpriced-pet-set" — the two are different refusals and the customer needs the right one.
+    const labelBySlug = new Map(acceptedTypes.map((r) => [r.PetType, r.Label]));
+    const acceptanceError = validatePetTypeAcceptance(
+      service.AcceptedPetTypes,
+      service.Label,
+      chosen.map((p) => ({ name: p!.Name, petType: p!.PetType })),
+      (petSlug) => labelBySlug.get(petSlug) ?? petSlug,
+    );
+    if (acceptanceError)
+      return c.json({ error: acceptanceError, code: 'pet_type_not_accepted' }, 400);
+
     const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
 
     if (service.Shape === 'range') {
@@ -106,12 +120,27 @@ export const bookingRoutes = new Hono<AppEnv>()
         tenant.Timezone ?? undefined,
       );
       if (rangeError) return c.json({ error: rangeError.error }, rangeError.status);
+      // Same rule the POST applies (validateServiceConstraints) — a quote for more pets than the
+      // service allows must refuse with the same friendly, structured shape the widget already
+      // renders (bp-result.bp-no), not fall through to capacity/pricing.
+      const constraintsError = validateServiceConstraints(
+        { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
+        { nights: nightsBetween(start, end), petCount: pets.length },
+      );
+      if (constraintsError)
+        return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
       return c.json(
         await checkAvailability(c.env, tenant, service, option, start, end, pets, rates),
       );
     }
     const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
     if (dateError) return c.json({ error: dateError.error }, dateError.status);
+    const constraintsError = validateServiceConstraints(
+      { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
+      { nights: null, petCount: pets.length },
+    );
+    if (constraintsError)
+      return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
     return c.json(await checkAvailability(c.env, tenant, service, option, start, '', pets, rates));
   })
 

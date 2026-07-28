@@ -43,7 +43,7 @@ export function buildLlmsTxt(
     '',
     '## API',
     `- Config (services, rates, pet types): GET ${origin}/api/${tenant.Slug}/config`,
-    `- Availability & quote: GET ${origin}/api/${tenant.Slug}/availability?type=&option=&start=&end=&pets=`,
+    `- Availability & quote: GET ${origin}/api/${tenant.Slug}/availability?type=&option=&start=&end=&petIds= (email-code auth required; petIds is a comma-joined list of the caller's own pet ids, priced as the exact set requested)`,
     `- Booking requests: POST ${origin}/api/${tenant.Slug}/bookings (email-code auth; supports Idempotency-Key header)`,
     `- Booking widget: ${origin}/embed/${tenant.Slug}`,
   );
