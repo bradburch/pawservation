@@ -29,6 +29,7 @@ export {
   buildGroupKey,
   buildMixKey,
   mixFromPetTypes,
+  parseMixKey,
   petCountOf,
   resolvePetSetRate,
   type GroupRate,

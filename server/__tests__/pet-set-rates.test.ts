@@ -3,6 +3,7 @@ import {
   buildGroupKey,
   buildMixKey,
   mixFromPetTypes,
+  parseMixKey,
   petCountOf,
   resolvePetSetRate,
 } from '../../src/shared/index.js';
@@ -218,5 +219,38 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
         mixRates: [{ mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' }],
       }),
     ).toBeNull();
+  });
+});
+
+describe('parseMixKey', () => {
+  it('inverts buildMixKey', () => {
+    expect(parseMixKey('cat:1|dog:2')).toEqual({ cat: 1, dog: 2 });
+    expect(buildMixKey(parseMixKey('cat:1|dog:2'))).toBe('cat:1|dog:2');
+  });
+
+  it('returns an empty mix for the empty key', () => {
+    expect(Object.keys(parseMixKey(''))).toHaveLength(0);
+  });
+
+  it('rebuild equality rejects every non-canonical key', () => {
+    // Wrong order, zero/negative/float counts, duplicate species, malformed parts:
+    for (const bad of [
+      'dog:2|cat:1',
+      'dog:0',
+      'dog:-1',
+      'dog:1.5',
+      'dog:1|dog:2',
+      'dog',
+      ':2',
+      'dog:x',
+    ]) {
+      expect(buildMixKey(parseMixKey(bad))).not.toBe(bad);
+    }
+  });
+
+  it('returns a null-prototype record, so a species slugged "constructor" is an own property', () => {
+    const mix = parseMixKey('constructor:2');
+    expect(mix['constructor']).toBe(2);
+    expect(buildMixKey(mix)).toBe('constructor:2');
   });
 });

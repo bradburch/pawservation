@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deletePetGroupRateById,
   deleteTenantCompletely,
+  listAllPetGroupPricing,
   listPetGroupPricing,
   listServicePetRates,
-  replacePetGroupPricing,
   replaceServicePetRates,
+  upsertPetGroupRate,
 } from '../db/repo';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -74,51 +76,117 @@ describe('species-count rates repo', () => {
   });
 });
 
-describe('pet-group rates repo', () => {
-  it('round-trips and is scoped by service type', async () => {
+describe('pet-group rates repo (upsert/delete-one — never whole-set replace)', () => {
+  it('upsert creates a row, then updates it IN PLACE — same id, new rate', async () => {
     const { env } = createTestEnv();
-    await replacePetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk', [
-      { id: 'pgp_1', optionKey: 'w60', groupKey: 'p_a,p_b', rate: 44 },
-    ]);
-    await replacePetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'boarding', [
-      { id: 'pgp_2', optionKey: 'standard', groupKey: 'p_a,p_b', rate: 80 },
-    ]);
-    const walk = await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk');
-    expect(walk).toHaveLength(1);
-    expect(walk[0].GroupKey).toBe('p_a,p_b');
-    expect(walk[0].OptionKey).toBe('w60');
-    expect(walk[0].Rate).toBe(44);
-    expect(await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'boarding')).toHaveLength(1);
-  });
-
-  it('is tenant-scoped', async () => {
-    const { env } = createTestEnv();
-    await replacePetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk', [
-      { id: 'pgp_a', optionKey: 'w30', groupKey: 'p_a', rate: 20 },
-    ]);
-    await replacePetGroupPricing(env.PAWBOOK_DB, TENANT_B, 'walk', [
-      { id: 'pgp_b', optionKey: 'w30', groupKey: 'p_a', rate: 99 },
-    ]);
-    expect((await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk'))[0].Rate).toBe(20);
-    expect((await listPetGroupPricing(env.PAWBOOK_DB, TENANT_B, 'walk'))[0].Rate).toBe(99);
-  });
-
-  it('replace is scoped to the whole service, across options — a second option is not a sibling row that survives', async () => {
-    const { env } = createTestEnv();
-    await replacePetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk', [
-      { id: 'pgp_1', optionKey: 'w30', groupKey: 'p_a,p_b', rate: 44 },
-      { id: 'pgp_2', optionKey: 'w60', groupKey: 'p_a,p_b', rate: 60 },
-    ]);
-    // A replace call for the same service always supplies the FULL set for that service (the
-    // admin editor is per-service, not per-option), so it is correct for this call to drop the
-    // w60 row: it is not in the new set.
-    await replacePetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk', [
-      { id: 'pgp_3', optionKey: 'w30', groupKey: 'p_a,p_b', rate: 50 },
-    ]);
+    const first = await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a,p_b',
+      rate: 44,
+    });
+    const second = await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a,p_b',
+      rate: 50,
+    });
+    expect(second.id).toBe(first.id);
     const rows = await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk');
     expect(rows).toHaveLength(1);
-    expect(rows[0].OptionKey).toBe('w30');
     expect(rows[0].Rate).toBe(50);
+  });
+
+  it('upsert never clobbers a SIBLING row — the anti-replace lock (PR 2 GATE)', async () => {
+    const { env } = createTestEnv();
+    // Three siblings differing in exactly one key component each:
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a,p_b',
+      rate: 44,
+    });
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd60',
+      groupKey: 'p_a,p_b',
+      rate: 60,
+    });
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_c',
+      rate: 20,
+    });
+    // Updating one leaves the other two standing:
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a,p_b',
+      rate: 48,
+    });
+    const rows = await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk');
+    expect(rows).toHaveLength(3);
+    expect(rows.find((r) => r.OptionKey === 'd60')?.Rate).toBe(60);
+    expect(rows.find((r) => r.GroupKey === 'p_c')?.Rate).toBe(20);
+  });
+
+  it('delete-one removes exactly one row and reports found/not-found', async () => {
+    const { env } = createTestEnv();
+    const { id } = await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a',
+      rate: 20,
+    });
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_b',
+      rate: 22,
+    });
+    expect(await deletePetGroupRateById(env.PAWBOOK_DB, TENANT_A, id)).toBe(true);
+    expect(await deletePetGroupRateById(env.PAWBOOK_DB, TENANT_A, id)).toBe(false);
+    const rows = await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].GroupKey).toBe('p_b');
+  });
+
+  it('delete-one is tenant-scoped — tenant B cannot delete tenant A’s row', async () => {
+    const { env } = createTestEnv();
+    const { id } = await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a',
+      rate: 20,
+    });
+    expect(await deletePetGroupRateById(env.PAWBOOK_DB, TENANT_B, id)).toBe(false);
+    expect(await listPetGroupPricing(env.PAWBOOK_DB, TENANT_A, 'walk')).toHaveLength(1);
+  });
+
+  it('listAllPetGroupPricing spans services but never tenants', async () => {
+    const { env } = createTestEnv();
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a',
+      rate: 20,
+    });
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+      serviceType: 'boarding',
+      optionKey: 'standard',
+      groupKey: 'p_a,p_b',
+      rate: 80,
+    });
+    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_B, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      groupKey: 'p_a',
+      rate: 99,
+    });
+    const all = await listAllPetGroupPricing(env.PAWBOOK_DB, TENANT_A);
+    expect(all).toHaveLength(2);
+    expect(all.every((r) => r.TenantId === TENANT_A)).toBe(true);
   });
 });
 
@@ -129,9 +197,12 @@ describe('deleteTenantCompletely clears both rate tables', () => {
       await replaceServicePetRates(env.PAWBOOK_DB, t, 'walk', 'w30', [
         { mixKey: 'dog:2', rate: 35 },
       ]);
-      await replacePetGroupPricing(env.PAWBOOK_DB, t, 'walk', [
-        { id: `pgp_${t}`, optionKey: 'w30', groupKey: 'p_a', rate: 20 },
-      ]);
+      await upsertPetGroupRate(env.PAWBOOK_DB, t, {
+        serviceType: 'walk',
+        optionKey: 'w30',
+        groupKey: 'p_a',
+        rate: 20,
+      });
     }
     await deleteTenantCompletely(env.PAWBOOK_DB, TENANT_A);
     expect(await listServicePetRates(env.PAWBOOK_DB, TENANT_A)).toHaveLength(0);

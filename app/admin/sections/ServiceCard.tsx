@@ -22,6 +22,7 @@ export function ServiceCard({
   onToggleExpanded,
   openRef,
   acceptedPetLabels,
+  multiPetUnpriced,
 }: {
   service: ServiceForm;
   expanded: boolean;
@@ -31,6 +32,8 @@ export function ServiceCard({
   onToggleExpanded: () => void;
   openRef: (el: HTMLButtonElement | null) => void;
   acceptedPetLabels: string[] | null;
+  /** True when the service allows 2+ pets but no stored rate covers any multi-pet set. */
+  multiPetUnpriced: boolean;
 }) {
   const { price, facts } = serviceSummary({ ...service, acceptedPetLabels });
   const cardClass =
@@ -71,6 +74,11 @@ export function ServiceCard({
           facts && <span className="pb-hint">{facts}</span>
         ) : (
           <span className="pb-hint">Not offered — turn on to take bookings</span>
+        )}
+        {multiPetUnpriced && (
+          <span className="pb-error">
+            No multi-pet rate — add one so bookings with two or more pets have a set price
+          </span>
         )}
       </button>
     </div>
