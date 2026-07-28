@@ -102,6 +102,34 @@ export function createTestEnv(opts?: { html?: string }): { env: Env; raw: Databa
   return { env, raw };
 }
 
+/**
+ * Seed pets for one owner, WITH their PetOwners edge — the authoritative owner list every
+ * customer-facing pet read uses (CLAUDE.md). A pet inserted without the edge is invisible to its
+ * own owner, which surfaces as a baffling "Unknown pet." 400 rather than a missing row.
+ *
+ * Synchronous on the raw handle (not the D1 shim) so a test can seed inline before its first
+ * request. Ids are caller-supplied and deterministic: the quote's group key is built from pet
+ * ids, so a random id would make a rate-matching assertion unwritable.
+ */
+export function seedPets(
+  raw: DatabaseSync,
+  tenantId: string,
+  endUserId: string,
+  specs: { id: string; petType: string; name?: string }[],
+): string[] {
+  const insertPet = raw.prepare(
+    `INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES (?, ?, ?, ?, ?)`,
+  );
+  const insertOwner = raw.prepare(
+    `INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)`,
+  );
+  for (const s of specs) {
+    insertPet.run(s.id, tenantId, endUserId, s.name ?? s.id, s.petType);
+    insertOwner.run(tenantId, s.id, endUserId);
+  }
+  return specs.map((s) => s.id);
+}
+
 /** A valid admin session token for a tenant — Authorization: `Bearer ${adminToken(...)}`. */
 export function adminToken(tenantId: string): Promise<string> {
   return mintAdminToken(`tu_${tenantId}`, tenantId, TEST_SECRET);
