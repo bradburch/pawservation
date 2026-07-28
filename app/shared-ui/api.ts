@@ -226,6 +226,8 @@ export const api = {
       optionKey: string;
       startDate: string;
       endDate?: string;
+      /** Range services only: customer-chosen arrival time 'HH:MM'. */
+      startTime?: string;
       petIds: string[];
       answers: Record<string, string>;
     },

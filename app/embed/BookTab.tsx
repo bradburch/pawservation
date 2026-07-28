@@ -34,6 +34,7 @@ export function BookTab({
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
+  const [startTime, setStartTime] = useState('');
   const [selectedPets, setSelectedPets] = useState<string[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [calReloadKey, setCalReloadKey] = useState(0);
@@ -83,6 +84,7 @@ export function BookTab({
     setOptionKey(svc?.options[0]?.optionKey ?? '');
     setStart('');
     setEnd('');
+    setStartTime('');
     setSelectedPets([]);
     setAnswers({});
     resetCheck();
@@ -127,7 +129,9 @@ export function BookTab({
         startDate: start,
         petIds: selectedPets,
         answers,
-        ...(service?.shape === 'range' ? { endDate: end } : {}),
+        ...(service?.shape === 'range'
+          ? { endDate: end, ...(startTime ? { startTime } : {}) }
+          : {}),
       };
       const res = await api.createBooking(slug, token, body);
       setConfirmation(
@@ -137,6 +141,7 @@ export function BookTab({
       );
       setStart('');
       setEnd('');
+      setStartTime('');
       setSelectedPets([]);
       setAnswers({});
       setResult(null);
@@ -232,6 +237,12 @@ export function BookTab({
 
       {datesReady && (
         <div className="bp-details">
+          {service.shape === 'range' && (
+            <label className="bp-field">
+              Arrival time (optional)
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            </label>
+          )}
           <fieldset className="bp-pets">
             <legend>Who&apos;s coming?</legend>
             {pets === null ? (

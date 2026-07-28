@@ -5,10 +5,12 @@ import { PaymentsPanel } from '../PaymentsPanel';
 import type { Session } from '../shared.js';
 import { Hint } from '../Hint';
 
-/** Renders the dates for one row: single date (+ time, for timed services) or a range. */
+/** Renders the dates for one row: single date (+ time, for timed services), or a range with the
+ * customer's optional arrival time. */
 function formatWhen(b: AdminBooking): string {
   const range = b.endDate ? `${b.startDate} – ${b.endDate}` : b.startDate;
-  return b.startTime ? `${range} at ${b.startTime}` : range;
+  if (!b.startTime) return range;
+  return b.endDate ? `${range}, arriving ${b.startTime}` : `${range} at ${b.startTime}`;
 }
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
