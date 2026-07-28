@@ -1666,7 +1666,7 @@ export const adminRoutes = new Hono<AppEnv>()
     } else if (booking?.GCalEventId) {
       // Cancel/decline: delete the synced Google event. The booking keeps its GCalEventId as a
       // historical record; reconciliation ignores cancelled and declined rows.
-      calendarTask = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId);
+      calendarTask = deleteBookingCalendarEvent(c.env, tenant, booking.GCalEventId, id);
     }
 
     if (calendarTask) {

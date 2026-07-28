@@ -1,6 +1,7 @@
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
   clearBookingCalendarEventIds,
+  clearSyncPending,
   getEndUserById,
   getProviderConnection,
   listPetNamesForBooking,
@@ -168,6 +169,7 @@ export async function updateBookingCalendarEvent(
       gcalEventId,
     );
   }
+  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, b.bookingId);
 }
 
 /**
@@ -241,16 +243,19 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
  * must stand regardless of what Google does. deleteEvent treats 410 Gone (already deleted, e.g.
  * removed by hand in Calendar) as success. The booking keeps its GCalEventId as a historical
  * record; reconciliation ignores it because listSyncedBookingIds excludes cancelled bookings.
+ * Clearing SyncPending here is what retires the delete from the outbox.
  */
 export async function deleteBookingCalendarEvent(
   env: Env,
   tenant: Tenant,
   gcalEventId: string,
+  bookingId: string,
 ): Promise<void> {
   const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   await deleteEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId);
+  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, bookingId);
 }
 
 const CALENDAR_SYNC_TTL_SECONDS = 120;

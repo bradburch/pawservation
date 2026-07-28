@@ -526,6 +526,7 @@ export async function listSlotBookingCounts(
   return new Map(results.map((r) => [r.StartDate, r.n]));
 }
 
+/** Real bookings are born sync-pending; the outbox clears on push success. */
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -548,8 +549,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -566,6 +567,7 @@ export async function insertBookingRequest(
       row.status,
       row.source ?? null,
       row.idempotencyKey ?? null,
+      row.serviceType === 'blocked' ? 0 : 1,
     )
     .run();
   return id;
@@ -680,6 +682,8 @@ export async function listBookingsForTenant(
  *
  * 'declined' is a sitter's "no" to a still-pending request — a first-class Status value — and is
  * only valid from 'pending': a confirmed booking is cancelled, never declined.
+ *
+ * Every transition re-enters the calendar outbox; the push that mirrors it clears the flag.
  */
 export async function updateBookingStatus(
   db: D1Database,
@@ -693,7 +697,7 @@ export async function updateBookingStatus(
   if (status === 'cancelled' && cancellationFee != null) {
     const result = await db
       .prepare(
-        `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?
+        `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
          WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'confirmed'`,
       )
       .bind(cancellationFee, tenantId, id)
@@ -704,14 +708,14 @@ export async function updateBookingStatus(
     status === 'declined'
       ? await db
           .prepare(
-            `UPDATE BookingRequests SET Status = 'declined'
+            `UPDATE BookingRequests SET Status = 'declined', SyncPending = 1
              WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked' AND Status = 'pending'`,
           )
           .bind(tenantId, id)
           .run()
       : await db
           .prepare(
-            `UPDATE BookingRequests SET Status = ?
+            `UPDATE BookingRequests SET Status = ?, SyncPending = 1
              WHERE TenantId = ? AND Id = ? AND ServiceType != 'blocked'
                AND Status NOT IN ('cancelled', 'declined')`,
           )
@@ -1353,7 +1357,7 @@ export async function setBookingGCalEventId(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      'UPDATE BookingRequests SET GCalEventId = ? WHERE TenantId = ? AND Id = ? AND GCalEventId IS ?',
+      'UPDATE BookingRequests SET GCalEventId = ?, SyncPending = 0 WHERE TenantId = ? AND Id = ? AND GCalEventId IS ?',
     )
     .bind(eventId, tenantId, bookingId, expectedOld)
     .run();
@@ -1387,6 +1391,18 @@ export async function clearBookingCalendarEventIds(
     .bind(tenantId)
     .run();
   return (result.meta as { changes?: number }).changes ?? 0;
+}
+
+/** Outbox success path: mark one booking's calendar state as mirrored. Tenant-scoped. */
+export async function clearSyncPending(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<void> {
+  await db
+    .prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE TenantId = ? AND Id = ?')
+    .bind(tenantId, bookingId)
+    .run();
 }
 
 const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
