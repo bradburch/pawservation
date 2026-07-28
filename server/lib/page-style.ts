@@ -5,6 +5,14 @@
  * mounts those routes, so the routes module cannot import back from index.ts).
  */
 export const PAGE_STYLE = /* css */ `
+      /* Brand face for the nav wordmark only — a 1.3KB self-hosted subset ("Pawservation"
+         glyphs), so it can never slow the page or leak a request off-origin. */
+      @font-face {
+        font-family: 'Boogaloo';
+        src: url('/fonts/boogaloo.woff2') format('woff2');
+        font-weight: 400;
+        font-display: swap;
+      }
       :root {
         color-scheme: light;
         /* Palette derived from the widget's own tokens (app/embed/widget.css) so the
@@ -67,9 +75,10 @@ export const PAGE_STYLE = /* css */ `
         gap: 9px;
         text-decoration: none;
         color: var(--ink);
-        font-weight: 700;
-        font-size: 1.06rem;
-        letter-spacing: -0.02em;
+        font-family: 'Boogaloo', var(--sans, sans-serif);
+        font-weight: 400;
+        font-size: 1.3rem;
+        letter-spacing: 0.02em;
       }
       .logo svg { display: block; color: var(--green); }
       .nav-links {
