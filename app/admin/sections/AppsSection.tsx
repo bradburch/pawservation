@@ -44,7 +44,7 @@ function PetCalendarAction({
   if (!isPersonalCalendarTarget(calendarId)) {
     return (
       <p className="pb-hint">
-        {created ? `Created "${created}". ` : ''}Bookings sync to a separate calendar:{' '}
+        {created ? `Created “${created}”. ` : ''}Bookings sync to a separate calendar:{' '}
         <code className="pb-truncate">{calendarId}</code>. Only events on that calendar affect your
         availability — the rest of your Google account is never read. Clear the calendar ID below to
         go back to your main calendar.
@@ -78,7 +78,7 @@ function PetCalendarAction({
           {busy ? 'Creating…' : 'Create a pet calendar'}
         </button>
         <small className="pb-hint">
-          Pawservation makes a separate "{PET_CALENDAR_NAME}" calendar in your Google account and
+          Pawservation makes a separate “{PET_CALENDAR_NAME}” calendar in your Google account and
           syncs bookings there instead, so only pet work affects your availability. Your upcoming
           bookings move across automatically, and your personal calendar stops being read.
         </small>
