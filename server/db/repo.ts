@@ -253,9 +253,6 @@ export async function deletePetType(
   return (result.meta as { changes?: number }).changes !== 0;
 }
 
-/** Customer pets + bookings of ANY status referencing the slug — history included, mirroring
- * countBookingsForService's rule, so deletion never orphans a slug that admin lists and CSV
- * exports would otherwise render as a bare token. */
 /** Customer pets + bookings referencing the slug via their linked pets (any status — history
  * included, mirroring countBookingsForService's rule, so deletion never orphans a slug the admin
  * list and CSV export would render as a bare token). A booking references a slug through
