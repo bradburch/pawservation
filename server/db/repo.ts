@@ -1006,7 +1006,6 @@ export async function replaceServiceOptions(
     label: string;
     durationMinutes: number | null;
     rate: number;
-    rateUnit: RateUnit;
     startTime: string | null;
     endTime: string | null;
     capacity: number | null;
@@ -1015,13 +1014,10 @@ export async function replaceServiceOptions(
 ): Promise<void> {
   // DELETE-then-INSERT as ONE atomic, single-round-trip batch: a mid-write failure can no longer
   // leave the service's options half-wiped, and N options cost one trip instead of N+1.
-  // NB: RateUnit here is the RETIRED per-option copy (see sql/schema.sql) — read by nothing and
-  // absent from TenantServiceOption; it is bound only because the column is NOT NULL with no
-  // DEFAULT. This input type is the write shape, deliberately separate from the read type.
   const insert = db.prepare(
     `INSERT INTO TenantServiceOptions
-       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity, WeekdaysOnly)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity, WeekdaysOnly)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   await db.batch([
     db
@@ -1036,7 +1032,6 @@ export async function replaceServiceOptions(
         o.label,
         o.durationMinutes,
         o.rate,
-        o.rateUnit,
         o.startTime,
         o.endTime,
         o.capacity,
@@ -1341,20 +1336,18 @@ export async function clearBookingCalendarEventIds(
   return (result.meta as { changes?: number }).changes ?? 0;
 }
 
+const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
+
 export async function getEndUserById(
   db: D1Database,
   tenantId: string,
   id: string,
 ): Promise<EndUser | null> {
   return await db
-    .prepare(
-      'SELECT Id, TenantId, Email, Name, Status, InvitedAt FROM EndUsers WHERE TenantId = ? AND Id = ?',
-    )
+    .prepare(`SELECT ${ENDUSER_COLS} FROM EndUsers WHERE TenantId = ? AND Id = ?`)
     .bind(tenantId, id)
     .first<EndUser>();
 }
-
-const ENDUSER_COLS = 'Id, TenantId, Email, Name, Phone, Status, InvitedAt';
 
 export async function getEndUserByEmail(
   db: D1Database,

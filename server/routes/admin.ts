@@ -668,10 +668,6 @@ export const adminRoutes = new Hono<AppEnv>()
           label: o.label,
           durationMinutes: o.durationMinutes,
           rate: o.rate,
-          // Copied down from the parent service row only to satisfy the column's NOT NULL
-          // constraint — TenantServiceOptions.RateUnit is retired and read by nothing (every price
-          // reads TenantServices.RateUnit). Never authoritative; never client-settable.
-          rateUnit: current.RateUnit,
           startTime: o.startTime,
           endTime: o.endTime,
           capacity: o.capacity,

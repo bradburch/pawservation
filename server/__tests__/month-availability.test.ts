@@ -154,8 +154,8 @@ describe('GET /api/:slug/availability/month', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'opt_test_morning',
@@ -165,7 +165,6 @@ describe('GET /api/:slug/availability/month', () => {
         'Morning Walk',
         180,
         25,
-        'visit',
         '11:00',
         '14:00',
         1,
@@ -216,8 +215,8 @@ describe('GET /api/:slug/availability/month', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'opt_test_afternoon',
@@ -227,7 +226,6 @@ describe('GET /api/:slug/availability/month', () => {
         'Afternoon Walk',
         180,
         25,
-        'visit',
         '11:00',
         '14:00',
         null,

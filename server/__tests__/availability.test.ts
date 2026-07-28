@@ -658,8 +658,8 @@ describe('quote/stamp parity for a day-unit range service', () => {
     raw
       .prepare(
         `INSERT INTO TenantServiceOptions
-           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit)
-         VALUES (?, ?, ?, 'standard', 'Standard', NULL, 30, 'day')`,
+           (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate)
+         VALUES (?, ?, ?, 'standard', 'Standard', NULL, 30)`,
       )
       .run('opt_sp_dayboard', TENANT_A, 'day-boarding');
   }

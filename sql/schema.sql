@@ -6,12 +6,6 @@ CREATE TABLE IF NOT EXISTS Tenants (
   Slug TEXT NOT NULL UNIQUE,
   DisplayName TEXT NOT NULL,
   AccentColor TEXT NOT NULL DEFAULT '#4f46e5',
-  -- RETIRED by 0015 (service-level attributes): caps/stay-length now live on TenantServices
-  -- (MaxConcurrentPets / MaxPerDay / MaxNights). Columns stay so schema.sql, the local DB, and
-  -- the remote DB keep the exact same shape; no code reads or writes them. Drop in a future 0016+.
-  MaxBoardingPets INTEGER,
-  MaxHouseSitsPerDay INTEGER,
-  MaxStayNights INTEGER,
   -- NULL = instance default (DEFAULT_TIMEZONE).
   Timezone TEXT,
   -- Optional contact details shown to clients in the booking widget.
@@ -55,28 +49,19 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   CapacityKind TEXT NOT NULL DEFAULT 'none' CHECK (CapacityKind IN ('boarding', 'housesit', 'none')),
   SortOrder INTEGER NOT NULL DEFAULT 0,
   -- Per-service intake questions (JSON array of ServiceQuestion, see src/shared/booking/service-rules.ts)
-  -- + optional booking-level limits. NULL limit = unlimited, matching the Tenants Max* convention.
+  -- + optional booking-level limits. NULL limit = unlimited. There is deliberately NO MinNights
+  -- and NO MinPetCount: the minimum stay is structurally 1 night and services have only a
+  -- max-pets limit — a settings PUT that still sends either is rejected, not silently dropped.
   Questions TEXT NOT NULL DEFAULT '[]',
-  MinNights INTEGER,
   MaxNights INTEGER,
-  -- MinPetCount is RETIRED in place (services have only a max-pets limit): nullable, so nothing
-  -- writes it, and it is deliberately absent from the TenantService type and listServices SELECT —
-  -- the compiler, not a comment, prevents reading it. No migration NULLs it, so an already-
-  -- provisioned DB may still hold values here: they are INERT and no longer enforced on any
-  -- booking. A settings PUT that still sends minPetCount is rejected, not silently dropped.
-  -- Drop the column in a future cleanup migration.
-  MinPetCount INTEGER,
   MaxPetCount INTEGER,
   -- JSON array of pet-type slugs this service accepts; NULL = accepts every registry type
   -- (null-is-unlimited convention). An empty array is invalid for an ENABLED service.
   AcceptedPetTypes TEXT,
-  -- Per-service capacity (added by 0015; NULL = unlimited). MaxConcurrentPets is the pets-per-day
-  -- cap for BOTH pool kinds (0017): CapacityKind='boarding' and 'housesit' both read it — a booking
-  -- with three pets uses three slots. A cap on a 'none'-kind service is rejected on PUT. MaxPerDay
-  -- is RETIRED (0017 folded it into MaxConcurrentPets); the column stays for shape lockstep but no
-  -- code reads or writes it. Drop in a future cleanup migration.
+  -- Per-service capacity (NULL = unlimited). MaxConcurrentPets is the pets-per-day cap for BOTH
+  -- pool kinds: CapacityKind='boarding' and 'housesit' both read it — a booking with three pets
+  -- uses three slots. A cap on a 'none'-kind service is rejected on PUT.
   MaxConcurrentPets INTEGER,
-  MaxPerDay INTEGER,
   -- Tiered cancellation policy (added by 0016); JSON array like
   -- [{"withinDays":2,"percent":100},{"withinDays":7,"percent":50}]. NULL = no fee.
   CancellationTiers TEXT,
@@ -94,11 +79,7 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   Label TEXT NOT NULL,
   DurationMinutes INTEGER,
   Rate INTEGER NOT NULL,
-  -- RETIRED in place (no migration): the billing unit is read from TenantServices.RateUnit; this
-  -- copy is read by nothing and is not even SELECTed into the app's types. NOT NULL with no
-  -- DEFAULT, so writes must still supply it. No drop scheduled — that needs expand/contract across
-  -- two hand-applied production migrations to remove a column that causes no defect.
-  RateUnit TEXT NOT NULL CHECK (RateUnit IN ('night', 'day', 'visit', 'walk')),
+  -- The billing unit is TenantServices.RateUnit — options deliberately carry no copy of it.
   -- A fixed clock window (both set together, or both NULL). Windowed options derive
   -- DurationMinutes from this window server-side (see server/routes/admin.ts); Capacity caps
   -- concurrent bookings against this option on one date. NULL = unlimited, matching the
@@ -112,12 +93,10 @@ CREATE TABLE IF NOT EXISTS TenantServiceOptions (
   UNIQUE (TenantId, ServiceType, OptionKey)
 );
 
--- Explicit rate for a specific set of pets, keyed per service (0020). GroupKey is the sorted,
--- comma-joined pet-id list with a '|<duration>' suffix for timed services — see buildGroupKey in
--- src/shared/pricing/pet-set-rates.ts. Exact-match only; nothing reads this table yet.
 -- Explicit rate for a specific pet-id set, keyed per OPTION so OptionKey pins duration — no
--- suffix or DurationMinutes column needed. RateUnit comes from TenantServices.RateUnit (see
--- migrations/0020_pet_group_pricing.sql for the full rationale).
+-- suffix or DurationMinutes column needed. GroupKey is the sorted, comma-joined pet-id list —
+-- see buildGroupKey in src/shared/pricing/pet-set-rates.ts. The billing unit comes from
+-- TenantServices.RateUnit. Exact-match only; nothing reads this table yet.
 CREATE TABLE IF NOT EXISTS PetGroupPricing (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
@@ -151,9 +130,6 @@ CREATE TABLE IF NOT EXISTS TenantPetTypes (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   PetType TEXT NOT NULL,            -- per-tenant slug ('dog', 'rabbit', ...), immutable
   Label TEXT NOT NULL,              -- display name ('Dogs', 'Rabbits'), renamable
-  -- RETIRED by 0015: the registry is pure slug+label; behavior derives from per-service
-  -- AcceptedPetTypes. Column stays for shape lockstep; no code reads or writes it.
-  Enabled INTEGER NOT NULL DEFAULT 1,
   UNIQUE (TenantId, PetType)
 );
 
@@ -269,7 +245,7 @@ CREATE TABLE IF NOT EXISTS ProviderConnections (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   Capability TEXT NOT NULL,
   Provider TEXT NOT NULL,
-  Status TEXT NOT NULL DEFAULT 'disconnected' CHECK (Status IN ('disconnected', 'connected-stub', 'connected')),
+  Status TEXT NOT NULL DEFAULT 'disconnected' CHECK (Status IN ('disconnected', 'connected')),
   ConnectedAt TEXT,
   -- AES-GCM ciphertext (base64 iv||ct), key derived from TOKEN_SECRET. NEVER returned to a client.
   AccessToken TEXT,

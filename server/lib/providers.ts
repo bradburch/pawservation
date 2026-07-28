@@ -6,7 +6,7 @@ import type { ProviderConnection } from '../types';
  */
 
 export type CalendarView = {
-  status: 'disconnected' | 'connected-stub' | 'connected';
+  status: 'disconnected' | 'connected';
   connectedAt: string | null;
   calendarId: string | null;
 };

@@ -30,7 +30,7 @@ function seedFullTenant(raw: DatabaseSync, t: string, slug: string) {
     `INSERT INTO TenantServices (TenantId, ServiceType, Label, Shape, RateUnit) VALUES ('${t}','boarding','Boarding','range','night');`,
   );
   raw.exec(
-    `INSERT INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKey, Label, Rate, RateUnit) VALUES ('${t}_opt','${t}','boarding','std','Standard',50,'night');`,
+    `INSERT INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKey, Label, Rate) VALUES ('${t}_opt','${t}','boarding','std','Standard',50);`,
   );
   raw.exec(`INSERT INTO TenantPetTypes (TenantId, PetType, Label) VALUES ('${t}','dog','Dogs');`);
   raw.exec(`INSERT INTO EndUsers (Id, TenantId, Email) VALUES ('${t}_eu','${t}','client@x.test');`);

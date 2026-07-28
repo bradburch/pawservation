@@ -6,8 +6,7 @@
 -- is intended for a throwaway demo environment; provision real tenants/logins separately.
 -- (Hashes are full-strength 600k-iteration PBKDF2 so they are at least not weak-by-iteration.)
 
--- Tenant rows carry branding + timezone/contact only (0015): capacity and stay-length live on
--- TenantServices. The retired Tenants cap columns are omitted (NULL — unread by code).
+-- Tenant rows carry branding + timezone/contact only: capacity and stay-length live on TenantServices.
 INSERT OR REPLACE INTO Tenants (Id, Slug, DisplayName, AccentColor) VALUES
   ('tnt_sunnypaws', 'sunny-paws', 'Sunny Paws', '#2563eb'),
   ('tnt_happytails', 'happy-tails', 'Happy Tails', '#d97706'),
@@ -50,35 +49,35 @@ INSERT OR REPLACE INTO TenantServices
 -- Priced options. Non-duration services = single 'standard' option, DurationMinutes NULL.
 -- Walks/check-ins = sitter-defined (duration, price) rows; prices are free-typed (note the sitter's
 -- 90-min walk priced BELOW his 60-min one — deliberate, proves there is no duration->price formula).
-INSERT OR REPLACE INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit) VALUES
-  ('opt_sp_board', 'tnt_sunnypaws', 'boarding', 'standard', 'Standard', NULL, 50, 'night'),
-  ('opt_sp_house', 'tnt_sunnypaws', 'housesitting', 'standard', 'Standard', NULL, 70, 'night'),
-  ('opt_sp_day', 'tnt_sunnypaws', 'daycare', 'standard', 'Standard', NULL, 40, 'day'),
-  ('opt_sp_walk30', 'tnt_sunnypaws', 'walk', 'd30', '30 minutes', 30, 20, 'walk'),
-  ('opt_sp_walk60', 'tnt_sunnypaws', 'walk', 'd60', '1 hour', 60, 35, 'walk'),
-  ('opt_sp_walk90', 'tnt_sunnypaws', 'walk', 'd90', '90 minutes', 90, 30, 'walk'),
-  ('opt_sp_chk15', 'tnt_sunnypaws', 'checkin', 'd15', '15 minutes', 15, 12, 'visit'),
-  ('opt_sp_chk30', 'tnt_sunnypaws', 'checkin', 'd30', '30 minutes', 30, 18, 'visit'),
-  ('opt_ht_board', 'tnt_happytails', 'boarding', 'standard', 'Standard', NULL, 40, 'night'),
-  ('opt_ht_day', 'tnt_happytails', 'daycare', 'standard', 'Standard', NULL, 35, 'day'),
-  ('opt_ht_walk30', 'tnt_happytails', 'walk', 'd30', '30 minutes', 30, 25, 'walk'),
-  ('opt_ht_walk60', 'tnt_happytails', 'walk', 'd60', '1 hour', 60, 40, 'walk'),
-  ('opt_pr_board', 'tnt_pawsandrelax', 'boarding', 'standard', 'Standard', NULL, 45, 'night'),
-  ('opt_pr_house', 'tnt_pawsandrelax', 'housesitting', 'standard', 'Standard', NULL, 65, 'night'),
-  ('opt_pr_walk30', 'tnt_pawsandrelax', 'walk', 'd30', '30 minutes', 30, 22, 'walk');
+INSERT OR REPLACE INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate) VALUES
+  ('opt_sp_board', 'tnt_sunnypaws', 'boarding', 'standard', 'Standard', NULL, 50),
+  ('opt_sp_house', 'tnt_sunnypaws', 'housesitting', 'standard', 'Standard', NULL, 70),
+  ('opt_sp_day', 'tnt_sunnypaws', 'daycare', 'standard', 'Standard', NULL, 40),
+  ('opt_sp_walk30', 'tnt_sunnypaws', 'walk', 'd30', '30 minutes', 30, 20),
+  ('opt_sp_walk60', 'tnt_sunnypaws', 'walk', 'd60', '1 hour', 60, 35),
+  ('opt_sp_walk90', 'tnt_sunnypaws', 'walk', 'd90', '90 minutes', 90, 30),
+  ('opt_sp_chk15', 'tnt_sunnypaws', 'checkin', 'd15', '15 minutes', 15, 12),
+  ('opt_sp_chk30', 'tnt_sunnypaws', 'checkin', 'd30', '30 minutes', 30, 18),
+  ('opt_ht_board', 'tnt_happytails', 'boarding', 'standard', 'Standard', NULL, 40),
+  ('opt_ht_day', 'tnt_happytails', 'daycare', 'standard', 'Standard', NULL, 35),
+  ('opt_ht_walk30', 'tnt_happytails', 'walk', 'd30', '30 minutes', 30, 25),
+  ('opt_ht_walk60', 'tnt_happytails', 'walk', 'd60', '1 hour', 60, 40),
+  ('opt_pr_board', 'tnt_pawsandrelax', 'boarding', 'standard', 'Standard', NULL, 45),
+  ('opt_pr_house', 'tnt_pawsandrelax', 'housesitting', 'standard', 'Standard', NULL, 65),
+  ('opt_pr_walk30', 'tnt_pawsandrelax', 'walk', 'd30', '30 minutes', 30, 22);
 
 -- One windowed group-slot option (capacity-limited, fixed clock window) to demo time-windowed
 -- services on a fresh seed, alongside morning-walk demoing custom services.
 INSERT OR REPLACE INTO TenantServiceOptions
-  (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, StartTime, EndTime, Capacity) VALUES
-  ('opt_ht_group_walk', 'tnt_happytails', 'walk', 'group-8-9', 'Group walk 8:00-9:00am', 60, 18, 'walk', '08:00', '09:00', 3);
+  (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, StartTime, EndTime, Capacity) VALUES
+  ('opt_ht_group_walk', 'tnt_happytails', 'walk', 'group-8-9', 'Group walk 8:00-9:00am', 60, 18, '08:00', '09:00', 3);
 
 -- Sunny Paws' custom morning walk is weekday-only (WeekdaysOnly=1): the widget greys Sat/Sun
 -- and the server rejects weekend bookings. Plausible sitter behavior that keeps the landing
 -- page's greyed-weekend calendar screenshot honest and demos the rule on a fresh seed.
 INSERT OR REPLACE INTO TenantServiceOptions
-  (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, RateUnit, WeekdaysOnly) VALUES
-  ('opt_sp_mw30', 'tnt_sunnypaws', 'morning-walk', 'd30', '30 minutes', 30, 18, 'walk', 1);
+  (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate, WeekdaysOnly) VALUES
+  ('opt_sp_mw30', 'tnt_sunnypaws', 'morning-walk', 'd30', '30 minutes', 30, 18, 1);
 
 -- Pet-type registry: Sunny Paws takes dogs + cats + rabbits (rabbit demos custom types end to
 -- end); Happy Tails' cat row stays in the registry but is accepted by NO service (its services
