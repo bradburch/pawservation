@@ -17,3 +17,12 @@ docs/specs/
 docs/ai-saas-architecture-findings.html
 docs/llm-comparison.html
 docs/pricing-and-invoicing-spec.md
+docs/fixes.md
+docs/*.png
+.DS_Store
+*.sql.bak
+0024-pre-migration-backup.sql
+.agents/
+_bmad/
+_bmad-output/
+.claude/skills/bmad-*/
