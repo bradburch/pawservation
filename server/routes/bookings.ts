@@ -107,10 +107,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       chosen.map((p) => ({ name: p!.Name, petType: p!.PetType })),
       (petSlug) => labelBySlug.get(petSlug) ?? petSlug,
     );
-    if (acceptanceError)
-      return c.json({ error: acceptanceError, code: 'pet_type_not_accepted' }, 400);
-
-    const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
+    if (acceptanceError) return c.json({ error: acceptanceError }, 400);
 
     if (service.Shape === 'range') {
       const rangeError = validateBoardingRange(
@@ -127,8 +124,10 @@ export const bookingRoutes = new Hono<AppEnv>()
         { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
         { nights: nightsBetween(start, end), petCount: pets.length },
       );
-      if (constraintsError)
-        return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
+      if (constraintsError) return c.json({ error: constraintsError }, 400);
+      // Read only once date/constraint validation has passed, saving two D1 reads on the 400
+      // paths above — behavior is identical since checkAvailability is the only consumer.
+      const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
       return c.json(
         await checkAvailability(c.env, tenant, service, option, start, end, pets, rates),
       );
@@ -139,8 +138,8 @@ export const bookingRoutes = new Hono<AppEnv>()
       { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
       { nights: null, petCount: pets.length },
     );
-    if (constraintsError)
-      return c.json({ error: constraintsError, code: 'service_constraint' }, 400);
+    if (constraintsError) return c.json({ error: constraintsError }, 400);
+    const rates = await loadPetSetRates(c.env, tenant.Id, service.ServiceType);
     return c.json(await checkAvailability(c.env, tenant, service, option, start, '', pets, rates));
   })
 

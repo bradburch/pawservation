@@ -694,7 +694,8 @@ export function ClientsSection({
                 <details className="pb-account-rates">
                   <summary>Rates for this account</summary>
                   <p className="pb-hint">
-                    Rates for specific pets beat species rates beat the base rate.
+                    Rates for specific pets beat species rates beat the base rate. A set you
+                    haven&rsquo;t priced has no price — multi-pet bookings without one are refused.
                   </p>
                   <p className="pb-hint">
                     Covers all of this account&rsquo;s pets together. Pricing a subset of the

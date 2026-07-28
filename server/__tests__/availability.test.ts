@@ -220,8 +220,7 @@ describe('availability API — regression guards', () => {
       'pet_sp_mochi',
     ]);
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; code: string };
-    expect(body.code).toBe('service_constraint');
+    const body = (await res.json()) as { error: string };
     expect(body.error).toBe('This service allows at most 1 pet.');
   });
 
@@ -235,8 +234,7 @@ describe('availability API — regression guards', () => {
       'pet_sp_mochi',
     ]);
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; code: string };
-    expect(body.code).toBe('pet_type_not_accepted');
+    const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Boarding doesn't accept cat — Mochi can't join this booking.");
   });
 });

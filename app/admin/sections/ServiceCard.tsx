@@ -77,7 +77,7 @@ export function ServiceCard({
         )}
         {multiPetUnpriced && (
           <span className="pb-error">
-            No multi-pet rate — add one so bookings with two or more pets have a set price
+            No multi-pet rate — bookings with two or more pets are refused until you add one.
           </span>
         )}
       </button>

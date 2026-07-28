@@ -360,15 +360,20 @@ export function BookTab({
                   group of pets yet.
                 </p>
                 <p>
-                  Ask about a rate for these {selectedPets.length} pets
-                  {config.contactEmail ? (
+                  {config.contactEmail || config.contactPhone ? (
                     <>
-                      {' '}
-                      at <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
+                      Ask about a rate for these {selectedPets.length} pets at{' '}
+                      {config.contactEmail ? (
+                        <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
+                      ) : null}
+                      {config.contactEmail && config.contactPhone ? ' or ' : null}
+                      {config.contactPhone ? (
+                        <a href={`tel:${config.contactPhone}`}>{config.contactPhone}</a>
+                      ) : null}
+                      {'. '}
                     </>
                   ) : null}
-                  {config.contactPhone ? <> or {config.contactPhone}</> : null}. You can also book
-                  one pet at a time.
+                  You can also book one pet at a time.
                 </p>
               </div>
             ) : (
