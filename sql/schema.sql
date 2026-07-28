@@ -174,6 +174,15 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- the customer's optional arrival time. NULL = all-day / not given.
   StartTime TEXT,
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
+  -- Calendar-sync outbox: 1 = this row has a state change Google has not confirmed yet
+  -- (create/update/delete derived from Status+GCalEventId at re-drive time). Set in the SAME
+  -- statement as the state change, cleared only on push success, re-driven by the cron sweep.
+  -- Always 0 for 'blocked' (time off is not synced) and 'external' (Google is the writer there).
+  SyncPending INTEGER NOT NULL DEFAULT 0,
+  -- ServiceType='external' rows only: the Google event's summary, shown on the admin calendar.
+  -- External rows are Google-owned mirrors (EndUserId NULL, Status 'confirmed', EstCost NULL,
+  -- GCalEventId = the Google id): they block capacity like blocked days and are read-only here.
+  ExternalSummary TEXT,
   EstCost INTEGER,
   -- Fee assessed at cancel time, whole dollars, matches EstCost (added by 0016). NULL = none assessed.
   CancellationFee INTEGER,
@@ -193,6 +202,9 @@ CREATE INDEX IF NOT EXISTS idx_BookingRequests_Tenant_User ON BookingRequests (T
 CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_IdempotencyKey
   ON BookingRequests (TenantId, EndUserId, IdempotencyKey)
   WHERE IdempotencyKey IS NOT NULL;
+-- Upsert target for materialized Google events: one row per (tenant, Google event id).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_BookingRequests_External
+  ON BookingRequests (TenantId, GCalEventId) WHERE ServiceType = 'external';
 
 CREATE TABLE IF NOT EXISTS EndUserPets (
   Id TEXT PRIMARY KEY,
