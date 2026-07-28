@@ -33,6 +33,7 @@ function emptyOption(): ServiceOptionForm {
     endTime: null,
     capacity: null,
     weekdaysOnly: false,
+    petRates: [],
   };
 }
 
