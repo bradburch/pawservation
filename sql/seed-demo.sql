@@ -1,5 +1,12 @@
 -- Demo ACTIVITY seed: what makes the seeded tenants look like accounts a sitter has been running
--- — more clients, a booking against every enabled service, and deliberate conflicts.
+-- — more clients, a booking against every enabled service, and deliberate conflicts — AND what
+-- keeps their CONFIGURATION current. The three tenants were authored as literal rows over many
+-- months, so sql/seed.sql still describes them with the defaults of the day they were written;
+-- everything they would have if they signed up today (a 12-month booking horizon, 'linear'
+-- multi-pet pricing, template-shaped species acceptance) plus the per-service features a working
+-- sitter would have configured (notice periods, stay ceilings, capacity, cancellation policies,
+-- holiday rates, intake questions) is re-stated here rather than there, because sql/seed.sql is
+-- the fixture ~120 test files assert against.
 --
 -- ⚠️  DEMO DATA ONLY — DO NOT SEED A PRODUCTION DATABASE. Applied after sql/seed.sql (which this
 -- file depends on for its tenants, services, options and pet-type registry) by `npm run seed:local`
@@ -29,33 +36,57 @@
 -- comment there. That is what makes this seed's conflicts identical for every possible value of
 -- "today" rather than only for the day it was written.
 
--- PET-SET PRICING MODE (0005). sql/seed.sql's services predate PetRateMode and default to
--- 'exact' — refuse a priced quote for any 2+-pet set with no stored group/mix rate. That's the
--- correct behaviour for a legacy service, but the embed widget pre-selects ALL of a customer's
--- accepted pets by default, and Jess owns two pets at Sunny Paws (Bella the dog + Mochi the cat):
--- on any service that accepts both, her very first screen would hit the "ask your sitter for a
--- rate" dead end, and a demo account must look like an account a sitter could actually be
--- running. HOUSE SITTING is exactly that service (it accepts every species — see the acceptance
--- block below), so opt the PRIMARY, stay-shaped services into 'linear' (N distinct pets = N x the
--- option's one-pet rate) and the default multi-pet selection quotes a real number. Deliberately
--- leave walk / check-in / morning-walk on 'exact' — those are single-visit, per-slot services
--- where "one sitter, one pet at a time" is the more realistic default anyway, and it means a
--- prospective sitter poking at a walk with two pets selected still sees the refusal path once,
--- which is informative rather than broken. A plain UPDATE is idempotent by construction: there is
--- no row identity to restate, so re-running this file changes nothing on a second pass.
+-- ============================================================================================
+-- WHAT A SITTER WHO SIGNED UP TODAY WOULD ACTUALLY HAVE.
 --
--- TenantId-SCOPED, explicitly, to exactly the three seeded demo tenants — same discipline every
--- other statement in this file already follows by naming a TenantId on each row. This file is
--- chained onto `seed:remote` (package.json), so an unscoped UPDATE here would not just be a demo
--- wart: applied against a real database it would silently flip every sitter's boarding/
--- housesitting/daycare services from 'exact' to 'linear' and change what their own clients get
--- charged for a multi-pet booking — the exact "a rate the sitter did not type is a price they did
--- not agree to" failure PetRateMode exists to prevent, arriving through a seed file instead of the
--- price path. `server/__tests__/seed-demo.test.ts` guards this: it seeds a fourth, un-related
--- tenant with its own 'exact' boarding service and asserts this file leaves it untouched.
+-- The three demo tenants were written as literal rows over many months, so they carry defaults
+-- from superseded versions of the product. Their whole purpose is to show a prospective sitter
+-- what this product IS, so everything below re-states them against the CURRENT create-time rules
+-- and turns on the per-service features a working sitter would have configured. sql/seed.sql
+-- stays the minimal, deterministic base fixture (~120 test files assert its exact contents) —
+-- every "what a sitter gets today" write lives here, in the demo layer, which `seed:local` /
+-- `seed:remote` apply straight after it.
+--
+-- EVERY STATEMENT IS TenantId-SCOPED, explicitly, to exactly the three seeded demo tenants —
+-- the same discipline every INSERT in this file already follows by naming a TenantId on each row.
+-- This file is chained onto `seed:remote` (package.json), so an unscoped UPDATE here would not be
+-- a demo wart: applied against a real database it would rewrite every real sitter's pricing,
+-- capacity, notice periods and cancellation policy. `server/__tests__/seed-demo.test.ts` guards
+-- it — a fourth, unrelated tenant is seeded with a different value in every column this file
+-- touches, and asserted unchanged afterwards.
+-- ============================================================================================
+
+-- THE BOOKING HORIZON (0004). `createTenantFromSignup` gives a NEW tenant MaxAdvanceMonths = 12;
+-- the seeded three predate that default and were NULL (= no horizon at all), so their widgets
+-- offered a customer any month into the 2030s. Sunny Paws and Paws & Relax take the signup
+-- default; Happy Tails is a walk/drop-in business whose clients book weeks out, not years, so it
+-- carries a deliberately tighter 6 — the knob is per-business, and a demo that shows one value
+-- three times does not show a knob at all.
+UPDATE Tenants SET MaxAdvanceMonths = 12 WHERE Id IN ('tnt_sunnypaws', 'tnt_pawsandrelax');
+UPDATE Tenants SET MaxAdvanceMonths = 6 WHERE Id = 'tnt_happytails';
+
+-- PET-SET PRICING MODE (0005). sql/seed.sql's services predate PetRateMode and default to
+-- 'exact' — refuse a priced quote for any 2+-pet set with no stored group/mix rate. That is the
+-- right behaviour for a legacy row, and it is also what `POST /:slug/admin/services` STOPPED
+-- doing: a service created from here on is stamped 'linear' (owner directive, 2026-07-28), so a
+-- two-dog household can book the moment the sitter types one price. A demo account must look
+-- like an account someone could be running TODAY, so all three tenants' services carry the
+-- current create-time default rather than the pre-0005 one.
+--
+-- It matters most on the widget's first screen: the embed pre-selects ALL of a customer's
+-- accepted pets, and Jess owns two at Sunny Paws (Bella the dog + Mochi the cat), so on house
+-- sitting — the one demo service that accepts both species — 'exact' put her straight into the
+-- "ask your sitter for a rate" dead end. Walks and check-ins are included too, and deliberately:
+-- they are created 'linear' by the same route, and now that the demo's walks are dog-only (see
+-- the acceptance block below) the 'exact' refusal path was no longer reachable from any seeded
+-- client's own roster anyway — keeping it there bought no demo value, only drift.
+--
+-- 'exact' is NOT untested by this: it remains the column default, sql/seed.sql leaves every base
+-- fixture service on it, and the refused-not-tripled pricing lock in availability.test.ts is
+-- written against it. A plain UPDATE is idempotent by construction — there is no row identity to
+-- restate, so re-running this file changes nothing on a second pass.
 UPDATE TenantServices SET PetRateMode = 'linear'
- WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
-   AND ServiceType IN ('boarding', 'housesitting', 'daycare');
+ WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax');
 
 -- WHICH SPECIES EACH DEMO SERVICE ACCEPTS.
 --
@@ -100,6 +131,111 @@ UPDATE TenantServices SET AcceptedPetTypes = NULL
  WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
    AND ServiceType = 'housesitting';
 
+-- ============================================================================================
+-- PER-SERVICE CONFIGURATION — the knobs a working sitter would have set, one UPDATE per
+-- (tenant, service) so every statement names its TenantId and is auditable on its own line.
+--
+-- The seeded rows carried NULL for every one of these, which reads as "this product has no
+-- notice period, no maximum stay, no cancellation policy, no holiday pricing and no intake
+-- questions." The three tenants deliberately do NOT all show the same features — three tenants
+-- is three shapes:
+--
+--   * Sunny Paws     — the strict, boarding-heavy business: real notice periods, a stay length
+--                      cap, a two-tier cancellation policy, and the longest intake forms.
+--   * Happy Tails    — the walk/drop-in business: short notice, a same-day-ish cancellation
+--                      rule on walks, a holiday rate on boarding, small forms.
+--   * Paws & Relax   — the relaxed one: no cancellation fees at all, no maximum stay, same-day
+--                      walks welcome. NULL is a real configuration and one tenant should show it.
+--
+-- MaxConcurrentPets is only legal on a 'boarding'/'housesit' CapacityKind row (the admin PUT
+-- rejects it elsewhere) and may never be lower than the same service's MaxPetCount — a pool that
+-- could not seat one booking. Both rules are respected below.
+--
+-- HOLIDAY RATES and stamped EstCost. A HolidayRate is an explicit stored rate for billed units
+-- landing on a listed US holiday (src/shared/util/us-holidays.ts). The demo's dates slide daily,
+-- so a seeded stay WILL sometimes straddle a holiday while its stored EstCost was written at the
+-- base rate — which is not a contradiction: EstCost is stamped once at booking time and never
+-- updated, so those rows read exactly like bookings taken before the sitter added the rate.
+-- Sunny Paws' boarding and house sitting are deliberately left holiday-free: seed-demo.test.ts
+-- pins their quoted cost to an exact dollar figure, and a rate that fires on ~3% of possible
+-- "todays" would make those assertions flake on dates nobody ran the suite on. Put a new holiday
+-- rate on a service no test pins, or make the test choose a holiday-free window first.
+-- ============================================================================================
+
+-- SUNNY PAWS. Two nights of notice on boarding, three on a house sit (she has to collect keys),
+-- a 21-night ceiling, and the fullest intake forms in the demo.
+UPDATE TenantServices
+   SET MinLeadDays = 2, MaxNights = 21, MaxPetCount = 2,
+       CancellationTiers = '[{"withinDays":3,"percent":100},{"withinDays":7,"percent":50}]',
+       Questions = '[{"id":"vaccines","label":"Are vaccinations up to date?","type":"yesno","required":true},{"id":"feeding","label":"Feeding routine (times and amounts)","type":"text","required":true},{"id":"vet","label":"Emergency vet phone number","type":"text","required":false}]'
+ WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'boarding';
+
+UPDATE TenantServices
+   SET MinLeadDays = 3, MaxNights = 14, MaxPetCount = 3,
+       CancellationTiers = '[{"withinDays":7,"percent":50},{"withinDays":14,"percent":25}]',
+       Questions = '[{"id":"entry","label":"How will we get in?","type":"select","required":true,"options":["Lockbox","Hidden key","Hand off in person"]},{"id":"plants","label":"Plants to water?","type":"yesno","required":false},{"id":"mail","label":"Bring in the mail?","type":"yesno","required":false}]'
+ WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'housesitting';
+
+-- Daycare carries the demo's holiday rate for a 'day'-unit service ($40 base -> $55).
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 2, HolidayRate = 55,
+       Questions = '[{"id":"pickup","label":"Usual pick-up time","type":"text","required":false}]'
+ WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'daycare';
+
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 2,
+       Questions = '[{"id":"leash","label":"Where is the leash kept?","type":"text","required":false}]'
+ WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'walk';
+
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 3,
+       Questions = '[{"id":"litter","label":"Scoop the litter box?","type":"yesno","required":false}]'
+ WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'checkin';
+
+-- The custom weekday-only walk stays deliberately bare: a service a sitter just added, with the
+-- one option rule (WeekdaysOnly) and nothing else configured yet.
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 1
+ WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'morning-walk';
+
+-- HAPPY TAILS. A walk business: one night of notice on boarding, none worth speaking of on
+-- walks, and the demo's only "cancel the day before and you owe the whole walk" rule. Its
+-- boarding carries the 'night'-unit holiday rate ($40 base -> $55).
+UPDATE TenantServices
+   SET MinLeadDays = 2, MaxNights = 14, MaxPetCount = 3, HolidayRate = 55,
+       CancellationTiers = '[{"withinDays":2,"percent":50}]',
+       Questions = '[{"id":"vaccines","label":"Are vaccinations up to date?","type":"yesno","required":true},{"id":"crate","label":"Crate trained?","type":"yesno","required":false},{"id":"dogs","label":"Gets along with other dogs?","type":"yesno","required":true}]'
+ WHERE TenantId = 'tnt_happytails' AND ServiceType = 'boarding';
+
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 2
+ WHERE TenantId = 'tnt_happytails' AND ServiceType = 'daycare';
+
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 2,
+       CancellationTiers = '[{"withinDays":1,"percent":100}]',
+       Questions = '[{"id":"gate","label":"Gate or door code","type":"text","required":false},{"id":"treats","label":"Treats allowed?","type":"yesno","required":false}]'
+ WHERE TenantId = 'tnt_happytails' AND ServiceType = 'walk';
+
+-- PAWS & RELAX. No cancellation fees anywhere, no stay ceiling, same-day walks welcome
+-- (MinLeadDays stays NULL on the walk row) — the tenant that shows what "unset" looks like. Its
+-- boarding pool gains a real cap of 3 so the widget prints a used/max the seeded rows never
+-- reach: time off (the blocked row below) stays the only thing that closes its calendar.
+UPDATE TenantServices
+   SET MinLeadDays = 1, MaxPetCount = 3, MaxConcurrentPets = 3,
+       Questions = '[{"id":"weight","label":"Pet weight in pounds","type":"number","required":true,"min":1,"max":200},{"id":"vaccines","label":"Are vaccinations up to date?","type":"yesno","required":true}]'
+ WHERE TenantId = 'tnt_pawsandrelax' AND ServiceType = 'boarding';
+
+-- The 'night'-unit holiday rate on the third tenant ($65 base -> $85).
+UPDATE TenantServices
+   SET MinLeadDays = 2, MaxPetCount = 4, HolidayRate = 85,
+       Questions = '[{"id":"entry","label":"How will we get in?","type":"select","required":true,"options":["Lockbox","Hidden key","Hand off in person"]}]'
+ WHERE TenantId = 'tnt_pawsandrelax' AND ServiceType = 'housesitting';
+
+UPDATE TenantServices
+   SET MaxPetCount = 2
+ WHERE TenantId = 'tnt_pawsandrelax' AND ServiceType = 'walk';
+
 -- More clients, so a busy day is several DIFFERENT families rather than one customer booked
 -- against herself. Every one is active (invite-only /identify) and every one owns a pet below.
 INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUES
@@ -113,10 +249,14 @@ INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUE
   ('eu_pr_omar', 'tnt_pawsandrelax', 'omar@example.com', 'Omar Haddad', '(555) 555-0104', 'active'),
   ('eu_pr_nina', 'tnt_pawsandrelax', 'nina@example.com', 'Nina Castellanos', NULL, 'active');
 
--- One pet each (client-AND-pet invariant: no owners without pets). Happy Tails is dogs-only, so
--- every Happy Tails pet is a dog; Sunny Paws' registry also has cats and rabbits.
+-- One pet each (client-AND-pet invariant: no owners without pets), except Marco, who has TWO
+-- dogs at Sunny Paws on purpose: boarding is dog-only there, so his household is the demo's one
+-- multi-pet set on a capacity-bearing service — which is what makes the stored two-dog rate
+-- below visible, and what shows a prospective sitter the pet-set pricing feature at all. Happy
+-- Tails is dogs-only, so every Happy Tails pet is a dog; Sunny Paws' registry also has rabbits.
 INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Notes) VALUES
   ('pet_sp_juno', 'tnt_sunnypaws', 'eu_sp_marco', 'Juno', 'dog', 'Crate-trained; needs the door left open.'),
+  ('pet_sp_ollie', 'tnt_sunnypaws', 'eu_sp_marco', 'Ollie', 'dog', 'Junos littermate — they board together.'),
   ('pet_sp_dash', 'tnt_sunnypaws', 'eu_sp_priya', 'Dash', 'dog', NULL),
   ('pet_sp_clover', 'tnt_sunnypaws', 'eu_sp_ana', 'Clover', 'rabbit', 'Timothy hay only — no pellets.'),
   ('pet_ht_scout', 'tnt_happytails', 'eu_ht_marco', 'Scout', 'dog', NULL),
@@ -129,6 +269,7 @@ INSERT OR REPLACE INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType, Note
 -- The authoritative owner edges. A pet without one is invisible to its own owner.
 INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES
   ('tnt_sunnypaws', 'pet_sp_juno', 'eu_sp_marco'),
+  ('tnt_sunnypaws', 'pet_sp_ollie', 'eu_sp_marco'),
   ('tnt_sunnypaws', 'pet_sp_dash', 'eu_sp_priya'),
   ('tnt_sunnypaws', 'pet_sp_clover', 'eu_sp_ana'),
   ('tnt_happytails', 'pet_ht_scout', 'eu_ht_marco'),
@@ -137,6 +278,15 @@ INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES
   ('tnt_happytails', 'pet_ht_maple', 'eu_ht_rosa'),
   ('tnt_pawsandrelax', 'pet_pr_biscuit', 'eu_pr_omar'),
   ('tnt_pawsandrelax', 'pet_pr_sable', 'eu_pr_nina');
+
+-- A STORED SPECIES-COUNT RATE. Marco's two dogs board together, and Sunny Paws priced that set
+-- explicitly: $85/night for any two dogs, not the $100 the 'linear' multiplier would produce
+-- from her one-dog rate. This is the demo of the rule that makes PetRateMode safe — a stored
+-- pet-set rate ALWAYS beats the multiplier, because it is the number the sitter actually typed.
+-- MixKey is species-sorted `slug:count` joined by '|' (buildMixKey, src/shared/pricing/
+-- pet-set-rates.ts) and is keyed per OPTION, so it prices boarding's 'standard' option only.
+INSERT OR REPLACE INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate) VALUES
+  ('tnt_sunnypaws', 'boarding', 'standard', 'dog:2', 85);
 
 -- SUNNY PAWS — boarding (MaxConcurrentPets=2), house sitting, daycare, walk, check-in and the
 -- custom weekday-only morning walk all carry work.
@@ -152,21 +302,30 @@ INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES
 -- unambiguous regardless of a service's PetRateMode — the 'linear' multiplier above only ever
 -- fires for a pet SET (2+ distinct pets) a customer selects live in the widget, never for a
 -- seeded row.
-INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
-  ('seed_sp_board_a', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+5 days'), date('now', '+12 days'), 'standard', 1, NULL, 350, 'confirmed'),
-  ('seed_sp_board_b', 'tnt_sunnypaws', 'eu_sp_marco', 'boarding', date('now', '+7 days'), date('now', '+11 days'), 'standard', 1, '16:00', 200, 'confirmed'),
-  ('seed_sp_board_c', 'tnt_sunnypaws', 'eu_sp_priya', 'boarding', date('now', '+8 days'), date('now', '+10 days'), 'standard', 1, NULL, 100, 'pending'),
-  ('seed_sp_house_a', 'tnt_sunnypaws', 'eu_sp_ana', 'housesitting', date('now', '+24 days'), date('now', '+29 days'), 'standard', 1, NULL, 350, 'confirmed'),
-  ('seed_sp_day_a', 'tnt_sunnypaws', 'eu_sp_marco', 'daycare', date('now', '+3 days'), NULL, 'standard', 1, NULL, 40, 'confirmed'),
-  ('seed_sp_day_b', 'tnt_sunnypaws', 'eu_sp_priya', 'daycare', date('now', '+17 days'), NULL, 'standard', 1, NULL, 40, 'pending'),
-  ('seed_sp_walk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+2 days'), NULL, 'd60', 1, '08:30', 35, 'confirmed'),
-  ('seed_sp_walk_b', 'tnt_sunnypaws', 'eu_sp_marco', 'walk', date('now', '+9 days'), NULL, 'd30', 1, '07:30', 20, 'confirmed'),
-  ('seed_sp_chk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+6 days'), NULL, 'd15', 1, '12:00', 12, 'confirmed'),
-  ('seed_sp_chk_b', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+20 days'), NULL, 'd30', 1, '17:00', 18, 'pending'),
+--
+-- ANSWERS. The admin bookings list renders each row's stored Answers JSON against its service's
+-- Questions inline in the expanded row, so a service that asks a REQUIRED question and a booking
+-- that answers nothing is a booking the POST would itself have rejected — the same class of
+-- self-contradiction as a seeded stay the capacity engine would refuse. Every answer below is
+-- keyed by its question's `id` and valid for its type (yesno = 'yes'/'no', select = one of the
+-- stored options, number = a numeric string); seed-demo.test.ts re-checks them through the real
+-- `validateAnswers`. '{}' appears only where a service asks nothing, or asks only optional
+-- questions the customer skipped — which is a real state and worth showing too.
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
+  ('seed_sp_board_a', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+5 days'), date('now', '+12 days'), 'standard', 1, NULL, 350, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken.","vet":"(555) 555-0190"}', 'confirmed'),
+  ('seed_sp_board_b', 'tnt_sunnypaws', 'eu_sp_marco', 'boarding', date('now', '+7 days'), date('now', '+11 days'), 'standard', 1, '16:00', 200, '{"vaccines":"yes","feeding":"One scoop at 8am, one at 7pm.","vet":"(555) 555-0177"}', 'confirmed'),
+  ('seed_sp_board_c', 'tnt_sunnypaws', 'eu_sp_priya', 'boarding', date('now', '+8 days'), date('now', '+10 days'), 'standard', 1, NULL, 100, '{"vaccines":"yes","feeding":"Half a cup three times a day."}', 'pending'),
+  ('seed_sp_house_a', 'tnt_sunnypaws', 'eu_sp_ana', 'housesitting', date('now', '+24 days'), date('now', '+29 days'), 'standard', 1, NULL, 350, '{"entry":"Lockbox","plants":"yes","mail":"yes"}', 'confirmed'),
+  ('seed_sp_day_a', 'tnt_sunnypaws', 'eu_sp_marco', 'daycare', date('now', '+3 days'), NULL, 'standard', 1, NULL, 40, '{"pickup":"5:30pm"}', 'confirmed'),
+  ('seed_sp_day_b', 'tnt_sunnypaws', 'eu_sp_priya', 'daycare', date('now', '+17 days'), NULL, 'standard', 1, NULL, 40, '{"pickup":"6pm"}', 'pending'),
+  ('seed_sp_walk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+2 days'), NULL, 'd60', 1, '08:30', 35, '{"leash":"Hook by the front door."}', 'confirmed'),
+  ('seed_sp_walk_b', 'tnt_sunnypaws', 'eu_sp_marco', 'walk', date('now', '+9 days'), NULL, 'd30', 1, '07:30', 20, '{}', 'confirmed'),
+  ('seed_sp_chk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+6 days'), NULL, 'd15', 1, '12:00', 12, '{"litter":"yes"}', 'confirmed'),
+  ('seed_sp_chk_b', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+20 days'), NULL, 'd30', 1, '17:00', 18, '{"litter":"yes"}', 'pending'),
   -- Morning walk is WeekdaysOnly=1, so these use SQLite's `weekday N` modifier (0=Sun..6=Sat) to
   -- land on a real weekday however the seed is re-run: a Wednesday and a Tuesday, never a weekend.
-  ('seed_sp_mw_a', 'tnt_sunnypaws', 'eu_sp_marco', 'morning-walk', date('now', '+7 days', 'weekday 3'), NULL, 'd30', 1, '07:00', 18, 'confirmed'),
-  ('seed_sp_mw_b', 'tnt_sunnypaws', 'eu_sp_priya', 'morning-walk', date('now', '+14 days', 'weekday 2'), NULL, 'd30', 1, '07:00', 18, 'pending');
+  ('seed_sp_mw_a', 'tnt_sunnypaws', 'eu_sp_marco', 'morning-walk', date('now', '+7 days', 'weekday 3'), NULL, 'd30', 1, '07:00', 18, '{}', 'confirmed'),
+  ('seed_sp_mw_b', 'tnt_sunnypaws', 'eu_sp_priya', 'morning-walk', date('now', '+14 days', 'weekday 2'), NULL, 'd30', 1, '07:00', 18, '{}', 'pending');
 
 -- HAPPY TAILS — boarding (MaxConcurrentPets=4), daycare and walks. House sitting and check-in are
 -- disabled for this tenant, so they deliberately carry no bookings.
@@ -174,31 +333,32 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
 -- THE BOARDING CONFLICT: a week that fills up. Four confirmed stays nest inside each other and a
 -- fifth is pending, so now+16..now+18 sits AT or OVER the 4-pet pool (five pets on now+17) and
 -- paints `unavailable`, while the shoulder days now+14/+15/+19/+20 paint `partial`.
-INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
-  ('seed_ht_board_a', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+14 days'), date('now', '+21 days'), 'standard', 1, NULL, 280, 'confirmed'),
-  ('seed_ht_board_b', 'tnt_happytails', 'eu_ht_marco', 'boarding', date('now', '+15 days'), date('now', '+20 days'), 'standard', 1, NULL, 200, 'confirmed'),
-  ('seed_ht_board_c', 'tnt_happytails', 'eu_ht_devon', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, '18:00', 120, 'confirmed'),
-  ('seed_ht_board_d', 'tnt_happytails', 'eu_ht_kate', 'boarding', date('now', '+17 days'), date('now', '+18 days'), 'standard', 1, NULL, 40, 'confirmed'),
-  ('seed_ht_board_e', 'tnt_happytails', 'eu_ht_rosa', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, NULL, 120, 'pending'),
-  ('seed_ht_day_a', 'tnt_happytails', 'eu_ht_marco', 'daycare', date('now', '+4 days'), NULL, 'standard', 1, NULL, 35, 'confirmed'),
-  ('seed_ht_day_b', 'tnt_happytails', 'eu_ht_kate', 'daycare', date('now', '+11 days'), NULL, 'standard', 1, NULL, 35, 'pending'),
-  ('seed_ht_walk_a', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+3 days'), NULL, 'd30', 1, '16:00', 25, 'confirmed'),
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
+  ('seed_ht_board_a', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+14 days'), date('now', '+21 days'), 'standard', 1, NULL, 280, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_b', 'tnt_happytails', 'eu_ht_marco', 'boarding', date('now', '+15 days'), date('now', '+20 days'), 'standard', 1, NULL, 200, '{"vaccines":"yes","crate":"yes","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_c', 'tnt_happytails', 'eu_ht_devon', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, '18:00', 120, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_d', 'tnt_happytails', 'eu_ht_kate', 'boarding', date('now', '+17 days'), date('now', '+18 days'), 'standard', 1, NULL, 40, '{"vaccines":"yes","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_e', 'tnt_happytails', 'eu_ht_rosa', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, NULL, 120, '{"vaccines":"yes","crate":"yes","dogs":"no"}', 'pending'),
+  ('seed_ht_day_a', 'tnt_happytails', 'eu_ht_marco', 'daycare', date('now', '+4 days'), NULL, 'standard', 1, NULL, 35, '{}', 'confirmed'),
+  ('seed_ht_day_b', 'tnt_happytails', 'eu_ht_kate', 'daycare', date('now', '+11 days'), NULL, 'standard', 1, NULL, 35, '{}', 'pending'),
+  ('seed_ht_walk_a', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+3 days'), NULL, 'd30', 1, '16:00', 25, '{"gate":"1932","treats":"yes"}', 'confirmed'),
   -- THE SLOT CONFLICT: the 8-9am group walk holds three dogs (TenantServiceOptions.Capacity=3).
   -- Three confirmed bookings on one date fill it, so that date is unavailable for THAT option
   -- while the tenant's other walk options stay open — the per-slot conflict group services hit.
-  ('seed_ht_grp_a', 'tnt_happytails', 'eu_ht_marco', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, 'confirmed'),
-  ('seed_ht_grp_b', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, 'confirmed'),
-  ('seed_ht_grp_c', 'tnt_happytails', 'eu_ht_kate', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, 'confirmed');
+  ('seed_ht_grp_a', 'tnt_happytails', 'eu_ht_marco', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, '{"treats":"yes"}', 'confirmed'),
+  ('seed_ht_grp_b', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, '{"treats":"no"}', 'confirmed'),
+  ('seed_ht_grp_c', 'tnt_happytails', 'eu_ht_kate', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, '{}', 'confirmed');
 
 -- PAWS & RELAX — boarding, house sitting and walks (daycare and check-in are disabled). Its
--- boarding pool is unlimited (MaxConcurrentPets NULL), so its calendar can only be closed by the
--- blocked row below — the "time off" mechanism on a tenant with no cap.
-INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
-  ('seed_pr_board_a', 'tnt_pawsandrelax', 'eu_pr_jess', 'boarding', date('now', '+9 days'), date('now', '+13 days'), 'standard', 1, NULL, 180, 'confirmed'),
-  ('seed_pr_board_b', 'tnt_pawsandrelax', 'eu_pr_omar', 'boarding', date('now', '+10 days'), date('now', '+12 days'), 'standard', 1, '15:30', 90, 'pending'),
-  ('seed_pr_house_a', 'tnt_pawsandrelax', 'eu_pr_nina', 'housesitting', date('now', '+19 days'), date('now', '+23 days'), 'standard', 1, NULL, 260, 'confirmed'),
-  ('seed_pr_walk_a', 'tnt_pawsandrelax', 'eu_pr_omar', 'walk', date('now', '+2 days'), NULL, 'd30', 1, '17:30', 22, 'confirmed'),
-  ('seed_pr_walk_b', 'tnt_pawsandrelax', 'eu_pr_jess', 'walk', date('now', '+8 days'), NULL, 'd30', 1, '11:00', 22, 'pending');
+-- boarding pool is capped at 3 pets/day but the seeded stays never reach it, so its calendar is
+-- still closed only by the blocked row below — the "time off" mechanism, shown on a tenant whose
+-- pool never fills.
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
+  ('seed_pr_board_a', 'tnt_pawsandrelax', 'eu_pr_jess', 'boarding', date('now', '+9 days'), date('now', '+13 days'), 'standard', 1, NULL, 180, '{"weight":"45","vaccines":"yes"}', 'confirmed'),
+  ('seed_pr_board_b', 'tnt_pawsandrelax', 'eu_pr_omar', 'boarding', date('now', '+10 days'), date('now', '+12 days'), 'standard', 1, '15:30', 90, '{"weight":"22","vaccines":"yes"}', 'pending'),
+  ('seed_pr_house_a', 'tnt_pawsandrelax', 'eu_pr_nina', 'housesitting', date('now', '+19 days'), date('now', '+23 days'), 'standard', 1, NULL, 260, '{"entry":"Hidden key"}', 'confirmed'),
+  ('seed_pr_walk_a', 'tnt_pawsandrelax', 'eu_pr_omar', 'walk', date('now', '+2 days'), NULL, 'd30', 1, '17:30', 22, '{}', 'confirmed'),
+  ('seed_pr_walk_b', 'tnt_pawsandrelax', 'eu_pr_jess', 'walk', date('now', '+8 days'), NULL, 'd30', 1, '11:00', 22, '{}', 'pending');
 
 -- REBASING THE BASE FIXTURE'S SEVEN HARDCODED ROWS.
 --
@@ -218,15 +378,15 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
 -- that does not opt into the demo, and re-running the seed is still idempotent. If you add a
 -- statically-dated booking to seed.sql, re-stamp it here too -- server/__tests__/seed-demo.test.ts
 -- fails if any demo-database booking sits outside the relative window.
-INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
-  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+38 days'), NULL, 'd30', 1, '09:00', 20, 'pending'),
-  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', date('now', '+39 days'), NULL, 'd60', 1, '15:00', 40, 'pending'),
-  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+40 days'), date('now', '+43 days'), 'standard', 1, NULL, 150, 'pending'),
-  ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 250, 'confirmed'),
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
+  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+38 days'), NULL, 'd30', 1, '09:00', 20, '{"leash":"Hook by the front door."}', 'pending'),
+  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', date('now', '+39 days'), NULL, 'd60', 1, '15:00', 40, '{"gate":"4410","treats":"no"}', 'pending'),
+  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+40 days'), date('now', '+43 days'), 'standard', 1, NULL, 150, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken."}', 'pending'),
+  ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 250, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken.","vet":"(555) 555-0190"}', 'confirmed'),
   -- The base row books two pets for $400. In the DEMO database it becomes a 1-pet stay at 5 x $40,
   -- for the same reason nothing else here books a set: every seeded booking keeps PetCount at 1
   -- so its EstCost stays unambiguous (see the PetRateMode note above).
-  ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 200, 'confirmed');
+  ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 200, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed');
 
 -- THE BLOCKED-DAY CONFLICT: time off (the 'blocked' sentinel; EndDate exclusive). A hard stop for
 -- EVERY service on those days — no bookend sharing, no pool math — so each tenant's calendar has

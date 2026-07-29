@@ -9,8 +9,9 @@ import {
   buildCapacity,
   getPacificDateStr,
   rangeHasConflict,
+  validateAnswers,
 } from '../../src/shared/index.js';
-import type { CapacityRequest } from '../../src/shared/index.js';
+import type { CapacityRequest, ServiceQuestion } from '../../src/shared/index.js';
 import { getTenantBySlug, listCapacityRows, listServices } from '../db/repo';
 import { monthAvailability, rowsToCapacityEvents, type MonthDay } from '../lib/availability';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
@@ -237,28 +238,64 @@ describe('sql/seed-demo.sql — shape', () => {
     ).toEqual([]);
   });
 
+  it('answers every intake question its services require', () => {
+    // The demo tenants ask real intake questions now, and the admin bookings list renders each
+    // row's stored Answers against them. A booking that leaves a REQUIRED question blank is a
+    // booking the POST would have refused — the same self-contradiction class as a seeded stay the
+    // capacity engine would reject. Checked through the REAL validator, so a question edited in
+    // the seed without its answers being updated fails here.
+    const { raw } = createTestEnv({ demoActivity: true });
+    const rows = raw
+      .prepare(
+        `SELECT b.Id, b.Answers, s.Questions
+           FROM BookingRequests b
+           JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
+          WHERE s.Questions != '[]' ORDER BY b.Id`,
+      )
+      .all() as { Id: string; Answers: string; Questions: string }[];
+    expect(rows.length).toBeGreaterThan(20);
+    const invalid = rows
+      .map((r) => ({
+        id: r.Id,
+        error: validateAnswers(
+          JSON.parse(r.Questions) as ServiceQuestion[],
+          JSON.parse(r.Answers) as Record<string, string>,
+        ),
+      }))
+      .filter((r) => r.error !== null);
+    expect(invalid).toEqual([]);
+  });
+
   it('touches ONLY the three seeded demo tenants — a real tenant is untouched', () => {
     // CLAUDE.md's central invariant is "every write is scoped by TenantId". This file is chained
     // onto `seed:remote` (package.json), so an unscoped statement here would not just be a demo
-    // wart: applied against a real database it would rewrite real sitters' rows. Seed a FOURTH
-    // tenant — unrelated to the three this file knows about — with its own services, apply
-    // seed-demo.sql, and prove those rows survive unchanged. Every column this file UPDATEs needs
-    // a witness here, and one per statement: PetRateMode, plus an AcceptedPetTypes row for each of
-    // the three acceptance writes (dog-only, cat-only, and the NULL that opens house sitting) —
-    // each seeded to a DIFFERENT value than the statement would write, so an unscoped write is
-    // visible rather than accidentally idempotent.
+    // wart: applied against a real database it would rewrite real sitters' rows — narrowing which
+    // animals they accept, changing what a multi-pet booking costs, imposing a notice period and
+    // a cancellation policy nobody agreed to, and capping a horizon that was deliberately open.
+    // Seed a FOURTH tenant — unrelated to the three this file knows about — with its own services,
+    // apply seed-demo.sql, and prove those rows survive unchanged. EVERY column this file UPDATEs
+    // needs a witness here, seeded to a DIFFERENT value than any statement would write, so an
+    // unscoped write is visible rather than accidentally idempotent: Tenants.MaxAdvanceMonths,
+    // plus PetRateMode / MinLeadDays / MaxNights / MaxPetCount / MaxConcurrentPets /
+    // CancellationTiers / HolidayRate / Questions and an AcceptedPetTypes row for each of the
+    // three acceptance writes (dog-only, cat-only, and the NULL that opens house sitting).
     const { raw } = createTestEnv(); // base seed only — demoActivity applied by hand below
     raw
       .prepare(
-        `INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('tnt_other', 'other-co', 'Other Co')`,
+        `INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths)
+         VALUES ('tnt_other', 'other-co', 'Other Co', 3)`,
       )
       .run();
     const addService = (type: string, accepted: string | null) =>
       raw
         .prepare(
           `INSERT INTO TenantServices
-             (TenantId, ServiceType, Label, Shape, RateUnit, PetRateMode, AcceptedPetTypes)
-           VALUES ('tnt_other', ?, 'Service', 'range', 'night', 'exact', ?)`,
+             (TenantId, ServiceType, Label, Shape, RateUnit, CapacityKind, PetRateMode,
+              AcceptedPetTypes, MinLeadDays, MaxNights, MaxPetCount, MaxConcurrentPets,
+              CancellationTiers, HolidayRate, Questions)
+           VALUES ('tnt_other', ?, 'Service', 'range', 'night', 'boarding', 'exact', ?,
+                   9, 99, 9, 9, '[{"withinDays":9,"percent":9}]', 999,
+                   '[{"id":"q","label":"Untouched?","type":"text","required":false}]')`,
         )
         .run(type, accepted);
     addService('boarding', '["cat","dog"]'); // the '["dog"]' statement must not narrow it
@@ -268,17 +305,40 @@ describe('sql/seed-demo.sql — shape', () => {
     raw.exec(readFileSync(join(import.meta.dirname, '..', '..', 'sql', 'seed-demo.sql'), 'utf8'));
 
     expect(
+      raw.prepare(`SELECT MaxAdvanceMonths FROM Tenants WHERE Id = 'tnt_other'`).get(),
+    ).toEqual({ MaxAdvanceMonths: 3 });
+    const untouched = {
+      PetRateMode: 'exact',
+      MinLeadDays: 9,
+      MaxNights: 99,
+      MaxPetCount: 9,
+      MaxConcurrentPets: 9,
+      CancellationTiers: '[{"withinDays":9,"percent":9}]',
+      HolidayRate: 999,
+      Questions: '[{"id":"q","label":"Untouched?","type":"text","required":false}]',
+    };
+    expect(
       raw
         .prepare(
-          `SELECT ServiceType, PetRateMode, AcceptedPetTypes FROM TenantServices
-            WHERE TenantId = 'tnt_other' ORDER BY ServiceType`,
+          `SELECT ServiceType, AcceptedPetTypes, PetRateMode, MinLeadDays, MaxNights, MaxPetCount,
+                  MaxConcurrentPets, CancellationTiers, HolidayRate, Questions
+             FROM TenantServices WHERE TenantId = 'tnt_other' ORDER BY ServiceType`,
         )
         .all(),
     ).toEqual([
-      { ServiceType: 'boarding', PetRateMode: 'exact', AcceptedPetTypes: '["cat","dog"]' },
-      { ServiceType: 'checkin', PetRateMode: 'exact', AcceptedPetTypes: null },
-      { ServiceType: 'housesitting', PetRateMode: 'exact', AcceptedPetTypes: '["dog"]' },
+      { ServiceType: 'boarding', AcceptedPetTypes: '["cat","dog"]', ...untouched },
+      { ServiceType: 'checkin', AcceptedPetTypes: null, ...untouched },
+      { ServiceType: 'housesitting', AcceptedPetTypes: '["dog"]', ...untouched },
     ]);
+    // TenantServicePetRates is INSERTed into by this file; a stray row under another tenant would
+    // be a price nobody typed appearing on a real sitter's service.
+    expect(
+      raw
+        .prepare(
+          `SELECT COUNT(*) AS n FROM TenantServicePetRates WHERE TenantId != 'tnt_sunnypaws'`,
+        )
+        .get(),
+    ).toEqual({ n: 0 });
   });
 });
 
@@ -457,8 +517,9 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
     // Bella (dog) and Mochi (cat), and house sitting is the demo's one open-to-any-species
     // service, so it is where that default really is a two-pet set. sql/seed.sql's services
     // predate PetRateMode (default 'exact'), which would refuse the set outright; seed-demo.sql
-    // opts boarding/housesitting/daycare into 'linear' so the default quotes a real number instead
-    // of landing on "hasn't set a price for this group of pets yet."
+    // puts every demo service on 'linear' — the mode `POST /admin/services` stamps on a service
+    // created today — so the default quotes a real number instead of landing on "hasn't set a
+    // price for this group of pets yet."
     const { env } = createTestEnv({ demoActivity: true });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     // Far past every conflict this file seeds (the latest is the blocked stretch at now+60..+62),
@@ -511,6 +572,32 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
       billedUnits: 3,
     });
   });
+
+  it("charges Marco's two dogs the STORED two-dog rate, not twice the one-dog rate", async () => {
+    // The demo's proof that a stored pet-set rate always beats the 'linear' multiplier — the rule
+    // that makes opting into per-pet multiplication safe. Sunny Paws priced "any two dogs" at $85
+    // a night (TenantServicePetRates, MixKey 'dog:2'); the multiplier would have said 2 x $50.
+    // Marco's Juno + Ollie are the demo's only multi-pet household on a dog-only service, which is
+    // what makes that rate reachable from the widget at all.
+    const { env } = createTestEnv({ demoActivity: true });
+    const token = await endUserToken(env, 'sunny-paws', 'marco@example.com');
+    const today = getPacificDateStr();
+    const start = addDays(today, 100); // clear of every conflict this file seeds
+    const end = addDays(start, 3);
+    const res = await app.request(
+      `/api/sunny-paws/availability?type=boarding&start=${start}&end=${end}&petIds=pet_sp_juno,pet_sp_ollie`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    // 3 nights x $85, NOT 3 x $50 x 2 = $300. Pinned so a silent change to either fails here.
+    expect(await res.json()).toMatchObject({
+      available: true,
+      priced: true,
+      estCost: 255,
+      billedUnits: 3,
+    });
+  });
 });
 
 /**
@@ -554,6 +641,15 @@ describe('sql/seed-demo.sql — time stability sweep', () => {
     const failures: string[] = [];
     for (const asOf of anchors) {
       const { env, raw } = createTestEnv({ demoActivityAsOf: asOf });
+      // `demoActivityAsOf` simulates "today" only INSIDE SQLite (it rewrites `date('now')`), while
+      // the booking-window rule reads the real clock — so at asOf = today+400 every seeded date is
+      // beyond the tenant's own MaxAdvanceMonths and the grid correctly paints it `unavailable`
+      // for a reason this sweep is not about. Clear the horizon on the rebuilt fixture so what is
+      // measured here is capacity, which is what this test exists to prove; the window rule has
+      // its own file (booking-window.test.ts) and its own month-grid tests. MinLeadDays needs no
+      // such treatment: every simulated `now` is at or after the real one, so a seeded date can
+      // never be too SOON.
+      raw.exec(`UPDATE Tenants SET MaxAdvanceMonths = NULL`);
       const tenants = {
         sp: (await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!,
         ht: (await getTenantBySlug(env.PAWBOOK_DB, 'happy-tails'))!,

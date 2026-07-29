@@ -153,7 +153,7 @@ server/       Hono Worker — routes, tenant middleware, auth/tokens, availabili
 app/          Three React apps: embed/ (widget), admin/ (dashboard + owner console),
               setup/ (signup-link page), plus shared-ui/ (API client, icons, hooks)
 src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
-sql/          schema.sql (canonical DDL), seed.sql (demo tenants), seed-demo.sql (activity)
+sql/          schema.sql (canonical DDL), seed.sql (base fixture), seed-demo.sql (demo activity + config)
 migrations/   New incremental DB changes only, numbered from the 2026-07-27 re-baseline
 public/       embed.js loader, demo host script, landing images, CSV import example
 ```

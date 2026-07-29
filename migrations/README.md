@@ -16,7 +16,12 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
   seed-demo.sql). Never `wrangler d1 migrations apply`.
 - **Two seed files.** `sql/seed.sql` is the minimal base fixture the Vitest harness loads and the
   suite asserts against; `sql/seed-demo.sql` is the lived-in demo layered on top (extra clients, a
-  booking per enabled service, deliberate conflicts, dated relative to `now`). Both are
+  booking per enabled service, deliberate conflicts, dated relative to `now`). `seed-demo.sql` is
+  also where the demo tenants' **configuration** is kept current — the booking horizon, pet-rate
+  mode, species acceptance, notice periods, capacity, cancellation policies, holiday rates and
+  intake questions a sitter who signed up today would have. The base fixture stays deliberately
+  under-configured because tests want those rules off; configure the demo tenants in
+  `seed-demo.sql`, never in `seed.sql`. Both are
   `INSERT OR REPLACE`, so re-seeding is idempotent — the demo simply rolls its dates forward.
   Tests opt into the demo with `createTestEnv({ demoActivity: true })`. The demo database holds no
   static dates: `seed-demo.sql` re-stamps `seed.sql`'s seven hardcoded bookings (same ids) relative

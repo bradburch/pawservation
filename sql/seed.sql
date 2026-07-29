@@ -2,10 +2,15 @@
 --
 -- This is the BASE fixture — tenants, logins, services, options, pet types, and a minimal handful
 -- of clients/bookings. The Vitest harness executes exactly this file (plus sql/schema.sql), and
--- ~120 test files assert against its exact contents, so keep it small and deterministic. The
--- lived-in demo — extra clients, a booking per enabled service, and deliberate capacity/slot/
--- blocked-day conflicts, all dated relative to `now` — lives in sql/seed-demo.sql, which
--- `npm run seed:local` / `seed:remote` apply straight after this file.
+-- ~120 test files assert against its exact contents, so keep it small and deterministic. It is
+-- deliberately UNDER-configured: no booking horizon, no notice periods, no cancellation policy,
+-- no holiday rates, no intake questions, PetRateMode left at the column default 'exact' — every
+-- one of those is a rule some test wants switched OFF, and the tests that want them on set them
+-- themselves. The lived-in demo — extra clients, a booking per enabled service, deliberate
+-- capacity/slot/blocked-day conflicts (all dated relative to `now`), AND the current-rules
+-- configuration a sitter who signed up today would have — lives in sql/seed-demo.sql, which
+-- `npm run seed:local` / `seed:remote` apply straight after this file. Configure the demo
+-- tenants THERE, not here.
 --
 -- ⚠️  DEMO DATA ONLY — DO NOT SEED A PRODUCTION DATABASE.
 -- The sitter logins below use the publicly-known password "demo1234". Running this against a
