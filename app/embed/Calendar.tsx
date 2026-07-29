@@ -16,6 +16,7 @@ import {
   shiftMonth as shiftMonthFn,
   nextRangeSelection,
   rangePosition,
+  type RangePosition,
   type RangeValue,
 } from '../../src/shared/index.js';
 import { IconChevronLeft, IconChevronRight } from '../shared-ui/icons';
@@ -73,6 +74,15 @@ type RangeVerdict = { ok: true } | { ok: false; date: string; reason: string | n
 /** String compares, not date math: 'YYYY-MM-DD' sorts lexicographically. */
 const maxDate = (a: string, b: string) => (a > b ? a : b);
 const minDate = (a: string, b: string) => (a < b ? a : b);
+
+/** Spoken name for a cell's place in the COMMITTED selection; pairs with `aria-selected`. */
+const SELECTION_NOTE: Record<RangePosition, string | null> = {
+  none: null,
+  only: 'selected',
+  start: 'first day',
+  middle: 'in your dates',
+  end: 'last day',
+};
 
 function rangeVerdict(
   start: string,
@@ -466,11 +476,21 @@ export function Calendar({
                 // pending — tinted, not solid, so "chosen" and "considering" never look alike.
                 if (candidateEnd && date > value.start!) cls.push('bp-prov');
               }
+              // Selection is announced from the COMMITTED value, never the provisional band: a
+              // preview that follows the cursor (or, for a keyboard user, the focus) is not a
+              // choice, and calling it "selected" would tell a screen-reader user they had picked
+              // dates they have not picked. aria-selected is the idiomatic carrier in a
+              // role="grid", and is set only where true — false on all 31 cells would have every
+              // arrow keypress announce "not selected".
+              const chosen = rangePosition(value, date, shape);
               const notes = [
                 isToday ? 'today' : null,
                 past ? 'past' : weekend ? 'weekdays only' : (d?.status ?? null),
                 // Only the server's reason is additive; the client's two already read as above.
                 past || weekend ? null : (d?.reason ?? null),
+                // Which END of the stay this is — aria-selected alone says "in the range", not
+                // "this is your check-in day".
+                SELECTION_NOTE[chosen],
                 d?.mine ? 'your booking' : null,
                 holiday,
               ].filter(Boolean);
@@ -485,6 +505,7 @@ export function Calendar({
                   // order, and the whole point of the roving grid is that a customer can arrow
                   // ONTO a struck-out day and hear why it's struck out. `pick` no-ops anyway.
                   aria-disabled={gridBusy || blocked || undefined}
+                  aria-selected={chosen !== 'none' || undefined}
                   tabIndex={date === anchor ? 0 : -1}
                   title={[holiday, reason].filter(Boolean).join(' — ') || undefined}
                   aria-label={[date, ...notes].join(', ')}

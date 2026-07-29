@@ -623,10 +623,27 @@ body {
   transform: rotate(180deg);
 }
 
+/* Sits between the service blurb and the calendar, outside `.bp-details` — so its own margin
+   replaces the gap `.bp-details` used to supply. */
 .bp-pets-block {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin-top: 10px;
+}
+
+/* The pet-count / acceptance refusal, beside the control that causes it. Always rendered: it
+   appears and disappears as pets are ticked, and that is exactly the interaction the
+   reserved-space rule exists for. THREE lines, from the same 294px measurement as `.bp-note` —
+   this slot carries the acceptance error verbatim ("House sitting doesn't accept guinea pigs —
+   Bartholomew can't join this booking."), which is the longest string either slot can hold. */
+.bp-pets-note {
+  min-height: 3.6em;
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  color: var(--bp-soft);
 }
 
 .bp-pets,
@@ -772,22 +789,37 @@ body {
   gap: 4px;
 }
 
-/* Holiday units and the cancellation policy — both are money context, both are short. */
+/* Holiday units and the cancellation policy — both money context.
+   THREE lines, not one. Measured in the browser at a 294px-wide host (a 248px content column,
+   about the narrowest sidebar embed worth supporting): "Includes 12 holiday nights at $195/night.
+   · Cancellation: 100% within 14 days, 50% within 7 days" wraps to three. A one-line reserve was
+   wrong — the quote landing would have grown the widget on the very tenants that have holiday
+   pricing. Past three lines this degrades the way `.bp-service-desc` already does (min-height,
+   so it grows rather than truncates): a sitter with three-plus cancellation tiers can exceed it,
+   but that text is FIXED per service, so it cannot change under a pet or day tap — only across a
+   service switch, which is the same tail `.bp-service-desc` accepts. Money terms are never
+   clamped away to make a box fit. */
 .bp-fineprint {
-  min-height: 1.3em;
+  min-height: 3.6em;
   margin: 0;
   font-size: 0.8rem;
   line-height: 1.2;
+  overflow-wrap: break-word;
   color: var(--bp-soft);
 }
 
 /* Every refusal the customer can hit, in one reserved slot OUTSIDE the pets disclosure so a
-   collapsed section can never hide one. */
+   collapsed section can never hide one.
+   THREE lines, measured at a 294px-wide host (248px column) against the longest strings this slot
+   can actually carry — the weekdays-only 400 ("That option is only available on weekdays — pick a
+   Monday–Friday date.") and the unpriced-set refusal both wrap to three there. Two lines was a
+   guess and it was wrong: an arriving error would have grown the widget on a narrow embed. */
 .bp-note {
-  min-height: 2.4em;
+  min-height: 3.6em;
   margin: 0;
   font-size: 0.88rem;
   line-height: 1.2;
+  overflow-wrap: break-word;
   color: var(--bp-soft);
 }
 
@@ -795,6 +827,21 @@ body {
   color: var(--bp-bad);
 }
 
+/* The ONE element in this flow whose space is deliberately NOT reserved, so the exception is
+   written down rather than left to look like an oversight.
+   It mounts and unmounts on a pet toggle under `PetRateMode = 'exact'`, which is an
+   interaction-driven height change — the thing every other reserved-height rule here prevents.
+   Measured, not estimated: the card costs 213px on a 294px-wide host (1310px → 1523px across an
+   untick/retick of the second pet on a `walk`) and ~100px at 520px.
+   Accepted because: (1) reserving 213px permanently would tax every customer on every booking to
+   spare a legacy tenant one reflow; (2) it is a TERMINAL state —
+   submit is blocked, the flow cannot continue, and the customer has to read it, which is the one
+   case where growing the page is the correct answer rather than a glitch; (3) it is the LAST
+   element in `.bp-details`, so it only ever extends the page downward — the button, the quote and
+   the error slot never shift under a finger already on its way to them; and (4) every service
+   created since migration 0005 is `'linear'`, so the state is unreachable except on rows that
+   predate it. If the widget ever learns a service's pet-rate mode, reserve it conditionally
+   instead — but it must not learn that to reserve a box. */
 .bp-result.bp-unpriced {
   border-radius: 12px;
   padding: 12px 16px;

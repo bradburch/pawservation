@@ -123,6 +123,28 @@ export function BookTab({
       )
     : null;
 
+  /**
+   * The pet-count half of `constraintsError`, isolated by asking the SAME shared validator with
+   * the nights constraint switched off — never re-derived. Now that the roster sits above the
+   * calendar, a bad pet selection is reachable before any date exists, i.e. before `.bp-details`
+   * and its error slot are on the page at all; this is what explains it in place. (Zero selected
+   * sends no `petIds`, so the server paints the grid for one pet — the neutral default — and
+   * this line is what says so rather than leaving a phantom pet unexplained.)
+   */
+  const petCountError = service
+    ? validateServiceConstraints(
+        { maxNights: null, maxPetCount: service.maxPetCount },
+        { nights: null, petCount: selectedPets.length },
+      )
+    : null;
+  const petsNote =
+    (selectedPets.length === 0 && pets !== null && pets.length > 0
+      ? 'Choose at least one pet.'
+      : '') ||
+    acceptanceError ||
+    petCountError ||
+    '';
+
   const datesReady = !!start && (service?.shape !== 'range' || !!end);
 
   /**
@@ -384,6 +406,78 @@ export function BookTab({
         </label>
       )}
 
+      {/* ABOVE the calendar, and deliberately outside `.bp-details`. The grid is painted for this
+          set (task 8b), so this control is what a customer needs when the month comes back empty —
+          and `.bp-details` only mounts once the dates are COMPLETE. Inside it, a two-pet household
+          looking at a month where every day is 1/2 saw a fully struck-out grid, could pick no day,
+          and so could never reach the one control that would untick a pet and repaint it. Reading
+          order follows from the same fact: who's coming decides what the calendar can show. */}
+      <div className="bp-pets-block">
+        <button
+          type="button"
+          className="bp-disclosure"
+          aria-expanded={petsExpanded}
+          onClick={() => setPetsOpen(!petsExpanded)}
+        >
+          <span className="bp-disclosure-label">Who&apos;s coming?</span>
+          <span className="bp-disclosure-summary">
+            {pets === null ? 'Loading pets…' : petSummary(selectedNames)}
+          </span>
+          <span
+            className={`bp-disclosure-chevron${petsExpanded ? ' bp-open' : ''}`}
+            aria-hidden="true"
+          >
+            <IconChevronDown size={16} />
+          </span>
+        </button>
+        {petsExpanded && (
+          <fieldset className="bp-pets">
+            <legend className="bp-sr-only">Pets on this booking</legend>
+            {pets === null ? (
+              <p className="bp-empty">Loading pets…</p>
+            ) : pets.length === 0 ? (
+              <p className="bp-empty">No pets added yet — ask your sitter to add yours.</p>
+            ) : (
+              <div className="bp-pet-chips">
+                {pets.map((p) => {
+                  const on = selectedPets.includes(p.id);
+                  const ok = petAccepted(p);
+                  return (
+                    <label
+                      className={`bp-pet-chip${on ? ' bp-on' : ''}${ok ? '' : ' bp-off'}`}
+                      key={p.id}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={!ok}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...selectedPets, p.id]
+                            : selectedPets.filter((id) => id !== p.id);
+                          setPetSelection(next);
+                          resetCheck();
+                        }}
+                      />
+                      <span className="bp-chip-check" aria-hidden="true">
+                        <IconCheck size={13} />
+                      </span>
+                      {p.name}
+                      <span className="bp-pet-type">{labelOf(p.petType)}</span>
+                      {!ok && <span className="bp-pet-hint">not accepted for {service.label}</span>}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </fieldset>
+        )}
+      </div>
+      {/* The pet-count refusals belong beside the control that causes them, not only in the
+          post-dates note slot the customer may not have reached yet. Reserved height, always
+          rendered — see .bp-pets-note. */}
+      <p className={`bp-pets-note${petsNote ? ' bp-note-bad' : ''}`}>{petsNote}</p>
+
       <Calendar
         slug={slug}
         token={getToken(slug) ?? ''}
@@ -412,72 +506,19 @@ export function BookTab({
           {service.shape === 'range' && (
             <label className="bp-field">
               Arrival time (optional)
-              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              <input
+                type="time"
+                value={startTime}
+                // resetCheck, like every other input: the arrival time is part of the request
+                // BODY, so an attempt key held across an edit to it would replay the booking that
+                // carried the old time (and leave a stale error on screen while they type).
+                onChange={(e) => {
+                  setStartTime(e.target.value);
+                  resetCheck();
+                }}
+              />
             </label>
           )}
-          <div className="bp-pets-block">
-            <button
-              type="button"
-              className="bp-disclosure"
-              aria-expanded={petsExpanded}
-              onClick={() => setPetsOpen(!petsExpanded)}
-            >
-              <span className="bp-disclosure-label">Who&apos;s coming?</span>
-              <span className="bp-disclosure-summary">
-                {pets === null ? 'Loading pets…' : petSummary(selectedNames)}
-              </span>
-              <span
-                className={`bp-disclosure-chevron${petsExpanded ? ' bp-open' : ''}`}
-                aria-hidden="true"
-              >
-                <IconChevronDown size={16} />
-              </span>
-            </button>
-            {petsExpanded && (
-              <fieldset className="bp-pets">
-                <legend className="bp-sr-only">Pets on this booking</legend>
-                {pets === null ? (
-                  <p className="bp-empty">Loading pets…</p>
-                ) : pets.length === 0 ? (
-                  <p className="bp-empty">No pets added yet — ask your sitter to add yours.</p>
-                ) : (
-                  <div className="bp-pet-chips">
-                    {pets.map((p) => {
-                      const on = selectedPets.includes(p.id);
-                      const ok = petAccepted(p);
-                      return (
-                        <label
-                          className={`bp-pet-chip${on ? ' bp-on' : ''}${ok ? '' : ' bp-off'}`}
-                          key={p.id}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            disabled={!ok}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? [...selectedPets, p.id]
-                                : selectedPets.filter((id) => id !== p.id);
-                              setPetSelection(next);
-                              resetCheck();
-                            }}
-                          />
-                          <span className="bp-chip-check" aria-hidden="true">
-                            <IconCheck size={13} />
-                          </span>
-                          {p.name}
-                          <span className="bp-pet-type">{labelOf(p.petType)}</span>
-                          {!ok && (
-                            <span className="bp-pet-hint">not accepted for {service.label}</span>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </fieldset>
-            )}
-          </div>
           {service && service.questions.length > 0 && (
             <fieldset className="bp-questions">
               <legend>
@@ -488,7 +529,12 @@ export function BookTab({
                   key={q.id}
                   question={q}
                   value={answers[q.id] ?? ''}
-                  onChange={(value) => setAnswers((cur) => ({ ...cur, [q.id]: value }))}
+                  // Same reason as the arrival time: answers ride in the request body, so an
+                  // edited answer is a different attempt and must not inherit the old key.
+                  onChange={(value) => {
+                    setAnswers((cur) => ({ ...cur, [q.id]: value }));
+                    resetCheck();
+                  }}
                 />
               ))}
             </fieldset>
