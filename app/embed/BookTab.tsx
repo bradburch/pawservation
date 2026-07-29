@@ -383,20 +383,22 @@ export function BookTab({
               aria-pressed={type === s.type}
               onClick={() => onServiceChange(s.type)}
             >
+              {/* Selection must not be color-only: the selected card also gets a check. It lives
+                  INSIDE the leading icon, as an absolutely-positioned badge on that icon's corner
+                  (see widget.css), and it is ALWAYS rendered — hidden by CSS when unselected,
+                  never removed. Both facts are load-bearing. Rendered conditionally, its box
+                  appeared and disappeared on a tap; as an in-flow sibling of the label it was one
+                  more inline word the text wrapped around, so selecting a long-named service
+                  pushed the label onto an extra line. Either way the grid's height moved on a tap,
+                  and with it the height this widget posts to its host iframe. Out of flow it costs
+                  the label's line box nothing, which is what lets the grid keep narrow columns. */}
               <span className="bp-service-emoji" aria-hidden="true">
                 <Icon />
+                <span className="bp-service-check">
+                  <IconCheck size={11} />
+                </span>
               </span>
               <span className="bp-service-label">{s.label}</span>
-              {/* Selection must not be color-only: the selected card also gets a check. It is a
-                  SIBLING of the label, never a child, and it is ALWAYS rendered — hidden by CSS
-                  when unselected, not removed. Inside the label it was one more inline word the
-                  text wrapped around, so selecting a long-named service pushed the label onto an
-                  extra line and grew the card; rendered conditionally, its box appeared and
-                  disappeared. Either way the grid's height moved on a tap, and with it the height
-                  this widget posts to its host iframe. See widget.css. */}
-              <span className="bp-service-check" aria-hidden="true">
-                <IconCheck size={13} />
-              </span>
             </button>
           );
         })}
