@@ -3,6 +3,7 @@
   "description": "Multi-tenant, embeddable booking widget for pet-sitting businesses (Cloudflare Workers + D1)",
   "private": true,
   "type": "module",
+  "_dangerSeedRemote": "scripts.seed:remote OVERWRITES the PRODUCTION Cloudflare D1 database (pawbook-db --remote) with sql/schema.sql + sql/seed.sql + sql/seed-demo.sql, replacing real tenant data with demo tenants/bookings and resetting demo sitter logins to a password documented in this public repo. It happened for real on 2026-07-28. The script is guarded behind CONFIRM_SEED_REMOTE=overwrite-production -- if you are reading this because you copy-pasted the underlying `wrangler d1 execute pawbook-db --remote --file=...` commands out of the script to run by hand, that guard does not protect you: think twice before running them against the remote DB.",
   "dependencies": {
     "hono": "^4.12.31",
     "react": "^19.2.8",
@@ -33,7 +34,7 @@
     "dev": "npm run build && concurrently -n widget,worker -c magenta,cyan \"vite build --watch\" \"wrangler dev\"",
     "deploy": "npm run build && wrangler deploy",
     "seed:local": "wrangler d1 execute pawbook-db --local --file=./sql/schema.sql && wrangler d1 execute pawbook-db --local --file=./sql/seed.sql && wrangler d1 execute pawbook-db --local --file=./sql/seed-demo.sql",
-    "seed:remote": "wrangler d1 execute pawbook-db --remote --file=./sql/schema.sql && wrangler d1 execute pawbook-db --remote --file=./sql/seed.sql && wrangler d1 execute pawbook-db --remote --file=./sql/seed-demo.sql",
+    "seed:remote": "[ \"$CONFIRM_SEED_REMOTE\" = \"overwrite-production\" ] || { echo; echo '!! seed:remote OVERWRITES the PRODUCTION D1 (pawbook-db --remote) !!'; echo 'It runs, in order: sql/schema.sql (CREATE ... IF NOT EXISTS), sql/seed.sql, then'; echo 'sql/seed-demo.sql (both INSERT OR REPLACE) -- replacing real tenant rows with'; echo 'the three demo tenants, ~38 demo bookings, and resetting the demo sitter'; echo 'logins to the password documented in this public repo. This happened for'; echo 'real against prod on 2026-07-28 and had to be hand-repaired.'; echo; echo 'To proceed anyway: CONFIRM_SEED_REMOTE=overwrite-production npm run seed:remote'; echo; exit 1; } && echo 'CONFIRMED -- seeding PRODUCTION pawbook-db (remote): schema.sql, seed.sql, seed-demo.sql' && wrangler d1 execute pawbook-db --remote --file=./sql/schema.sql && wrangler d1 execute pawbook-db --remote --file=./sql/seed.sql && wrangler d1 execute pawbook-db --remote --file=./sql/seed-demo.sql",
     "migrate:local": "wrangler d1 migrations apply pawbook-db --local",
     "migrate:remote": "wrangler d1 migrations apply pawbook-db --remote",
     "lint": "eslint .",
