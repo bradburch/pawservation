@@ -217,6 +217,12 @@ export async function deleteService(
     db
       .prepare('DELETE FROM TenantServicePetRates WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
+    // Same argument for saved intake answers: they key on the ServiceType STRING too, so a
+    // re-created service would otherwise pre-fill its form with answers to questions it never
+    // asked. (The shape guard would drop most of them on read; scrubbing is the real fix.)
+    db
+      .prepare('DELETE FROM SavedAnswers WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
     db
       .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
@@ -1911,6 +1917,72 @@ export async function getEndUserById(
     .first<EndUser>();
 }
 
+/** One stored pre-fill: the customer's last answer to a question, with the question's shape at
+ *  the time they gave it. See sql/schema.sql's SavedAnswers comment. */
+export type SavedAnswerRow = {
+  ServiceType: string;
+  QuestionId: string;
+  Shape: string;
+  Value: string;
+};
+
+/** Every saved answer this customer has, across services. One indexed read per widget load. */
+export async function listSavedAnswers(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<SavedAnswerRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ServiceType, QuestionId, Shape, Value
+         FROM SavedAnswers WHERE TenantId = ? AND EndUserId = ?`,
+    )
+    .bind(tenantId, endUserId)
+    .all<SavedAnswerRow>();
+  return results ?? [];
+}
+
+/**
+ * Replaces this customer's saved answers FOR ONE SERVICE with what they just submitted. Each
+ * entry is upserted under its question's CURRENT shape (so the next read compares against the
+ * question as it stood when the answer was given); a question the customer left blank has its
+ * saved row DELETED rather than kept, because a cleared answer that silently came back next time
+ * would be the feature working against them.
+ *
+ * Callers pass only questions that belong to `serviceType` — an answer to a key the service never
+ * asked about is not saved.
+ */
+export async function replaceSavedAnswers(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  serviceType: string,
+  entries: { questionId: string; shape: string; value: string }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  await db.batch(
+    entries.map((e) =>
+      e.value === ''
+        ? db
+            .prepare(
+              `DELETE FROM SavedAnswers
+                 WHERE TenantId = ? AND EndUserId = ? AND ServiceType = ? AND QuestionId = ?`,
+            )
+            .bind(tenantId, endUserId, serviceType, e.questionId)
+        : db
+            .prepare(
+              `INSERT INTO SavedAnswers (TenantId, EndUserId, ServiceType, QuestionId, Shape, Value)
+                    VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT (TenantId, EndUserId, ServiceType, QuestionId)
+                 DO UPDATE SET Shape = excluded.Shape,
+                               Value = excluded.Value,
+                               UpdatedAt = datetime('now')`,
+            )
+            .bind(tenantId, endUserId, serviceType, e.questionId, e.shape, e.value),
+    ),
+  );
+}
+
 export async function getEndUserByEmail(
   db: D1Database,
   tenantId: string,
@@ -2148,7 +2220,7 @@ export async function deleteCustomer(
                                  WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
                                    AND po.EndUserId <> ?)
                 AND EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id))`;
-  const [, , , , endUsersResult] = await db.batch([
+  const [, , , , , endUsersResult] = await db.batch([
     db
       .prepare(
         `UPDATE EndUserPets
@@ -2179,6 +2251,16 @@ export async function deleteCustomer(
     db
       .prepare(
         `DELETE FROM LoginCodes
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    // Saved intake answers (0007) also FK to EndUsers. Unreachable on today's paths — a saved
+    // answer only exists because a booking POST succeeded, and `bookingGuard` refuses the delete
+    // outright in that case — but the FK is real, so cascade it rather than rely on that
+    // coincidence surviving a future change. Same guards as everything else in the batch.
+    db
+      .prepare(
+        `DELETE FROM SavedAnswers
            WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
@@ -2955,6 +3037,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
     db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM SavedAnswers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM PetGroupPricing WHERE TenantId = ?').bind(tenantId),

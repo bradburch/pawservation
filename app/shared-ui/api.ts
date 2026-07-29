@@ -43,6 +43,17 @@ export type Pet = {
   /** NULL/absent = alive. Only the admin payload sets it — customer-facing lists omit deceased pets. */
   deceasedAt?: string | null;
 };
+/** The signed-in customer's own view of themselves — `GET /api/:slug/me`. */
+export type Me = {
+  name: string | null;
+  pets: Pet[];
+  /** Intake answers to pre-fill, `{ serviceType: { questionId: value } }`. The SERVER has already
+   *  dropped anything whose question was reworded, retyped or narrowed past it, so the widget can
+   *  render these as-is — but they are a convenience, never an authority: the booking POST
+   *  re-validates them exactly like a typed answer. */
+  savedAnswers: Record<string, Record<string, string>>;
+};
+
 export type MonthDay = {
   date: string;
   status: 'available' | 'partial' | 'unavailable';
@@ -356,7 +367,7 @@ export const api = {
     ),
 
   me: (slug: string, token: string) =>
-    request<{ name: string | null; pets: Pet[] }>(`/api/${slug}/me`, {
+    request<Me>(`/api/${slug}/me`, {
       headers: authHeaders(token),
     }),
 

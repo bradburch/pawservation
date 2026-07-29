@@ -4,7 +4,7 @@ import {
   getToken,
   isAuthExpired,
   setToken,
-  type Pet,
+  type Me,
   type TenantConfig,
 } from '../shared-ui/api';
 import { useAsync } from '../shared-ui/useAsync';
@@ -61,7 +61,7 @@ export default function App() {
     setAuthed(false);
   }, []);
 
-  const loadMe = useCallback(async (): Promise<{ name: string | null; pets: Pet[] } | null> => {
+  const loadMe = useCallback(async (): Promise<Me | null> => {
     if (!authed) return null;
     const token = getToken(slug);
     if (!token) return null;
@@ -72,7 +72,7 @@ export default function App() {
         onAuthExpired();
         return null;
       }
-      return { name: null, pets: [] };
+      return { name: null, pets: [], savedAnswers: {} };
     }
   }, [authed, onAuthExpired]);
 
@@ -153,7 +153,12 @@ export default function App() {
       ) : (
         <>
           <h1 className="bp-greeting">How can I help, {firstName}?</h1>
-          <BookTab config={config} pets={me?.pets ?? null} onAuthExpired={onAuthExpired} />
+          <BookTab
+            config={config}
+            pets={me?.pets ?? null}
+            savedAnswers={me?.savedAnswers ?? null}
+            onAuthExpired={onAuthExpired}
+          />
         </>
       )}
       {contact}

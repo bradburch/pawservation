@@ -88,6 +88,7 @@ export {
   type RangeValue,
 } from './booking/calendar-ui.js';
 export {
+  questionShape,
   validateAnswer,
   validateAnswers,
   validateServiceConstraints,

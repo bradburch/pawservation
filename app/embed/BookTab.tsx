@@ -46,10 +46,14 @@ function petSummary(names: string[]): string {
 export function BookTab({
   config,
   pets,
+  savedAnswers,
   onAuthExpired,
 }: {
   config: TenantConfig;
   pets: Pet[] | null;
+  /** Server-vetted intake pre-fills, `{ serviceType: { questionId: value } }`; null until /me
+   *  lands. Convenience only — the POST re-validates every answer, typed or pre-filled. */
+  savedAnswers: Record<string, Record<string, string>> | null;
   onAuthExpired: () => void;
 }) {
   const [type, setType] = useState(config.services[0]?.type ?? 'boarding');
@@ -66,7 +70,13 @@ export function BookTab({
   const [petSelection, setPetSelection] = useState<string[] | null>(null);
   // null = "not decided by the customer", which falls through to `autoExpand`.
   const [petsOpen, setPetsOpen] = useState<boolean | null>(null);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  // Only what the customer has TYPED this session. The answers actually in play are these laid
+  // over the saved pre-fills for the selected service — held apart, and as a sentinel, for the
+  // same reason `petSelection` is: /me arrives after first paint and the service can change
+  // under them, and an effect that seeded state from either would clobber an edit already made.
+  // A cleared field is a real `''` entry here, so it wins over its pre-fill rather than looking
+  // like "not answered yet".
+  const [answerEdits, setAnswerEdits] = useState<Record<string, string>>({});
   const [calReloadKey, setCalReloadKey] = useState(0);
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
@@ -114,6 +124,12 @@ export function BookTab({
         labelOf,
       )
     : null;
+  // Pre-fills are per service, so switching services swaps them rather than carrying an answer
+  // across. Only this service's own question ids are submitted — `answerEdits` can still hold a
+  // previously-selected service's keys, which are not this service's to send or to save.
+  const answers: Record<string, string> = {};
+  for (const q of service?.questions ?? [])
+    answers[q.id] = answerEdits[q.id] ?? savedAnswers?.[type]?.[q.id] ?? '';
   const questionsError = service ? validateAnswers(service.questions, answers) : null;
   const nights = service?.shape === 'range' && start && end ? nightsBetween(start, end) : null;
   const constraintsError = service
@@ -169,7 +185,10 @@ export function BookTab({
     // Back to the default for the NEW service — acceptance and the pet cap are both per service.
     setPetSelection(null);
     setPetsOpen(null);
-    setAnswers({});
+    // Edits are dropped with the service that asked for them — `answers` is rebuilt from the new
+    // service's questions and ITS pre-fills, so a stale edit could otherwise outrank a pre-fill
+    // on any question id the two services happen to share.
+    setAnswerEdits({});
     resetCheck();
   };
 
@@ -272,7 +291,10 @@ export function BookTab({
       setStartTime('');
       setPetSelection(null);
       setPetsOpen(null);
-      setAnswers({});
+      // The answers deliberately SURVIVE the reset that clears the dates. The server has just
+      // saved them as this customer's pre-fill for this service, so blanking the fields here
+      // would show them an empty form the very next render and then refill it on the next /me —
+      // and "these carry over to your next booking" is the whole feature.
       setCalReloadKey((k) => k + 1);
       // Both families, for HTTP-cached pre-rebrand loaders (see the resize note in App.tsx):
       // the current loader handles `pawservation:booked`, legacy loaders handle `pawbook:booked`.
@@ -537,7 +559,7 @@ export function BookTab({
                   // Same reason as the arrival time: answers ride in the request body, so an
                   // edited answer is a different attempt and must not inherit the old key.
                   onChange={(value) => {
-                    setAnswers((cur) => ({ ...cur, [q.id]: value }));
+                    setAnswerEdits((cur) => ({ ...cur, [q.id]: value }));
                     resetCheck();
                   }}
                 />

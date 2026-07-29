@@ -15,9 +15,12 @@ import {
   listEndUserPets,
   listPetNamesForBooking,
   listPetTypes,
+  listSavedAnswers,
   listServiceOptions,
   listServices,
+  replaceSavedAnswers,
 } from '../db/repo';
+import { buildSavedAnswerMap, savedAnswerEntries } from '../lib/saved-answers';
 import {
   checkAvailability,
   estimateCost,
@@ -311,11 +314,21 @@ export const bookingRoutes = new Hono<AppEnv>()
 
   .get('/:slug/me', async (c) => {
     const tenant = c.get('tenant');
-    const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
-    const pets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
+    const endUserId = c.get('endUserId');
+    const user = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId);
+    const pets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, endUserId);
+    // Intake pre-fills, resolved against the questions AS THEY STAND NOW — a saved answer whose
+    // question has been reworded, retyped, or narrowed past it never reaches the browser
+    // (buildSavedAnswerMap). Read concurrently: neither read depends on the other, and /me is on
+    // the widget's first paint.
+    const [savedRows, services] = await Promise.all([
+      listSavedAnswers(c.env.PAWBOOK_DB, tenant.Id, endUserId),
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+    ]);
     return c.json({
       name: user?.Name ?? null,
       pets: pets.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType })),
+      savedAnswers: buildSavedAnswerMap(savedRows, services),
     });
   })
 
@@ -614,6 +627,21 @@ export const bookingRoutes = new Hono<AppEnv>()
       await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id).catch(() => {});
       throw err;
     }
+
+    // Whatever they just submitted becomes the pre-fill for their next booking of this service
+    // (0007). Reached only past the `isDemo` return above, so the demo identity saves nothing,
+    // like it persists nothing else. Best-effort on the same terms as the calendar push below:
+    // the booking is already committed and the customer is about to be told it worked — failing
+    // the response over a convenience write would report a real booking as an error.
+    await replaceSavedAnswers(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      endUserId,
+      service.ServiceType,
+      savedAnswerEntries(service.Questions, answers),
+    ).catch((err) => {
+      console.error('saving intake answers failed', err);
+    });
 
     // Best-effort calendar sync — never blocks or fails the booking. Use waitUntil in production;
     // in tests (no ExecutionContext) await it so behavior is deterministic.

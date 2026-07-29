@@ -70,6 +70,15 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   be applied to the remote DB **before** the branch merges — the new worker's `TENANT_COLS` SELECT
   and `updateTenantSettings` UPDATE both name the column.
 
+- **`0007_saved_answers.sql`** (`widget-edit-and-saved-answers`) — adds the `SavedAnswers` table
+  and its lookup index: a customer's last intake answer per `(TenantId, EndUserId, ServiceType,
+QuestionId)`, re-offered as the pre-fill on their next booking of that service. Each row also
+  stores the question's `Shape` (`questionShape()` = type + normalized label) as of the answer, so
+  a reworded or retyped question drops its stale answer instead of pre-filling it. Additive only
+  (one `CREATE TABLE`, one `CREATE INDEX`) — no `Tenants` column, so the KV tenant-config cache
+  key needs **no** bump. **Not yet applied** to the remote DB and **not yet merged**; must be
+  applied before the branch merges — `GET /:slug/me` and the booking POST both name the table.
+
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long
 as every migration that lands on `main` is also applied to the remote DB by hand before that
