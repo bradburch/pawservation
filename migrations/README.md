@@ -63,7 +63,7 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   `setServiceConfig` UPDATE both name the column.
 - **`0006_overlap_days.sql`** (`housesit-boarding-overlap`) — adds
   `Tenants.HousesitBoardingOverlapDays` (nullable, `DEFAULT 1`), the tenant-wide house-sit/boarding
-  overlap allowance: 0 = never overlap, 1 = the default one tail-touch day, 2 = one at each end of
+  overlap allowance: 0 = never overlap, 1 = the default one handover day, 2 = one at each end of
   a stay, NULL = no limit. Additive only (one `ALTER TABLE … ADD COLUMN`), and SQLite stamps every
   existing row with the DEFAULT 1 — the intent the previously hardcoded rule already had — so no
   backfill statement is needed. **Not yet applied** to the remote DB and **not yet merged**; must

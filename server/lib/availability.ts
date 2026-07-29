@@ -344,7 +344,12 @@ export async function loadPetSetRates(
  * JSON, so for one TTL after this feature deploys the cached rows have no such field and
  * `tenant.HousesitBoardingOverlapDays` is `undefined` at runtime however the type reads. Falling
  * back to the product default keeps the rule ON through that window; `?? null` would have quietly
- * switched it off for every tenant, including one who had set 0.
+ * switched it off for every tenant.
+ *
+ * Honest about what that costs for one TTL, since the default cannot be right for everybody: a
+ * tenant who stored 0 is enforced at 1 (one handover day they had refused) and one who stored NULL
+ * is enforced at 1 rather than unlimited. Both self-heal on the next cache fill, and both are the
+ * safe direction — a refusal a sitter can override beats a double booking she cannot undo.
  */
 function overlapAllowanceOf(tenant: Tenant): number | null {
   const stored: number | null | undefined = tenant.HousesitBoardingOverlapDays;
@@ -368,8 +373,8 @@ function rangeRefusal(
     available: false,
     reason:
       kind === 'housesit'
-        ? 'Your sitter has boarding on those dates — a house sit can only overlap it on the first or last day of the stay.'
-        : 'Your sitter is house-sitting on those dates — a boarding can only overlap it on the first or last day of the stay.',
+        ? 'Your sitter has boarding on those dates — a house sit can only overlap it on the day one is ending as the other begins, never for the whole stay.'
+        : 'Your sitter is house-sitting on those dates — a boarding can only overlap it on the day one is ending as the other begins, never for the whole stay.',
     code: 'overlap_not_allowed',
   };
 }

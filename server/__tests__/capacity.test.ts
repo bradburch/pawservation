@@ -128,15 +128,18 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     // The boarding occupancy lives on a DIFFERENT boarding-kind service ('kitty-condo') than the
     // house-sit request could ever share a pool with — the overlap rule must still fire, because
     // it models the sitter's physical absence, not a pool.
-    const cap = buildCapacity([boarding('2028-09-01', '2028-09-10', 'kitty-condo', 1)]);
     const sit: CapacityRequest = {
       serviceType: 'housesitting',
       kind: 'housesit',
       cap: null,
       overlapAllowance: 1,
     };
-    expect(rangeHasConflict('2028-09-02', '2028-09-04', sit, cap)).toBe(true); // overlaps 2 days
-    expect(rangeHasConflict('2028-09-01', '2028-09-02', sit, cap)).toBe(false); // exactly 1 day
+    const long = buildCapacity([boarding('2028-09-01', '2028-09-10', 'kitty-condo', 1)]);
+    expect(rangeHasConflict('2028-09-02', '2028-09-04', sit, long)).toBe(true); // overlaps 2 days
+    // …and the ONE legal handover against that same foreign-pool service: the boarding departs
+    // Sep 4 (its last night), the sit arrives on it and has Sep 5 and Sep 6 to itself.
+    const short = buildCapacity([boarding('2028-09-01', '2028-09-05', 'kitty-condo', 1)]);
+    expect(rangeHasConflict('2028-09-04', '2028-09-07', sit, short)).toBe(false);
   });
 
   it('house-sit occupancy counts PETS: a 3-pet sit fills 3 units', () => {
@@ -219,8 +222,9 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
  * The rule is TENANT-WIDE and SYMMETRIC: it models the sitter's own whereabouts (she cannot sleep
  * at a client's house and keep a boarder at her own), so it reads OPPOSITE-kind occupancy whichever
  * kind is asking. A shared day is legal only when all three hold: the running count is within
- * `overlapAllowance`; the day is an ENDPOINT of the requested range; and no opposite-kind booking
- * is mid-stay on it (the existing side of the handover). `null` = the rule does not run.
+ * `overlapAllowance`; the day is a HANDOVER (we arrive as every opposite-kind booking there
+ * departs, or we depart as every one of them arrives); and the stay is not shared END TO END — at
+ * least one of its own days is free of the opposite kind. `null` = the rule does not run.
  *
  * Dates: end is EXCLUSIVE, so `Sep1 → Sep5` occupies Sep 1–4 and Sep 5 is an unoccupied checkout.
  */
@@ -307,10 +311,44 @@ describe('house-sit / boarding overlap allowance', () => {
   });
 
   it('row 9 — a stay wedged between two house sits needs allowance 2', () => {
-    // Sep 4 is house sit A's last night (we arrive as A departs) and Sep 5 is house sit B's first
-    // (we depart as B arrives). Two real handovers — exactly what "one at each end" buys.
+    // Sep 4 is house sit A's last night (we arrive as A departs) and Sep 6 is house sit B's first
+    // (we depart as B arrives). Two real handovers — exactly what "one at each end" buys — and
+    // Sep 5 is the boarding's own night, which is what keeps it a stay rather than a double
+    // booking (rule 3).
+    const events = [houseSit('2028-09-01', '2028-09-05'), houseSit('2028-09-06', '2028-09-10')];
+    expect(verdicts(events, '2028-09-04', '2028-09-07', bdReq)).toEqual([true, true, false, false]);
+  });
+
+  it('row 9b — the same wedge with NO night of its own is refused at every allowance', () => {
+    // Drop the free middle night and the "two handovers" become a stay the sitter is never home
+    // for. Rule 2 is satisfied on both days; rule 3 is what refuses it.
     const events = [houseSit('2028-09-01', '2028-09-05'), houseSit('2028-09-05', '2028-09-09')];
-    expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, false, false]);
+    expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, true, false]);
+  });
+
+  it('row 13 — a one-night stay laid on a one-night opposite stay is refused', () => {
+    // Both stays are a single night, so each is its own arrival AND departure and rule 2 passes.
+    // Nothing is handing over: the dog is at her house for the one night she is at a client's.
+    expect(
+      verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-05', bdReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('row 14 — a CHAIN of one-night stays cannot double a whole stay either', () => {
+    // The gap rule 2 alone leaves open: two back-to-back one-night sits satisfy the handover test
+    // on both of a two-night boarding's days, so the count budget (2) is met and every day is a
+    // "handover". Rule 3 refuses it — the boarding has no night of its own.
+    const events = [houseSit('2028-09-04', '2028-09-05'), houseSit('2028-09-05', '2028-09-06')];
+    expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, true, false]);
+  });
+
+  it('a one-night stay CAN take a handover day when the request has nights of its own', () => {
+    // The mirror of rows 13/14, so "rule 3" is not read as "one-night bookings are cursed": the
+    // same one-night house sit departs Sep 4, and a three-night boarding arriving that day keeps
+    // Sep 5 and Sep 6 to itself.
+    expect(
+      verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-07', bdReq),
+    ).toEqual([true, false, false, false]);
   });
 
   it('a day where one boarding is finishing and another is mid-stay is NOT a handover', () => {

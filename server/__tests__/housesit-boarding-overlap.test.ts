@@ -14,8 +14,9 @@ import { adminHeaders, createTestEnv, demoToken, endUserToken, TENANT_A } from '
  *
  * TWO THINGS THIS CHANGES about the pre-0006 behaviour, and both are proved below:
  *  1. the rule now runs in the BOARDING direction (it only ever checked house-sit requests), and
- *  2. an overlapping day must sit at the TAIL ENDS — an endpoint of the requested range AND a day
- *     the existing booking is not mid-stay on.
+ *  2. an overlapping day must be a real HANDOVER — the request arriving as every opposite-kind
+ *     booking there departs, or departing as every one of them arrives — and a stay may never be
+ *     shared end to end, however generous the allowance.
  */
 
 const HOUSESIT_START = '2027-03-01';
@@ -139,7 +140,7 @@ describe('overlap allowance — the availability quote', () => {
     expect(await res.json()).toEqual({
       available: false,
       reason:
-        'Your sitter is house-sitting on those dates — a boarding can only overlap it on the first or last day of the stay.',
+        'Your sitter is house-sitting on those dates — a boarding can only overlap it on the day one is ending as the other begins, never for the whole stay.',
       code: 'overlap_not_allowed',
     });
   });
@@ -214,7 +215,7 @@ describe('overlap allowance — the availability quote', () => {
       available: false,
       code: 'overlap_not_allowed',
       reason:
-        'Your sitter has boarding on those dates — a house sit can only overlap it on the first or last day of the stay.',
+        'Your sitter has boarding on those dates — a house sit can only overlap it on the day one is ending as the other begins, never for the whole stay.',
     });
   });
 });
@@ -273,7 +274,7 @@ describe('overlap allowance — the booking POST', () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
       error:
-        'Your sitter is house-sitting on those dates — a boarding can only overlap it on the first or last day of the stay.',
+        'Your sitter is house-sitting on those dates — a boarding can only overlap it on the day one is ending as the other begins, never for the whole stay.',
       code: 'overlap_not_allowed',
     });
     // The optimistic insert is rolled back — a refused request must not sit in the sitter's list.

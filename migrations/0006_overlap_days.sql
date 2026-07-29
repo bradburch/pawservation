@@ -7,7 +7,7 @@
 --   own — not a capacity pool.
 --
 --     0    = never overlap.
---     1    = the DEFAULT: one tail-touch day, e.g. a boarding that starts as a house sit wraps up.
+--     1    = the DEFAULT: one handover day, e.g. a boarding that starts as a house sit wraps up.
 --     2    = a stay may touch a tail at each of its own ends.
 --     NULL = no limit (the repo-wide NULL-=-unlimited convention; the rule stops running).
 --

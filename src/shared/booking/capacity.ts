@@ -67,7 +67,7 @@ export type CapacityRequest = {
   petCount?: number;
   /**
    * `Tenants.HousesitBoardingOverlapDays` — how many days this request may overlap OPPOSITE-kind
-   * occupancy, counted only at the tail ends (see `rangeConflictReason`). 0 = never; 1 = the
+   * occupancy, and only ever as a HANDOVER (see `rangeConflictReason`). 0 = never; 1 = the
    * product default; NULL = no limit, the rule stops running. REQUIRED on purpose: a defaulted
    * field is how the quote and the booking POST would silently disagree, so every construction
    * site must name the tenant's value.
@@ -186,6 +186,7 @@ export function rangeConflictReason(
   const requestEnd = addDays(endDateExclusive, -1); // last occupied night
   const units = unitsOf(request.petCount);
   let overlapDays = 0;
+  let requestDays = 0;
 
   // Defensive normalization of the tenant's allowance: only a number or an explicit null mean
   // anything. Anything else — a caller built against the older CapacityRequest shape, or a tenant
@@ -200,6 +201,7 @@ export function rangeConflictReason(
   if (request.cap !== null && units > request.cap) return 'over_cap';
 
   for (let date = startDate; date < endDateExclusive; date = addDays(date, 1)) {
+    requestDays += 1; // counted before the early-continue: the whole stay, not just its busy days
     const day = capacityByDate.get(date);
     if (!day) continue;
 
@@ -210,19 +212,20 @@ export function rangeConflictReason(
     // pool, so it reads occupancy from ANY service of the opposite kind, and governs a boarding
     // laid over a house sit exactly as it governs the reverse.
     //
-    // A shared day is legal only when BOTH hold:
-    //   1. the running count of shared days is within `overlapAllowance`, and
+    // A shared day is legal only when ALL THREE hold:
+    //   1. the running count of shared days is within `overlapAllowance`;
     //   2. the day is a handover — either we ARRIVE on it and every opposite-kind booking there
-    //      DEPARTS on it, or we DEPART on it and every one of them ARRIVES on it.
+    //      DEPARTS on it, or we DEPART on it and every one of them ARRIVES on it; and
+    //   3. the stay is not shared END TO END — at least one of its own days is free of the
+    //      opposite kind (checked after the walk, below).
     //
     // Rule 2 is directional on purpose. "At the tail ends" is not "at either end of the request":
     // both ends of a two-night request are its endpoints, so an endpoint-only test would let a
-    // boarding sit exactly on top of a two-night house sit at allowance 2 — a total double
-    // booking. Requiring one stay to be leaving as the other arrives is what makes the concession
-    // a handover, and it also refuses a one-night boarding dropped in the MIDDLE of a ten-day
-    // house sit (a single-day stay is trivially "at its own endpoint", so nothing else would).
-    // `every one of them`: if two bookings occupy the day and only one is leaving, the other is
-    // still there.
+    // boarding sit exactly on top of a two-night house sit — a total double booking. Requiring one
+    // stay to be leaving as the other arrives is what makes the concession a handover, and it is
+    // also what refuses a one-night boarding dropped in the MIDDLE of a ten-day house sit (a
+    // single-day stay is trivially "at its own endpoint", so nothing else would). `every one of
+    // them`: if two bookings occupy the day and only one is leaving, the other is still there.
     if (overlapAllowance !== null) {
       const opposite = request.kind === 'housesit' ? day.boarding : day.housesit;
       if (opposite.events > 0) {
@@ -245,6 +248,17 @@ export function rangeConflictReason(
     }
 
     return 'blocked_or_full';
+  }
+
+  // Rule 3, and the reason the count alone is not the guarantee. A doubled day is tolerable as a
+  // TRANSITION into or out of a stay the sitter is actually there for; a stay with no such day is
+  // not one she is there for at all — the dog is at her house every night she is sleeping at a
+  // client's. Rule 2 cannot see this: a one-night stay is its own arrival AND departure, so a
+  // chain of one-nighters (or a request exactly as long as the allowance) satisfies the handover
+  // test on every single day and doubles the whole stay. Checked here, once the walk knows how
+  // many of the request's days were shared.
+  if (overlapAllowance !== null && overlapDays > 0 && overlapDays >= requestDays) {
+    return 'cross_kind_overlap';
   }
 
   return null;
