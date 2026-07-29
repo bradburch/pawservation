@@ -19,7 +19,7 @@ import {
   loadPetSetRates,
   monthAvailability,
 } from '../lib/availability';
-import { syncBookingToCalendar } from '../lib/calendar-sync';
+import { reconcileIfStale, syncBookingToCalendar } from '../lib/calendar-sync';
 import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
@@ -179,6 +179,12 @@ export const bookingRoutes = new Hono<AppEnv>()
       if (!found) return c.json({ error: 'Unknown service option.' }, 400);
       option = found;
     }
+    // Pull Google's reality INTO the DB before painting the grid, throttled on the widget's own
+    // key (~10 min). Availability itself still reads only D1 — reconcile is what writes a
+    // hand-deleted event or a foreign busy day into BookingRequests, so the grid below sees it as
+    // an ordinary row. Best-effort and never throws: a Google outage just means a slightly staler
+    // grid, never a broken widget. Suppressed for a disabled tenant (read-only, no GET-side writes).
+    if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant, 'widget');
     const result = await monthAvailability(
       c.env,
       tenant,

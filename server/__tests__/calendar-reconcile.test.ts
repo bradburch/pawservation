@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { reconcileBookingsWithCalendar, reconcileIfStale } from '../lib/calendar-sync';
+import {
+  calendarSyncKey,
+  calendarWidgetSyncKey,
+  RECONCILE_MIN_HORIZON_DAYS,
+  reconcileBookingsWithCalendar,
+  reconcileIfStale,
+  reconcileWindow,
+} from '../lib/calendar-sync';
 import { insertBookingRequest, setBookingGCalEventId, setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
-import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { adminToken, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
+import { addDays, addMonths, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+import { adminToken, createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
 import type { Tenant } from '../types';
 
 const tenant = {
@@ -495,5 +502,172 @@ describe('reconcile v2 — delete-detection now notifies the customer', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
     await reconcileBookingsWithCalendar(env, tenant);
     expect(await statusOf(env, id)).toBe('cancelled');
+  });
+});
+
+/**
+ * Task 6c. Reconcile's authoritative window used to be a hardcoded [today-1, today+180) — so a
+ * business taking bookings 12+ months out had a whole tail of its bookable calendar that Google
+ * was never consulted about. The window now stretches to cover the tenant's booking horizon.
+ *
+ * The safety property under test is LOCKSTEP: the Google query, `listSyncedBookingIds` and
+ * `listExternalEventRowsInWindow` all derive from `reconcileWindow`. Widening only the Google
+ * query would leave "absent from the response" meaning "deleted by hand" for bookings that were
+ * never in the response's range — i.e. spurious cancellation of real bookings.
+ */
+describe('reconcileWindow', () => {
+  const T = '2026-03-15';
+
+  it('is [today-1, today+180) when the tenant sets no horizon (NULL = unlimited)', () => {
+    expect(reconcileWindow({ MaxAdvanceMonths: null } as Tenant, T)).toEqual({
+      start: addDays(T, -1),
+      endExclusive: addDays(T, RECONCILE_MIN_HORIZON_DAYS),
+    });
+  });
+
+  it('stretches to the whole horizon, one day past the last bookable date (exclusive end)', () => {
+    // 12 months out is well past the 180-day floor.
+    expect(reconcileWindow({ MaxAdvanceMonths: 12 } as Tenant, T).endExclusive).toBe(
+      addDays(addMonths(T, 12), 1),
+    );
+  });
+
+  it('never shrinks below the 180-day floor for a short horizon', () => {
+    // 2 months ≈ 61 days — the floor wins, so a short horizon keeps today's reach.
+    expect(reconcileWindow({ MaxAdvanceMonths: 2 } as Tenant, T).endExclusive).toBe(
+      addDays(T, RECONCILE_MIN_HORIZON_DAYS),
+    );
+  });
+});
+
+describe('reconcile over a widened window', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // 300 days out: past the old 180-day window, inside a 12-month horizon.
+  const FAR_START = addDays(TODAY, 300);
+  const FAR_END = addDays(TODAY, 303);
+  const horizonTenant = { ...tenant, MaxAdvanceMonths: 12 } as Tenant;
+
+  it('does NOT cancel a far-future booking whose Google event is still live', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedSyncedBooking(env, { startDate: FAR_START, endDate: FAR_END });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([id]));
+    await reconcileBookingsWithCalendar(env, horizonTenant);
+    expect(await statusOf(env, id)).toBe('confirmed');
+  });
+
+  it('cancels a far-future booking whose Google event is gone — the widened window reaches it', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedSyncedBooking(env, { startDate: FAR_START, endDate: FAR_END });
+    // Fresh Response per call — this test reconciles twice, and a Response body reads once.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => calendarListResponse([]));
+    await reconcileBookingsWithCalendar(env, horizonTenant);
+    expect(await statusOf(env, id)).toBe('cancelled');
+    // Control: the same booking under a no-horizon tenant is outside the 180-day window and is
+    // therefore never a candidate — proving the cancel above came from the widening, not luck.
+    const { env: env2 } = createTestEnv();
+    await connectCalendar(env2);
+    const id2 = await seedSyncedBooking(env2, { startDate: FAR_START, endDate: FAR_END });
+    await reconcileBookingsWithCalendar(env2, tenant);
+    expect(await statusOf(env2, id2)).toBe('confirmed');
+  });
+
+  it('materializes a far-future foreign event, and deletes its row only when Google drops it', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const far = { id: 'gev_far', start: { date: FAR_START }, end: { date: FAR_END } };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => calendarResponse([far]));
+    await reconcileBookingsWithCalendar(env, horizonTenant);
+    expect(await externalRows(env)).toMatchObject([{ GCalEventId: 'gev_far' }]);
+
+    // Still live on the next pass → the row survives (the spurious-delete guard).
+    await reconcileBookingsWithCalendar(env, horizonTenant);
+    expect(await externalRows(env)).toMatchObject([{ GCalEventId: 'gev_far' }]);
+
+    // Gone from Google → the row goes with it, in the same widened window.
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([]));
+    await reconcileBookingsWithCalendar(env, horizonTenant);
+    expect(await externalRows(env)).toEqual([]);
+  });
+});
+
+describe('reconcileIfStale scopes', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('the widget draws on its own KV key, so the cron cannot eat its budget', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
+
+    // The cron/dashboard marker is set — a shared key would suppress the widget pull entirely.
+    await env.PAWBOOK_CACHE.put(calendarSyncKey(TENANT_A), '1');
+    await reconcileIfStale(env, tenant, 'widget');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+
+    // …and the widget's own marker then throttles it.
+    await reconcileIfStale(env, tenant, 'widget');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a widget pull does not consume the dashboard throttle', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
+    await reconcileIfStale(env, tenant, 'widget');
+    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
+    await reconcileIfStale(env, tenant); // dashboard scope still runs
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('GET /:slug/availability/month triggers a widget-scoped reconciliation', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('a booking whose Google event was deleted by hand is gone from the grid on the next widget load', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // A 2-pet stay fills Sunny Paws' boarding pool (MaxConcurrentPets=2) for its night.
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: IN_WINDOW_START,
+      endDate: addDays(IN_WINDOW_START, 1),
+      optionKey: 'standard',
+      petCount: 2,
+      estCost: null,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_hand_deleted', null);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([])); // sitter deleted it
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      `/api/sunny-paws/availability/month?type=boarding&month=${IN_WINDOW_START.slice(0, 7)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: { date: string; status: string }[] };
+    // Reconcile ran BEFORE the grid was painted, so the freed day is already available.
+    expect(body.days.find((d) => d.date === IN_WINDOW_START)?.status).toBe('available');
+    expect(await statusOf(env, id)).toBe('cancelled');
+    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+  });
+
+  it('a Google outage does not break the grid', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Google is down'));
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      `/api/sunny-paws/availability/month?type=boarding&month=${IN_WINDOW_START.slice(0, 7)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
   });
 });

@@ -1,4 +1,4 @@
-import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+import { addDays, addMonths, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
   chunkArray,
   clearBookingCalendarEventIds,
@@ -356,6 +356,19 @@ export async function deleteBookingCalendarEvent(
 export const CALENDAR_SYNC_TTL_SECONDS = 120;
 export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:last`;
 
+/**
+ * The customer widget's own reconcile throttle — a SEPARATE key from `calendarSyncKey`, on
+ * purpose. The 15-minute cron writes `calendarSyncKey` after every sweep, so sharing it would
+ * hand the cron the whole budget and a widget-triggered pull would essentially never fire.
+ * KV is eventually consistent (~60s), so this is best-effort by design: an occasional double
+ * pull is cheaper than a lock, and reconcile is idempotent.
+ */
+export const CALENDAR_WIDGET_SYNC_TTL_SECONDS = 600;
+export const calendarWidgetSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:widget`;
+
+/** Which throttle a `reconcileIfStale` caller draws on — see `calendarWidgetSyncKey`. */
+export type SyncScope = 'dashboard' | 'widget';
+
 /** Cap on how many foreign Google events one reconcile pass MATERIALIZES (writes a row for) — a
  * shared calendar can trivially carry thousands of events, and reconcileIfStale runs synchronously
  * on a user-facing GET (the dashboard load), so an unbounded per-event awaited-write loop there is
@@ -389,8 +402,43 @@ function externalSpan(e: CalendarEvent): { startDate: string; endDateExclusive: 
 }
 
 /**
+ * Floor for how far ahead reconcile treats Google as authoritative. Also the whole window when the
+ * tenant sets no booking horizon (`MaxAdvanceMonths` NULL = unlimited) — Google can't be polled to
+ * infinity, so an unlimited horizon keeps exactly today's behaviour.
+ */
+export const RECONCILE_MIN_HORIZON_DAYS = 180;
+
+/**
+ * Reconcile's authoritative window, `[today-1, end)`, stretched to cover the tenant's whole
+ * BOOKING HORIZON (`Tenants.MaxAdvanceMonths`, day-clamped by `addMonths`; +1 day because the
+ * horizon date is itself bookable and the window end is exclusive) but never shorter than
+ * RECONCILE_MIN_HORIZON_DAYS.
+ *
+ * The one function every consumer of the window derives from, which is what makes widening SAFE:
+ * `reconcileBookingsWithCalendar` feeds the identical pair of dates to Google's query, to
+ * `listSyncedBookingIds` and to `listExternalEventRowsInWindow`. Those last two are the
+ * delete-detection truth sets — widening the Google query without widening them in lockstep would
+ * read "absent from the response" as "deleted by hand" and spuriously cancel real bookings.
+ * Bounded because `MaxAdvanceMonths` is capped at 24 (validation.ts), and a Google page overflow
+ * throws rather than returning a partial list (google-calendar.ts), so a too-large window fails
+ * loudly instead of silently deleting.
+ */
+export function reconcileWindow(
+  tenant: Tenant,
+  today: string,
+): { start: string; endExclusive: string } {
+  const floor = addDays(today, RECONCILE_MIN_HORIZON_DAYS);
+  const horizonEnd =
+    tenant.MaxAdvanceMonths != null ? addDays(addMonths(today, tenant.MaxAdvanceMonths), 1) : null;
+  return {
+    start: addDays(today, -1),
+    endExclusive: horizonEnd !== null && horizonEnd > floor ? horizonEnd : floor,
+  };
+}
+
+/**
  * Reconciles this tenant against Google Calendar — Google is authoritative for the window
- * [today-1, today+180):
+ * `reconcileWindow` returns:
  *  (a) a Pawservation-synced booking whose event is gone from Google is cancelled, and the
  *      customer is emailed (best-effort, spec decision: notify via sendBookingStatusEmail);
  *  (b) every foreign event (no private.bookingId) is materialized as a read-only
@@ -405,8 +453,9 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
-  const windowStart = addDays(today, -1);
-  const windowEndExclusive = addDays(today, 180);
+  // ONE derivation, three consumers (Google's query, listSyncedBookingIds,
+  // listExternalEventRowsInWindow) — see reconcileWindow on why they must never drift apart.
+  const { start: windowStart, endExclusive: windowEndExclusive } = reconcileWindow(tenant, today);
   const events = await listCalendarEvents(
     accessToken,
     conn.CalendarId ?? 'primary',
@@ -495,20 +544,27 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   await deleteExternalEventsMissing(env.PAWBOOK_DB, tenant.Id, existingRows, liveIds);
 }
 
-/** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. The
- * dashboard freshness path does the same two-step the cron sweep does — flush the outbox, then
- * pull — throttled per tenant. */
-export async function reconcileIfStale(env: Env, tenant: Tenant): Promise<void> {
-  const key = calendarSyncKey(tenant.Id);
+/** Reconciles at most once per scope TTL per tenant, via PAWBOOK_CACHE. Both freshness paths do
+ * the same two-step the cron sweep does — flush the outbox, then pull — throttled per tenant, each
+ * against its OWN key: the sitter dashboard on `calendarSyncKey` (120s, shared with the cron) and
+ * the customer widget on `calendarWidgetSyncKey` (600s, its own budget). Never throws: a Google
+ * outage leaves the caller with current DB state, which is the whole point of reconcile writing
+ * Google's reality INTO the DB rather than availability ever reading Google. */
+export async function reconcileIfStale(
+  env: Env,
+  tenant: Tenant,
+  scope: SyncScope = 'dashboard',
+): Promise<void> {
+  const widget = scope === 'widget';
+  const key = widget ? calendarWidgetSyncKey(tenant.Id) : calendarSyncKey(tenant.Id);
+  const ttl = widget ? CALENDAR_WIDGET_SYNC_TTL_SECONDS : CALENDAR_SYNC_TTL_SECONDS;
   if (await env.PAWBOOK_CACHE.get(key).catch(() => null)) return;
   try {
     await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);
   } catch {
-    /* best-effort; the dashboard falls back to current DB state */
+    /* best-effort; the caller falls back to current DB state */
   } finally {
-    await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: CALENDAR_SYNC_TTL_SECONDS }).catch(
-      () => {},
-    );
+    await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: ttl }).catch(() => {});
   }
 }
