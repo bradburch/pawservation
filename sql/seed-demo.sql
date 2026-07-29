@@ -31,17 +31,18 @@
 
 -- PET-SET PRICING MODE (0005). sql/seed.sql's services predate PetRateMode and default to
 -- 'exact' — refuse a priced quote for any 2+-pet set with no stored group/mix rate. That's the
--- correct behaviour for a legacy service, but the embed widget now pre-selects ALL of a
--- customer's accepted pets by default, and Jess owns two pets at Sunny Paws (Bella + Mochi): her
--- very first screen would hit the "ask your sitter for a rate" dead end, and a demo account must
--- look like an account a sitter could actually be running. Opt the PRIMARY, stay-shaped services
--- into 'linear' (N distinct pets = N x the option's one-pet rate) so the default multi-pet
--- selection quotes a real number. Deliberately leave walk / check-in / morning-walk on 'exact' —
--- those are single-visit, per-slot services where "one sitter, one pet at a time" is the more
--- realistic default anyway, and it means a prospective sitter poking at a walk with two pets
--- selected still sees the refusal path once, which is informative rather than broken. A plain
--- UPDATE is idempotent by construction: there is no row identity to restate, so re-running this
--- file changes nothing on a second pass.
+-- correct behaviour for a legacy service, but the embed widget pre-selects ALL of a customer's
+-- accepted pets by default, and Jess owns two pets at Sunny Paws (Bella the dog + Mochi the cat):
+-- on any service that accepts both, her very first screen would hit the "ask your sitter for a
+-- rate" dead end, and a demo account must look like an account a sitter could actually be
+-- running. HOUSE SITTING is exactly that service (it accepts every species — see the acceptance
+-- block below), so opt the PRIMARY, stay-shaped services into 'linear' (N distinct pets = N x the
+-- option's one-pet rate) and the default multi-pet selection quotes a real number. Deliberately
+-- leave walk / check-in / morning-walk on 'exact' — those are single-visit, per-slot services
+-- where "one sitter, one pet at a time" is the more realistic default anyway, and it means a
+-- prospective sitter poking at a walk with two pets selected still sees the refusal path once,
+-- which is informative rather than broken. A plain UPDATE is idempotent by construction: there is
+-- no row identity to restate, so re-running this file changes nothing on a second pass.
 --
 -- TenantId-SCOPED, explicitly, to exactly the three seeded demo tenants — same discipline every
 -- other statement in this file already follows by naming a TenantId on each row. This file is
@@ -55,6 +56,49 @@
 UPDATE TenantServices SET PetRateMode = 'linear'
  WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
    AND ServiceType IN ('boarding', 'housesitting', 'daycare');
+
+-- WHICH SPECIES EACH DEMO SERVICE ACCEPTS.
+--
+-- `defaultAcceptedPetTypes` in src/shared/service-templates.ts is what a service created from a
+-- template STARTS accepting — walks and daycare are for dogs, drop-in check-ins are usually the
+-- cat's — but it only fires at create time, so the seeded tenants (which predate it, and are
+-- written as literal rows rather than created through the route) never got it. A demo account
+-- that contradicts the product's own default is a bad demo, so the same rule is materialized
+-- here: dog-only walks/daycare/boarding, cat-only check-ins.
+--
+-- BOARDING is dog-only by choice, matching the demo narrative (Sunny Paws' own blurb is "a fenced
+-- yard and two walks a day"; Happy Tails already carried '["dog"]'). It is NOT the template
+-- default — a real sitter may board anything — but a seeded demo has to pick something, and
+-- dog-only is what the sitters here are described as running.
+--
+-- HOUSE SITTING stays OPEN (NULL = every registry type), which is both the template default and
+-- the honest answer: the sitter is in the CLIENT'S home, so which animals are there is the
+-- client's call, not the sitter's. It is also what keeps the demo whole — Ana's rabbit Clover and
+-- Nina's cat Sable are seeded onto house sits below, and it is the one service where Jess's
+-- dog+cat pair are both accepted, which is what the 'linear' mode above exists to price.
+--
+-- SUBSET RULE: AcceptedPetTypes must be a subset of the tenant's own TenantPetTypes registry, and
+-- an ENABLED service may not end up with an empty list (server/routes/admin.ts rejects that on
+-- the next settings PUT). All three demo tenants register both 'dog' and 'cat' (sql/seed.sql), so
+-- every value below is in range. Happy Tails' cat is still accepted by no ENABLED service — its
+-- check-in row is Enabled=0 — which keeps the base fixture's "dogs only, and the widget shows it"
+-- story intact.
+--
+-- TenantId-SCOPED for the same reason the UPDATE above is: this file is chained onto
+-- `seed:remote`, and an unscoped write here would silently narrow every real sitter's services to
+-- one species — cancelling bookings nobody asked to cancel. server/__tests__/seed-demo.test.ts
+-- seeds an unrelated fourth tenant and asserts these statements leave its acceptance untouched.
+UPDATE TenantServices SET AcceptedPetTypes = '["dog"]'
+ WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
+   AND ServiceType IN ('boarding', 'daycare', 'walk', 'morning-walk');
+
+UPDATE TenantServices SET AcceptedPetTypes = '["cat"]'
+ WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
+   AND ServiceType = 'checkin';
+
+UPDATE TenantServices SET AcceptedPetTypes = NULL
+ WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
+   AND ServiceType = 'housesitting';
 
 -- More clients, so a busy day is several DIFFERENT families rather than one customer booked
 -- against herself. Every one is active (invite-only /identify) and every one owns a pet below.

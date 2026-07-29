@@ -194,12 +194,20 @@ body {
 }
 
 /* ── Service pills ─────────────────────────────────────────────── */
-/* auto-fit keeps cells equal width/height per row; at the widget's ~376px content width this
-   gives 2-3 columns (tenants have at most 6 services, realistically 2-4), collapsing to one
-   column on narrow host pages. */
+/* auto-fit keeps cells equal width/height per row; at the widget's 420px content width this gives
+   2 columns (tenants have at most 6 services, realistically 2-4), collapsing to one column on
+   narrow host pages.
+   The floor is SIZED FOR THE CHECK, not chosen for looks. A card spends 27px of padding, a 20px
+   icon, two 8px gaps and the 13px selection check — 76px — before a single letter of the label is
+   drawn, and "Boarding" alone measures 64px, so a track narrower than ~140px cannot hold the
+   shortest built-in label and its check on one line. The old 104px floor (3 columns of ~135px)
+   left 59px, which is why the check either pushed the label onto a second line or, once the check
+   was moved out of the label, sat on top of the text. 148px keeps a comfortable margin over that
+   140px minimum at every width auto-fit can produce. Lower it and the overlap comes straight
+   back. */
 .bp-service-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 8px;
 }
 
@@ -237,6 +245,7 @@ body {
 
 .bp-service-emoji {
   display: inline-flex;
+  flex: 0 0 auto;
   color: inherit;
 }
 
@@ -244,7 +253,15 @@ body {
   color: var(--bp-accent);
 }
 
+/* The one flexible item on the card's single flex line. A sitter's service name is her own words,
+   so it is never truncated: it wraps to a second line instead, and min-width:0 is what lets it do
+   that rather than forcing the card wider than its grid track. `overflow-wrap: anywhere` is the
+   backstop for the one case wrapping cannot handle — a single unbreakable word longer than the
+   track — which would otherwise spill out of its box and run underneath the check. It never fires
+   for an ordinary label at the track width above. */
 .bp-service-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: inherit;
 }
 
@@ -1112,12 +1129,23 @@ body {
   color: var(--bp-accent);
 }
 
-/* The selected service card's non-color cue. */
+/* The selected service card's non-color cue (this widget never says "selected" in colour alone).
+   Two rules keep it from moving the page:
+   - It is a SIBLING of `.bp-service-label`, so it sits on the card's own flex line and can never
+     be wrapped by the label's text. Inside the label it was an extra inline word, and "House
+     sitting ✓" broke to a third line while "House sitting" needed two.
+   - It is always in the DOM, hidden rather than removed when the card is unselected, so its box is
+     reserved in EVERY card. Selecting a service therefore changes no geometry at all — which
+     matters because this widget lives in an iframe that resizes its host to `scrollHeight` on
+     every ResizeObserver tick, so a card that grows on a tap bounces the host page. */
 .bp-service-check {
   display: inline-flex;
-  margin-left: 5px;
+  flex: 0 0 auto;
   color: var(--bp-accent);
-  vertical-align: middle;
+}
+
+.bp-book .bp-service-card:not(.bp-selected) .bp-service-check {
+  visibility: hidden;
 }
 
 /* Visually hidden, still read by screen readers — the widget's live announcement region. */

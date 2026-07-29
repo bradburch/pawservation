@@ -187,34 +187,98 @@ describe('sql/seed-demo.sql — shape', () => {
     expect(snapshot()).toBe(before);
   });
 
+  it('accepts every pet it books — no booking names a species its service refuses', () => {
+    // The demo tenants materialize src/shared/service-templates.ts's `defaultAcceptedPetTypes`
+    // (dog-only walks/daycare/boarding, cat-only check-ins, house sitting open to anything), so a
+    // seeded booking could easily end up naming a pet the booking POST would itself have refused
+    // on `validatePetTypeAcceptance`. That is a self-contradicting demo, and this is the guard.
+    // AcceptedPetTypes is read straight off the row and matched with json_each, so it stays true
+    // however the acceptance lists are edited.
+    const { raw } = createTestEnv({ demoActivity: true });
+    const rejected = raw
+      .prepare(
+        `SELECT b.Id, p.Name AS Pet, p.PetType, b.ServiceType
+           FROM BookingRequests b
+           JOIN BookingRequestPets brp ON brp.BookingRequestId = b.Id
+           JOIN EndUserPets p ON p.Id = brp.PetId
+           JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
+          WHERE s.AcceptedPetTypes IS NOT NULL
+            AND p.PetType NOT IN (SELECT value FROM json_each(s.AcceptedPetTypes))
+          ORDER BY b.Id`,
+      )
+      .all();
+    expect(rejected).toEqual([]);
+  });
+
+  it('keeps every accepted species inside its tenant pet-type registry', () => {
+    // A service may only accept types the tenant actually registers, and an ENABLED service may
+    // not accept nothing at all — server/routes/admin.ts rejects both on the next settings PUT,
+    // so a demo violating either is a demo the sitter cannot save.
+    const { raw } = createTestEnv({ demoActivity: true });
+    expect(
+      raw
+        .prepare(
+          `SELECT s.TenantId, s.ServiceType, j.value AS PetType
+             FROM TenantServices s, json_each(s.AcceptedPetTypes) j
+            WHERE s.AcceptedPetTypes IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM TenantPetTypes t
+                               WHERE t.TenantId = s.TenantId AND t.PetType = j.value)
+            ORDER BY s.TenantId, s.ServiceType`,
+        )
+        .all(),
+    ).toEqual([]);
+    expect(
+      raw
+        .prepare(
+          `SELECT TenantId, ServiceType FROM TenantServices
+            WHERE Enabled = 1 AND AcceptedPetTypes = '[]' ORDER BY TenantId, ServiceType`,
+        )
+        .all(),
+    ).toEqual([]);
+  });
+
   it('touches ONLY the three seeded demo tenants — a real tenant is untouched', () => {
     // CLAUDE.md's central invariant is "every write is scoped by TenantId". This file is chained
     // onto `seed:remote` (package.json), so an unscoped statement here would not just be a demo
     // wart: applied against a real database it would rewrite real sitters' rows. Seed a FOURTH
-    // tenant — unrelated to the three this file knows about — with its own 'exact' boarding
-    // service, apply seed-demo.sql, and prove that row survives unchanged.
+    // tenant — unrelated to the three this file knows about — with its own services, apply
+    // seed-demo.sql, and prove those rows survive unchanged. Every column this file UPDATEs needs
+    // a witness here, and one per statement: PetRateMode, plus an AcceptedPetTypes row for each of
+    // the three acceptance writes (dog-only, cat-only, and the NULL that opens house sitting) —
+    // each seeded to a DIFFERENT value than the statement would write, so an unscoped write is
+    // visible rather than accidentally idempotent.
     const { raw } = createTestEnv(); // base seed only — demoActivity applied by hand below
     raw
       .prepare(
         `INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('tnt_other', 'other-co', 'Other Co')`,
       )
       .run();
-    raw
-      .prepare(
-        `INSERT INTO TenantServices
-           (TenantId, ServiceType, Label, Shape, RateUnit, PetRateMode)
-         VALUES ('tnt_other', 'boarding', 'Boarding', 'range', 'night', 'exact')`,
-      )
-      .run();
+    const addService = (type: string, accepted: string | null) =>
+      raw
+        .prepare(
+          `INSERT INTO TenantServices
+             (TenantId, ServiceType, Label, Shape, RateUnit, PetRateMode, AcceptedPetTypes)
+           VALUES ('tnt_other', ?, 'Service', 'range', 'night', 'exact', ?)`,
+        )
+        .run(type, accepted);
+    addService('boarding', '["cat","dog"]'); // the '["dog"]' statement must not narrow it
+    addService('checkin', null); // the '["cat"]' statement must not fill it
+    addService('housesitting', '["dog"]'); // the NULL statement must not clear it
 
     raw.exec(readFileSync(join(import.meta.dirname, '..', '..', 'sql', 'seed-demo.sql'), 'utf8'));
 
-    const other = raw
-      .prepare(
-        `SELECT PetRateMode FROM TenantServices WHERE TenantId = 'tnt_other' AND ServiceType = 'boarding'`,
-      )
-      .get() as { PetRateMode: string };
-    expect(other.PetRateMode).toBe('exact');
+    expect(
+      raw
+        .prepare(
+          `SELECT ServiceType, PetRateMode, AcceptedPetTypes FROM TenantServices
+            WHERE TenantId = 'tnt_other' ORDER BY ServiceType`,
+        )
+        .all(),
+    ).toEqual([
+      { ServiceType: 'boarding', PetRateMode: 'exact', AcceptedPetTypes: '["cat","dog"]' },
+      { ServiceType: 'checkin', PetRateMode: 'exact', AcceptedPetTypes: null },
+      { ServiceType: 'housesitting', PetRateMode: 'exact', AcceptedPetTypes: '["dog"]' },
+    ]);
   });
 });
 
@@ -388,12 +452,13 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
     }
   });
 
-  it("prices Sunny Paws boarding for Jess's two pets — the multi-pet default the widget now selects", async () => {
-    // The embed widget pre-selects every accepted pet by default. Jess has two at Sunny Paws
-    // (Bella + Mochi), and sql/seed.sql's services predate PetRateMode (default 'exact'), which
-    // would refuse that set outright. seed-demo.sql opts boarding/housesitting/daycare into
-    // 'linear' so a demo customer's default multi-pet selection quotes a real number instead of
-    // landing on "hasn't set a price for this group of pets yet."
+  it("prices Sunny Paws house sitting for Jess's two pets — the multi-pet default the widget selects", async () => {
+    // The embed widget pre-selects every ACCEPTED pet by default. Jess has two at Sunny Paws,
+    // Bella (dog) and Mochi (cat), and house sitting is the demo's one open-to-any-species
+    // service, so it is where that default really is a two-pet set. sql/seed.sql's services
+    // predate PetRateMode (default 'exact'), which would refuse the set outright; seed-demo.sql
+    // opts boarding/housesitting/daycare into 'linear' so the default quotes a real number instead
+    // of landing on "hasn't set a price for this group of pets yet."
     const { env } = createTestEnv({ demoActivity: true });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     // Far past every conflict this file seeds (the latest is the blocked stretch at now+60..+62),
@@ -402,15 +467,49 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
     const start = addDays(today, 100);
     const end = addDays(start, 3);
     const res = await app.request(
-      `/api/sunny-paws/availability?type=boarding&start=${start}&end=${end}&petIds=pet_sp_bella,pet_sp_mochi`,
+      `/api/sunny-paws/availability?type=housesitting&start=${start}&end=${end}&petIds=pet_sp_bella,pet_sp_mochi`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    // opt_sp_board's Rate is $50/night (sql/seed.sql); 3 nights x 2 distinct pets under the
-    // 'linear' mode this task turns on. Pinned so a silent change to either number fails here.
-    expect(body).toMatchObject({ available: true, priced: true, estCost: 300, billedUnits: 3 });
+    // opt_sp_house's Rate is $70/night (sql/seed.sql); 3 nights x 2 distinct pets under the
+    // 'linear' mode seed-demo.sql turns on. Pinned so a silent change to either number fails here.
+    expect(body).toMatchObject({ available: true, priced: true, estCost: 420, billedUnits: 3 });
+  });
+
+  it("refuses Jess's cat on dog-only boarding — the demo carries the acceptance rule", async () => {
+    // The counterpart to the quote above: boarding is dog-only in the demo, so the same pair is
+    // not bookable there at all. This is what makes Mochi render greyed-out and unchecked in the
+    // widget's roster, and what makes the default boarding selection Bella alone.
+    const { env } = createTestEnv({ demoActivity: true });
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const today = getPacificDateStr();
+    const start = addDays(today, 100);
+    const end = addDays(start, 3);
+    const url = (petIds: string) =>
+      `/api/sunny-paws/availability?type=boarding&start=${start}&end=${end}&petIds=${petIds}`;
+    const both = await app.request(
+      url('pet_sp_bella,pet_sp_mochi'),
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(both.status).toBe(400);
+
+    // Bella alone — the widget's actual default for boarding now — is a plain single-pet quote at
+    // opt_sp_board's $50/night, so narrowing boarding did not strand the demo's first screen.
+    const bella = await app.request(
+      url('pet_sp_bella'),
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(bella.status).toBe(200);
+    expect(await bella.json()).toMatchObject({
+      available: true,
+      priced: true,
+      estCost: 150,
+      billedUnits: 3,
+    });
   });
 });
 
