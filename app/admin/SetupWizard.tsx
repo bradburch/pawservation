@@ -525,7 +525,7 @@ export function SetupWizard({
                 disabled={applying || !chosen.every(priceValid)}
                 onClick={() => void apply()}
               >
-                {applying ? 'Setting up…' : error ? 'Retry' : 'Finish setup'}
+                {applying ? 'Setting up…' : error ? 'Retry' : 'Save and continue'}
               </button>
             </div>
           </>
@@ -577,15 +577,13 @@ export function SetupWizard({
               </p>
             )}
             <div className="pb-wizard-nav">
-              {settings.calendar.status === 'connected' ? (
-                <button type="button" onClick={() => goTo(5)}>
-                  Continue
-                </button>
-              ) : (
-                <button type="button" className="pb-wizard-skip" onClick={() => goTo(5)}>
-                  Skip for now
-                </button>
-              )}
+              {/* Step 4 is the last COUNTED step ("Step 4 of 4") — this is where "Finish setup"
+                  belongs, regardless of whether the sitter connected a calendar. Services/prices
+                  are already persisted (apply() ran on step 3); this button only advances to the
+                  done screen (step 5), same as both branches did before this label unified them. */}
+              <button type="button" onClick={() => goTo(5)}>
+                Finish setup
+              </button>
               <button type="button" className="pb-wizard-back" onClick={() => goTo(3)}>
                 Back
               </button>

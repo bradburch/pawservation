@@ -2861,8 +2861,12 @@ export async function createTenantFromSignup(
   const claimedAt = args.claimedAtIso ?? new Date().toISOString();
   const results = await db.batch([
     db
-      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName) VALUES (?, ?, ?)')
-      .bind(args.tenantId, args.slug, args.displayName),
+      // New tenants default to a 12-month booking horizon (0004's NULL-=-unlimited convention
+      // still applies to every OTHER insert path — this is a signup-time default, not a schema
+      // DEFAULT, so it can't silently change behavior elsewhere). A sitter can widen or clear it
+      // from the wizard's profile step or Business settings.
+      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths) VALUES (?, ?, ?, ?)')
+      .bind(args.tenantId, args.slug, args.displayName, 12),
     db
       .prepare('INSERT INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES (?, ?, ?, ?)')
       .bind(args.userId, args.tenantId, args.email, args.passwordHash),

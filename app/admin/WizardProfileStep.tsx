@@ -1,4 +1,5 @@
 import { DEFAULT_TIMEZONE } from '../../src/shared/index.js';
+import { Hint } from './Hint';
 import type { Settings, SettingsPayload } from './shared.js';
 import { TIMEZONES } from './timezones.js';
 
@@ -12,8 +13,9 @@ import { TIMEZONES } from './timezones.js';
  * contact / timezone) idioms verbatim.
  */
 
-/** The five profile fields as controlled-input state. Nullable wire fields are held as
- * ''-means-null strings — the same mapping BusinessSection applies on its live inputs. */
+/** The profile fields as controlled-input state. Nullable text fields are held as ''-means-null
+ * strings — the same mapping BusinessSection applies on its live inputs; `maxAdvanceMonths` is
+ * the one numeric exception (see below). */
 export type ProfileDraft = {
   displayName: string;
   contactEmail: string;
@@ -21,6 +23,9 @@ export type ProfileDraft = {
   /** '' = use the instance default (wire value null). */
   timezone: string;
   accentColor: string;
+  /** Booking horizon in months, whole-business; null = no limit — same number|null shape as
+   * Settings.maxAdvanceMonths (unlike the text fields above, no ''-means-null encoding needed). */
+  maxAdvanceMonths: number | null;
 };
 
 export function makeProfileDraft(settings: Settings): ProfileDraft {
@@ -30,6 +35,7 @@ export function makeProfileDraft(settings: Settings): ProfileDraft {
     contactPhone: settings.contactPhone ?? '',
     timezone: settings.timezone ?? '',
     accentColor: settings.accentColor,
+    maxAdvanceMonths: settings.maxAdvanceMonths,
   };
 }
 
@@ -48,6 +54,8 @@ export function profilePutBody(
   if (draft.contactPhone !== initial.contactPhone) body.contactPhone = draft.contactPhone || null;
   if (draft.timezone !== initial.timezone) body.timezone = draft.timezone || null;
   if (draft.accentColor !== initial.accentColor) body.accentColor = draft.accentColor;
+  if (draft.maxAdvanceMonths !== initial.maxAdvanceMonths)
+    body.maxAdvanceMonths = draft.maxAdvanceMonths;
   return Object.keys(body).length > 0 ? body : null;
 }
 
@@ -102,6 +110,35 @@ export function WizardProfileStep({
             </option>
           ))}
         </select>
+      </label>
+      <label>
+        <span className="pb-labelrow">
+          How far ahead clients can book <span className="pb-hint">(months, blank = no limit)</span>
+          <Hint label="How far ahead clients can book">
+            One limit for your whole business. Set it to 8 and nobody can request a date more than 8
+            months from today — days past that simply can&rsquo;t be picked. Each service can also
+            require notice (&ldquo;days of notice needed&rdquo; under Services &amp; Rates).
+          </Hint>
+        </span>
+        <input
+          type="number"
+          min={1}
+          max={24}
+          aria-label="How far ahead clients can book, in months (blank = no limit)"
+          aria-invalid={
+            draft.maxAdvanceMonths !== null &&
+            (!Number.isInteger(draft.maxAdvanceMonths) ||
+              draft.maxAdvanceMonths < 1 ||
+              draft.maxAdvanceMonths > 24)
+          }
+          value={draft.maxAdvanceMonths ?? ''}
+          onChange={(e) =>
+            setDraft({
+              ...draft,
+              maxAdvanceMonths: e.target.value === '' ? null : Number(e.target.value),
+            })
+          }
+        />
       </label>
       <p className="pb-hint">
         Pet types you accept are managed under Pets, and per service under Services.

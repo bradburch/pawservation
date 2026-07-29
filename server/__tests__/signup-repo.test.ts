@@ -99,6 +99,11 @@ describe('createTenantFromSignup (atomic batch)', () => {
     expect(tenant?.DisplayName).toBe('X Biz');
     // New-tenant timezone defaults to NULL (unlimited / instance-default).
     expect(tenant?.Timezone).toBeNull();
+    // New-tenant booking horizon defaults to 12 months — a signup-time default stamped in the
+    // INSERT, not a schema DEFAULT, so it never touches any other insert path (existing tenants
+    // keep their NULL/unlimited horizon). A sitter can widen or clear it from the wizard's
+    // profile step or Business settings.
+    expect(tenant?.MaxAdvanceMonths).toBe(12);
     // ContactEmail stays NULL — and must. It is PUBLIC (unauthenticated /config, the widget's
     // mailto: link, JSON-LD `email` for crawlers), whereas the signup address is a login
     // credential that may be personal. Copying it here would publish it to clients and crawlers
