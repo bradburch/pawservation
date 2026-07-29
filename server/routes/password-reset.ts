@@ -8,7 +8,7 @@ import {
 } from '../db/repo';
 import { isEmailConfigured, sendResetLink } from '../lib/email';
 import { isOwnerEmail } from '../lib/owners';
-import { hashPassword } from '../lib/password';
+import { hashPassword, validatePassword } from '../lib/password';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
 import {
   RESET_LINK_TTL_SECONDS,
@@ -18,7 +18,7 @@ import {
 } from '../lib/reset-link';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
 import { EMAIL_RE } from '../lib/validation';
-import { EXPIRED_ERROR, MIN_PASSWORD_LENGTH } from './signup';
+import { EXPIRED_ERROR } from './signup';
 import type { AppEnv } from '../types';
 
 /**
@@ -123,11 +123,14 @@ export const passwordResetRoutes = new Hono<AppEnv>()
     if (!parsed.success) return c.json({ error: 'Invalid request.' }, 400);
     const { token, password } = parsed.output;
 
-    if (password.length < MIN_PASSWORD_LENGTH)
-      return c.json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
-
     const payload = await verifyResetLink(c.env.TOKEN_SECRET, token, Date.now());
     if (!payload) return c.json({ error: EXPIRED_ERROR }, 400);
+
+    // Password floor next — a policy rejection must not burn the single-use link, so this still
+    // runs before the nonce consume below (see signup.ts's /complete for why it can't run before
+    // verifyResetLink: the email-similarity rule needs payload.email).
+    const passwordError = validatePassword(password, { email: payload.email });
+    if (passwordError) return c.json({ error: passwordError }, 400);
 
     const seen = await c.env.PAWBOOK_CACHE.get(RESET_NONCE_KEY(payload.nonce));
     if (!seen) return c.json({ error: EXPIRED_ERROR }, 400);

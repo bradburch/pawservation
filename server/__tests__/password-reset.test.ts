@@ -60,7 +60,7 @@ describe('POST /api/password-reset/start — enumeration neutrality', () => {
 
   it('returns the identical 200 body for an owner, a sitter, and an unknown email', async () => {
     const { env } = createTestEnv();
-    await makeOwner(env, 'ownerpass1');
+    await makeOwner(env, 'MeadowBright99');
     configureEmail(env);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
     const bodies: string[] = [];
@@ -75,7 +75,7 @@ describe('POST /api/password-reset/start — enumeration neutrality', () => {
 
   it('sends a link only for emails with an actual account', async () => {
     const { env } = createTestEnv();
-    await makeOwner(env, 'ownerpass1');
+    await makeOwner(env, 'MeadowBright99');
     configureEmail(env);
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -93,7 +93,7 @@ describe('POST /api/password-reset/start — enumeration neutrality', () => {
 
   it('dev + no email provider: prototypeLink ONLY for emails with an account', async () => {
     const { env } = createTestEnv();
-    await makeOwner(env, 'ownerpass1');
+    await makeOwner(env, 'MeadowBright99');
     const sitter = (await (await start(env, ADMIN_EMAIL_A)).json()) as { prototypeLink?: string };
     expect(sitter.prototypeLink).toMatch(/\/setup\?t=.*&reset=1/);
     const owner = (await (await start(env, OWNER_EMAIL)).json()) as { prototypeLink?: string };
@@ -133,7 +133,7 @@ describe('POST /api/password-reset/complete — sitter', () => {
   it('updates the password and returns a working admin token; old password no longer works', async () => {
     const { env } = createTestEnv();
     const t = await getResetToken(env, ADMIN_EMAIL_A);
-    const res = await complete(env, { token: t, password: 'newpass99' });
+    const res = await complete(env, { token: t, password: 'RiverStone2026' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { token: string; role: string };
     expect(body.role).toBe('admin');
@@ -161,7 +161,7 @@ describe('POST /api/password-reset/complete — sitter', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: ADMIN_EMAIL_A, password: 'newpass99' }),
+        body: JSON.stringify({ email: ADMIN_EMAIL_A, password: 'RiverStone2026' }),
       },
       env,
     );
@@ -172,7 +172,14 @@ describe('POST /api/password-reset/complete — sitter', () => {
     const { env } = createTestEnv();
     const t = await getResetToken(env, ADMIN_EMAIL_A);
     expect((await complete(env, { token: t, password: 'seven77' })).status).toBe(400);
-    expect((await complete(env, { token: t, password: 'eightchr' })).status).toBe(200);
+    expect((await complete(env, { token: t, password: 'RiverStone2026' })).status).toBe(200);
+  });
+
+  it("rejects a password derived from the reset link's own email (400) — link still usable after", async () => {
+    const { env } = createTestEnv();
+    const t = await getResetToken(env, ADMIN_EMAIL_A); // local part "admin"
+    expect((await complete(env, { token: t, password: 'myadminaccount123' })).status).toBe(400);
+    expect((await complete(env, { token: t, password: 'RiverStone2026' })).status).toBe(200);
   });
 
   it('rejects expired and tampered tokens (400)', async () => {
@@ -185,26 +192,26 @@ describe('POST /api/password-reset/complete — sitter', () => {
       nonce,
       exp: Date.now() - 1000,
     });
-    expect((await complete(env, { token: expired, password: 'newpass99' })).status).toBe(400);
+    expect((await complete(env, { token: expired, password: 'RiverStone2026' })).status).toBe(400);
     const good = await getResetToken(env, ADMIN_EMAIL_A);
     const tampered = good.slice(0, -1) + (good.endsWith('A') ? 'B' : 'A');
-    expect((await complete(env, { token: tampered, password: 'newpass99' })).status).toBe(400);
+    expect((await complete(env, { token: tampered, password: 'RiverStone2026' })).status).toBe(400);
   });
 
   it('is single-use — the nonce is consumed, so the same link cannot complete twice', async () => {
     const { env } = createTestEnv();
     const t = await getResetToken(env, ADMIN_EMAIL_A);
-    expect((await complete(env, { token: t, password: 'newpass99' })).status).toBe(200);
-    expect((await complete(env, { token: t, password: 'again12345' })).status).toBe(400);
+    expect((await complete(env, { token: t, password: 'RiverStone2026' })).status).toBe(200);
+    expect((await complete(env, { token: t, password: 'RiverStone2027' })).status).toBe(400);
   });
 });
 
 describe('POST /api/password-reset/complete — owner', () => {
   it('updates the OwnerUsers password and returns a working owner token', async () => {
     const { env, raw } = createTestEnv();
-    await makeOwner(env, 'ownerpass1');
+    await makeOwner(env, 'MeadowBright99');
     const t = await getResetToken(env, OWNER_EMAIL);
-    const res = await complete(env, { token: t, password: 'newownerpass' });
+    const res = await complete(env, { token: t, password: 'BrightMeadow77' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { token: string; role: string; email: string };
     expect(body.role).toBe('owner');
@@ -212,21 +219,21 @@ describe('POST /api/password-reset/complete — owner', () => {
     const row = raw
       .prepare('SELECT PasswordHash FROM OwnerUsers WHERE Email = ?')
       .get(OWNER_EMAIL) as { PasswordHash: string };
-    expect(await verifyPassword('newownerpass', row.PasswordHash)).toBe(true);
-    expect(await verifyPassword('ownerpass1', row.PasswordHash)).toBe(false);
+    expect(await verifyPassword('BrightMeadow77', row.PasswordHash)).toBe(true);
+    expect(await verifyPassword('MeadowBright99', row.PasswordHash)).toBe(false);
   });
 
   it('re-checks OWNER_EMAILS at completion — a removed owner is rejected (400)', async () => {
     const { env } = createTestEnv();
-    await makeOwner(env, 'ownerpass1');
+    await makeOwner(env, 'MeadowBright99');
     const t = await getResetToken(env, OWNER_EMAIL);
     env.OWNER_EMAILS = ''; // secret changed since the link was issued
-    expect((await complete(env, { token: t, password: 'newownerpass' })).status).toBe(400);
+    expect((await complete(env, { token: t, password: 'BrightMeadow77' })).status).toBe(400);
   });
 
   it('does not mint a reset link for a deprovisioned owner even though the OwnerUsers row persists', async () => {
     const { env } = createTestEnv();
-    await makeOwner(env, 'ownerpass1');
+    await makeOwner(env, 'MeadowBright99');
     env.OWNER_EMAILS = ''; // owner removed from the allowlist secret; row still exists
     const res = await start(env, OWNER_EMAIL);
     expect(res.status).toBe(200);
@@ -247,7 +254,7 @@ describe('POST /api/password-reset/complete — vanished account', () => {
       nonce,
       exp: Date.now() + 1000,
     });
-    const res = await complete(env, { token, password: 'newpass99' });
+    const res = await complete(env, { token, password: 'RiverStone2026' });
     expect(res.status).toBe(400);
     expect((await res.json()) as { error: string }).toEqual({
       error:

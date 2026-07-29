@@ -100,3 +100,9 @@ export {
   type QuarterTotal,
   type QuarterlyBreakdown,
 } from './analytics/periods.js';
+export {
+  validatePassword,
+  MIN_PASSWORD_LENGTH,
+  MAX_PASSWORD_LENGTH,
+  type ValidatePasswordOptions,
+} from './auth/password-policy.js';

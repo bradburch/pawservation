@@ -149,7 +149,7 @@ describe('POST /api/owner/allowlist — invite email', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password: 'hunter22', businessName: 'E2E Walks' }),
+        body: JSON.stringify({ token, password: 'RiverStone2026', businessName: 'E2E Walks' }),
       },
       env,
     );

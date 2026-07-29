@@ -4,7 +4,18 @@
  *   pbkdf2$<iterations>$<saltHex>$<hashHex>
  */
 
+import {
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  validatePassword,
+  type ValidatePasswordOptions,
+} from '../../src/shared/index.js';
 import { constantTimeEqual } from './timing';
+
+/** `validatePassword` lives in `src/shared/auth/password-policy.ts` so the setup bundle imports
+ *  the same validator; re-exported here unchanged, and still enforced server-side at the trust
+ *  boundary (signup.ts, password-reset.ts). */
+export { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, validatePassword, type ValidatePasswordOptions };
 
 // Cloudflare Workers' runtime rejects PBKDF2 iteration counts above 100_000
 // (NotSupportedError in production; local workerd and Node do NOT enforce the cap),
