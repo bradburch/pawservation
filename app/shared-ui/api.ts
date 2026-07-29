@@ -244,6 +244,9 @@ export type AnalyticsPayload = {
     lastMonth: number;
     outstandingTotal: number;
     outstandingCount: number;
+    /** Money paid on bookings that no longer owe it — see `credits`. Never netted against
+     *  `outstandingTotal`: one client owing $100 while another is owed $100 is not a settled book. */
+    creditTotal: number;
   };
   monthly: { month: string; total: number }[];
   ytd: number;
@@ -267,6 +270,23 @@ export type AnalyticsPayload = {
     paidTotal: number;
     balance: number;
     isCancellationFee: boolean;
+  }[];
+  /**
+   * The mirror of `outstanding`: bookings paid MORE than they may keep, which is where a booking
+   * edited down below what was already paid now shows up. `credit` is `paidTotal - keepable`. These
+   * rows deliberately carry no *Record payment* affordance — a credit is a negative balance, not a
+   * payable one.
+   */
+  credits: {
+    bookingId: string;
+    name: string | null;
+    email: string | null;
+    serviceType: string;
+    startDate: string;
+    status: string;
+    keepable: number;
+    paidTotal: number;
+    credit: number;
   }[];
 };
 

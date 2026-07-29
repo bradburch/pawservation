@@ -1250,6 +1250,35 @@ const OUTSTANDING_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
      AND b.Status IN ('confirmed', 'cancelled')
      AND ${EXPECTED_AMOUNT_SQL} > COALESCE(paid.Total, 0)`;
 
+/**
+ * How much of the money received against a booking the sitter may legitimately KEEP. Identical to
+ * `EXPECTED_AMOUNT_SQL` for every status except `'declined'`, which is never billed at all (see
+ * `insertPayment`'s guard and the outstanding predicate above) and may therefore keep nothing — so a
+ * deposit taken on a request the sitter went on to decline is owed back in full, not merely the part
+ * above its old quote. Written as a CASE over the expected amount rather than as a second formula,
+ * so that "the same figure, minus one status" is literal in the SQL.
+ */
+const CREDITABLE_AMOUNT_SQL = `(CASE WHEN b.Status = 'declined' THEN 0 ELSE ${EXPECTED_AMOUNT_SQL} END)`;
+
+/**
+ * A booking is IN CREDIT when more has been paid against it than it may keep — the exact mirror of
+ * `OUTSTANDING_WHERE_SQL`'s arithmetic, and the reason an edit can no longer swallow money in
+ * silence: `updateBookingForEdit` re-stamps `EstCost` and returns the row to `'pending'`, so a $250
+ * stay paid in full and edited down to $100 left $150 of the customer's money on no screen at all
+ * (outstanding asks only whether something is still OWED, and it filters to confirmed/cancelled).
+ *
+ * **Mutually exclusive with the outstanding predicate, by construction.** For the two statuses
+ * outstanding covers, `CREDITABLE_AMOUNT_SQL` IS `EXPECTED_AMOUNT_SQL`, so `expected > paid` and
+ * `paid > keepable` cannot both hold; for `'pending'`/`'declined'` outstanding deliberately does not
+ * run at all. That is what lets this exist without disturbing the standing rule that
+ * `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in both directions: a credit is not
+ * a payable balance, it is a NEGATIVE one, and the UI gives it no *Record payment* button. There is
+ * no refund path in this product — the sitter settles it with her client — so surfacing the figure
+ * is the whole job. Expects `paid` and `chg` subqueries aliased in scope.
+ */
+const CREDIT_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
+     AND COALESCE(paid.Total, 0) > ${CREDITABLE_AMOUNT_SQL}`;
+
 export type OutstandingBookingRow = {
   BookingId: string;
   EndUserId: string | null;
@@ -1310,7 +1339,7 @@ export async function getAnalytics(
   const nextMonth = new Date(Date.UTC(y, m, 1));
   const windowEnd = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}-01`;
 
-  const [monthlyRes, byServiceRes, topClientsRes, outstandingRes] = await Promise.all([
+  const [monthlyRes, byServiceRes, topClientsRes, outstandingRes, creditsRes] = await Promise.all([
     db
       .prepare(
         `SELECT substr(PaidDate, 1, 7) AS Month, SUM(Amount) AS Total
@@ -1370,6 +1399,27 @@ export async function getAnalytics(
       )
       .bind(tenantId, tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
+    db
+      .prepare(
+        // OVER-payments: the mirror of the query above (see CREDIT_WHERE_SQL). `Keepable` is what
+        // this booking may keep in total — charges included — so the UI derives the credit as
+        // `PaidTotal - Keepable` with the same one-rule arithmetic the outstanding row uses.
+        `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
+                b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
+                ${CREDITABLE_AMOUNT_SQL} AS Keepable,
+                COALESCE(paid.Total, 0) AS PaidTotal
+         FROM BookingRequests b
+         LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
+         LEFT JOIN (
+           SELECT BookingRequestId, SUM(Amount) AS Total
+           FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+         ) paid ON paid.BookingRequestId = b.Id
+         ${CHARGES_JOIN_SQL}
+         WHERE b.TenantId = ? AND ${CREDIT_WHERE_SQL}
+         ORDER BY COALESCE(paid.Total, 0) - (${CREDITABLE_AMOUNT_SQL}) DESC, b.Id`,
+      )
+      .bind(tenantId, tenantId, tenantId)
+      .all<AnalyticsData['credits'][number]>(),
   ]);
 
   const byMonth = new Map(monthlyRes.results.map((r) => [r.Month, r.Total]));
@@ -1382,6 +1432,7 @@ export async function getAnalytics(
     byService: byServiceRes.results,
     topClients: topClientsRes.results,
     outstanding: outstandingRes.results,
+    credits: creditsRes.results,
   };
 }
 

@@ -12,12 +12,21 @@ import {
   addBookingPets,
   insertBookingCharge,
   insertBookingRequest,
+  insertPayment,
   setBookingGCalEventId,
   setProviderTokens,
 } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { createTestEnv, endUserToken, seedPets, TENANT_A, TEST_SECRET } from './helpers';
+import {
+  adminHeaders,
+  createTestEnv,
+  endUserToken,
+  seedPets,
+  TENANT_A,
+  TEST_SECRET,
+} from './helpers';
+import type { AnalyticsPayload } from '../../app/shared-ui/api';
 import type { DatabaseSync } from 'node:sqlite';
 
 const SLUG = 'sunny-paws';
@@ -609,6 +618,61 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     expect(charges.results).toEqual([{ Label: 'Medication', Amount: 15 }]);
     // The estimate is re-stamped and the charge is still additive on top of it.
     expect((await row(env, id)).EstCost).toBe(100);
+  });
+
+  /**
+   * The other half of "EstCost is re-stamped": a stay already PAID FOR, then shortened. `EstCost`
+   * drops, the row returns to 'pending', and the money already banked exceeds what the booking may
+   * keep. `OUTSTANDING_WHERE_SQL` asks only whether something is still OWED, so before this the
+   * $150 of over-payment appeared on no screen at all — and after re-confirmation `100 > 250` is
+   * false, so it never came back as outstanding either. The Earnings page names it instead.
+   */
+  it('an edit that lowers the price below what was already paid surfaces the overpayment', async () => {
+    const { env } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    // 5 nights at $50 = $250, confirmed and paid in full.
+    const id = await seedBooking(env, {
+      status: 'confirmed',
+      startDate: addDays(TODAY, 40),
+      endDate: addDays(TODAY, 45),
+      estCost: 250,
+    });
+    expect(
+      await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+        bookingRequestId: id,
+        amount: 250,
+        method: 'cash',
+        paidDate: TODAY,
+        note: null,
+        externalRef: null,
+      }),
+    ).not.toBeNull();
+
+    const res = await edit(env, token, id, {
+      startDate: addDays(TODAY, 40),
+      endDate: addDays(TODAY, 42), // 2 nights → $100
+      petIds: [BELLA],
+      answers: {},
+    });
+    expect(res.status).toBe(200);
+    expect((await row(env, id)).EstCost).toBe(100);
+
+    const earnings = (await (
+      await app.request(
+        `/api/${SLUG}/admin/analytics`,
+        { headers: await adminHeaders(TENANT_A) },
+        env,
+      )
+    ).json()) as AnalyticsPayload;
+    expect(earnings.credits.find((c) => c.bookingId === id)).toMatchObject({
+      credit: 150,
+      paidTotal: 250,
+      keepable: 100,
+      status: 'pending',
+    });
+    expect(earnings.tiles.creditTotal).toBe(150);
+    // And it is NOT also reported as owing — the two predicates are mutually exclusive.
+    expect(earnings.outstanding.find((o) => o.bookingId === id)).toBeUndefined();
   });
 
   it('accepts and clears an arrival time, and refuses a malformed one', async () => {

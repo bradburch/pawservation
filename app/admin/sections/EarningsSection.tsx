@@ -138,6 +138,14 @@ export function EarningsView({
           <strong>{data.tiles.outstandingCount}</strong>
           <span>{data.tiles.outstandingCount === 1 ? 'Unpaid booking' : 'Unpaid bookings'}</span>
         </div>
+        {/* Only when there IS one: a permanent "$0 in credit" tile would be noise on a healthy
+            book, and this figure is never netted into Outstanding (see the server comment). */}
+        {data.tiles.creditTotal > 0 && (
+          <div className="pb-tile">
+            <strong>${data.tiles.creditTotal}</strong>
+            <span>Owed back</span>
+          </div>
+        )}
       </div>
 
       <h3>Revenue over time</h3>
@@ -242,6 +250,30 @@ export function EarningsView({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Overpayments. Rendered only when there are any — a sitter with a clean book should not have
+          to read a "nothing here" line — and with NO payment button: this is money going the other
+          way, and the product has no refund path, so the honest thing is to name it and let her
+          settle it with her client. The commonest source is an edit: a stay paid in full and then
+          shortened re-stamps a lower EstCost. */}
+      {data.credits.length > 0 && (
+        <>
+          <h3>Owed back to clients</h3>
+          <ul>
+            {data.credits.map((c) => (
+              <li key={c.bookingId}>
+                <span className="pb-truncate-block" title={c.name || c.email || 'Unknown client'}>
+                  <span className="pb-truncate">{c.name || c.email || 'Unknown client'}</span> —{' '}
+                  {c.serviceType} ({formatFriendlyDate(c.startDate)})
+                  <br />
+                  overpaid ${c.credit} (paid ${c.paidTotal}
+                  {c.keepable > 0 ? ` of $${c.keepable}` : ', now owes nothing'})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </>
   );
