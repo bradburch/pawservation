@@ -1027,16 +1027,82 @@ body {
   font-size: 0.85rem;
 }
 
-/* Always present, even when it holds nothing — see the block comment above. */
+/* Always present, even when it holds nothing — see the block comment above. It may hold TWO
+   buttons ("Change booking" + "Cancel booking"), and it must be exactly as tall either way:
+   `nowrap` plus shrinkable, ellipsising buttons is what guarantees one line at every embed width,
+   so the card's height — and the scrollHeight this widget posts to its host page — never depends
+   on how many actions a booking happens to offer. */
 .bp-mine-actions {
   margin-top: auto;
   padding-top: 10px;
   min-height: 44px;
   display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
   align-items: flex-end;
 }
 
-.bp-mine-cancel {
+.bp-mine-cancel,
+.bp-mine-edit {
+  background: none;
+  border: 1px solid var(--bp-line);
+  border-radius: 8px;
+  color: var(--bp-soft);
+  font-family: var(--bp-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  min-height: 44px;
+  cursor: pointer;
+  /* Shrink rather than wrap — see the block above. */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bp-mine-cancel:hover,
+.bp-mine-edit:hover {
+  color: var(--bp-ink);
+  background: var(--bp-sage-wash);
+}
+
+/* The primary of the two: changing a booking is the outcome a sitter usually prefers, so it
+   reads as the encouraged path and the cancel keeps the quieter outline. */
+.bp-mine-edit {
+  border-color: var(--bp-accent);
+  color: var(--bp-accent);
+}
+
+/* Edit mode's header: what is being changed, and the way out. One line, fixed height — it stands
+   where the service picker would be, and the form below it is otherwise identical to a new
+   request's. */
+.bp-editing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.bp-editing-what {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--bp-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-editing-what strong {
+  color: var(--bp-ink);
+}
+
+/* Scoped under .bp-book to beat `.bp-book button` on specificity — backing out of an edit is the
+   quiet action; "Save changes" is the only primary on this screen. */
+.bp-book .bp-editing-back {
+  flex: 0 0 auto;
   background: none;
   border: 1px solid var(--bp-line);
   border-radius: 8px;
@@ -1049,7 +1115,7 @@ body {
   cursor: pointer;
 }
 
-.bp-mine-cancel:hover {
+.bp-book .bp-editing-back:hover {
   color: var(--bp-ink);
   background: var(--bp-sage-wash);
 }

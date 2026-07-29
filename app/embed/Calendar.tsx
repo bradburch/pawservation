@@ -118,6 +118,7 @@ export function Calendar({
   value,
   onChange,
   reloadKey,
+  excludeBookingId,
   onAuthExpired,
 }: {
   slug: string;
@@ -138,6 +139,12 @@ export function Calendar({
   value: RangeValue;
   onChange: (v: RangeValue) => void;
   reloadKey?: number;
+  /**
+   * While EDITING a booking, that booking's id: the server leaves it out of the capacity map, so
+   * the days the customer already holds don't paint as taken by someone. Ownership is proved
+   * server-side — this is not a client-side capacity adjustment.
+   */
+  excludeBookingId?: string;
   /** Called when the month fetch is rejected as unauthenticated (expired token). */
   onAuthExpired?: () => void;
 }) {
@@ -156,7 +163,15 @@ export function Calendar({
     // fetchMonth identity (and therefore a refetch) after a booking submission bumps it.
     void reloadKey;
     try {
-      const r = await api.monthAvailability(slug, token, serviceType, month, optionKey, petIds);
+      const r = await api.monthAvailability(
+        slug,
+        token,
+        serviceType,
+        month,
+        optionKey,
+        petIds,
+        excludeBookingId,
+      );
       // Stamp which service/option this answer describes: useAsync retains the last success
       // across a DEPENDENCY change too, not just across an error, so without the stamp the
       // previous service's window bounds would drive the nav buttons until the new month lands
@@ -179,7 +194,7 @@ export function Calendar({
       }
       throw e;
     }
-  }, [slug, token, serviceType, month, optionKey, petIds, reloadKey]);
+  }, [slug, token, serviceType, month, optionKey, petIds, reloadKey, excludeBookingId]);
 
   const { data, error, loading } = useAsync(fetchMonth);
   const loadError = !loading && !!error;

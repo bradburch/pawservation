@@ -605,6 +605,14 @@ export async function monthAvailability(
    * then refuses it. Defaults to 1, which is exactly the pre-change behaviour.
    */
   petCount = 1,
+  /**
+   * A booking of the CALLER's own to leave out of the capacity map — set while they are editing
+   * it. Without it the grid paints the days they already hold as occupied by someone, and a stay
+   * being re-timed inside a tight pool reads as unavailable on its own dates. Ownership of this id
+   * is verified by the caller (`booking-ops`' `monthGrid`) against customer-scoped SQL before it
+   * ever reaches here.
+   */
+  excludeBookingId?: string,
 ): Promise<MonthAvailability> {
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
   const pets = Math.max(1, petCount);
@@ -631,11 +639,12 @@ export async function monthAvailability(
           option!.OptionKey,
           monthStart,
           monthEndExclusive,
+          excludeBookingId,
         )
       : Promise.resolve(null);
 
   const [capacityRows, slotCounts, mineRows] = await Promise.all([
-    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive),
+    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive, excludeBookingId),
     slotCountsPromise,
     listUserBookingDatesInRange(
       env.PAWBOOK_DB,

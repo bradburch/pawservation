@@ -4,6 +4,7 @@ import {
   getToken,
   isAuthExpired,
   setToken,
+  type Booking,
   type Me,
   type TenantConfig,
 } from '../shared-ui/api';
@@ -19,6 +20,14 @@ export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken(slug));
   const [error, setError] = useState('');
   const [showMine, setShowMine] = useState(false);
+  /**
+   * The booking being CHANGED, or null. Held here rather than inside MineTab because an edit
+   * borrows the whole booking form — the same service rules, the same silent quote, the same
+   * calendar — and re-implementing that inside a card would be the second implementation this
+   * project exists to avoid. Moving between "my bookings" and the form is a NAVIGATION, which
+   * already changes the widget's height; nothing here changes height on an in-place interaction.
+   */
+  const [editing, setEditing] = useState<Booking | null>(null);
 
   // Report content height to the parent loader so the iframe auto-resizes (story 3.1).
   useEffect(() => {
@@ -141,22 +150,50 @@ export default function App() {
   return (
     <div className="bp-widget bp-book-view">
       <div className="bp-topline">
-        <button className="bp-mine-link" onClick={() => setShowMine((s) => !s)}>
+        <button
+          className="bp-mine-link"
+          onClick={() => {
+            setEditing(null);
+            setShowMine((s) => !s);
+          }}
+        >
           {showMine ? '← Book' : 'My bookings'}
         </button>
       </div>
       {showMine ? (
         <>
           <h1 className="bp-greeting">Your bookings</h1>
-          <MineTab config={config} />
+          <MineTab
+            config={config}
+            onEdit={(b) => {
+              setEditing(b);
+              setShowMine(false);
+            }}
+          />
         </>
       ) : (
         <>
-          <h1 className="bp-greeting">How can I help, {firstName}?</h1>
+          <h1 className="bp-greeting">
+            {editing ? 'Change your booking' : `How can I help, ${firstName}?`}
+          </h1>
           <BookTab
+            // A fresh mount per edit target: BookTab seeds its dates, pets, arrival time and
+            // answers from `editing` in useState initializers, which run once per mount. Without
+            // the key, switching from one booking to another (or back to a new request) would
+            // keep the previous form's state.
+            key={editing?.id ?? 'new'}
             config={config}
             pets={me?.pets ?? null}
             savedAnswers={me?.savedAnswers ?? null}
+            editing={editing}
+            onEditSaved={() => {
+              setEditing(null);
+              setShowMine(true);
+            }}
+            onEditCancel={() => {
+              setEditing(null);
+              setShowMine(true);
+            }}
             onAuthExpired={onAuthExpired}
           />
         </>

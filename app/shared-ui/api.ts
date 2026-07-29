@@ -110,16 +110,30 @@ export type Booking = {
   type: string;
   startDate: string;
   endDate: string | null;
+  /** Customer-chosen arrival time on a range stay; null = none given. */
+  startTime: string | null;
+  /** Which priced option the booking is on. An edit never changes it — it is here so the edit
+   *  form paints the calendar against the right option's capacity. */
+  optionKey: string | null;
+  /** The pet ids on the booking, so an edit form can pre-select them without matching names. */
+  petIds: string[];
   petCount: number;
   estCost: number | null;
   /** Extras the sitter added after the fact. `estCost` excludes them by design; what the client
    *  owes is `estCost + chargesTotal`. */
   charges: { label: string; amount: number }[];
   chargesTotal: number;
+  /** What was answered ON THIS BOOKING, keyed by question id — not the saved pre-fill, which may
+   *  since have moved on. The edit form opens showing these. */
+  answers: Record<string, string>;
   cancellationFee: number | null;
   /** Whether the customer may still cancel this one. The SERVER's answer — the widget does no
    *  date math and never infers cancellability from `status` + dates itself. */
   cancellable: boolean;
+  /** Whether the customer may still CHANGE this one. Also the server's answer, and deliberately
+   *  not the same question as `cancellable`: a stay already under way can be cancelled but not
+   *  re-dated. */
+  editable: boolean;
   /** Whole dollars owed if cancelled today; null when it isn't cancellable. Server-computed from
    *  the sitter's stored policy — the widget renders money, it never derives it. */
   feeIfCancelledToday: number | null;
@@ -366,6 +380,33 @@ export const api = {
       },
     ),
 
+  /**
+   * The customer changes their own booking — dates, pets, arrival time, intake answers. There is
+   * deliberately no service field: the server reads the service off the stored row, so switching
+   * Boarding→Daycare stays cancel-and-rebook. The response carries the RE-QUOTED estimate and the
+   * status the booking landed in, which is always `pending` — the sitter re-approves.
+   */
+  editBooking: (
+    slug: string,
+    token: string,
+    id: string,
+    body: {
+      startDate: string;
+      endDate?: string;
+      startTime?: string;
+      petIds: string[];
+      answers: Record<string, string>;
+    },
+  ) =>
+    request<{ id: string; estCost: number; status: string }>(
+      `/api/${slug}/bookings/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify(body),
+      },
+    ),
+
   me: (slug: string, token: string) =>
     request<Me>(`/api/${slug}/me`, {
       headers: authHeaders(token),
@@ -380,11 +421,15 @@ export const api = {
     /** Comma-joined pet ids the grid is painted FOR — a `1/2` day is bookable for one pet and
      *  not for two, and the server does that arithmetic. Empty = one pet. */
     petIds?: string,
+    /** A booking of the caller's own to leave out of the capacity map — set while EDITING it, so
+     *  the days it already holds don't paint as taken. The server proves ownership. */
+    excludeBookingId?: string,
   ) =>
     request<MonthAvailability>(
       `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}` +
         (optionKey ? `&option=${encodeURIComponent(optionKey)}` : '') +
-        (petIds ? `&petIds=${encodeURIComponent(petIds)}` : ''),
+        (petIds ? `&petIds=${encodeURIComponent(petIds)}` : '') +
+        (excludeBookingId ? `&excludeBookingId=${encodeURIComponent(excludeBookingId)}` : ''),
       { headers: authHeaders(token) },
     ),
 

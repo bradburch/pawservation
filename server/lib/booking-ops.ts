@@ -1,6 +1,6 @@
 /**
- * The booking OPERATIONS layer: "quote a booking", "create a booking", "cancel a booking" as
- * plain callable functions rather than as HTTP routes.
+ * The booking OPERATIONS layer: "quote a booking", "create a booking", "cancel a booking", "edit a
+ * booking" as plain callable functions rather than as HTTP routes.
  *
  * ## Why this module exists, and why it lives here
  *
@@ -54,7 +54,10 @@ import {
   listSavedAnswers,
   listServiceOptions,
   listServices,
+  replaceBookingPets,
   replaceSavedAnswers,
+  restoreBookingAfterEdit,
+  updateBookingForEdit,
 } from '../db/repo';
 import { buildSavedAnswerMap, savedAnswerEntries } from './saved-answers';
 import {
@@ -156,6 +159,23 @@ export function isCustomerCancellable(
 }
 
 /**
+ * Can this customer still EDIT this booking themselves? Deliberately stricter than
+ * `isCustomerCancellable` at one point: the stay must not have STARTED. A cancellation of a stay
+ * in progress is a real, priced action; an edit of one is not, because every date validator the
+ * edit re-runs (`validateBoardingRange` / `validateSingleDate`) refuses a start date in the past,
+ * so offering the action would only ever produce "That date is in the past." Withholding it is the
+ * honest answer, and it is the SERVER's answer — shipped as `editable` on `/bookings/mine` so the
+ * widget does no date math of its own.
+ */
+export function isCustomerEditable(
+  status: BookingRow['Status'],
+  startDate: string,
+  today: string,
+): boolean {
+  return (status === 'pending' || status === 'confirmed') && startDate >= today;
+}
+
+/**
  * What this customer would owe to cancel TODAY, in whole dollars. Computed here and nowhere else:
  * `/bookings/mine` sends it so the confirm step can state a figure, and the cancel route stamps
  * the same rule onto the row — the widget never computes money and never sends one.
@@ -201,6 +221,14 @@ export type QuoteInput = {
   end?: string;
   /** The caller's own pet ids, already de-duplicated by the adapter. */
   petIds: string[];
+  /**
+   * A booking of the CALLER's own to leave out of the capacity read — set while they are EDITING
+   * it, so a stay being re-timed does not collide with itself and read as "those dates are full".
+   * Ownership is proved here with the same customer-scoped SQL the edit and cancel paths use; an
+   * id the caller does not own is REFUSED rather than ignored, because ignoring it would quote
+   * against a capacity map the caller asked not to have.
+   */
+  excludeBookingId?: string;
 };
 
 /**
@@ -225,6 +253,9 @@ export async function quoteBooking(
   if (requestedPetIds.length === 0) return fail(400, 'Choose at least one pet.');
   // Bounds the ownership scan; same defensive cap the booking POST uses.
   if (!isValidPetCount(requestedPetIds.length)) return fail(400, 'Too many pets.');
+
+  const excluded = await verifyOwnExclusion(ctx, input.excludeBookingId);
+  if (excluded) return excluded;
 
   const [services, options, myPets, acceptedTypes] = await Promise.all([
     listServices(env.PAWBOOK_DB, tenant.Id),
@@ -286,7 +317,19 @@ export async function quoteBooking(
     // Read only once date/constraint validation has passed, saving two D1 reads on the 400
     // paths above — behavior is identical since checkAvailability is the only consumer.
     const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
-    return ok(await checkAvailability(env, tenant, service, option, start, end, pets, rates));
+    return ok(
+      await checkAvailability(
+        env,
+        tenant,
+        service,
+        option,
+        start,
+        end,
+        pets,
+        rates,
+        input.excludeBookingId,
+      ),
+    );
   }
   const dateError = validateSingleDate(start, tenant.Timezone ?? undefined);
   if (dateError) return fail(dateError.status, dateError.error);
@@ -303,7 +346,40 @@ export async function quoteBooking(
   );
   if (constraintsError) return fail(400, constraintsError);
   const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
-  return ok(await checkAvailability(env, tenant, service, option, start, '', pets, rates));
+  return ok(
+    await checkAvailability(
+      env,
+      tenant,
+      service,
+      option,
+      start,
+      '',
+      pets,
+      rates,
+      input.excludeBookingId,
+    ),
+  );
+}
+
+/**
+ * Prove that an `excludeBookingId` names a booking THIS customer owns, using the same
+ * customer-scoped SQL (`getBookingForUser`, `EndUserId = ?`) the edit and cancel paths use.
+ * Returns `null` when nothing was asked to be excluded, and an `OpFailure` when the id is not the
+ * caller's — never "ignore it and carry on", which would hand back a quote computed against a
+ * capacity map the caller could not have asked for.
+ */
+async function verifyOwnExclusion(
+  ctx: BookingOpsContext,
+  excludeBookingId: string | undefined,
+): Promise<OpFailure | null> {
+  if (!excludeBookingId) return null;
+  const own = await getBookingForUser(
+    ctx.env.PAWBOOK_DB,
+    ctx.tenant.Id,
+    ctx.endUserId,
+    excludeBookingId,
+  );
+  return own ? null : fail(400, 'Unknown booking.', 'unknown_booking');
 }
 
 // ─── Month grid ──────────────────────────────────────────────────────────────
@@ -314,6 +390,8 @@ export type MonthGridInput = {
   /** Absent = the service's first option; a key that matches nothing is an error, never a drop. */
   optionKey?: string;
   petIds: string[];
+  /** See `QuoteInput.excludeBookingId` — same rule, same ownership proof. */
+  excludeBookingId?: string;
 };
 
 export async function monthGrid(
@@ -324,6 +402,8 @@ export async function monthGrid(
   const { type, month, optionKey, petIds: requestedPetIds } = input;
 
   if (!isValidPetCount(Math.max(1, requestedPetIds.length))) return fail(400, 'Too many pets.');
+  const excluded = await verifyOwnExclusion(ctx, input.excludeBookingId);
+  if (excluded) return excluded;
   // Read concurrently: the ownership check must not add a serial round-trip to the widget's
   // hottest path (this GET refires on every month page AND every pet-selection change).
   const [services, myPets] = await Promise.all([
@@ -380,6 +460,7 @@ export async function monthGrid(
       ctx.endUserId,
       option,
       Math.max(1, requestedPetIds.length),
+      input.excludeBookingId,
     ),
   );
 }
@@ -836,6 +917,284 @@ export async function cancelBooking(
   return ok({ status: 'cancelled' as const, cancellationFee: fee });
 }
 
+// ─── Edit ────────────────────────────────────────────────────────────────────
+
+export type EditBookingInput = {
+  bookingId: string;
+  startDate?: string;
+  endDate?: string;
+  petIds: string[];
+  answers: Record<string, string>;
+  startTime: string | null;
+};
+
+export type EditBookingPayload = { id: string; estCost: number; status: 'pending' };
+
+/**
+ * Customer-initiated edit of an existing booking: DATES, WHICH PETS, ARRIVAL TIME and INTAKE
+ * ANSWERS. Deliberately NOT the service — switching Boarding→Daycare changes shape, rate unit,
+ * capacity pool and question set, which is a different request, not an amendment, so it stays
+ * cancel-and-rebook. The service and its option are read from the STORED row and are not
+ * inputs at all, which is what makes "not the service" structural rather than validated.
+ *
+ * ## Every rule a create runs, run again — by calling the same code
+ *
+ * Date shape, the booking window (0004), pet ownership, registry membership, per-service pet-type
+ * acceptance, weekday-only options, arrival-time shape, intake-answer validation, per-service
+ * constraints (`MaxNights`/`MaxPetCount`), the pet-set pricing mode, and capacity/conflict —
+ * including the house-sit/boarding handover rule (0006), whose allowance is the tenant's. None of
+ * them are restated here: this function walks the same validators and the same
+ * `estimateCost`/`checkAvailability` pair the create path does. An edit that skips a check a
+ * create performs is the defect this shape exists to prevent.
+ *
+ * ## A confirmed booking returns to `pending`
+ *
+ * The sitter agreed to specific dates for specific pets, not to whatever they become. So an edit
+ * un-confirms: `Status = 'pending'`, `SyncPending = 1`, and the outbox retitles the Google event
+ * back to `[REQUEST] …` and moves it to the new dates. There is NO cancellation fee — rescheduling
+ * keeps the sitter's work, and charging for it would only push customers to cancel instead. She
+ * still re-approves, and can decline.
+ *
+ * ## EstCost IS re-stamped
+ *
+ * A deliberate, documented deviation from "stamped once and never updated". `EstCost` is the price
+ * OF the booking as it stands; an edit is by definition a re-quote, and leaving the old number
+ * would let a customer move onto a holiday, add a pet under `PetRateMode = 'linear'`, or lengthen
+ * the stay and pay the old price. `totalDue = EstCost + chargesTotal` still holds unchanged —
+ * `BookingCharges` are additive extras the sitter added and are never touched here, so re-stamping
+ * the estimate cannot swallow one. The invariant that survives is the one that mattered: `EstCost`
+ * is written ONLY by the two operations that price a booking (create and edit) and never absorbs a
+ * charge or a cancellation fee.
+ */
+export async function editBooking(
+  ctx: BookingOpsContext,
+  input: EditBookingInput,
+): Promise<OpResult<EditBookingPayload>> {
+  const { env, tenant, endUserId } = ctx;
+  const id = input.bookingId;
+  const start = typeof input.startDate === 'string' ? input.startDate : '';
+  const end = typeof input.endDate === 'string' ? input.endDate : '';
+  const petIds = input.petIds;
+  const answers = input.answers;
+  const rawStartTime = input.startTime;
+
+  // Ownership is in the SQL (`EndUserId = ?`), exactly like the cancel path: another customer's
+  // id, an unknown id and a 'blocked'/'external' sentinel are one indistinguishable 404.
+  const booking = await getBookingForUser(env.PAWBOOK_DB, tenant.Id, endUserId, id);
+  if (!booking) return fail(404, 'Not found.', 'unknown_booking');
+
+  const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const notEditable = () =>
+    fail(
+      409,
+      `That booking can no longer be changed here — please contact ${tenant.DisplayName}.`,
+      'not_editable',
+    );
+  if (!isCustomerEditable(booking.Status, booking.StartDate, today)) return notEditable();
+
+  // The reserved demo identity persists nothing, ever — including an edit. It has no real rows to
+  // edit in the first place (its booking POST never inserts), so the 404 above is what it actually
+  // hits; this is the structural backstop for a demo customer that somehow names a real id.
+  const requester = await getEndUserById(env.PAWBOOK_DB, tenant.Id, endUserId);
+  if (requester?.Email === DEMO_EMAIL) return fail(404, 'Not found.', 'unknown_booking');
+
+  const services = await listServices(env.PAWBOOK_DB, tenant.Id);
+  // The service comes from the STORED row. It is not an input, so it cannot be changed.
+  const service = services.find((s) => s.ServiceType === booking.ServiceType);
+  if (!service) return fail(400, 'Unknown service type.', 'unknown_service_type');
+  if (!service.Enabled) return fail(400, 'Service not offered.', 'service_not_offered');
+
+  if (petIds.length === 0) return fail(400, 'Choose at least one pet.', 'no_pets_selected');
+  const myPets = await listEndUserPets(env.PAWBOOK_DB, tenant.Id, endUserId);
+  const chosen = petIds.map((pid) => myPets.find((p) => p.Id === pid));
+  if (chosen.some((p) => !p)) return fail(400, 'Unknown pet.', 'unknown_pet');
+  const pets = chosen.length;
+  if (!isValidPetCount(pets)) return fail(400, 'Too many pets.', 'too_many_pets');
+
+  const acceptedTypes = await listPetTypes(env.PAWBOOK_DB, tenant.Id);
+  for (const p of chosen) {
+    if (!acceptedTypes.find((pt) => pt.PetType === p!.PetType))
+      return fail(400, 'That pet type is not accepted.', 'pet_type_not_accepted');
+  }
+  const labelBySlug = new Map(acceptedTypes.map((r) => [r.PetType, r.Label]));
+  const acceptanceError = validatePetTypeAcceptance(
+    service.AcceptedPetTypes,
+    service.Label,
+    chosen.map((p) => ({ name: p!.Name, petType: p!.PetType })),
+    (petSlug) => labelBySlug.get(petSlug) ?? petSlug,
+  );
+  if (acceptanceError) return fail(400, acceptanceError, 'pet_type_not_accepted');
+
+  // The option, like the service, comes from the stored row — an edit does not re-pick a walk
+  // duration or a check-in slot. A row whose option the sitter has since deleted cannot be
+  // re-priced at all, so it is refused rather than silently re-homed onto another option.
+  const options = await listServiceOptions(env.PAWBOOK_DB, tenant.Id);
+  const option = options.find(
+    (o) => o.ServiceType === booking.ServiceType && o.OptionKey === booking.OptionKey,
+  );
+  if (!option) return fail(400, 'Service not configured.', 'service_not_configured');
+
+  const shape = service.Shape;
+  const dateError =
+    shape === 'range'
+      ? validateBoardingRange(start, end, service.MaxNights, tenant.Timezone ?? undefined)
+      : validateSingleDate(start, tenant.Timezone ?? undefined);
+  if (dateError) return fail(dateError.status, dateError.error, dateError.code);
+
+  const windowError = validateBookingWindow(
+    start,
+    service.MinLeadDays,
+    tenant.MaxAdvanceMonths,
+    tenant.Timezone ?? undefined,
+  );
+  if (windowError) return fail(windowError.status, windowError.error, windowError.code);
+
+  if (rawStartTime !== null) {
+    if (shape !== 'range')
+      return fail(400, 'An arrival time only applies to multi-day stays.', 'invalid_start_time');
+    if (!isValidTimeString(rawStartTime))
+      return fail(400, 'Arrival time must look like 14:30 (24-hour HH:MM).', 'invalid_start_time');
+  }
+  const bookingStartTime = shape === 'range' ? rawStartTime : option.StartTime;
+
+  if (option.WeekdaysOnly) {
+    const spanNights = shape === 'range' ? nightsBetween(start, end) : 1;
+    for (let i = 0; i < spanNights; i++) {
+      if (isWeekend(addDays(start, i)))
+        return fail(
+          400,
+          'That option is only available on weekdays — pick a Monday–Friday date.',
+          'weekdays_only',
+        );
+    }
+  }
+  const endDate = shape === 'range' ? end : null;
+  const nights = shape === 'range' ? nightsBetween(start, end) : null;
+
+  const answersError = validateAnswers(service.Questions, answers);
+  if (answersError) return fail(400, answersError, 'invalid_answers');
+
+  const constraintsError = validateServiceConstraints(
+    { maxNights: service.MaxNights, maxPetCount: service.MaxPetCount },
+    { nights, petCount: pets },
+  );
+  if (constraintsError) return fail(400, constraintsError, 'service_constraint');
+
+  const pricedPets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
+  const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
+  const price = estimateCost(service, option, start, end, pricedPets, rates);
+  if (!price.priced) {
+    return fail(
+      400,
+      `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
+      'unpriced_pet_set',
+    );
+  }
+  const estCost = price.cost;
+
+  // Apply optimistically, then check capacity EXCLUDING this row — the create path's pattern,
+  // and for the same reason: a check performed before the write leaves a window in which a
+  // concurrent booking takes the last slot. Excluding our own row is what stops the stay
+  // conflicting with itself. On refusal the previous values are put back verbatim.
+  const previous = {
+    startDate: booking.StartDate,
+    endDate: booking.EndDate,
+    startTime: booking.StartTime,
+    petCount: booking.PetCount,
+    estCost: booking.EstCost,
+    answers: booking.Answers,
+    status: booking.Status,
+  };
+  const previousPetIds = (await listBookingPetsForUser(env.PAWBOOK_DB, tenant.Id, endUserId))
+    .filter((r) => r.BookingRequestId === id)
+    .map((r) => r.PetId);
+
+  // Customer-scoped AND status-guarded in SQL: the guard is the status we read and priced from,
+  // so a sitter confirming (or declining) in the gap wins the race and the edit 409s rather than
+  // landing on a row whose state it no longer describes.
+  const applied = await updateBookingForEdit(env.PAWBOOK_DB, tenant.Id, endUserId, id, {
+    startDate: start,
+    endDate,
+    startTime: bookingStartTime,
+    petCount: pets,
+    estCost,
+    answers,
+    expectedStatus: booking.Status as 'pending' | 'confirmed',
+  });
+  if (!applied) return notEditable();
+
+  try {
+    await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, petIds);
+    const check = await checkAvailability(
+      env,
+      tenant,
+      service,
+      option,
+      start,
+      end,
+      pricedPets,
+      rates,
+      id,
+    );
+    if (!check.available) {
+      await restoreBookingAfterEdit(env.PAWBOOK_DB, tenant.Id, id, previous);
+      await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, previousPetIds);
+      return conflictFailure(check);
+    }
+  } catch (err) {
+    // Best-effort rollback, then surface the original error — a half-applied edit would leave the
+    // customer's booking describing dates nobody asked for.
+    await restoreBookingAfterEdit(env.PAWBOOK_DB, tenant.Id, id, previous).catch(() => {});
+    await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, previousPetIds).catch(() => {});
+    throw err;
+  }
+
+  // Same pre-fill write the create does (0007): an edited answer becomes the saved one, and a
+  // blanked answer deletes its saved row. Best-effort — the edit is already committed.
+  await replaceSavedAnswers(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    endUserId,
+    service.ServiceType,
+    savedAnswerEntries(service.Questions, answers),
+  ).catch((err) => {
+    console.error('saving intake answers failed', err);
+  });
+
+  // Mirror to Google: MOVE the event to the new dates and retitle it `[REQUEST] …` (the update
+  // path derives the title from `status: 'pending'`). A booking with no event yet — one taken
+  // before the sitter connected Google — gets one created, which is what `syncBookingToCalendar`
+  // does and what the outbox would do on the next sweep anyway. `SyncPending` is already set by
+  // the UPDATE above, so a Google failure only delays the mirror.
+  await background(
+    ctx,
+    (async () => {
+      const petNames = chosen.map((p) => p!.Name);
+      const syncInput = {
+        bookingId: id,
+        endUserId,
+        serviceType: service.ServiceType,
+        serviceLabel: service.Label,
+        startDate: start,
+        endDate,
+        startTime: bookingStartTime,
+        durationMinutes: option.DurationMinutes,
+        petCount: pets,
+        petNames,
+        estCost,
+        status: 'pending' as const,
+      };
+      if (booking.GCalEventId)
+        await updateBookingCalendarEvent(env, tenant, booking.GCalEventId, syncInput);
+      else await syncBookingToCalendar(env, tenant, syncInput);
+    })().catch((err) => {
+      console.error('calendar edit sync failed', err);
+    }),
+  );
+
+  return ok({ id, estCost, status: 'pending' as const });
+}
+
 // ─── The customer's own bookings ─────────────────────────────────────────────
 
 export type MyBooking = {
@@ -843,16 +1202,32 @@ export type MyBooking = {
   type: string;
   startDate: string;
   endDate: string | null;
+  startTime: string | null;
+  optionKey: string | null;
+  petIds: string[];
   petCount: number;
   pets: string[];
+  answers: Record<string, string>;
   estCost: number | null;
   charges: { label: string; amount: number }[];
   chargesTotal: number;
   cancellationFee: number | null;
   cancellable: boolean;
+  editable: boolean;
   feeIfCancelledToday: number | null;
   status: string;
 };
+
+function parseAnswers(raw: string): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, string>)
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 export async function listMyBookings(
   ctx: BookingOpsContext,
@@ -860,10 +1235,10 @@ export async function listMyBookings(
   const { env, tenant, endUserId } = ctx;
   const rows = await listBookingsForUser(env.PAWBOOK_DB, tenant.Id, endUserId);
   const petRows = await listBookingPetsForUser(env.PAWBOOK_DB, tenant.Id, endUserId);
-  const petsByBooking = new Map<string, string[]>();
+  const petsByBooking = new Map<string, { id: string; name: string }[]>();
   for (const pr of petRows) {
     const list = petsByBooking.get(pr.BookingRequestId) ?? [];
-    list.push(pr.Name);
+    list.push({ id: pr.PetId, name: pr.Name });
     petsByBooking.set(pr.BookingRequestId, list);
   }
   // Charges for THIS caller's bookings only — scoped by the tenant read plus the row filter
@@ -887,19 +1262,34 @@ export async function listMyBookings(
   return ok({
     bookings: rows.map((r) => {
       const cancellable = isCustomerCancellable(r.Status, r.StartDate, r.EndDate, today);
+      const mine = petsByBooking.get(r.Id) ?? [];
       return {
         id: r.Id,
         type: r.ServiceType,
         startDate: r.StartDate,
         endDate: r.EndDate,
+        /** The stored arrival time — what the edit form must open showing. */
+        startTime: r.StartTime,
+        /** Which priced option (walk length, check-in slot) this booking is on. An edit never
+         *  changes it — it is here so the edit form paints the grid against the RIGHT option's
+         *  capacity instead of falling back to the service's first one. */
+        optionKey: r.OptionKey,
+        /** The pet IDS on the booking, so an edit form can pre-select them instead of guessing
+         *  from display names. The names stay in `pets`. */
+        petIds: mine.map((p) => p.id),
         petCount: r.PetCount,
-        pets: petsByBooking.get(r.Id) ?? [],
+        pets: mine.map((p) => p.name),
+        /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
+         *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
+        answers: parseAnswers(r.Answers),
         estCost: r.EstCost,
         charges: chargesByBooking.get(r.Id) ?? [],
         chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
         cancellationFee: r.CancellationFee,
         /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
         cancellable,
+        /** Whether THIS customer may still change it — see `isCustomerEditable`. */
+        editable: isCustomerEditable(r.Status, r.StartDate, today),
         /** What cancelling today would cost, whole dollars; null when it isn't cancellable. */
         feeIfCancelledToday: cancellable
           ? feeToCancelToday(

@@ -13,6 +13,7 @@ import type { Context } from 'hono';
 import {
   cancelBooking,
   createBooking,
+  editBooking,
   getMe,
   listMyBookings,
   monthGrid,
@@ -89,6 +90,8 @@ export const bookingRoutes = new Hono<AppEnv>()
         start: c.req.query('start') ?? '',
         end: c.req.query('end') ?? '',
         petIds: petIdsFromQuery(c.req.query('petIds')),
+        // Set by the widget while EDITING a booking, so the stay does not collide with itself.
+        excludeBookingId: c.req.query('excludeBookingId'),
       }),
     ),
   )
@@ -101,6 +104,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         month: c.req.query('month') ?? '',
         optionKey: c.req.query('option'),
         petIds: petIdsFromQuery(c.req.query('petIds')),
+        excludeBookingId: c.req.query('excludeBookingId'),
       }),
     ),
   )
@@ -143,6 +147,47 @@ export const bookingRoutes = new Hono<AppEnv>()
         startTime:
           typeof body.startTime === 'string' && body.startTime !== '' ? body.startTime : null,
         idempotencyKey: c.req.header('Idempotency-Key')?.trim() || null,
+      }),
+    );
+  })
+
+  /**
+   * The customer changes their own booking: dates, which pets, arrival time, intake answers.
+   * Deliberately NOT the service — `editBooking` reads the service and its option off the stored
+   * row and never looks at the body for them, so a `type` here is inert rather than rejected.
+   */
+  .put('/:slug/bookings/:id', async (c) => {
+    const body = await c.req
+      .json<{
+        startDate?: string;
+        endDate?: string;
+        petIds?: unknown;
+        answers?: unknown;
+        startTime?: unknown;
+      }>()
+      .catch(() => ({}) as Record<string, never>);
+    const rawPetIds = Array.isArray(body.petIds)
+      ? body.petIds.filter((x): x is string => typeof x === 'string')
+      : [];
+    const rawAnswers = body.answers;
+    const answers: Record<string, string> =
+      rawAnswers && typeof rawAnswers === 'object' && !Array.isArray(rawAnswers)
+        ? Object.fromEntries(
+            Object.entries(rawAnswers as Record<string, unknown>).filter(
+              (entry): entry is [string, string] => typeof entry[1] === 'string',
+            ),
+          )
+        : {};
+    return respond(
+      c,
+      await editBooking(opsContext(c), {
+        bookingId: c.req.param('id'),
+        startDate: body.startDate,
+        endDate: body.endDate,
+        petIds: [...new Set(rawPetIds)],
+        answers,
+        startTime:
+          typeof body.startTime === 'string' && body.startTime !== '' ? body.startTime : null,
       }),
     );
   })
