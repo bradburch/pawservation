@@ -183,6 +183,49 @@ const allDepartOn = (spans: EventSpan[], date: string): boolean =>
 const allArriveOn = (spans: EventSpan[], date: string): boolean =>
   spans.every((span) => span.start === date);
 
+/**
+ * The SOUNDLY PAINTABLE half of the cross-kind handover rule: is this day unusable by EVERY range
+ * request of `kind`, whatever its dates?
+ *
+ * The rule itself is a property of a RANGE — really of a PAIR of ranges — so a per-day grid can
+ * never paint it exactly, and `rangeConflictReason` stays the authority (CALENDAR_LOGIC.md §9). But
+ * a caller that paints days (the month grid) must not claim a day is available when no request of
+ * that kind could arrive on it, depart on it, or span it. That much IS a fact about the day alone,
+ * and it lives here — beside the rule — rather than being re-derived by the caller.
+ *
+ * Three grounds, each one a rule the range walk would apply to any request touching this day:
+ *
+ *  1. `allowance` 0 — the two kinds may never share a day at all, so any opposite-kind occupancy is
+ *     final. (`null` switches the whole rule off; nothing is paintable.)
+ *  2. The DIRECTIONAL half of rule 2. A request's only three options for a day are to arrive on it,
+ *     depart on it, or span it, and spanning is never a handover — so if the day's opposite-kind
+ *     bookings are neither all departing nor all arriving, no request can use it.
+ *  3. A ONE-NIGHT neighbour. Its single occupied day is both its arrival and its departure, so it
+ *     passes the directional test from either side — but any handover doubles the only night it
+ *     has, so `neighborsViolated` refuses every request that touches it (rule 3, seen from the
+ *     other stay).
+ *
+ * Deliberately NOT decided here, because none of it is a property of one day: rule 3 for the
+ * REQUEST (needs the request's length), the allowance BUDGET across a multi-day request, and a
+ * multi-day neighbour's own budget/free-day count (which needs that neighbour's whole span in the
+ * map, and a one-month read cannot promise it). Those stay with the range walk, which is why a span
+ * of days this predicate leaves open can still be refused.
+ */
+export function crossKindDayBlocked(
+  day: DayCapacity,
+  date: string,
+  kind: PoolKind,
+  allowance: number | null,
+): boolean {
+  const normalized = normalizeAllowance(allowance);
+  if (normalized === null) return false;
+  const opposite = kind === 'housesit' ? day.boarding : day.housesit;
+  if (opposite.spans.length === 0) return false;
+  if (normalized < 1) return true;
+  if (opposite.spans.some((span) => span.start === span.lastOccupied)) return true;
+  return !(allDepartOn(opposite.spans, date) || allArriveOn(opposite.spans, date));
+}
+
 /** The opposite-kind bookings the request's own days touch, de-duplicated by span identity (the
  *  same object sits on every day its event occupies, which is what makes identity meaningful). */
 function touchedSpans(

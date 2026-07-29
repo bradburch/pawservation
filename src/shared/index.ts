@@ -29,6 +29,7 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  crossKindDayBlocked,
   overlapReadWindow,
   rangeConflictReason,
   rangeHasConflict,
