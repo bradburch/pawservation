@@ -84,6 +84,39 @@ export async function getTenantUserEmailById(
   return row?.Email ?? null;
 }
 
+/**
+ * Where to send this tenant operational mail (today: a customer cancelled something).
+ *
+ * `Tenants.ContactEmail` is the address the sitter chose to publish for business contact, so it
+ * wins — but it is OPTIONAL and genuinely often unset, and a notification feature that silently
+ * does nothing for every account that skipped an optional field is worse than no feature. So it
+ * falls back to her dashboard login (`TenantUsers.Email`, NOT NULL and created at signup), which
+ * is the address Pawservation already uses to reach her for password resets. Empty/whitespace
+ * ContactEmail is treated as unset rather than as an address.
+ *
+ * Returns null only when a tenant has neither — reachable only for a half-built tenant row with
+ * no user yet. Callers must treat that as "skip the send", never as an error: the operation being
+ * reported on has already committed.
+ *
+ * ORDER BY pins which login is chosen if a tenant ever has several, so the recipient is stable
+ * rather than whatever SQLite returns first.
+ */
+export async function getSitterNotificationEmail(
+  db: D1Database,
+  tenantId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(
+         (SELECT NULLIF(TRIM(ContactEmail), '') FROM Tenants WHERE Id = ?),
+         (SELECT Email FROM TenantUsers WHERE TenantId = ? ORDER BY CreatedAt, Id LIMIT 1)
+       ) AS Email`,
+    )
+    .bind(tenantId, tenantId)
+    .first<{ Email: string | null }>();
+  return row?.Email ?? null;
+}
+
 /** Returns whether a row actually changed — false means the email has no sitter login. */
 export async function updateTenantUserPasswordHash(
   db: D1Database,

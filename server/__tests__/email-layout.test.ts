@@ -4,6 +4,7 @@ import {
   emailButton,
   sendLoginCode,
   sendBookingStatusEmail,
+  sendCancellationNoticeToSitter,
   sendInvite,
   sendSignupLink,
   sendSitterInvite,
@@ -96,6 +97,21 @@ const TEMPLATES: [string, (send: typeof env) => Promise<void>, boolean][] = [
   [
     'sendBookingStatusEmail',
     (e) => sendBookingStatusEmail(e, 'a@b.test', HOSTILE, 'confirmed', `Aug 3 ${HOSTILE}`),
+    true,
+  ],
+  [
+    // The one sitter-DIRECTION template; the brand rules bind it exactly like the customer ones.
+    'sendCancellationNoticeToSitter',
+    (e) =>
+      sendCancellationNoticeToSitter(e, 'a@b.test', {
+        displayName: HOSTILE,
+        customerName: HOSTILE,
+        customerEmail: `${HOSTILE}@b.test`,
+        serviceLabel: HOSTILE,
+        whenText: `Aug 3 ${HOSTILE}`,
+        wasConfirmed: true,
+        cancellationFee: 100,
+      }),
     true,
   ],
   [

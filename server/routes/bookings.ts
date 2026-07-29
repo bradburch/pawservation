@@ -7,6 +7,7 @@ import {
   getBookingForUser,
   getBookingSyncData,
   getEndUserById,
+  getSitterNotificationEmail,
   insertBookingRequest,
   listBookingPetsForUser,
   listBookingsForUser,
@@ -30,6 +31,7 @@ import {
   syncBookingToCalendar,
   updateBookingCalendarEvent,
 } from '../lib/calendar-sync';
+import { isEmailConfigured, sendCancellationNoticeToSitter } from '../lib/email';
 import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
@@ -722,6 +724,35 @@ export const bookingRoutes = new Hono<AppEnv>()
       } catch {
         await task;
       }
+    }
+
+    // Tell the sitter. Best-effort on exactly the terms the calendar push is: the row is written
+    // and the customer has already been told their booking is cancelled, so a Resend outage must
+    // change nothing about the outcome. Every failure mode — no configured provider, no resolvable
+    // recipient, a throwing transport — is swallowed and logged, never surfaced.
+    const notify = (async () => {
+      if (!isEmailConfigured(c.env)) return;
+      const sitterEmail = await getSitterNotificationEmail(c.env.PAWBOOK_DB, tenant.Id);
+      if (!sitterEmail) return;
+      const customer = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId);
+      await sendCancellationNoticeToSitter(c.env, sitterEmail, {
+        displayName: tenant.DisplayName,
+        customerName: customer?.Name ?? null,
+        customerEmail: customer?.Email ?? null,
+        serviceLabel: service?.Label ?? booking.ServiceType,
+        whenText: booking.EndDate ? `${booking.StartDate} – ${booking.EndDate}` : booking.StartDate,
+        // The status BEFORE the cancel: 'confirmed' means she had committed, 'pending' means the
+        // customer withdrew a request she never accepted. Two different messages.
+        wasConfirmed: booking.Status === 'confirmed',
+        cancellationFee: fee, // the stored number, never recomputed downstream
+      });
+    })().catch((err) => {
+      console.error('cancellation notice to sitter failed', err);
+    });
+    try {
+      c.executionCtx.waitUntil(notify);
+    } catch {
+      await notify;
     }
 
     return c.json({ status: 'cancelled', cancellationFee: fee });

@@ -176,6 +176,83 @@ export async function sendBookingStatusEmail(
   });
 }
 
+/** What the sitter needs to know about a cancellation without opening the dashboard. */
+export type CancellationNotice = {
+  /** The sitter's own business name — for the footer, same as every other template. */
+  displayName: string;
+  /** Who cancelled. Null when the customer row has no name on file. */
+  customerName: string | null;
+  /** Their email, so the sitter can reply without looking anyone up. */
+  customerEmail: string | null;
+  serviceLabel: string;
+  /** Already-formatted date or range, built by the caller (one date shape, one place). */
+  whenText: string;
+  /**
+   * Whether the sitter had CONFIRMED it. False = the customer withdrew a request she had never
+   * committed to, which is a materially different event and reads differently below.
+   */
+  wasConfirmed: boolean;
+  /** Whole dollars, as STORED on the booking. Never recomputed here — the template reports the
+   *  number the cancel already stamped, so the mail and the ledger cannot disagree. */
+  cancellationFee: number;
+};
+
+/**
+ * Tell the SITTER that a customer cancelled — the first sitter-direction booking mail; every other
+ * template here speaks to a customer. Booking mail, so it uses RESEND_FROM_BOOKING.
+ *
+ * One template with a branch rather than two: the recipient, sender, shell, footer and the
+ * who/what/when block are identical, and the two differ only in the opening sentence, the subject,
+ * and the fee line. Splitting them would duplicate the shared bulk and let the halves drift.
+ * Throws if email is not configured or Resend rejects the request; callers treat it as
+ * best-effort — the cancellation is already committed and must stand regardless.
+ */
+export async function sendCancellationNoticeToSitter(
+  env: Env,
+  to: string,
+  n: CancellationNotice,
+): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // customerName, customerEmail, serviceLabel, whenText and displayName are all tenant- or
+  // user-controlled → escaped in every HTML slot. cancellationFee is a number from the DB.
+  // Subject/text are plain-text JSON fields in Resend's API — no escaping needed.
+  const who = n.customerName?.trim() || n.customerEmail || 'A client';
+  const headline = n.wasConfirmed
+    ? `${who} cancelled a confirmed booking.`
+    : `${who} withdrew a request you hadn't confirmed yet.`;
+  const feeLine = n.wasConfirmed
+    ? n.cancellationFee > 0
+      ? `Cancellation fee: $${n.cancellationFee}. It's recorded on the booking and counts as outstanding until it's paid.`
+      : 'No cancellation fee applies under your policy for these dates.'
+    : 'No cancellation fee applies — you had not confirmed it.';
+  const detail = [
+    `Service: ${n.serviceLabel}`,
+    `Dates: ${n.whenText}`,
+    ...(n.customerEmail ? [`Client: ${n.customerEmail}`] : []),
+  ];
+
+  await resendPost(env, env.RESEND_FROM_BOOKING!, {
+    to,
+    subject: n.wasConfirmed
+      ? `Cancelled: ${n.serviceLabel} for ${who} (${n.whenText})`
+      : `Withdrawn: ${n.serviceLabel} request from ${who} (${n.whenText})`,
+    text:
+      `${headline}\n\n` +
+      `${detail.join('\n')}\n\n` +
+      `${feeLine}\n\n` +
+      `Those dates are free again in Pawservation. Nothing else needs doing.`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">${htmlEscape(headline)}</p>` +
+        `<p style="margin:12px 0;color:${EMAIL_INK};">` +
+        detail.map((line) => htmlEscape(line)).join('<br />') +
+        `</p>` +
+        `<p style="margin:12px 0 0;"><strong>${htmlEscape(feeLine)}</strong></p>` +
+        `<p style="margin:12px 0 0;">Those dates are free again in Pawservation. Nothing else needs doing.</p>`,
+      `Sent by Pawservation on behalf of ${n.displayName}`,
+    ),
+  });
+}
+
 /** Send a booking invite (on-demand customer welcome). Throws if email is not configured or Resend rejects the request. */
 export async function sendInvite(
   env: Env,
