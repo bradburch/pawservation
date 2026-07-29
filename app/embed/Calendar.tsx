@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { api, isAuthExpired, type MonthAvailability, type MonthDay } from '../shared-ui/api';
 import {
+  addDays,
+  formatShortDate,
   holidaysInMonth,
   isWeekend,
   monthGrid,
@@ -20,6 +29,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
  * scrollHeight on every ResizeObserver tick), so the host page would visibly bounce.
  */
 const GRID_CELLS = 42;
+const GRID_COLUMNS = 7;
 
 /** The month response, indexed for O(1) cell lookup and stamped with what it describes. */
 type MonthState = Omit<MonthAvailability, 'days'> & {
@@ -42,11 +52,54 @@ const MONTHS = [
   'December',
 ];
 
+/**
+ * The client's read on a candidate stay, from the day statuses ALREADY in hand — no endpoint, no
+ * money, no capacity rules re-derived. Three outcomes, and the third is the one that matters:
+ *
+ * - `clear` — every day the stay occupies is paintable and painted bookable.
+ * - `conflict` — one is not, named with the server's own `reason` for it.
+ * - `null` — **no verdict**, because at least one occupied day is not in the loaded month. The
+ *   day map holds ONE month; a range spanning out of it must degrade to silence rather than
+ *   guess, since a confidently wrong "looks open" is worse than saying nothing.
+ *
+ * It is an OPTIMISTIC HINT, never a guarantee, and is worded that way. Per-day status is
+ * necessary but not sufficient for a range service: `rangeHasConflict` has bookend / soft-bookend
+ * sharing and the house-sit-over-boarding one-day rule (CALENDAR_LOGIC.md §3), none of which any
+ * per-day paint can express — so a span of green days can still be refused, and an endpoint on a
+ * full day is *more* permissive than the paint suggests. The server remains the authority.
+ */
+type RangeVerdict = { ok: true } | { ok: false; date: string; reason: string | null } | null;
+
+/** String compares, not date math: 'YYYY-MM-DD' sorts lexicographically. */
+const maxDate = (a: string, b: string) => (a > b ? a : b);
+const minDate = (a: string, b: string) => (a < b ? a : b);
+
+function rangeVerdict(
+  start: string,
+  endExclusive: string,
+  days: Map<string, MonthDay>,
+  weekdaysOnly: boolean,
+  today: string,
+): RangeVerdict {
+  if (!start || !endExclusive || endExclusive <= start) return null;
+  // Bounded by the day map: the first date it doesn't hold ends the walk with no verdict, and it
+  // holds at most one month, so this can never run away.
+  for (let date = start; date < endExclusive; date = addDays(date, 1)) {
+    const day = days.get(date);
+    if (!day) return null;
+    if (today && date < today) return { ok: false, date, reason: 'Already past' };
+    if (weekdaysOnly && isWeekend(date)) return { ok: false, date, reason: 'Weekdays only' };
+    if (day.status === 'unavailable') return { ok: false, date, reason: day.reason };
+  }
+  return { ok: true };
+}
+
 export function Calendar({
   slug,
   token,
   serviceType,
   optionKey,
+  petIds,
   weekdaysOnly,
   shape,
   month,
@@ -60,6 +113,12 @@ export function Calendar({
   token: string;
   serviceType: string;
   optionKey?: string;
+  /**
+   * Comma-joined ids of the pets the customer has selected. The grid is painted FOR this set —
+   * a day with one of two slots free is bookable for one pet and not for two — so a change here
+   * refetches the month. The arithmetic is entirely the server's; this is a cache key.
+   */
+  petIds?: string;
   /** Selected option is weekday-only: marks unavailable + disable Sat/Sun (server enforces the same). */
   weekdaysOnly?: boolean;
   shape: 'range' | 'single';
@@ -86,7 +145,7 @@ export function Calendar({
     // fetchMonth identity (and therefore a refetch) after a booking submission bumps it.
     void reloadKey;
     try {
-      const r = await api.monthAvailability(slug, token, serviceType, month, optionKey);
+      const r = await api.monthAvailability(slug, token, serviceType, month, optionKey, petIds);
       // Stamp which service/option this answer describes: useAsync retains the last success
       // across a DEPENDENCY change too, not just across an error, so without the stamp the
       // previous service's window bounds would drive the nav buttons until the new month lands
@@ -109,7 +168,7 @@ export function Calendar({
       }
       throw e;
     }
-  }, [slug, token, serviceType, month, optionKey, reloadKey]);
+  }, [slug, token, serviceType, month, optionKey, petIds, reloadKey]);
 
   const { data, error, loading } = useAsync(fetchMonth);
   const loadError = !loading && !!error;
@@ -117,7 +176,10 @@ export function Calendar({
   // failed fetch, but this grid should render blank + the error message (the pre-hook
   // behavior), not a stale month's availability.
   const showData = !loading && !loadError;
-  const days = showData ? (data?.days ?? new Map<string, MonthDay>()) : new Map<string, MonthDay>();
+  const days = useMemo(
+    () => (showData ? (data?.days ?? new Map<string, MonthDay>()) : new Map<string, MonthDay>()),
+    [showData, data],
+  );
   const today = showData ? (data?.today ?? '') : '';
   // While the month data is in flight the grid knows nothing: `days` is empty and `today` is ''.
   // Without this gate every cell would render enabled, undimmed and implicitly AVAILABLE, and
@@ -149,19 +211,157 @@ export function Calendar({
   const year = Number(parts[0]);
   const mon = Number(parts[1]);
 
-  const pick = (date: string, d: MonthDay | undefined) => {
-    if (!d || d.status === 'unavailable' || (today && date < today)) return;
-    if (weekdaysOnly && isWeekend(date)) return;
+  const grid = useMemo(() => monthGrid(month), [month]);
+  // Pad, never truncate: monthGrid never exceeds 6 rows (max lead 6 + 31 days = 37 cells).
+  const cells: (string | null)[] = useMemo(
+    () => [...grid, ...Array.from({ length: Math.max(0, GRID_CELLS - grid.length) }, () => null)],
+    [grid],
+  );
+  const rows: (string | null)[][] = useMemo(
+    () =>
+      Array.from({ length: GRID_CELLS / GRID_COLUMNS }, (_, r) =>
+        cells.slice(r * GRID_COLUMNS, r * GRID_COLUMNS + GRID_COLUMNS),
+      ),
+    [cells],
+  );
+  const holidays = useMemo(
+    () => new Map(holidaysInMonth(month).map((h) => [h.date, h.name])),
+    [month],
+  );
+
+  const selectable = useCallback(
+    (date: string): boolean => {
+      if (gridBusy) return false;
+      const d = days.get(date);
+      if (!d || d.status === 'unavailable') return false;
+      if (today && date < today) return false;
+      if (weekdaysOnly && isWeekend(date)) return false;
+      return true;
+    },
+    [gridBusy, days, today, weekdaysOnly],
+  );
+
+  const pick = (date: string) => {
+    if (!selectable(date)) return;
     onChange(nextRangeSelection(value, date, shape));
   };
 
-  const grid = monthGrid(month);
-  // Pad, never truncate: monthGrid never exceeds 6 rows (max lead 6 + 31 days = 37 cells).
-  const cells: (string | null)[] = [
-    ...grid,
-    ...Array.from({ length: Math.max(0, GRID_CELLS - grid.length) }, () => null),
-  ];
-  const holidays = new Map(holidaysInMonth(month).map((h) => [h.date, h.name]));
+  // ── Roving tabindex + keyboard grid ────────────────────────────────────────
+  // `.bp-cal-grid` used to be a flat list of buttons: tabbing past a month cost 30+ stops. It is
+  // now a role="grid" of rows where exactly ONE cell is tabbable (the anchor) and the arrows move
+  // between them. Unavailable days carry aria-disabled rather than `disabled` — a disabled button
+  // is not focusable, and a grid whose blocked days can't be reached is a grid you can't read.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [focusDate, setFocusDate] = useState<string | null>(null);
+  // Set by the key handlers only: focus is moved imperatively in response to a keypress, never
+  // stolen on mount or on a background refetch.
+  const wantFocus = useRef(false);
+
+  const inMonth = (date: string | null | undefined): date is string =>
+    !!date && date.slice(0, 7) === month;
+  const firstOfMonth = `${month}-01`;
+  const anchor =
+    (inMonth(focusDate) && focusDate) ||
+    (inMonth(value.start) && value.start) ||
+    (inMonth(today) && today) ||
+    firstOfMonth;
+
+  useEffect(() => {
+    if (!wantFocus.current) return;
+    wantFocus.current = false;
+    gridRef.current?.querySelector<HTMLElement>(`[data-date="${anchor}"]`)?.focus();
+  });
+
+  /** Move the anchor, paging the month when the move crosses out of it (bounds permitting). */
+  const moveTo = (date: string) => {
+    const target = date.slice(0, 7);
+    if (target !== month) {
+      if (target < month && atEarliest) return;
+      if (target > month && atLatest) return;
+      onMonthChange(target);
+    }
+    setFocusDate(date);
+    wantFocus.current = true;
+  };
+
+  const onGridKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const index = cells.indexOf(anchor);
+    const column = index < 0 ? 0 : index % GRID_COLUMNS;
+    const monthDays = grid.filter((c): c is string => !!c);
+    // Same day-of-month in the neighbouring month, clamped to its length (Mar 31 → Feb 28).
+    const pageBy = (delta: number) => {
+      const target = shiftMonthFn(month, delta);
+      const targetDays = monthGrid(target).filter((c): c is string => !!c);
+      const same = `${target}-${anchor.slice(-2)}`;
+      return targetDays.includes(same) ? same : targetDays[targetDays.length - 1];
+    };
+    const handlers: Record<string, () => void> = {
+      ArrowLeft: () => moveTo(addDays(anchor, -1)),
+      ArrowRight: () => moveTo(addDays(anchor, 1)),
+      ArrowUp: () => moveTo(addDays(anchor, -GRID_COLUMNS)),
+      ArrowDown: () => moveTo(addDays(anchor, GRID_COLUMNS)),
+      // Week edges, derived from the anchor's COLUMN in the grid — no weekday arithmetic — then
+      // clamped into the month so Home on the 1st row doesn't land on a padding cell.
+      Home: () => moveTo(maxDate(addDays(anchor, -column), monthDays[0])),
+      End: () =>
+        moveTo(
+          minDate(addDays(anchor, GRID_COLUMNS - 1 - column), monthDays[monthDays.length - 1]),
+        ),
+      PageUp: () => moveTo(pageBy(-1)),
+      PageDown: () => moveTo(pageBy(1)),
+      Escape: () => onChange({}),
+    };
+    const handler = handlers[e.key];
+    if (!handler) return;
+    e.preventDefault();
+    handler();
+  };
+
+  // ── Provisional range + verdict ────────────────────────────────────────────
+  // Two-tap selection stays (drag-select inside an iframe needs a global mouseup listener plus
+  // elementFromPoint plus preventDefault on touchstart — hostile). Hover/keyboard focus only
+  // PREVIEWS the second tap; nothing is committed until it happens.
+  const [hoverDate, setHoverDate] = useState<string | null>(null);
+  const awaitingEnd = shape === 'range' && !!value.start && !value.end;
+  const candidateEnd = !awaitingEnd
+    ? null
+    : hoverDate && hoverDate > value.start!
+      ? hoverDate
+      : inMonth(focusDate) && focusDate > value.start!
+        ? focusDate
+        : null;
+  // What the band + verdict describe: the committed range, or the one the customer is hovering.
+  const bandValue: RangeValue = candidateEnd ? { start: value.start, end: candidateEnd } : value;
+  const verdict =
+    shape === 'range' && bandValue.start && bandValue.end
+      ? rangeVerdict(bandValue.start, bandValue.end, days, !!weekdaysOnly, today)
+      : null;
+
+  // The cheap win the grid already knows the answer to: the first day in THIS month a customer
+  // could actually pick. Silent when that is simply the first day on offer (nothing to point at).
+  const nextOpening = useMemo(() => {
+    const monthDays = grid.filter((c): c is string => !!c);
+    const eligible = monthDays.filter((d) => !today || d >= today);
+    const open = eligible.find(selectable) ?? null;
+    return { open, isFirst: !!open && open === eligible[0], none: eligible.length > 0 && !open };
+  }, [grid, today, selectable]);
+
+  const note = verdict
+    ? verdict.ok
+      ? 'These dates look open — your sitter confirms.'
+      : `${formatShortDate(verdict.date)} is unavailable${
+          verdict.reason ? ` — ${verdict.reason.toLowerCase()}` : ''
+        }.`
+    : // Silent while the day map is unknown, and while a first day is already committed: the
+      // month's next opening has nothing to add to "now tap your last day", and pointing at a
+      // date BEHIND the one already chosen would read as a correction.
+      gridBusy || awaitingEnd
+      ? ''
+      : nextOpening.none
+        ? `No openings in ${MONTHS[mon - 1]}.`
+        : nextOpening.open && !nextOpening.isFirst
+          ? `Next opening: ${formatShortDate(nextOpening.open)}`
+          : '';
 
   const hint =
     shape === 'range'
@@ -216,7 +416,7 @@ export function Calendar({
           <IconChevronRight />
         </button>
       </div>
-      <div className="bp-cal-grid bp-cal-head">
+      <div className="bp-cal-grid bp-cal-head" aria-hidden="true">
         {WEEKDAYS.map((w) => (
           <span key={w} className="bp-cal-weekday">
             {w}
@@ -225,56 +425,99 @@ export function Calendar({
       </div>
       <div
         className={`bp-cal-grid${gridBusy ? ' bp-cal-busy' : ''}`}
+        role="grid"
+        aria-label={`${MONTHS[mon - 1]} ${year} availability`}
         aria-busy={loading || undefined}
+        ref={gridRef}
+        onKeyDown={onGridKeyDown}
+        onMouseLeave={() => setHoverDate(null)}
       >
-        {cells.map((date, i) => {
-          if (!date) return <span key={i} className="bp-cal-empty" />;
-          const d = days.get(date);
-          const past = !!(today && date < today);
-          const weekend = !!weekdaysOnly && isWeekend(date);
-          const isToday = !!today && date === today;
-          const holiday = holidays.get(date) ?? null;
-          // Why this day can't be picked, in the customer's words. The server owns every reason
-          // it knows (capacity, blocked, outside the booking window); the two the client alone
-          // can see — a past day and a weekday-only weekend — are named here.
-          const reason = past ? 'Already past' : weekend ? 'Weekdays only' : (d?.reason ?? null);
-          const cls = ['bp-cal-day'];
-          if (past) cls.push('bp-past');
-          else if (weekend || d?.status === 'unavailable') cls.push('bp-unavail');
-          else if (d?.status === 'partial') cls.push('bp-partial');
-          if (d?.mine) cls.push('bp-mine');
-          if (isToday) cls.push('bp-today');
-          if (holiday) cls.push('bp-cal-holiday');
-          const pos = rangePosition(value, date, shape);
-          if (pos !== 'none') cls.push('bp-sel', `bp-sel-${pos === 'middle' ? 'mid' : pos}`);
-          const notes = [
-            isToday ? 'today' : null,
-            past ? 'past' : weekend ? 'weekdays only' : (d?.status ?? null),
-            // Only the server's reason is additive; the client's two already read as the note above.
-            past || weekend ? null : (d?.reason ?? null),
-            d?.mine ? 'your booking' : null,
-            holiday,
-          ].filter(Boolean);
-          return (
-            <button
-              type="button"
-              key={i}
-              className={cls.join(' ')}
-              disabled={gridBusy || past || weekend || d?.status === 'unavailable'}
-              title={[holiday, reason].filter(Boolean).join(' — ') || undefined}
-              aria-label={[date, ...notes].join(', ')}
-              onClick={() => pick(date, d)}
-            >
-              {Number(date.slice(-2))}
-              {d?.status === 'partial' && d.max != null ? (
-                <small>
-                  {d.used}/{d.max}
-                </small>
-              ) : null}
-            </button>
-          );
-        })}
+        {rows.map((row, r) => (
+          // display:contents — the row exists for the accessibility tree; the 7-column grid
+          // layout is unchanged, and with it the reserved six-row height.
+          <div className="bp-cal-row" role="row" key={r}>
+            {row.map((date, i) => {
+              if (!date) return <span key={i} className="bp-cal-empty" role="gridcell" />;
+              const d = days.get(date);
+              const past = !!(today && date < today);
+              const weekend = !!weekdaysOnly && isWeekend(date);
+              const isToday = !!today && date === today;
+              const holiday = holidays.get(date) ?? null;
+              const blocked = past || weekend || d?.status === 'unavailable';
+              // Why this day can't be picked, in the customer's words. The server owns every
+              // reason it knows (capacity, blocked, outside the booking window); the two the
+              // client alone can see — a past day and a weekday-only weekend — are named here.
+              const reason = past
+                ? 'Already past'
+                : weekend
+                  ? 'Weekdays only'
+                  : (d?.reason ?? null);
+              const cls = ['bp-cal-day'];
+              if (past) cls.push('bp-past');
+              else if (weekend || d?.status === 'unavailable') cls.push('bp-unavail');
+              else if (d?.status === 'partial') cls.push('bp-partial');
+              if (d?.mine) cls.push('bp-mine');
+              if (isToday) cls.push('bp-today');
+              if (holiday) cls.push('bp-cal-holiday');
+              const pos = rangePosition(bandValue, date, shape);
+              if (pos !== 'none') {
+                cls.push('bp-sel', `bp-sel-${pos === 'middle' ? 'mid' : pos}`);
+                // Everything past the committed start is a PREVIEW while a second tap is
+                // pending — tinted, not solid, so "chosen" and "considering" never look alike.
+                if (candidateEnd && date > value.start!) cls.push('bp-prov');
+              }
+              const notes = [
+                isToday ? 'today' : null,
+                past ? 'past' : weekend ? 'weekdays only' : (d?.status ?? null),
+                // Only the server's reason is additive; the client's two already read as above.
+                past || weekend ? null : (d?.reason ?? null),
+                d?.mine ? 'your booking' : null,
+                holiday,
+              ].filter(Boolean);
+              return (
+                <button
+                  type="button"
+                  key={i}
+                  role="gridcell"
+                  data-date={date}
+                  className={cls.join(' ')}
+                  // aria-disabled, not disabled: a `disabled` button drops out of the focus
+                  // order, and the whole point of the roving grid is that a customer can arrow
+                  // ONTO a struck-out day and hear why it's struck out. `pick` no-ops anyway.
+                  aria-disabled={gridBusy || blocked || undefined}
+                  tabIndex={date === anchor ? 0 : -1}
+                  title={[holiday, reason].filter(Boolean).join(' — ') || undefined}
+                  aria-label={[date, ...notes].join(', ')}
+                  onClick={() => pick(date)}
+                  onFocus={() => setFocusDate(date)}
+                  // Only while a second tap is pending — otherwise every mouse move across the
+                  // grid would be a state update with nothing to show for it.
+                  onMouseEnter={() => {
+                    if (awaitingEnd) setHoverDate(date);
+                  }}
+                >
+                  {Number(date.slice(-2))}
+                  {d?.status === 'partial' && d.max != null ? (
+                    <small>
+                      {d.used}/{d.max}
+                    </small>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
+      {/* Always rendered with a reserved height (see widget.css) — a line that appears and
+          disappears as the customer hovers days would bounce the host page's iframe on every
+          mouse move. Whatever it says, it occupies the same space. */}
+      <p
+        className={`bp-cal-note${verdict && !verdict.ok ? ' bp-cal-note-bad' : ''}`}
+        role="status"
+        aria-live="polite"
+      >
+        {note}
+      </p>
       {(() => {
         // Built from the RETAINED response, not the loading-gated `days`: gating it here emptied
         // the legend mid-fetch, unmounting the whole <ul> and then remounting it — a shrink-then-

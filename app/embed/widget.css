@@ -167,8 +167,7 @@ body {
 
 /* ── Buttons ───────────────────────────────────────────────────── */
 .bp-book button,
-.bp-identify button,
-.bp-summary button {
+.bp-identify button {
   background: var(--bp-accent);
   color: #fff;
   border: none;
@@ -184,8 +183,7 @@ body {
 }
 
 .bp-book button:hover,
-.bp-identify button:hover,
-.bp-summary button:hover {
+.bp-identify button:hover {
   filter: brightness(0.93);
 }
 
@@ -320,6 +318,14 @@ body {
   row-gap: 3px;
 }
 
+/* The grid is role="grid" > role="row" > role="gridcell" so arrow keys can walk a month instead
+   of Tab visiting 30+ stops. `display: contents` keeps the rows out of the LAYOUT entirely — the
+   cells stay direct items of the 7-column grid above, so the reserved six-row height (and the
+   connected range band, which needs adjacent cells with no gap) is exactly as it was. */
+.bp-cal-row {
+  display: contents;
+}
+
 .bp-cal-weekday {
   text-align: center;
   font-size: 0.72rem;
@@ -359,9 +365,16 @@ body {
   opacity: 0.75;
 }
 
-.bp-book .bp-cal-day:hover:not(:disabled) {
+.bp-book .bp-cal-day:hover:not([aria-disabled='true']) {
   background: var(--bp-sage-wash);
   filter: none;
+}
+
+/* Unpickable days carry aria-disabled, not `disabled`: a disabled button is not focusable, and
+   the roving-tabindex grid exists precisely so a customer can arrow ONTO a struck-out day and
+   hear why. The pointer treatment `:disabled` used to supply comes from here instead. */
+.bp-book .bp-cal-day[aria-disabled='true'] {
+  cursor: default;
 }
 
 .bp-book .bp-cal-day.bp-past {
@@ -468,11 +481,11 @@ body {
   color: var(--bp-ink);
 }
 
-.bp-book .bp-cal-day.bp-sel:hover:not(:disabled) {
+.bp-book .bp-cal-day.bp-sel:hover:not([aria-disabled='true']) {
   background: var(--bp-accent);
 }
 
-.bp-book .bp-cal-day.bp-sel-mid:hover:not(:disabled) {
+.bp-book .bp-cal-day.bp-sel-mid:hover:not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--bp-accent) 30%, var(--bp-card));
 }
 
@@ -512,6 +525,37 @@ body {
   background: color-mix(in srgb, var(--bp-ink) 25%, transparent);
 }
 
+/* The provisional half of a range: everything past the committed first day while the customer is
+   still choosing the second. Tinted rather than solid so "chosen" and "considering" never look
+   alike, and deliberately re-asserting the unavailable treatment (3 classes, so it wins over
+   .bp-sel's flat background and text-decoration: none) — a struck-out day inside a preview band
+   must still read as struck out. */
+.bp-book .bp-cal-day.bp-prov {
+  background: color-mix(in srgb, var(--bp-accent) 20%, var(--bp-card));
+  color: var(--bp-ink);
+}
+
+.bp-book .bp-cal-day.bp-prov.bp-unavail {
+  background: color-mix(in srgb, var(--bp-bad) 12%, #fff);
+  color: var(--bp-bad);
+  text-decoration: line-through;
+}
+
+/* The range verdict / next-opening hint. ALWAYS rendered with two lines reserved: it changes on
+   every hover while a second tap is pending, and an appearing-and-disappearing line would post a
+   new scrollHeight to the host page on every mouse move. */
+.bp-cal-note {
+  min-height: 2.5em;
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  color: var(--bp-soft);
+}
+
+.bp-cal-note-bad {
+  color: var(--bp-bad);
+}
+
 .bp-lg-unavail::before {
   width: 6px;
   height: 6px;
@@ -519,12 +563,70 @@ body {
   border: 1px solid var(--bp-bad);
 }
 
-/* ── Details (pets + duration + summary) ───────────────────────── */
+/* ── Details (pets + duration + the action row) ────────────────── */
 .bp-details {
   display: flex;
   flex-direction: column;
   gap: 14px;
   margin-top: 6px;
+}
+
+/* Everyone is coming by default, so the roster is collapsed to one line: who's on the booking,
+   tappable to change it. Styled as a quiet row rather than a filled button — it is a disclosure,
+   not the page's action. */
+.bp-book .bp-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bp-card);
+  border: 1px solid var(--bp-line);
+  border-radius: 10px;
+  color: var(--bp-body);
+  font-family: var(--bp-sans);
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.bp-book .bp-disclosure:hover {
+  filter: none;
+  border-color: var(--bp-sage);
+}
+
+.bp-disclosure-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--bp-soft);
+  flex: 0 0 auto;
+}
+
+.bp-disclosure-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bp-ink);
+  font-weight: 600;
+}
+
+.bp-disclosure-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--bp-soft);
+  transition: transform 0.12s ease;
+}
+
+.bp-disclosure-chevron.bp-open {
+  transform: rotate(180deg);
+}
+
+.bp-pets-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .bp-pets,
@@ -631,41 +733,32 @@ body {
   margin: 0;
 }
 
-/* ── Booking summary ───────────────────────────────────────────── */
-.bp-summary {
+/* ── The one primary action, and its quote ─────────────────────── */
+.bp-actions {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: var(--bp-ok-wash);
-  border: 1px solid color-mix(in srgb, var(--bp-ok) 25%, transparent);
-  border-radius: 12px;
-  padding: 14px 16px;
+  align-items: center;
+  /* nowrap, deliberately: a quote that wrapped under the button on a narrow host page would
+     change the widget's height the moment a price landed. */
+  flex-wrap: nowrap;
+  gap: 12px;
 }
 
-.bp-summary-dates {
+.bp-book .bp-primary {
+  flex: 0 0 auto;
+}
+
+/* Reserved line: "Checking…", then "5 nights · $250". Never blank-then-tall. */
+.bp-quote {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 1.4em;
   margin: 0;
-  font-size: 0.88rem;
+  text-align: right;
+  font-size: 0.9rem;
   color: var(--bp-soft);
 }
 
-.bp-summary-policy {
-  margin: 0;
-  font-size: 0.88rem;
-  color: var(--bp-soft);
-}
-
-.bp-summary-holiday {
-  margin: 2px 0 0;
-  font-size: 0.85em;
-  opacity: 0.85;
-}
-
-.bp-summary-cost {
-  margin: 0 0 8px;
-  color: var(--bp-body);
-}
-
-.bp-summary-cost strong {
+.bp-quote strong {
   font-family: var(--bp-display);
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -673,15 +766,32 @@ body {
   color: var(--bp-ink);
 }
 
-.bp-result.bp-no {
-  border-radius: 12px;
-  padding: 12px 16px;
-  background: var(--bp-bad-wash);
-  border: 1px solid color-mix(in srgb, var(--bp-bad) 22%, transparent);
+.bp-below-action {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.bp-result.bp-no p {
+/* Holiday units and the cancellation policy — both are money context, both are short. */
+.bp-fineprint {
+  min-height: 1.3em;
   margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: var(--bp-soft);
+}
+
+/* Every refusal the customer can hit, in one reserved slot OUTSIDE the pets disclosure so a
+   collapsed section can never hide one. */
+.bp-note {
+  min-height: 2.4em;
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.2;
+  color: var(--bp-soft);
+}
+
+.bp-note-bad {
   color: var(--bp-bad);
 }
 
