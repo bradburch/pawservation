@@ -34,7 +34,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, DisabledAt';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -1290,12 +1290,17 @@ export async function updateTenantSettings(
     contactPhone?: string | null;
     /** Booking horizon in months (0004); null = no limit. */
     maxAdvanceMonths?: number | null;
+    /** House-sit/boarding tail-end overlap allowance in days (0006); null = no limit. REQUIRED,
+     *  unlike the older optional fields above: this UPDATE overwrites the column unconditionally,
+     *  so an omitted value would silently turn a tenant's rule OFF. Callers must state it. */
+    housesitBoardingOverlapDays: number | null;
   },
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, Timezone = ?,
-         ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ? WHERE Id = ?`,
+         ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ?,
+         HousesitBoardingOverlapDays = ? WHERE Id = ?`,
     )
     .bind(
       settings.displayName,
@@ -1304,6 +1309,7 @@ export async function updateTenantSettings(
       settings.contactEmail ?? null,
       settings.contactPhone ?? null,
       settings.maxAdvanceMonths ?? null,
+      settings.housesitBoardingOverlapDays,
       tenantId,
     )
     .run();

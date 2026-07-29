@@ -43,6 +43,7 @@ async function setHorizon(env: Env, months: number | null): Promise<void> {
     contactEmail: t.ContactEmail,
     contactPhone: t.ContactPhone,
     maxAdvanceMonths: months,
+    housesitBoardingOverlapDays: t.HousesitBoardingOverlapDays,
   });
 }
 

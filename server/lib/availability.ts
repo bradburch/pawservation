@@ -10,7 +10,7 @@ import {
   getPacificDateStr,
   mixFromPetTypes,
   nightsBetween,
-  rangeHasConflict,
+  rangeConflictReason,
   resolvePetSetRate,
   walkHasConflict,
   type CapacityEvent,
@@ -19,6 +19,7 @@ import {
   type MixRate,
   type PoolKind,
   type PricedPet,
+  type RangeConflict,
 } from '../../src/shared/index.js';
 import {
   listCapacityRows,
@@ -101,7 +102,18 @@ export type AvailabilityResult =
       groupKey: string;
       mixKey: string;
     }
-  | { available: false; reason: string };
+  | {
+      available: false;
+      /** Customer-facing "why not", rendered verbatim by the widget (`BookTab`'s quoteRefusal). */
+      reason: string;
+      /**
+       * A stable snake_case identifier for the refusal, present ONLY where the generic
+       * "those dates just filled up" would misdescribe it — today just the house-sit/boarding
+       * overlap rule, whose dates are NOT full. The booking POST forwards it (and this `reason`)
+       * as its `{ error, code }`, so an agent gets the same distinction a person does.
+       */
+      code?: string;
+    };
 
 /**
  * The result of pricing a booking. `priced: false` carries NO cost — the failure cannot be
@@ -325,6 +337,29 @@ export async function loadPetSetRates(
   };
 }
 
+/**
+ * Turn the engine's refusal into the customer's answer. The cross-kind overlap rule gets its own
+ * sentence and its own `code` because "those dates are not available" is simply untrue of it — the
+ * dates have room; the SITTER does not, and a customer told the truth can move by one day instead
+ * of giving up. Every other refusal keeps the pre-existing generic wording verbatim.
+ */
+function rangeRefusal(
+  conflict: RangeConflict,
+  kind: PoolKind,
+): { available: false; reason: string; code?: string } {
+  if (conflict !== 'cross_kind_overlap') {
+    return { available: false, reason: 'Those dates are not available.' };
+  }
+  return {
+    available: false,
+    reason:
+      kind === 'housesit'
+        ? 'Your sitter has boarding on those dates — a house sit can only overlap it on the first or last day of the stay.'
+        : 'Your sitter is house-sitting on those dates — a boarding can only overlap it on the first or last day of the stay.',
+    code: 'overlap_not_allowed',
+  };
+}
+
 async function checkRange(
   env: Env,
   tenant: Tenant,
@@ -344,6 +379,11 @@ async function checkRange(
     kind: service.CapacityKind === 'housesit' ? 'housesit' : 'boarding',
     cap: service.MaxConcurrentPets,
     petCount,
+    // The tenant's own tail-end allowance (0006). Read HERE, from the tenant row, because the
+    // engine is pure and must never learn what a database is — and because this one call site is
+    // reached by all three enforcement paths (the quote, the demo POST check, the real POST
+    // check), which is what stops them disagreeing.
+    overlapAllowance: tenant.HousesitBoardingOverlapDays,
   };
   // The engine (rangeHasConflict) already rejects an over-cap request on its own. This fast path
   // is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the generic
@@ -367,9 +407,8 @@ async function checkRange(
     excludeBookingId,
   );
   const capacity = buildCapacity(rowsToCapacityEvents(rows));
-  if (rangeHasConflict(startDate, endDateExclusive, request, capacity)) {
-    return { available: false, reason: 'Those dates are not available.' };
-  }
+  const conflict = rangeConflictReason(startDate, endDateExclusive, request, capacity);
+  if (conflict !== null) return rangeRefusal(conflict, request.kind);
   // ONE call — estimateCost resolves the rate, prices, AND splits for holidays; the estCost and
   // the reported breakdown below come from this single result, so no site recomputes the formula.
   const price = estimateCost(service, option, startDate, endDateExclusive, pets, rates);

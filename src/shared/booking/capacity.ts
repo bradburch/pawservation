@@ -7,8 +7,11 @@ import { addDays, DATE_RE } from '../util/dates.js';
 // (MaxConcurrentPets, for boarding-kind AND housesit-kind); a `null` cap is UNLIMITED (auto
 // pass-through) and is never compared. A booking with three pets consumes three units. Other
 // services' occupancy is invisible to a request's cap check. Admin-blocked dates always block.
-// The house-sit/boarding ≤1-day overlap rule stays TENANT-WIDE (all boarding-kind services): it
-// models the sitter's physical absence, not a pool.
+// The house-sit/boarding overlap rule stays TENANT-WIDE (all boarding-kind services) and is
+// SYMMETRIC: it models the sitter's physical whereabouts, not a pool — she cannot sleep at a
+// client's house and keep a boarder at her own — so it governs a boarding laid over a house sit
+// exactly as it governs a house sit laid over boarding. Its allowance arrives on the request
+// (`overlapAllowance`, from Tenants.HousesitBoardingOverlapDays); this module reads no config.
 // Boundary (bookend) sharing: the start/end day of an existing booking may be
 // shared by a new booking's endpoint, EXCEPT for blocked events.
 
@@ -28,11 +31,28 @@ export type CapacityEvent = {
   petCount?: number;
 };
 
+/**
+ * One pool KIND's footprint on one day, tenant-wide (every service of that kind summed). Feeds the
+ * structural cross-kind overlap rule ONLY — per-service capacity is `byService`.
+ */
+export type KindOccupancy = {
+  /** Pets of this kind occupying the day. */
+  total: number;
+  /**
+   * How many events of this kind are MID-STAY here — this day is neither their first nor their
+   * last occupied day. A spanning day offers no handover: the sitter is committed to it end to
+   * end, so nothing of the opposite kind may share it however generous the allowance.
+   */
+  spanning: number;
+};
+
 export type DayCapacity = {
   /** Occupancy per service, in PETS (boarding-kind and housesit-kind alike). */
   byService: Map<string, number>;
-  /** ALL boarding-kind pets on this day — drives the structural house-sit rule only. */
-  boardingTotal: number;
+  /** ALL boarding-kind pets on this day — drives the structural cross-kind rule only. */
+  boarding: KindOccupancy;
+  /** ALL housesit-kind pets on this day — the mirror of `boarding`, same rule, other direction. */
+  housesit: KindOccupancy;
   blocked: number;
   isBoundary: boolean;
 };
@@ -45,11 +65,20 @@ export type CapacityRequest = {
   cap: number | null;
   /** Pets in this request; default 1. */
   petCount?: number;
+  /**
+   * `Tenants.HousesitBoardingOverlapDays` — how many days this request may overlap OPPOSITE-kind
+   * occupancy, counted only at the tail ends (see `rangeConflictReason`). 0 = never; 1 = the
+   * product default; NULL = no limit, the rule stops running. REQUIRED on purpose: a defaulted
+   * field is how the quote and the booking POST would silently disagree, so every construction
+   * site must name the tenant's value.
+   */
+  overlapAllowance: number | null;
 };
 
 const emptyDay = (): DayCapacity => ({
   byService: new Map(),
-  boardingTotal: 0,
+  boarding: { total: 0, spanning: 0 },
+  housesit: { total: 0, spanning: 0 },
   blocked: 0,
   isBoundary: false,
 });
@@ -81,6 +110,11 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
       getOrCreate(end).isBoundary = true;
     }
 
+    // The last day this event OCCUPIES (end is exclusive). Everything strictly between `start` and
+    // it is a spanning day — see KindOccupancy.spanning. A single-occupied-day event is its own
+    // first and last day, so it spans nothing.
+    const lastOccupied = addDays(end, -1);
+
     for (let d = start; d < end; d = addDays(d, 1)) {
       const day = getOrCreate(d);
       if (event.kind === 'blocked') {
@@ -90,7 +124,9 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
       const units = unitsOf(event.petCount);
       const key = event.serviceType ?? '';
       day.byService.set(key, (day.byService.get(key) ?? 0) + units);
-      if (event.kind === 'boarding') day.boardingTotal += units;
+      const occupancy = event.kind === 'boarding' ? day.boarding : day.housesit;
+      occupancy.total += units;
+      if (d !== start && d !== lastOccupied) occupancy.spanning += 1;
     }
   }
 
@@ -110,35 +146,67 @@ export function dayBlocksRequest(day: DayCapacity, request: CapacityRequest): bo
   return (day.byService.get(request.serviceType) ?? 0) + units > request.cap;
 }
 
+/**
+ * Why a range was refused, or `null` when it was not. `rangeHasConflict` is the boolean view of
+ * this exact walk — one implementation, so a caller that wants to TELL the customer why can never
+ * disagree with the caller that only asks yes/no.
+ *
+ * - `over_cap` — more pets than the request's own service cap could ever seat.
+ * - `cross_kind_overlap` — the house-sit/boarding rule below.
+ * - `blocked_or_full` — an admin block, or the service's own pool with no room.
+ */
+export type RangeConflict = 'over_cap' | 'cross_kind_overlap' | 'blocked_or_full';
+
 export function rangeHasConflict(
   startDate: string,
   endDateExclusive: string,
   request: CapacityRequest,
   capacityByDate: Map<string, DayCapacity>,
 ): boolean {
+  return rangeConflictReason(startDate, endDateExclusive, request, capacityByDate) !== null;
+}
+
+export function rangeConflictReason(
+  startDate: string,
+  endDateExclusive: string,
+  request: CapacityRequest,
+  capacityByDate: Map<string, DayCapacity>,
+): RangeConflict | null {
   const requestEnd = addDays(endDateExclusive, -1); // last occupied night
   const units = unitsOf(request.petCount);
-  let houseSitBoardingOverlapDays = 0;
+  let overlapDays = 0;
 
   // A request for more units than its own cap can NEVER fit — not even on an empty calendar,
   // where the day-by-day walk below has nothing to inspect. Enforcing it here keeps the engine
   // correct standalone (the single source of truth), so callers need no separate isolation check.
-  if (request.cap !== null && units > request.cap) return true;
+  if (request.cap !== null && units > request.cap) return 'over_cap';
 
   for (let date = startDate; date < endDateExclusive; date = addDays(date, 1)) {
     const day = capacityByDate.get(date);
     if (!day) continue;
 
-    // Structural rule (TENANT-WIDE): a house-sit may overlap existing boarding — on ANY
-    // boarding-kind service — by at most one day. Models the sitter's absence, not a pool.
-    if (request.kind === 'housesit' && day.boardingTotal > 0) {
-      houseSitBoardingOverlapDays += 1;
-      if (houseSitBoardingOverlapDays > 1) return true;
+    const isRequestEndpoint = date === startDate || date === requestEnd;
+
+    // Structural rule (TENANT-WIDE, SYMMETRIC): a house sit and boarding may share a day only at
+    // the TAIL ENDS, because the sitter cannot be in two places — this models her whereabouts, not
+    // a pool, so it reads occupancy from ANY service of the opposite kind. `overlapAllowance` is
+    // the tenant's own number (null = the rule is off entirely). A shared day is legal only when
+    // ALL THREE hold: the running count is within the allowance; the day is an endpoint of THIS
+    // request; and no opposite-kind booking is mid-stay on it. The third is what refuses a
+    // one-night boarding dropped inside a ten-day house sit — a stay with a single occupied day is
+    // trivially "at its own endpoint", and without the existing booking's side of the handover
+    // the allowance would legalise exactly the double-booking it exists to prevent.
+    if (request.overlapAllowance !== null) {
+      const opposite = request.kind === 'housesit' ? day.boarding : day.housesit;
+      if (opposite.total > 0) {
+        overlapDays += 1;
+        if (overlapDays > request.overlapAllowance) return 'cross_kind_overlap';
+        if (!isRequestEndpoint || opposite.spanning > 0) return 'cross_kind_overlap';
+      }
     }
 
     if (!dayBlocksRequest(day, request)) continue;
 
-    const isRequestEndpoint = date === startDate || date === requestEnd;
     if (isRequestEndpoint && day.isBoundary) continue;
 
     // Soft bookend: an unavailable (non-blocked) endpoint is allowed when the next day has
@@ -148,10 +216,10 @@ export function rangeHasConflict(
       if (!next || !dayBlocksRequest(next, request)) continue;
     }
 
-    return true;
+    return 'blocked_or_full';
   }
 
-  return false;
+  return null;
 }
 
 /** Walks/check-ins only conflict with fully-blocked days. */

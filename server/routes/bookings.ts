@@ -95,6 +95,20 @@ function feeToCancelToday(
   return cancellationFee(tiers, estCost, startDate, today);
 }
 
+/**
+ * The 409 body for a capacity refusal, in ONE place so the demo path and the real path answer
+ * identically. `capacity_conflict` + "those dates just filled up" stays the default because it is
+ * true of a full pool and every reader (widget, tests, agents) already knows it. A refusal the
+ * availability layer labelled — today only the house-sit/boarding overlap rule, whose dates are
+ * NOT full — forwards its own `code` and its own sentence instead of being flattened into a
+ * misleading one.
+ */
+function conflictBody(check: { reason: string; code?: string }): { error: string; code: string } {
+  return check.code
+    ? { error: check.reason, code: check.code }
+    : { error: 'Sorry — those dates just filled up.', code: 'capacity_conflict' };
+}
+
 export const bookingRoutes = new Hono<AppEnv>()
   // Scoped tightly to the booking paths so the merged middleware never guards public routes.
   .use('/:slug/me', endUserAuth)
@@ -529,11 +543,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         rates,
         'demo-excludes-no-row',
       );
-      if (!demoCheck.available)
-        return c.json(
-          { error: 'Sorry — those dates just filled up.', code: 'capacity_conflict' },
-          409,
-        );
+      if (!demoCheck.available) return c.json(conflictBody(demoCheck), 409);
       return c.json(
         {
           id: `demo_${crypto.randomUUID()}`,
@@ -594,10 +604,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       );
       if (!check.available) {
         await deleteBookingRequest(c.env.PAWBOOK_DB, tenant.Id, id);
-        return c.json(
-          { error: 'Sorry — those dates just filled up.', code: 'capacity_conflict' },
-          409,
-        );
+        return c.json(conflictBody(check), 409);
       }
       await addBookingPets(c.env.PAWBOOK_DB, tenant.Id, id, petIds);
     } catch (err) {

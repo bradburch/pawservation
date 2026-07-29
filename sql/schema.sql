@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- months from today (tenant timezone, day-clamped). NULL = no limit. One value for the whole
   -- business — the per-service knob is TenantServices.MinLeadDays.
   MaxAdvanceMonths INTEGER,
+  -- How many days a request may overlap OPPOSITE-kind occupancy — a house sit over boarding or
+  -- boarding over a house sit (0006). Tenant-wide because it models the sitter's own whereabouts,
+  -- not a pool. An overlapping day only ever counts at the TAIL ENDS (an endpoint of the requested
+  -- range AND a tail day of the existing booking). 0 = never; 1 = the default tail touch; 2 = one
+  -- at each end; NULL = no limit. Values above 2 are unreachable (a range has two endpoints).
+  HousesitBoardingOverlapDays INTEGER DEFAULT 1,
   -- NULL = active; timestamp = disabled by the owner (widget dark + admin read-only).
   DisabledAt TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))

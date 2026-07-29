@@ -61,6 +61,14 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   with today's refuse-an-unpriced-set behaviour, so applying it moves no price. Must be applied to
   the remote DB **before** the branch merges — the new worker's `listServices` SELECT and
   `setServiceConfig` UPDATE both name the column.
+- **`0006_overlap_days.sql`** (`housesit-boarding-overlap`) — adds
+  `Tenants.HousesitBoardingOverlapDays` (nullable, `DEFAULT 1`), the tenant-wide house-sit/boarding
+  overlap allowance: 0 = never overlap, 1 = the default one tail-touch day, 2 = one at each end of
+  a stay, NULL = no limit. Additive only (one `ALTER TABLE … ADD COLUMN`), and SQLite stamps every
+  existing row with the DEFAULT 1 — the intent the previously hardcoded rule already had — so no
+  backfill statement is needed. **Not yet applied** to the remote DB and **not yet merged**; must
+  be applied to the remote DB **before** the branch merges — the new worker's `TENANT_COLS` SELECT
+  and `updateTenantSettings` UPDATE both name the column.
 
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long

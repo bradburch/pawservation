@@ -29,12 +29,15 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  rangeConflictReason,
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
   type DayCapacity,
+  type KindOccupancy,
   type PoolKind,
+  type RangeConflict,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
 export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';

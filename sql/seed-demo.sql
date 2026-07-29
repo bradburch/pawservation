@@ -65,6 +65,13 @@
 UPDATE Tenants SET MaxAdvanceMonths = 12 WHERE Id IN ('tnt_sunnypaws', 'tnt_pawsandrelax');
 UPDATE Tenants SET MaxAdvanceMonths = 6 WHERE Id = 'tnt_happytails';
 
+-- THE HOUSE-SIT / BOARDING OVERLAP ALLOWANCE (0006). The schema DEFAULT is 1 — one shared day, and
+-- only where a stay's own first or last day meets the tail of an existing booking — which is what
+-- Sunny Paws and Happy Tails keep. Paws & Relax runs boarding and house sitting side by side and
+-- takes the strict line: no double-booking herself at all, not even for a handover. Same reason
+-- the horizon above is not one value three times — a knob shown at a single setting is not shown.
+UPDATE Tenants SET HousesitBoardingOverlapDays = 0 WHERE Id = 'tnt_pawsandrelax';
+
 -- PET-SET PRICING MODE (0005). sql/seed.sql's services predate PetRateMode and default to
 -- 'exact' — refuse a priced quote for any 2+-pet set with no stored group/mix rate. That is the
 -- right behaviour for a legacy row, and it is also what `POST /:slug/admin/services` STOPPED

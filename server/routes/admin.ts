@@ -122,6 +122,8 @@ import {
   isValidRate,
   isValidTimeString,
   MAX_ADVANCE_MONTHS_CAP,
+  MAX_OVERLAP_DAYS_CAP,
+  isValidOverlapDays,
   MAX_LEAD_DAYS_CAP,
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
@@ -509,6 +511,10 @@ type SettingsBody = {
   contactPhone?: string | null;
   /** Booking horizon in months, profile-level (0004); null = no limit. PATCH: absent = keep. */
   maxAdvanceMonths?: number | null;
+  /** House-sit/boarding tail-end overlap allowance in days (0006); null = no limit. Same PATCH
+   *  semantics — and 0 is a MEANINGFUL value here ("never overlap"), which is why `patchNullable`
+   *  keys off `in`, not falsiness. */
+  housesitBoardingOverlapDays?: number | null;
   services?: ServiceBody[];
 };
 
@@ -519,7 +525,12 @@ type SettingsBody = {
  */
 function patchNullable<T extends number | string>(
   body: SettingsBody,
-  key: 'timezone' | 'contactEmail' | 'contactPhone' | 'maxAdvanceMonths',
+  key:
+    | 'timezone'
+    | 'contactEmail'
+    | 'contactPhone'
+    | 'maxAdvanceMonths'
+    | 'housesitBoardingOverlapDays',
   current: T | null,
 ): T | null {
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
@@ -571,6 +582,7 @@ export const adminRoutes = new Hono<AppEnv>()
       contactEmail: tenant.ContactEmail,
       contactPhone: tenant.ContactPhone,
       maxAdvanceMonths: tenant.MaxAdvanceMonths,
+      housesitBoardingOverlapDays: tenant.HousesitBoardingOverlapDays,
       // The signed-in sitter's own login email — never a client-settable field; the setup wizard
       // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
       adminEmail,
@@ -652,6 +664,18 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json(
         {
           error: `Booking horizon must be between 1 and ${MAX_ADVANCE_MONTHS_CAP} months, or blank for no limit.`,
+        },
+        400,
+      );
+    const housesitBoardingOverlapDays = patchNullable<number>(
+      body,
+      'housesitBoardingOverlapDays',
+      tenant.HousesitBoardingOverlapDays,
+    );
+    if (!isValidOverlapDays(housesitBoardingOverlapDays))
+      return c.json(
+        {
+          error: `House sitting and boarding may overlap by 0 to ${MAX_OVERLAP_DAYS_CAP} days, or leave it blank for no limit.`,
         },
         400,
       );
@@ -867,6 +891,7 @@ export const adminRoutes = new Hono<AppEnv>()
       contactEmail,
       contactPhone,
       maxAdvanceMonths,
+      housesitBoardingOverlapDays,
     });
     for (const svc of services) {
       const svcType = svc.type as string;

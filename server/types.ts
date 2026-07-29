@@ -23,6 +23,11 @@ export type Tenant = {
   /** Booking horizon in calendar months (0004): a request may not START further out than this.
    *  null = no limit. Profile-level — one value for the whole business. */
   MaxAdvanceMonths: number | null;
+  /** How many days a request may overlap OPPOSITE-kind occupancy — a house sit over boarding or
+   *  boarding over a house sit (0006) — counted only at the tail ends. 0 = never; 1 = the default
+   *  tail touch; 2 = one at each end; null = no limit. Tenant-wide: the sitter's whereabouts, not
+   *  a pool. Fed to the engine as `CapacityRequest.overlapAllowance`. */
+  HousesitBoardingOverlapDays: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
 };
 

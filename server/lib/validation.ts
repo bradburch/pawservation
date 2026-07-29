@@ -50,6 +50,25 @@ export const MAX_LEAD_DAYS_CAP = 90;
 /** Sanity rail for Tenants.MaxAdvanceMonths: 1..24 months of booking horizon. */
 export const MAX_ADVANCE_MONTHS_CAP = 24;
 
+/**
+ * Business cap for Tenants.HousesitBoardingOverlapDays (0006). TWO, not a rail: an overlapping day
+ * only ever counts when it is an ENDPOINT of the requested range, and a range has exactly two of
+ * those, so 3 and 300 would behave identically to 2. Refusing them keeps the stored number honest
+ * about what it buys instead of implying interior overlap can be unlocked with a bigger figure.
+ */
+export const MAX_OVERLAP_DAYS_CAP = 2;
+
+/** True for the overlap allowance's accepted domain: null (= no limit) or a whole 0..2. */
+export function isValidOverlapDays(value: unknown): value is number | null {
+  return (
+    value === null ||
+    (typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= 0 &&
+      value <= MAX_OVERLAP_DAYS_CAP)
+  );
+}
+
 /** True for a whole number in [1, DEFENSIVE_MAX_PET_COUNT]. */
 export function isValidPetCount(value: unknown): value is number {
   return (

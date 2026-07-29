@@ -65,8 +65,8 @@ const MONTHS = [
  *
  * It is an OPTIMISTIC HINT, never a guarantee, and is worded that way. Per-day status is
  * necessary but not sufficient for a range service: `rangeHasConflict` has bookend / soft-bookend
- * sharing and the house-sit-over-boarding one-day rule (CALENDAR_LOGIC.md §3), none of which any
- * per-day paint can express — so a span of green days can still be refused, and an endpoint on a
+ * sharing and the tail-ends-only house-sit/boarding overlap rule (CALENDAR_LOGIC.md §3) — a
+ * property of a RANGE, not of a day — none of which any per-day paint can express — so a span of green days can still be refused, and an endpoint on a
  * full day is *more* permissive than the paint suggests. The server remains the authority.
  */
 type RangeVerdict = { ok: true } | { ok: false; date: string; reason: string | null } | null;

@@ -29,6 +29,7 @@ const req = (over: Partial<CapacityRequest> = {}): CapacityRequest => ({
   kind: 'boarding',
   cap: null,
   petCount: 1,
+  overlapAllowance: 1, // the product default (Tenants.HousesitBoardingOverlapDays)
   ...over,
 });
 
@@ -69,11 +70,17 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
 
   it('two housesit-kind services keep independent pools', () => {
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04', 'housesitting')]);
-    const sameService: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: 1 };
+    const sameService: CapacityRequest = {
+      serviceType: 'housesitting',
+      kind: 'housesit',
+      cap: 1,
+      overlapAllowance: 1,
+    };
     const otherService: CapacityRequest = {
       serviceType: 'overnight-sit',
       kind: 'housesit',
       cap: 1,
+      overlapAllowance: 1,
     };
     expect(rangeHasConflict('2028-09-02', '2028-09-03', sameService, cap)).toBe(true);
     expect(rangeHasConflict('2028-09-02', '2028-09-03', otherService, cap)).toBe(false);
@@ -101,18 +108,33 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
 
   it('house-sit cap counts only its own service; unlimited lets them stack', () => {
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04')]);
-    const oneSit: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: 1 };
-    const noCap: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: null };
+    const oneSit: CapacityRequest = {
+      serviceType: 'housesitting',
+      kind: 'housesit',
+      cap: 1,
+      overlapAllowance: 1,
+    };
+    const noCap: CapacityRequest = {
+      serviceType: 'housesitting',
+      kind: 'housesit',
+      cap: null,
+      overlapAllowance: 1,
+    };
     expect(rangeHasConflict('2028-09-02', '2028-09-03', oneSit, cap)).toBe(true);
     expect(rangeHasConflict('2028-09-02', '2028-09-03', noCap, cap)).toBe(false);
   });
 
-  it('the structural house-sit rule stays TENANT-WIDE: boardingTotal from ANY boarding-kind service', () => {
+  it('the structural house-sit rule stays TENANT-WIDE: day.boarding.total from ANY boarding-kind service', () => {
     // The boarding occupancy lives on a DIFFERENT boarding-kind service ('kitty-condo') than the
-    // house-sit request could ever share a pool with — the ≤1-day overlap must still fire, because
+    // house-sit request could ever share a pool with — the overlap rule must still fire, because
     // it models the sitter's physical absence, not a pool.
     const cap = buildCapacity([boarding('2028-09-01', '2028-09-10', 'kitty-condo', 1)]);
-    const sit: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: null };
+    const sit: CapacityRequest = {
+      serviceType: 'housesitting',
+      kind: 'housesit',
+      cap: null,
+      overlapAllowance: 1,
+    };
     expect(rangeHasConflict('2028-09-02', '2028-09-04', sit, cap)).toBe(true); // overlaps 2 days
     expect(rangeHasConflict('2028-09-01', '2028-09-02', sit, cap)).toBe(false); // exactly 1 day
   });
@@ -124,6 +146,7 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
       kind: 'housesit',
       cap: null,
       petCount: 1,
+      overlapAllowance: 1,
       ...over,
     });
     // cap 3 is exactly filled by the existing 3-pet sit → one more pet blocks.
@@ -140,7 +163,12 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     const capNull = buildCapacity([
       houseSit('2028-09-01', '2028-09-04', 'housesitting', undefined),
     ]);
-    const sit: CapacityRequest = { serviceType: 'housesitting', kind: 'housesit', cap: 1 };
+    const sit: CapacityRequest = {
+      serviceType: 'housesitting',
+      kind: 'housesit',
+      cap: 1,
+      overlapAllowance: 1,
+    };
     // 1 existing pet (defaulted) fills cap 1 → a second 1-pet request blocks.
     expect(rangeHasConflict('2028-09-02', '2028-09-03', sit, capNull)).toBe(true);
 
@@ -156,6 +184,22 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     expect(rangeHasConflict('2028-10-02', '2028-10-03', sit, capZero)).toBe(true);
   });
 
+  it('cross-kind rule ignores SAME-kind occupancy entirely (only the pool cap applies)', () => {
+    // Two boardings on the same days is a pure capacity question — the whereabouts rule has
+    // nothing to say about it, at any allowance.
+    const cap = buildCapacity([boarding('2028-09-01', '2028-09-10', 'boarding', 1)]);
+    for (const allowance of [0, 1, 2, null]) {
+      expect(
+        rangeHasConflict(
+          '2028-09-02',
+          '2028-09-08',
+          req({ cap: null, overlapAllowance: allowance }),
+          cap,
+        ),
+      ).toBe(false);
+    }
+  });
+
   it('house-sit over-cap is rejected on an EMPTY calendar (standalone guard, pets)', () => {
     const empty = buildCapacity([]);
     const sit: CapacityRequest = {
@@ -163,7 +207,157 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
       kind: 'housesit',
       cap: 2,
       petCount: 3,
+      overlapAllowance: 1,
     };
     expect(rangeHasConflict('2028-09-02', '2028-09-04', sit, empty)).toBe(true);
+  });
+});
+
+/**
+ * The house-sit/boarding overlap rule (0006), as a truth table — the design's §3, executable.
+ *
+ * The rule is TENANT-WIDE and SYMMETRIC: it models the sitter's own whereabouts (she cannot sleep
+ * at a client's house and keep a boarder at her own), so it reads OPPOSITE-kind occupancy whichever
+ * kind is asking. A shared day is legal only when all three hold: the running count is within
+ * `overlapAllowance`; the day is an ENDPOINT of the requested range; and no opposite-kind booking
+ * is mid-stay on it (the existing side of the handover). `null` = the rule does not run.
+ *
+ * Dates: end is EXCLUSIVE, so `Sep1 → Sep5` occupies Sep 1–4 and Sep 5 is an unoccupied checkout.
+ */
+describe('house-sit / boarding overlap allowance', () => {
+  const bdReq = (overlapAllowance: number | null): CapacityRequest => ({
+    serviceType: 'boarding',
+    kind: 'boarding',
+    cap: null,
+    petCount: 1,
+    overlapAllowance,
+  });
+  const hsReq = (overlapAllowance: number | null): CapacityRequest => ({
+    serviceType: 'housesitting',
+    kind: 'housesit',
+    cap: null,
+    petCount: 1,
+    overlapAllowance,
+  });
+  /** [allowance 0, 1, 2, null] verdicts for one (existing calendar, request) pair. */
+  const verdicts = (
+    events: CapacityEvent[],
+    start: string,
+    end: string,
+    request: (a: number | null) => CapacityRequest,
+  ): boolean[] => {
+    const cap = buildCapacity(events);
+    return [0, 1, 2, null].map((a) => rangeHasConflict(start, end, request(a), cap));
+  };
+
+  it('row 1 — a boarding that STARTS the day a house sit ends does not overlap at all', () => {
+    // The owner's own example. A checkout day carries no occupancy, so there is nothing to share:
+    // legal even at allowance 0.
+    expect(
+      verdicts([houseSit('2028-09-01', '2028-09-05')], '2028-09-05', '2028-09-08', bdReq),
+    ).toEqual([false, false, false, false]);
+  });
+
+  it('row 2 — boarding starting on the house sit’s LAST night: one tail-touch day', () => {
+    expect(
+      verdicts([houseSit('2028-09-01', '2028-09-05')], '2028-09-04', '2028-09-07', bdReq),
+    ).toEqual([true, false, false, false]);
+  });
+
+  it('row 3 — the same touch with the kinds swapped (house sit over boarding)', () => {
+    expect(
+      verdicts([boarding('2028-09-01', '2028-09-05')], '2028-09-04', '2028-09-08', hsReq),
+    ).toEqual([true, false, false, false]);
+  });
+
+  it('row 4 — the shared day may be the request’s LAST day, not just its first', () => {
+    // Existing boarding starts Sep 4; the requested house sit's last occupied day is Sep 4.
+    expect(
+      verdicts([boarding('2028-09-04', '2028-09-09')], '2028-09-01', '2028-09-05', hsReq),
+    ).toEqual([true, false, false, false]);
+  });
+
+  it('row 5 — two shared days, one of them mid-sit: refused even at allowance 2', () => {
+    // Sep 4 is interior to the house sit (Sep 1–5 occupied), Sep 5 is its last night. The count
+    // fits in 2, but Sep 4 has no handover on the existing side.
+    expect(
+      verdicts([houseSit('2028-09-01', '2028-09-06')], '2028-09-04', '2028-09-07', bdReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('row 6 — a ONE-NIGHT boarding wholly inside a house sit is refused', () => {
+    // The case the whole "endpoint of the EXISTING booking too" question turns on: a single-night
+    // stay is trivially "at its own endpoint", so only the existing side's mid-stay test refuses
+    // it. Without that test, allowance 1 would legalise the sitter being in two places for a night.
+    expect(
+      verdicts([houseSit('2028-09-01', '2028-09-10')], '2028-09-04', '2028-09-05', bdReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('row 7 — a house sit laid across the middle of a boarding is refused', () => {
+    expect(
+      verdicts([boarding('2028-09-01', '2028-09-10')], '2028-09-04', '2028-09-06', hsReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('row 8 — a long interior overlap is refused at every allowance but null', () => {
+    expect(
+      verdicts([houseSit('2028-09-01', '2028-09-10')], '2028-09-03', '2028-09-08', bdReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('row 9 — a stay wedged between two house sits needs allowance 2', () => {
+    // Sep 4 is house sit A's last night, Sep 5 is house sit B's first: both tails, both endpoints
+    // of the requested boarding. Exactly what a "one at each end" allowance buys.
+    const events = [houseSit('2028-09-01', '2028-09-05'), houseSit('2028-09-05', '2028-09-09')];
+    expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, false, false]);
+  });
+
+  it('a day where one boarding is finishing and another is mid-stay is NOT a handover', () => {
+    // `spanning` is counted per event, not inferred from "some boarding ends here", so a tail that
+    // happens to coincide with another stay's middle does not excuse the overlap.
+    const events = [
+      boarding('2028-09-01', '2028-09-05', 'boarding'),
+      boarding('2028-09-01', '2028-09-10', 'kitty-condo'),
+    ];
+    expect(verdicts(events, '2028-09-04', '2028-09-07', hsReq)).toEqual([true, true, true, false]);
+  });
+
+  it('the rule is TENANT-WIDE: occupancy on ANY service of the opposite kind counts', () => {
+    // A boarding-kind service the house sit could never share a pool with still blocks it.
+    expect(
+      verdicts(
+        [boarding('2028-09-01', '2028-09-10', 'kitty-condo')],
+        '2028-09-02',
+        '2028-09-04',
+        hsReq,
+      ),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('bookend sharing still works underneath the rule: same-kind cap, cross-kind tail', () => {
+    // A full 2-pet boarding ending Sep 4 (checkout) plus a house sit whose last night is Sep 3.
+    // The request's first day is Sep 3: shared with the sit's tail (allowed at 1) and with the
+    // full boarding's own bookend (allowed by boundary sharing). Both rules pass at once.
+    const events = [
+      boarding('2028-09-01', '2028-09-04', 'boarding', 2),
+      houseSit('2028-09-01', '2028-09-04', 'housesitting'),
+    ];
+    const request: CapacityRequest = {
+      serviceType: 'boarding',
+      kind: 'boarding',
+      cap: 2,
+      petCount: 2,
+      overlapAllowance: 1,
+    };
+    expect(rangeHasConflict('2028-09-03', '2028-09-06', request, buildCapacity(events))).toBe(
+      false,
+    );
+  });
+
+  it('allowance 0 refuses a single shared day but never a mere adjacency', () => {
+    const events = [houseSit('2028-09-01', '2028-09-05')];
+    expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)[0]).toBe(true); // shares Sep 4
+    expect(verdicts(events, '2028-09-05', '2028-09-08', bdReq)[0]).toBe(false); // starts at checkout
   });
 });

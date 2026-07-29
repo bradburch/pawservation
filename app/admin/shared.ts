@@ -63,6 +63,9 @@ export type Settings = {
   contactPhone: string | null;
   /** Booking horizon in months for the whole business; null = no limit (0004). */
   maxAdvanceMonths: number | null;
+  /** How many days a house sit and a boarding may overlap, at the tail ends only (0006).
+   *  0 = never; 1 = the default; 2 = one at each end; null = no limit. */
+  housesitBoardingOverlapDays: number | null;
   /** The authenticated admin's own login email — wizard prefill for a missing contactEmail. */
   adminEmail: string | null;
   petTypes: { petType: string; label: string }[];
@@ -110,6 +113,7 @@ export type SettingsPayload = {
   contactEmail: string | null;
   contactPhone: string | null;
   maxAdvanceMonths: number | null;
+  housesitBoardingOverlapDays: number | null;
   services: ServicePayload[];
 };
 

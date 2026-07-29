@@ -71,6 +71,7 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     ContactEmail: null,
     ContactPhone: null,
     MaxAdvanceMonths: null,
+    HousesitBoardingOverlapDays: 1,
     DisabledAt: null,
     ...over,
   };
