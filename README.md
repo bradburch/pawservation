@@ -36,16 +36,26 @@ the availability/conflict math.
 - **Admin dashboard** — lands on a monthly **Calendar** view of bookings and time off;
   plus bookings (confirm/decline/cancel), earnings and payment tracking, client list with
   CSV import, services & rates card grid, time off, embed codes, and in-app help.
-- **Google Calendar sync** — per-tenant OAuth connect; bookings create calendar events,
-  cancelling/declining deletes them, and events deleted in Google reconcile the booking
-  back to cancelled.
+- **Google Calendar sync is two-way** — per-tenant OAuth connect; bookings are pushed out
+  with retry via an outbox, and a 15-minute cron sweep reconciles both directions: a
+  booking cancelled/declined in Pawservation deletes its event, an event deleted in
+  Google reconciles the booking back to cancelled, and a foreign event hand-kept on the
+  connected calendar is read back and blocks new requests like a time-off day.
+- **Per-service minimum notice + booking horizon** — a service can require N days' notice
+  before its earliest bookable start, and a tenant-wide advance-booking horizon caps how
+  far out anyone can book; both are optional (NULL = unlimited) and enforced identically
+  at the quote, the calendar grid, and the booking POST.
+- **Pet-set rates** — beyond the base per-pet price, a sitter can set an exact-match rate
+  for a specific combination of pets or a species mix (e.g. "two dogs" priced as its own
+  line); an unpriced multi-pet set is refused rather than guessed at by multiplying the
+  single-pet rate.
 - **Onboarding wizard** — first login walks a new sitter through business profile,
   services, and pricing presets; skippable and re-runnable, always additive.
 - **Invite-only signup + owner console** — the platform owner (identified by the
   `OWNER_EMAILS` secret) allowlists sitter emails; sitters self-serve from the login page
   via an emailed single-use setup link. No open signup. The owner console can also disable
-  (and later remove) a joined sitter — a disabled tenant's widget goes dark and its admin
-  dashboard drops to read-only.
+  or permanently remove a joined sitter — a disabled tenant's widget goes dark and its
+  admin dashboard drops to read-only; removal deletes the tenant and every row it owns.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
   sitter admins (PBKDF2, with timing-safe user-enumeration defenses).
 - **Billing accounts** — co-owned pets collapse into one household billing account (union-
@@ -131,7 +141,7 @@ app/          Three React apps: embed/ (widget), admin/ (dashboard + owner conso
               setup/ (signup-link page), plus shared-ui/ (API client, icons, hooks)
 src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
 sql/          schema.sql (canonical DDL) + seed.sql (demo tenants)
-migrations/   New incremental DB changes only — empty by design as of 2026-07-27
+migrations/   New incremental DB changes only, numbered from the 2026-07-27 re-baseline
 public/       embed.js loader, demo host script, landing images, CSV import example
 ```
 
@@ -153,15 +163,16 @@ consistent):
   harness — is expected to match it exactly. `npm run seed:local` / `seed:remote` apply
   `sql/schema.sql` (+ optional demo `sql/seed.sql`) directly; there is nothing to replay
   on top.
-- **`migrations/` is empty by design** as of 2026-07-27. The incremental history that
-  built the old schema (`0001`–`0025`) was deleted in the re-baseline; it lives in git
-  (`git log -- migrations/`), not on disk.
-- **New schema changes:** add a file to `migrations/` starting at **`0001_*.sql`**
-  (numbering restarts from the new baseline) **and** mirror the change into
-  `sql/schema.sql` in the same branch — the test suite only sees what `schema.sql` has.
-  Apply new migration files to the remote DB **by hand** before (or with) the deploy that
-  needs them, e.g. `npx wrangler d1 execute pawbook-db --remote --file
-./migrations/0001_*.sql` — otherwise the new code 500s on missing columns.
+- **`migrations/` numbering restarts from the 2026-07-27 re-baseline.** The incremental
+  history that built the old schema (`0001`–`0025`) was deleted in the re-baseline; it
+  lives in git (`git log -- migrations/`), not on disk. See `migrations/README.md` for
+  the current files and what each one adds.
+- **New schema changes:** add a file to `migrations/` continuing the new numbering
+  **and** mirror the change into `sql/schema.sql` in the same branch — the test suite
+  only sees what `schema.sql` has. Apply new migration files to the remote DB **by
+  hand** before (or with) the deploy that needs them, e.g. `npx wrangler d1 execute
+pawbook-db --remote --file ./migrations/NNNN_*.sql` — otherwise the new code 500s on
+  missing columns.
 
 Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
 against existing DBs — no real DB here has a `d1_migrations` tracking table.
