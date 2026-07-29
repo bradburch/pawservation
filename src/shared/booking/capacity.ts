@@ -32,18 +32,26 @@ export type CapacityEvent = {
 };
 
 /**
+ * One booking's occupied span, as the overlap rule needs to see it: `lastOccupied` is the final
+ * OCCUPIED day (`end_date - 1`), not the exclusive checkout. The SAME object is pushed into every
+ * day the event occupies, so identity (`Set<EventSpan>`) recovers the distinct bookings behind a
+ * run of days — which is what lets the rule reason about the OTHER stay, not just the incoming one.
+ */
+export type EventSpan = { start: string; lastOccupied: string };
+
+/**
  * One pool KIND's footprint on one day, tenant-wide (every service of that kind summed). Feeds the
  * structural cross-kind overlap rule ONLY — per-service capacity is `byService`.
  */
 export type KindOccupancy = {
   /** Pets of this kind occupying the day. */
   total: number;
-  /** How many distinct events of this kind occupy the day. */
-  events: number;
-  /** …of which this is the FIRST occupied day — they ARRIVE here. */
-  arriving: number;
-  /** …of which this is the LAST occupied day — they DEPART here. */
-  departing: number;
+  /**
+   * The events of this kind occupying the day. Spans, not counters: the rule has to ask whether the
+   * booking on the OTHER side of a handover keeps a day of its own, and a per-day tally can never
+   * answer that. `arriving`/`departing` are derived from these (see `allArriveOn`/`allDepartOn`).
+   */
+  spans: EventSpan[];
 };
 
 export type DayCapacity = {
@@ -77,8 +85,8 @@ export type CapacityRequest = {
 
 const emptyDay = (): DayCapacity => ({
   byService: new Map(),
-  boarding: { total: 0, events: 0, arriving: 0, departing: 0 },
-  housesit: { total: 0, events: 0, arriving: 0, departing: 0 },
+  boarding: { total: 0, spans: [] },
+  housesit: { total: 0, spans: [] },
   blocked: 0,
   isBoundary: false,
 });
@@ -110,12 +118,13 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
       getOrCreate(end).isBoundary = true;
     }
 
-    // The last day this event OCCUPIES (end is exclusive), so the walk below can mark where each
-    // event ARRIVES and DEPARTS — the two facts the cross-kind handover rule needs. A one-night
-    // stay occupies a single day and both arrives and departs on it. An event with no `end_date`
-    // (or one equal to its start) occupies NOTHING at all — the loop below never runs — which is
-    // how single-day services stay invisible to pool occupancy.
-    const lastOccupied = addDays(end, -1);
+    // The last day this event OCCUPIES (end is exclusive). Recorded as a SPAN shared by every day
+    // the event covers, so the overlap rule can ask about the whole booking — where it arrives,
+    // where it departs, and whether it keeps a day of its own — from any one of its days. A
+    // one-night stay occupies a single day and both arrives and departs on it. An event with no
+    // `end_date` (or one equal to its start) occupies NOTHING at all — the loop below never runs —
+    // which is how single-day services stay invisible to pool occupancy.
+    const span: EventSpan = { start, lastOccupied: addDays(end, -1) };
 
     for (let d = start; d < end; d = addDays(d, 1)) {
       const day = getOrCreate(d);
@@ -128,9 +137,7 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
       day.byService.set(key, (day.byService.get(key) ?? 0) + units);
       const occupancy = event.kind === 'boarding' ? day.boarding : day.housesit;
       occupancy.total += units;
-      occupancy.events += 1;
-      if (d === start) occupancy.arriving += 1;
-      if (d === lastOccupied) occupancy.departing += 1;
+      occupancy.spans.push(span);
     }
   }
 
@@ -167,6 +174,91 @@ function normalizeAllowance(value: number | null): number | null {
 }
 
 export type RangeConflict = 'over_cap' | 'cross_kind_overlap' | 'blocked_or_full';
+
+/** Every one of these bookings has `date` as its LAST occupied day — they are all leaving. */
+const allDepartOn = (spans: EventSpan[], date: string): boolean =>
+  spans.every((span) => span.lastOccupied === date);
+
+/** Every one of these bookings has `date` as its FIRST occupied day — they are all arriving. */
+const allArriveOn = (spans: EventSpan[], date: string): boolean =>
+  spans.every((span) => span.start === date);
+
+/** The opposite-kind bookings the request's own days touch, de-duplicated by span identity (the
+ *  same object sits on every day its event occupies, which is what makes identity meaningful). */
+function touchedSpans(
+  startDate: string,
+  endDateExclusive: string,
+  kind: PoolKind,
+  capacityByDate: Map<string, DayCapacity>,
+): EventSpan[] {
+  const seen = new Set<EventSpan>();
+  for (let date = startDate; date < endDateExclusive; date = addDays(date, 1)) {
+    const day = capacityByDate.get(date);
+    if (!day) continue;
+    for (const span of kind === 'housesit' ? day.boarding.spans : day.housesit.spans)
+      seen.add(span);
+  }
+  return [...seen];
+}
+
+/**
+ * The calendar window a correct verdict needs: the union of the request's own span with every
+ * opposite-kind booking it touches. Those neighbours routinely reach OUTSIDE the request's dates —
+ * a house sit departing on our arrival day started days earlier — and `neighborsViolated` has to
+ * see their whole span to know whether they keep a day of their own. `null` when nothing is
+ * touched, which is the common case and the reason a caller can skip the widened read entirely.
+ */
+export function overlapReadWindow(
+  startDate: string,
+  endDateExclusive: string,
+  kind: PoolKind,
+  capacityByDate: Map<string, DayCapacity>,
+): { from: string; toExclusive: string } | null {
+  const spans = touchedSpans(startDate, endDateExclusive, kind, capacityByDate);
+  if (spans.length === 0) return null;
+  let from = startDate;
+  let last = addDays(endDateExclusive, -1);
+  for (const span of spans) {
+    if (span.start < from) from = span.start;
+    if (span.lastOccupied > last) last = span.lastOccupied;
+  }
+  return { from, toExclusive: addDays(last, 1) };
+}
+
+/**
+ * Rules 1 and 3 applied to each booking the request touches, which is what makes the whole rule
+ * ORDER-INDEPENDENT: whichever of two stays is booked second, both are judged by the same two
+ * questions. For every touched booking, count the days of ITS span that carry request-kind
+ * occupancy — the incoming request itself, plus any request-kind booking already on the calendar —
+ * and refuse if that exceeds the allowance or leaves it with no day of its own.
+ *
+ * The walk is bounded by the touched spans, which the caller is expected to have fetched whole
+ * (`checkRange` widens its capacity read for exactly this reason). A day outside the map counts as
+ * free: it is the permissive direction, and the only thing that can live there is a booking that
+ * was itself validated under these same rules.
+ */
+function neighborsViolated(
+  startDate: string,
+  endDateExclusive: string,
+  kind: PoolKind,
+  capacityByDate: Map<string, DayCapacity>,
+  allowance: number,
+): boolean {
+  for (const span of touchedSpans(startDate, endDateExclusive, kind, capacityByDate)) {
+    let shared = 0;
+    let days = 0;
+    for (let date = span.start; date <= span.lastOccupied; date = addDays(date, 1)) {
+      days += 1;
+      const inRequest = date >= startDate && date < endDateExclusive;
+      const day = capacityByDate.get(date);
+      const mine =
+        day && (kind === 'housesit' ? day.housesit.spans : day.boarding.spans).length > 0;
+      if (inRequest || mine) shared += 1;
+    }
+    if (shared > allowance || shared >= days) return true;
+  }
+  return false;
+}
 
 export function rangeHasConflict(
   startDate: string,
@@ -212,12 +304,13 @@ export function rangeConflictReason(
     // pool, so it reads occupancy from ANY service of the opposite kind, and governs a boarding
     // laid over a house sit exactly as it governs the reverse.
     //
-    // A shared day is legal only when ALL THREE hold:
-    //   1. the running count of shared days is within `overlapAllowance`;
+    // A shared day is legal only when ALL THREE hold, and each is checked for BOTH stays — the
+    // incoming request here in the walk, the bookings it touches in `neighborsViolated` below:
+    //   1. the count of shared days is within `overlapAllowance`;
     //   2. the day is a handover — either we ARRIVE on it and every opposite-kind booking there
-    //      DEPARTS on it, or we DEPART on it and every one of them ARRIVES on it; and
+    //      DEPARTS on it, or we DEPART on it and every one of them ARRIVES on it;
     //   3. the stay is not shared END TO END — at least one of its own days is free of the
-    //      opposite kind (checked after the walk, below).
+    //      opposite kind.
     //
     // Rule 2 is directional on purpose. "At the tail ends" is not "at either end of the request":
     // both ends of a two-night request are its endpoints, so an endpoint-only test would let a
@@ -228,10 +321,10 @@ export function rangeConflictReason(
     // them`: if two bookings occupy the day and only one is leaving, the other is still there.
     if (overlapAllowance !== null) {
       const opposite = request.kind === 'housesit' ? day.boarding : day.housesit;
-      if (opposite.events > 0) {
+      if (opposite.spans.length > 0) {
         overlapDays += 1;
-        const weArrive = date === startDate && opposite.departing === opposite.events;
-        const weDepart = date === requestEnd && opposite.arriving === opposite.events;
+        const weArrive = date === startDate && allDepartOn(opposite.spans, date);
+        const weDepart = date === requestEnd && allArriveOn(opposite.spans, date);
         if (overlapDays > overlapAllowance || !(weArrive || weDepart)) return 'cross_kind_overlap';
       }
     }
@@ -250,15 +343,26 @@ export function rangeConflictReason(
     return 'blocked_or_full';
   }
 
-  // Rule 3, and the reason the count alone is not the guarantee. A doubled day is tolerable as a
-  // TRANSITION into or out of a stay the sitter is actually there for; a stay with no such day is
-  // not one she is there for at all — the dog is at her house every night she is sleeping at a
-  // client's. Rule 2 cannot see this: a one-night stay is its own arrival AND departure, so a
-  // chain of one-nighters (or a request exactly as long as the allowance) satisfies the handover
-  // test on every single day and doubles the whole stay. Checked here, once the walk knows how
-  // many of the request's days were shared.
+  // Rule 3 for the REQUEST, and the reason the count alone is not the guarantee. A doubled day is
+  // tolerable as a TRANSITION into or out of a stay the sitter is actually there for; a stay with
+  // no such day is not one she is there for at all — the dog is at her house every night she is
+  // sleeping at a client's. Rule 2 cannot see this: a one-night stay is its own arrival AND
+  // departure, so a chain of one-nighters (or a request exactly as long as the allowance)
+  // satisfies the handover test on every single day and doubles the whole stay.
   if (overlapAllowance !== null && overlapDays > 0 && overlapDays >= requestDays) {
     return 'cross_kind_overlap';
+  }
+
+  // …and rules 1 and 3 again, from the OTHER stay's point of view. Without this the verdict
+  // depends on the order the two bookings arrive in: a one-night boarding on Sep 4, then a house
+  // sit Sep 1→5, is accepted (the sit has three free nights and one handover) even though booking
+  // the same pair the other way round is refused — and the dog spends its only night alone while
+  // the sitter sleeps at a client's. The physical claim is symmetric, so the test has to be.
+  if (overlapAllowance !== null && overlapDays > 0) {
+    if (
+      neighborsViolated(startDate, endDateExclusive, request.kind, capacityByDate, overlapAllowance)
+    )
+      return 'cross_kind_overlap';
   }
 
   return null;

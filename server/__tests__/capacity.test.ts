@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addDays,
   buildCapacity,
   rangeHasConflict,
   type CapacityEvent,
   type CapacityRequest,
+  type PoolKind,
 } from '../../src/shared/index.js';
 
 const boarding = (
@@ -342,13 +344,14 @@ describe('house-sit / boarding overlap allowance', () => {
     expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, true, false]);
   });
 
-  it('a one-night stay CAN take a handover day when the request has nights of its own', () => {
-    // The mirror of rows 13/14, so "rule 3" is not read as "one-night bookings are cursed": the
-    // same one-night house sit departs Sep 4, and a three-night boarding arriving that day keeps
-    // Sep 5 and Sep 6 to itself.
+  it('row 15 — a ONE-NIGHT opposite stay can never be handed over, however long the request', () => {
+    // The request keeps Sep 5 and Sep 6 to itself, so rule 3 passes FOR IT — but the house sit's
+    // only night is Sep 4, and sharing it leaves that stay with nothing of its own. Rules 1 and 3
+    // are asked of BOTH stays, so this is the same verdict as booking the pair the other way round
+    // (row 13's ordering) — which is the whole point of judging the neighbour too.
     expect(
       verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-07', bdReq),
-    ).toEqual([true, false, false, false]);
+    ).toEqual([true, true, true, false]);
   });
 
   it('a day where one boarding is finishing and another is mid-stay is NOT a handover', () => {
@@ -374,13 +377,14 @@ describe('house-sit / boarding overlap allowance', () => {
     ).toEqual([true, true, true, false]);
   });
 
-  it('bookend sharing still works underneath the rule: same-kind cap, cross-kind tail', () => {
-    // A full 2-pet boarding ending Sep 4 (checkout) plus a house sit whose last night is Sep 3.
-    // The request's first day is Sep 3: shared with the sit's tail (allowed at 1) and with the
-    // full boarding's own bookend (allowed by boundary sharing). Both rules pass at once.
+  it('bookend sharing still works underneath the rule: soft bookend in, handover out', () => {
+    // The request's FIRST day (Sep 3) is full in its own pool and is rescued by the soft bookend —
+    // the existing 2-pet boarding checks out Sep 4. Its LAST day (Sep 6) is a cross-kind handover:
+    // the house sit arrives as the boarding leaves. Two different rules, both satisfied, at the two
+    // ends of one request — and the house sit keeps Sep 7–9, so the neighbour test passes too.
     const events = [
       boarding('2028-09-01', '2028-09-04', 'boarding', 2),
-      houseSit('2028-09-01', '2028-09-04', 'housesitting'),
+      houseSit('2028-09-06', '2028-09-10', 'housesitting'),
     ];
     const request: CapacityRequest = {
       serviceType: 'boarding',
@@ -389,7 +393,7 @@ describe('house-sit / boarding overlap allowance', () => {
       petCount: 2,
       overlapAllowance: 1,
     };
-    expect(rangeHasConflict('2028-09-03', '2028-09-06', request, buildCapacity(events))).toBe(
+    expect(rangeHasConflict('2028-09-03', '2028-09-07', request, buildCapacity(events))).toBe(
       false,
     );
   });
@@ -428,5 +432,121 @@ describe('house-sit / boarding overlap allowance', () => {
     const events = [houseSit('2028-09-01', '2028-09-05')];
     expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)[0]).toBe(true); // shares Sep 4
     expect(verdicts(events, '2028-09-05', '2028-09-08', bdReq)[0]).toBe(false); // starts at checkout
+  });
+});
+
+/**
+ * ORDER INDEPENDENCE. The overlap rule is a claim about a STATE of the calendar — the sitter is
+ * either in two places on some night or she is not — so it must not matter which of two bookings
+ * arrived first. It is easy to get wrong (and was: rules 1 and 3 originally looked only at the
+ * incoming request, so a one-night boarding followed by a long house sit was accepted while the
+ * same pair booked the other way round was refused), and a fixed-fixture test can never catch it,
+ * because it only ever books in one order.
+ *
+ * So: sweep every cross-kind pair of stays in a small window and assert the two orderings agree.
+ */
+describe('the overlap rule is order-independent', () => {
+  const BASE = '2028-11-01';
+  type Stay = { kind: PoolKind; start: string; end: string };
+
+  const stays: Stay[] = [];
+  for (const kind of ['boarding', 'housesit'] as const)
+    for (let offset = 0; offset <= 5; offset++)
+      for (let nights = 1; nights <= 3; nights++)
+        stays.push({
+          kind,
+          start: addDays(BASE, offset),
+          end: addDays(BASE, offset + nights),
+        });
+
+  const eventOf = (s: Stay): CapacityEvent => ({
+    start_date: s.start,
+    end_date: s.end,
+    kind: s.kind,
+    serviceType: s.kind === 'boarding' ? 'boarding' : 'housesitting',
+    petCount: 1,
+  });
+  const requestOf = (s: Stay, overlapAllowance: number | null): CapacityRequest => ({
+    serviceType: s.kind === 'boarding' ? 'boarding' : 'housesitting',
+    kind: s.kind,
+    cap: null, // pools unlimited: this sweep is about the cross-kind rule and nothing else
+    petCount: 1,
+    overlapAllowance,
+  });
+  /** Would `incoming` be accepted onto a calendar holding only `existing`? */
+  const accepts = (existing: Stay, incoming: Stay, allowance: number | null): boolean =>
+    !rangeHasConflict(
+      incoming.start,
+      incoming.end,
+      requestOf(incoming, allowance),
+      buildCapacity([eventOf(existing)]),
+    );
+
+  for (const allowance of [0, 1, 2, null]) {
+    it(`agrees with itself in both orders at allowance ${allowance}`, () => {
+      const disagreements: string[] = [];
+      let pairs = 0;
+      for (const a of stays) {
+        for (const b of stays) {
+          if (a.kind === b.kind) continue; // same kind: the rule never applies, in either order
+          pairs += 1;
+          const bAfterA = accepts(a, b, allowance);
+          const aAfterB = accepts(b, a, allowance);
+          if (bAfterA !== aAfterB) {
+            disagreements.push(
+              `${a.kind} ${a.start}→${a.end} vs ${b.kind} ${b.start}→${b.end}: ` +
+                `second-is-b ${bAfterA ? 'accept' : 'refuse'}, second-is-a ${aAfterB ? 'accept' : 'refuse'}`,
+            );
+          }
+        }
+      }
+      expect({ pairs: pairs > 0, disagreements }).toEqual({ pairs: true, disagreements: [] });
+    });
+  }
+
+  it('the two-booking repro from review refuses in BOTH orders at the default allowance', () => {
+    // A one-night boarding on Sep 4 and a house sit Sep 1→5. Whichever is booked first, the other
+    // must be refused: the dog would spend its only night alone while the sitter sleeps at a
+    // client's house. Before the neighbour check, the house-sit-second ordering was ACCEPTED.
+    const bd: Stay = { kind: 'boarding', start: '2028-09-04', end: '2028-09-05' };
+    const hs: Stay = { kind: 'housesit', start: '2028-09-01', end: '2028-09-05' };
+    expect({ hsAfterBd: accepts(bd, hs, 1), bdAfterHs: accepts(hs, bd, 1) }).toEqual({
+      hsAfterBd: false,
+      bdAfterHs: false,
+    });
+  });
+
+  it('the three-booking ratchet cannot double a stay one handover at a time', () => {
+    // bd Sep4→Sep6 (empty calendar, fine), then hs Sep1→Sep5 (one handover on Sep 4, and the
+    // boarding still keeps Sep 5 — legal), then hs Sep5→Sep9, which would take the boarding's
+    // LAST free night and leave it 2 doubled nights at an allowance of 1.
+    const bd: CapacityEvent = {
+      start_date: '2028-09-04',
+      end_date: '2028-09-06',
+      kind: 'boarding',
+      serviceType: 'boarding',
+      petCount: 1,
+    };
+    const hsA: CapacityEvent = {
+      start_date: '2028-09-01',
+      end_date: '2028-09-05',
+      kind: 'housesit',
+      serviceType: 'housesitting',
+      petCount: 1,
+    };
+    const sit = (over: Partial<CapacityRequest> = {}): CapacityRequest => ({
+      serviceType: 'housesitting',
+      kind: 'housesit',
+      cap: null,
+      petCount: 1,
+      overlapAllowance: 1,
+      ...over,
+    });
+    // Step 2 is legal on its own…
+    expect(rangeHasConflict('2028-09-01', '2028-09-05', sit(), buildCapacity([bd]))).toBe(false);
+    // …and step 3 is what the neighbour check refuses.
+    expect(rangeHasConflict('2028-09-05', '2028-09-09', sit(), buildCapacity([bd, hsA]))).toBe(
+      true,
+    );
   });
 });

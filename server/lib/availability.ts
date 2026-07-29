@@ -10,6 +10,7 @@ import {
   getPacificDateStr,
   mixFromPetTypes,
   nightsBetween,
+  overlapReadWindow,
   rangeConflictReason,
   resolvePetSetRate,
   walkHasConflict,
@@ -339,17 +340,13 @@ export async function loadPetSetRates(
 }
 
 /**
- * The tenant's overlap allowance, defended against a row that predates the column. Tenants are
- * resolved through a 60-second KV cache (`lib/tenant-resolve.ts`) that stores the whole row as
- * JSON, so for one TTL after this feature deploys the cached rows have no such field and
- * `tenant.HousesitBoardingOverlapDays` is `undefined` at runtime however the type reads. Falling
- * back to the product default keeps the rule ON through that window; `?? null` would have quietly
- * switched it off for every tenant.
- *
- * Honest about what that costs for one TTL, since the default cannot be right for everybody: a
- * tenant who stored 0 is enforced at 1 (one handover day they had refused) and one who stored NULL
- * is enforced at 1 rather than unlimited. Both self-heal on the next cache fill, and both are the
- * safe direction — a refusal a sitter can override beats a double booking she cannot undo.
+ * The tenant's overlap allowance, with a last-resort default for a row that somehow lacks the
+ * column. The window that made this necessary is closed at the source — `tenantCacheKey` is
+ * versioned (`…:config:v2`), so a row cached by a worker that predates migration 0006 is never
+ * read back — and this stays as the backstop for any other path that hands us a partial row. It
+ * falls back to the product default rather than `?? null`, because reading a missing value as
+ * "no limit" switches the rule OFF for everybody, which is the one direction that cannot be
+ * recovered from: an overbooking the sitter did not agree to, versus a refusal she can widen.
  */
 function overlapAllowanceOf(tenant: Tenant): number | null {
   const stored: number | null | undefined = tenant.HousesitBoardingOverlapDays;
@@ -425,7 +422,30 @@ async function checkRange(
     addDays(endDateExclusive, 1),
     excludeBookingId,
   );
-  const capacity = buildCapacity(rowsToCapacityEvents(rows));
+  let capacity = buildCapacity(rowsToCapacityEvents(rows));
+
+  // The overlap rule judges the bookings this request TOUCHES as well as the request itself (it is
+  // symmetric, so the verdict cannot depend on which of two stays was booked first), and a touched
+  // house sit or boarding routinely starts before this request or ends after it. When one does,
+  // re-read the calendar over the union of their spans so those neighbours are whole; without it a
+  // neighbour's own days would fall outside the map and read as free. Costs a second D1 read only
+  // when an overlap actually exists — and never when the tenant has switched the rule off.
+  const need =
+    request.overlapAllowance === null
+      ? null
+      : overlapReadWindow(startDate, endDateExclusive, request.kind, capacity);
+  const readEnd = addDays(endDateExclusive, 1);
+  if (need !== null && (need.from < startDate || need.toExclusive > readEnd)) {
+    const widened = await listCapacityRows(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      need.from < startDate ? need.from : startDate,
+      need.toExclusive > readEnd ? need.toExclusive : readEnd,
+      excludeBookingId,
+    );
+    capacity = buildCapacity(rowsToCapacityEvents(widened));
+  }
+
   const conflict = rangeConflictReason(startDate, endDateExclusive, request, capacity);
   if (conflict !== null) return rangeRefusal(conflict, request.kind);
   // ONE call — estimateCost resolves the rate, prices, AND splits for holidays; the estCost and

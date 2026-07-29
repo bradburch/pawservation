@@ -62,6 +62,32 @@ async function quoteBoarding(env: Env, start: string, end: string): Promise<Resp
   );
 }
 
+/** Book any range service for Jess's dog through the REAL POST path. */
+async function bookStay(env: Env, type: string, start: string, end: string): Promise<Response> {
+  const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+  return app.request(
+    '/api/sunny-paws/bookings',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, startDate: start, endDate: end, petIds: ['pet_sp_bella'] }),
+    },
+    env,
+  );
+}
+
+/** `{ status, code }` of a booking attempt — enough to assert a verdict without repeating shapes. */
+async function attempt(
+  env: Env,
+  type: string,
+  start: string,
+  end: string,
+): Promise<{ status: number; code?: string }> {
+  const res = await bookStay(env, type, start, end);
+  const body = (await res.json()) as { code?: string };
+  return { status: res.status, code: body.code };
+}
+
 async function bookBoarding(env: Env, start: string, end: string): Promise<Response> {
   const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
   return app.request(
@@ -321,5 +347,63 @@ describe('overlap allowance — the booking POST', () => {
       error: 'Sorry — those dates just filled up.',
       code: 'capacity_conflict',
     });
+  });
+});
+
+/**
+ * ORDER INDEPENDENCE, through the real booking POST. The rule is a claim about a STATE of the
+ * calendar, so the same two stays must get the same verdict whichever one is requested first.
+ * Every other test in this file pins ONE existing calendar against ONE incoming request, which is
+ * exactly the shape that hides an asymmetry — these book in sequence instead.
+ */
+describe('overlap allowance — a SEQUENCE of real bookings', () => {
+  const ACCEPTED = { status: 201, code: undefined };
+  const REFUSED = { status: 409, code: 'overlap_not_allowed' };
+
+  it('one-night boarding then the house sit over it — refused in both orders', async () => {
+    // The review repro. Booked in this order the house sit passes its own three rules (three free
+    // nights, one handover on Mar 4) — and leaves the boarding's ONLY night doubled, which is the
+    // verdict the reverse order has always given.
+    const first = createTestEnv();
+    expect(await attempt(first.env, 'boarding', '2027-03-04', '2027-03-05')).toEqual(ACCEPTED);
+    expect(await attempt(first.env, 'housesitting', '2027-03-01', '2027-03-05')).toEqual(REFUSED);
+
+    const reversed = createTestEnv();
+    expect(await attempt(reversed.env, 'housesitting', '2027-03-01', '2027-03-05')).toEqual(
+      ACCEPTED,
+    );
+    expect(await attempt(reversed.env, 'boarding', '2027-03-04', '2027-03-05')).toEqual(REFUSED);
+  });
+
+  it('one-night house sit then the boarding over it — refused in both orders (the mirror)', async () => {
+    const first = createTestEnv();
+    expect(await attempt(first.env, 'housesitting', '2027-03-04', '2027-03-05')).toEqual(ACCEPTED);
+    expect(await attempt(first.env, 'boarding', '2027-03-01', '2027-03-05')).toEqual(REFUSED);
+
+    const reversed = createTestEnv();
+    expect(await attempt(reversed.env, 'boarding', '2027-03-01', '2027-03-05')).toEqual(ACCEPTED);
+    expect(await attempt(reversed.env, 'housesitting', '2027-03-04', '2027-03-05')).toEqual(
+      REFUSED,
+    );
+  });
+
+  it('the three-booking ratchet stops at the booking that takes the last free night', async () => {
+    // bd Mar4→Mar6, then hs Mar1→Mar5 (one handover on Mar 4; the boarding keeps Mar 5, so this is
+    // legal and stays legal), then hs Mar5→Mar9 — which would take Mar 5 too and leave the
+    // boarding with two doubled nights at an allowance of one.
+    const { env } = createTestEnv();
+    expect(await attempt(env, 'boarding', '2027-03-04', '2027-03-06')).toEqual(ACCEPTED);
+    expect(await attempt(env, 'housesitting', '2027-03-01', '2027-03-05')).toEqual(ACCEPTED);
+    expect(await attempt(env, 'housesitting', '2027-03-05', '2027-03-09')).toEqual(REFUSED);
+  });
+
+  it('a genuine pair of handovers around a stay that keeps a night still books', async () => {
+    // The control: the same shape as the ratchet but with the boarding a night longer, so it keeps
+    // Mar 5 to itself. Both handovers are real and the sitter is home for one night in the middle.
+    const { env } = createTestEnv();
+    await setAllowance(env, 2);
+    expect(await attempt(env, 'boarding', '2027-03-04', '2027-03-07')).toEqual(ACCEPTED);
+    expect(await attempt(env, 'housesitting', '2027-03-01', '2027-03-05')).toEqual(ACCEPTED);
+    expect(await attempt(env, 'housesitting', '2027-03-06', '2027-03-10')).toEqual(ACCEPTED);
   });
 });

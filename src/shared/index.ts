@@ -29,12 +29,14 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  overlapReadWindow,
   rangeConflictReason,
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
   type DayCapacity,
+  type EventSpan,
   type KindOccupancy,
   type PoolKind,
   type RangeConflict,
