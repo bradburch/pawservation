@@ -260,6 +260,12 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /**
+     * The response's stable snake_case `code`, when it carried one. Only the booking POST does
+     * today (`server/routes/bookings.ts`), which is why this is optional — `message` remains the
+     * only thing every caller can rely on. Prefer the code over string-matching the message.
+     */
+    public code?: string,
   ) {
     super(message);
   }
@@ -272,8 +278,9 @@ export function isAuthExpired(e: unknown): boolean {
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new ApiError(res.status, body.error ?? 'Something went wrong — try again.');
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string; code?: string };
+  if (!res.ok)
+    throw new ApiError(res.status, body.error ?? 'Something went wrong — try again.', body.code);
   return body;
 }
 
@@ -321,12 +328,23 @@ export const api = {
       petIds: string[];
       answers: Record<string, string>;
     },
+    /**
+     * Dedupes a retried attempt: the server returns the ORIGINAL `{id, estCost, status}` with 201
+     * instead of creating a second booking (≤128 chars, unique per tenant+customer). Generate one
+     * per attempt and reuse it across retries of that same attempt — a changed selection is a new
+     * attempt and must carry a new key, or the replay would return the booking for the old dates.
+     */
+    idempotencyKey?: string,
   ) =>
     request<{ id: string; estCost: number; status: string; demo?: boolean; note?: string }>(
       `/api/${slug}/bookings`,
       {
         method: 'POST',
-        headers: { ...jsonHeaders, ...authHeaders(token) },
+        headers: {
+          ...jsonHeaders,
+          ...authHeaders(token),
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+        },
         body: JSON.stringify(body),
       },
     ),
@@ -342,10 +360,14 @@ export const api = {
     type: string,
     month: string,
     optionKey?: string,
+    /** Comma-joined pet ids the grid is painted FOR — a `1/2` day is bookable for one pet and
+     *  not for two, and the server does that arithmetic. Empty = one pet. */
+    petIds?: string,
   ) =>
     request<MonthAvailability>(
       `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}` +
-        (optionKey ? `&option=${encodeURIComponent(optionKey)}` : ''),
+        (optionKey ? `&option=${encodeURIComponent(optionKey)}` : '') +
+        (petIds ? `&petIds=${encodeURIComponent(petIds)}` : ''),
       { headers: authHeaders(token) },
     ),
 
