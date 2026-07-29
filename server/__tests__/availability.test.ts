@@ -113,12 +113,12 @@ describe('availability API — regression guards', () => {
     expect(res.status).toBe(400);
   });
 
-  it('sees a booking that starts exactly on the checkout day (fetch-window +1)', async () => {
+  it('a request whose last night is full is refused, even with a booking starting on its checkout day', async () => {
     const { env } = createTestEnv();
     // Sunny Paws max 2. Existing: 1 pet Mar 8→12, and 2 pets starting EXACTLY on Mar 12 (→15).
-    // A 2-pet request Mar 11→12: its last night (Mar 11) is full (1+2>2); the soft-bookend
-    // look-ahead at Mar 12 must see the full next-day booking and keep the conflict — which
-    // only works if the capacity fetch reaches one day past checkout.
+    // A 2-pet request Mar 11→12 occupies only the night of the 11th, which already holds one pet
+    // (1+2>2). The refusal is the plain pool arithmetic on that night: the day is neither a
+    // boundary of the existing stay nor freed by the booking that starts on the 12th.
     await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
@@ -146,6 +146,64 @@ describe('availability API — regression guards', () => {
       ])
     ).json()) as { available: boolean };
     expect(res.available).toBe(false);
+  });
+
+  /**
+   * The over-capacity accept the old "soft bookend" concession waved through — reproduced end to
+   * end, because the quote and the POST both took it. An existing stay's LAST OCCUPIED NIGHT is not
+   * its checkout day: on the checkout day the pool is genuinely empty (that is why a back-to-back
+   * booking has always been legal and still is, below); on the last night the pet is still there.
+   */
+  it('does not accept a 2-pet stay starting on an existing stay’s last occupied night', async () => {
+    const { env } = createTestEnv();
+    // Sunny Paws boarding: max 2 pets/day. One pet Mar 1→5 (nights of the 1st–4th).
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: '2027-03-01',
+      endDate: '2027-03-05',
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    // Two dogs are priced as a set so the refusal can only ever be about capacity.
+    await env.PAWBOOK_DB.prepare(
+      `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
+       VALUES (?, 'boarding', 'standard', 'cat:1|dog:1', 50)`,
+    )
+      .bind(TENANT_A)
+      .run();
+
+    const pets = ['pet_sp_bella', 'pet_sp_mochi'];
+    const q = (await (
+      await quote(env, 'sunny-paws', 'type=boarding&start=2027-03-04&end=2027-03-07', pets)
+    ).json()) as { available: boolean };
+    // 1 + 2 = 3 pets in a 2-pet pool on the night of the 4th.
+    expect(q.available).toBe(false);
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const post = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'boarding',
+          startDate: '2027-03-04',
+          endDate: '2027-03-07',
+          petIds: pets,
+        }),
+      },
+      env,
+    );
+    expect(post.status).toBe(409);
+
+    // Starting on the CHECKOUT day (the 5th) is still accepted — the concession that is real.
+    const onCheckout = (await (
+      await quote(env, 'sunny-paws', 'type=boarding&start=2027-03-05&end=2027-03-07', pets)
+    ).json()) as { available: boolean };
+    expect(onCheckout.available).toBe(true);
   });
 
   it('the same dates differ between tenants because capacity is per-tenant', async () => {

@@ -376,13 +376,19 @@ export function rangeConflictReason(
 
     if (isRequestEndpoint && day.isBoundary) continue;
 
-    // Soft bookend: an unavailable (non-blocked) endpoint is allowed when the next day has
-    // room for this request — the existing booking is ending here.
-    if (isRequestEndpoint && day.blocked === 0) {
-      const next = capacityByDate.get(addDays(date, 1));
-      if (!next || !dayBlocksRequest(next, request)) continue;
-    }
-
+    // NO "soft bookend" here, deliberately. There used to be a second concession: an over-full
+    // non-blocked endpoint was forgiven when the NEXT day had room, on the reading that "the
+    // existing booking is ending here". It is not — a stay's CHECKOUT day and its LAST OCCUPIED
+    // NIGHT are different days, and only the first of them frees the pool.
+    //
+    // On a genuine checkout day the departing stay contributes nothing to `byService` at all, so
+    // `dayBlocksRequest` never fires for it and no concession is needed (and if another booking
+    // makes that day full, the day is a boundary and the branch above already covers it). By
+    // elimination the look-ahead could only ever fire on a day INTERIOR to the occupying stay whose
+    // next day is free — i.e. on that stay's last occupied night, where its pet is still in the
+    // pool. Forgiving it accepted a real double booking: with a cap of 2, one pet on Mar 1→5 and a
+    // 2-pet request for Mar 4→7 both quoted and posted successfully, putting 3 pets in a 2-pet pool
+    // on the night of Mar 4. So the concession had no sound case left to serve, and is gone.
     return 'blocked_or_full';
   }
 

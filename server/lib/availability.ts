@@ -414,8 +414,12 @@ async function checkRange(
           : 'That exceeds our house-sitting capacity.',
     };
   }
-  // Fetch one day PAST checkout so the soft-bookend look-ahead sees a booking starting on the
-  // checkout day (without +1, listCapacityRows clips that row and a final night can double-book).
+  // Fetch one day PAST checkout. This used to feed the engine's soft-bookend look-ahead, which is
+  // gone (it forgave an over-full LAST OCCUPIED NIGHT as if it were a checkout day); the over-read
+  // is kept because it still buys something and can never cost correctness. An opposite-kind
+  // neighbour that departs on our own checkout day is a common shape, and with the extra day
+  // already in the map `overlapReadWindow` below asks for no widening — one D1 query saved, and a
+  // wider map can only ever make the verdict stricter, never wrong.
   const rows = await listCapacityRows(
     env.PAWBOOK_DB,
     tenant.Id,

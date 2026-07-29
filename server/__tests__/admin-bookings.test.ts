@@ -233,9 +233,9 @@ describe('admin booking lifecycle', () => {
   it('cancelling a booking releases capacity for a new booking on the same dates', async () => {
     const { env } = createTestEnv();
     // Sunny Paws' boarding service is seeded with MaxConcurrentPets=2. Use fresh dates so the seeded boarding row
-    // (2028-06-20..25) doesn't interfere. A 3-night span is used (not 2) so the middle night
-    // isn't a boundary day eligible for the engine's "soft bookend" endpoint-sharing rule —
-    // otherwise a same-range third request could dodge the capacity check entirely.
+    // (2028-06-20..25) doesn't interfere. A 3-night span is used (not 2) so the middle night is
+    // not one of the request's own endpoints, where the engine's boundary-sharing concession could
+    // let a same-range third request dodge the capacity check.
     const start = '2028-10-20';
     const end = '2028-10-23';
 

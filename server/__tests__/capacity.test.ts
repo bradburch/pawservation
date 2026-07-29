@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addDays,
   buildCapacity,
+  rangeConflictReason,
   rangeHasConflict,
   type CapacityEvent,
   type CapacityRequest,
@@ -101,9 +102,46 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     ).toBe(false);
   });
 
-  it('shares a boundary day (soft bookend) under a per-service cap', () => {
+  it('a full stay CHECKS OUT into the next request: the checkout day frees the pool', () => {
+    // Aug 1→3 occupies the nights of the 1st and the 2nd; the 3rd is checkout, with no overnight,
+    // so the pool is genuinely empty that night and a cap-filling 2-pet request starts on it.
     const cap = buildCapacity([boarding('2028-08-01', '2028-08-03', 'boarding', 2)]);
     expect(rangeHasConflict('2028-08-03', '2028-08-05', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      false,
+    );
+  });
+
+  it('an endpoint on an existing stay’s LAST OCCUPIED NIGHT is refused, not forgiven', () => {
+    // The distinction the old "soft bookend" concession missed. Mar 1→5 occupies the nights of the
+    // 1st–4th; the 5th is checkout. On the 4th the existing stay is STILL THERE — "the next day has
+    // room" is true of it, but so is "there is one pet in this pool tonight", and a 2-pet request
+    // arriving on the 4th would put 3 pets in a 2-pet pool that night.
+    const cap = buildCapacity([boarding('2028-03-01', '2028-03-05', 'boarding', 1)]);
+    expect(rangeConflictReason('2028-03-04', '2028-03-07', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      'blocked_or_full',
+    );
+    // …and the same in the other direction: a request DEPARTING on that night.
+    expect(rangeConflictReason('2028-03-02', '2028-03-05', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      'blocked_or_full',
+    );
+    // One pet still fits alongside the one already there (1 + 1 <= 2) — the fix refuses the
+    // over-capacity set, not the endpoint.
+    expect(rangeHasConflict('2028-03-04', '2028-03-07', req({ cap: 2, petCount: 1 }), cap)).toBe(
+      false,
+    );
+    // And the CHECKOUT day (the 5th) is still open to the cap-filling set.
+    expect(rangeHasConflict('2028-03-05', '2028-03-07', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      false,
+    );
+  });
+
+  it('a 1-pet pool is not double-booked on the last night either', () => {
+    // The same defect with the smallest possible numbers: cap 1, one pet in it, one more asked for.
+    const cap = buildCapacity([boarding('2028-03-01', '2028-03-05', 'boarding', 1)]);
+    expect(rangeHasConflict('2028-03-04', '2028-03-07', req({ cap: 1, petCount: 1 }), cap)).toBe(
+      true,
+    );
+    expect(rangeHasConflict('2028-03-05', '2028-03-07', req({ cap: 1, petCount: 1 }), cap)).toBe(
       false,
     );
   });
@@ -377,13 +415,20 @@ describe('house-sit / boarding overlap allowance', () => {
     ).toEqual([true, true, true, false]);
   });
 
-  it('bookend sharing still works underneath the rule: soft bookend in, handover out', () => {
-    // The request's FIRST day (Sep 3) is full in its own pool and is rescued by the soft bookend —
-    // the existing 2-pet boarding checks out Sep 4. Its LAST day (Sep 6) is a cross-kind handover:
-    // the house sit arrives as the boarding leaves. Two different rules, both satisfied, at the two
-    // ends of one request — and the house sit keeps Sep 7–9, so the neighbour test passes too.
+  it('the two concessions compose underneath the rule: a checkout in, a handover out', () => {
+    // The request ARRIVES on Sep 3, which is the existing 2-pet boarding's CHECKOUT day — the pool
+    // is empty that night, so a cap-filling pair fits. It DEPARTS on Sep 6, which is a cross-kind
+    // handover: the house sit arrives as this boarding leaves. Two different concessions, both
+    // genuine, at the two ends of one request — and the house sit keeps Sep 7–9, so the neighbour
+    // test passes too.
+    //
+    // This test used to give the existing boarding an end date of Sep 4, making Sep 3 its LAST
+    // OCCUPIED NIGHT rather than its checkout, and relied on the old "soft bookend" concession to
+    // forgive it. That was 2 + 2 = 4 pets in a 2-pet pool on the night of Sep 3, so the assertion
+    // was pinning a real double booking; the concession is gone and the scenario is now the sound
+    // one it was always described as.
     const events = [
-      boarding('2028-09-01', '2028-09-04', 'boarding', 2),
+      boarding('2028-09-01', '2028-09-03', 'boarding', 2),
       houseSit('2028-09-06', '2028-09-10', 'housesitting'),
     ];
     const request: CapacityRequest = {

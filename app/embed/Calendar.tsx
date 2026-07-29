@@ -65,8 +65,8 @@ const MONTHS = [
  *
  * It is an OPTIMISTIC HINT, never a guarantee, and is worded that way. Per-day status is necessary
  * but not sufficient for a range service, because `rangeHasConflict` applies two rules that are
- * properties of a RANGE rather than of a day and that no per-day paint can FULLY express: bookend /
- * soft-bookend sharing, and the house-sit/boarding handover allowance — whose day-level half the
+ * properties of a RANGE rather than of a day and that no per-day paint can FULLY express: boundary
+ * (bookend) sharing at a request's own endpoints, and the house-sit/boarding handover allowance — whose day-level half the
  * grid does now paint, while its range-level half stays with the server (CALENDAR_LOGIC.md §3, §9).
  * So a
  * span of green days can still be refused, and an endpoint on a full day is *more* permissive than
