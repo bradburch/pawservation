@@ -221,6 +221,30 @@ describe('reconcileIfStale', () => {
     expect(spy).toHaveBeenCalledTimes(1); // marker was written despite the first call's failure
   });
 
+  /**
+   * The marker is CLAIMED BEFORE the pull, not written after it. Written after, the throttle only
+   * spaces out non-overlapping pulls and gives no exclusion: every concurrent month-grid GET reads
+   * an empty key and starts its own reconcile — and one pull's outbox stamping a GCalEventId
+   * mid-flight makes another read a live booking as hand-deleted and CANCEL it (emailing the
+   * customer). This drives a second call from inside the first one's in-flight Google round-trip,
+   * which is the shape of that race.
+   */
+  it('claims the throttle BEFORE the work, so an overlapping call does no Google round-trip', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    let reentered = false;
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      if (!reentered) {
+        reentered = true;
+        await reconcileIfStale(env, tenant); // a second request, arriving mid-pull
+      }
+      return calendarListResponse([]);
+    });
+    await reconcileIfStale(env, tenant);
+    expect(reentered).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(1); // the overlapping call saw the claim and did nothing
+  });
+
   it('does not cancel a booking when the Calendar response is truncated (nextPageToken present)', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);

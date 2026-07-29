@@ -858,18 +858,25 @@ export async function getBookingWithCustomer(
 }
 
 /**
- * Record a payment iff the booking exists for THIS tenant, is not a 'blocked' sentinel, and is
- * either not cancelled OR cancelled with a NON-ZERO assessed CancellationFee — the guard lives in the SQL
- * (INSERT ... SELECT ... WHERE) so it is atomic with the write, like updateBookingStatus's guarded
- * UPDATE. 'pending' is deliberately allowed: deposits are commonly collected before a booking is
- * confirmed. A cancelled or declined booking normally refuses payment, but one carrying a cancellation fee is a
- * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
- * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
+ * Record a payment iff the booking exists for THIS tenant, is not a 'blocked'/'external' sentinel,
+ * and still OWES something — the guard lives in the SQL (INSERT ... SELECT ... WHERE) so it is
+ * atomic with the write, like updateBookingStatus's guarded UPDATE. 'pending' is deliberately
+ * allowed: deposits are commonly collected before a booking is confirmed. Returns the new payment
+ * id, or null when the guard refused (route 404s on null, the existing idiom).
  *
- * The fee test is `> 0`, not `IS NOT NULL`: a customer self-cancel writes a real 0 for "cancelled,
- * nothing owed" (see cancelBookingForUser), and nothing owed must still refuse payment. For every
- * sitter-assessed fee the two spellings agree — the admin route only ever stores a fee it computed
- * as greater than zero.
+ * A terminal row normally refuses payment, with exactly the two exceptions that make it a live
+ * receivable — and they are the same two `OUTSTANDING_WHERE_SQL` bills a cancelled row for, which
+ * is the point: the sitter must never be shown an outstanding balance whose *Record payment*
+ * button 404s.
+ *   1. A NON-ZERO assessed CancellationFee. The test is `> 0`, not `IS NOT NULL`: a customer
+ *      self-cancel writes a real 0 for "cancelled, nothing owed" (see cancelBookingForUser), and
+ *      nothing owed must still refuse. For every sitter-assessed fee the two spellings agree —
+ *      the admin route only ever stores a fee it computed as greater than zero.
+ *   2. A live BookingCharges total. Extra charges survive a cancellation by design (a charge is
+ *      owed on a stay that happened whether or not it was later cancelled) and EstCost is never
+ *      mutated to absorb them, so a fee-FREE cancel carrying $45 of extras is genuinely owed $45.
+ * 'declined' gets neither exception, matching the earnings predicate: a declined row is never
+ * billed, so it is never payable.
  *
  * `externalRef` carries the Venmo transaction id for imported payments (NULL for hand-recorded
  * ones). A replay violates the partial unique index and THROWS rather than returning null — the
@@ -895,7 +902,13 @@ export async function insertPayment(
        SELECT ?, ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
-         AND (Status NOT IN ('cancelled', 'declined') OR COALESCE(CancellationFee, 0) > 0)`,
+         AND (Status NOT IN ('cancelled', 'declined')
+              OR COALESCE(CancellationFee, 0) > 0
+              OR (Status = 'cancelled' AND COALESCE((
+                    SELECT SUM(c.Amount) FROM BookingCharges c
+                    WHERE c.TenantId = BookingRequests.TenantId
+                      AND c.BookingRequestId = BookingRequests.Id
+                  ), 0) > 0))`,
     )
     .bind(
       id,
@@ -1091,6 +1104,11 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
  * the Venmo importer's candidate set so the sitter can never be offered a booking the Earnings
  * page does not consider owing, and a cancelled booking with no assessed fee but a live charge
  * still surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
+ *
+ * `insertPayment`'s guard is the third reader of this rule (it cannot share the SQL — it has no
+ * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
+ * a non-zero CancellationFee OR a live charges total). It must keep agreeing with this predicate
+ * in both directions, or the Earnings page shows a balance whose *Record payment* button 404s.
  *
  * 'blocked' AND 'external' rows are excluded: 'blocked' rows are never billed, and 'external'
  * rows (mirrored from a connected Google Calendar) always carry a NULL EstCost, so they could
@@ -2666,11 +2684,18 @@ export async function listUnsyncedFutureBookings(
 }
 
 /** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings
- * only ('blocked' is never synced; 'external' is Google-owned). Bounded to StartDate >= fromDate
- * so ancient never-synced history doesn't churn every sweep, soonest first. Status here can be
- * any of the four, and CancellationFee rides along because the delete-vs-retitle decision for a
- * cancelled row turns on it (keepsCalendarEventOnCancel) — the caller derives
- * create/update/delete from Status + CancellationFee + GCalEventId. */
+ * only ('blocked' is never synced; 'external' is Google-owned). Bounded so ancient never-synced
+ * history doesn't churn every sweep, soonest first. Status here can be any of the four, and
+ * CancellationFee rides along because the delete-vs-retitle decision for a cancelled row turns on
+ * it (keepsCalendarEventOnCancel) — the caller derives create/update/delete from Status +
+ * CancellationFee + GCalEventId.
+ *
+ * The bound is `COALESCE(EndDate, StartDate) >= fromDate` — the same shape `listSyncedBookingIds`
+ * uses, and for the same reason: a stay that has ALREADY STARTED is still live. `StartDate >=
+ * fromDate` excluded it, and a customer may cancel an in-progress stay (isCustomerCancellable),
+ * so that row's SyncPending could never be drained: the ghost event stayed on the sitter's
+ * calendar forever, and a fee-bearing cancel never got its [CANCELLED] retitle. It also stranded
+ * the connect-later backfill for any stay spanning today. */
 export type SyncPendingRow = Omit<BookingSyncRow, 'Status'> & {
   Status: BookingRow['Status'];
   CancellationFee: number | null;
@@ -2688,7 +2713,8 @@ export async function listSyncPendingBookings(
       `SELECT ${BOOKING_SYNC_COLS}, b.CancellationFee AS CancellationFee,
               b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
-         AND b.ServiceType NOT IN ('blocked', 'external') AND b.StartDate >= ?
+         AND b.ServiceType NOT IN ('blocked', 'external')
+         AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,
     )

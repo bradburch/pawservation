@@ -595,7 +595,21 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
  * against its OWN key: the sitter dashboard on `calendarSyncKey` (120s, shared with the cron) and
  * the customer widget on `calendarWidgetSyncKey` (600s, its own budget). Never throws: a Google
  * outage leaves the caller with current DB state, which is the whole point of reconcile writing
- * Google's reality INTO the DB rather than availability ever reading Google. */
+ * Google's reality INTO the DB rather than availability ever reading Google.
+ *
+ * The marker is CLAIMED BEFORE the work, not written after it. Written afterwards it throttles
+ * only non-overlapping pulls and gives no exclusion at all: N simultaneous month-grid GETs each
+ * read an empty key and each start a full reconcile. That is not merely wasteful — if one pull's
+ * outbox stamps a GCalEventId in the gap between another's `listCalendarEvents` and its
+ * `listSyncedBookingIds`, the second reads a live booking as hand-deleted from Google and cancels
+ * it (emailing the customer). Claiming first collapses that window to the KV read itself.
+ *
+ * The trade is deliberate: a pull that dies early now suppresses retries for the rest of the TTL
+ * (120s dashboard / 600s widget). That is the cheaper failure — the 15-minute cron re-drives the
+ * outbox and reconciles unconditionally, so nothing is lost, only delayed by less than one cron
+ * period. KV is eventually consistent (~60s), so this stays best-effort by nature; do not mistake
+ * it for a lock, and do not build a stronger one here.
+ */
 export async function reconcileIfStale(
   env: Env,
   tenant: Tenant,
@@ -605,12 +619,11 @@ export async function reconcileIfStale(
   const key = widget ? calendarWidgetSyncKey(tenant.Id) : calendarSyncKey(tenant.Id);
   const ttl = widget ? CALENDAR_WIDGET_SYNC_TTL_SECONDS : CALENDAR_SYNC_TTL_SECONDS;
   if (await env.PAWBOOK_CACHE.get(key).catch(() => null)) return;
+  await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: ttl }).catch(() => {});
   try {
     await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);
   } catch {
     /* best-effort; the caller falls back to current DB state */
-  } finally {
-    await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: ttl }).catch(() => {});
   }
 }

@@ -93,6 +93,19 @@ const cancel = async (env: Env, token: string, id: string) =>
 
 const jessToken = (env: Env) => endUserToken(env, SLUG, 'jess@example.com');
 
+/** Record a hand-entered payment as the sitter — 201 when insertPayment's guard allows it, 404
+ *  when it refuses (the route's existing idiom). */
+const pay = async (env: Env, id: string, amount = 10) =>
+  app.request(
+    `/api/${SLUG}/admin/bookings/${id}/payments`,
+    {
+      method: 'POST',
+      headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, method: 'cash', paidDate: TODAY }),
+    },
+    env,
+  );
+
 /** Every Google call the mock saw, as `METHOD url`. Structurally typed so it takes the fetch spy
  *  without importing vitest's mock-instance generics. */
 function calls(spy: { mock: { calls: unknown[][] } }): string[] {
@@ -288,6 +301,44 @@ describe('the outbox must not undo a retitle (the 15-minute bug)', () => {
     expect(calls(spy).filter((c) => c.startsWith('DELETE')).length).toBe(2);
     expect((await row(env, free)).SyncPending).toBe(0);
     expect((await row(env, declined)).SyncPending).toBe(0);
+  });
+
+  /**
+   * The outbox's window used to be `StartDate >= today-1`, but `isCustomerCancellable` lets a
+   * customer cancel a stay that has ALREADY STARTED. A cancel whose inline Google push failed
+   * therefore left SyncPending=1 on a row no sweep could ever see again: the event stayed on the
+   * sitter's calendar forever, and the fee-bearing retitle never landed. The bound is now
+   * `COALESCE(EndDate, StartDate) >= today-1`, the same shape listSyncedBookingIds uses.
+   */
+  it('a sweep re-drives a cancelled IN-PROGRESS stay whose push failed (it is not stuck forever)', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    await connectCalendar(env);
+    // Started 5 days ago, runs 5 more — in progress today, and inside the 100% tier.
+    const id = await seedBooking(env, {
+      startsInDays: -5,
+      nights: 10,
+      gcalEventId: 'evt_inflight',
+    });
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
+    expect((await cancel(env, await jessToken(env), id)).status).toBe(200);
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 200, SyncPending: 1 });
+
+    vi.restoreAllMocks();
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    await redriveCalendarOutbox(env, tenant);
+
+    expect(calls(spy)).toEqual([
+      'PATCH https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_inflight',
+    ]);
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string) as {
+      summary: string;
+    };
+    expect(body.summary).toContain('[CANCELLED]');
+    expect(await row(env, id)).toMatchObject({ SyncPending: 0 });
   });
 
   it('a fee-bearing cancel that never synced is retired from the outbox, not pushed into Google', async () => {
@@ -534,16 +585,78 @@ describe('Earnings after a customer cancellation', () => {
     seedBoardingTiers(raw);
     const id = await seedBooking(env, { startsInDays: 40 });
     await cancel(env, await jessToken(env), id);
+    expect((await pay(env, id)).status).toBe(404);
+  });
+
+  /**
+   * The other direction of the same guard. OUTSTANDING_WHERE_SQL surfaces a fee-free cancellation
+   * that still carries extra charges (charges survive a cancellation by design), so the Earnings
+   * page actively tells the sitter she is owed $45 — and *Record payment* used to 404 on exactly
+   * that row, because insertPayment's guard tested the fee alone.
+   */
+  it('a fee-free cancellation carrying extra charges IS payable', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const id = await seedBooking(env, { startsInDays: 40 });
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: id,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    await cancel(env, await jessToken(env), id);
+
+    // Same booking the Earnings page lists as owing $45…
+    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    expect(analytics.outstanding.find((o) => o.BookingId === id)).toMatchObject({
+      EstCost: 0,
+      ChargesTotal: 45,
+    });
+    // …and the sitter can now actually record the payment against it.
+    const res = await pay(env, id, 45);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ paidTotal: 45 });
+  });
+
+  it('a DECLINED booking is never payable, charges or not — declines are never billed', async () => {
+    const { env } = createTestEnv();
+    const id = await seedBooking(env, { status: 'pending', startsInDays: 20 });
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: id,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined');
+    // Not outstanding either — the guard and the earnings predicate agree in both directions.
+    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    expect(analytics.outstanding.some((o) => o.BookingId === id)).toBe(false);
+    expect((await pay(env, id)).status).toBe(404);
+  });
+
+  it('the outstanding row for a fee-free cancel with extras is NOT labelled a cancellation fee', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const free = await seedBooking(env, { startsInDays: 40 });
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+      bookingRequestId: free,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    await cancel(env, await jessToken(env), free);
+    const withFee = await seedBooking(env, { startsInDays: 5 });
+    await cancel(env, await jessToken(env), withFee);
+
     const res = await app.request(
-      `/api/${SLUG}/admin/bookings/${id}/payments`,
-      {
-        method: 'POST',
-        headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: 10, method: 'cash', paidDate: TODAY }),
-      },
+      `/api/${SLUG}/admin/analytics`,
+      { headers: await adminHeaders(TENANT_A) },
       env,
     );
-    expect(res.status).toBe(404);
+    const body = (await res.json()) as {
+      outstanding: { bookingId: string; isCancellationFee: boolean }[];
+    };
+    const byId = (id: string) => body.outstanding.find((o) => o.bookingId === id)!;
+    // $45 of extras on a waived cancellation is not "a $45 cancellation fee".
+    expect(byId(free).isCancellationFee).toBe(false);
+    expect(byId(withFee).isCancellationFee).toBe(true);
   });
 });
 

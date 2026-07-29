@@ -24,6 +24,20 @@ const MONTH_NAMES = [
   'Dec',
 ];
 
+/**
+ * The ", incl. …" tail on an outstanding balance. Each component is named with its OWN amount, so
+ * a cancelled booking that owes only its extras never reads as a cancellation fee the sitter
+ * waived: `isCancellationFee` means "the base amount on this row is a fee" (server-side it also
+ * requires that fee to be non-zero), and the extras are always a separate figure.
+ */
+function breakdown(o: AnalyticsPayload['outstanding'][number]): string {
+  const parts = [
+    ...(o.isCancellationFee ? [`$${o.estCost} cancellation fee`] : []),
+    ...(o.chargesTotal > 0 ? [`$${o.chargesTotal} extras`] : []),
+  ];
+  return parts.length ? `, incl. ${parts.join(' + ')}` : '';
+}
+
 /** '2026-07' → 'Jul 26'. */
 function monthLabel(month: string): string {
   const [y, m] = month.split('-');
@@ -208,8 +222,7 @@ export function EarningsView({
                 {o.serviceType} ({formatFriendlyDate(o.startDate)})
                 <br />
                 owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost + o.chargesTotal}
-                {o.chargesTotal > 0 ? `, incl. $${o.chargesTotal} extras` : ''}
-                {o.isCancellationFee ? ' cancellation fee' : ''})
+                {breakdown(o)})
               </span>
               {session && onChanged && handleError && (
                 <>

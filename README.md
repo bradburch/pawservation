@@ -38,9 +38,11 @@ the availability/conflict math.
   CSV import, services & rates card grid, time off, embed codes, and in-app help.
 - **Google Calendar sync is two-way** — per-tenant OAuth connect; bookings are pushed out
   with retry via an outbox, and a 15-minute cron sweep reconciles both directions: a
-  booking cancelled/declined in Pawservation deletes its event, an event deleted in
-  Google reconciles the booking back to cancelled, and a foreign event hand-kept on the
-  connected calendar is read back and blocks new requests like a time-off day.
+  booking declined (or cancelled with nothing owed) in Pawservation deletes its event
+  while a cancellation carrying a fee keeps it and retitles it `[CANCELLED]`, an event
+  deleted in Google reconciles the booking back to cancelled, and a foreign event
+  hand-kept on the connected calendar is read back and blocks new requests like a time-off
+  day.
 - **Per-service minimum notice + booking horizon** — a service can require N days' notice
   before its earliest bookable start, and a tenant-wide advance-booking horizon caps how
   far out anyone can book; both are optional (NULL = unlimited) and enforced identically
@@ -59,8 +61,16 @@ the availability/conflict math.
   via an emailed single-use setup link. No open signup. The owner console can also disable
   or permanently remove a joined sitter — a disabled tenant's widget goes dark and its
   admin dashboard drops to read-only; removal deletes the tenant and every row it owns.
+- **Customer self-cancellation** — a customer can cancel their own pending or confirmed
+  booking (including a stay already in progress) from the widget. The fee is computed
+  server-side from the service's stored cancellation tiers — the client never names a
+  price — and the same number is previewed before confirming and stamped on the row. A
+  pending request is always free to withdraw; the sitter is emailed either way.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
-  sitter admins (PBKDF2, with timing-safe user-enumeration defenses).
+  sitter admins (PBKDF2, with timing-safe user-enumeration defenses). Sitter and owner
+  passwords must be at least 12 characters and clear a short denylist of keyboard-walks
+  and leaked-password filler — one validator in `src/shared/auth/password-policy.ts`,
+  mirrored by the setup page for UX and enforced independently by the server.
 - **Billing accounts** — co-owned pets collapse into one household billing account (union-
   find over owner↔pet links), so a shared client sees one balance, not one per owner.
 - **Venmo CSV import** — upload a Venmo export to preview matched transactions against

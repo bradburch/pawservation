@@ -1963,7 +1963,8 @@ export const adminRoutes = new Hono<AppEnv>()
       note,
       externalRef: null,
     });
-    // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
+    // Guard refused: foreign, blocked/external, declined, or a cancelled booking that owes
+    // nothing — no fee and no live charges (pending is deliberately allowed).
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
     const payments = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
     const created = payments.find((p) => p.Id === paymentId);

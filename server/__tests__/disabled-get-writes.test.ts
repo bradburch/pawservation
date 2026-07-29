@@ -22,7 +22,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200); // read-only view still works
-    // reconcileIfStale writes calendarSyncKey in its finally; skipping means the key is never set.
+    // reconcileIfStale claims calendarSyncKey before it pulls; skipping means the key is never set.
     expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 
@@ -46,7 +46,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200); // read-only view still works
-    // reconcileIfStale writes calendarSyncKey in its finally; skipping means the key is never set.
+    // reconcileIfStale claims calendarSyncKey before it pulls; skipping means the key is never set.
     expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 
