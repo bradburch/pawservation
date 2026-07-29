@@ -12,8 +12,11 @@ import { addDays, DATE_RE } from '../util/dates.js';
 // client's house and keep a boarder at her own — so it governs a boarding laid over a house sit
 // exactly as it governs a house sit laid over boarding. Its allowance arrives on the request
 // (`overlapAllowance`, from Tenants.HousesitBoardingOverlapDays); this module reads no config.
-// Boundary (bookend) sharing: the start/end day of an existing booking may be
-// shared by a new booking's endpoint, EXCEPT for blocked events.
+// There is NO bookend/boundary concession on the pool cap: occupancy is counted over `[start, end)`,
+// so a day holds exactly the pets sleeping that night, and an over-full night is a double booking
+// wherever it falls in a request. The back-to-back booking everyone reaches for that concession to
+// explain needs none — a departing stay contributes nothing to its checkout day, so that day simply
+// is not full. See `rangeConflictReason` for the two unsound concessions this replaced.
 
 export type PoolKind = 'boarding' | 'housesit';
 
@@ -62,6 +65,15 @@ export type DayCapacity = {
   /** ALL housesit-kind pets on this day — the mirror of `boarding`, same rule, other direction. */
   housesit: KindOccupancy;
   blocked: number;
+  /**
+   * A non-blocked event starts or checks out on this day. INFORMATIONAL ONLY — no rule in this
+   * module reads it, and none may: the flag is kind-agnostic, cannot say WHICH event set it, and
+   * above all cannot distinguish a stay ARRIVING (all its pets in the pool that night) from one
+   * CHECKING OUT (none of them). Two endpoint concessions were built on that conflation and both
+   * accepted real double bookings — `rangeConflictReason` records what and why. Retained because
+   * `DayCapacity` is exported engine API mirrored by out-of-tree consumers, not because anything
+   * here needs it.
+   */
   isBoundary: boolean;
 };
 
@@ -112,7 +124,8 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
     const end = event.end_date || event.start_date;
     if (!DATE_RE.test(start) || !DATE_RE.test(end)) continue;
 
-    // Blocked events get no boundary — no bookend sharing.
+    // Blocked events get no boundary. Informational either way (see `DayCapacity.isBoundary`) —
+    // kept truthful rather than removed, since the field is exported engine API.
     if (event.kind !== 'blocked') {
       getOrCreate(start).isBoundary = true;
       getOrCreate(end).isBoundary = true;
@@ -340,8 +353,6 @@ export function rangeConflictReason(
     const day = capacityByDate.get(date);
     if (!day) continue;
 
-    const isRequestEndpoint = date === startDate || date === requestEnd;
-
     // Structural rule (TENANT-WIDE, SYMMETRIC): a house sit and boarding may share a day only as a
     // HANDOVER, because the sitter cannot be in two places — this models her whereabouts, not a
     // pool, so it reads occupancy from ANY service of the opposite kind, and governs a boarding
@@ -374,21 +385,39 @@ export function rangeConflictReason(
 
     if (!dayBlocksRequest(day, request)) continue;
 
-    if (isRequestEndpoint && day.isBoundary) continue;
-
-    // NO "soft bookend" here, deliberately. There used to be a second concession: an over-full
-    // non-blocked endpoint was forgiven when the NEXT day had room, on the reading that "the
-    // existing booking is ending here". It is not — a stay's CHECKOUT day and its LAST OCCUPIED
-    // NIGHT are different days, and only the first of them frees the pool.
+    // A FULL NIGHT IS A FULL NIGHT — there is NO endpoint concession here, and there must never be
+    // one again. Two of them lived here and both were unsound for the same reason, so what follows
+    // is the one rule that replaced them rather than a third patch:
     //
-    // On a genuine checkout day the departing stay contributes nothing to `byService` at all, so
-    // `dayBlocksRequest` never fires for it and no concession is needed (and if another booking
-    // makes that day full, the day is a boundary and the branch above already covers it). By
-    // elimination the look-ahead could only ever fire on a day INTERIOR to the occupying stay whose
-    // next day is free — i.e. on that stay's last occupied night, where its pet is still in the
-    // pool. Forgiving it accepted a real double booking: with a cap of 2, one pet on Mar 1→5 and a
-    // 2-pet request for Mar 4→7 both quoted and posted successfully, putting 3 pets in a 2-pet pool
-    // on the night of Mar 4. So the concession had no sound case left to serve, and is gone.
+    //   Occupancy is measured over `[start, end)`, so a day carries exactly the pets SLEEPING that
+    //   night. A night is atomic — nobody arrives "after" the pets already in the pool leave,
+    //   because they do not leave until the morning. So an over-full night is a real double booking
+    //   at ANY position in the request, including its two ends.
+    //
+    // 1. The "soft bookend" forgave an over-full non-blocked endpoint when the NEXT day had room,
+    //    reading it as "the existing booking is ending here." A stay's CHECKOUT day and its LAST
+    //    OCCUPIED NIGHT are different days and only the first frees the pool: with a cap of 2, one
+    //    pet on Mar 1→5 and a 2-pet request for Mar 4→7 both quoted and posted, putting 3 pets in a
+    //    2-pet pool on the night of Mar 4.
+    // 2. The boundary (bookend) concession forgave an over-full endpoint that was also `isBoundary`.
+    //    `isBoundary` is set on an existing stay's START day as well as its checkout day (see
+    //    `buildCapacity`), so a day that is merely where another stay ARRIVES — every pet of it in
+    //    the pool — was forgiven as though something were leaving: cap 2, an existing 2-pet boarding
+    //    Sep 6→9 and a 2-pet request Sep 3→7 were both accepted, seating 4 pets on the night of the
+    //    6th. It also read a boundary set by a THIRD, unrelated stay's checkout as licence to
+    //    overfill a night, and — because `dayBlocksRequest` folds blocks and pool arithmetic into
+    //    one answer — it waved through an admin-BLOCKED day whenever any booking happened to bookend
+    //    it, which is a hard stop being bypassed.
+    //
+    // What made both look necessary is the legitimate handover, and it needs no concession at all:
+    // on a stay's checkout day that stay contributes NOTHING to `byService`, so the day is simply
+    // not full and the `continue` above has already taken it. A request may still start the day an
+    // existing stay checks out, still end the day before another arrives, and a `1/2` night still
+    // seats one more pet. What it may no longer do is share a night that is already full.
+    //
+    // Everything the concessions could have been reaching for is therefore either already legal by
+    // plain arithmetic or a genuine refusal. Do not re-add an endpoint exception for a date the
+    // month grid strikes out: the grid runs this same arithmetic, and agreeing with it is correct.
     return 'blocked_or_full';
   }
 

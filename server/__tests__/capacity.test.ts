@@ -135,6 +135,69 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     );
   });
 
+  it('an endpoint on the FIRST night of an existing stay is refused, not forgiven', () => {
+    // The other half of the same confusion, and the reason `isBoundary` cannot excuse anything: the
+    // flag is set on an existing stay's START day as well as its checkout day, and only the checkout
+    // frees the pool. Sep 6→9 occupies the nights of the 6th, 7th and 8th. A 2-pet request Sep 3→7
+    // departs on the 6th — where two pets are already sleeping — so forgiving it as a "bookend"
+    // seats 4 pets in a 2-pet pool.
+    const cap = buildCapacity([boarding('2028-09-06', '2028-09-09', 'boarding', 2)]);
+    expect(rangeConflictReason('2028-09-03', '2028-09-07', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      'blocked_or_full',
+    );
+    // …and arriving on that same first night, from the other direction.
+    expect(rangeConflictReason('2028-09-06', '2028-09-09', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      'blocked_or_full',
+    );
+    // Stopping the night BEFORE the existing stay arrives is still fine: Sep 3→6 occupies the 3rd,
+    // 4th and 5th, none of which the existing stay touches.
+    expect(rangeHasConflict('2028-09-03', '2028-09-06', req({ cap: 2, petCount: 2 }), cap)).toBe(
+      false,
+    );
+  });
+
+  it('a day filled by ANOTHER stay is not freed by a third stay checking out on it', () => {
+    // A day can be a boundary for a reason that has nothing to do with the pets in the pool. Sep 5
+    // is boarding A's CHECKOUT (it contributes nothing) and boarding B's third night (it contributes
+    // 2, filling the cap). The boundary flag cannot distinguish them, so it must not be trusted:
+    // arriving on Sep 5 puts 3 pets in a 2-pet pool.
+    //
+    // ONE night is requested on purpose. Over a longer stay the walk would refuse a LATER day
+    // anyway and the verdict would look right for the wrong reason; Sep 5 is both endpoints of a
+    // one-night stay, so it is the only day the walk can refuse on.
+    const cap = buildCapacity([
+      boarding('2028-09-01', '2028-09-05', 'boarding', 1),
+      boarding('2028-09-03', '2028-09-08', 'boarding', 2),
+    ]);
+    expect(rangeConflictReason('2028-09-05', '2028-09-06', req({ cap: 2, petCount: 1 }), cap)).toBe(
+      'blocked_or_full',
+    );
+  });
+
+  it('a BLOCKED day stays a hard stop even when a booking bookends it', () => {
+    // Blocked events set no boundary of their own, but another booking's start/checkout can set one
+    // on the same day — and an endpoint concession that only asks `isBoundary` would then wave the
+    // block through. The sitter is away on Sep 6; nothing may be booked over it, at either end.
+    const cap = buildCapacity([
+      blocked('2028-09-06', '2028-09-07'),
+      boarding('2028-09-06', '2028-09-09', 'boarding', 1),
+    ]);
+    expect(rangeConflictReason('2028-09-04', '2028-09-07', req({ cap: null }), cap)).toBe(
+      'blocked_or_full',
+    );
+    expect(rangeConflictReason('2028-09-06', '2028-09-09', req({ cap: null }), cap)).toBe(
+      'blocked_or_full',
+    );
+    // The same block bookended by a CHECKOUT rather than a start — still a hard stop.
+    const onCheckout = buildCapacity([
+      blocked('2028-09-06', '2028-09-07'),
+      boarding('2028-09-03', '2028-09-06', 'boarding', 1),
+    ]);
+    expect(rangeConflictReason('2028-09-06', '2028-09-08', req({ cap: null }), onCheckout)).toBe(
+      'blocked_or_full',
+    );
+  });
+
   it('a 1-pet pool is not double-booked on the last night either', () => {
     // The same defect with the smallest possible numbers: cap 1, one pet in it, one more asked for.
     const cap = buildCapacity([boarding('2028-03-01', '2028-03-05', 'boarding', 1)]);

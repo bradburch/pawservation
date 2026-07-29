@@ -39,8 +39,8 @@ import { DEFAULT_OVERLAP_DAYS } from './validation';
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
 
-// External rows are deliberately blocked-kind (hard stop, no bookend sharing) — a Google event
-// tells us the sitter is busy, not which pool is busy.
+// External rows are deliberately blocked-kind (an unconditional hard stop) — a Google event tells us
+// the sitter is busy, not which pool is busy.
 export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
   return rows.map((row) =>
     row.ServiceType === 'blocked' || row.ServiceType === 'external'
