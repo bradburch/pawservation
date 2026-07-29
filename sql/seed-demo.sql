@@ -29,6 +29,21 @@
 -- comment there. That is what makes this seed's conflicts identical for every possible value of
 -- "today" rather than only for the day it was written.
 
+-- PET-SET PRICING MODE (0005). sql/seed.sql's services predate PetRateMode and default to
+-- 'exact' — refuse a priced quote for any 2+-pet set with no stored group/mix rate. That's the
+-- correct behaviour for a legacy service, but the embed widget now pre-selects ALL of a
+-- customer's accepted pets by default, and Jess owns two pets at Sunny Paws (Bella + Mochi): her
+-- very first screen would hit the "ask your sitter for a rate" dead end, and a demo account must
+-- look like an account a sitter could actually be running. Opt the PRIMARY, stay-shaped services
+-- into 'linear' (N distinct pets = N x the option's one-pet rate) so the default multi-pet
+-- selection quotes a real number. Deliberately leave walk / check-in / morning-walk on 'exact' —
+-- those are single-visit, per-slot services where "one sitter, one pet at a time" is the more
+-- realistic default anyway, and it means a prospective sitter poking at a walk with two pets
+-- selected still sees the refusal path once, which is informative rather than broken. A plain
+-- UPDATE is idempotent by construction: there is no row identity to restate, so re-running this
+-- file changes nothing on a second pass.
+UPDATE TenantServices SET PetRateMode = 'linear' WHERE ServiceType IN ('boarding', 'housesitting', 'daycare');
+
 -- More clients, so a busy day is several DIFFERENT families rather than one customer booked
 -- against herself. Every one is active (invite-only /identify) and every one owns a pet below.
 INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUES
@@ -77,8 +92,10 @@ INSERT OR REPLACE INTO PetOwners (TenantId, PetId, EndUserId) VALUES
 --
 -- Every EstCost is nights x the option's stored Rate (boarding $50, house sitting $70, and the
 -- flat option rate for single-day services), so nothing here is a price the server would not have
--- quoted. PetCount is always 1: a set of 2+ pets with no stored pet-set rate is REFUSED at
--- pricing, and an unpriceable booking is a bad demo.
+-- quoted. PetCount is always 1 in every seeded booking below, on purpose, so each EstCost is
+-- unambiguous regardless of a service's PetRateMode — the 'linear' multiplier above only ever
+-- fires for a pet SET (2+ distinct pets) a customer selects live in the widget, never for a
+-- seeded row.
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
   ('seed_sp_board_a', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+5 days'), date('now', '+12 days'), 'standard', 1, NULL, 350, 'confirmed'),
   ('seed_sp_board_b', 'tnt_sunnypaws', 'eu_sp_marco', 'boarding', date('now', '+7 days'), date('now', '+11 days'), 'standard', 1, '16:00', 200, 'confirmed'),
@@ -151,8 +168,8 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
   ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+40 days'), date('now', '+43 days'), 'standard', 1, NULL, 150, 'pending'),
   ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 250, 'confirmed'),
   -- The base row books two pets for $400. In the DEMO database it becomes a 1-pet stay at 5 x $40,
-  -- for the same reason nothing else here books a set: 2+ pets with no stored pet-set rate is
-  -- refused at pricing, so a 2-pet demo booking is one the widget could never re-quote.
+  -- for the same reason nothing else here books a set: every seeded booking keeps PetCount at 1
+  -- so its EstCost stays unambiguous (see the PetRateMode note above).
   ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 200, 'confirmed');
 
 -- THE BLOCKED-DAY CONFLICT: time off (the 'blocked' sentinel; EndDate exclusive). A hard stop for

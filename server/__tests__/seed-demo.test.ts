@@ -357,6 +357,31 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
       }).toEqual({ id, conflict: false });
     }
   });
+
+  it("prices Sunny Paws boarding for Jess's two pets — the multi-pet default the widget now selects", async () => {
+    // The embed widget pre-selects every accepted pet by default. Jess has two at Sunny Paws
+    // (Bella + Mochi), and sql/seed.sql's services predate PetRateMode (default 'exact'), which
+    // would refuse that set outright. seed-demo.sql opts boarding/housesitting/daycare into
+    // 'linear' so a demo customer's default multi-pet selection quotes a real number instead of
+    // landing on "hasn't set a price for this group of pets yet."
+    const { env } = createTestEnv({ demoActivity: true });
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    // Far past every conflict this file seeds (the latest is the blocked stretch at now+60..+62),
+    // so this is an ordinary open range — the test is about pricing, not availability.
+    const today = getPacificDateStr();
+    const start = addDays(today, 100);
+    const end = addDays(start, 3);
+    const res = await app.request(
+      `/api/sunny-paws/availability?type=boarding&start=${start}&end=${end}&petIds=pet_sp_bella,pet_sp_mochi`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // opt_sp_board's Rate is $50/night (sql/seed.sql); 3 nights x 2 distinct pets under the
+    // 'linear' mode this task turns on. Pinned so a silent change to either number fails here.
+    expect(body).toMatchObject({ available: true, priced: true, estCost: 300, billedUnits: 3 });
+  });
 });
 
 /**
