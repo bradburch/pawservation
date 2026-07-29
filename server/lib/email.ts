@@ -27,28 +27,71 @@ export function htmlEscape(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
-// Brand tokens for the shared mail shell — mirror the admin/landing palette (--leaf, --ink,
-// --soft, --line in app/admin/admin.css). Inline styles only: email clients strip <style>
-// blocks, and a strict no-external-assets rule (no hosted images/fonts) keeps every mail
-// self-contained.
-const EMAIL_ACCENT = '#2e6440';
+/**
+ * The public origin of the product. Not guessed: it is the `custom_domain` route the worker is
+ * bound to in wrangler.jsonc, and the same host `lib/demo.ts` allow-lists as "our own pages".
+ * There is no origin on `Env`, and mail is not always sent inside a request (the calendar sweep
+ * and the invite-request form are the exceptions), so the shell cannot derive one from the
+ * incoming URL the way `sendSitterInvite` does for its setup link. Declared once here and reused
+ * for the logo and the how-it-works links so the two can never point at different hosts.
+ */
+const BRAND_ORIGIN = 'https://pawservation.com';
+
+/**
+ * The brand lockup — the calendar mark plus the Boogaloo wordmark, i.e. exactly what the site's
+ * header renders (`server/index.ts`'s `.logo`) — as a PNG, served off the assets layer. Rendered
+ * at 3x for retina inboxes from the site's own source of truth; regenerate it whenever the SVG
+ * changes, with:
+ *
+ *     rsvg-convert -w 540 -h 210 public/brand/pawservation-logo.svg \
+ *       -o public/brand/pawservation-logo.png
+ *
+ * PNG, not the SVG the site uses: Gmail and Outlook do not render `<img src="*.svg">` at all, so
+ * shipping the site's own tag would ship an invisible logo to most inboxes. The wordmark ships
+ * INSIDE the PNG rather than as live text, because Boogaloo is a self-hosted @font-face the site
+ * loads from `/fonts/boogaloo.woff2` and no mail client will load a web font. Images are blocked
+ * by default in plenty of clients, so the `<img>` carries real alt text ("Pawservation") and the
+ * alt text is styled by the `<img>`'s own font/colour rules — with images off the reader still
+ * sees the brand name in the site's ink colour. Nothing the mail actually needs (a login code, a
+ * button label) is ever inside this image.
+ */
+const LOGO_URL = `${BRAND_ORIGIN}/brand/pawservation-logo.png`;
+const LOGO_W = 180;
+const LOGO_H = 70;
+
+// Brand tokens for the shared mail shell — the site's own palette (--green/--ink/--body-c/--soft/
+// --line in server/lib/page-style.ts, the same values as --leaf/--ink/--body/--soft/--line in
+// app/admin/admin.css). Inline styles only: email clients strip <style> blocks, and no web fonts,
+// so the copy falls back to the same system stack the site names in --sans.
+const EMAIL_ACCENT = '#2e6440'; // --green / --leaf
+const EMAIL_INK = '#18271d'; // --ink
+const EMAIL_BODY = '#415044'; // --body-c
+const EMAIL_SOFT = '#5a6a5e'; // --soft
+const EMAIL_LINE = '#e3e7e0'; // --line
 const EMAIL_FONTS =
   "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 /**
- * Shared HTML shell for every outgoing mail: accent bar, one 🐾 brand line, a 560px column,
- * system font stack, optional footer. `bodyHtml` is trusted markup built by the senders below
- * (they escape their own interpolations); `footer` is often tenant-controlled ("on behalf of
- * {DisplayName}"), so the shell escapes it itself. Exported for unit tests.
+ * Shared HTML shell for every outgoing mail: accent bar, the brand lockup over a hairline (the
+ * site's own header, as far as an inbox can carry it), a 560px column, system font stack,
+ * optional footer. `bodyHtml` is trusted markup built by the senders below (they escape their own
+ * interpolations); `footer` is often tenant-controlled ("on behalf of {DisplayName}"), so the
+ * shell escapes it itself. Exported for unit tests.
  */
 export function emailShell(bodyHtml: string, footer?: string): string {
   return (
-    `<div style="margin:0 auto;max-width:560px;font-family:${EMAIL_FONTS};color:#18271d;line-height:1.55;">` +
-    `<div style="height:4px;background:${EMAIL_ACCENT};"></div>` +
-    `<p style="margin:18px 0 0;font-size:14px;font-weight:700;color:${EMAIL_ACCENT};">🐾 Pawservation</p>` +
+    `<div style="margin:0 auto;max-width:560px;background:#ffffff;font-family:${EMAIL_FONTS};color:${EMAIL_BODY};line-height:1.55;">` +
+    // font-size:0/line-height keep the rule 4px tall in Outlook, which otherwise gives an empty
+    // block the line-height of a text row.
+    `<div style="height:4px;line-height:4px;font-size:0;background:${EMAIL_ACCENT};">&nbsp;</div>` +
+    `<div style="padding:18px 0 16px;border-bottom:1px solid ${EMAIL_LINE};">` +
+    `<img src="${LOGO_URL}" width="${LOGO_W}" height="${LOGO_H}" alt="Pawservation" ` +
+    `style="display:block;border:0;outline:none;text-decoration:none;width:${LOGO_W}px;height:${LOGO_H}px;` +
+    `font-family:${EMAIL_FONTS};font-size:20px;font-weight:700;letter-spacing:0.02em;color:${EMAIL_INK};" />` +
+    `</div>` +
     `<div style="margin:20px 0 0;">${bodyHtml}</div>` +
     (footer
-      ? `<p style="margin:28px 0 12px;padding-top:12px;border-top:1px solid #e3e7e0;font-size:13px;color:#697a6d;">${htmlEscape(footer)}</p>`
+      ? `<p style="margin:28px 0 12px;padding-top:12px;border-top:1px solid ${EMAIL_LINE};font-size:13px;color:${EMAIL_SOFT};">${htmlEscape(footer)}</p>`
       : '') +
     `</div>`
   );
@@ -61,7 +104,7 @@ export function emailShell(bodyHtml: string, footer?: string): string {
 export function emailButton(url: string, label: string): string {
   return (
     `<p style="margin:20px 0;"><a href="${htmlEscape(url)}" ` +
-    `style="display:inline-block;background:${EMAIL_ACCENT};color:#ffffff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:600;">` +
+    `style="display:inline-block;background:${EMAIL_ACCENT};color:#ffffff;padding:11px 22px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:600;">` +
     `${htmlEscape(label)}</a></p>`
   );
 }
@@ -97,7 +140,7 @@ export async function sendLoginCode(
       `If you didn't try to sign in, you can ignore this email.`,
     html: emailShell(
       `<p style="margin:0 0 8px;">Your code to sign in and book with <strong>${htmlEscape(displayName)}</strong>:</p>` +
-        `<p style="margin:12px 0;font-size:28px;font-weight:800;letter-spacing:6px;">${code}</p>` +
+        `<p style="margin:12px 0;font-size:28px;font-weight:800;letter-spacing:6px;color:${EMAIL_INK};">${code}</p>` +
         `<p style="margin:8px 0 0;">It expires in 10 minutes. If you didn&#39;t try to sign in, you can ignore this email.</p>`,
       `Sent by Pawservation on behalf of ${displayName}`,
     ),
@@ -172,12 +215,12 @@ export async function sendSignupLink(env: Env, to: string, url: string): Promise
       `You're almost there. Pawservation gives your pet-care business its own booking page: clients you choose request stays, walks and visits online, and you confirm or decline each one — your calendar stays yours.\n\n` +
       `Finish setting up your account: ${url}\n\n` +
       `This link expires in 30 minutes. If you didn't request it, ignore this email.\n\n` +
-      `See how it works: https://pawservation.com/how-it-works`,
+      `See how it works: ${BRAND_ORIGIN}/how-it-works`,
     html: emailShell(
       `<p style="margin:0 0 8px;">You&#39;re almost there. <strong>Pawservation</strong> gives your pet-care business its own booking page: clients you choose request stays, walks and visits online, and you confirm or decline each one &mdash; your calendar stays yours.</p>` +
         `${emailButton(url, 'Finish setting up')}` +
         `<p style="margin:8px 0 0;">This link expires in 30 minutes. If you didn&#39;t request it, ignore this email.</p>` +
-        `<p style="margin:16px 0 0;"><a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how Pawservation works</a></p>`,
+        `<p style="margin:16px 0 0;"><a href="${BRAND_ORIGIN}/how-it-works" style="color:${EMAIL_ACCENT};">See how Pawservation works</a></p>`,
       'Sent by Pawservation',
     ),
   });
@@ -200,12 +243,12 @@ export async function sendSitterInvite(env: Env, to: string, url: string): Promi
       `You've been invited to Pawservation — a booking page for your pet-care business. Clients you choose request stays, walks and visits online; you confirm or decline each one, and your calendar stays yours.\n\n` +
       `Set up your account here: ${url}\n\n` +
       `This link expires in 7 days. Link expired? Go to ${origin}/admin, choose "New here" and enter this email address.\n\n` +
-      `See how it works: https://pawservation.com/how-it-works`,
+      `See how it works: ${BRAND_ORIGIN}/how-it-works`,
     html: emailShell(
       `<p style="margin:0 0 8px;">You&#39;ve been invited to <strong>Pawservation</strong> &mdash; a booking page for your pet-care business. Clients you choose request stays, walks and visits online; you confirm or decline each one, and your calendar stays yours.</p>` +
         `${emailButton(url, 'Set up your account')}` +
-        `<p style="margin:8px 0 0;">This link expires in 7 days. Link expired? Go to <a href="${htmlEscape(origin)}/admin" style="color:#2e6440;">${htmlEscape(origin)}/admin</a>, choose &ldquo;New here&rdquo; and enter this email address.</p>` +
-        `<p style="margin:16px 0 0;"><a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how Pawservation works</a></p>`,
+        `<p style="margin:8px 0 0;">This link expires in 7 days. Link expired? Go to <a href="${htmlEscape(origin)}/admin" style="color:${EMAIL_ACCENT};">${htmlEscape(origin)}/admin</a>, choose &ldquo;New here&rdquo; and enter this email address.</p>` +
+        `<p style="margin:16px 0 0;"><a href="${BRAND_ORIGIN}/how-it-works" style="color:${EMAIL_ACCENT};">See how Pawservation works</a></p>`,
       'Sent by Pawservation',
     ),
   });
@@ -223,12 +266,12 @@ export async function sendResetLink(env: Env, to: string, url: string): Promise<
       `Someone asked to reset the password for your Pawservation account — the dashboard where you run your booking page.\n\n` +
       `Reset your password: ${url}\n\n` +
       `This link expires in 30 minutes. If you didn't request it, ignore this email — your password stays as it is.\n\n` +
-      `New to Pawservation? See how it works: https://pawservation.com/how-it-works`,
+      `New to Pawservation? See how it works: ${BRAND_ORIGIN}/how-it-works`,
     html: emailShell(
       `<p style="margin:0 0 8px;">Someone asked to reset the password for your Pawservation account &mdash; the dashboard where you run your booking page.</p>` +
         `${emailButton(url, 'Reset your password')}` +
         `<p style="margin:8px 0 0;">This link expires in 30 minutes. If you didn&#39;t request it, ignore this email &mdash; your password stays as it is.</p>` +
-        `<p style="margin:16px 0 0;">New to Pawservation? <a href="https://pawservation.com/how-it-works" style="color:#2e6440;">See how it works</a></p>`,
+        `<p style="margin:16px 0 0;">New to Pawservation? <a href="${BRAND_ORIGIN}/how-it-works" style="color:${EMAIL_ACCENT};">See how it works</a></p>`,
       'Sent by Pawservation',
     ),
   });
