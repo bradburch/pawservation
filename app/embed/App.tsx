@@ -148,7 +148,7 @@ export default function App() {
       {showMine ? (
         <>
           <h1 className="bp-greeting">Your bookings</h1>
-          <MineTab />
+          <MineTab config={config} />
         </>
       ) : (
         <>

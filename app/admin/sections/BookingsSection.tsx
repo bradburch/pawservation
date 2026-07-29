@@ -48,7 +48,9 @@ function paidText(b: AdminBooking): string | null {
  * charges are stated separately (EarningsSection's honest phrasing) rather than pre-summed —
  * "fee $100 + $45 extras", never a single merged "$145" that reads as if it were the fee. */
 function feeText(b: AdminBooking): string | null {
-  if (b.status !== 'cancelled' || b.cancellationFee == null) return null;
+  // `> 0`, not just non-null: a customer self-cancel stores a real 0 for "cancelled, nothing
+  // owed" (server/db/repo.ts's cancelBookingForUser), which is not a fee to announce.
+  if (b.status !== 'cancelled' || b.cancellationFee == null || b.cancellationFee <= 0) return null;
   const extras = b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : '';
   return b.paidTotal > 0
     ? `paid $${b.paidTotal} of fee $${b.cancellationFee}${extras}`

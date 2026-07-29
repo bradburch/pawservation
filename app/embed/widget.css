@@ -890,53 +890,191 @@ body {
   color: var(--bp-ink);
 }
 
-/* ── "My bookings" list ────────────────────────────────────────── */
+/* ── "My bookings" list ────────────────────────────────────────────
+   Cards rather than a flat list, because a row now has to hold an action. Two heights matter and
+   both are FIXED regardless of state: `.bp-mine-actions` is always rendered (empty for a booking
+   that can't be cancelled), and `.bp-mine-confirm` is an absolutely-positioned overlay rather
+   than a panel that pushes the card open. The widget reports document.scrollHeight to its host
+   page on every ResizeObserver tick, so anything that changes height on interaction makes the
+   embedding page jump. */
 .bp-mine {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
-.bp-mine li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--bp-line);
-  padding: 12px 0;
+.bp-mine-item {
+  position: relative; /* the confirm overlay's containing block */
+  background: var(--bp-card);
+  border: 1px solid var(--bp-line);
+  border-radius: 10px;
+  padding: 12px 14px;
   font-size: 0.9rem;
   color: var(--bp-soft);
+  /* Floor tall enough for the confirm overlay's own content, so opening it never grows the card.
+     If the copy still overruns, it scrolls inside the overlay — the card never grows. */
+  min-height: 178px;
+  display: flex;
+  flex-direction: column;
 }
 
-.bp-mine-main {
-  flex: 1 1 auto;
-  min-width: 0;
+.bp-mine-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.bp-mine li:last-child {
-  border-bottom: none;
-}
-
-.bp-mine li strong {
-  font-weight: 600;
+.bp-mine-title {
+  font-weight: 700;
   color: var(--bp-ink);
-  text-transform: capitalize;
+  font-family: var(--bp-display);
+  letter-spacing: -0.01em;
 }
 
-.bp-mine li em {
-  font-style: normal;
+/* State is a WORD in a pill, never a colour alone. */
+.bp-mine-status {
+  flex: 0 0 auto;
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.03em;
-  text-transform: capitalize;
   color: var(--bp-ink);
   background: var(--bp-sage-wash);
   border: 1px solid var(--bp-line);
   border-radius: 999px;
   padding: 2px 9px;
+}
+
+.bp-mine-when {
+  color: var(--bp-ink);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.bp-mine-meta {
+  margin-top: 2px;
+  font-size: 0.85rem;
+}
+
+/* Always present, even when it holds nothing — see the block comment above. */
+.bp-mine-actions {
+  margin-top: auto;
+  padding-top: 10px;
+  min-height: 44px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.bp-mine-cancel {
+  background: none;
+  border: 1px solid var(--bp-line);
+  border-radius: 8px;
+  color: var(--bp-soft);
+  font-family: var(--bp-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.bp-mine-cancel:hover {
+  color: var(--bp-ink);
+  background: var(--bp-sage-wash);
+}
+
+.bp-mine-confirm {
+  position: absolute;
+  inset: 0;
+  background: var(--bp-card);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The copy scrolls; the buttons below never do. Long contact details or a wrapped label must not
+   put the actions out of reach, and the card is not allowed to grow to make room. */
+.bp-mine-confirm-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bp-mine-confirm p {
+  margin: 0;
+}
+
+.bp-mine-confirm-q {
+  font-family: var(--bp-display);
+  font-weight: 700;
+  color: var(--bp-ink);
+}
+
+.bp-mine-confirm-fee {
+  color: var(--bp-ink);
+  font-weight: 600;
+}
+
+.bp-mine-confirm-alt {
+  font-size: 0.82rem;
+}
+
+/* Reserved slot: empty until something goes wrong, so the message costs no extra height. */
+.bp-mine-confirm-err {
+  min-height: 1.2em;
+  font-size: 0.82rem;
+  color: var(--bp-bad);
+}
+
+.bp-mine-confirm-row {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+.bp-mine-confirm-row button {
+  flex: 1 1 0;
+  border-radius: 8px;
+  font-family: var(--bp-display);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  min-height: 44px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.bp-mine-keep {
+  background: none;
+  border: 1px solid var(--bp-line);
+  color: var(--bp-ink);
+}
+
+.bp-mine-keep:hover {
+  background: var(--bp-sage-wash);
+}
+
+.bp-mine-confirm-go {
+  background: var(--bp-bad);
+  border: 1px solid var(--bp-bad);
+  color: #fff;
+}
+
+.bp-mine-confirm-go:hover {
+  filter: brightness(0.93);
+}
+
+.bp-mine-confirm-go:disabled {
+  filter: saturate(0.35) brightness(1.08);
+  cursor: default;
 }
 
 :focus-visible {

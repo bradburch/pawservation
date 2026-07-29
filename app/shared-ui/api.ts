@@ -106,6 +106,12 @@ export type Booking = {
   charges: { label: string; amount: number }[];
   chargesTotal: number;
   cancellationFee: number | null;
+  /** Whether the customer may still cancel this one. The SERVER's answer — the widget does no
+   *  date math and never infers cancellability from `status` + dates itself. */
+  cancellable: boolean;
+  /** Whole dollars owed if cancelled today; null when it isn't cancellable. Server-computed from
+   *  the sitter's stored policy — the widget renders money, it never derives it. */
+  feeIfCancelledToday: number | null;
   status: string;
   pets: string[];
 };
@@ -375,6 +381,17 @@ export const api = {
     request<{ bookings: Booking[] }>(`/api/${slug}/bookings/mine`, {
       headers: authHeaders(token),
     }),
+
+  /**
+   * Owner-initiated cancellation. Carries no body at all: the fee is the server's to compute from
+   * the sitter's policy, so there is nothing for the client to send and nothing for it to get
+   * wrong. The response echoes the amount actually stamped on the booking.
+   */
+  cancelBooking: (slug: string, token: string, id: string) =>
+    request<{ status: string; cancellationFee: number }>(
+      `/api/${slug}/bookings/${encodeURIComponent(id)}/cancel`,
+      { method: 'POST', headers: authHeaders(token) },
+    ),
 };
 
 export const adminApi = {

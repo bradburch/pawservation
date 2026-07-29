@@ -45,8 +45,30 @@ export type SyncInput = {
   petCount: number;
   petNames: string[];
   estCost: number | null;
-  status: 'pending' | 'confirmed';
+  status: 'pending' | 'confirmed' | 'cancelled';
 };
+
+/**
+ * THE rule for what a cancellation does to its Google event, in one place because three call
+ * sites must never disagree: the customer cancel route, the admin status route, and the outbox
+ * re-drive.
+ *
+ * - Cancelled with an assessed fee (> 0) → KEEP the event and retitle it `[CANCELLED] …`. The
+ *   stay isn't happening but a receivable is, and deleting it would erase the sitter's only
+ *   calendar-side trace of that.
+ * - Cancelled fee-free (fee 0 or none assessed) and every decline → DELETE the event. Nothing is
+ *   owed and nothing happened, so the day should simply be free again.
+ *
+ * Getting this wrong is invisible for 15 minutes and then catastrophic: `redriveCalendarOutbox`
+ * derives its op from row state, and every status write re-arms `SyncPending`, so a retitle that
+ * this predicate doesn't cover is deleted by the very next cron sweep.
+ */
+export function keepsCalendarEventOnCancel(
+  status: BookingRow['Status'],
+  cancellationFee: number | null,
+): boolean {
+  return status === 'cancelled' && cancellationFee != null && cancellationFee > 0;
+}
 
 /**
  * Build the Google event resource for a booking, resolving the customer's email for the
@@ -267,8 +289,9 @@ const OUTBOX_LIMIT = 100;
 
 /**
  * Re-drive every pending calendar push for this tenant. The op is derived from row state
- * (terminal status + event id → delete; no event id → create; otherwise → update), so a row can
- * never replay a stale intent — it always pushes the row's CURRENT state (as of the batch fetch).
+ * (terminal status + event id → delete, EXCEPT a fee-bearing cancellation, which retitles and
+ * keeps its event — see keepsCalendarEventOnCancel; no event id → create; otherwise → update),
+ * so a row can never replay a stale intent — it always pushes the row's CURRENT state (as of the batch fetch).
  * Per-row best-effort: a Google failure leaves that row pending for the next sweep and moves on.
  * This function plus the SyncPending write-ahead flag is the "no event exists only in
  * Pawservation" guarantee: while a connection exists, every state change either cleared the flag
@@ -295,7 +318,12 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
   );
   for (const r of rows) {
     try {
-      if (r.Status === 'cancelled' || r.Status === 'declined') {
+      // A terminal row DELETES its event — unless it is a cancellation carrying an assessed fee,
+      // which retitles instead and so falls through to the update path below. Without that
+      // exception the retitle done inline by the cancel route would be undone (the event deleted
+      // outright) by the next sweep, because this row is still SyncPending until a push lands.
+      const retitle = keepsCalendarEventOnCancel(r.Status, r.CancellationFee);
+      if (!retitle && (r.Status === 'cancelled' || r.Status === 'declined')) {
         if (r.GCalEventId) {
           await deleteBookingCalendarEvent(env, tenant, r.GCalEventId, r.Id, r.Status);
         } else {
@@ -303,6 +331,17 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
         }
         continue;
       }
+      if (retitle && !r.GCalEventId) {
+        // Nothing to retitle and nothing to create: a cancelled booking that never synced must
+        // not be pushed into Google now — a create here would put a [CANCELLED] event on the
+        // sitter's calendar for a stay that was never on it.
+        await clearSyncPending(env.PAWBOOK_DB, tenant.Id, r.Id, r.Status);
+        continue;
+      }
+      // Unreachable — 'declined' always takes the delete branch above (keepsCalendarEventOnCancel
+      // is false for it). Present so the union handed to SyncInput is narrowed by the compiler
+      // rather than by a comment, and so a future edit to the branches above fails loudly here.
+      if (r.Status === 'declined') continue;
       const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
       const input: SyncInput = {
         bookingId: r.Id,

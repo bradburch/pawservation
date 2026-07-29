@@ -745,6 +745,67 @@ export async function updateBookingStatus(
   return (result.meta as { changes?: number }).changes !== 0;
 }
 
+/**
+ * One of THIS customer's own bookings. Deliberately a separate function from
+ * `getBookingWithCustomer` rather than a widened parameter on it: the customer cancel path must
+ * never be able to name a booking it does not own, and the way to guarantee that is for the only
+ * read it has access to to carry `EndUserId = ?` in its own SQL. The 'blocked'/'external'
+ * sentinels are excluded here too, so they read as "no such booking" (a 404) rather than as an
+ * existence oracle for rows the customer has no business knowing about.
+ */
+export async function getBookingForUser(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  id: string,
+): Promise<BookingRow | null> {
+  return await db
+    .prepare(
+      `SELECT ${BOOKING_COLS} FROM BookingRequests
+       WHERE TenantId = ? AND EndUserId = ? AND Id = ?
+         AND ServiceType NOT IN ('blocked', 'external')`,
+    )
+    .bind(tenantId, endUserId, id)
+    .first<BookingRow>();
+}
+
+/**
+ * Customer-initiated cancellation. Scoped by `EndUserId` as well as tenant — the ownership
+ * constraint lives in this statement, not in a caller's pre-check, so it cannot be forgotten.
+ *
+ * The whole guard is in SQL and therefore atomic with the write, exactly like
+ * `updateBookingStatus`'s assessed-cancellation arm. It matches `expectedStatus` — the status the
+ * caller PRICED — rather than `Status IN ('pending','confirmed')`, which does two jobs at once: a
+ * raced double-cancel changes one row and stamps the fee once, AND a sitter confirming in the gap
+ * between the fee calculation and this write loses the race instead of landing a request-priced
+ * (free) cancellation on a now-confirmed booking. Either loser sees `false` and its route 409s.
+ *
+ * `cancellationFee` is ALWAYS written, 0 included — a customer cancellation that owes nothing
+ * stores a real 0 rather than NULL, so "the customer cancelled and owes nothing" is a recorded
+ * fact rather than the absence of one. (NULL keeps meaning "no fee was ever assessed", which is
+ * what a sitter-side waive still writes.) Every money read already treats 0 correctly: the
+ * earnings base amount resolves to 0, and the payment guard requires a fee > 0.
+ */
+export async function cancelBookingForUser(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  id: string,
+  cancellationFee: number,
+  expectedStatus: 'pending' | 'confirmed',
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
+       WHERE TenantId = ? AND EndUserId = ? AND Id = ?
+         AND ServiceType NOT IN ('blocked', 'external')
+         AND Status = ?`,
+    )
+    .bind(cancellationFee, tenantId, endUserId, id, expectedStatus)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
 /** One booking joined with its customer's contact details — for status-change notifications. */
 export async function getBookingWithCustomer(
   db: D1Database,
@@ -765,12 +826,17 @@ export async function getBookingWithCustomer(
 
 /**
  * Record a payment iff the booking exists for THIS tenant, is not a 'blocked' sentinel, and is
- * either not cancelled OR cancelled with an assessed CancellationFee — the guard lives in the SQL
+ * either not cancelled OR cancelled with a NON-ZERO assessed CancellationFee — the guard lives in the SQL
  * (INSERT ... SELECT ... WHERE) so it is atomic with the write, like updateBookingStatus's guarded
  * UPDATE. 'pending' is deliberately allowed: deposits are commonly collected before a booking is
  * confirmed. A cancelled or declined booking normally refuses payment, but one carrying a cancellation fee is a
  * live receivable — the customer still owes that fee — so payments against it are accepted. Returns
  * the new payment id, or null when the guard refused (route 404s on null, the existing idiom).
+ *
+ * The fee test is `> 0`, not `IS NOT NULL`: a customer self-cancel writes a real 0 for "cancelled,
+ * nothing owed" (see cancelBookingForUser), and nothing owed must still refuse payment. For every
+ * sitter-assessed fee the two spellings agree — the admin route only ever stores a fee it computed
+ * as greater than zero.
  *
  * `externalRef` carries the Venmo transaction id for imported payments (NULL for hand-recorded
  * ones). A replay violates the partial unique index and THROWS rather than returning null — the
@@ -796,7 +862,7 @@ export async function insertPayment(
        SELECT ?, ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
-         AND (Status NOT IN ('cancelled', 'declined') OR CancellationFee IS NOT NULL)`,
+         AND (Status NOT IN ('cancelled', 'declined') OR COALESCE(CancellationFee, 0) > 0)`,
     )
     .bind(
       id,
@@ -2569,27 +2635,32 @@ export async function listUnsyncedFutureBookings(
 /** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings
  * only ('blocked' is never synced; 'external' is Google-owned). Bounded to StartDate >= fromDate
  * so ancient never-synced history doesn't churn every sweep, soonest first. Status here can be
- * any of the four — the caller derives create/update/delete from Status + GCalEventId. */
+ * any of the four, and CancellationFee rides along because the delete-vs-retitle decision for a
+ * cancelled row turns on it (keepsCalendarEventOnCancel) — the caller derives
+ * create/update/delete from Status + CancellationFee + GCalEventId. */
+export type SyncPendingRow = Omit<BookingSyncRow, 'Status'> & {
+  Status: BookingRow['Status'];
+  CancellationFee: number | null;
+  GCalEventId: string | null;
+};
+
 export async function listSyncPendingBookings(
   db: D1Database,
   tenantId: string,
   fromDate: string,
   limit: number,
-): Promise<
-  (Omit<BookingSyncRow, 'Status'> & { Status: BookingRow['Status']; GCalEventId: string | null })[]
-> {
+): Promise<SyncPendingRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_SYNC_COLS}, b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
+      `SELECT ${BOOKING_SYNC_COLS}, b.CancellationFee AS CancellationFee,
+              b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
          AND b.ServiceType NOT IN ('blocked', 'external') AND b.StartDate >= ?
        ORDER BY b.StartDate
        LIMIT ?`,
     )
     .bind(tenantId, fromDate, limit)
-    .all<
-      Omit<BookingSyncRow, 'Status'> & { Status: BookingRow['Status']; GCalEventId: string | null }
-    >();
+    .all<SyncPendingRow>();
   return results;
 }
 

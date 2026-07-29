@@ -68,6 +68,7 @@ import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
   getCalendarAccessToken,
+  keepsCalendarEventOnCancel,
   reconcileIfStale,
   repointCalendarTarget,
   syncBookingToCalendar,
@@ -1875,12 +1876,20 @@ export const adminRoutes = new Hono<AppEnv>()
     // Calendar hooks are best-effort and never block the response (waitUntil in production; awaited
     // in tests, which have no ExecutionContext — see routes/bookings.ts).
     let calendarTask: Promise<void> | null = null;
-    if (status === 'confirmed') {
+    const retitle = keepsCalendarEventOnCancel('cancelled', fee ?? null) && status === 'cancelled';
+    if (status === 'confirmed' || retitle) {
       // Confirm: retitle the existing event (drop the [REQUEST] marker), or — if the booking has
       // NO event yet (booked before the calendar was connected, or a Google outage swallowed the
       // request-time create) — create it now as a catch-up, already in the confirmed state.
+      //
+      // Cancel-WITH-A-FEE lands here too, retitling to [CANCELLED] rather than deleting: the stay
+      // isn't happening but the receivable is, and this must agree with the outbox's own
+      // delete-vs-retitle derivation or a failed push here would be resolved the other way by the
+      // next sweep. It differs from confirm in one respect — a fee-cancelled booking with no
+      // event is NOT created now, since putting a [CANCELLED] event on a calendar that never had
+      // the booking helps nobody.
       const syncData = await getBookingSyncData(c.env.PAWBOOK_DB, tenant.Id, id);
-      if (syncData) {
+      if (syncData && !(retitle && !booking?.GCalEventId)) {
         const petNames = await listPetNamesForBooking(c.env.PAWBOOK_DB, tenant.Id, id);
         const input: SyncInput = {
           bookingId: id,
@@ -1894,7 +1903,7 @@ export const adminRoutes = new Hono<AppEnv>()
           petCount: syncData.PetCount,
           petNames,
           estCost: syncData.EstCost,
-          status: 'confirmed',
+          status: retitle ? 'cancelled' : 'confirmed',
         };
         calendarTask = booking?.GCalEventId
           ? updateBookingCalendarEvent(c.env, tenant, booking.GCalEventId, input)

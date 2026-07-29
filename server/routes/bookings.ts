@@ -1,14 +1,18 @@
 import { Hono } from 'hono';
 import {
   addBookingPets,
+  cancelBookingForUser,
   deleteBookingRequest,
   findBookingByIdempotencyKey,
+  getBookingForUser,
+  getBookingSyncData,
   getEndUserById,
   insertBookingRequest,
   listBookingPetsForUser,
   listBookingsForUser,
   listChargesForTenant,
   listEndUserPets,
+  listPetNamesForBooking,
   listPetTypes,
   listServiceOptions,
   listServices,
@@ -19,7 +23,13 @@ import {
   loadPetSetRates,
   monthAvailability,
 } from '../lib/availability';
-import { reconcileIfStale, syncBookingToCalendar } from '../lib/calendar-sync';
+import {
+  deleteBookingCalendarEvent,
+  keepsCalendarEventOnCancel,
+  reconcileIfStale,
+  syncBookingToCalendar,
+  updateBookingCalendarEvent,
+} from '../lib/calendar-sync';
 import { DEMO_EMAIL } from '../lib/demo';
 import { isUniqueViolation } from '../lib/db-errors';
 import { endUserAuth } from '../lib/middleware';
@@ -32,13 +42,56 @@ import {
 } from '../lib/validation';
 import {
   addDays,
+  cancellationFee,
+  DEFAULT_TIMEZONE,
+  getPacificDateStr,
   isWeekend,
   nightsBetween,
   validateAnswers,
   validatePetTypeAcceptance,
   validateServiceConstraints,
+  type CancellationTier,
 } from '../../src/shared/index.js';
-import type { AppEnv } from '../types';
+import type { AppEnv, BookingRow } from '../types';
+
+/**
+ * Can this customer still cancel this booking themselves? Terminal rows and stays that have
+ * already finished are history, not actions. A stay ALREADY IN PROGRESS stays cancellable on
+ * purpose: the fee schedule already prices a cancellation on or after the start date (0 days
+ * out → the tightest tier), so refusing here would only push the customer to the phone.
+ *
+ * The server owns this rule and ships the answer as a boolean on `/bookings/mine`, so the widget
+ * never does date math to decide whether to offer the action.
+ */
+function isCustomerCancellable(
+  status: BookingRow['Status'],
+  startDate: string,
+  endDate: string | null,
+  today: string,
+): boolean {
+  return (status === 'pending' || status === 'confirmed') && (endDate ?? startDate) >= today;
+}
+
+/**
+ * What this customer would owe to cancel TODAY, in whole dollars. Computed here and nowhere else:
+ * `/bookings/mine` sends it so the confirm step can state a figure, and the cancel route stamps
+ * the same rule onto the row — the widget never computes money and never sends one.
+ *
+ * A PENDING request is always free. The tiers price breaking a commitment the SITTER has made,
+ * and on a pending request she has not made it — the cancellation design already says declines
+ * never charge, and a customer withdrawing a request the sitter never accepted is the same event
+ * seen from the other side.
+ */
+function feeToCancelToday(
+  status: BookingRow['Status'],
+  estCost: number | null,
+  startDate: string,
+  tiers: CancellationTier[] | null,
+  today: string,
+): number {
+  if (status !== 'confirmed' || estCost == null || !tiers) return 0;
+  return cancellationFee(tiers, estCost, startDate, today);
+}
 
 export const bookingRoutes = new Hono<AppEnv>()
   // Scoped tightly to the booking paths so the merged middleware never guards public routes.
@@ -580,6 +633,100 @@ export const bookingRoutes = new Hono<AppEnv>()
     return c.json({ id, estCost, status: 'pending' }, 201);
   })
 
+  /**
+   * Owner-initiated cancellation. The booking row is NEVER deleted — `BookingRequestPets` has no
+   * ON DELETE CASCADE (D1 enforces FKs, so the DELETE would fail outright) and a deleted row with
+   * a live GCalEventId orphans its Google event forever, since reconcile skips any event that
+   * still carries a bookingId. `Status = 'cancelled'` gives the same visible outcome with none of
+   * that.
+   *
+   * The fee is computed here, from the sitter's stored policy — the request body is not read at
+   * all, so there is no dollar figure for a client to supply. Fee-free cancellations store a real
+   * 0 and DELETE the Google event; a fee-bearing one stores the amount and RETITLES the event
+   * `[CANCELLED] …` (keepsCalendarEventOnCancel — the same predicate the outbox re-drive consults,
+   * or the next sweep would delete the event this route just retitled).
+   */
+  .post('/:slug/bookings/:id/cancel', async (c) => {
+    const tenant = c.get('tenant');
+    const endUserId = c.get('endUserId');
+    const id = c.req.param('id');
+
+    // Ownership is in the SQL, not in a check around it: another customer's id, an unknown id, and
+    // a 'blocked'/'external' sentinel are all one indistinguishable 404 — no existence oracle.
+    const booking = await getBookingForUser(c.env.PAWBOOK_DB, tenant.Id, endUserId, id);
+    if (!booking) return c.json({ error: 'Not found.', code: 'unknown_booking' }, 404);
+
+    const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+    const notCancellable = {
+      error: `That booking can no longer be cancelled here — please contact ${tenant.DisplayName}.`,
+      code: 'not_cancellable',
+    } as const;
+    if (!isCustomerCancellable(booking.Status, booking.StartDate, booking.EndDate, today))
+      return c.json(notCancellable, 409);
+
+    const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    const service = services.find((s) => s.ServiceType === booking.ServiceType);
+    const fee = feeToCancelToday(
+      booking.Status,
+      booking.EstCost,
+      booking.StartDate,
+      service?.CancellationTiers ?? null,
+      today,
+    );
+
+    // The Status guard lives inside this UPDATE and matches the status the fee was PRICED from,
+    // so two simultaneous cancels change one row and stamp the fee once, and a sitter confirming
+    // in the gap above cannot have a request-priced (free) cancellation land on her now-confirmed
+    // booking. Either loser arrives here with `false` and is told what a stale tab is told.
+    const cancelled = await cancelBookingForUser(
+      c.env.PAWBOOK_DB,
+      tenant.Id,
+      endUserId,
+      id,
+      fee,
+      booking.Status as 'pending' | 'confirmed', // narrowed by isCustomerCancellable above
+    );
+    if (!cancelled) return c.json(notCancellable, 409);
+
+    // Best-effort calendar mirror — never blocks or fails the cancellation. SyncPending is already
+    // set by the UPDATE above, so a Google failure just leaves the push for the next cron sweep.
+    if (booking.GCalEventId) {
+      const eventId = booking.GCalEventId;
+      const task = (
+        keepsCalendarEventOnCancel('cancelled', fee)
+          ? (async () => {
+              const sync = await getBookingSyncData(c.env.PAWBOOK_DB, tenant.Id, id);
+              if (!sync) return;
+              const petNames = await listPetNamesForBooking(c.env.PAWBOOK_DB, tenant.Id, id);
+              await updateBookingCalendarEvent(c.env, tenant, eventId, {
+                bookingId: id,
+                endUserId: sync.EndUserId,
+                serviceType: sync.ServiceType,
+                serviceLabel: sync.ServiceLabel,
+                startDate: sync.StartDate,
+                endDate: sync.EndDate,
+                startTime: sync.StartTime,
+                durationMinutes: sync.DurationMinutes,
+                petCount: sync.PetCount,
+                petNames,
+                estCost: sync.EstCost,
+                status: 'cancelled',
+              });
+            })()
+          : deleteBookingCalendarEvent(c.env, tenant, eventId, id, 'cancelled')
+      ).catch((err) => {
+        console.error('calendar cancel sync failed', err);
+      });
+      try {
+        c.executionCtx.waitUntil(task);
+      } catch {
+        await task;
+      }
+    }
+
+    return c.json({ status: 'cancelled', cancellationFee: fee });
+  })
+
   .get('/:slug/bookings/mine', async (c) => {
     const tenant = c.get('tenant');
     const rows = await listBookingsForUser(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'));
@@ -599,19 +746,43 @@ export const bookingRoutes = new Hono<AppEnv>()
       list.push({ label: ch.Label, amount: ch.Amount });
       chargesByBooking.set(ch.BookingRequestId, list);
     }
+    // Cancellation policy per service, so each row can carry what cancelling it TODAY would cost.
+    // Server-computed for the same reason the quote is: the widget renders money, never derives it.
+    const tiersByType = new Map<string, CancellationTier[] | null>(
+      (await listServices(c.env.PAWBOOK_DB, tenant.Id)).map((s) => [
+        s.ServiceType,
+        s.CancellationTiers,
+      ]),
+    );
+    const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     return c.json({
-      bookings: rows.map((r) => ({
-        id: r.Id,
-        type: r.ServiceType,
-        startDate: r.StartDate,
-        endDate: r.EndDate,
-        petCount: r.PetCount,
-        pets: petsByBooking.get(r.Id) ?? [],
-        estCost: r.EstCost,
-        charges: chargesByBooking.get(r.Id) ?? [],
-        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
-        cancellationFee: r.CancellationFee,
-        status: r.Status,
-      })),
+      bookings: rows.map((r) => {
+        const cancellable = isCustomerCancellable(r.Status, r.StartDate, r.EndDate, today);
+        return {
+          id: r.Id,
+          type: r.ServiceType,
+          startDate: r.StartDate,
+          endDate: r.EndDate,
+          petCount: r.PetCount,
+          pets: petsByBooking.get(r.Id) ?? [],
+          estCost: r.EstCost,
+          charges: chargesByBooking.get(r.Id) ?? [],
+          chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
+          cancellationFee: r.CancellationFee,
+          /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
+          cancellable,
+          /** What cancelling today would cost, whole dollars; null when it isn't cancellable. */
+          feeIfCancelledToday: cancellable
+            ? feeToCancelToday(
+                r.Status,
+                r.EstCost,
+                r.StartDate,
+                tiersByType.get(r.ServiceType) ?? null,
+                today,
+              )
+            : null,
+          status: r.Status,
+        };
+      }),
     });
   });

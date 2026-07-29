@@ -203,7 +203,13 @@ export type CalendarBooking = {
   petNames: string[];
   estCost: number | null;
   customerEmail: string | null;
-  status: 'pending' | 'confirmed';
+  /**
+   * 'cancelled' is the RETITLE state: a cancellation that assessed a fee keeps its event and
+   * marks it `[CANCELLED] …`, so the sitter still sees a receivable she is owed. A fee-free
+   * cancellation deletes the event instead and never reaches this builder — see
+   * `keepsCalendarEventOnCancel` in calendar-sync.ts, the single place that rule lives.
+   */
+  status: 'pending' | 'confirmed' | 'cancelled';
   timezone: string;
 };
 
@@ -239,13 +245,19 @@ export function buildEventResource(b: CalendarBooking): EventResource {
     b.petNames.length > 0
       ? b.petNames.join(', ')
       : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`;
-  const summary = `${b.status === 'pending' ? '[REQUEST] ' : ''}${b.serviceLabel} — ${petsText}`;
+  // Mirrors the [REQUEST] marker: a state a human scanning the calendar must read off the title
+  // alone, without opening the event.
+  const marker =
+    b.status === 'pending' ? '[REQUEST] ' : b.status === 'cancelled' ? '[CANCELLED] ' : '';
+  const summary = `${marker}${b.serviceLabel} — ${petsText}`;
   const lines = [`Service: ${b.serviceLabel}`, `Pets: ${petsText}`];
   if (b.customerEmail) lines.push(`Customer: ${b.customerEmail}`);
   if (b.startTime && b.endDate) lines.push(`Arrival: ${b.startTime}`);
   if (b.estCost != null) lines.push(`Estimated cost: $${b.estCost}`);
   if (b.status === 'pending')
     lines.push('Requested via Pawservation — confirm or decline in your dashboard.');
+  if (b.status === 'cancelled')
+    lines.push('Cancelled — kept on your calendar because a cancellation fee is owed.');
   const description = lines.join('\n');
   const extendedProperties = {
     private: {
