@@ -578,8 +578,11 @@ const LANDING_HTML = `<!doctype html>
  * so out loud (no repeating schedule, no way to type in a stay agreed before signing up).
  * Guardrails are enforced by server/__tests__/how-it-works.test.ts rather
  * than by convention: the page may not use the words "invoice"/"statement"/"SMS"/"AI" (none of
- * those exist), multi-pet pricing must be described as SHIPPED — rates the sitter typed, with an
- * unpriced group refused rather than inferred, and nothing ever multiplied —
+ * those exist), multi-pet pricing must be described as SHIPPED and as the sitter's own CHOICE —
+ * per service, either "N pets costs N times the rate" or "only the combinations I priced", with a
+ * combination the sitter typed always beating the multiplier and an unpriced group refused under
+ * the second setting. The page may NOT carry the pre-0005 absolutes ("nothing is multiplied,
+ * ever"), which stopped being true the day PetRateMode shipped —
  * and the developer nouns "idempotency"/"machine-readable"/"llms.txt" are banned from the body
  * copy — the concepts stay, in the language a pet sitter uses.
  */
@@ -787,14 +790,15 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="money-h">You collect it your way &mdash; Pawservation keeps the count</h2>
             <p>
               The arithmetic is deliberately boring: your rate, times the nights, days, walks, or
-              visits booked. Nothing else multiplies it.
+              visits booked &mdash; and, on the setting you pick, times the number of pets. Nothing
+              enters the sum that you did not choose.
             </p>
           </div>
           <div class="wf-math">
             <h3 class="wf-h">How the counting works</h3>
             <div class="wf-pair">
-              <p class="wf-keep">Rates are per service, and they don&rsquo;t multiply behind your back.</p>
-              <p>A second pet uses a second slot of your capacity; it does not quietly double the bill. Any figure a client sees comes from a rate you typed in, never from a multiplier nobody chose.</p>
+              <p class="wf-keep">You choose what a second pet does to the bill.</p>
+              <p>Every service carries one setting, in plain English. Either two dogs cost twice your one-dog rate, or only the combinations you have priced can be booked together. A service you add starts on the first, so a two-dog household can book the moment you type one price; switch it to the second and a pair you have not priced is refused rather than guessed at. Whichever you pick, a second pet also uses a second slot of your capacity, and the figure a client sees traces back to a choice you made &mdash; there is no third behaviour we picked for you.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Record payments as they land.</p>
@@ -809,8 +813,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>The money goes from your client to you by whatever means you already use. Nothing routes through us, so there is no cut taken and no fee on your earnings. An earnings view totals up what you&rsquo;ve recorded.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Two dogs can cost more than one &mdash; because you said so, not because we multiplied.</p>
-              <p>Set a rate for a combination and that combination has a price. On your walk, one dog might be $40 and two dogs $60 &mdash; two numbers you typed, not $40 doubled. Set them once per service and they apply to every client. If a group of pets has no rate yet, we don&rsquo;t invent one: the client sees the dates are free, but the widget asks you for a rate before it will book them &mdash; no price is guessed, and nothing is multiplied, ever.</p>
+              <p class="wf-keep">Two dogs can cost more than one &mdash; and you decide how much more.</p>
+              <p>Price a combination and that combination has that price, whichever setting the service is on. On your walk, one dog might be $40 and two dogs $60 &mdash; two numbers you typed, and they beat the doubling every time. Set them once per service and they apply to every client. A group with no rate of its own falls to the setting you picked: either your rate for each pet, or the widget asks you for a rate before it will book them. There is no third answer invented in between.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">One client can keep an old price.</p>

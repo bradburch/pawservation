@@ -72,20 +72,40 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('href="/#invite-h"');
   });
 
-  it('describes multi-pet pricing as SHIPPED, and as rates the sitter typed', async () => {
+  it("describes multi-pet pricing as SHIPPED, and as the sitter's own CHOICE", async () => {
     const body = await howItWorksBody();
-    // >>> These two pins deliberately REPLACE the pre-PR-3 pins `toContain('being built')` and
-    // `toContain('never auto-multiplied')`. The first became false the moment enforcement
-    // shipped; the second was a promise about a feature that did not exist and is now a
-    // property of one that does, so it is re-pinned as behaviour rather than as intent.
+    // >>> This pin has now been rewritten TWICE, and the history is the point. Pre-PR-3 it read
+    // `toContain('being built')` + `toContain('never auto-multiplied')`. PR 3 shipped enforcement
+    // and re-pinned the second as behaviour: "nothing is multiplied, ever". 0005 shipped
+    // `PetRateMode`, and that absolute became a LIE the moment any service sat on 'linear' — a
+    // page telling a sitter nothing is ever multiplied while her own services double the bill for
+    // a second dog is the worst failure this file exists to prevent. So the absolute is retired
+    // and something stronger replaces it: the page must say the sitter CHOOSES, name both
+    // choices, and never re-acquire the absolute.
     expect(body).not.toContain('being built');
     // The two rate kinds a sitter can actually set:
     expect(body).toContain('two dogs');
     expect(body).toContain('Fido');
-    // The refusal is stated out loud — the page must not imply a fallback price exists.
+    // Both halves of the choice are named, in the sitter's own money language.
+    expect(body).toMatch(/twice your one-dog rate|times the number of pets/i);
+    expect(body).toMatch(/only the combinations you have priced/i);
+    // …and the choice is attributed to the sitter, not to us.
+    expect(body).toMatch(/you choose|you decide/i);
+    // The refusal survives, but as one BRANCH of the choice rather than as the only behaviour.
     expect(body).toMatch(/asks? you for a rate|won&rsquo;t quote|no price/i);
-    // And the multiplier is still ruled out, now as a description of shipped behaviour.
-    expect(body).toMatch(/never multiplied|not a multiplier|nothing is multiplied/i);
+    // A stored combination beats the multiplier — the promise that keeps "a rate you typed" true.
+    expect(body).toMatch(/beat the doubling|beats the doubling|wins over/i);
+    // >>> THE REGRESSION GUARD: the retired absolutes must never come back. Each of these
+    // sentences shipped on this page and is now false for any service on 'linear'.
+    for (const lie of [
+      'nothing is multiplied',
+      'never from a multiplier',
+      'does not quietly double the bill',
+      'multiply behind your back',
+      'not because we multiplied',
+      'Nothing else multiplies it',
+    ])
+      expect(body).not.toContain(lie);
   });
 
   it('teaches capacity with a worked example and cites two real refusal reasons', async () => {

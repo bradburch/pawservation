@@ -21,8 +21,12 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
  */
 const GRID_CELLS = 42;
 
-/** The month response, with its day list indexed for O(1) cell lookup. */
-type MonthState = Omit<MonthAvailability, 'days'> & { days: Map<string, MonthDay> };
+/** The month response, indexed for O(1) cell lookup and stamped with what it describes. */
+type MonthState = Omit<MonthAvailability, 'days'> & {
+  days: Map<string, MonthDay>;
+  forService: string;
+  forOption: string;
+};
 const MONTHS = [
   'January',
   'February',
@@ -83,7 +87,16 @@ export function Calendar({
     void reloadKey;
     try {
       const r = await api.monthAvailability(slug, token, serviceType, month, optionKey);
-      return { ...r, days: new Map(r.days.map((d) => [d.date, d])) };
+      // Stamp which service/option this answer describes: useAsync retains the last success
+      // across a DEPENDENCY change too, not just across an error, so without the stamp the
+      // previous service's window bounds would drive the nav buttons until the new month lands
+      // (minimum notice is per service). See `boundsFresh` below.
+      return {
+        ...r,
+        days: new Map(r.days.map((d) => [d.date, d])),
+        forService: serviceType,
+        forOption: optionKey ?? '',
+      };
     } catch (e) {
       // An expired/invalid token must degrade to re-identify (see server/lib/token.ts) —
       // otherwise the calendar renders with no availability and silently ignores taps.
@@ -115,13 +128,22 @@ export function Calendar({
   // service minimum notice + the business-wide horizon) in the TENANT's timezone — the client
   // does no date arithmetic, it only slices a date to its 'YYYY-MM' and compares strings.
   // Read from `data` rather than the gated values above so paging stays enabled while the next
-  // month loads (useAsync keeps the last successful result), and because the bounds describe the
-  // service, not the month on screen.
-  const earliestMonth = data ? data.earliestBookable.slice(0, 7) : null;
+  // MONTH loads (useAsync keeps the last successful result) — the bounds describe the service,
+  // not the month on screen. But only while the retained answer still describes THIS service and
+  // option; otherwise treat the bounds as unknown, which leaves both buttons enabled (permissive
+  // — the server still refuses an out-of-window request, and the grid still paints it out).
+  const boundsFresh =
+    !!data && data.forService === serviceType && data.forOption === (optionKey ?? '');
+  const earliestMonth = boundsFresh ? data.earliestBookable.slice(0, 7) : null;
   // null latestBookable = no horizon: page forward forever, exactly like the server allows.
-  const latestMonth = data?.latestBookable?.slice(0, 7) ?? null;
-  const atEarliest = earliestMonth !== null && month <= earliestMonth;
-  const atLatest = latestMonth !== null && month >= latestMonth;
+  const latestMonth = boundsFresh ? (data.latestBookable?.slice(0, 7) ?? null) : null;
+  // A misconfigured business (minimum notice past its own horizon) has NO bookable month at all.
+  // Disabling both buttons there would trap the customer between two contradictory labels, so
+  // leave paging alone and let the all-unavailable grid tell the story.
+  const windowUnbookable =
+    earliestMonth !== null && latestMonth !== null && earliestMonth > latestMonth;
+  const atEarliest = !windowUnbookable && earliestMonth !== null && month <= earliestMonth;
+  const atLatest = !windowUnbookable && latestMonth !== null && month >= latestMonth;
 
   const parts = month.split('-');
   const year = Number(parts[0]);
@@ -254,7 +276,12 @@ export function Calendar({
         })}
       </div>
       {(() => {
-        const states = [...days.values()];
+        // Built from the RETAINED response, not the loading-gated `days`: gating it here emptied
+        // the legend mid-fetch, unmounting the whole <ul> and then remounting it — a shrink-then-
+        // grow the auto-resizing iframe faithfully forwards to the host page on every month
+        // change. The <ul> is also always rendered (see .bp-cal-legend's min-height) so a month
+        // that happens to need no entries doesn't collapse it either.
+        const states = [...(data?.days.values() ?? [])];
         const legend = [
           states.some((d) => d.status === 'partial') && (
             <li key="partial" className="bp-lg-partial">
@@ -274,7 +301,7 @@ export function Calendar({
             </li>
           ),
         ].filter(Boolean);
-        return legend.length > 0 ? <ul className="bp-cal-legend">{legend}</ul> : null;
+        return <ul className="bp-cal-legend">{legend}</ul>;
       })()}
       {loadError && <p className="bp-error">Couldn&apos;t load availability — please reload.</p>}
     </div>

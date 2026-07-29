@@ -179,12 +179,30 @@ export const bookingRoutes = new Hono<AppEnv>()
       if (!found) return c.json({ error: 'Unknown service option.' }, 400);
       option = found;
     }
-    // Pull Google's reality INTO the DB before painting the grid, throttled on the widget's own
-    // key (~10 min). Availability itself still reads only D1 — reconcile is what writes a
-    // hand-deleted event or a foreign busy day into BookingRequests, so the grid below sees it as
-    // an ordinary row. Best-effort and never throws: a Google outage just means a slightly staler
-    // grid, never a broken widget. Suppressed for a disabled tenant (read-only, no GET-side writes).
-    if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant, 'widget');
+    // Pull Google's reality INTO the DB, throttled on the widget's own key (~10 min). Availability
+    // itself still reads only D1 — reconcile is what writes a hand-deleted event or a foreign busy
+    // day into BookingRequests, so the grid sees it as an ordinary row on a later load.
+    //
+    // Deliberately NOT awaited. `listCalendarEvents` has no timeout, so awaiting it would let a
+    // HANGING Google block a customer-facing first paint until the platform kills the request —
+    // "Couldn't load availability" caused by a third party the grid doesn't even read. Correctness
+    // never depended on the ordering: the grid and the booking POST both read D1, so they agree
+    // whenever the pull lands. The cost is at most a one-page-load lag on freshness, which the
+    // 600s throttle already licenses away. (waitUntil in production; awaited in tests, which have
+    // no ExecutionContext — the same dance as the booking POST and the OAuth callback.)
+    // Suppressed for a disabled tenant: read-only, no GET-side writes.
+    if (!tenant.DisabledAt) {
+      // reconcileIfStale is documented as never throwing; the guard is insurance against a future
+      // edit turning an unhandled rejection loose in a waitUntil task.
+      const pull = reconcileIfStale(c.env, tenant, 'widget').catch((err) => {
+        console.error('widget calendar pull failed', err);
+      });
+      try {
+        c.executionCtx.waitUntil(pull);
+      } catch {
+        await pull;
+      }
+    }
     const result = await monthAvailability(
       c.env,
       tenant,

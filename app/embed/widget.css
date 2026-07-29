@@ -393,8 +393,10 @@ body {
 }
 
 /* "Your booking" carried a background tint and nothing else — colour alone. The dot is the
-   non-colour cue (same device as the holiday marker, opposite corner so the two compose), and
-   the cell's aria-label says "your booking" outright. */
+   non-colour cue (same device as the holiday marker, mirrored to the opposite corner so a day
+   that is both still reads as both), and the cell's aria-label says "your booking" outright.
+   TOP-left, not bottom-centre: the bottom band belongs to .bp-cal-day small's "used/max" line,
+   which at the widget's narrow (mobile) widths sits only ~4px above the cell floor. */
 .bp-book .bp-cal-day.bp-mine {
   background: color-mix(in srgb, var(--bp-ink) 10%, transparent);
   position: relative;
@@ -403,9 +405,8 @@ body {
 .bp-book .bp-cal-day.bp-mine::before {
   content: '';
   position: absolute;
-  bottom: 4px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 3px;
+  left: 3px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
@@ -475,6 +476,9 @@ body {
   background: color-mix(in srgb, var(--bp-accent) 30%, var(--bp-card));
 }
 
+/* Always rendered, even with no entries — hence the reserved line box. The widget sits in an
+   auto-resizing iframe (App.tsx posts scrollHeight), so a legend that appears and disappears
+   between months bounces the host page exactly like a variable-row grid would. */
 .bp-cal-legend {
   list-style: none;
   display: flex;
@@ -482,6 +486,9 @@ body {
   gap: 4px 14px;
   padding: 10px 0 0;
   margin: 0;
+  /* One legend line. Content-box (the widget sets no global border-box), so this reserves the
+     line itself and the 10px padding above it still applies on top. */
+  min-height: 1.5em;
   font-size: 0.72rem;
   color: var(--bp-soft);
 }

@@ -624,10 +624,100 @@ describe('reconcileIfStale scopes', () => {
   });
 });
 
+/**
+ * The widget's pull is DEFERRED (`c.executionCtx.waitUntil`), not awaited: `listCalendarEvents`
+ * has no timeout, and a hanging Google must never hold up a customer-facing first paint. These
+ * tests supply a real ExecutionContext so the route takes its production path; the rest of the
+ * suite has none, so the route's `catch { await pull }` fallback keeps those deterministic.
+ */
+function fakeCtx(): { ctx: ExecutionContext; tail: Promise<unknown>[] } {
+  const tail: Promise<unknown>[] = [];
+  return {
+    tail,
+    ctx: {
+      waitUntil: (p: Promise<unknown>) => tail.push(p),
+      passThroughOnException: () => {},
+      props: {},
+    } as unknown as ExecutionContext,
+  };
+}
+
+const monthUrl = (month: string) =>
+  `/api/sunny-paws/availability/month?type=boarding&month=${month}`;
+
 describe('GET /:slug/availability/month triggers a widget-scoped reconciliation', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('a booking whose Google event was deleted by hand is gone from the grid on the next widget load', async () => {
+  it('does not wait on Google: a fetch that never settles still returns the grid promptly', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // The outage mode an awaited call could not survive: Google accepts the connection and then
+    // never answers. `listCalendarEvents` has no timeout, so awaiting this would block the
+    // response until the platform killed the request.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(() => {}));
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const { ctx } = fakeCtx();
+
+    const responded = Promise.resolve(
+      app.request(
+        monthUrl(IN_WINDOW_START.slice(0, 7)),
+        { headers: { Authorization: `Bearer ${token}` } },
+        env,
+        ctx,
+      ),
+    ).then((r) => r.status as number | 'timeout');
+    const timedOut = new Promise<'timeout'>((resolve) =>
+      setTimeout(() => resolve('timeout'), 1000),
+    );
+
+    expect(await Promise.race([responded, timedOut])).toBe(200);
+  });
+
+  it('the deleted-by-hand booking is reconciled in the background and gone from the NEXT load', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: IN_WINDOW_START,
+      endDate: addDays(IN_WINDOW_START, 1),
+      optionKey: 'standard',
+      petCount: 2, // fills Sunny Paws' 2-pet boarding pool for that night
+      estCost: null,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_hand_deleted', null);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => calendarListResponse([]));
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const { ctx, tail } = fakeCtx();
+
+    const first = await app.request(
+      monthUrl(IN_WINDOW_START.slice(0, 7)),
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+      ctx,
+    );
+    expect(first.status).toBe(200);
+    expect(tail).toHaveLength(1); // the pull was handed to the runtime, not awaited inline
+
+    await Promise.all(tail); // the runtime drains it after the response
+    expect(await statusOf(env, id)).toBe('cancelled');
+    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+
+    const second = await app.request(
+      monthUrl(IN_WINDOW_START.slice(0, 7)),
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+      fakeCtx().ctx,
+    );
+    const body = (await second.json()) as { days: { date: string; status: string }[] };
+    expect(body.days.find((d) => d.date === IN_WINDOW_START)?.status).toBe('available');
+  });
+
+  // Covers the no-ExecutionContext fallback (`catch { await pull }`), which is what keeps every
+  // other test in the suite deterministic: with the pull awaited, one request both reconciles and
+  // paints. NOT the production ordering — see the deferred test above for that.
+  it('with no ExecutionContext the pull is awaited, so one request both reconciles and paints', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
     // A 2-pet stay fills Sunny Paws' boarding pool (MaxConcurrentPets=2) for its night.
@@ -652,7 +742,6 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { days: { date: string; status: string }[] };
-    // Reconcile ran BEFORE the grid was painted, so the freed day is already available.
     expect(body.days.find((d) => d.date === IN_WINDOW_START)?.status).toBe('available');
     expect(await statusOf(env, id)).toBe('cancelled');
     expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
