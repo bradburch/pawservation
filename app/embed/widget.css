@@ -196,9 +196,12 @@ body {
 }
 
 /* ── Service pills ─────────────────────────────────────────────── */
+/* auto-fit keeps cells equal width/height per row; at the widget's ~376px content width this
+   gives 2-3 columns (tenants have at most 6 services, realistically 2-4), collapsing to one
+   column on narrow host pages. */
 .bp-service-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 8px;
 }
 
@@ -247,31 +250,15 @@ body {
   color: inherit;
 }
 
-/* The service name stacked over the sitter's optional short description, so a blurb grows the
-   pill downward instead of stretching the row. Cards without one are untouched. */
-.bp-service-text {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-}
-
+/* The selected service's description, below the grid. min-height reserves space for the
+   longest realistic 1-2 line blurb so switching services (including to one with no
+   description) never changes the widget's height. */
 .bp-service-desc {
-  max-width: 28ch;
-  font-size: 0.8rem;
-  font-weight: 500;
-  letter-spacing: 0;
+  min-height: 2.6em;
+  margin: 6px 0 0;
+  font-size: 0.85rem;
   line-height: 1.3;
   color: var(--bp-soft);
-  text-align: left;
-  white-space: normal;
-}
-
-/* A pill radius reads as a mistake once the card is two lines tall. */
-.bp-book .bp-service-card:has(.bp-service-desc) {
-  align-items: flex-start;
-  border-radius: 16px;
 }
 
 /* ── Calendar ──────────────────────────────────────────────────── */

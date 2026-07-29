@@ -199,22 +199,22 @@ export function BookTab({
               <span className="bp-service-emoji" aria-hidden="true">
                 <Icon />
               </span>
-              <span className="bp-service-text">
-                <span className="bp-service-label">
-                  {s.label}
-                  {/* Selection must not be color-only: the selected card also gets a check. */}
-                  {type === s.type && (
-                    <span className="bp-service-check" aria-hidden="true">
-                      <IconCheck size={13} />
-                    </span>
-                  )}
-                </span>
-                {s.description && <span className="bp-service-desc">{s.description}</span>}
+              <span className="bp-service-label">
+                {s.label}
+                {/* Selection must not be color-only: the selected card also gets a check. */}
+                {type === s.type && (
+                  <span className="bp-service-check" aria-hidden="true">
+                    <IconCheck size={13} />
+                  </span>
+                )}
               </span>
             </button>
           );
         })}
       </div>
+      {/* Reserved height (see widget.css) so tapping between services doesn't resize the
+          widget — and with it, the host page's iframe. */}
+      <p className="bp-service-desc">{service.description}</p>
 
       {service?.hasDuration && (
         <label className="bp-field">
