@@ -216,6 +216,107 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     expect((await row(env, id)).EstCost).toBe(150);
   });
 
+  /**
+   * The re-quote is what makes an edit honest, but it must not be able to make an editable booking
+   * UNEDITABLE. `/bookings/mine` advertises `editable: true` from status + start date alone, so a
+   * re-price that can fail on a set the customer is not changing is a booking the widget offers to
+   * edit and the server always refuses — the customer's only exit being a cancellation, possibly
+   * with a fee.
+   *
+   * The trigger needs no bad data: the sitter flipping `PetRateMode` back to 'exact', a
+   * `replaceServiceOptions` that scrubs the pet-set rate rows, or a `deleteService`/re-create all
+   * strand every existing multi-pet booking the same way.
+   *
+   * PRICE-RELEVANT = the dates and the pet id set (the only two `estimateCost` inputs an edit can
+   * change; the service and its option come from the stored row). When neither moved, the stored
+   * `EstCost` is still the price of exactly this request and is kept as-is.
+   */
+  it('keeps the stored price when nothing price-relevant changed, even if the set is no longer quotable', async () => {
+    const { env, raw } = createTestEnv();
+    // Priced when the service was 'linear': 3 nights × $50 × 2 pets.
+    setService(raw, "PetRateMode = 'linear'");
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const id = await seedBooking(env, { petIds: [BELLA, MOCHI], estCost: 300 });
+    // …and the sitter flips the service back to 'exact' with no two-pet rate stored, so this exact
+    // set can no longer be quoted at all.
+    setService(raw, "PetRateMode = 'exact'");
+
+    const res = await edit(env, token, id, {
+      startDate: START,
+      endDate: END,
+      petIds: [MOCHI, BELLA], // same SET, different order — a set, not a list
+      startTime: '14:30', // the only thing actually changing
+      answers: {},
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id, estCost: 300, status: 'pending' });
+    const after = await row(env, id);
+    expect(after.EstCost).toBe(300);
+    expect(after.StartTime).toBe('14:30');
+  });
+
+  it('still re-prices when the DATES move, holiday rate and all', async () => {
+    const { env, raw } = createTestEnv();
+    // A holiday rate makes the re-quote observable in a way a flat rate could not: moving onto
+    // Christmas must cost the holiday rate, not the stored number.
+    setService(raw, 'HolidayRate = 90');
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    // Dec 26 → Dec 28: two ordinary nights, $100.
+    const year = Number(TODAY.slice(0, 4)) + 1;
+    const id = await seedBooking(env, {
+      startDate: `${year}-12-26`,
+      endDate: `${year}-12-28`,
+      estCost: 100,
+    });
+
+    const res = await edit(env, token, id, {
+      startDate: `${year}-12-24`, // moved BACK onto Christmas Eve + Christmas Day
+      endDate: `${year}-12-27`, // nights of the 24th, 25th, 26th
+      petIds: [BELLA],
+      answers: {},
+    });
+
+    expect(res.status).toBe(200);
+    // $90 (Christmas Eve) + $90 (Christmas Day) + $50 — re-quoted, not the stored 100.
+    expect(((await res.json()) as { estCost: number }).estCost).toBe(230);
+    expect((await row(env, id)).EstCost).toBe(230);
+  });
+
+  it('still re-prices when the PET SET changes under linear mode', async () => {
+    const { env, raw } = createTestEnv();
+    setService(raw, "PetRateMode = 'linear'");
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const id = await seedBooking(env, { estCost: 150 });
+
+    const res = await edit(env, token, id, {
+      startDate: START,
+      endDate: END,
+      petIds: [BELLA, MOCHI], // the set MOVED — re-price
+      answers: {},
+    });
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { estCost: number }).estCost).toBe(300);
+  });
+
+  it('re-prices a never-priced booking rather than keeping its NULL EstCost', async () => {
+    const { env } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const id = await seedBooking(env, { estCost: null });
+
+    const res = await edit(env, token, id, {
+      startDate: START,
+      endDate: END,
+      petIds: [BELLA],
+      startTime: '09:00',
+      answers: {},
+    });
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { estCost: number }).estCost).toBe(150);
+  });
+
   it('re-runs the booking window: too soon', async () => {
     const { env, raw } = createTestEnv();
     setService(raw, 'MinLeadDays = 5');

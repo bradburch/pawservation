@@ -210,6 +210,19 @@ function conflictFailure(check: { reason: string; code?: string }): OpFailure {
     : fail(409, 'Sorry — those dates just filled up.', 'capacity_conflict');
 }
 
+/**
+ * Do these two id lists name the same SET? Order-insensitive and duplicate-insensitive, because a
+ * pet set is a set: `[a, b]` and `[b, a]` are one request, and `[a, a]` names one pet. Used by the
+ * edit path to decide whether anything price-relevant moved (see `editBooking`).
+ */
+function sameIdSet(a: string[], b: string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  if (left.size !== right.size) return false;
+  for (const id of left) if (!right.has(id)) return false;
+  return true;
+}
+
 // ─── Quote ───────────────────────────────────────────────────────────────────
 
 export type QuoteInput = {
@@ -955,12 +968,19 @@ export type EditBookingPayload = { id: string; estCost: number; status: 'pending
  * keeps the sitter's work, and charging for it would only push customers to cancel instead. She
  * still re-approves, and can decline.
  *
- * ## EstCost IS re-stamped
+ * ## EstCost IS re-stamped — when something PRICE-RELEVANT moved
  *
  * A deliberate, documented deviation from "stamped once and never updated". `EstCost` is the price
- * OF the booking as it stands; an edit is by definition a re-quote, and leaving the old number
- * would let a customer move onto a holiday, add a pet under `PetRateMode = 'linear'`, or lengthen
- * the stay and pay the old price. `totalDue = EstCost + chargesTotal` still holds unchanged —
+ * OF the booking as it stands; an edit that moves the stay is by definition a re-quote, and leaving
+ * the old number would let a customer move onto a holiday, add a pet under
+ * `PetRateMode = 'linear'`, or lengthen the stay and pay the old price. But the re-quote is scoped
+ * to the two inputs an edit can actually change — the DATES and the PET ID SET (the service and its
+ * option come from the stored row) — so an edit that changes only the arrival time or an intake
+ * answer keeps the stored estimate. Re-quoting unconditionally made an editable booking
+ * UNEDITABLE: a 2+-pet set stops resolving the moment the sitter flips `PetRateMode` to 'exact' or
+ * edits the service's options (which scrubs pet-set rate rows), and the edit would 400
+ * `unpriced_pet_set` on a booking `/bookings/mine` advertises as `editable: true`.
+ * `totalDue = EstCost + chargesTotal` still holds unchanged —
  * `BookingCharges` are additive extras the sitter added and are never touched here, so re-stamping
  * the estimate cannot swallow one. The invariant that survives is the one that mattered: `EstCost`
  * is written ONLY by the two operations that price a booking (create and edit) and never absorbs a
@@ -1082,15 +1102,6 @@ export async function editBooking(
 
   const pricedPets = chosen.map((p) => ({ id: p!.Id, petType: p!.PetType }));
   const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
-  const price = estimateCost(service, option, start, end, pricedPets, rates);
-  if (!price.priced) {
-    return fail(
-      400,
-      `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
-      'unpriced_pet_set',
-    );
-  }
-  const estCost = price.cost;
 
   // Apply optimistically, then check capacity EXCLUDING this row — the create path's pattern,
   // and for the same reason: a check performed before the write leaves a window in which a
@@ -1108,6 +1119,42 @@ export async function editBooking(
   const previousPetIds = (await listBookingPetsForUser(env.PAWBOOK_DB, tenant.Id, endUserId))
     .filter((r) => r.BookingRequestId === id)
     .map((r) => r.PetId);
+
+  // Re-price only when something PRICE-RELEVANT moved. `estimateCost`'s inputs are the service,
+  // its option, the dates and the pet set — and the first two come from the stored row, so the
+  // only ones an edit can change are the dates and the pet id set. When neither moved, the stored
+  // `EstCost` already IS the price of exactly this request and is kept verbatim.
+  //
+  // Re-quoting unconditionally is not merely wasteful, it is a trap: a 2+-pet set stops resolving
+  // to a stored rate the moment the sitter flips `PetRateMode` back to 'exact', edits the service's
+  // options (`replaceServiceOptions` scrubs pet-set rate rows) or re-creates the service. The edit
+  // would then 400 `unpriced_pet_set` on a booking `/bookings/mine` still advertises as
+  // `editable: true`, and the customer's only exit would be a cancellation, possibly with a fee.
+  // A NULL stored estimate (never priced) is re-quoted: there is nothing to keep.
+  const samePets =
+    booking.PetCount === pets &&
+    sameIdSet(previousPetIds, petIds) &&
+    previousPetIds.length === pets;
+  const priceRelevantUnchanged =
+    booking.EstCost !== null &&
+    start === booking.StartDate &&
+    endDate === booking.EndDate &&
+    samePets;
+
+  let estCost: number;
+  if (priceRelevantUnchanged) {
+    estCost = booking.EstCost!;
+  } else {
+    const price = estimateCost(service, option, start, end, pricedPets, rates);
+    if (!price.priced) {
+      return fail(
+        400,
+        `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
+        'unpriced_pet_set',
+      );
+    }
+    estCost = price.cost;
+  }
 
   // Customer-scoped AND status-guarded in SQL: the guard is the status we read and priced from,
   // so a sitter confirming (or declining) in the gap wins the race and the edit 409s rather than
