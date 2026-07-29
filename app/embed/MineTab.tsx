@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatFriendlyDate } from '../../src/shared/index.js';
 import {
   api,
@@ -53,6 +53,30 @@ export function MineTab({ config }: { config: TenantConfig }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState('');
+
+  // Focus moves INTO the overlay when it opens and back to the button that opened it when it
+  // closes — a confirm step for a destructive action that a keyboard user can't reach, or that
+  // strands them where the overlay used to be, isn't a confirm step. (The card's own "Cancel
+  // booking" button is unmounted while covered, so nothing focusable is left underneath and
+  // there is nothing to trap against.)
+  //
+  // Return focus is keyed by BOOKING ID rather than held as a node: that button unmounts when the
+  // overlay opens and a fresh element mounts when it closes, so a captured node would always be
+  // the detached old one. Refs are attached before effects run, so the map is current here.
+  const keepRef = useRef<HTMLButtonElement | null>(null);
+  const cancelButtons = useRef(new Map<string, HTMLButtonElement>());
+  const returnToId = useRef<string | null>(null);
+  useEffect(() => {
+    if (confirmId) {
+      keepRef.current?.focus();
+      return;
+    }
+    const id = returnToId.current;
+    returnToId.current = null;
+    // Absent when the row cancelled successfully — it is no longer cancellable, so there is no
+    // button to go back to and focus is left where the browser put it.
+    if (id) cancelButtons.current.get(id)?.focus();
+  }, [confirmId]);
 
   const labelFor = (type: string) => config.services.find((s) => s.type === type)?.label ?? type;
 
@@ -117,11 +141,16 @@ export function MineTab({ config }: { config: TenantConfig }) {
                 auto-resizing iframe, and a row that grows a button on some loads and not others
                 changes scrollHeight and bounces the host page. */}
             <div className="bp-mine-actions">
-              {b.cancellable ? (
+              {b.cancellable && !confirming ? (
                 <button
                   type="button"
                   className="bp-mine-cancel"
+                  ref={(el) => {
+                    if (el) cancelButtons.current.set(b.id, el);
+                    else cancelButtons.current.delete(b.id);
+                  }}
                   onClick={() => {
+                    returnToId.current = b.id;
                     setCancelError('');
                     setConfirmId(b.id);
                   }}
@@ -135,7 +164,20 @@ export function MineTab({ config }: { config: TenantConfig }) {
                 covers the card instead of adding to it, so document height is identical whether
                 it's open or closed and the embedding page never jumps. */}
             {confirming ? (
-              <div className="bp-mine-confirm" role="group" aria-label="Confirm cancellation">
+              <div
+                className="bp-mine-confirm"
+                role="group"
+                aria-label="Confirm cancellation"
+                // Escape backs out, the cheap way out of a destructive prompt. Bound to the
+                // overlay rather than the document because focus is already inside it, and
+                // ignored mid-request so it can't be used to dismiss a cancel already in flight.
+                onKeyDown={(e) => {
+                  if (e.key !== 'Escape' || busyId === b.id) return;
+                  e.stopPropagation();
+                  setCancelError('');
+                  setConfirmId(null);
+                }}
+              >
                 {/* Only the COPY scrolls; the action row below is pinned. A long contact line or a
                     wrapped service label must never push the buttons out of reach, and the fix
                     can't be "let the card grow" — that would move the host page. */}
@@ -171,6 +213,7 @@ export function MineTab({ config }: { config: TenantConfig }) {
                   <button
                     type="button"
                     className="bp-mine-keep"
+                    ref={keepRef}
                     onClick={() => {
                       setCancelError('');
                       setConfirmId(null);

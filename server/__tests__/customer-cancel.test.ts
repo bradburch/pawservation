@@ -12,7 +12,7 @@ import {
 import { redriveCalendarOutbox, reconcileBookingsWithCalendar } from '../lib/calendar-sync';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
+import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Tenant } from '../types';
 
@@ -307,6 +307,116 @@ describe('the outbox must not undo a retitle (the 15-minute bug)', () => {
   });
 });
 
+/**
+ * The SITTER's cancel path has to reach the same conclusion as the customer's, from the same
+ * predicate. If it doesn't, one DB state (cancelled + fee) resolves two ways depending only on
+ * whether the inline Google call happened to succeed: the route deletes, but a failed delete
+ * leaves SyncPending set and the next sweep retitles instead.
+ */
+describe('the admin status route shares the delete-vs-retitle rule', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const postStatus = async (env: Env, id: string, body: Record<string, unknown>) =>
+    app.request(
+      `/api/${SLUG}/admin/bookings/${id}/status`,
+      {
+        method: 'POST',
+        headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      env,
+    );
+
+  it('cancel WITH a fee PATCHes the event to [CANCELLED] rather than deleting it', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    await connectCalendar(env);
+    const id = await seedBooking(env, { startsInDays: 5, gcalEventId: 'evt_admin' });
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+
+    const res = await postStatus(env, id, { status: 'cancelled', chargeFee: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'cancelled', cancellationFee: 100 });
+
+    expect(calls(spy)).toEqual([
+      'PATCH https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_admin',
+    ]);
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string) as {
+      summary: string;
+    };
+    expect(body.summary).toContain('[CANCELLED]');
+    expect(await row(env, id)).toMatchObject({
+      Status: 'cancelled',
+      CancellationFee: 100,
+      GCalEventId: 'evt_admin',
+      SyncPending: 0,
+    });
+  });
+
+  it('cancel with a fee on a booking that never synced makes NO Google call — no catch-up create', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    await connectCalendar(env);
+    const id = await seedBooking(env, { startsInDays: 5 }); // no GCalEventId
+    const spy = vi.spyOn(globalThis, 'fetch');
+
+    const res = await postStatus(env, id, { status: 'cancelled', chargeFee: true });
+    expect(res.status).toBe(200);
+    // The confirm branch this now shares would otherwise CREATE the event as a catch-up, putting
+    // a [CANCELLED] entry on a calendar that never carried the booking.
+    expect(spy).not.toHaveBeenCalled();
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 100, GCalEventId: null });
+  });
+
+  it('cancel WITHOUT a fee still deletes, and a decline still deletes', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    await connectCalendar(env);
+    const cancelled = await seedBooking(env, { startsInDays: 5, gcalEventId: 'evt_nofee' });
+    const declined = await seedBooking(env, {
+      status: 'pending',
+      startsInDays: 6,
+      gcalEventId: 'evt_dec',
+    });
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    // chargeFee omitted entirely — the sitter waived it.
+    await postStatus(env, cancelled, { status: 'cancelled' });
+    await postStatus(env, declined, { status: 'declined' });
+    expect(calls(spy)).toEqual([
+      'DELETE https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_nofee',
+      'DELETE https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_dec',
+    ]);
+  });
+});
+
+describe('a retitle never resurrects a hand-deleted event', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('a fee-bearing cancel against an already-deleted event does not create a [CANCELLED] one', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    await connectCalendar(env);
+    const id = await seedBooking(env, { startsInDays: 5, gcalEventId: 'evt_gone' });
+    // Google reports the event gone (the sitter deleted it by hand). updateBookingCalendarEvent's
+    // recreate branch exists to re-assert a LIVE booking; re-asserting a dead one would put back
+    // the very event a fee-free cancel deletes on purpose.
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 410 }));
+
+    expect((await cancel(env, await jessToken(env), id)).status).toBe(200);
+    expect(calls(spy)).toEqual([
+      'PATCH https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_gone',
+    ]);
+    expect(calls(spy).some((c) => c.startsWith('POST'))).toBe(false);
+    // Flag cleared: there is nothing left to push, so this must not wedge the outbox either.
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 100, SyncPending: 0 });
+  });
+});
+
 describe('a [CANCELLED] event must not block capacity', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -424,7 +534,6 @@ describe('Earnings after a customer cancellation', () => {
     seedBoardingTiers(raw);
     const id = await seedBooking(env, { startsInDays: 40 });
     await cancel(env, await jessToken(env), id);
-    const { adminHeaders } = await import('./helpers');
     const res = await app.request(
       `/api/${SLUG}/admin/bookings/${id}/payments`,
       {

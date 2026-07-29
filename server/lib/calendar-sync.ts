@@ -187,6 +187,13 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
  * id in place of the stale one. This re-asserts the booking the sitter just confirmed, so a later
  * reconcile won't cancel it for having no live event. If the CAS loses to a concurrent writer, the
  * replacement is deleted rather than orphaned (persistEventIdOrCleanup).
+ *
+ * The recreate is skipped for a `'cancelled'` retitle. Re-asserting is the right move for a live
+ * booking and the wrong one for a dead one: an event the sitter already deleted by hand is
+ * already in the state a fee-free cancel would have put it in, and springing a `[CANCELLED]`
+ * event back onto her calendar is exactly what the outbox's own no-event branch refuses to do.
+ * Nothing is lost — a cancelled row is invisible to reconcile (`listSyncedBookingIds` excludes
+ * it), so there is no later pass to protect the booking from.
  */
 export async function updateBookingCalendarEvent(
   env: Env,
@@ -201,7 +208,7 @@ export async function updateBookingCalendarEvent(
   const calendarId = conn.CalendarId ?? 'primary';
   const resource = await resourceForBooking(env, tenant, b);
   const { gone } = await updateEvent(accessToken, calendarId, gcalEventId, resource);
-  if (gone) {
+  if (gone && b.status !== 'cancelled') {
     const { id } = await createEvent(accessToken, calendarId, resource);
     await persistEventIdOrCleanup(
       env,
