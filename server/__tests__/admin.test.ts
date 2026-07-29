@@ -1896,6 +1896,81 @@ describe('settings PUT — the per-service option cap', () => {
     expect((await putOptions(env, 8)).status).toBe(204);
   });
 
+  /**
+   * The cap blocks GROWTH, not existence. "Add an option" was unbounded before the cap landed, so
+   * a live sitter can already hold more rows than the limit — and a flat `> MAX` check would lock
+   * her out of saving ANYTHING in Settings until she deleted options she still uses. A rule
+   * introduced today must not retroactively invalidate a configuration that was legal when made.
+   */
+  it('an ALREADY over-cap service stays saveable — the cap is not retroactive', async () => {
+    const { env, raw } = createTestEnv();
+    // 11 stored walk options, the way a pre-cap sitter's row looks. Written directly, since the
+    // PUT is exactly the thing being proven not to lock her out.
+    raw
+      .prepare(`DELETE FROM TenantServiceOptions WHERE TenantId=? AND ServiceType='walk'`)
+      .run(TENANT_A);
+    for (let i = 1; i <= 11; i++)
+      raw
+        .prepare(
+          `INSERT INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate)
+           VALUES (?, ?, 'walk', ?, ?, ?, 25)`,
+        )
+        .run(`opt_over_${i}`, TENANT_A, `d${i * 10}`, `${i * 10} min`, i * 10);
+
+    // Re-saving all 11 unchanged — plus an unrelated edit — must succeed.
+    const resave = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              description: 'Neighbourhood walks',
+              options: Array.from({ length: 11 }, (_, i) => ({
+                optionKey: `d${(i + 1) * 10}`,
+                label: `${(i + 1) * 10} min`,
+                durationMinutes: (i + 1) * 10,
+                rate: 25,
+              })),
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(resave.status).toBe(204);
+
+    // But she still cannot GROW it — and the message says why, naming both numbers.
+    const grow = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: Array.from({ length: 12 }, (_, i) => ({
+                label: `${(i + 1) * 10} min`,
+                durationMinutes: (i + 1) * 10,
+                rate: 25,
+              })),
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(grow.status).toBe(400);
+    const msg = ((await grow.json()) as { error: string }).error;
+    expect(msg).toContain('already has 11 options');
+    expect(msg).toContain('limit of 8');
+  });
+
   it('refuses one option past the cap, in plain language, and writes nothing', async () => {
     const { env } = createTestEnv();
     expect((await putOptions(env, 8)).status).toBe(204);

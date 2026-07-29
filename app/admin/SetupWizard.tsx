@@ -218,6 +218,26 @@ export function SetupWizard({
   const presetOptions = (preset: ServicePreset): PresetOption[] =>
     optionEdits[preset.id] ?? preset.options;
 
+  /**
+   * What a SECOND pet will cost on this preset, in the sitter's own money language.
+   *
+   * This wizard is the primary creation path for a new tenant, and a sitter can finish the whole
+   * of it without ever opening Services & Rates — so if the multi-pet setting is not disclosed
+   * HERE, it is not disclosed at all, and "your rate x the number of pets" becomes a price nobody
+   * was told about. That is the one thing the pricing invariant exists to prevent.
+   *
+   * Read per preset rather than stated once, because the answer genuinely differs: a preset with
+   * no existing row will be CREATED by the apply loop, and `POST /admin/services` stamps new
+   * services 'linear'; a preset that matches a row already in the database keeps whatever that
+   * row stores. The wizard's settings PUT deliberately does NOT send `petRateMode`, so an
+   * existing service's stored choice is never overwritten by a Quick setup re-run — which is
+   * exactly why this line must read the stored value instead of assuming.
+   */
+  const multiPetNote = (ps: PresetState): string =>
+    (ps.existing?.petRateMode ?? 'linear') === 'linear'
+      ? 'More than one pet: two pets cost twice this, three cost three times. Change it, or price exact combinations like “two dogs $60”, under Services & Rates.'
+      : 'More than one pet: only combinations you have priced under Services & Rates can be booked together.';
+
   // Escape closes the dialog (same as Skip for now), except mid-apply — matching the
   // Skip button, which is also disabled while a run is in flight.
   useEffect(() => {
@@ -534,6 +554,7 @@ export function SetupWizard({
                     /{SERVICE_TEMPLATES[ps.preset.template].rateUnit}
                   </label>
                 )}
+                <span className="pb-hint">{multiPetNote(ps)}</span>
                 {!ps.alreadyPriced &&
                   ['visit', 'walk'].includes(SERVICE_TEMPLATES[ps.preset.template].rateUnit) && (
                     <details className="pb-wizard-custom">
@@ -564,7 +585,7 @@ export function SetupWizard({
                           }
                         />
                       ))}
-                      {presetOptions(ps.preset).length < MAX_PACK_ROWS && (
+                      {presetOptions(ps.preset).length < MAX_PACK_ROWS ? (
                         <button
                           type="button"
                           onClick={() =>
@@ -579,6 +600,11 @@ export function SetupWizard({
                         >
                           Add another slot
                         </button>
+                      ) : (
+                        <p className="pb-hint">
+                          That&rsquo;s the limit of {MAX_PACK_ROWS} slots on one service. Remove one
+                          to add another.
+                        </p>
                       )}
                     </details>
                   )}

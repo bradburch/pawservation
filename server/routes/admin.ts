@@ -300,11 +300,23 @@ function resolveServiceOptions(
   existingKeys: Set<string>,
 ): { error: string } | { resolved: ResolvedOption[] } {
   const resolved: ResolvedOption[] = [];
-  // Server-side bound on the "Add an option" / "Add another pack" buttons. Checked before any
+  // Server-side bound on the "Add an option" / "Add another slot" buttons. Checked before any
   // per-row work so an oversized payload is one clear message, not the first row's complaint.
-  if (opts.length > MAX_OPTIONS_PER_SERVICE)
+  //
+  // The cap blocks GROWTH, not existence. "Add an option" was unbounded before this cap landed,
+  // so a live sitter may already hold more rows than the limit — and a flat `> MAX` check would
+  // lock her out of saving ANYTHING in Settings (a name, a question, a holiday rate) until she
+  // deleted options she still uses. A rule introduced today must never retroactively invalidate
+  // a configuration that was legal when it was made. So the effective ceiling is the higher of
+  // the cap and what this service ALREADY has: an over-cap service stays fully editable and
+  // saveable, it simply cannot get bigger, and every deletion ratchets it down toward the cap.
+  const ceiling = Math.max(MAX_OPTIONS_PER_SERVICE, existingKeys.size);
+  if (opts.length > ceiling)
     return {
-      error: `${serviceLabel}: a service can have at most ${MAX_OPTIONS_PER_SERVICE} options. Remove one to add another.`,
+      error:
+        existingKeys.size > MAX_OPTIONS_PER_SERVICE
+          ? `${serviceLabel}: this service already has ${existingKeys.size} options, more than the limit of ${MAX_OPTIONS_PER_SERVICE}. You can keep and edit the ones you have, but you'll need to remove one before adding another.`
+          : `${serviceLabel}: a service can have at most ${MAX_OPTIONS_PER_SERVICE} options. Remove one to add another.`,
     };
   // Duplicate names are the only collision a sitter should ever have to fix by hand — keys are
   // derived plumbing and are de-duped automatically below (two same-duration options are fine).

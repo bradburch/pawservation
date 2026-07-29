@@ -45,10 +45,13 @@ the availability/conflict math.
   before its earliest bookable start, and a tenant-wide advance-booking horizon caps how
   far out anyone can book; both are optional (NULL = unlimited) and enforced identically
   at the quote, the calendar grid, and the booking POST.
-- **Pet-set rates** — beyond the base per-pet price, a sitter can set an exact-match rate
-  for a specific combination of pets or a species mix (e.g. "two dogs" priced as its own
-  line); an unpriced multi-pet set is refused rather than guessed at by multiplying the
-  single-pet rate.
+- **Pet-set rates + a per-service multi-pet mode** — a sitter can set an exact-match rate for
+  a specific combination of pets or a species mix (e.g. "two dogs" priced as its own line),
+  and those stored rates always win. For a combination with no rate of its own, each service
+  carries a stored `PetRateMode`: `'linear'` charges the option rate × the number of pets,
+  `'exact'` refuses the booking rather than guessing a price. Services created from here on
+  start `'linear'`; every service that existed before the mode shipped stays `'exact'`, and
+  nothing is backfilled.
 - **Onboarding wizard** — first login walks a new sitter through business profile,
   services, and pricing presets; skippable and re-runnable, always additive.
 - **Invite-only signup + owner console** — the platform owner (identified by the

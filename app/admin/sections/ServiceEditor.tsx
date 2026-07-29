@@ -234,7 +234,9 @@ function PetRatesEditor({
           What a booking with more than one pet costs. Either every pet multiplies your rate, or
           only the combinations you price below can be booked together — your choice, stated in the
           sentence under this heading. A combination you price always wins over the multiplier, so
-          you can charge less for the second dog just by adding a row.
+          you can charge less for the second dog just by adding a row. A service you add starts on
+          the multiply setting; deleting a service and adding it back starts it fresh there too, so
+          check this line after you re-create one.
         </Hint>
       </h3>
       <p className="pb-inline pb-mix-mode">
@@ -634,7 +636,7 @@ export function ServiceEditor({
               </div>
             );
           })}
-          {s.options.length < MAX_OPTIONS && (
+          {s.options.length < MAX_OPTIONS ? (
             <button
               type="button"
               onClick={() =>
@@ -649,6 +651,15 @@ export function ServiceEditor({
             >
               Add an option
             </button>
+          ) : (
+            // A button that simply vanishes reads as a bug. Say why it is gone — and say it in a
+            // way that is also true for a service that predates the cap and holds MORE than it,
+            // which stays fully editable (the server grandfathers it; see resolveServiceOptions).
+            <p className="pb-hint">
+              {s.options.length > MAX_OPTIONS
+                ? `This service has ${s.options.length} options, more than the limit of ${MAX_OPTIONS}. They all keep working and stay editable — remove one before adding another.`
+                : `That's the limit of ${MAX_OPTIONS} options on one service. Remove one to add another.`}
+            </p>
           )}
         </div>
       )}
