@@ -474,11 +474,14 @@ export function BookTab({
             )}
           </fieldset>
         )}
+        {/* The pet-count refusals belong beside the control that causes them, not only in the
+            post-dates note slot the customer may not have reached yet. Reserved height, always
+            rendered — see .bp-pets-note. A SIBLING of the disclosure inside `.bp-pets-block`,
+            never a child of the collapsible fieldset, so a collapsed roster still can't hide it;
+            keeping it in the block is what lets one 8px gap separate all three rows instead of
+            the note paying `.bp-book`'s gap plus a margin of its own. */}
+        <p className={`bp-pets-note${petsNote ? ' bp-note-bad' : ''}`}>{petsNote}</p>
       </div>
-      {/* The pet-count refusals belong beside the control that causes them, not only in the
-          post-dates note slot the customer may not have reached yet. Reserved height, always
-          rendered — see .bp-pets-note. */}
-      <p className={`bp-pets-note${petsNote ? ' bp-note-bad' : ''}`}>{petsNote}</p>
 
       <Calendar
         slug={slug}

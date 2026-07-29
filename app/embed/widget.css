@@ -118,6 +118,15 @@ body {
   gap: 14px;
 }
 
+/* Tighter than the sign-in column. The book tab stacks the service pills, the blurb, the roster
+   and the calendar in a row, so a 14px gap repeated four times reads as drift rather than
+   structure — and each of those gaps used to be paid TWICE, because the blocks carried their own
+   top margins on top of it. Those margins are gone (see .bp-service-desc / .bp-pets-block /
+   .bp-cal); this gap is now the only spacing between them. */
+.bp-book {
+  gap: 12px;
+}
+
 /* ── Fields ────────────────────────────────────────────────────── */
 .bp-field,
 .bp-book label.bp-field,
@@ -267,10 +276,11 @@ body {
 
 /* The selected service's description, below the grid. min-height reserves space for the
    longest realistic 1-2 line blurb so switching services (including to one with no
-   description) never changes the widget's height. */
+   description) never changes the widget's height. No top margin: `.bp-book`'s gap is the only
+   spacing between blocks, and this line belongs to the card above it anyway. */
 .bp-service-desc {
   min-height: 2.6em;
-  margin: 6px 0 0;
+  margin: 0;
   font-size: 0.85rem;
   line-height: 1.3;
   color: var(--bp-soft);
@@ -278,7 +288,8 @@ body {
 
 /* ── Calendar ──────────────────────────────────────────────────── */
 .bp-cal {
-  margin-top: 4px;
+  /* No top margin — `.bp-book`'s gap already separates it from the roster above. */
+  margin-top: 0;
 }
 
 .bp-cal-nav {
@@ -523,6 +534,22 @@ body {
   color: var(--bp-soft);
 }
 
+/* Two lines, on narrow hosts only. WHICH entries the legend carries is a property of the month
+   on screen ("Almost full" only appears if some day is partial), so the number of lines it needs
+   changes as the customer pages months — the same class of host-page bounce every reserve in
+   this file exists to stop, and it was measurably live: 1033px ⇄ 1053px paging Aug→Oct at a
+   294px host. The three entries measure 74 + 91 + 78px plus their dots and gaps, which needs
+   ~271px of column and so cannot share one line inside a 248px one.
+   Reserved by media query rather than unconditionally because the widget's width IS the iframe's
+   width: at 420px the column is 376px and one line is provably enough, so a typical embed pays
+   nothing for a wrap that cannot happen to it. Shrinking the type until three entries fit at
+   248px was measured too — it takes 0.66rem (10.5px), which is not a legend anyone can read. */
+@media (max-width: 380px) {
+  .bp-cal-legend {
+    min-height: 3.3em;
+  }
+}
+
 .bp-cal-legend li::before {
   content: '';
   display: inline-block;
@@ -640,23 +667,35 @@ body {
   transform: rotate(180deg);
 }
 
-/* Sits between the service blurb and the calendar, outside `.bp-details` — so its own margin
-   replaces the gap `.bp-details` used to supply. */
+/* Sits between the service blurb and the calendar, outside `.bp-details`. It owns the roster's
+   whole stack — the disclosure, the expanded chips, AND `.bp-pets-note` — so those three share
+   ONE 8px gap instead of the note paying `.bp-book`'s gap plus a margin of its own on top. No
+   top margin here either: `.bp-book`'s gap is the only spacing above it. */
 .bp-pets-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 0;
 }
 
-/* The pet-count / acceptance refusal, beside the control that causes it. Always rendered: it
-   appears and disappears as pets are ticked, and that is exactly the interaction the
-   reserved-space rule exists for. THREE lines, from the same 294px measurement as `.bp-note` —
-   this slot carries the acceptance error verbatim ("House sitting doesn't accept guinea pigs —
-   Bartholomew can't join this booking."), which is the longest string either slot can hold. */
+/* The pet-count refusal, beside the control that causes it. Always rendered: it appears and
+   disappears as pets are ticked, and that is exactly the interaction the reserved-space rule
+   exists for.
+   ONE line, sized for the worst case this slot can REACH rather than the worst case it can
+   HOLD. Measured at a 294px host (a 248px column, the narrowest sidebar embed worth
+   supporting): every string a customer can produce here wraps to one line — "Choose at least
+   one pet." and the pet cap at its widest, "This service allows at most 15 pets." (15 is
+   MAX_PET_COUNT_CAP), both fit with room to spare.
+   The three-line reserve this used to carry was sized for `acceptanceError` ("House sitting
+   doesn't accept guinea pigs — Bartholomew can't join this booking.", three lines here), which
+   is NOT reachable from the widget: a pet the service doesn't accept renders as a `disabled`
+   checkbox, and `defaultPets` is filtered to accepted pets and reset to that default on every
+   service change — so no interaction can put a rejected pet into the selection. Should stale or
+   corrupt data ever produce it anyway, min-height is a floor, so it grows to three lines and
+   stays legible rather than being clipped. */
 .bp-pets-note {
-  min-height: 3.6em;
-  margin: 6px 0 0;
+  min-height: 1.2em;
+  margin: 0;
   font-size: 0.85rem;
   line-height: 1.2;
   overflow-wrap: break-word;
