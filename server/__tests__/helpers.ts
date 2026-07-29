@@ -77,7 +77,16 @@ function makeKV(): KVNamespace {
   } as unknown as KVNamespace;
 }
 
-export function createTestEnv(opts?: { html?: string; demoActivity?: boolean }): {
+export function createTestEnv(opts?: {
+  html?: string;
+  demoActivity?: boolean;
+  /**
+   * Load the demo seed as if `date('now')` were this 'YYYY-MM-DD' — the only way to prove the
+   * demo's conflicts hold for EVERY possible "today" rather than for the day the suite happens to
+   * run. Implies `demoActivity`. See seed-demo.test.ts's sweep.
+   */
+  demoActivityAsOf?: string;
+}): {
   env: Env;
   raw: DatabaseSync;
 } {
@@ -91,7 +100,14 @@ export function createTestEnv(opts?: { html?: string; demoActivity?: boolean }):
   // clients, which is what a real account looks like but not what a deterministic fixture is. Most
   // tests want the minimal base seed; `demoActivity: true` gets the demo one, exercised end to end
   // by seed-demo.test.ts.
-  if (opts?.demoActivity) raw.exec(readFileSync(join(SQL_DIR, 'seed-demo.sql'), 'utf8'));
+  if (opts?.demoActivity || opts?.demoActivityAsOf) {
+    const sql = readFileSync(join(SQL_DIR, 'seed-demo.sql'), 'utf8');
+    const asOf = opts.demoActivityAsOf;
+    if (asOf !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+      throw new Error(`demoActivityAsOf must be YYYY-MM-DD, got ${asOf}`);
+    }
+    raw.exec(asOf ? sql.replaceAll(`date('now'`, `date('${asOf}'`) : sql);
+  }
   const env = {
     PAWBOOK_DB: makeD1(raw),
     PAWBOOK_CACHE: makeKV(),

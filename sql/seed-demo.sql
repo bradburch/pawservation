@@ -22,6 +22,12 @@
 -- seed REPLACES these rows in place, so the whole demo rolls forward to the new "now" — same rows,
 -- same shape, new dates. `date('now')` is UTC, so every offset here is >= +2 days to stay
 -- comfortably in the future in any tenant timezone.
+--
+-- Because the window slides, the demo database must contain NO STATIC DATES — a fixed date the
+-- window eventually walks over silently changes the conflicts below. sql/seed.sql's seven
+-- hardcoded rows are therefore re-stamped relative to `now` near the bottom of this file; see the
+-- comment there. That is what makes this seed's conflicts identical for every possible value of
+-- "today" rather than only for the day it was written.
 
 -- More clients, so a busy day is several DIFFERENT families rather than one customer booked
 -- against herself. Every one is active (invite-only /identify) and every one owns a pet below.
@@ -121,13 +127,44 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
   ('seed_pr_walk_a', 'tnt_pawsandrelax', 'eu_pr_omar', 'walk', date('now', '+2 days'), NULL, 'd30', 1, '17:30', 22, 'confirmed'),
   ('seed_pr_walk_b', 'tnt_pawsandrelax', 'eu_pr_jess', 'walk', date('now', '+8 days'), NULL, 'd30', 1, '11:00', 22, 'pending');
 
+-- REBASING THE BASE FIXTURE'S SEVEN HARDCODED ROWS.
+--
+-- sql/seed.sql dates its own bookings statically (2026-08-10/20, 2028-06-20, 2028-07-03) because
+-- ~120 tests assert those literals. Left alone in the DEMO database they are a time bomb: this
+-- file's window slides forward every day, and `listCapacityRows` counts pending and confirmed
+-- alike, so sooner or later a static row drifts into a day this file's conflicts are built on --
+-- silently changing an `available` day to `partial`, or a 1-pet shoulder to a full one. (Sweeping
+-- the next 900 days found 35 such days: 2026-08-08..08-17 and most of 2028-06.) It also produced a
+-- real data defect: on 2026-07-28 the house sit below overlapped seed_sp_pend2's boarding nights
+-- by two days, which `rangeHasConflict`'s tenant-wide house-sit rule (at most ONE day of overlap)
+-- would have refused -- a confirmed booking the server itself would not have accepted.
+--
+-- So the demo database contains NO static dates at all: the seven rows are re-stamped here,
+-- relative to the same `now`, parked at +38..+62 where they are clear of every day this file's
+-- conflicts assert on (which reach +33). Same ids, so the base fixture is unchanged for every test
+-- that does not opt into the demo, and re-running the seed is still idempotent. If you add a
+-- statically-dated booking to seed.sql, re-stamp it here too -- server/__tests__/seed-demo.test.ts
+-- fails if any demo-database booking sits outside the relative window.
+INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Status) VALUES
+  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+38 days'), NULL, 'd30', 1, '09:00', 20, 'pending'),
+  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', date('now', '+39 days'), NULL, 'd60', 1, '15:00', 40, 'pending'),
+  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+40 days'), date('now', '+43 days'), 'standard', 1, NULL, 150, 'pending'),
+  ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 250, 'confirmed'),
+  -- The base row books two pets for $400. In the DEMO database it becomes a 1-pet stay at 5 x $40,
+  -- for the same reason nothing else here books a set: 2+ pets with no stored pet-set rate is
+  -- refused at pricing, so a 2-pet demo booking is one the widget could never re-quote.
+  ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 200, 'confirmed');
+
 -- THE BLOCKED-DAY CONFLICT: time off (the 'blocked' sentinel; EndDate exclusive). A hard stop for
 -- EVERY service on those days — no bookend sharing, no pool math — so each tenant's calendar has
 -- a stretch of closed days a prospective sitter can recognise.
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, PetCount, EstCost, Status) VALUES
   ('seed_sp_block2', 'tnt_sunnypaws', NULL, 'blocked', date('now', '+30 days'), date('now', '+33 days'), 1, NULL, 'confirmed'),
   ('seed_ht_block2', 'tnt_happytails', NULL, 'blocked', date('now', '+26 days'), date('now', '+28 days'), 1, NULL, 'confirmed'),
-  ('seed_pr_block1', 'tnt_pawsandrelax', NULL, 'blocked', date('now', '+15 days'), date('now', '+17 days'), 1, NULL, 'confirmed');
+  ('seed_pr_block1', 'tnt_pawsandrelax', NULL, 'blocked', date('now', '+15 days'), date('now', '+17 days'), 1, NULL, 'confirmed'),
+  -- The base fixture's two static blocked ranges, re-stamped out past everything else (see above).
+  ('seed_sp_block1', 'tnt_sunnypaws', NULL, 'blocked', date('now', '+60 days'), date('now', '+62 days'), 1, NULL, 'confirmed'),
+  ('seed_ht_block1', 'tnt_happytails', NULL, 'blocked', date('now', '+60 days'), date('now', '+62 days'), 1, NULL, 'confirmed');
 
 -- Which pet each booking is for. BookingRequests carries no PetType column: pet references flow
 -- through BookingRequestPets -> EndUserPets, so a booking with no row here shows no pet name.
@@ -159,4 +196,11 @@ INSERT OR REPLACE INTO BookingRequestPets (BookingRequestId, PetId) VALUES
   ('seed_pr_board_b', 'pet_pr_biscuit'),
   ('seed_pr_house_a', 'pet_pr_sable'),
   ('seed_pr_walk_a', 'pet_pr_biscuit'),
-  ('seed_pr_walk_b', 'pet_pr_luna');
+  ('seed_pr_walk_b', 'pet_pr_luna'),
+  -- The re-stamped base rows get their pet links too, so no booking in the demo database shows a
+  -- blank pet column. (The base fixture deliberately still has none — tests assert on that.)
+  ('seed_sp_pend1', 'pet_sp_bella'),
+  ('seed_sp_pend2', 'pet_sp_bella'),
+  ('seed_sp_board1', 'pet_sp_bella'),
+  ('seed_ht_pend1', 'pet_ht_otis'),
+  ('seed_ht_board1', 'pet_ht_otis');
