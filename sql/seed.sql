@@ -1,5 +1,12 @@
 -- Demo seed: two tenants with deliberately different branding, rates, and capacity.
 --
+-- This is the BASE fixture — tenants, logins, services, options, pet types, and a minimal handful
+-- of clients/bookings. The Vitest harness executes exactly this file (plus sql/schema.sql), and
+-- ~120 test files assert against its exact contents, so keep it small and deterministic. The
+-- lived-in demo — extra clients, a booking per enabled service, and deliberate capacity/slot/
+-- blocked-day conflicts, all dated relative to `now` — lives in sql/seed-demo.sql, which
+-- `npm run seed:local` / `seed:remote` apply straight after this file.
+--
 -- ⚠️  DEMO DATA ONLY — DO NOT SEED A PRODUCTION DATABASE.
 -- The sitter logins below use the publicly-known password "demo1234". Running this against a
 -- real deployment installs admin accounts anyone reading this repo can log into. `seed:remote`

@@ -78,7 +78,7 @@ Prereqs: **Node 24** (`nvm use` reads `.nvmrc` — the test harness needs the bu
 
 ```bash
 npm install
-npm run seed:local   # applies sql/schema.sql + sql/seed.sql to the local D1 (resets local data)
+npm run seed:local   # applies sql/schema.sql + sql/seed.sql + sql/seed-demo.sql to the local D1
 npm run build        # build the four Vite bundles into dist/
 npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM_NOREPLY: --var RESEND_FROM_BOOKING:
 ```
@@ -119,7 +119,7 @@ Seeded demo logins:
 | Command                                                | What it does                                                                          |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `npm run dev`                                          | Build + watch widgets, run `wrangler dev` (reads `.dev.vars` → real email; see above) |
-| `npm run seed:local`                                   | Reset the local D1 from `sql/schema.sql` + `sql/seed.sql`                             |
+| `npm run seed:local`                                   | Reset the local D1 from `sql/schema.sql` + `sql/seed.sql` + `sql/seed-demo.sql`       |
 | `npm test`                                             | Vitest against a real in-memory SQLite (`server/**/*.test.ts`)                        |
 | `npx vitest run server/__tests__/availability.test.ts` | Run one test file                                                                     |
 | `npx vitest run -t "conflict"`                         | Filter tests by name                                                                  |
@@ -140,7 +140,7 @@ server/       Hono Worker — routes, tenant middleware, auth/tokens, availabili
 app/          Three React apps: embed/ (widget), admin/ (dashboard + owner console),
               setup/ (signup-link page), plus shared-ui/ (API client, icons, hooks)
 src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
-sql/          schema.sql (canonical DDL) + seed.sql (demo tenants)
+sql/          schema.sql (canonical DDL), seed.sql (demo tenants), seed-demo.sql (activity)
 migrations/   New incremental DB changes only, numbered from the 2026-07-27 re-baseline
 public/       embed.js loader, demo host script, landing images, CSV import example
 ```
@@ -161,8 +161,8 @@ consistent):
 
 - **`sql/schema.sql` IS the baseline.** Every database — local, remote, and the Vitest
   harness — is expected to match it exactly. `npm run seed:local` / `seed:remote` apply
-  `sql/schema.sql` (+ optional demo `sql/seed.sql`) directly; there is nothing to replay
-  on top.
+  `sql/schema.sql` (+ the demo `sql/seed.sql` and `sql/seed-demo.sql`) directly; there is
+  nothing to replay on top.
 - **`migrations/` numbering restarts from the 2026-07-27 re-baseline.** The incremental
   history that built the old schema (`0001`–`0025`) was deleted in the re-baseline; it
   lives in git (`git log -- migrations/`), not on disk. See `migrations/README.md` for

@@ -12,8 +12,13 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
 
 ## Rules
 
-- **Fresh installs:** `npm run seed:local` / `seed:remote` (schema.sql then seed.sql). Never
-  `wrangler d1 migrations apply`.
+- **Fresh installs:** `npm run seed:local` / `seed:remote` (schema.sql, then seed.sql, then
+  seed-demo.sql). Never `wrangler d1 migrations apply`.
+- **Two seed files.** `sql/seed.sql` is the minimal base fixture the Vitest harness loads and the
+  suite asserts against; `sql/seed-demo.sql` is the lived-in demo layered on top (extra clients, a
+  booking per enabled service, deliberate conflicts, dated relative to `now`). Both are
+  `INSERT OR REPLACE`, so re-seeding is idempotent — the demo simply rolls its dates forward.
+  Tests opt into the demo with `createTestEnv({ demoActivity: true })`.
 - **New schema changes:** add a file here starting at **`0001_*.sql`** (numbering restarts from
   the new baseline) AND mirror the change into `sql/schema.sql` in the same branch — the test
   suite only sees what schema.sql has. Apply to the remote DB by hand (`npx wrangler d1 execute

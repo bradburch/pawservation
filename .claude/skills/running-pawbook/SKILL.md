@@ -11,7 +11,7 @@ Cloudflare Worker (Hono) + D1 + three Vite bundles (embed widget, admin dashboar
 
 ```bash
 npm install                 # if node_modules is missing/stale
-npm run seed:local          # applies sql/schema.sql + sql/seed.sql to local D1 (fresh state)
+npm run seed:local          # schema.sql + seed.sql + seed-demo.sql (the lived-in demo) to local D1
 npm run build               # build the Vite bundles into dist/
 npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM_NOREPLY: --var RESEND_FROM_BOOKING:
 ```
