@@ -1,4 +1,9 @@
-import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
+import type {
+  PetRateMode,
+  ServiceConstraints,
+  ServiceOption,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 import { request, type AdminBooking } from '../shared-ui/api.js';
 
 /** Sitter-dashboard session. `role` mirrors the server's login/session responses. */
@@ -37,6 +42,10 @@ export type ServiceForm = ServiceConstraints & {
   minLeadDays: number | null;
   /** Optional explicit holiday rate in the service's own unit; null = no holiday pricing. */
   holidayRate: number | '' | null;
+  /** The sitter's stored choice for a pet set with no rate of its own: 'exact' refuses it,
+   *  'linear' charges the option rate x the pet count. Rendered and edited here; the PRICE that
+   *  results is still computed only by the server. */
+  petRateMode: PetRateMode;
   /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
    * feeding the "multi-pet but unpriced" warning; never sent back on the PUT. */
   multiPetGroupRateCount: number;
@@ -88,6 +97,7 @@ export type ServicePayload = ServiceConstraints & {
   maxConcurrentPets: number | null;
   minLeadDays: number | null;
   holidayRate: number | null;
+  petRateMode: PetRateMode;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
   acceptedPetTypes: string[] | null;

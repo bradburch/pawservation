@@ -15,6 +15,10 @@ type ServiceEditorTier = { withinDays: number; percent: number };
 /** Mirrors MAX_SERVICE_DESCRIPTION in server/routes/admin.ts — UX only; the server still validates. */
 const MAX_DESCRIPTION = 200;
 
+/** Mirrors MAX_OPTIONS_PER_SERVICE in server/lib/services.ts — UX only (it hides the Add button);
+ * `resolveServiceOptions` is the authority and 400s an oversized payload independently. */
+const MAX_OPTIONS = 8;
+
 const QUESTION_TYPES: QuestionForm['type'][] = ['text', 'yesno', 'number', 'select'];
 const QUESTION_TYPE_LABELS: Record<QuestionForm['type'], string> = {
   text: 'Text',
@@ -156,11 +160,26 @@ function QuestionRow({
 }
 
 /**
- * Species-count rates for one service, per option: "1 dog $40, 2 dogs $60" (spec §6). Rows are
- * composed from the service's ACCEPTED pet types; the canonical mixKey is built client-side with
- * the same shared buildMixKey the server validates against — key construction only, never a
- * price computation. All edits flow through setService into the staged draft; the save bar
- * commits. An unfilled row ('' rate or empty mix) blocks saving via App's unpricedService.
+ * Multi-pet pricing for one service: the MODE (what happens to a combination the sitter never
+ * priced) plus the priced combinations themselves, per option.
+ *
+ * Two deliberate shapes, both borrowed from the cancellation-policy editor below — the house
+ * standard for "a rule a sitter has to understand before they trust it":
+ *
+ * 1. The rule is stated once, in one plain sentence, with the mode as an inline control INSIDE
+ *    that sentence rather than a checkbox floating above it. A sitter reading "When a client books
+ *    more than one pet, charge …" learns what their unpriced combinations do without inferring it
+ *    from the absence of a row.
+ * 2. Each combination row is itself a sentence with its inputs embedded — "When a client books
+ *    [2] [Dogs], charge $[60] per night" — instead of a bare rank of spinners a sitter has to
+ *    decode ("2 in the Dogs box, 0 in the Cats box" meaning "any two dogs").
+ *
+ * Every stored combination BEATS the mode, in both modes, which is why the row list reads as
+ * "override" copy under `linear`. The canonical mixKey is still built client-side with the shared
+ * `buildMixKey` the server validates against — key construction only, never a price computation.
+ * The client never multiplies anything: the mode is a stored value it renders and edits, and the
+ * resulting money comes back from the server's quote. All edits flow through `setService` into the
+ * staged draft; the save bar commits. An unfilled row ('' rate or empty mix) blocks saving.
  */
 function PetRatesEditor({
   service: s,
@@ -174,6 +193,7 @@ function PetRatesEditor({
   const accepted = petTypes.filter(
     (pt) => s.acceptedPetTypes === null || s.acceptedPetTypes.includes(pt.petType),
   );
+  const linear = s.petRateMode === 'linear';
   const setOptionRates = (oi: number, petRates: ServiceOptionForm['petRates']) => {
     const options = [...s.options];
     options[oi] = { ...options[oi], petRates };
@@ -187,48 +207,158 @@ function PetRatesEditor({
     next[slug] = count;
     return next;
   };
+  /** The species clauses of one row, in key order, so the sentence reads the same every render. */
+  const clausesOf = (mix: PetMix): { slug: string; count: number }[] =>
+    Object.keys(mix)
+      .filter((slug) => Number.isInteger(mix[slug]) && mix[slug] > 0)
+      .sort()
+      .map((slug) => ({ slug, count: mix[slug] }));
+  const labelOf = (slug: string) => petTypes.find((pt) => pt.petType === slug)?.label ?? slug;
+  /** Next row's starting combination: one more of the previous row's first species (the
+   *  cancellation editor's derive-from-the-last-row idiom), else two of the first accepted type. */
+  const nextRowMixKey = (rows: ServiceOptionForm['petRates']): string => {
+    const first = accepted[0]?.petType;
+    if (!first) return '';
+    const last = rows[rows.length - 1];
+    const lastClauses = last ? clausesOf(parseMixKey(last.mixKey)) : [];
+    const seed = lastClauses[0];
+    return seed
+      ? buildMixKey(withCount(parseMixKey(last!.mixKey), seed.slug, seed.count + 1))
+      : buildMixKey({ [first]: 2 });
+  };
   return (
     <div className="pb-limits">
       <h3>
-        Multi-pet rates
-        <Hint label="Multi-pet rates">
-          An exact price for an exact set of pets — e.g. 1 dog $40, 2 dogs $60. These apply to every
-          client. There is never a per-pet multiplier: a set you haven&rsquo;t priced has no price.
+        Multi-pet pricing
+        <Hint label="Multi-pet pricing">
+          What a booking with more than one pet costs. Either every pet multiplies your rate, or
+          only the combinations you price below can be booked together — your choice, stated in the
+          sentence under this heading. A combination you price always wins over the multiplier, so
+          you can charge less for the second dog just by adding a row.
         </Hint>
       </h3>
-      <p className="pb-hint">Rates for specific pets beat species rates beat the base rate.</p>
+      <p className="pb-inline pb-mix-mode">
+        When a client books more than one pet, charge{' '}
+        <select
+          aria-label="How bookings with more than one pet are priced"
+          value={s.petRateMode}
+          onChange={(e) =>
+            setService({ ...s, petRateMode: e.target.value === 'linear' ? 'linear' : 'exact' })
+          }
+        >
+          <option value="linear">my rate × the number of pets</option>
+          <option value="exact">only the combinations I price below</option>
+        </select>
+        .
+      </p>
+      <p className="pb-hint">
+        {linear ? (
+          <>
+            So two dogs cost twice your one-dog rate — on holidays too. Add a combination below to
+            charge something else for it.
+          </>
+        ) : (
+          <>
+            So a combination you haven&rsquo;t priced below can&rsquo;t be booked at all. Rates for
+            specific pets beat these species rates, which beat your base rate.
+          </>
+        )}
+      </p>
       {s.options.map((o, oi) => (
         <div className="pb-mix-option" key={o.optionKey ?? `new-${oi}`}>
           {s.options.length > 1 && <strong className="pb-mix-option-label">{o.label}</strong>}
           {o.petRates.map((r, ri) => {
             const mix = parseMixKey(r.mixKey);
+            const clauses = clausesOf(mix);
             const setRow = (next: { mixKey: string; rate: number | '' }) =>
               setOptionRates(
                 oi,
                 o.petRates.map((row, k) => (k === ri ? next : row)),
               );
+            const unusedSpecies = accepted.filter(
+              (pt) => !clauses.some((cl) => cl.slug === pt.petType),
+            );
             return (
-              <div className="pb-inline" key={ri}>
-                {accepted.map((pt) => (
-                  <label className="pb-inline" key={pt.petType}>
+              <div className="pb-inline pb-mix-row" key={ri}>
+                When a client books
+                {clauses.map((cl, ci) => (
+                  <span className="pb-inline" key={cl.slug}>
+                    {ci > 0 && 'and'}
                     <input
                       type="number"
-                      min={0}
+                      min={1}
                       step={1}
                       inputMode="numeric"
-                      aria-label={`${pt.label} count, rate ${ri + 1} of ${o.label}`}
-                      value={mix[pt.petType] ?? 0}
+                      aria-label={`Combination ${ri + 1} of ${o.label}: how many ${labelOf(cl.slug)}`}
+                      value={cl.count}
                       onChange={(e) =>
                         setRow({
                           ...r,
-                          mixKey: buildMixKey(withCount(mix, pt.petType, Number(e.target.value))),
+                          mixKey: buildMixKey(withCount(mix, cl.slug, Number(e.target.value))),
                         })
                       }
                     />
-                    {pt.label}
-                  </label>
+                    <select
+                      aria-label={`Combination ${ri + 1} of ${o.label}: which pet type`}
+                      value={cl.slug}
+                      onChange={(e) => {
+                        // Move the count to the newly chosen species; the old slug drops out of
+                        // the key when its count goes to 0 (buildMixKey filters non-positives).
+                        const moved = withCount(
+                          withCount(mix, cl.slug, 0),
+                          e.target.value,
+                          cl.count,
+                        );
+                        setRow({ ...r, mixKey: buildMixKey(moved) });
+                      }}
+                    >
+                      {/* The row's own species is always listed — even if the service has since
+                          stopped accepting it — so the shown value can never disagree with the
+                          stored key. Species already used by ANOTHER clause of this row are
+                          hidden, since one row cannot name a species twice. */}
+                      {(accepted.some((pt) => pt.petType === cl.slug)
+                        ? accepted
+                        : [{ petType: cl.slug, label: labelOf(cl.slug) }, ...accepted]
+                      )
+                        .filter(
+                          (pt) =>
+                            pt.petType === cl.slug || !clauses.some((c2) => c2.slug === pt.petType),
+                        )
+                        .map((pt) => (
+                          <option key={pt.petType} value={pt.petType}>
+                            {pt.label}
+                          </option>
+                        ))}
+                    </select>
+                    {clauses.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label={`Combination ${ri + 1} of ${o.label}: drop ${labelOf(cl.slug)}`}
+                        onClick={() =>
+                          setRow({ ...r, mixKey: buildMixKey(withCount(mix, cl.slug, 0)) })
+                        }
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    )}
+                  </span>
                 ))}
-                $
+                {unusedSpecies.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRow({
+                        ...r,
+                        mixKey: buildMixKey(withCount(mix, unusedSpecies[0].petType, 1)),
+                      })
+                    }
+                  >
+                    {/* A row emptied to zero pets has no sentence left to extend — the button
+                        becomes how the sitter puts one back, rather than an "and" with no "this". */}
+                    {clauses.length === 0 ? 'pick a pet type' : 'and another pet type'}
+                  </button>
+                )}
+                , charge $
                 <input
                   type="number"
                   min={1}
@@ -236,13 +366,13 @@ function PetRatesEditor({
                   inputMode="numeric"
                   required
                   aria-invalid={!isValidRate(r.rate)}
-                  aria-label={`Price, rate ${ri + 1} of ${o.label}`}
+                  aria-label={`Price for combination ${ri + 1} of ${o.label}`}
                   value={r.rate}
                   onChange={(e) =>
                     setRow({ ...r, rate: e.target.value === '' ? '' : Number(e.target.value) })
                   }
                 />
-                /{s.rateUnit}
+                per {s.rateUnit}
                 <button
                   type="button"
                   onClick={() =>
@@ -259,15 +389,17 @@ function PetRatesEditor({
           })}
           <button
             type="button"
-            onClick={() => setOptionRates(oi, [...o.petRates, { mixKey: '', rate: '' }])}
+            onClick={() =>
+              setOptionRates(oi, [...o.petRates, { mixKey: nextRowMixKey(o.petRates), rate: '' }])
+            }
           >
-            Add a pet-mix rate
+            Add another combination
           </button>
         </div>
       ))}
       {s.options.some((o) => o.petRates.some((r) => r.mixKey === '')) && (
         <p className="pb-error" role="alert">
-          Each pet-mix rate needs at least one pet.
+          Each combination needs at least one pet.
         </p>
       )}
     </div>
@@ -502,17 +634,22 @@ export function ServiceEditor({
               </div>
             );
           })}
-          <button
-            type="button"
-            onClick={() =>
-              setService({
-                ...s,
-                options: [...s.options, { ...emptyOption(), label: '30 min', durationMinutes: 30 }],
-              })
-            }
-          >
-            Add an option
-          </button>
+          {s.options.length < MAX_OPTIONS && (
+            <button
+              type="button"
+              onClick={() =>
+                setService({
+                  ...s,
+                  options: [
+                    ...s.options,
+                    { ...emptyOption(), label: '30 min', durationMinutes: 30 },
+                  ],
+                })
+              }
+            >
+              Add an option
+            </button>
+          )}
         </div>
       )}
       <div className="pb-inline">
@@ -524,7 +661,8 @@ export function ServiceEditor({
               {s.rateUnit === 'night' ? 'nights that start' : 'days that fall'} on one of these
               days: {US_HOLIDAY_NAMES.join(', ')}. Leave it blank to charge your normal rate all
               year. It is a rate you set, not a percentage — set it lower than your normal rate if
-              you like. Your price never changes with the number of pets.
+              you like. If multi-pet pricing below is set to multiply, holiday {s.rateUnit}s
+              multiply the same way; a combination you price yourself always wins.
             </Hint>
           </span>
           $
@@ -618,12 +756,25 @@ export function ServiceEditor({
             label="Max nights"
             value={s.maxNights}
             onChange={(maxNights) => setService({ ...s, maxNights })}
+            hint={
+              <Hint label="Max nights">
+                The longest single stay a client can request for this service. Blank means no limit.
+                It caps one booking&rsquo;s length, not how many stays they book.
+              </Hint>
+            }
           />
         )}
         <NullableNumberField
           label="Max pets"
           value={s.maxPetCount}
           onChange={(maxPetCount) => setService({ ...s, maxPetCount })}
+          hint={
+            <Hint label="Max pets">
+              The most pets a client can put on ONE booking of this service. Blank means no limit.
+              Different from &ldquo;pets in care&rdquo; above, which counts every pet across all
+              overlapping bookings.
+            </Hint>
+          }
         />
         <label>
           <span className="pb-labelrow">

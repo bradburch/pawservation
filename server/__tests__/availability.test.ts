@@ -52,6 +52,11 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     MaxConcurrentPets: null,
     CancellationTiers: null,
     HolidayRate: null,
+    // 'exact' on purpose: this fixture is the DEFAULT service, and every pricing
+    // assertion below is written against the refusing mode. A 'linear' service must be
+    // asked for explicitly (`svc('boarding', { PetRateMode: 'linear' })`), so no existing
+    // expectation can quietly change meaning when the multiplier lands.
+    PetRateMode: 'exact',
     ...over,
   };
 }
@@ -745,6 +750,208 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
   });
 });
 
+/**
+ * `PetRateMode` (0005) is the ONE sanctioned route by which a pet COUNT reaches the price path,
+ * and it is reachable only because the sitter stored the choice. Every test here has a sibling in
+ * the block above asserting the same input under `'exact'`: the pair is the lock. Deleting either
+ * half leaves "refuses" or "multiplies" untested and the boundary between them unguarded.
+ */
+describe('estimateCost — PetRateMode: multiplication ONLY where the sitter opted in', () => {
+  const bella = { id: 'pet_sp_bella', petType: 'dog' };
+  const mochi = { id: 'pet_sp_mochi', petType: 'cat' };
+  const rex = { id: 'p_rex', petType: 'dog' };
+  const noRates = { groupRates: [], mixRates: [] };
+  const linearBoarding = svc('boarding', { PetRateMode: 'linear' });
+
+  it("the DEFAULT fixture is 'exact' — the multiplier is opt-in, never the ambient behaviour", () => {
+    expect(svc('boarding').PetRateMode).toBe('exact');
+    expect(
+      estimateCost(
+        svc('boarding'),
+        opt({ Rate: 50 }),
+        '2028-08-10',
+        '2028-08-13',
+        [bella, mochi],
+        noRates,
+      ),
+    ).toMatchObject({ priced: false, reason: 'unpriced-pet-set' });
+  });
+
+  it("under 'linear', two pets with no stored rate cost exactly twice the one-pet price", () => {
+    const one = estimateCost(
+      linearBoarding,
+      opt({ Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella],
+      noRates,
+    );
+    const two = estimateCost(
+      linearBoarding,
+      opt({ Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella, mochi],
+      noRates,
+    );
+    // 3 nights x $50 = $150 for one pet; x2 pets = $300. The quantity fields do NOT double:
+    // three nights are three nights however many dogs sleep through them.
+    expect(one).toEqual({ priced: true, cost: 150, billedUnits: 3, unit: 'night' });
+    expect(two).toEqual({ priced: true, cost: 300, billedUnits: 3, unit: 'night' });
+  });
+
+  it("under 'linear', a STORED pet-set rate still wins — a typed rate is never multiplied", () => {
+    // The sitter typed "$70/night for two dogs". Multiplying it would charge $140 for a pair she
+    // deliberately priced at $70 — the exact "price they did not agree to" this feature guards.
+    const res = estimateCost(
+      svc('boarding', { PetRateMode: 'linear' }),
+      opt({ ServiceType: 'boarding', OptionKey: 'standard', Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella, rex],
+      {
+        groupRates: [],
+        mixRates: [{ mixKey: 'dog:2', rate: 70, serviceType: 'boarding', optionKey: 'standard' }],
+      },
+    );
+    expect(res).toEqual({ priced: true, cost: 210, billedUnits: 3, unit: 'night' }); // 70x3, not 140x3
+  });
+
+  it("under 'linear', a stored pet-ID group rate also wins over the multiplier", () => {
+    const res = estimateCost(
+      svc('boarding', { PetRateMode: 'linear' }),
+      opt({ ServiceType: 'boarding', OptionKey: 'standard', Rate: 50 }),
+      '2028-08-10',
+      '2028-08-11',
+      [bella, mochi],
+      {
+        groupRates: [
+          {
+            groupKey: 'pet_sp_bella,pet_sp_mochi',
+            rate: 65,
+            serviceType: 'boarding',
+            optionKey: 'standard',
+          },
+        ],
+        mixRates: [],
+      },
+    );
+    expect(res).toEqual({ priced: true, cost: 65, billedUnits: 1, unit: 'night' }); // not 100
+  });
+
+  it("under 'linear', ONE pet is untouched — x1 is not a price change", () => {
+    expect(
+      estimateCost(linearBoarding, opt({ Rate: 50 }), '2028-08-10', '2028-08-13', [bella], noRates),
+    ).toEqual(
+      estimateCost(
+        svc('boarding'),
+        opt({ Rate: 50 }),
+        '2028-08-10',
+        '2028-08-13',
+        [bella],
+        noRates,
+      ),
+    );
+  });
+
+  it("under 'linear', a repeated pet id is still ONE pet — a duplicate cannot double a price", () => {
+    const res = estimateCost(
+      svc('walk', { PetRateMode: 'linear' }),
+      opt({ Rate: 20 }),
+      '2028-08-01',
+      '2028-08-01',
+      [bella, bella],
+      noRates,
+    );
+    expect(res).toEqual({ priced: true, cost: 20 });
+  });
+
+  it("under 'linear', an EMPTY pet set is STILL refused — the multiplier never manufactures a $0", () => {
+    const res = estimateCost(
+      svc('walk', { PetRateMode: 'linear' }),
+      opt({ Rate: 20 }),
+      '2028-08-01',
+      '2028-08-01',
+      [],
+      noRates,
+    );
+    expect(res).toMatchObject({ priced: false, reason: 'unpriced-pet-set' });
+    expect(res).not.toHaveProperty('cost');
+  });
+
+  it('an UNRECOGNISED stored mode reads as refusing, not as multiplying', () => {
+    // Bad data (a hand-edited row, a future value rolled back) must fail toward "no price", never
+    // toward inventing one. The branch compares against 'linear' explicitly for this reason.
+    const weird = svc('boarding', { PetRateMode: 'sliding' as unknown as 'exact' });
+    expect(
+      estimateCost(weird, opt({ Rate: 50 }), '2028-08-10', '2028-08-13', [bella, mochi], noRates),
+    ).toMatchObject({ priced: false, reason: 'unpriced-pet-set' });
+  });
+
+  it('scales the WHOLE cost including the holiday leg — the pets are not free on Christmas', () => {
+    // Dec 24 -> Dec 27 = 3 nights, 2 of them holiday-priced (Eve + Day, named by check-in date).
+    // One dog: $40 + 2 x $90 = $220. Two dogs on a 'linear' service: $440.
+    const holiday = { HolidayRate: 90 } as const;
+    const one = estimateCost(
+      svc('boarding', { ...holiday, PetRateMode: 'linear' }),
+      opt({ Rate: 40 }),
+      '2029-12-24',
+      '2029-12-27',
+      [bella],
+      noRates,
+    );
+    const two = estimateCost(
+      svc('boarding', { ...holiday, PetRateMode: 'linear' }),
+      opt({ Rate: 40 }),
+      '2029-12-24',
+      '2029-12-27',
+      [bella, mochi],
+      noRates,
+    );
+    expect(one).toMatchObject({ priced: true, cost: 220, holidayUnits: 2, holidayRate: 90 });
+    expect(two).toMatchObject({ priced: true, cost: 440, holidayUnits: 2, holidayRate: 90 });
+    // The BREAKDOWN is unchanged by pet count: 2 holiday nights, one stored $90 rate. Only the
+    // total scales — `holiday-cost.ts` still never sees a pet.
+    expect((two as { holidayUnits: number }).holidayUnits).toBe(
+      (one as { holidayUnits: number }).holidayUnits,
+    );
+    // And the same stay on the DEFAULT 'exact' service is refused outright, not holiday-tripled.
+    expect(
+      estimateCost(
+        svc('boarding', holiday),
+        opt({ Rate: 40 }),
+        '2029-12-24',
+        '2029-12-27',
+        [bella, mochi],
+        noRates,
+      ),
+    ).toMatchObject({ priced: false });
+  });
+
+  it('the multiplier is x N and nothing else — three pets is exactly 3x, never 2.5x or 3x+fee', () => {
+    const base = estimateCost(
+      linearBoarding,
+      opt({ Rate: 50 }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella],
+      noRates,
+    ) as { cost: number };
+    for (const n of [2, 3, 4, 5]) {
+      const pets = Array.from({ length: n }, (_, i) => ({ id: `p_${i}`, petType: 'dog' }));
+      const res = estimateCost(
+        linearBoarding,
+        opt({ Rate: 50 }),
+        '2028-08-10',
+        '2028-08-13',
+        pets,
+        noRates,
+      ) as { cost: number };
+      expect(res.cost).toBe(base.cost * n);
+    }
+  });
+});
+
 describe('estimateCost — the billing unit is the service’s RateUnit, not a hardcoded constant', () => {
   // THE test that must never break: every service that exists today is night-billed, so this
   // change must not move a single price. Numbers are the seeded rates (sql/seed.sql).
@@ -936,7 +1143,18 @@ describe('no inferred pricing — an unpriced multi-pet set is REFUSED, never in
    */
   const dates = 'type=boarding&start=2029-05-10&end=2029-05-13'; // 3 nights, clear of seeded rows
 
-  it('a three-dog quote with no three-dog rate is refused, not tripled', async () => {
+  /** Flip ONE tenant's ONE service into the opted-in multiplier, the way the admin PUT does. */
+  function setLinear(
+    raw: ReturnType<typeof createTestEnv>['raw'],
+    tenantId: string,
+    serviceType: string,
+  ): void {
+    raw
+      .prepare(`UPDATE TenantServices SET PetRateMode='linear' WHERE TenantId=? AND ServiceType=?`)
+      .run(tenantId, serviceType);
+  }
+
+  it("a three-dog quote with no three-dog rate is refused, not tripled (mode 'exact')", async () => {
     const { env, raw } = createTestEnv();
     const ids = seedPets(raw, TENANT_B, 'eu_ht_jess', [
       { id: 'pet_ht_pip', petType: 'dog' },
@@ -957,6 +1175,74 @@ describe('no inferred pricing — an unpriced multi-pet set is REFUSED, never in
     expect(three).not.toHaveProperty('estCost');
     // The defect this whole feature exists to prevent, stated as a number:
     expect(three.estCost).not.toBe(360);
+    // …and it is the DEFAULT: nobody had to configure this tenant to get the refusal.
+    const stored = raw
+      .prepare(`SELECT PetRateMode FROM TenantServices WHERE TenantId=? AND ServiceType='boarding'`)
+      .get(TENANT_B) as { PetRateMode: string };
+    expect(stored.PetRateMode).toBe('exact');
+  });
+
+  it("…and with the sitter's stored 'linear' mode, that SAME quote is exactly tripled", async () => {
+    // The sibling of the test above, on the same tenant, service, dates and pets. The ONLY
+    // difference is one stored column the sitter chose — which is the whole design: the number
+    // 360 is legitimate here and a defect one test up, and the two must stay side by side.
+    const { env, raw } = createTestEnv();
+    setLinear(raw, TENANT_B, 'boarding');
+    const ids = seedPets(raw, TENANT_B, 'eu_ht_jess', [
+      { id: 'pet_ht_pip', petType: 'dog' },
+      { id: 'pet_ht_sam', petType: 'dog' },
+    ]);
+    const one = (await (await quote(env, 'happy-tails', dates, ['pet_ht_otis'])).json()) as Record<
+      string,
+      unknown
+    >;
+    const three = (await (
+      await quote(env, 'happy-tails', dates, ['pet_ht_otis', ...ids])
+    ).json()) as Record<string, unknown>;
+    expect(one).toMatchObject({ available: true, priced: true, estCost: 120 });
+    expect(three).toMatchObject({ available: true, priced: true, estCost: 360 });
+    // The nights did not triple with the price — only the money scales.
+    expect(three.billedUnits).toBe(3);
+    expect(three.unit).toBe('night');
+  });
+
+  it("a stored three-dog rate beats 'linear' at the API too — the sitter's number, not 3x", async () => {
+    const { env, raw } = createTestEnv();
+    setLinear(raw, TENANT_B, 'boarding');
+    const ids = seedPets(raw, TENANT_B, 'eu_ht_jess', [
+      { id: 'pet_ht_pip', petType: 'dog' },
+      { id: 'pet_ht_sam', petType: 'dog' },
+    ]);
+    raw
+      .prepare(
+        `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
+         VALUES (?, 'boarding', 'standard', 'dog:3', 55)`,
+      )
+      .run(TENANT_B);
+    const three = (await (
+      await quote(env, 'happy-tails', dates, ['pet_ht_otis', ...ids])
+    ).json()) as Record<string, unknown>;
+    // $55/night x 3 nights = $165 — the typed trio rate, NOT $360 and not $165 x 3.
+    expect(three).toMatchObject({ available: true, priced: true, estCost: 165 });
+  });
+
+  it("one tenant's 'linear' mode never leaks into another tenant's identical service", async () => {
+    const { env, raw } = createTestEnv();
+    // Sunny Paws opts in; Happy Tails does not. Same service slug, same option key.
+    setLinear(raw, TENANT_A, 'boarding');
+    const htIds = seedPets(raw, TENANT_B, 'eu_ht_jess', [{ id: 'pet_ht_pip', petType: 'dog' }]);
+    const spIds = seedPets(raw, TENANT_A, 'eu_sp_jess', [{ id: 'pet_sp_pip', petType: 'dog' }]);
+    const sunny = (await (
+      await quote(env, 'sunny-paws', 'type=boarding&start=2029-05-10&end=2029-05-13', [
+        'pet_sp_bella',
+        ...spIds,
+      ])
+    ).json()) as Record<string, unknown>;
+    const happy = (await (
+      await quote(env, 'happy-tails', dates, ['pet_ht_otis', ...htIds])
+    ).json()) as Record<string, unknown>;
+    expect(sunny).toMatchObject({ available: true, priced: true, estCost: 300 }); // $50 x 3 x 2
+    expect(happy).toMatchObject({ available: true, priced: false, reason: 'unpriced-pet-set' });
   });
 
   it('with an explicit three-dog rate, the price is THAT rate — not three times the single rate', async () => {
@@ -992,7 +1278,7 @@ describe('no inferred pricing — an unpriced multi-pet set is REFUSED, never in
     expect(five).toEqual({ available: false, reason: 'That exceeds our boarding capacity.' });
   });
 
-  it('a HOLIDAY rate is also immune to pet count', async () => {
+  it("a HOLIDAY rate is also immune to pet count (mode 'exact')", async () => {
     const { env, raw } = createTestEnv();
     // Happy Tails boarding with an explicit holiday rate. The whole point: a holiday rate is a
     // stored rate x units of TIME. If any future change made the holiday leg pet-aware — a
@@ -1030,6 +1316,34 @@ describe('no inferred pricing — an unpriced multi-pet set is REFUSED, never in
     expect(one).toMatchObject({ available: true, priced: true, holidayUnits: 2 });
     // The WHOLE payload — including estCost, holidayUnits and holidayRate — must be identical.
     expect(three).toEqual(one);
+  });
+
+  it("…and under 'linear' the holiday leg scales too — but the BREAKDOWN never does", async () => {
+    // The deliberate holiday call (documented in server/lib/holiday-cost.ts): the multiplier is
+    // applied to the composed total, so a sitter who opted into "N pets cost N times as much"
+    // gets that on holidays as well. What must NOT change is the breakdown — the number of
+    // holiday units and the stored holiday rate are facts about the CALENDAR, not the pets.
+    const { env, raw } = createTestEnv();
+    setLinear(raw, TENANT_B, 'boarding');
+    raw
+      .prepare(`UPDATE TenantServices SET HolidayRate = 90 WHERE TenantId = ? AND ServiceType = ?`)
+      .run(TENANT_B, 'boarding');
+    const ids = seedPets(raw, TENANT_B, 'eu_ht_jess', [
+      { id: 'pet_ht_pip', petType: 'dog' },
+      { id: 'pet_ht_sam', petType: 'dog' },
+    ]);
+    const holidayDates = 'type=boarding&start=2029-12-24&end=2029-12-27';
+    const one = (await (
+      await quote(env, 'happy-tails', holidayDates, ['pet_ht_otis'])
+    ).json()) as Record<string, unknown>;
+    const three = (await (
+      await quote(env, 'happy-tails', holidayDates, ['pet_ht_otis', ...ids])
+    ).json()) as Record<string, unknown>;
+    // 1 normal night at $40 + 2 holiday nights at $90 = $220 for one dog; x3 dogs = $660.
+    expect(one).toMatchObject({ estCost: 220, holidayUnits: 2, holidayRate: 90 });
+    expect(three).toMatchObject({ estCost: 660, holidayUnits: 2, holidayRate: 90 });
+    // Still 3 billed nights, still 2 of them holidays, still ONE stored $90 rate.
+    expect(three.billedUnits).toBe(one.billedUnits);
   });
 });
 

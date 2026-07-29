@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- RateUnit. A STORED rate, never a multiplier and never pet-count-scaled — the price formula
   -- (server/lib/holiday-cost.ts) may only multiply a stored rate by units of time.
   HolidayRate INTEGER CHECK (HolidayRate IS NULL OR HolidayRate >= 1),
+  -- How a pet SET with no stored pet-set rate is priced (0005). 'exact' = REFUSE it (the original
+  -- no-inferred-pricing behaviour); 'linear' = the option's own rate x the number of distinct
+  -- pets. The default is 'exact', so a row nobody chose a mode for prices exactly as it did before
+  -- this column existed. A stored pet-set rate ALWAYS wins over the multiplier — the multiplier is
+  -- only the fallback the sitter opted into, and their stored choice IS the typed consent that
+  -- keeps "a rate the sitter did not type is a price they did not agree to" true.
+  PetRateMode TEXT NOT NULL DEFAULT 'exact' CHECK (PetRateMode IN ('exact', 'linear')),
   UNIQUE (TenantId, ServiceType)
 );
 

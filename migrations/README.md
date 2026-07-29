@@ -50,6 +50,13 @@ pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a 
   `ALTER TABLE … ADD COLUMN`s). Must be applied to the remote DB **before** the branch merges —
   the new worker's `listServices`/`TENANT_COLS` SELECTs name both columns.
 
+- **`0005_pet_rate_mode.sql`** (`fixes-batch-2-pr1`) — adds `TenantServices.PetRateMode`
+  (`'exact' | 'linear'`, `NOT NULL DEFAULT 'exact'`), the sitter-opted-in per-pet multiplier.
+  Additive only (one `ALTER TABLE … ADD COLUMN`), and the default backfills every existing row
+  with today's refuse-an-unpriced-set behaviour, so applying it moves no price. Must be applied to
+  the remote DB **before** the branch merges — the new worker's `listServices` SELECT and
+  `setServiceConfig` UPDATE both name the column.
+
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long
 as every migration that lands on `main` is also applied to the remote DB by hand before that

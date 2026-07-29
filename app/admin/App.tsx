@@ -609,6 +609,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           minLeadDays: s.minLeadDays,
           // '' means the sitter emptied the box — that is "no holiday pricing", i.e. null, not 0.
           holidayRate: s.holidayRate === '' || s.holidayRate == null ? null : s.holidayRate,
+          petRateMode: s.petRateMode,
           options: s.options.map((o): ServiceOptionForm => ({
             optionKey: o.optionKey,
             label: o.label,

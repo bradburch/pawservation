@@ -1832,6 +1832,21 @@ body {
 .pb-mix-option > button {
   margin-top: 6px;
 }
+/* The mode sentence and each priced combination read as PROSE with controls set into them (the
+   cancellation-tier idiom), so they inherit .pb-inline's natural inline flow — the only styling
+   they need is room to breathe and number inputs narrow enough not to break the sentence. */
+.pb-mix-mode {
+  margin: 6px 0 2px;
+}
+.pb-mix-mode select {
+  max-width: 100%;
+}
+.pb-mix-row {
+  margin: 6px 0;
+}
+.pb-mix-row input[type='number'] {
+  width: 5.5em;
+}
 
 /* Service-card advisories. The multi-pet note is warn-toned and single-line: it repeats on
    every card, so full pb-error red turned the grid into a wall of alarm. The holiday suffix

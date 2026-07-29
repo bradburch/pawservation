@@ -52,10 +52,15 @@ export function ServicesSection({
   /**
    * Coarse spec-§6 check: the service can take 2+ pets (MaxPetCount null or >= 2) yet NO stored
    * rate — species-count with 2+ pets, or specific-pet group with 2+ pets — could price ANY
-   * multi-pet set. PR 3 enforces rates, so such bookings are refused — surface it here too.
+   * multi-pet set. Such bookings are refused server-side, so the card says so.
+   *
+   * A `linear` service has no such gap: an unpriced combination there is priced at the rate ×
+   * the pet count, which is the sitter's own stored choice. The warning is for `exact` only —
+   * leaving it up under `linear` would tell a sitter something is broken when nothing is.
    */
   const multiPetUnpriced = (s: ServiceForm): boolean =>
     s.enabled &&
+    s.petRateMode === 'exact' &&
     (s.maxPetCount === null || s.maxPetCount >= 2) &&
     s.multiPetGroupRateCount === 0 &&
     !s.options.some((o) =>

@@ -1,8 +1,16 @@
 import type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType } from './lib/services';
-import type { PaymentMethod } from './lib/validation';
+import type { PaymentMethod, PetRateMode } from './lib/validation';
 import type { ServiceQuestion, CancellationTier } from '../src/shared/index.js';
 
-export type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType, CancellationTier };
+export type {
+  CapacityKind,
+  PetType,
+  RateUnit,
+  ServiceShape,
+  ServiceType,
+  CancellationTier,
+  PetRateMode,
+};
 
 export type Tenant = {
   Id: string;
@@ -70,6 +78,10 @@ export type TenantService = {
   /** Explicit whole-dollar rate for units landing on a listed US holiday; null = no holiday
    *  pricing. Same unit as RateUnit. Never a multiplier — see server/lib/holiday-cost.ts. */
   HolidayRate: number | null;
+  /** How a pet set with no stored pet-set rate is priced (0005): 'exact' refuses it, 'linear'
+   *  charges the option rate × the number of distinct pets. Defaults to 'exact'; a stored pet-set
+   *  rate always beats the multiplier. See `estimateCost`. */
+  PetRateMode: PetRateMode;
 };
 
 export type TenantServiceOption = {

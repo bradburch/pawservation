@@ -20,7 +20,7 @@ import type {
   TenantUser,
 } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
-import type { PaymentMethod } from '../lib/validation';
+import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
 import { parseMixKey, quarterlyBreakdown } from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
@@ -102,7 +102,7 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
               CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount, MinLeadDays,
-              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate
+              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate, PetRateMode
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -136,13 +136,21 @@ export async function createService(
     hasDuration: boolean;
     capacityKind: CapacityKind;
     sortOrder: number;
+    /** Species this service accepts, already intersected with the tenant's registry by the
+     *  caller. null = accepts every registry type (the null-is-unlimited convention). */
+    acceptedPetTypes: string[] | null;
+    /** Named explicitly rather than left to the column default, so "which mode does a brand-new
+     *  service start in" is one visible decision at the call site instead of an implicit one
+     *  buried in DDL. Existing rows are never touched by this. */
+    petRateMode: PetRateMode;
   },
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO TenantServices
-         (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind, SortOrder)
-       VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         (TenantId, ServiceType, Enabled, Label, Icon, Shape, RateUnit, HasDuration, CapacityKind,
+          SortOrder, AcceptedPetTypes, PetRateMode)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       tenantId,
@@ -154,6 +162,8 @@ export async function createService(
       svc.hasDuration ? 1 : 0,
       svc.capacityKind,
       svc.sortOrder,
+      svc.acceptedPetTypes === null ? null : JSON.stringify(svc.acceptedPetTypes),
+      svc.petRateMode,
     )
     .run();
 }
@@ -1205,6 +1215,8 @@ export async function setServiceConfig(
     cancellationTiers: CancellationTier[] | null;
     /** Explicit holiday rate; null clears it back to "no holiday pricing". */
     holidayRate: number | null;
+    /** The sitter's stored choice for pricing an otherwise-unpriced pet set (0005). */
+    petRateMode: PetRateMode;
   },
 ): Promise<boolean> {
   const result = await db
@@ -1212,7 +1224,7 @@ export async function setServiceConfig(
       `UPDATE TenantServices SET
          Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
          MaxPetCount = ?, MinLeadDays = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?,
-         CancellationTiers = ?, HolidayRate = ?
+         CancellationTiers = ?, HolidayRate = ?, PetRateMode = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -1226,6 +1238,7 @@ export async function setServiceConfig(
       config.maxConcurrentPets,
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),
       config.holidayRate,
+      config.petRateMode,
       tenantId,
       serviceType,
     )

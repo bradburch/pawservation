@@ -37,7 +37,7 @@ export {
   type PoolKind,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
-export { isValidRate } from './pricing/rate.js';
+export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';
 export {
   buildGroupKey,
   buildMixKey,

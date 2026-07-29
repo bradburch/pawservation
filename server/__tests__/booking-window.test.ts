@@ -30,6 +30,7 @@ async function setLeadDays(env: Env, days: number | null): Promise<void> {
     maxConcurrentPets: current.MaxConcurrentPets,
     cancellationTiers: current.CancellationTiers,
     holidayRate: current.HolidayRate,
+    petRateMode: current.PetRateMode,
   });
 }
 

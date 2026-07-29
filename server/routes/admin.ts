@@ -88,6 +88,7 @@ import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
   isTemplateId,
+  MAX_OPTIONS_PER_SERVICE,
   MAX_QUESTIONS_PER_SERVICE,
   MAX_SERVICES,
   RESERVED_SERVICE_SLUGS,
@@ -114,6 +115,7 @@ import {
   EMAIL_RE,
   isNullableLimit,
   isPaymentMethod,
+  isPetRateMode,
   isRealDate,
   isValidDuration,
   isValidRate,
@@ -298,6 +300,12 @@ function resolveServiceOptions(
   existingKeys: Set<string>,
 ): { error: string } | { resolved: ResolvedOption[] } {
   const resolved: ResolvedOption[] = [];
+  // Server-side bound on the "Add an option" / "Add another pack" buttons. Checked before any
+  // per-row work so an oversized payload is one clear message, not the first row's complaint.
+  if (opts.length > MAX_OPTIONS_PER_SERVICE)
+    return {
+      error: `${serviceLabel}: a service can have at most ${MAX_OPTIONS_PER_SERVICE} options. Remove one to add another.`,
+    };
   // Duplicate names are the only collision a sitter should ever have to fix by hand — keys are
   // derived plumbing and are de-duped automatically below (two same-duration options are fine).
   const seenLabels = new Set<string>();
@@ -475,6 +483,10 @@ type ServiceBody = {
   cancellationTiers?: CancellationTier[] | null;
   /** Explicit whole-dollar holiday rate; null clears it. PATCH: absent = keep current. */
   holidayRate?: number | null;
+  /** How an otherwise-unpriced pet set is priced (0005): 'exact' refuses it, 'linear' charges the
+   *  option rate x the pet count. PATCH: absent = keep current — never coerced to a default here,
+   *  because coercing it would silently re-mode a service on any partial save. */
+  petRateMode?: unknown;
 };
 type SettingsBody = {
   displayName?: string;
@@ -569,6 +581,7 @@ export const adminRoutes = new Hono<AppEnv>()
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
         holidayRate: svc.HolidayRate,
+        petRateMode: svc.PetRateMode,
         // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
         // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
         multiPetGroupRateCount: groupRates.filter(
@@ -787,6 +800,11 @@ export const adminRoutes = new Hono<AppEnv>()
           { error: `${meta.Label}: Holiday rate must be whole dollars, $1 or more (or blank).` },
           400,
         );
+      // The pet-rate mode is a STORED CHOICE, so an unrecognised value is rejected rather than
+      // coerced: coercing to 'exact' would silently discard a sitter's opt-in, and coercing to
+      // 'linear' would multiply money nobody asked to multiply.
+      if ('petRateMode' in svc && !isPetRateMode(svc.petRateMode))
+        return c.json({ error: `${meta.Label}: unknown multi-pet pricing mode.` }, 400);
       // Per-service acceptance list: PATCH semantics (absent = keep current). An explicit list
       // must be a subset of the tenant's slugs; the EFFECTIVE list (incoming or kept) may not be
       // empty on an enabled service — "accepts nothing" is expressed by disabling the service.
@@ -867,6 +885,7 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers:
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
         holidayRate: 'holidayRate' in svc ? (svc.holidayRate ?? null) : current.HolidayRate,
+        petRateMode: isPetRateMode(svc.petRateMode) ? svc.petRateMode : current.PetRateMode,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.
@@ -931,6 +950,15 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'A service with that name already exists.' }, 400);
 
     const tpl = SERVICE_TEMPLATES[body.template];
+    // The template's species guess, INTERSECTED with this tenant's actual registry. A tenant that
+    // deleted 'cat' would otherwise get a check-in service whose accepted list is empty — an
+    // enabled service accepting nothing, which the settings PUT rejects on every subsequent save.
+    // An empty intersection falls back to NULL (= every registry type), never to `[]`.
+    const registry = new Set(
+      (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).map((p) => p.PetType),
+    );
+    const wanted = tpl.defaultAcceptedPetTypes?.filter((t) => registry.has(t)) ?? null;
+    const acceptedPetTypes = wanted && wanted.length > 0 ? [...wanted] : null;
     try {
       await createService(c.env.PAWBOOK_DB, tenant.Id, {
         serviceType: slug,
@@ -941,6 +969,14 @@ export const adminRoutes = new Hono<AppEnv>()
         hasDuration: tpl.hasDuration,
         capacityKind: tpl.capacityKind,
         sortOrder: Math.max(0, ...existing.map((s) => s.SortOrder)) + 1,
+        acceptedPetTypes,
+        // Owner directive (2026-07-28): a service created from here on starts with per-pet
+        // multiplication ON, so a two-dog household can book the moment the sitter types one
+        // price. This is the ONE place that default is chosen, and it applies to NEW rows only —
+        // the column's own default is 'exact', so every service that already exists keeps
+        // refusing unpriced sets exactly as before. The service editor states the mode in plain
+        // English right above the price, so it is a disclosed default, not a silent one.
+        petRateMode: 'linear',
       });
     } catch (err) {
       // The listServices check above can't see a concurrent insert of the same slug — fall back

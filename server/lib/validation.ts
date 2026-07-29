@@ -8,12 +8,22 @@ import {
   PAYMENT_METHODS,
   isPaymentMethod,
   isValidRate,
+  isPetRateMode,
   type PaymentMethod,
+  type PetRateMode,
 } from '../../src/shared/index.js';
 
-/** `isValidRate` lives in `src/shared/pricing/rate.ts` so the admin bundle imports the same
- * predicate; re-exported here unchanged, and still enforced server-side at the trust boundary. */
-export { PAYMENT_METHODS, isPaymentMethod, isValidRate, type PaymentMethod };
+/** `isValidRate`/`isPetRateMode` live in `src/shared/pricing/rate.ts` so the admin bundle imports
+ * the SAME predicates; re-exported here unchanged, and still enforced server-side at the trust
+ * boundary. */
+export {
+  PAYMENT_METHODS,
+  isPaymentMethod,
+  isValidRate,
+  isPetRateMode,
+  type PaymentMethod,
+  type PetRateMode,
+};
 
 /**
  * Shared request-validation guards. `DATE_RE` alone accepts impossible dates ("2026-02-30"),

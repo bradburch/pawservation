@@ -141,31 +141,37 @@ export type PriceResult =
  * displays and the price it sits next to can never disagree.
  *
  * INVARIANT — no inferred pricing. A price must never come from an algorithm the sitter did not
- * configure:
+ * configure. The rule is not "pet count may never be multiplied"; it is **"a rate the sitter did
+ * not type is a price they did not agree to."** Concretely:
  *
- * - **Pet count never affects price.** Two dogs for three nights cost the same as one dog for
- *   three nights UNLESS the sitter stored a rate for that exact set — and then the price is that
- *   stored number, not a function of the count.
  * - The only arithmetic permitted here is over **units of time** (nights, days, per-visit) times
- *   a stored `Rate`. Nothing else may be multiplied, scaled, or surcharged.
- * - A per-pet or per-combination rate requires an explicit stored rate entry the sitter chose. It
- *   must never be inferred (no "×1.5 for the second dog", no per-pet multiplier).
+ *   a stored `Rate`, and — only where the sitter stored `PetRateMode = 'linear'` — times the
+ *   number of distinct pets. Nothing else may be multiplied, scaled, or surcharged.
+ * - A per-combination rate is never GUESSED. `resolvePetSetRate` does exact matching and no
+ *   arithmetic of any kind, and an explicitly stored pet-set rate always WINS over the multiplier:
+ *   a sitter who typed a two-dog rate gets that rate, never 2× the one-dog rate.
+ * - There is still no "×1.5 for the second dog", no percentage surcharge, no proration, and no
+ *   nearest-match — the multiplier is exactly ×N or nothing.
  *
- * The structural guarantee: the ONLY thing `pets` can do in this function is select a stored rate
- * by EXACT match (`resolvePetSetRate`, which does no arithmetic of any kind), or, for a single
- * pet, fall through to the option's own rate. There is no expression anywhere below in which a
- * pet count is an operand. When no rate matches a set of two or more, the function REFUSES —
- * inventing a number from the single-pet rate is precisely the defect this comment prevents, and
- * `server/__tests__/availability.test.ts`'s "a three-dog quote is refused, not tripled" is its
- * lock.
+ * The structural guarantee, restated for `PetRateMode` (2026-07-28): the ONLY things `pets` can do
+ * in this function are (a) select a stored rate by EXACT match, (b) for a single pet, fall through
+ * to the option's own rate, and (c) multiply by its own DISTINCT COUNT — and (c) is reachable only
+ * when the service row itself says `'linear'`, which is a value a sitter stored. `'exact'` is the
+ * default for every row that has never been given one, and under `'exact'` a set of two or more
+ * with no matching stored rate REFUSES exactly as it always has. Inventing a number from the
+ * single-pet rate for a service that did NOT opt in is precisely the defect this comment prevents;
+ * `server/__tests__/availability.test.ts`'s "a three-dog quote is refused, not tripled (mode
+ * 'exact')" is its lock, and its `'linear'` sibling pins the opted-in multiplication next to it so
+ * neither can be deleted as "the other one covers it".
  *
  * Holiday units (2026-07-27, WS-H) obey every rule above: a service's optional `HolidayRate` is an
  * explicit stored rate the sitter typed, charged per UNIT OF TIME that lands on a listed US
  * holiday, applied to whatever base rate `r` the pet-set resolution above produced — never a
- * multiplier, never derived, never scaled by pet count. A NULL `HolidayRate` — every service until
- * a sitter sets one — prices identically to before the feature existed. Composing the two features
- * is a single call to `holidayAwareCost(r, service.HolidayRate, split)` below; neither the pet-set
- * resolution nor `holiday-cost.ts` learns anything about the other.
+ * multiplier, never derived. A NULL `HolidayRate` — every service until a sitter sets one — prices
+ * identically to before the feature existed. Composing the two features is a single call to
+ * `holidayAwareCost(r, service.HolidayRate, split)` below; `holiday-cost.ts` still never learns
+ * that pets exist. Under `'linear'` the pet multiplier is applied to that composed total, so the
+ * holiday leg scales too — see the `petMultiplier` comment at the call site for why.
  */
 export function estimateCost(
   service: TenantService,
@@ -185,16 +191,32 @@ export function estimateCost(
   });
 
   let rate: number;
+  // 1 unless the sitter stored `PetRateMode = 'linear'` AND nothing exact matched. It is the only
+  // pet-count operand in this function, and it can only ever be the DISTINCT pet count — never a
+  // percentage, never a per-pet surcharge.
+  let petMultiplier = 1;
   if (resolved) {
+    // A stored pet-set rate ALWAYS wins, in both modes. The sitter typed a number for exactly
+    // this set; multiplying it would price a set they already priced.
     rate = resolved.rate;
   } else if (distinct.length === 1) {
     // Spec §2 step 3: a single pet keeps the option's flat rate. This is explicit sitter config,
     // not inference, and scoping the refusal to 2+ pets is what stops this feature breaking every
     // booking on deploy (spec §2 "Why single-pet keeps the flat-rate fallback").
     rate = option.Rate;
+  } else if (distinct.length >= 2 && service.PetRateMode === 'linear') {
+    // The opted-in fallback (0005): N pets cost N times the one-pet rate. Two guards, both
+    // load-bearing. `>= 2` keeps ZERO pets out: `petMultiplier = 0` would price an empty set at
+    // $0 — a free booking is the same defect as an inferred one, and `priced: false` carrying no
+    // cost at all is the shape that makes it unrepresentable. And the mode is compared against
+    // 'linear' explicitly rather than "not 'exact'", so an unrecognised or legacy column value
+    // reads as the REFUSING mode — the safe direction, since the unsafe one invents money.
+    rate = option.Rate;
+    petMultiplier = distinct.length;
   } else {
-    // Spec §2 step 4. Zero pets lands here too: an empty set has nothing to price, and the routes
-    // reject it earlier — this is the structural backstop, not the user-facing check.
+    // Spec §2 step 4, still the behaviour of every service that has not opted in. Zero pets lands
+    // here in BOTH modes: an empty set has nothing to price, and the routes reject it earlier —
+    // this is the structural backstop, not the user-facing check.
     return {
       priced: false,
       reason: 'unpriced-pet-set',
@@ -206,8 +228,14 @@ export function estimateCost(
   // Holidays split the SAME units the base formula bills — they never change how many units
   // there are, only which stored rate each one is charged at. `rate` is the base rate `r`
   // resolved above (pet-set rate, or the option's flat rate for a single pet).
+  //
+  // The pet multiplier scales the COMPOSED total, not the base rate, so the holiday leg scales
+  // with it: a sitter who opted into "N pets cost N times as much" would be astonished if the
+  // third dog were free on Christmas, and pricing the holiday nights flat while the ordinary
+  // nights scale is a discontinuity nobody typed either. `holidayAwareCost` therefore still never
+  // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
-  const cost = holidayAwareCost(rate, service.HolidayRate, split);
+  const cost = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
 
   if (service.Shape !== 'range') return { priced: true, cost, ...holidayFields(service, split) };
   return {

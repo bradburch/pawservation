@@ -1768,3 +1768,144 @@ describe('settings PUT caps', () => {
     expect(cfg.services.find((s) => s.type === 'boarding')!.holidayRate).toBe(75);
   });
 });
+
+describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005)', () => {
+  const putMode = async (env: Env, petRateMode: unknown) =>
+    app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              petRateMode,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+
+  it("every seeded service starts 'exact' — the multiplier is never the ambient default", async () => {
+    const { env } = createTestEnv();
+    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(services.length).toBeGreaterThan(0);
+    for (const svc of services) expect(svc.PetRateMode).toBe('exact');
+  });
+
+  it('round-trips the mode through the settings PUT and back out of the GET', async () => {
+    const { env } = createTestEnv();
+    expect((await putMode(env, 'linear')).status).toBe(204);
+    const read = async () => {
+      const res = await app.request(
+        '/api/sunny-paws/admin/settings',
+        { headers: await auth(TENANT_A) },
+        env,
+      );
+      const body = (await res.json()) as { services: { type: string; petRateMode: string }[] };
+      return body.services.find((s) => s.type === 'boarding')!.petRateMode;
+    };
+    expect(await read()).toBe('linear');
+    expect(
+      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+        .PetRateMode,
+    ).toBe('linear');
+    expect((await putMode(env, 'exact')).status).toBe(204);
+    expect(await read()).toBe('exact');
+  });
+
+  it('keeps the stored mode when the field is absent (PATCH semantics — no silent re-moding)', async () => {
+    const { env } = createTestEnv();
+    expect((await putMode(env, 'linear')).status).toBe(204);
+    // A later save that says nothing about pricing mode must not quietly reset the opt-in.
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
+    expect(
+      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+        .PetRateMode,
+    ).toBe('linear');
+  });
+
+  it('rejects an unknown mode rather than coercing it in either direction', async () => {
+    const { env } = createTestEnv();
+    for (const bad of ['sliding', '', 1, true, null]) {
+      const res = await putMode(env, bad);
+      expect(res.status).toBe(400);
+    }
+    // Nothing was written by any of those attempts.
+    expect(
+      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+        .PetRateMode,
+    ).toBe('exact');
+  });
+
+  it('the mode is per SERVICE and per TENANT — one opt-in moves exactly one row', async () => {
+    const { env } = createTestEnv();
+    expect((await putMode(env, 'linear')).status).toBe(204);
+    const sunny = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(sunny.find((s) => s.ServiceType === 'boarding')!.PetRateMode).toBe('linear');
+    for (const svc of sunny.filter((s) => s.ServiceType !== 'boarding'))
+      expect(svc.PetRateMode).toBe('exact');
+    for (const svc of await listServices(env.PAWBOOK_DB, TENANT_B))
+      expect(svc.PetRateMode).toBe('exact');
+  });
+});
+
+describe('settings PUT — the per-service option cap', () => {
+  const optionRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      label: `Pack ${i + 1}`,
+      durationMinutes: 60,
+      rate: 25,
+    }));
+  const putOptions = async (env: Env, n: number) =>
+    app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [{ type: 'walk', enabled: true, options: optionRows(n) }],
+        }),
+      },
+      env,
+    );
+
+  it('accepts a service at exactly the cap', async () => {
+    const { env } = createTestEnv();
+    expect((await putOptions(env, 8)).status).toBe(204);
+  });
+
+  it('refuses one option past the cap, in plain language, and writes nothing', async () => {
+    const { env } = createTestEnv();
+    expect((await putOptions(env, 8)).status).toBe(204);
+    const res = await putOptions(env, 9);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('at most 8 options');
+    // The rejected payload left the 8 saved rows alone rather than half-applying.
+    const rows = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as { services: { type: string; options: unknown[] }[] };
+    expect(rows.services.find((s) => s.type === 'walk')!.options).toHaveLength(8);
+  });
+});
