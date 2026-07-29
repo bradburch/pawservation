@@ -515,3 +515,143 @@ describe('MonthDay.reason', () => {
     expect([...farDays.values()].every((d) => d.reason === 'Too far ahead to book')).toBe(true);
   });
 });
+
+/**
+ * `?petIds=` (task 8b): the grid is painted for the pets the customer actually selected, not for
+ * a hypothetical single pet. Without it a `1/2` cell reads bookable to a two-dog household and
+ * the booking POST then refuses it — the grid and `checkRange` must give the same answer.
+ */
+describe('GET /api/:slug/availability/month — ?petIds=', () => {
+  const today = () => getPacificDateStr();
+  const futureMonth = () => addMonths(today(), 2).slice(0, 7);
+
+  // Jess's two seeded Sunny Paws pets (sql/seed.sql).
+  const BELLA = 'pet_sp_bella';
+  const MOCHI = 'pet_sp_mochi';
+
+  async function daysFor(env: Env, month: string, petIds?: string) {
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      `/api/sunny-paws/availability/month?type=boarding&month=${month}` +
+        (petIds === undefined ? '' : `&petIds=${petIds}`),
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    return { res, body: (await res.json()) as MonthAvailability };
+  }
+
+  /** One pet already boarding on the 12th; Sunny Paws' pool holds 2. */
+  async function seedOneOfTwo(env: Env, month: string) {
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: `${month}-12`,
+      endDate: `${month}-13`,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+  }
+
+  it('a 1-of-2 day is partial for one pet and unavailable for two', async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    await seedOneOfTwo(env, m);
+
+    const one = await daysFor(env, m, BELLA);
+    expect(one.body.days.find((d) => d.date === `${m}-12`)).toMatchObject({
+      status: 'partial',
+      used: 1,
+      max: 2,
+      reason: null,
+    });
+
+    const two = await daysFor(env, m, `${BELLA},${MOCHI}`);
+    expect(two.body.days.find((d) => d.date === `${m}-12`)).toMatchObject({
+      status: 'unavailable',
+      // The counts stay in the cell — the customer still sees 1/2, now with the reason that
+      // explains why 1/2 isn't enough for them.
+      used: 1,
+      max: 2,
+      reason: 'Not enough room for 2 pets',
+    });
+    // An empty day still seats both, so the paint is set-aware, not a blanket refusal.
+    expect(two.body.days.find((d) => d.date === `${m}-15`)?.status).toBe('available');
+  });
+
+  it('agrees with the quote: a day the grid strikes out mid-range, checkRange refuses', async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    await seedOneOfTwo(env, m);
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+
+    const { body } = await daysFor(env, m, `${BELLA},${MOCHI}`);
+    expect(body.days.find((d) => d.date === `${m}-12`)?.status).toBe('unavailable');
+
+    // Spanned as a MIDDLE day, where no bookend rule can excuse it. (`rangeHasConflict` is
+    // deliberately MORE permissive at the two endpoints — a stay may check in on the day another
+    // checks out — so a per-day paint can only ever be the conservative half of the answer, which
+    // is why the widget's client-side range verdict is an optimistic hint and the server stays
+    // the authority. See CALENDAR_LOGIC.md §3.)
+    const quote = await app.request(
+      `/api/sunny-paws/availability?type=boarding&option=standard&start=${m}-11&end=${m}-14` +
+        `&petIds=${BELLA},${MOCHI}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(((await quote.json()) as { available: boolean }).available).toBe(false);
+  });
+
+  it('a cap-filling set strikes out even an empty day, with the count named', async () => {
+    const { env, raw } = createTestEnv();
+    const m = futureMonth();
+    raw.exec(
+      `UPDATE TenantServices SET MaxConcurrentPets = 1
+       WHERE TenantId = '${TENANT_A}' AND ServiceType = 'boarding';`,
+    );
+    const { body } = await daysFor(env, m, `${BELLA},${MOCHI}`);
+    expect(body.days.find((d) => d.date === `${m}-15`)).toMatchObject({
+      status: 'unavailable',
+      reason: 'Not enough room for 2 pets',
+    });
+  });
+
+  it('no petIds paints for one pet — byte-identical to the pre-change response', async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    await seedOneOfTwo(env, m);
+    const absent = await daysFor(env, m);
+    const explicit = await daysFor(env, m, BELLA);
+    expect(absent.body).toEqual(explicit.body);
+  });
+
+  it('duplicate ids collapse — a set is distinct pets, never a count the client can inflate', async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    await seedOneOfTwo(env, m);
+    const dupe = await daysFor(env, m, `${BELLA},${BELLA}`);
+    expect(dupe.body.days.find((d) => d.date === `${m}-12`)?.status).toBe('partial');
+  });
+
+  it("refuses an id the caller doesn't own rather than painting for fewer pets", async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    // A real pet — belonging to the OTHER seeded tenant's customer.
+    const other = await daysFor(env, m, 'pet_ht_otis');
+    expect(other.res.status).toBe(400);
+    const nonsense = await daysFor(env, m, 'pet_does_not_exist');
+    expect(nonsense.res.status).toBe(400);
+  });
+
+  it('bounds the set with the same cap the quote and the POST use', async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    const tooMany = await daysFor(
+      env,
+      m,
+      Array.from({ length: 20 }, (_, i) => `pet_${i}`).join(','),
+    );
+    expect(tooMany.res.status).toBe(400);
+  });
+});

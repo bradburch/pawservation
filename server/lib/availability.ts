@@ -480,6 +480,12 @@ const REASON = {
   full: 'Fully booked',
   tooSoon: 'Too soon to book',
   tooFarAhead: 'Too far ahead to book',
+  /**
+   * The day has room, but not `petCount` pets' worth — the refusal `checkRange` would give and
+   * the one a "1/2" cell used to hide. Always plural: a single pet that does not fit means the
+   * pool is at its cap, which is `full`.
+   */
+  noRoom: (petCount: number) => `Not enough room for ${petCount} pets`,
 } as const;
 
 /** The month grid's response: the day states plus the booking window RESOLVED TO DATES. */
@@ -514,8 +520,16 @@ export async function monthAvailability(
   month: string, // YYYY-MM
   callerEndUserId: string,
   option: TenantServiceOption | null = null,
+  /**
+   * How many pets the grid is being painted FOR. The pool check below is the same
+   * `dayBlocksRequest` arithmetic `checkRange` runs (`used + petCount > cap`), not "does at least
+   * one pet fit" — otherwise a 1/2 day reads bookable to a two-dog household and the booking POST
+   * then refuses it. Defaults to 1, which is exactly the pre-change behaviour.
+   */
+  petCount = 1,
 ): Promise<MonthAvailability> {
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const pets = Math.max(1, petCount);
 
   const monthStart = `${month}-01`;
   // new Date(year, month, 0) — month is 1-based here, day 0 = last day of prior month = last day of `month`
@@ -592,11 +606,17 @@ export async function monthAvailability(
       const rawUsed = day?.byService.get(service.ServiceType) ?? 0;
       max = service.MaxConcurrentPets;
       const blocked = (day?.blocked ?? 0) >= 1;
-      const unavailable = blocked || (max != null && rawUsed >= max);
+      // The requested SET has to fit, not just one pet — `used + pets > cap` is `dayBlocksRequest`
+      // verbatim. `partial` still means "occupied but the set fits", so a cell showing 1/2 is now
+      // true for the pets actually selected rather than for a hypothetical single pet.
+      const noRoom = max != null && rawUsed + pets > max;
+      const unavailable = blocked || noRoom;
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';
       used = max != null ? rawUsed : null;
       if (blocked) reason = REASON.blocked;
-      else if (unavailable) reason = REASON.full;
+      // A pool at its cap is "Fully booked" however many pets you asked for; a pool with room
+      // that still can't seat this set gets the specific answer instead of a misleading one.
+      else if (noRoom) reason = max != null && rawUsed >= max ? REASON.full : REASON.noRoom(pets);
     } else {
       // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
       // capacity check when the option has one. Customers never see raw counts — only status.

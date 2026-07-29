@@ -164,10 +164,35 @@ export const bookingRoutes = new Hono<AppEnv>()
     const type = c.req.query('type');
     const month = c.req.query('month') ?? '';
     const optionKey = c.req.query('option');
-    const services = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    // The pets the grid is being painted FOR — same comma-joined ids the quote takes, and taken
+    // as IDS rather than a count for the same reason: a count can neither be owned nor looked up,
+    // so it could describe pets that don't exist and paint a grid the quote would then contradict.
+    // Absent = 1 pet, which is exactly the pre-change behaviour.
+    const requestedPetIds = [
+      ...new Set(
+        (c.req.query('petIds') ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (!isValidPetCount(Math.max(1, requestedPetIds.length)))
+      return c.json({ error: 'Too many pets.' }, 400);
+    // Read concurrently: the ownership check must not add a serial round-trip to the widget's
+    // hottest path (this GET refires on every month page AND every pet-selection change).
+    const [services, myPets] = await Promise.all([
+      listServices(c.env.PAWBOOK_DB, tenant.Id),
+      requestedPetIds.length > 0
+        ? listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, c.get('endUserId'))
+        : Promise.resolve(null),
+    ]);
     const service = services.find((s) => s.ServiceType === type);
     if (!service) return c.json({ error: 'Unknown service type.' }, 400);
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: 'Bad month.' }, 400);
+    // An id the caller doesn't own is refused rather than dropped: silently painting for fewer
+    // pets than were asked about is the same class of lie the count-based grid was.
+    if (myPets && requestedPetIds.some((id) => !myPets.some((p) => p.Id === id)))
+      return c.json({ error: 'Unknown pet.' }, 400);
     const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
     const serviceOptions = options.filter((o) => o.ServiceType === type);
     let option = serviceOptions[0] ?? null;
@@ -210,6 +235,7 @@ export const bookingRoutes = new Hono<AppEnv>()
       month,
       c.get('endUserId'),
       option,
+      Math.max(1, requestedPetIds.length),
     );
     return c.json(result);
   })
