@@ -32,6 +32,7 @@ import {
 } from '../db/repo';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import { holidayAwareCost, splitUnits, type UnitSplit } from './holiday-cost';
+import { DEFAULT_OVERLAP_DAYS } from './validation';
 
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
@@ -338,6 +339,19 @@ export async function loadPetSetRates(
 }
 
 /**
+ * The tenant's overlap allowance, defended against a row that predates the column. Tenants are
+ * resolved through a 60-second KV cache (`lib/tenant-resolve.ts`) that stores the whole row as
+ * JSON, so for one TTL after this feature deploys the cached rows have no such field and
+ * `tenant.HousesitBoardingOverlapDays` is `undefined` at runtime however the type reads. Falling
+ * back to the product default keeps the rule ON through that window; `?? null` would have quietly
+ * switched it off for every tenant, including one who had set 0.
+ */
+function overlapAllowanceOf(tenant: Tenant): number | null {
+  const stored: number | null | undefined = tenant.HousesitBoardingOverlapDays;
+  return stored === undefined ? DEFAULT_OVERLAP_DAYS : stored;
+}
+
+/**
  * Turn the engine's refusal into the customer's answer. The cross-kind overlap rule gets its own
  * sentence and its own `code` because "those dates are not available" is simply untrue of it — the
  * dates have room; the SITTER does not, and a customer told the truth can move by one day instead
@@ -379,11 +393,11 @@ async function checkRange(
     kind: service.CapacityKind === 'housesit' ? 'housesit' : 'boarding',
     cap: service.MaxConcurrentPets,
     petCount,
-    // The tenant's own tail-end allowance (0006). Read HERE, from the tenant row, because the
+    // The tenant's own handover allowance (0006). Read HERE, from the tenant row, because the
     // engine is pure and must never learn what a database is — and because this one call site is
     // reached by all three enforcement paths (the quote, the demo POST check, the real POST
     // check), which is what stops them disagreeing.
-    overlapAllowance: tenant.HousesitBoardingOverlapDays,
+    overlapAllowance: overlapAllowanceOf(tenant),
   };
   // The engine (rangeHasConflict) already rejects an over-cap request on its own. This fast path
   // is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the generic

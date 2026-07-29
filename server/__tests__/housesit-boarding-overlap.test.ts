@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { getTenantBySlug, insertBookingRequest, updateTenantSettings } from '../db/repo';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
-import { adminHeaders, createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { adminHeaders, createTestEnv, demoToken, endUserToken, TENANT_A } from './helpers';
 
 /**
  * The house-sit / boarding overlap allowance (migration 0006, owner directive 2026-07-29):
@@ -189,8 +189,10 @@ describe('overlap allowance — the availability quote', () => {
     ).toMatchObject({ available: true });
   });
 
-  it('the house-sit direction still behaves exactly as it did', async () => {
-    // The pre-0006 rule, unchanged: an existing boarding, a house-sit request over two of its days.
+  it('refuses a ONE-DAY house sit in the middle of a boarding — the count alone used to allow it', async () => {
+    // The other half of the behaviour change, in the direction that was always checked: the old
+    // rule counted overlapping days and stopped at "more than one", so a single interior day
+    // passed. It is not a handover — the boarding neither arrives nor departs on Mar 4.
     const { env } = createTestEnv();
     await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
@@ -204,7 +206,7 @@ describe('overlap allowance — the availability quote', () => {
     });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability?type=housesitting&start=2027-03-04&end=2027-03-06&petIds=pet_sp_bella',
+      '/api/sunny-paws/availability?type=housesitting&start=2027-03-04&end=2027-03-05&petIds=pet_sp_bella',
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
@@ -218,6 +220,52 @@ describe('overlap allowance — the availability quote', () => {
 });
 
 describe('overlap allowance — the booking POST', () => {
+  it('the DEMO path refuses it the same way, and still persists nothing', async () => {
+    // The zero-pollution demo runs the full validation pipeline and a real capacity check against
+    // real bookings, so it must give the same answer with the same code — a demo that books a
+    // clash the product would refuse is a demo of a different product.
+    const { env, raw } = createTestEnv();
+    await seedHouseSit(env);
+    const token = await demoToken(env, 'sunny-paws');
+    const demoPetId = (
+      raw
+        .prepare(
+          `SELECT p.Id FROM EndUserPets p JOIN EndUsers u ON u.Id = p.EndUserId
+            WHERE u.TenantId = ? AND u.Email = 'demo@pawservation.com'`,
+        )
+        .get(TENANT_A) as { Id: string }
+    ).Id;
+    const before = (
+      raw.prepare('SELECT COUNT(*) AS n FROM BookingRequests WHERE TenantId = ?').get(TENANT_A) as {
+        n: number;
+      }
+    ).n;
+    const res = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'boarding',
+          startDate: '2027-03-04',
+          endDate: '2027-03-06',
+          petIds: [demoPetId],
+          answers: {},
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { code: string }).toMatchObject({ code: 'overlap_not_allowed' });
+    expect(
+      (
+        raw
+          .prepare('SELECT COUNT(*) AS n FROM BookingRequests WHERE TenantId = ?')
+          .get(TENANT_A) as { n: number }
+      ).n,
+    ).toBe(before);
+  });
+
   it('409s with a stable code, and leaves no row behind', async () => {
     const { env, raw } = createTestEnv();
     await seedHouseSit(env);

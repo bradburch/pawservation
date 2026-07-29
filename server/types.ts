@@ -24,9 +24,9 @@ export type Tenant = {
    *  null = no limit. Profile-level — one value for the whole business. */
   MaxAdvanceMonths: number | null;
   /** How many days a request may overlap OPPOSITE-kind occupancy — a house sit over boarding or
-   *  boarding over a house sit (0006) — counted only at the tail ends. 0 = never; 1 = the default
-   *  tail touch; 2 = one at each end; null = no limit. Tenant-wide: the sitter's whereabouts, not
-   *  a pool. Fed to the engine as `CapacityRequest.overlapAllowance`. */
+   *  boarding over a house sit (0006) — counted only where the day is a real handover. 0 = never;
+   *  1 = the default; 2 = one at each end of the stay; null = no limit. Tenant-wide: the sitter's
+   *  whereabouts, not a pool. Fed to the engine as `CapacityRequest.overlapAllowance`. */
   HousesitBoardingOverlapDays: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
 };

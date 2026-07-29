@@ -38,12 +38,12 @@ export type CapacityEvent = {
 export type KindOccupancy = {
   /** Pets of this kind occupying the day. */
   total: number;
-  /**
-   * How many events of this kind are MID-STAY here — this day is neither their first nor their
-   * last occupied day. A spanning day offers no handover: the sitter is committed to it end to
-   * end, so nothing of the opposite kind may share it however generous the allowance.
-   */
-  spanning: number;
+  /** How many distinct events of this kind occupy the day. */
+  events: number;
+  /** …of which this is the FIRST occupied day — they ARRIVE here. */
+  arriving: number;
+  /** …of which this is the LAST occupied day — they DEPART here. */
+  departing: number;
 };
 
 export type DayCapacity = {
@@ -77,8 +77,8 @@ export type CapacityRequest = {
 
 const emptyDay = (): DayCapacity => ({
   byService: new Map(),
-  boarding: { total: 0, spanning: 0 },
-  housesit: { total: 0, spanning: 0 },
+  boarding: { total: 0, events: 0, arriving: 0, departing: 0 },
+  housesit: { total: 0, events: 0, arriving: 0, departing: 0 },
   blocked: 0,
   isBoundary: false,
 });
@@ -110,9 +110,11 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
       getOrCreate(end).isBoundary = true;
     }
 
-    // The last day this event OCCUPIES (end is exclusive). Everything strictly between `start` and
-    // it is a spanning day — see KindOccupancy.spanning. A single-occupied-day event is its own
-    // first and last day, so it spans nothing.
+    // The last day this event OCCUPIES (end is exclusive), so the walk below can mark where each
+    // event ARRIVES and DEPARTS — the two facts the cross-kind handover rule needs. A one-night
+    // stay occupies a single day and both arrives and departs on it. An event with no `end_date`
+    // (or one equal to its start) occupies NOTHING at all — the loop below never runs — which is
+    // how single-day services stay invisible to pool occupancy.
     const lastOccupied = addDays(end, -1);
 
     for (let d = start; d < end; d = addDays(d, 1)) {
@@ -126,7 +128,9 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
       day.byService.set(key, (day.byService.get(key) ?? 0) + units);
       const occupancy = event.kind === 'boarding' ? day.boarding : day.housesit;
       occupancy.total += units;
-      if (d !== start && d !== lastOccupied) occupancy.spanning += 1;
+      occupancy.events += 1;
+      if (d === start) occupancy.arriving += 1;
+      if (d === lastOccupied) occupancy.departing += 1;
     }
   }
 
@@ -136,8 +140,8 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
 /**
  * Can a request NOT occupy this day in isolation? A block is always a hard stop. Otherwise the
  * request is governed only by its OWN service's cap over its OWN service's occupancy; a `null`
- * cap never blocks (auto pass-through). Cross-service interaction (a house-sit may not overlap
- * occupied boarding by more than one day) is enforced at the range level, not here.
+ * cap never blocks (auto pass-through). Cross-KIND interaction (the house-sit/boarding handover
+ * rule) is enforced at the range level, not here — it is a property of a range, not of a day.
  */
 export function dayBlocksRequest(day: DayCapacity, request: CapacityRequest): boolean {
   if (day.blocked >= 1) return true;
@@ -155,6 +159,13 @@ export function dayBlocksRequest(day: DayCapacity, request: CapacityRequest): bo
  * - `cross_kind_overlap` — the house-sit/boarding rule below.
  * - `blocked_or_full` — an admin block, or the service's own pool with no room.
  */
+/** See the comment in `rangeConflictReason`: null passes through, a number passes through, and
+ * anything else (only reachable from an untyped caller) reads as 0 — never as "no limit". */
+function normalizeAllowance(value: number | null): number | null {
+  if (value === null) return null;
+  return Number.isFinite(value) ? value : 0;
+}
+
 export type RangeConflict = 'over_cap' | 'cross_kind_overlap' | 'blocked_or_full';
 
 export function rangeHasConflict(
@@ -176,6 +187,13 @@ export function rangeConflictReason(
   const units = unitsOf(request.petCount);
   let overlapDays = 0;
 
+  // Defensive normalization of the tenant's allowance: only a number or an explicit null mean
+  // anything. Anything else — a caller built against the older CapacityRequest shape, or a tenant
+  // row cached before the column existed — reads as 0 (share nothing) rather than as "no limit",
+  // because an unrecognised value must take the REFUSING branch. `null` still means the rule does
+  // not run at all, which is the tenant saying so.
+  const overlapAllowance: number | null = normalizeAllowance(request.overlapAllowance);
+
   // A request for more units than its own cap can NEVER fit — not even on an empty calendar,
   // where the day-by-day walk below has nothing to inspect. Enforcing it here keeps the engine
   // correct standalone (the single source of truth), so callers need no separate isolation check.
@@ -187,21 +205,31 @@ export function rangeConflictReason(
 
     const isRequestEndpoint = date === startDate || date === requestEnd;
 
-    // Structural rule (TENANT-WIDE, SYMMETRIC): a house sit and boarding may share a day only at
-    // the TAIL ENDS, because the sitter cannot be in two places — this models her whereabouts, not
-    // a pool, so it reads occupancy from ANY service of the opposite kind. `overlapAllowance` is
-    // the tenant's own number (null = the rule is off entirely). A shared day is legal only when
-    // ALL THREE hold: the running count is within the allowance; the day is an endpoint of THIS
-    // request; and no opposite-kind booking is mid-stay on it. The third is what refuses a
-    // one-night boarding dropped inside a ten-day house sit — a stay with a single occupied day is
-    // trivially "at its own endpoint", and without the existing booking's side of the handover
-    // the allowance would legalise exactly the double-booking it exists to prevent.
-    if (request.overlapAllowance !== null) {
+    // Structural rule (TENANT-WIDE, SYMMETRIC): a house sit and boarding may share a day only as a
+    // HANDOVER, because the sitter cannot be in two places — this models her whereabouts, not a
+    // pool, so it reads occupancy from ANY service of the opposite kind, and governs a boarding
+    // laid over a house sit exactly as it governs the reverse.
+    //
+    // A shared day is legal only when BOTH hold:
+    //   1. the running count of shared days is within `overlapAllowance`, and
+    //   2. the day is a handover — either we ARRIVE on it and every opposite-kind booking there
+    //      DEPARTS on it, or we DEPART on it and every one of them ARRIVES on it.
+    //
+    // Rule 2 is directional on purpose. "At the tail ends" is not "at either end of the request":
+    // both ends of a two-night request are its endpoints, so an endpoint-only test would let a
+    // boarding sit exactly on top of a two-night house sit at allowance 2 — a total double
+    // booking. Requiring one stay to be leaving as the other arrives is what makes the concession
+    // a handover, and it also refuses a one-night boarding dropped in the MIDDLE of a ten-day
+    // house sit (a single-day stay is trivially "at its own endpoint", so nothing else would).
+    // `every one of them`: if two bookings occupy the day and only one is leaving, the other is
+    // still there.
+    if (overlapAllowance !== null) {
       const opposite = request.kind === 'housesit' ? day.boarding : day.housesit;
-      if (opposite.total > 0) {
+      if (opposite.events > 0) {
         overlapDays += 1;
-        if (overlapDays > request.overlapAllowance) return 'cross_kind_overlap';
-        if (!isRequestEndpoint || opposite.spanning > 0) return 'cross_kind_overlap';
+        const weArrive = date === startDate && opposite.departing === opposite.events;
+        const weDepart = date === requestEnd && opposite.arriving === opposite.events;
+        if (overlapDays > overlapAllowance || !(weArrive || weDepart)) return 'cross_kind_overlap';
       }
     }
 

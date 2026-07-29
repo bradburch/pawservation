@@ -114,10 +114,10 @@ export function BusinessSection({
           House sitting and boarding
           <Hint label="House sitting and boarding">
             You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
-            day. This is the exception you allow for handovers — a boarding that starts as a house
-            sit wraps up, or the other way round. An overlapping day only ever counts at the{' '}
-            <em>ends</em> of a stay, never in the middle of one, so a boarding can never sit inside
-            a house sit however high you set this.
+            day. This is the exception you allow for <em>handovers</em> — a boarding that starts as
+            a house sit wraps up, or the other way round. It only ever covers a day one stay is
+            leaving on as the other arrives, so a boarding can never sit in the middle of a house
+            sit however high you set this.
           </Hint>
         </span>
         <select
@@ -131,8 +131,8 @@ export function BusinessSection({
           }
         >
           <option value="0">May never overlap</option>
-          <option value="1">May overlap by one day, at the start or end of a stay</option>
-          <option value="2">May overlap by one day at each end of a stay</option>
+          <option value="1">May overlap by one handover day</option>
+          <option value="2">May overlap by one handover day at each end of a stay</option>
           <option value="">No limit — I&rsquo;ll sort out any clashes myself</option>
         </select>
       </label>

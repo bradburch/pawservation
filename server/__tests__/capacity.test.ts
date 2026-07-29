@@ -307,15 +307,16 @@ describe('house-sit / boarding overlap allowance', () => {
   });
 
   it('row 9 — a stay wedged between two house sits needs allowance 2', () => {
-    // Sep 4 is house sit A's last night, Sep 5 is house sit B's first: both tails, both endpoints
-    // of the requested boarding. Exactly what a "one at each end" allowance buys.
+    // Sep 4 is house sit A's last night (we arrive as A departs) and Sep 5 is house sit B's first
+    // (we depart as B arrives). Two real handovers — exactly what "one at each end" buys.
     const events = [houseSit('2028-09-01', '2028-09-05'), houseSit('2028-09-05', '2028-09-09')];
     expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, false, false]);
   });
 
   it('a day where one boarding is finishing and another is mid-stay is NOT a handover', () => {
-    // `spanning` is counted per event, not inferred from "some boarding ends here", so a tail that
-    // happens to coincide with another stay's middle does not excuse the overlap.
+    // The handover test is "EVERY opposite-kind booking here departs", not "one of them does":
+    // `departing` and `events` are both counted per event, so a tail that happens to coincide with
+    // another stay's middle does not excuse the overlap.
     const events = [
       boarding('2028-09-01', '2028-09-05', 'boarding'),
       boarding('2028-09-01', '2028-09-10', 'kitty-condo'),
@@ -353,6 +354,36 @@ describe('house-sit / boarding overlap allowance', () => {
     expect(rangeHasConflict('2028-09-03', '2028-09-06', request, buildCapacity(events))).toBe(
       false,
     );
+  });
+
+  it('a stay laid exactly ON TOP of an opposite-kind stay is refused at EVERY allowance', () => {
+    // Both days of a two-night request are its own endpoints, so an "is it an endpoint" test alone
+    // would call this a pair of legal tail touches at allowance 2 — a total double booking. The
+    // handover test refuses it: on Sep 4 we arrive but the house sit does not depart, and on Sep 5
+    // we depart but it does not arrive.
+    const events = [houseSit('2028-09-04', '2028-09-06')];
+    expect(verdicts(events, '2028-09-04', '2028-09-06', bdReq)).toEqual([true, true, true, false]);
+    // …and the same in the other direction.
+    expect(
+      verdicts([boarding('2028-09-04', '2028-09-06')], '2028-09-04', '2028-09-06', hsReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('a single interior day is refused even though the COUNT allows it', () => {
+    // The pre-0006 rule counted days and nothing else, so this one-night house sit dropped into the
+    // middle of a nine-night boarding passed at "≤ 1 day". It is not a handover: the boarding
+    // neither arrives nor departs on Sep 5.
+    expect(
+      verdicts([boarding('2028-09-01', '2028-09-10')], '2028-09-05', '2028-09-06', hsReq),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it('an allowance that is not a number reads as 0, never as "no limit"', () => {
+    // Only reachable from an untyped caller (an out-of-tree mirror of this engine, or a tenant row
+    // deserialized before the column existed). The refusing branch is the safe one.
+    const cap = buildCapacity([houseSit('2028-09-01', '2028-09-05')]);
+    const stale = { ...bdReq(1), overlapAllowance: undefined as unknown as number };
+    expect(rangeHasConflict('2028-09-04', '2028-09-07', stale, cap)).toBe(true);
   });
 
   it('allowance 0 refuses a single shared day but never a mere adjacency', () => {
