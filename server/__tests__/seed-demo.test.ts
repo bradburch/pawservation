@@ -186,6 +186,36 @@ describe('sql/seed-demo.sql — shape', () => {
     raw.exec(readFileSync(join(import.meta.dirname, '..', '..', 'sql', 'seed-demo.sql'), 'utf8'));
     expect(snapshot()).toBe(before);
   });
+
+  it('touches ONLY the three seeded demo tenants — a real tenant is untouched', () => {
+    // CLAUDE.md's central invariant is "every write is scoped by TenantId". This file is chained
+    // onto `seed:remote` (package.json), so an unscoped statement here would not just be a demo
+    // wart: applied against a real database it would rewrite real sitters' rows. Seed a FOURTH
+    // tenant — unrelated to the three this file knows about — with its own 'exact' boarding
+    // service, apply seed-demo.sql, and prove that row survives unchanged.
+    const { raw } = createTestEnv(); // base seed only — demoActivity applied by hand below
+    raw
+      .prepare(
+        `INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('tnt_other', 'other-co', 'Other Co')`,
+      )
+      .run();
+    raw
+      .prepare(
+        `INSERT INTO TenantServices
+           (TenantId, ServiceType, Label, Shape, RateUnit, PetRateMode)
+         VALUES ('tnt_other', 'boarding', 'Boarding', 'range', 'night', 'exact')`,
+      )
+      .run();
+
+    raw.exec(readFileSync(join(import.meta.dirname, '..', '..', 'sql', 'seed-demo.sql'), 'utf8'));
+
+    const other = raw
+      .prepare(
+        `SELECT PetRateMode FROM TenantServices WHERE TenantId = 'tnt_other' AND ServiceType = 'boarding'`,
+      )
+      .get() as { PetRateMode: string };
+    expect(other.PetRateMode).toBe('exact');
+  });
 });
 
 describe('sql/seed-demo.sql — the conflicts are real', () => {

@@ -42,7 +42,19 @@
 -- selected still sees the refusal path once, which is informative rather than broken. A plain
 -- UPDATE is idempotent by construction: there is no row identity to restate, so re-running this
 -- file changes nothing on a second pass.
-UPDATE TenantServices SET PetRateMode = 'linear' WHERE ServiceType IN ('boarding', 'housesitting', 'daycare');
+--
+-- TenantId-SCOPED, explicitly, to exactly the three seeded demo tenants — same discipline every
+-- other statement in this file already follows by naming a TenantId on each row. This file is
+-- chained onto `seed:remote` (package.json), so an unscoped UPDATE here would not just be a demo
+-- wart: applied against a real database it would silently flip every sitter's boarding/
+-- housesitting/daycare services from 'exact' to 'linear' and change what their own clients get
+-- charged for a multi-pet booking — the exact "a rate the sitter did not type is a price they did
+-- not agree to" failure PetRateMode exists to prevent, arriving through a seed file instead of the
+-- price path. `server/__tests__/seed-demo.test.ts` guards this: it seeds a fourth, un-related
+-- tenant with its own 'exact' boarding service and asserts this file leaves it untouched.
+UPDATE TenantServices SET PetRateMode = 'linear'
+ WHERE TenantId IN ('tnt_sunnypaws', 'tnt_happytails', 'tnt_pawsandrelax')
+   AND ServiceType IN ('boarding', 'housesitting', 'daycare');
 
 -- More clients, so a busy day is several DIFFERENT families rather than one customer booked
 -- against herself. Every one is active (invite-only /identify) and every one owns a pet below.
