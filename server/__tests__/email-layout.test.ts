@@ -121,7 +121,7 @@ const TEMPLATES: [string, (send: typeof env) => Promise<void>, boolean][] = [
   ],
 ];
 
-describe.each(TEMPLATES)('%s branding', (name, send, hasUntrustedInput) => {
+describe.each(TEMPLATES)('%s branding', (_name, send, hasUntrustedInput) => {
   afterEach(() => vi.restoreAllMocks());
 
   async function render(): Promise<string> {
