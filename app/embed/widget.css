@@ -384,8 +384,41 @@ body {
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--bp-accent) 55%, transparent);
 }
 
+/* The grid has no availability yet (loading, or the fetch failed): every cell is disabled, and
+   this is the visual half of saying so. Without it an empty grid renders as "all available",
+   which is a lie the customer can't tell from the truth. Height is untouched — the six-row grid
+   is always rendered — so the auto-resizing iframe never bounces. */
+.bp-book .bp-cal-grid.bp-cal-busy {
+  opacity: 0.45;
+}
+
+/* "Your booking" carried a background tint and nothing else — colour alone. The dot is the
+   non-colour cue (same device as the holiday marker, opposite corner so the two compose), and
+   the cell's aria-label says "your booking" outright. */
 .bp-book .bp-cal-day.bp-mine {
   background: color-mix(in srgb, var(--bp-ink) 10%, transparent);
+  position: relative;
+}
+
+.bp-book .bp-cal-day.bp-mine::before {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+/* Today. An outline (not box-shadow) so it survives composing with .bp-partial's inset ring and
+   .bp-sel's `box-shadow: none` — the same reasoning as the holiday dot below. */
+.bp-book .bp-cal-day.bp-today {
+  font-weight: 800;
+  outline: 1.5px solid color-mix(in srgb, var(--bp-ink) 55%, transparent);
+  outline-offset: -2px;
 }
 
 /* Marks a listed US holiday. Purely informational — availability and price come from the

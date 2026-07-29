@@ -438,6 +438,35 @@ export type MonthDay = {
   used: number | null;
   max: number | null;
   mine: boolean;
+  /**
+   * Why this day can't be booked, in one short customer-facing phrase — `null` when it can.
+   * Derived from the SAME branch that produced `status`, so the widget can explain a greyed-out
+   * day (title/aria-label) without re-deriving any rule client-side.
+   */
+  reason: string | null;
+};
+
+/** The one place the customer-facing "why not" phrases live — see `MonthDay.reason`. */
+const REASON = {
+  blocked: 'Sitter unavailable',
+  full: 'Fully booked',
+  tooSoon: 'Too soon to book',
+  tooFarAhead: 'Too far ahead to book',
+} as const;
+
+/** The month grid's response: the day states plus the booking window RESOLVED TO DATES. */
+export type MonthAvailability = {
+  today: string;
+  /**
+   * First and last date this service may be booked for, already resolved from the booking-window
+   * knobs (`TenantServices.MinLeadDays` / `Tenants.MaxAdvanceMonths`) against the TENANT's
+   * timezone. `latestBookable` is null when the business sets no horizon (= unlimited).
+   * Published as dates, never as the knobs: the rule stays server-side (CLAUDE.md), and the
+   * widget only compares strings to decide whether paging further is pointless.
+   */
+  earliestBookable: string;
+  latestBookable: string | null;
+  days: MonthDay[];
 };
 
 /**
@@ -457,7 +486,7 @@ export async function monthAvailability(
   month: string, // YYYY-MM
   callerEndUserId: string,
   option: TenantServiceOption | null = null,
-): Promise<{ today: string; days: MonthDay[] }> {
+): Promise<MonthAvailability> {
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
 
   const monthStart = `${month}-01`;
@@ -528,6 +557,7 @@ export async function monthAvailability(
     let status: 'available' | 'partial' | 'unavailable';
     let used: number | null;
     let max: number | null;
+    let reason: string | null = null;
 
     if (poolKind !== null) {
       // Range service (boarding / housesitting): capacity-aware against ITS OWN pool + cap.
@@ -537,6 +567,8 @@ export async function monthAvailability(
       const unavailable = blocked || (max != null && rawUsed >= max);
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';
       used = max != null ? rawUsed : null;
+      if (blocked) reason = REASON.blocked;
+      else if (unavailable) reason = REASON.full;
     } else {
       // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
       // capacity check when the option has one. Customers never see raw counts — only status.
@@ -545,11 +577,18 @@ export async function monthAvailability(
       status = blocked || full ? 'unavailable' : 'available';
       used = null;
       max = null;
+      if (blocked) reason = REASON.blocked;
+      else if (full) reason = REASON.full;
     }
 
-    if (outsideWindow) status = 'unavailable';
-    days.push({ date, status, used, max, mine: mineDays.has(date) });
+    // The window overrides both the status and the reason: a day the customer could never request
+    // is explained by the window, not by whatever capacity happens to sit on it.
+    if (outsideWindow) {
+      status = 'unavailable';
+      reason = date < earliestBookable ? REASON.tooSoon : REASON.tooFarAhead;
+    }
+    days.push({ date, status, used, max, mine: mineDays.has(date), reason });
   }
 
-  return { today, days };
+  return { today, earliestBookable, latestBookable, days };
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { api, isAuthExpired, type MonthDay } from '../shared-ui/api';
+import { api, isAuthExpired, type MonthAvailability, type MonthDay } from '../shared-ui/api';
 import {
   holidaysInMonth,
   isWeekend,
@@ -13,6 +13,16 @@ import { IconChevronLeft, IconChevronRight } from '../shared-ui/icons';
 import { useAsync } from '../shared-ui/useAsync';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/**
+ * Always render six weeks (6 × 7). A month grid is 4–6 rows tall depending on its length and
+ * lead offset; letting that vary — or letting it collapse to nothing while a month loads —
+ * changes the widget's height, and the embed lives in an auto-resizing iframe (App.tsx posts
+ * scrollHeight on every ResizeObserver tick), so the host page would visibly bounce.
+ */
+const GRID_CELLS = 42;
+
+/** The month response, with its day list indexed for O(1) cell lookup. */
+type MonthState = Omit<MonthAvailability, 'days'> & { days: Map<string, MonthDay> };
 const MONTHS = [
   'January',
   'February',
@@ -73,7 +83,7 @@ export function Calendar({
     void reloadKey;
     try {
       const r = await api.monthAvailability(slug, token, serviceType, month, optionKey);
-      return { days: new Map(r.days.map((d) => [d.date, d])), today: r.today };
+      return { ...r, days: new Map(r.days.map((d) => [d.date, d])) };
     } catch (e) {
       // An expired/invalid token must degrade to re-identify (see server/lib/token.ts) —
       // otherwise the calendar renders with no availability and silently ignores taps.
@@ -82,7 +92,7 @@ export function Calendar({
         // Never resolve: the parent unmounts this component right after onAuthExpired()
         // flips auth state, so this just leaves `loading` true until then (matching the old
         // behavior of never updating fetch state once the token is known to be dead).
-        return new Promise<{ days: Map<string, MonthDay>; today: string }>(() => {});
+        return new Promise<MonthState>(() => {});
       }
       throw e;
     }
@@ -96,6 +106,22 @@ export function Calendar({
   const showData = !loading && !loadError;
   const days = showData ? (data?.days ?? new Map<string, MonthDay>()) : new Map<string, MonthDay>();
   const today = showData ? (data?.today ?? '') : '';
+  // While the month data is in flight the grid knows nothing: `days` is empty and `today` is ''.
+  // Without this gate every cell would render enabled, undimmed and implicitly AVAILABLE, and
+  // taps on it would silently do nothing. Disable the whole grid until the answer arrives.
+  const gridBusy = loading || loadError;
+
+  // Month-nav bounds. Both are DATES the server already resolved from the booking window (per-
+  // service minimum notice + the business-wide horizon) in the TENANT's timezone — the client
+  // does no date arithmetic, it only slices a date to its 'YYYY-MM' and compares strings.
+  // Read from `data` rather than the gated values above so paging stays enabled while the next
+  // month loads (useAsync keeps the last successful result), and because the bounds describe the
+  // service, not the month on screen.
+  const earliestMonth = data ? data.earliestBookable.slice(0, 7) : null;
+  // null latestBookable = no horizon: page forward forever, exactly like the server allows.
+  const latestMonth = data?.latestBookable?.slice(0, 7) ?? null;
+  const atEarliest = earliestMonth !== null && month <= earliestMonth;
+  const atLatest = latestMonth !== null && month >= latestMonth;
 
   const parts = month.split('-');
   const year = Number(parts[0]);
@@ -107,7 +133,12 @@ export function Calendar({
     onChange(nextRangeSelection(value, date, shape));
   };
 
-  const cells = monthGrid(month);
+  const grid = monthGrid(month);
+  // Pad, never truncate: monthGrid never exceeds 6 rows (max lead 6 + 31 days = 37 cells).
+  const cells: (string | null)[] = [
+    ...grid,
+    ...Array.from({ length: Math.max(0, GRID_CELLS - grid.length) }, () => null),
+  ];
   const holidays = new Map(holidaysInMonth(month).map((h) => [h.date, h.name]));
 
   const hint =
@@ -124,7 +155,15 @@ export function Calendar({
       <div className="bp-cal-nav">
         <button
           type="button"
-          aria-label="Previous month"
+          // Genuinely disabled rather than a silent no-op: paging into months the booking window
+          // already rules out only ever shows a full grid of struck-through days.
+          disabled={atEarliest}
+          aria-label={
+            atEarliest
+              ? `No earlier months — the earliest date you can book is ${data?.earliestBookable}`
+              : 'Previous month'
+          }
+          title={atEarliest ? 'No earlier months you can book' : undefined}
           onClick={() => onMonthChange(shiftMonthFn(month, -1))}
         >
           <IconChevronLeft />
@@ -134,12 +173,22 @@ export function Calendar({
             {MONTHS[mon - 1]} {year}
           </span>
           <span className="bp-cal-sub" aria-live="polite">
-            {loading ? 'Loading availability…' : hint}
+            {loading
+              ? 'Loading availability…'
+              : atLatest
+                ? `${hint} · last month you can book`
+                : hint}
           </span>
         </div>
         <button
           type="button"
-          aria-label="Next month"
+          disabled={atLatest}
+          aria-label={
+            atLatest
+              ? `No later months — this business books no further ahead than ${data?.latestBookable}`
+              : 'Next month'
+          }
+          title={atLatest ? 'No later months you can book' : undefined}
           onClick={() => onMonthChange(shiftMonthFn(month, 1))}
         >
           <IconChevronRight />
@@ -152,29 +201,46 @@ export function Calendar({
           </span>
         ))}
       </div>
-      <div className="bp-cal-grid">
+      <div
+        className={`bp-cal-grid${gridBusy ? ' bp-cal-busy' : ''}`}
+        aria-busy={loading || undefined}
+      >
         {cells.map((date, i) => {
           if (!date) return <span key={i} className="bp-cal-empty" />;
           const d = days.get(date);
           const past = !!(today && date < today);
           const weekend = !!weekdaysOnly && isWeekend(date);
+          const isToday = !!today && date === today;
           const holiday = holidays.get(date) ?? null;
+          // Why this day can't be picked, in the customer's words. The server owns every reason
+          // it knows (capacity, blocked, outside the booking window); the two the client alone
+          // can see — a past day and a weekday-only weekend — are named here.
+          const reason = past ? 'Already past' : weekend ? 'Weekdays only' : (d?.reason ?? null);
           const cls = ['bp-cal-day'];
           if (past) cls.push('bp-past');
           else if (weekend || d?.status === 'unavailable') cls.push('bp-unavail');
           else if (d?.status === 'partial') cls.push('bp-partial');
           if (d?.mine) cls.push('bp-mine');
+          if (isToday) cls.push('bp-today');
           if (holiday) cls.push('bp-cal-holiday');
           const pos = rangePosition(value, date, shape);
           if (pos !== 'none') cls.push('bp-sel', `bp-sel-${pos === 'middle' ? 'mid' : pos}`);
+          const notes = [
+            isToday ? 'today' : null,
+            past ? 'past' : weekend ? 'weekdays only' : (d?.status ?? null),
+            // Only the server's reason is additive; the client's two already read as the note above.
+            past || weekend ? null : (d?.reason ?? null),
+            d?.mine ? 'your booking' : null,
+            holiday,
+          ].filter(Boolean);
           return (
             <button
               type="button"
               key={i}
               className={cls.join(' ')}
-              disabled={past || weekend || d?.status === 'unavailable'}
-              title={holiday ?? undefined}
-              aria-label={`${date}${past ? ', past' : weekend ? ', weekdays only' : d ? ', ' + d.status : ''}${d?.mine ? ', your booking' : ''}${holiday ? ', ' + holiday : ''}`}
+              disabled={gridBusy || past || weekend || d?.status === 'unavailable'}
+              title={[holiday, reason].filter(Boolean).join(' — ') || undefined}
+              aria-label={[date, ...notes].join(', ')}
               onClick={() => pick(date, d)}
             >
               {Number(date.slice(-2))}

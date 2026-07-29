@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { createTestEnv, TENANT_A, endUserToken } from './helpers';
 import { insertBookingRequest } from '../db/repo';
-import type { MonthDay } from '../lib/availability';
+import { addDays, addMonths, getPacificDateStr } from '../../src/shared/index.js';
+import type { MonthAvailability, MonthDay } from '../lib/availability';
 
 // Seeded in sql/seed.sql: Jess's fixed EndUserId for the Sunny Paws tenant.
 const JESS_END_USER_ID = 'eu_sp_jess';
@@ -324,5 +325,193 @@ describe('GET /api/:slug/availability/month', () => {
     expect(d5.status).toBe('unavailable');
     expect(d5.used).toBe(2);
     expect(d5.max).toBe(2);
+  });
+});
+
+/**
+ * The booking window on the WIRE (task 6a). `monthAvailability` already resolves both ends of the
+ * window; publishing them lets the widget disable month paging past the horizon without the
+ * client ever touching the knobs (`MinLeadDays` / `MaxAdvanceMonths`) or doing date arithmetic —
+ * the rule stays at its three server call sites, exactly as CLAUDE.md requires.
+ */
+describe('GET /api/:slug/availability/month — booking-window bounds', () => {
+  const today = () => getPacificDateStr();
+  const monthOf = (date: string) => date.slice(0, 7);
+
+  async function monthBody(env: Env, month: string, type = 'boarding'): Promise<MonthAvailability> {
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      `/api/sunny-paws/availability/month?type=${type}&month=${month}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as MonthAvailability;
+  }
+
+  it('publishes both bounds as resolved dates; an unlimited horizon publishes null', async () => {
+    const { env } = createTestEnv(); // seeded tenant: no MinLeadDays, no MaxAdvanceMonths
+    const body = await monthBody(env, monthOf(today()));
+    expect(body.earliestBookable).toBe(today()); // no minimum notice → today is bookable
+    expect(body.latestBookable).toBeNull(); // NULL horizon = unlimited
+  });
+
+  it('an unlimited horizon still answers months years out, so the widget can page forever', async () => {
+    const { env } = createTestEnv();
+    const far = addMonths(today(), 40);
+    const body = await monthBody(env, monthOf(far));
+    expect(body.latestBookable).toBeNull();
+    // Not merely a 200 with everything struck out: with no horizon those days are real openings.
+    expect(body.days.some((d) => d.status === 'available')).toBe(true);
+  });
+
+  it('reflects the per-service minimum notice and the profile horizon, day-clamped', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE TenantServices SET MinLeadDays = 3 WHERE TenantId = '${TENANT_A}' AND ServiceType = 'boarding';`,
+    );
+    raw.exec(`UPDATE Tenants SET MaxAdvanceMonths = 2 WHERE Id = '${TENANT_A}';`);
+    const body = await monthBody(env, monthOf(today()));
+    expect(body.earliestBookable).toBe(addDays(today(), 3));
+    expect(body.latestBookable).toBe(addMonths(today(), 2));
+  });
+
+  it('the bounds are per SERVICE: a walk with no notice keeps today as its earliest', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE TenantServices SET MinLeadDays = 5 WHERE TenantId = '${TENANT_A}' AND ServiceType = 'boarding';`,
+    );
+    expect((await monthBody(env, monthOf(today()), 'boarding')).earliestBookable).toBe(
+      addDays(today(), 5),
+    );
+    expect((await monthBody(env, monthOf(today()), 'walk')).earliestBookable).toBe(today());
+  });
+});
+
+/**
+ * `MonthDay.reason` (task 6b): the branch that made a day unavailable, in the customer's words.
+ * The grid is the only place a customer can learn WHY a day is struck through.
+ */
+describe('MonthDay.reason', () => {
+  const today = () => getPacificDateStr();
+  // Two months out — safely inside no-horizon territory and stable against the real clock.
+  const futureMonth = () => addMonths(today(), 2).slice(0, 7);
+
+  async function daysOf(
+    env: Env,
+    month: string,
+    type = 'boarding',
+  ): Promise<Map<string, MonthDay>> {
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      `/api/sunny-paws/availability/month?type=${type}&month=${month}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as MonthAvailability;
+    return new Map(body.days.map((d) => [d.date, d]));
+  }
+
+  it('names the blocked / full branches and stays null for bookable days', async () => {
+    const { env } = createTestEnv();
+    const m = futureMonth();
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: `${m}-10`,
+      endDate: `${m}-11`,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    // Sunny Paws boarding is capped at 2 pets/day — one 2-pet stay fills the 20th outright.
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: `${m}-20`,
+      endDate: `${m}-21`,
+      optionKey: null,
+      petCount: 2,
+      estCost: null,
+      status: 'confirmed',
+    });
+    // One pet on the 22nd: partial, still bookable, so no reason.
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: `${m}-22`,
+      endDate: `${m}-23`,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+
+    const days = await daysOf(env, m);
+    expect(days.get(`${m}-10`)).toMatchObject({
+      status: 'unavailable',
+      reason: 'Sitter unavailable',
+    });
+    expect(days.get(`${m}-20`)).toMatchObject({ status: 'unavailable', reason: 'Fully booked' });
+    expect(days.get(`${m}-22`)).toMatchObject({ status: 'partial', reason: null });
+    expect(days.get(`${m}-25`)).toMatchObject({ status: 'available', reason: null });
+  });
+
+  it('a single-day service reports the blocked and slot-full branches too', async () => {
+    const { env, raw } = createTestEnv();
+    const m = futureMonth();
+    raw.exec(
+      `UPDATE TenantServiceOptions SET Capacity = 1
+       WHERE TenantId = '${TENANT_A}' AND ServiceType = 'walk' AND OptionKey = 'd30';`,
+    );
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: `${m}-10`,
+      endDate: `${m}-11`,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'walk',
+      startDate: `${m}-12`,
+      endDate: null,
+      optionKey: 'd30',
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      `/api/sunny-paws/availability/month?type=walk&option=d30&month=${m}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    const body = (await res.json()) as MonthAvailability;
+    const days = new Map(body.days.map((d) => [d.date, d]));
+    expect(days.get(`${m}-10`)?.reason).toBe('Sitter unavailable');
+    expect(days.get(`${m}-12`)?.reason).toBe('Fully booked');
+    expect(days.get(`${m}-13`)?.reason).toBeNull();
+  });
+
+  it('the booking window overrides whatever capacity says: too soon / too far ahead', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE TenantServices SET MinLeadDays = 3 WHERE TenantId = '${TENANT_A}' AND ServiceType = 'boarding';`,
+    );
+    raw.exec(`UPDATE Tenants SET MaxAdvanceMonths = 1 WHERE Id = '${TENANT_A}';`);
+    const t = getPacificDateStr();
+
+    const thisMonth = await daysOf(env, t.slice(0, 7));
+    expect(thisMonth.get(t)).toMatchObject({ status: 'unavailable', reason: 'Too soon to book' });
+
+    const farDays = await daysOf(env, addMonths(t, 3).slice(0, 7));
+    expect([...farDays.values()].every((d) => d.reason === 'Too far ahead to book')).toBe(true);
   });
 });

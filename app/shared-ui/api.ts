@@ -49,6 +49,18 @@ export type MonthDay = {
   used: number | null;
   max: number | null;
   mine: boolean;
+  /** Short server-authored phrase for WHY the day can't be booked; null when it can. */
+  reason: string | null;
+};
+
+// Hand-mirrors server/lib/availability.ts's MonthAvailability — keep the two in step.
+export type MonthAvailability = {
+  today: string;
+  /** Booking window RESOLVED TO DATES by the server (null latest = no horizon). The client only
+   *  ever compares these strings — the window rule itself never leaves the server. */
+  earliestBookable: string;
+  latestBookable: string | null;
+  days: MonthDay[];
 };
 
 // Hand-mirrors server/lib/availability.ts's AvailabilityResult — keep the two in step.
@@ -331,7 +343,7 @@ export const api = {
     month: string,
     optionKey?: string,
   ) =>
-    request<{ today: string; days: MonthDay[] }>(
+    request<MonthAvailability>(
       `/api/${slug}/availability/month?type=${encodeURIComponent(type)}&month=${month}` +
         (optionKey ? `&option=${encodeURIComponent(optionKey)}` : ''),
       { headers: authHeaders(token) },
