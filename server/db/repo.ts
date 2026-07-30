@@ -474,6 +474,22 @@ export async function consumeLoginCode(
 export type CapacityRow = BookingRow & { CapacityKind: Exclude<CapacityKind, 'none'> | null };
 
 /**
+ * WHICH existing rows a capacity read counts.
+ *
+ * - `'all-live'` — pending AND confirmed, the customer-facing rule: a pending request holds the
+ *   slot, so nobody else can take it while the sitter decides.
+ * - `'committed-only'` — confirmed rows (plus blocked/external rows, which are always stored
+ *   `'confirmed'`), i.e. what the sitter has actually COMMITTED to. Used by the admin confirm
+ *   re-check, where counting other pending requests would warn her about the very requests she is
+ *   adjudicating: the first of two competing requests is the one she SHOULD confirm, and a warning
+ *   there would train her to click through the one that matters (the second).
+ */
+export type OccupancyScope = 'all-live' | 'committed-only';
+
+const statusFilterSql = (scope: OccupancyScope): string =>
+  scope === 'committed-only' ? `Status = 'confirmed'` : `Status IN ('pending', 'confirmed')`;
+
+/**
  * A stored EndDate that is present but is not a `YYYY-MM-DD` date. The window predicate below
  * compares dates as STRINGS, so a corrupt end date can sort BELOW the window's start (`''` is the
  * easy example) and drop the row from the read entirely — and a row the query never returns is a
@@ -488,9 +504,10 @@ const CORRUPT_END_DATE_SQL = `(b.EndDate IS NOT NULL
 
 /**
  * Rows that feed the capacity map: bookings whose service draws from a capacity pool
- * (CapacityKind boarding/housesit — custom services included) + blocked ranges, pending or
- * confirmed, overlapping [from, to). `excludeId` omits one row — used by the post-insert race
- * check so a just-created booking re-asks "do I still fit, ignoring myself?" against everyone else.
+ * (CapacityKind boarding/housesit — custom services included) + blocked ranges, overlapping
+ * [from, to). `excludeId` omits one row — used by the post-insert race check so a just-created
+ * booking re-asks "do I still fit, ignoring myself?" against everyone else. `scope` chooses which
+ * rows count (see `OccupancyScope`); the default is the customer-facing "pending holds the slot".
  */
 export async function listCapacityRows(
   db: D1Database,
@@ -498,6 +515,7 @@ export async function listCapacityRows(
   fromDate: string,
   toDateExclusive: string,
   excludeId?: string,
+  scope: OccupancyScope = 'all-live',
 ): Promise<CapacityRow[]> {
   const cols = BOOKING_COLS.split(', ')
     .map((c) => `b.${c}`)
@@ -507,7 +525,7 @@ export async function listCapacityRows(
       `SELECT ${cols}, s.CapacityKind
        FROM BookingRequests b
        LEFT JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
-       WHERE b.TenantId = ? AND b.Status IN ('pending', 'confirmed')
+       WHERE b.TenantId = ? AND b.${statusFilterSql(scope)}
          AND (b.ServiceType IN ('blocked', 'external') OR s.CapacityKind IN ('boarding', 'housesit'))
          AND b.StartDate < ?
          AND (COALESCE(b.EndDate, b.StartDate) >= ? OR ${CORRUPT_END_DATE_SQL})
@@ -544,7 +562,9 @@ export async function listUserBookingDatesInRange(
 /**
  * Sum the pets across non-cancelled bookings against one option on one date — enforces a windowed option's
  * Capacity. `excludeId` lets the post-insert race check ask "do I still fit, ignoring myself?",
- * matching the pattern `listCapacityRows` already uses for boarding/house-sit.
+ * matching the pattern `listCapacityRows` already uses for boarding/house-sit — as does `scope`
+ * (see `OccupancyScope`), so the sitter's confirm re-check counts slot commitments the same way it
+ * counts pool ones.
  */
 export async function countSlotBookings(
   db: D1Database,
@@ -553,12 +573,13 @@ export async function countSlotBookings(
   optionKey: string,
   date: string,
   excludeId?: string,
+  scope: OccupancyScope = 'all-live',
 ): Promise<number> {
   const row = await db
     .prepare(
       `SELECT COALESCE(SUM(PetCount), 0) AS n FROM BookingRequests
        WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND StartDate = ?
-         AND Status IN ('pending', 'confirmed') AND (? IS NULL OR Id != ?)`,
+         AND ${statusFilterSql(scope)} AND (? IS NULL OR Id != ?)`,
     )
     .bind(tenantId, serviceType, optionKey, date, excludeId ?? null, excludeId ?? null)
     .first<{ n: number }>();

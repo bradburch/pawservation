@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
+import { ApiError, adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
 import { ChargesPanel } from '../ChargesPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
@@ -110,13 +110,30 @@ function BookingList({
     setMessage('');
     setBusyId(b.id);
     try {
-      const { notified, cancellationFee } = await adminApi.bookings.setStatus(
-        session.slug,
-        session.token,
-        b.id,
-        status,
-        chargeFee,
-      );
+      const post = (overrideCapacity?: boolean) =>
+        adminApi.bookings.setStatus(
+          session.slug,
+          session.token,
+          b.id,
+          status,
+          chargeFee,
+          overrideCapacity,
+        );
+      // A confirm that would overbook her comes back 409 `capacity_conflict` carrying the server's
+      // own sentence about WHAT will collide (her cap, a blocked day, a house sit). She is the
+      // authority over her own calendar, so she is asked rather than refused — but she cannot end up
+      // over capacity without having read this. Declining the prompt leaves the request pending.
+      let result;
+      try {
+        result = await post();
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.code !== 'capacity_conflict') throw e;
+        // Backing out changes nothing: the request stays pending and she can decline it instead.
+        // `finally` below clears the busy flag.
+        if (!window.confirm(`${e.message}\n\nConfirm anyway?`)) return;
+        result = await post(true);
+      }
+      const { notified, cancellationFee } = result;
       const who = b.customerName || b.customerEmail || 'the client';
       const verb =
         status === 'confirmed' ? 'Confirmed' : status === 'declined' ? 'Declined' : 'Cancelled';

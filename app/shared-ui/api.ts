@@ -635,13 +635,23 @@ export const adminApi = {
       // Only sent when the sitter opts to charge the prospective cancellation fee; the server
       // ignores it for non-cancel transitions, so it's omitted unless explicitly true.
       chargeFee?: boolean,
+      /**
+       * The sitter's ACKNOWLEDGEMENT that confirming will overbook her. Sent only on the second
+       * attempt, after the server answered 409 `capacity_conflict` and she said yes to the warning
+       * it wrote — never pre-emptively, or the warning would be one she never saw.
+       */
+      overrideCapacity?: boolean,
     ) =>
       request<{ status: string; notified: boolean; cancellationFee: number | null }>(
         `/api/${slug}/admin/bookings/${id}/status`,
         {
           method: 'POST',
           headers: { ...jsonHeaders, ...authHeaders(token) },
-          body: JSON.stringify(chargeFee ? { status, chargeFee: true } : { status }),
+          body: JSON.stringify({
+            status,
+            ...(chargeFee ? { chargeFee: true } : {}),
+            ...(overrideCapacity ? { overrideCapacity: true } : {}),
+          }),
         },
       ),
   },

@@ -63,6 +63,7 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import { serializeAnalytics } from '../lib/analytics';
+import { confirmOverbookWarning } from '../lib/availability';
 import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
@@ -1877,11 +1878,38 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const id = c.req.param('id');
     const body = await c.req
-      .json<{ status?: unknown; chargeFee?: unknown }>()
-      .catch(() => ({}) as { status?: unknown; chargeFee?: unknown });
+      .json<{ status?: unknown; chargeFee?: unknown; overrideCapacity?: unknown }>()
+      .catch(() => ({}) as { status?: unknown; chargeFee?: unknown; overrideCapacity?: unknown });
     const status = body.status;
     if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
       return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
+
+    // CONFIRM RE-CHECKS THE COMMITTED CALENDAR. A pending request occupies capacity, but nothing
+    // re-validated when the sitter said yes — so two pending requests for one scarce day could both
+    // be confirmed, and a confirm could break a rule that did not exist when the request was made (a
+    // day blocked off since, the 0006 handover rule, a cap she has since lowered).
+    //
+    // It WARNS; it does not refuse. It is her calendar, and hard-refusing an overbooking she wants on
+    // purpose would be worse than the hole — so the answer is a 409 naming what will collide plus
+    // `requiresOverride`, and the same POST with `overrideCapacity: true` goes through. What she can
+    // no longer do is end up over capacity without having been told.
+    //
+    // Only the pending -> confirmed direction: decline and cancel free capacity rather than take it,
+    // and a row that is ALREADY confirmed is not changing, so there is nothing to warn about (and
+    // re-confirming must not start refusing). Terminal rows still fall through to
+    // updateBookingStatus's SQL guard and its 404, which is why this reads the row first and only
+    // acts on 'pending' — a warning must never displace an existence answer.
+    if (status === 'confirmed' && body.overrideCapacity !== true) {
+      const bk = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+      if (bk && bk.Status === 'pending' && bk.ServiceType !== 'external') {
+        const warning = await confirmOverbookWarning(c.env, tenant, bk);
+        // Advisory, so inherently racy — a confirm landing in the same second still can't be caught
+        // here. That is acceptable precisely because the answer is a warning she may override
+        // anyway; the WRITE stays guarded by updateBookingStatus's own SQL.
+        if (warning !== null)
+          return c.json({ error: warning, code: 'capacity_conflict', requiresOverride: true }, 409);
+      }
+    }
 
     // Cancellation-fee assessment. The amount is ALWAYS computed server-side from the tenant's
     // policy — the request only supplies the `chargeFee` boolean, never a dollar figure. A $0
