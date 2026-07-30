@@ -29,7 +29,14 @@ function whenText(b: Booking): string {
     : formatFriendlyDate(b.startDate);
 }
 
-export function MineTab({ config }: { config: TenantConfig }) {
+export function MineTab({
+  config,
+  onEdit,
+}: {
+  config: TenantConfig;
+  /** Hand this booking to the booking form in edit mode (App owns that navigation). */
+  onEdit: (b: Booking) => void;
+}) {
   // Resolves to a settled outcome rather than throwing — an expired/invalid token degrades to
   // re-identify (see server/lib/token.ts) instead of surfacing as a generic error.
   const load = useCallback(async (): Promise<MineOutcome> => {
@@ -141,6 +148,14 @@ export function MineTab({ config }: { config: TenantConfig }) {
                 auto-resizing iframe, and a row that grows a button on some loads and not others
                 changes scrollHeight and bounces the host page. */}
             <div className="bp-mine-actions">
+              {/* Both server answers, never client date math — and deliberately different
+                  questions: a stay already under way can be cancelled but not re-dated. The row
+                  never wraps (see .bp-mine-actions), so one button or two is the same height. */}
+              {b.editable && !confirming ? (
+                <button type="button" className="bp-mine-edit" onClick={() => onEdit(b)}>
+                  Change booking
+                </button>
+              ) : null}
               {b.cancellable && !confirming ? (
                 <button
                   type="button"
@@ -188,8 +203,13 @@ export function MineTab({ config }: { config: TenantConfig }) {
                       ? `A $${fee} cancellation fee applies.`
                       : 'No cancellation fee applies.'}
                   </p>
+                  {/* Rescheduling now has a real answer in the widget, so it is offered FIRST —
+                      but only when the server says this booking is still changeable; otherwise
+                      the phone/email line stands alone, exactly as it did before. */}
                   <p className="bp-mine-confirm-alt">
-                    Need different dates instead?{' '}
+                    {b.editable
+                      ? 'Need different dates instead? Back out and choose Change booking. '
+                      : 'Need different dates instead? '}
                     {config.contactPhone ? (
                       <>
                         Call <a href={`tel:${config.contactPhone}`}>{config.contactPhone}</a>
@@ -202,7 +222,7 @@ export function MineTab({ config }: { config: TenantConfig }) {
                       </>
                     ) : null}
                     {!config.contactPhone && !config.contactEmail
-                      ? `get in touch with ${config.displayName}`
+                      ? `Get in touch with ${config.displayName}`
                       : null}{' '}
                     to move it rather than cancel.
                   </p>

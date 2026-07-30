@@ -29,6 +29,7 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  crossKindDayBlocked,
   overlapReadWindow,
   rangeConflictReason,
   rangeHasConflict,
@@ -88,6 +89,7 @@ export {
   type RangeValue,
 } from './booking/calendar-ui.js';
 export {
+  questionShape,
   validateAnswer,
   validateAnswers,
   validateServiceConstraints,

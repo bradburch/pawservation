@@ -64,11 +64,16 @@ const MONTHS = [
  *   guess, since a confidently wrong "looks open" is worse than saying nothing.
  *
  * It is an OPTIMISTIC HINT, never a guarantee, and is worded that way. Per-day status is necessary
- * but not sufficient for a range service, because `rangeHasConflict` applies two rules that are
- * properties of a RANGE rather than of a day and that no per-day paint can express: bookend /
- * soft-bookend sharing, and the house-sit/boarding handover allowance (CALENDAR_LOGIC.md §3). So a
- * span of green days can still be refused, and an endpoint on a full day is *more* permissive than
- * the paint suggests. The server remains the authority.
+ * but not sufficient for a range service, because of the house-sit/boarding handover allowance: a
+ * property of a RANGE (really of a PAIR of ranges) that no per-day paint can FULLY express — the
+ * grid paints its day-level half, its range-level half stays with the server (CALENDAR_LOGIC.md §3,
+ * §9). So a span of green days can still be refused, and the server remains the authority.
+ *
+ * The divergence runs ONE way only now. It used to run both: two endpoint concessions made
+ * `rangeHasConflict` *more* permissive than the paint on a full day, so a struck-out day could still
+ * be a legal check-in or checkout. Both were unsound and are gone (see `rangeConflictReason`), so on
+ * the pool cap and on blocked days this walk and the engine agree exactly — which is also why
+ * refusing an unavailable day as an endpoint (`selectable`) hides nothing bookable.
  */
 type RangeVerdict = { ok: true } | { ok: false; date: string; reason: string | null } | null;
 
@@ -118,6 +123,7 @@ export function Calendar({
   value,
   onChange,
   reloadKey,
+  excludeBookingId,
   onAuthExpired,
 }: {
   slug: string;
@@ -138,6 +144,12 @@ export function Calendar({
   value: RangeValue;
   onChange: (v: RangeValue) => void;
   reloadKey?: number;
+  /**
+   * While EDITING a booking, that booking's id: the server leaves it out of the capacity map, so
+   * the days the customer already holds don't paint as taken by someone. Ownership is proved
+   * server-side — this is not a client-side capacity adjustment.
+   */
+  excludeBookingId?: string;
   /** Called when the month fetch is rejected as unauthenticated (expired token). */
   onAuthExpired?: () => void;
 }) {
@@ -156,7 +168,15 @@ export function Calendar({
     // fetchMonth identity (and therefore a refetch) after a booking submission bumps it.
     void reloadKey;
     try {
-      const r = await api.monthAvailability(slug, token, serviceType, month, optionKey, petIds);
+      const r = await api.monthAvailability(
+        slug,
+        token,
+        serviceType,
+        month,
+        optionKey,
+        petIds,
+        excludeBookingId,
+      );
       // Stamp which service/option this answer describes: useAsync retains the last success
       // across a DEPENDENCY change too, not just across an error, so without the stamp the
       // previous service's window bounds would drive the nav buttons until the new month lands
@@ -179,7 +199,7 @@ export function Calendar({
       }
       throw e;
     }
-  }, [slug, token, serviceType, month, optionKey, petIds, reloadKey]);
+  }, [slug, token, serviceType, month, optionKey, petIds, reloadKey, excludeBookingId]);
 
   const { data, error, loading } = useAsync(fetchMonth);
   const loadError = !loading && !!error;

@@ -25,12 +25,33 @@ export function serializeAnalytics(data: AnalyticsData) {
     // amount on this row IS a fee", so it needs the fee to actually be there.
     isCancellationFee: o.Status === 'cancelled' && o.EstCost > 0,
   }));
+  /**
+   * OVER-payments — money the customer no longer owes. The one place an edit's re-stamped `EstCost`
+   * can leave a client in credit becomes visible: `credit` is `paidTotal - keepable`, the same
+   * one-rule arithmetic the outstanding row's `balance` uses, read in the other direction. There is
+   * deliberately no *Record payment* affordance on these rows (see `CREDIT_WHERE_SQL`): a credit is
+   * a negative balance, not a payable one.
+   */
+  const credits = data.credits.map((c) => ({
+    bookingId: c.BookingId,
+    name: c.Name,
+    email: c.Email,
+    serviceType: c.ServiceType,
+    startDate: c.StartDate,
+    status: c.Status,
+    keepable: c.Keepable,
+    paidTotal: c.PaidTotal,
+    credit: c.PaidTotal - c.Keepable,
+  }));
   return {
     tiles: {
       thisMonth: data.monthly.at(-1)?.Total ?? 0,
       lastMonth: data.monthly.at(-2)?.Total ?? 0,
       outstandingTotal: outstanding.reduce((sum, o) => sum + o.balance, 0),
       outstandingCount: outstanding.length,
+      // Never netted against `outstandingTotal`: one client owing $100 and another being owed $100
+      // is not a settled book, and showing $0 would say it was.
+      creditTotal: credits.reduce((sum, c) => sum + c.credit, 0),
     },
     monthly: data.monthly.map((m) => ({ month: m.Month, total: m.Total })),
     ytd: data.ytd,
@@ -48,5 +69,6 @@ export function serializeAnalytics(data: AnalyticsData) {
       bookings: t.Bookings,
     })),
     outstanding,
+    credits,
   };
 }

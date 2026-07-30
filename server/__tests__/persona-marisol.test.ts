@@ -350,6 +350,22 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     const start = addDays(TODAY, 20);
     const end = addDays(TODAY, 23);
 
+    // These dates are RELATIVE to the real clock (reconcile only trusts Google inside
+    // `[today-1, today+180)`), while the seed's own pending 1-pet boarding sits on FIXED dates
+    // (2026-08-20→23) in a 2-pet pool — so on some real days the two share a night, and the 2-pet
+    // request below is then refused on plain capacity grounds no matter what Marisol's calendar
+    // says. Clear any pool row overlapping the window so the ONLY thing that can refuse the booking
+    // is the materialized Google event, which is what this scenario is about. (Before the boundary
+    // concession was removed, that collision was silently forgiven and the request was accepted with
+    // three pets in a two-pet pool — the assertion passed for the wrong reason.)
+    raw
+      .prepare(
+        `DELETE FROM BookingRequests
+          WHERE TenantId = ? AND ServiceType NOT IN ('blocked', 'external')
+            AND EndDate > ? AND StartDate < ?`,
+      )
+      .run(TENANT_A, start, end);
+
     // Marisol pencils a legacy stay into her calendar by hand — no Pawservation bookingId.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       calendarResponse([{ id: 'gev_legacy', summary: 'Neighbor drop-off — Rex', start, end }]),

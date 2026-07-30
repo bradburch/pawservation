@@ -5,6 +5,7 @@ import {
   buildCapacity,
   buildGroupKey,
   buildMixKey,
+  crossKindDayBlocked,
   DEFAULT_TIMEZONE,
   dedupePets,
   getPacificDateStr,
@@ -38,8 +39,8 @@ import { DEFAULT_OVERLAP_DAYS } from './validation';
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
 
-// External rows are deliberately blocked-kind (hard stop, no bookend sharing) — a Google event
-// tells us the sitter is busy, not which pool is busy.
+// External rows are deliberately blocked-kind (an unconditional hard stop) — a Google event tells us
+// the sitter is busy, not which pool is busy.
 export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
   return rows.map((row) =>
     row.ServiceType === 'blocked' || row.ServiceType === 'external'
@@ -413,8 +414,12 @@ async function checkRange(
           : 'That exceeds our house-sitting capacity.',
     };
   }
-  // Fetch one day PAST checkout so the soft-bookend look-ahead sees a booking starting on the
-  // checkout day (without +1, listCapacityRows clips that row and a final night can double-book).
+  // Fetch one day PAST checkout. This used to feed the engine's soft-bookend look-ahead, which is
+  // gone (it forgave an over-full LAST OCCUPIED NIGHT as if it were a checkout day); the over-read
+  // is kept because it still buys something and can never cost correctness. An opposite-kind
+  // neighbour that departs on our own checkout day is a common shape, and with the extra day
+  // already in the map `overlapReadWindow` below asks for no widening — one D1 query saved, and a
+  // wider map can only ever make the verdict stricter, never wrong.
   const rows = await listCapacityRows(
     env.PAWBOOK_DB,
     tenant.Id,
@@ -564,6 +569,13 @@ const REASON = {
    * pool is at its cap, which is `full`.
    */
   noRoom: (petCount: number) => `Not enough room for ${petCount} pets`,
+  /**
+   * The cross-kind handover rule (0006), named by where the SITTER is rather than by a full pool —
+   * the dates have room, she does not. Reads from the requesting service's point of view, so it is
+   * symmetric with `rangeRefusal`'s longer sentence for the quote.
+   */
+  crossKind: (kind: PoolKind) =>
+    kind === 'housesit' ? 'Sitter has boarders' : 'Sitter is house-sitting',
 } as const;
 
 /** The month grid's response: the day states plus the booking window RESOLVED TO DATES. */
@@ -605,6 +617,14 @@ export async function monthAvailability(
    * then refuses it. Defaults to 1, which is exactly the pre-change behaviour.
    */
   petCount = 1,
+  /**
+   * A booking of the CALLER's own to leave out of the capacity map — set while they are editing
+   * it. Without it the grid paints the days they already hold as occupied by someone, and a stay
+   * being re-timed inside a tight pool reads as unavailable on its own dates. Ownership of this id
+   * is verified by the caller (`booking-ops`' `monthGrid`) against customer-scoped SQL before it
+   * ever reaches here.
+   */
+  excludeBookingId?: string,
 ): Promise<MonthAvailability> {
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
   const pets = Math.max(1, petCount);
@@ -617,6 +637,10 @@ export async function monthAvailability(
   const monthEndExclusive = addDays(lastDay, 1);
 
   const poolKind: PoolKind | null = service.CapacityKind === 'none' ? null : service.CapacityKind;
+  // The tenant's handover allowance, read here for the same reason `checkRange` reads it there: the
+  // engine is pure and must never learn what a database is. Same function, same row, so the grid
+  // and the quote can only ever disagree in the direction the grid is allowed to (see below).
+  const overlapDays = overlapAllowanceOf(tenant);
 
   // Slot capacity is fetched ONCE for the whole grid (not per day), matching buildCapacity's
   // "build the map once" pattern, and run concurrently with the other D1 reads since none of
@@ -631,11 +655,12 @@ export async function monthAvailability(
           option!.OptionKey,
           monthStart,
           monthEndExclusive,
+          excludeBookingId,
         )
       : Promise.resolve(null);
 
   const [capacityRows, slotCounts, mineRows] = await Promise.all([
-    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive),
+    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive, excludeBookingId),
     slotCountsPromise,
     listUserBookingDatesInRange(
       env.PAWBOOK_DB,
@@ -688,13 +713,21 @@ export async function monthAvailability(
       // verbatim. `partial` still means "occupied but the set fits", so a cell showing 1/2 is now
       // true for the pets actually selected rather than for a hypothetical single pet.
       const noRoom = max != null && rawUsed + pets > max;
-      const unavailable = blocked || noRoom;
+      // The cross-kind handover rule (0006), asked of THIS DAY only. The engine owns the question
+      // (`crossKindDayBlocked`) and answers it conservatively: true only where NO request of this
+      // kind could arrive, depart or span, whatever its dates. The rest of the rule is a property
+      // of a range and stays deliberately unpainted — see CALENDAR_LOGIC.md §9 — so a day left open
+      // here can still be refused by the quote, but a day the quote and the POST always refuse can
+      // no longer paint `available`.
+      const crossKind = day !== undefined && crossKindDayBlocked(day, date, poolKind, overlapDays);
+      const unavailable = blocked || noRoom || crossKind;
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';
       used = max != null ? rawUsed : null;
       if (blocked) reason = REASON.blocked;
       // A pool at its cap is "Fully booked" however many pets you asked for; a pool with room
       // that still can't seat this set gets the specific answer instead of a misleading one.
       else if (noRoom) reason = max != null && rawUsed >= max ? REASON.full : REASON.noRoom(pets);
+      else if (crossKind) reason = REASON.crossKind(poolKind);
     } else {
       // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
       // capacity check when the option has one. Customers never see raw counts — only status.
