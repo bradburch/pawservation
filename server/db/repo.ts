@@ -474,6 +474,19 @@ export async function consumeLoginCode(
 export type CapacityRow = BookingRow & { CapacityKind: Exclude<CapacityKind, 'none'> | null };
 
 /**
+ * A stored EndDate that is present but is not a `YYYY-MM-DD` date. The window predicate below
+ * compares dates as STRINGS, so a corrupt end date can sort BELOW the window's start (`''` is the
+ * easy example) and drop the row from the read entirely — and a row the query never returns is a
+ * row the capacity engine never gets to fail safe on, however carefully it treats what it is given
+ * (`isWellFormedCapacityEvent`). So the window fails toward INCLUSION: anything starting before the
+ * window's end whose end date is unusable comes back, and `buildCapacity` turns it into a blocked
+ * day. A corrupt row from outside the window can only add a blocked day outside the window, which
+ * costs nothing. GLOB (not LIKE) because it is case-sensitive and has real character classes.
+ */
+const CORRUPT_END_DATE_SQL = `(b.EndDate IS NOT NULL
+       AND b.EndDate NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')`;
+
+/**
  * Rows that feed the capacity map: bookings whose service draws from a capacity pool
  * (CapacityKind boarding/housesit — custom services included) + blocked ranges, pending or
  * confirmed, overlapping [from, to). `excludeId` omits one row — used by the post-insert race
@@ -496,7 +509,8 @@ export async function listCapacityRows(
        LEFT JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
        WHERE b.TenantId = ? AND b.Status IN ('pending', 'confirmed')
          AND (b.ServiceType IN ('blocked', 'external') OR s.CapacityKind IN ('boarding', 'housesit'))
-         AND b.StartDate < ? AND COALESCE(b.EndDate, b.StartDate) >= ?
+         AND b.StartDate < ?
+         AND (COALESCE(b.EndDate, b.StartDate) >= ? OR ${CORRUPT_END_DATE_SQL})
          AND (? IS NULL OR b.Id != ?)`,
     )
     .bind(tenantId, toDateExclusive, fromDate, excludeId ?? null, excludeId ?? null)

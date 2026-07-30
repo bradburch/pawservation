@@ -107,6 +107,34 @@ const emptyDay = (): DayCapacity => ({
  * measured in PETS for every pool kind — a booking with three pets consumes three units. */
 const unitsOf = (petCount: number | undefined): number => Math.max(1, petCount ?? 1);
 
+/**
+ * An event's exclusive end date, or its start when it has none (the single-day shape: it occupies
+ * nothing). `??`, NOT `||`: an end date that is PRESENT but empty is a corrupt row, not a caller
+ * saying "no end", and reading it as "no end" is how a range booking with a blanked-out EndDate came
+ * to occupy nothing and leave its nights bookable. An absent end is a shape; an empty one is damage.
+ */
+const endOf = (event: CapacityEvent): string => event.end_date ?? event.start_date;
+
+/**
+ * Are this event's dates usable at all? Both must parse as `YYYY-MM-DD`, and the exclusive end may
+ * not precede the start. An event with NO `end_date` (or one equal to its start) is well formed —
+ * it simply occupies nothing (see `buildCapacity`), which is how single-day services stay invisible
+ * to pool occupancy.
+ *
+ * Exported so a caller can TELL A HUMAN about a corrupt row rather than only failing safe on it:
+ * `buildCapacity` treats what it cannot parse as occupied (below), which keeps the calendar sound
+ * but silent, and a row that is quietly blocking a day forever is its own bug. The module stays
+ * pure — it takes no logger and knows nothing about where the rows came from; naming the rows is
+ * the caller's job (`server/lib/availability.ts` logs the booking ids).
+ */
+export function isWellFormedCapacityEvent(event: CapacityEvent): boolean {
+  const start = event.start_date;
+  const end = endOf(event);
+  // String comparison is date comparison for zero-padded ISO dates, so no parsing is needed —
+  // and none may be attempted before DATE_RE has passed.
+  return DATE_RE.test(start) && DATE_RE.test(end) && end >= start;
+}
+
 /** Build a per-day capacity map from normalized events (end date exclusive). */
 export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity> {
   const byDate = new Map<string, DayCapacity>();
@@ -121,8 +149,29 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
 
   for (const event of events) {
     const start = event.start_date;
-    const end = event.end_date || event.start_date;
-    if (!DATE_RE.test(start) || !DATE_RE.test(end)) continue;
+    const end = endOf(event);
+
+    // A CORRUPT ROW FAILS TOWARD OCCUPIED. This used to `continue` — skipping the event — which
+    // made the one direction of error this engine must never take: a row that really does occupy
+    // the pool contributed nothing, so its day read as bookable and the next request was seated on
+    // top of it. Corrupt data is now a hard `blocked` day, the same direction `normalizeAllowance`
+    // fails in (an unrecognised allowance reads as the stricter 0) and the same direction
+    // calendar-sync already takes for a timed Google event (over-block, never under-block).
+    //
+    // `blocked`, not pool arithmetic, because NOTHING on a row whose dates are garbage is
+    // trustworthy — least of all its `serviceType` and `petCount` — and because a hard stop is the
+    // strictest reading available. No boundary and no span are recorded: a span needs a
+    // `lastOccupied`, and the whole point is that this row's extent is unknown.
+    //
+    // The one day it CAN be pinned to is its start; the rest of its extent is unknowable, so this
+    // is deliberately a floor rather than a guess. And when the START itself does not parse there
+    // is no date to key at all — a date-indexed map cannot express it — so it is dropped here and
+    // surfaced instead: `isWellFormedCapacityEvent` is what lets the caller log it (see
+    // `server/lib/availability.ts`).
+    if (!isWellFormedCapacityEvent(event)) {
+      if (DATE_RE.test(start)) getOrCreate(start).blocked += 1;
+      continue;
+    }
 
     // Blocked events get no boundary. Informational either way (see `DayCapacity.isBoundary`) —
     // kept truthful rather than removed, since the field is exported engine API.

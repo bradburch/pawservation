@@ -9,6 +9,7 @@ import {
   DEFAULT_TIMEZONE,
   dedupePets,
   getPacificDateStr,
+  isWellFormedCapacityEvent,
   mixFromPetTypes,
   nightsBetween,
   overlapReadWindow,
@@ -17,6 +18,7 @@ import {
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
+  type DayCapacity,
   type GroupRate,
   type MixRate,
   type PoolKind,
@@ -53,6 +55,30 @@ export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
           petCount: row.PetCount,
         },
   );
+}
+
+/**
+ * The capacity map, plus the one thing the pure engine deliberately cannot do: TELL SOMEONE about a
+ * row it could not read. `buildCapacity` treats an event whose dates don't parse as a blocked day
+ * (fail toward occupied — see `isWellFormedCapacityEvent`), which keeps the calendar sound but
+ * silent, and a corrupt row quietly blocking a date forever is its own bug. Every server-side
+ * capacity read goes through here so the log happens once, at the boundary where the booking IDS
+ * are still in hand (the engine only ever sees normalized events).
+ *
+ * Logged, never thrown: a single bad row must not 500 the whole availability read, and treating it
+ * as occupied has already made the answer safe.
+ */
+function capacityFromRows(tenantId: string, rows: CapacityRow[]): Map<string, DayCapacity> {
+  const events = rowsToCapacityEvents(rows);
+  const corrupt = rows.filter((_, i) => !isWellFormedCapacityEvent(events[i]));
+  if (corrupt.length > 0) {
+    console.error(
+      `capacity: tenant ${tenantId} has ${corrupt.length} booking row(s) with unusable dates — ` +
+        `treated as BLOCKED days, fix or delete them: ` +
+        corrupt.map((r) => `${r.Id} (${r.StartDate} → ${r.EndDate ?? 'null'})`).join(', '),
+    );
+  }
+  return buildCapacity(events);
 }
 
 export type AvailabilityResult =
@@ -427,7 +453,7 @@ async function checkRange(
     addDays(endDateExclusive, 1),
     excludeBookingId,
   );
-  let capacity = buildCapacity(rowsToCapacityEvents(rows));
+  let capacity = capacityFromRows(tenant.Id, rows);
 
   // The overlap rule judges the bookings this request TOUCHES as well as the request itself (it is
   // symmetric, so the verdict cannot depend on which of two stays was booked first), and a touched
@@ -448,7 +474,7 @@ async function checkRange(
       need.toExclusive > readEnd ? need.toExclusive : readEnd,
       excludeBookingId,
     );
-    capacity = buildCapacity(rowsToCapacityEvents(widened));
+    capacity = capacityFromRows(tenant.Id, widened);
   }
 
   const conflict = rangeConflictReason(startDate, endDateExclusive, request, capacity);
@@ -488,7 +514,7 @@ async function checkSingle(
     addDays(date, 1),
     excludeBookingId,
   );
-  const capacity = buildCapacity(rowsToCapacityEvents(rows));
+  const capacity = capacityFromRows(tenant.Id, rows);
   if (walkHasConflict(date, capacity)) {
     return { available: false, reason: 'That day is blocked off.' };
   }
@@ -693,7 +719,7 @@ export async function monthAvailability(
     }
   }
 
-  const cap = buildCapacity(rowsToCapacityEvents(capacityRows));
+  const cap = capacityFromRows(tenant.Id, capacityRows);
 
   // The booking window (0004): days the customer could never request — before the service's
   // minimum notice or past the business-wide horizon — paint as unavailable, so the grid, the

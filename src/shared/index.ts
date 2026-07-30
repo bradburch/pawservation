@@ -30,6 +30,7 @@ export {
 export {
   buildCapacity,
   crossKindDayBlocked,
+  isWellFormedCapacityEvent,
   overlapReadWindow,
   rangeConflictReason,
   rangeHasConflict,

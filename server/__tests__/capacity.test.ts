@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addDays,
   buildCapacity,
+  isWellFormedCapacityEvent,
   rangeConflictReason,
   rangeHasConflict,
   type CapacityEvent,
@@ -656,5 +657,96 @@ describe('the overlap rule is order-independent', () => {
     expect(rangeHasConflict('2028-09-05', '2028-09-09', sit(), buildCapacity([bd, hsA]))).toBe(
       true,
     );
+  });
+});
+
+/**
+ * A row whose dates do not parse used to be SKIPPED, which is the one direction this engine must
+ * never fail in: the corrupt row contributed nothing, so the day it really occupies read as
+ * bookable and the sitter got a booking on top of it. Corrupt data fails toward OCCUPIED — the
+ * same direction `normalizeAllowance` already fails (an unrecognised allowance reads as the
+ * stricter 0), and the same direction the calendar-sync layer already takes for a timed Google
+ * event (over-block, never under-block).
+ */
+describe('malformed events fail toward OCCUPIED, never toward free', () => {
+  const malformedEnd: CapacityEvent = {
+    start_date: '2028-11-02',
+    end_date: 'not-a-date',
+    kind: 'boarding',
+    serviceType: 'boarding',
+    petCount: 1,
+  };
+  const malformedStart: CapacityEvent = {
+    start_date: '',
+    end_date: '2028-11-06',
+    kind: 'boarding',
+    serviceType: 'boarding',
+    petCount: 1,
+  };
+  const backwards: CapacityEvent = {
+    start_date: '2028-11-10',
+    end_date: '2028-11-08',
+    kind: 'housesit',
+    serviceType: 'housesitting',
+    petCount: 1,
+  };
+
+  it('an unparseable END date blocks the one day the row can still be pinned to', () => {
+    const cap = buildCapacity([malformedEnd]);
+    expect(cap.get('2028-11-02')?.blocked).toBe(1);
+    // A hard stop, not pool arithmetic: nothing about a corrupt row is trustworthy, so an
+    // unlimited cap must not wave it through either.
+    expect(rangeHasConflict('2028-11-01', '2028-11-04', req({ cap: null }), cap)).toBe(true);
+    expect(rangeConflictReason('2028-11-02', '2028-11-03', req({ cap: 9 }), cap)).toBe(
+      'blocked_or_full',
+    );
+  });
+
+  it('an END BEFORE the start is corrupt too, and blocks its start day', () => {
+    const cap = buildCapacity([backwards]);
+    expect(cap.get('2028-11-10')?.blocked).toBe(1);
+    expect(rangeHasConflict('2028-11-10', '2028-11-11', req({ cap: null }), cap)).toBe(true);
+  });
+
+  it('an unparseable START pins nothing, so it cannot block — but it is still reported', () => {
+    const cap = buildCapacity([malformedStart]);
+    expect(cap.size).toBe(0); // no date to key it under; a date-map cannot express it
+    expect(isWellFormedCapacityEvent(malformedStart)).toBe(false);
+  });
+
+  it('an end date that is PRESENT but empty is damage, not "no end date"', () => {
+    // `end_date: ''` used to fall through the `||` as "no end", i.e. a single-day event that
+    // occupies nothing — so a range booking whose EndDate had been blanked left its nights free.
+    const blankEnd: CapacityEvent = {
+      start_date: '2028-11-15',
+      end_date: '',
+      kind: 'boarding',
+      serviceType: 'boarding',
+      petCount: 2,
+    };
+    expect(isWellFormedCapacityEvent(blankEnd)).toBe(false);
+    expect(buildCapacity([blankEnd]).get('2028-11-15')?.blocked).toBe(1);
+    // An ABSENT end date is still the legitimate single-day shape: no occupancy, no block.
+    const noEnd: CapacityEvent = { start_date: '2028-11-15', kind: 'boarding', serviceType: 'x' };
+    expect(buildCapacity([noEnd]).get('2028-11-15')?.blocked).toBe(0);
+  });
+
+  it('the predicate names exactly the corrupt rows, so a human can be told about them', () => {
+    expect(isWellFormedCapacityEvent(malformedEnd)).toBe(false);
+    expect(isWellFormedCapacityEvent(backwards)).toBe(false);
+    expect(isWellFormedCapacityEvent(boarding('2028-11-02', '2028-11-04'))).toBe(true);
+    // A single-day event carries no end date at all and is perfectly well formed — it just
+    // occupies nothing (see buildCapacity).
+    expect(
+      isWellFormedCapacityEvent({ start_date: '2028-11-02', kind: 'boarding', serviceType: 'x' }),
+    ).toBe(true);
+    // …as is an end date EQUAL to the start (the same "occupies nothing" shape).
+    expect(isWellFormedCapacityEvent(boarding('2028-11-02', '2028-11-02'))).toBe(true);
+  });
+
+  it('one corrupt row never costs the well-formed rows beside it', () => {
+    const cap = buildCapacity([malformedStart, boarding('2028-11-20', '2028-11-22'), malformedEnd]);
+    expect(cap.get('2028-11-20')?.byService.get('boarding')).toBe(1);
+    expect(cap.get('2028-11-02')?.blocked).toBe(1);
   });
 });
