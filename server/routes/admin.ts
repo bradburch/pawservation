@@ -503,6 +503,13 @@ type ServiceBody = {
    *  option rate x the pet count. PATCH: absent = keep current — never coerced to a default here,
    *  because coercing it would silently re-mode a service on any partial save. */
   petRateMode?: unknown;
+  /** Extra-time surcharge (0009): the hours a stay normally starts and ends, plus a FLAT
+   *  whole-dollar fee for each side. All four PATCH: absent = keep current, null = clear. Each side
+   *  needs BOTH its time and its fee to charge anything. */
+  standardArrivalTime?: string | null;
+  standardDepartureTime?: string | null;
+  earlyArrivalFee?: number | null;
+  lateDepartureFee?: number | null;
 };
 type SettingsBody = {
   displayName?: string;
@@ -608,6 +615,12 @@ export const adminRoutes = new Hono<AppEnv>()
         maxConcurrentPets: svc.MaxConcurrentPets,
         holidayRate: svc.HolidayRate,
         petRateMode: svc.PetRateMode,
+        // Extra-time surcharge config (0009), round-tripped by the service editor. Null = that side
+        // is off; the FEE the customer is shown is still only ever computed server-side.
+        standardArrivalTime: svc.StandardArrivalTime,
+        standardDepartureTime: svc.StandardDepartureTime,
+        earlyArrivalFee: svc.EarlyArrivalFee,
+        lateDepartureFee: svc.LateDepartureFee,
         // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
         // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
         multiPetGroupRateCount: groupRates.filter(
@@ -843,6 +856,42 @@ export const adminRoutes = new Hono<AppEnv>()
       // 'linear' would multiply money nobody asked to multiply.
       if ('petRateMode' in svc && !isPetRateMode(svc.petRateMode))
         return c.json({ error: `${meta.Label}: unknown multi-pet pricing mode.` }, 400);
+      // Extra-time surcharge (0009). Gated the way the capacity check gates itself — to the shape
+      // this config can actually act on. Standard HOURS only mean something where the OWNER sets the
+      // booking's times, i.e. a service whose options are not duration-priced (`HasDuration = 0`:
+      // boarding, house sitting, daycare). On a walk or a check-in the option's slot IS the clock, so
+      // a "standard arrival" there could never fire — and config a sitter typed that silently never
+      // applies is the same defect as the retired minPetCount, so it is REJECTED, not dropped.
+      const extraTimeFields = [
+        'standardArrivalTime',
+        'standardDepartureTime',
+        'earlyArrivalFee',
+        'lateDepartureFee',
+      ] as const;
+      const sendsExtraTime = extraTimeFields.some((f) => f in svc && svc[f] != null);
+      if (sendsExtraTime && meta.HasDuration)
+        return c.json(
+          {
+            error: `${meta.Label}: the option you booked sets the times on this service, so standard hours don't apply.`,
+          },
+          400,
+        );
+      for (const field of ['standardArrivalTime', 'standardDepartureTime'] as const) {
+        if (svc[field] != null && !isValidTimeString(svc[field]))
+          return c.json({ error: `${meta.Label}: standard hours must be in HH:MM format.` }, 400);
+      }
+      // Whole dollars >= 1, the same `isValidRate` every other stored money field uses. Deliberately
+      // NOT bounded relative to the base rate, and deliberately not a percentage: a rate the sitter
+      // did not type is a price they did not agree to.
+      for (const field of ['earlyArrivalFee', 'lateDepartureFee'] as const) {
+        if (svc[field] != null && !isValidRate(svc[field]))
+          return c.json(
+            {
+              error: `${meta.Label}: extra-time fees must be whole dollars, $1 or more (or blank).`,
+            },
+            400,
+          );
+      }
       // Per-service acceptance list: PATCH semantics (absent = keep current). An explicit list
       // must be a subset of the tenant's slugs; the EFFECTIVE list (incoming or kept) may not be
       // empty on an enabled service — "accepts nothing" is expressed by disabling the service.
@@ -925,6 +974,20 @@ export const adminRoutes = new Hono<AppEnv>()
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
         holidayRate: 'holidayRate' in svc ? (svc.holidayRate ?? null) : current.HolidayRate,
         petRateMode: isPetRateMode(svc.petRateMode) ? svc.petRateMode : current.PetRateMode,
+        // Same PATCH idiom as every field above: absent keeps the stored value, an explicit null
+        // clears that side back to "no surcharge".
+        standardArrivalTime:
+          'standardArrivalTime' in svc
+            ? (svc.standardArrivalTime ?? null)
+            : current.StandardArrivalTime,
+        standardDepartureTime:
+          'standardDepartureTime' in svc
+            ? (svc.standardDepartureTime ?? null)
+            : current.StandardDepartureTime,
+        earlyArrivalFee:
+          'earlyArrivalFee' in svc ? (svc.earlyArrivalFee ?? null) : current.EarlyArrivalFee,
+        lateDepartureFee:
+          'lateDepartureFee' in svc ? (svc.lateDepartureFee ?? null) : current.LateDepartureFee,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.

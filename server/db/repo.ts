@@ -6,6 +6,7 @@ import type {
   CancellationTier,
   EndUser,
   EndUserPet,
+  ExtraTimeOrigin,
   OwnerUser,
   PaymentRow,
   PetGroupPricingRow,
@@ -19,6 +20,7 @@ import type {
   TenantServicePetRateRow,
   TenantUser,
 } from '../types';
+import { EXTRA_TIME_ORIGINS } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
@@ -135,7 +137,8 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
               CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount, MinLeadDays,
-              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate, PetRateMode
+              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate, PetRateMode,
+              StandardArrivalTime, StandardDepartureTime, EarlyArrivalFee, LateDepartureFee
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -1183,6 +1186,62 @@ export async function insertBookingCharge(
 }
 
 /**
+ * SET a booking's DERIVED extra-time charges to exactly this list (0009) — used by the create path
+ * (where the delete is a no-op on a fresh row) and by the edit path, which is what makes "the
+ * surcharge follows the booking's times" one rule written once.
+ *
+ * Three deliberate properties:
+ *
+ *  - **One `db.batch`**, so a delete can never land without its replacement insert. Half-applied,
+ *    this would silently WAIVE money the customer was quoted.
+ *  - **Scoped to `Origin IN (…)`**, so a charge the sitter typed herself (`Origin IS NULL`) is
+ *    untouched — the invariant that an edit never disturbs her extras, preserved exactly.
+ *  - **Each INSERT carries `insertBookingCharge`'s existence guard** (`INSERT … SELECT … FROM
+ *    BookingRequests WHERE TenantId = ? AND Id = ?`), so a charge can never attach to a foreign
+ *    tenant's booking, a nonexistent id, or a 'blocked'/'external' sentinel.
+ *
+ * The caller decides WHETHER to call this at all: `editBooking` only does so when the times actually
+ * moved, which is what lets a fee the sitter deliberately deleted stay deleted through every edit
+ * that does not re-open the question.
+ */
+export async function replaceExtraTimeCharges(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+  charges: { label: string; amount: number; origin: ExtraTimeOrigin }[],
+): Promise<void> {
+  const origins = EXTRA_TIME_ORIGINS.map(() => '?').join(', ');
+  const statements = [
+    db
+      .prepare(
+        `DELETE FROM BookingCharges
+          WHERE TenantId = ? AND BookingRequestId = ? AND Origin IN (${origins})`,
+      )
+      .bind(tenantId, bookingRequestId, ...EXTRA_TIME_ORIGINS),
+    ...charges.map((charge) =>
+      db
+        .prepare(
+          `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount, Origin)
+           SELECT ?, ?, ?, ?, ?, ?
+           FROM BookingRequests
+           WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          tenantId,
+          bookingRequestId,
+          charge.label,
+          charge.amount,
+          charge.origin,
+          tenantId,
+          bookingRequestId,
+        ),
+    ),
+  ];
+  await db.batch(statements);
+}
+
+/**
  * Delete one charge. The WHERE includes BookingRequestId so a charge id paired with the wrong
  * booking id in the URL reports false (route 404s) instead of silently deleting — deletePayment's
  * rule, for the same reason. Deleting is the only correction mechanism; there is no edit.
@@ -1207,7 +1266,7 @@ export async function listChargesForBooking(
 ): Promise<BookingChargeRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
        FROM BookingCharges WHERE TenantId = ? AND BookingRequestId = ?
        ORDER BY CreatedAt, Id`,
     )
@@ -1224,7 +1283,7 @@ export async function listChargesForTenant(
 ): Promise<BookingChargeRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
        FROM BookingCharges WHERE TenantId = ? ORDER BY BookingRequestId, CreatedAt, Id`,
     )
     .bind(tenantId)
@@ -1653,6 +1712,11 @@ export async function setServiceConfig(
     holidayRate: number | null;
     /** The sitter's stored choice for pricing an otherwise-unpriced pet set (0005). */
     petRateMode: PetRateMode;
+    /** Extra-time surcharge config (0009); null clears a side back to "no surcharge". */
+    standardArrivalTime: string | null;
+    standardDepartureTime: string | null;
+    earlyArrivalFee: number | null;
+    lateDepartureFee: number | null;
   },
 ): Promise<boolean> {
   const result = await db
@@ -1660,7 +1724,9 @@ export async function setServiceConfig(
       `UPDATE TenantServices SET
          Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
          MaxPetCount = ?, MinLeadDays = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?,
-         CancellationTiers = ?, HolidayRate = ?, PetRateMode = ?
+         CancellationTiers = ?, HolidayRate = ?, PetRateMode = ?,
+         StandardArrivalTime = ?, StandardDepartureTime = ?, EarlyArrivalFee = ?,
+         LateDepartureFee = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -1675,6 +1741,10 @@ export async function setServiceConfig(
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),
       config.holidayRate,
       config.petRateMode,
+      config.standardArrivalTime,
+      config.standardDepartureTime,
+      config.earlyArrivalFee,
+      config.lateDepartureFee,
       tenantId,
       serviceType,
     )

@@ -213,6 +213,10 @@ describe('custom services — creation', () => {
       sortOrder: 99,
       acceptedPetTypes: null,
       petRateMode: 'exact' as const,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     };
     await createService(env.PAWBOOK_DB, TENANT_A, svc);
     await expect(createService(env.PAWBOOK_DB, TENANT_A, svc)).rejects.toThrow(
@@ -401,6 +405,10 @@ describe('custom services — deletion', () => {
       cancellationTiers: null,
       holidayRate: null,
       petRateMode: 'exact',
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     expect(updated).toBe(false);
   });

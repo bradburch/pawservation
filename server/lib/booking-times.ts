@@ -34,7 +34,14 @@
  * That asymmetry is the single easiest thing in this feature to get wrong; it lives here, once.
  */
 import { isValidTimeString } from './validation';
-import type { TenantService, TenantServiceOption } from '../types';
+import type { ExtraTimeOrigin, TenantService, TenantServiceOption } from '../types';
+
+/**
+ * A whole-dollar surcharge a booking's times attract, carrying the `BookingCharges.Origin`
+ * provenance tag that lets an EDIT re-derive exactly these rows and leave a charge the sitter typed
+ * herself alone. The origin domain lives in `server/types.ts` beside the column it is stored in.
+ */
+export type ExtraTimeCharge = { label: string; amount: number; origin: ExtraTimeOrigin };
 
 export type ResolvedTimes = { startTime: string | null; departureTime: string | null };
 export type TimesError = { error: string; code: string; status: 400 };
@@ -110,4 +117,68 @@ export function resolveBookingTimes(
 /** Narrow `resolveBookingTimes`' union. */
 export function isTimesError(value: ResolvedTimes | TimesError): value is TimesError {
   return 'error' in value;
+}
+
+/**
+ * WHAT THE BOOKING'S TIMES COST — the ONE computation of the extra-time surcharge, called by the
+ * quote (which previews it) and by the create/edit paths (which stamp it as `BookingCharges` rows).
+ * Modelled on `feeToCancelToday`: the number a customer is shown and the number the server writes
+ * come from the same function, so they cannot drift.
+ *
+ * ── Why this is a CHARGE and not part of `estimateCost` ────────────────────────────────────────
+ *
+ * `estimateCost`'s docblock says the only arithmetic permitted there is units of time × a stored
+ * rate (× the distinct pet count under `PetRateMode = 'linear'`), and that nothing may be
+ * "multiplied, scaled, or **surcharged**". This is a surcharge, so it stays out — and not merely
+ * out of deference: inside `estimateCost` the `'linear'` pet multiplier is applied to the composed
+ * total, so a $20 early arrival would silently become $60 for three dogs. A per-pet fee nobody
+ * typed is precisely the no-inferred-pricing defect that invariant exists to prevent, and the only
+ * way to place this inside `estimateCost` would be to carve an exception out of the one clean
+ * multiplication. As a `BookingCharges` row it costs nothing instead: `EstCost` keeps meaning "the
+ * price of the stay", and `totalDue = EstCost + chargesTotal` picks the fee up at every read site
+ * already derived that way.
+ *
+ * ── FLAT, and PER STAY ────────────────────────────────────────────────────────────────────────
+ *
+ * Two stored whole-dollar amounts the sitter typed, each charged at most once. NOT per hour: an
+ * hourly fee needs a duration and a rounding rule, and a rounding rule is a price the sitter did
+ * not type. NOT per day either: a stay has exactly ONE arrival and ONE departure, so billing a
+ * multi-day stay per day for a single early drop-off invents an event that never happened. The
+ * result is that the whole feature performs no multiplication at all — it sums stored amounts.
+ *
+ * NULL anywhere switches it off, the `HolidayRate` convention: the fee applies only when the sitter
+ * stored BOTH a standard time and its fee, AND the owner actually named a time outside it. Times
+ * are 'HH:MM' zero-padded, so a string compare IS a clock compare.
+ */
+export function extraTimeSurcharges(
+  service: TenantService,
+  times: ResolvedTimes,
+): ExtraTimeCharge[] {
+  const charges: ExtraTimeCharge[] = [];
+  const { StandardArrivalTime, StandardDepartureTime, EarlyArrivalFee, LateDepartureFee } = service;
+  if (
+    StandardArrivalTime !== null &&
+    EarlyArrivalFee !== null &&
+    times.startTime !== null &&
+    times.startTime < StandardArrivalTime
+  ) {
+    charges.push({
+      label: `Early arrival (${times.startTime})`,
+      amount: EarlyArrivalFee,
+      origin: 'extra_time_early',
+    });
+  }
+  if (
+    StandardDepartureTime !== null &&
+    LateDepartureFee !== null &&
+    times.departureTime !== null &&
+    times.departureTime > StandardDepartureTime
+  ) {
+    charges.push({
+      label: `Late departure (${times.departureTime})`,
+      amount: LateDepartureFee,
+      origin: 'extra_time_late',
+    });
+  }
+  return charges;
 }

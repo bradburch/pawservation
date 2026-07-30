@@ -413,6 +413,21 @@ export function BookTab({
         })()
       : '';
 
+  /**
+   * The extra-time surcharge (0009), said out loud BEFORE the customer commits — a fee driven by a
+   * time they chose has to be consented to, not discovered on an invoice. Every figure here is the
+   * server's own (`extraTimeFees`, from the same function that stamps the charge): the widget is not
+   * even told the sitter's standard hours, so it cannot derive a fee, and `+$` says plainly that the
+   * amount sits ON TOP of the price beside the button rather than inside it.
+   *
+   * Rendered in its own reserved-height slot (`.bp-extratime`), so a fee appearing as a time is
+   * typed never changes the widget's height — and so never moves the host page.
+   */
+  const extraTimeNote =
+    quote && quote.available && quote.priced && quote.extraTimeFees?.length
+      ? `Extra time: ${quote.extraTimeFees.map((f) => `${f.label} +$${f.amount}`).join(' · ')}`
+      : '';
+
   const policyNote = service.cancellationTiers
     ? `Cancellation: ${service.cancellationTiers
         .map((t) => `${t.percent}% within ${t.withinDays} day${t.withinDays === 1 ? '' : 's'}`)
@@ -699,6 +714,11 @@ export function BookTab({
           {/* Both lines share ONE gap from .bp-details: they are reserved space, and reserved
               space should cost the layout as little as it can while still never collapsing. */}
           <div className="bp-below-action">
+            {/* Its OWN reserved slot rather than another clause in `.bp-fineprint`: that slot already
+                reserves exactly three lines for the holiday + cancellation notes, and adding a third
+                clause to it would overflow into a fourth line at a narrow host width — which is a
+                host-page bounce. Two lines is the worst case here (both fees, each with a time). */}
+            <p className="bp-extratime">{extraTimeNote}</p>
             <p className="bp-fineprint">{[holidayNote, policyNote].filter(Boolean).join(' · ')}</p>
             <p className={`bp-note${noteLine ? ' bp-note-bad' : ''}`}>{noteLine}</p>
           </div>
@@ -769,7 +789,12 @@ function srStatus(
       quote.billedUnits != null && quote.unit != null
         ? `${quote.billedUnits} ${quote.unit}${quote.billedUnits === 1 ? '' : 's'}, `
         : '';
-    return `${units}$${quote.estCost}.`;
+    // The surcharge is spoken with the price, not left to the visual line alone: a fee driven by a
+    // time the customer chose has to reach them however they are reading the page.
+    const extra = quote.extraTimeTotal
+      ? ` Plus $${quote.extraTimeTotal} for extra time: ${quote.extraTimeFees?.map((f) => f.label).join(', ')}.`
+      : '';
+    return `${units}$${quote.estCost}.${extra}`;
   }
   return '';
 }

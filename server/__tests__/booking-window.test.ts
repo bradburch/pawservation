@@ -31,6 +31,10 @@ async function setLeadDays(env: Env, days: number | null): Promise<void> {
     cancellationTiers: current.CancellationTiers,
     holidayRate: current.HolidayRate,
     petRateMode: current.PetRateMode,
+    standardArrivalTime: null,
+    standardDepartureTime: null,
+    earlyArrivalFee: null,
+    lateDepartureFee: null,
   });
 }
 

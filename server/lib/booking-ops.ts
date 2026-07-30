@@ -55,6 +55,7 @@ import {
   listServiceOptions,
   listServices,
   replaceBookingPets,
+  replaceExtraTimeCharges,
   replaceSavedAnswers,
   restoreBookingAfterEdit,
   updateBookingForEdit,
@@ -78,7 +79,7 @@ import {
 import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
 import { isUniqueViolation } from './db-errors';
-import { isTimesError, resolveBookingTimes } from './booking-times';
+import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
 import {
   isValidPetCount,
   validateBoardingRange,
@@ -97,7 +98,7 @@ import {
   validateServiceConstraints,
   type CancellationTier,
 } from '../../src/shared/index.js';
-import type { BookingRow, Tenant } from '../types';
+import type { BookingRow, Tenant, TenantService } from '../types';
 
 // ─── The result contract ─────────────────────────────────────────────────────
 
@@ -208,6 +209,34 @@ function conflictFailure(check: { reason: string; code?: string }): OpFailure {
   return check.code
     ? fail(409, check.reason, check.code)
     : fail(409, 'Sorry — those dates just filled up.', 'capacity_conflict');
+}
+
+/**
+ * Attach the extra-time surcharge PREVIEW to a quote (0009). Decorates only the arm that carries a
+ * price, and only when a fee actually applies, so an ordinary quote's payload is byte-identical to
+ * what it was before the feature.
+ *
+ * Applied HERE rather than inside `checkAvailability`/`estimateCost`, deliberately: the price
+ * formula never learns that a time of day exists, and a surcharge never passes through it. What
+ * makes the preview trustworthy is not where it is attached but that it comes from
+ * `extraTimeSurcharges` — the same function `createBooking`/`editBooking` stamp the charges from,
+ * the way `feeToCancelToday` serves both the cancellation preview and the cancellation stamp.
+ *
+ * The `origin` tag is stripped: it is provenance for the DB, not for the wire.
+ */
+function withExtraTimePreview(
+  result: AvailabilityResult,
+  service: TenantService,
+  times: { startTime: string | null; departureTime: string | null },
+): AvailabilityResult {
+  if (!(result.available && result.priced)) return result;
+  const fees = extraTimeSurcharges(service, times);
+  if (fees.length === 0) return result;
+  return {
+    ...result,
+    extraTimeFees: fees.map(({ label, amount }) => ({ label, amount })),
+    extraTimeTotal: fees.reduce((sum, fee) => sum + fee.amount, 0),
+  };
 }
 
 /**
@@ -350,16 +379,20 @@ export async function quoteBooking(
     // paths above — behavior is identical since checkAvailability is the only consumer.
     const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
     return ok(
-      await checkAvailability(
-        env,
-        tenant,
+      withExtraTimePreview(
+        await checkAvailability(
+          env,
+          tenant,
+          service,
+          option,
+          start,
+          end,
+          pets,
+          rates,
+          input.excludeBookingId,
+        ),
         service,
-        option,
-        start,
-        end,
-        pets,
-        rates,
-        input.excludeBookingId,
+        times,
       ),
     );
   }
@@ -379,16 +412,20 @@ export async function quoteBooking(
   if (constraintsError) return fail(400, constraintsError);
   const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
   return ok(
-    await checkAvailability(
-      env,
-      tenant,
+    withExtraTimePreview(
+      await checkAvailability(
+        env,
+        tenant,
+        service,
+        option,
+        start,
+        '',
+        pets,
+        rates,
+        input.excludeBookingId,
+      ),
       service,
-      option,
-      start,
-      '',
-      pets,
-      rates,
-      input.excludeBookingId,
+      times,
     ),
   );
 }
@@ -781,6 +818,17 @@ export async function createBooking(
       return conflictFailure(check);
     }
     await addBookingPets(env.PAWBOOK_DB, tenant.Id, id, petIds);
+    // The extra-time surcharge the times attract (0009), from the SAME function the quote previewed
+    // it with — so the fee the customer just read and the fee now owed are one number. Inside this
+    // try, not after it: money owed must not be best-effort, and a throw here rolls the whole
+    // booking back rather than committing an under-billed one. Nothing is written when no fee
+    // applies (the common case) — `replaceExtraTimeCharges` with an empty list is one no-op DELETE.
+    await replaceExtraTimeCharges(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      id,
+      extraTimeSurcharges(service, resolvedTimes),
+    );
   } catch (err) {
     // The optimistic row is already persisted; if the capacity check or pet insert fails,
     // don't leave it orphaned (a pending row counts against capacity and never expires).
@@ -1216,6 +1264,29 @@ export async function editBooking(
       await restoreBookingAfterEdit(env.PAWBOOK_DB, tenant.Id, id, previous);
       await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, previousPetIds);
       return conflictFailure(check);
+    }
+    // The extra-time surcharge follows the booking's TIMES (0009), so it is re-derived exactly when
+    // those times moved — and left completely alone when they did not. That condition is the whole
+    // design, not an optimisation:
+    //
+    //  - Re-deriving on EVERY edit would resurrect a fee the sitter deliberately WAIVED (deleting is
+    //    the only correction `BookingCharges` has), turning her decision into something the customer
+    //    could undo by nudging a date.
+    //  - Re-deriving on NO edit would leave a $20 early-arrival fee standing against an arrival time
+    //    that no longer exists.
+    //
+    // Scoped by `Origin` in the SQL, so a charge the sitter typed herself is untouched either way —
+    // the "an edit never disturbs her extras" invariant, preserved exactly. Inside this try, like the
+    // create path's write and for the same reason: money owed is not best-effort.
+    const timesMoved =
+      bookingStartTime !== booking.StartTime || bookingDepartureTime !== booking.DepartureTime;
+    if (timesMoved) {
+      await replaceExtraTimeCharges(
+        env.PAWBOOK_DB,
+        tenant.Id,
+        id,
+        extraTimeSurcharges(service, resolvedTimes),
+      );
     }
   } catch (err) {
     // Best-effort rollback, then surface the original error — a half-applied edit would leave the

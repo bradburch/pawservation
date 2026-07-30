@@ -169,10 +169,20 @@ UPDATE TenantServices SET AcceptedPetTypes = NULL
 -- rate on a service no test pins, or make the test choose a holiday-free window first.
 -- ============================================================================================
 
+-- EXTRA-TIME SURCHARGE (0009). Standard hours plus a flat fee per side, shown on exactly one
+-- tenant's boarding and one tenant's daycare so a prospective sitter meets the knob and still sees
+-- NULL (unset) everywhere else. It changes NO seeded figure: every seeded booking leaves StartTime
+-- and DepartureTime NULL, and the fee only ever fires on an owner-set time, so no seeded EstCost or
+-- receivable moves. It is also only legal on a service the OWNER times (HasDuration = 0), which is
+-- why it appears on boarding and daycare and never on a walk or a check-in.
+--
 -- SUNNY PAWS. Two nights of notice on boarding, three on a house sit (she has to collect keys),
--- a 21-night ceiling, and the fullest intake forms in the demo.
+-- a 21-night ceiling, and the fullest intake forms in the demo. Boarding runs 09:00–11:00 as
+-- standard, with $20 for an early drop-off and $15 for a late collection.
 UPDATE TenantServices
    SET MinLeadDays = 2, MaxNights = 21, MaxPetCount = 2,
+       StandardArrivalTime = '09:00', EarlyArrivalFee = 20,
+       StandardDepartureTime = '11:00', LateDepartureFee = 15,
        CancellationTiers = '[{"withinDays":3,"percent":100},{"withinDays":7,"percent":50}]',
        Questions = '[{"id":"vaccines","label":"Are vaccinations up to date?","type":"yesno","required":true},{"id":"feeding","label":"Feeding routine (times and amounts)","type":"text","required":true},{"id":"vet","label":"Emergency vet phone number","type":"text","required":false}]'
  WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'boarding';
@@ -183,9 +193,12 @@ UPDATE TenantServices
        Questions = '[{"id":"entry","label":"How will we get in?","type":"select","required":true,"options":["Lockbox","Hidden key","Hand off in person"]},{"id":"plants","label":"Plants to water?","type":"yesno","required":false},{"id":"mail","label":"Bring in the mail?","type":"yesno","required":false}]'
  WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'housesitting';
 
--- Daycare carries the demo's holiday rate for a 'day'-unit service ($40 base -> $55).
+-- Daycare carries the demo's holiday rate for a 'day'-unit service ($40 base -> $55), and shows
+-- the surcharge on a SINGLE-DAY service: doors open at 07:00, close at 18:00, $10 either side.
 UPDATE TenantServices
    SET MinLeadDays = 1, MaxPetCount = 2, HolidayRate = 55,
+       StandardArrivalTime = '07:00', EarlyArrivalFee = 10,
+       StandardDepartureTime = '18:00', LateDepartureFee = 10,
        Questions = '[{"id":"pickup","label":"Usual pick-up time","type":"text","required":false}]'
  WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'daycare';
 

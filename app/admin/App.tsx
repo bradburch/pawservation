@@ -611,6 +611,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           // '' means the sitter emptied the box — that is "no holiday pricing", i.e. null, not 0.
           holidayRate: s.holidayRate === '' || s.holidayRate == null ? null : s.holidayRate,
           petRateMode: s.petRateMode,
+          // Same '' = "the sitter emptied the box" = null rule the holiday rate uses. A blank
+          // standard hour and a blank fee both mean that side of the surcharge is off.
+          standardArrivalTime: s.standardArrivalTime || null,
+          standardDepartureTime: s.standardDepartureTime || null,
+          earlyArrivalFee:
+            s.earlyArrivalFee === '' || s.earlyArrivalFee == null ? null : s.earlyArrivalFee,
+          lateDepartureFee:
+            s.lateDepartureFee === '' || s.lateDepartureFee == null ? null : s.lateDepartureFee,
           options: s.options.map((o): ServiceOptionForm => ({
             optionKey: o.optionKey,
             label: o.label,

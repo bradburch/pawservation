@@ -881,6 +881,20 @@ body {
    but that text is FIXED per service, so it cannot change under a pet or day tap — only across a
    service switch, which is the same tail `.bp-service-desc` accepts. Money terms are never
    clamped away to make a box fit. */
+/* The extra-time surcharge line. TWO lines reserved, measured against the longest string this slot
+   can carry — "Extra time: Early arrival (07:00) +$20 · Late departure (13:00) +$15" — at a 294px
+   host (a 248px content column, the narrowest sidebar embed worth supporting). Always rendered and
+   never conditionally mounted, because it appears and disappears as a time input is filled in, and
+   an appearing line is a height change the widget posts straight to its host iframe. */
+.bp-extratime {
+  min-height: 2.4em;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  color: var(--bp-soft);
+}
+
 .bp-fineprint {
   min-height: 3.6em;
   margin: 0;

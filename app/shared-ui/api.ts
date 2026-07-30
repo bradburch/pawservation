@@ -92,6 +92,13 @@ export type Availability =
        *  includes them; the widget must never re-derive a total from these. */
       holidayUnits?: number;
       holidayRate?: number;
+      /** The extra-time surcharge the chosen arrival/departure times attract (0009) and its total,
+       *  both absent unless a fee applies. NOT included in `estCost` — it becomes a separate charge
+       *  on the booking, so what the client will owe is `estCost + extraTimeTotal`. Render these
+       *  verbatim: the amounts are the server's, and the widget must never derive a fee from a time
+       *  of day (it is not sent the sitter's standard hours at all, precisely so it cannot). */
+      extraTimeFees?: { label: string; amount: number }[];
+      extraTimeTotal?: number;
     }
   | {
       /** The dates are free but the sitter has never priced this set of pets. The widget shows

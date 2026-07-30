@@ -91,6 +91,21 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   tenant-config cache key needs **no** bump. **NOT YET APPLIED to the remote DB** — must be
   hand-applied before this branch merges, or the new worker's `BOOKING_COLS` SELECT 500s.
 
+- **`0009_extra_time_surcharge.sql`** (`hardening-and-remaining-features`) — adds
+  `TenantServices.StandardArrivalTime` / `StandardDepartureTime` / `EarlyArrivalFee` /
+  `LateDepartureFee` (the hours a stay normally starts and ends, plus a FLAT whole-dollar fee for an
+  owner-set arrival before / departure after each) and `BookingCharges.Origin` (provenance:
+  NULL = the sitter typed the charge, `'extra_time_early'`/`'extra_time_late'` = derived from the
+  booking's times). Additive only — five `ALTER TABLE … ADD COLUMN`s, each side needing BOTH its time
+  and its fee to charge anything, so NULL everywhere is the feature off and every existing row keeps
+  today's behaviour exactly. The fee is deliberately NOT part of `EstCost`: it lands as a
+  `BookingCharges` row, so `estimateCost` stays "units of time × a stored rate" and total due stays
+  `EstCost + SUM(charges)` — putting it inside `estimateCost` would have let the
+  `PetRateMode = 'linear'` multiplier scale a $20 fee to $60 for three dogs. No `Tenants` column, so
+  the KV tenant-config cache key needs **no** bump. **NOT YET APPLIED to the remote DB** — must be
+  hand-applied before this branch merges, or `listServices`' SELECT and the settings PUT's UPDATE
+  500 on missing columns.
+
 **All three of the above (0005, 0006, 0007) are applied to the remote DB as of this writing.**
 Do **not** re-run `0005_pet_rate_mode.sql` or `0006_overlap_days.sql` by hand against the remote
 DB — each is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and

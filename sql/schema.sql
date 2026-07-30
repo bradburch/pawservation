@@ -90,6 +90,26 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- only the fallback the sitter opted into, and their stored choice IS the typed consent that
   -- keeps "a rate the sitter did not type is a price they did not agree to" true.
   PetRateMode TEXT NOT NULL DEFAULT 'exact' CHECK (PetRateMode IN ('exact', 'linear')),
+  -- Extra-time surcharge (0009). The hours a stay NORMALLY starts and ends, plus two independent
+  -- FLAT whole-dollar fees for an owner-set arrival before / departure after them. All four
+  -- nullable, and each side needs BOTH its time and its fee to do anything: NULL = the feature is
+  -- off, the HolidayRate convention. Settable only where the OWNER sets the times at all
+  -- (HasDuration = 0: boarding, house sitting, daycare) — on a walk or check-in the option's slot
+  -- IS the clock, so a "standard hour" there would be config a sitter typed that never applies.
+  --
+  -- Deliberately FLAT and PER STAY, not per hour and not per day: an hourly fee needs a rounding
+  -- rule and a rounding rule is a price the sitter did not type, and a stay has exactly ONE arrival
+  -- and ONE departure, so billing a multi-night stay per day for a single early drop-off invents an
+  -- event that never happened. The consequence is that the whole feature performs no
+  -- multiplication — it sums stored amounts.
+  --
+  -- The fee is NOT part of EstCost: it lands as a BookingCharges row (see BookingCharges.Origin
+  -- below and server/lib/booking-times.ts), so estimateCost stays "units of time x a stored rate"
+  -- and total due stays EstCost + SUM(charges).
+  StandardArrivalTime TEXT,
+  StandardDepartureTime TEXT,
+  EarlyArrivalFee INTEGER CHECK (EarlyArrivalFee IS NULL OR EarlyArrivalFee >= 1),
+  LateDepartureFee INTEGER CHECK (LateDepartureFee IS NULL OR LateDepartureFee >= 1),
   UNIQUE (TenantId, ServiceType)
 );
 
@@ -337,6 +357,13 @@ CREATE TABLE IF NOT EXISTS BookingCharges (
   BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
   Label TEXT NOT NULL,
   Amount INTEGER NOT NULL CHECK (Amount >= 1), -- whole dollars, matching EstCost/Rate/Payments
+  -- PROVENANCE (0009). NULL = the sitter typed this charge herself, which is every row that
+  -- existed before this column and every row the admin Charges panel writes. The two
+  -- 'extra_time_*' values mark a charge DERIVED from the booking's own times, which is what lets a
+  -- customer edit that MOVES those times re-derive exactly those rows and leave hers untouched —
+  -- including a fee she deliberately deleted, since an edit that moves nothing re-derives nothing.
+  -- Values are owned by server/lib/booking-times.ts / server/types.ts's EXTRA_TIME_ORIGINS.
+  Origin TEXT CHECK (Origin IS NULL OR Origin IN ('extra_time_early', 'extra_time_late')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_BookingCharges_Tenant_Booking

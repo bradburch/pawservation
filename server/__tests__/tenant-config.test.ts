@@ -28,6 +28,10 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       cancellationTiers: before.CancellationTiers,
       holidayRate: before.HolidayRate,
       petRateMode: before.PetRateMode,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     let after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
@@ -45,6 +49,10 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       cancellationTiers: before.CancellationTiers,
       holidayRate: before.HolidayRate,
       petRateMode: before.PetRateMode,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
@@ -77,6 +85,10 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       cancellationTiers: before.CancellationTiers,
       holidayRate: 75,
       petRateMode: before.PetRateMode,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',

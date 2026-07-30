@@ -57,6 +57,10 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     // asked for explicitly (`svc('boarding', { PetRateMode: 'linear' })`), so no existing
     // expectation can quietly change meaning when the multiplier lands.
     PetRateMode: 'exact',
+    StandardArrivalTime: null,
+    StandardDepartureTime: null,
+    EarlyArrivalFee: null,
+    LateDepartureFee: null,
     ...over,
   };
 }

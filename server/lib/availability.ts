@@ -118,6 +118,22 @@ export type AvailabilityResult =
        */
       holidayUnits?: number;
       holidayRate?: number;
+      /**
+       * The extra-time surcharge the owner's chosen times attract (0009), and its total — DISPLAY
+       * ONLY, and deliberately NOT part of `estCost`. `estCost` is the price of the stay;
+       * `extraTimeTotal` is what will be added to it as `BookingCharges` rows when the booking is
+       * created, so `totalDue` stays `EstCost + chargesTotal` at every read site.
+       *
+       * Both fields are absent unless a fee actually applies, so a quote for a service with no
+       * standard hours (every service until a sitter sets some) is byte-identical to what it was
+       * before the feature. Written by `booking-ops`' `quoteBooking` from `extraTimeSurcharges` —
+       * the SAME function that stamps the charges — so the previewed number and the stamped one
+       * cannot drift, exactly as `feeToCancelToday` serves both the cancellation preview and its
+       * stamp. Attached OUTSIDE `estimateCost`/`checkAvailability` on purpose: the price formula
+       * never sees a time, and a surcharge never passes through it.
+       */
+      extraTimeFees?: { label: string; amount: number }[];
+      extraTimeTotal?: number;
     }
   | {
       /**

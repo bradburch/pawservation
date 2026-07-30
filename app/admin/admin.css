@@ -636,6 +636,14 @@ body {
   align-items: flex-end;
 }
 
+/* Standard hours + extra-time fees: a label row over two "time, fee" pairs. Column-stacked so the
+   two sides read as a pair rather than four unrelated inputs on one wrapped line. */
+.pb-extratime {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .pb-error {
   color: var(--bad);
   font-weight: 600;
