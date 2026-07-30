@@ -121,6 +121,72 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).not.toContain('up to 500');
   });
 
+  it('describes customer self-cancellation accurately, fee and all', async () => {
+    const body = await howItWorksBody();
+    // POST /:slug/bookings/:id/cancel: server-priced from the stored tiers, row kept, sitter mailed.
+    expect(body).toMatch(/the fee is worked out here/i);
+    expect(body).toContain('always free to withdraw');
+    expect(body).toContain('stays on the record as cancelled');
+    // isCustomerCancellable allows an in-progress stay on purpose (booking-ops.ts).
+    expect(body).toMatch(/already under way can be cancelled/i);
+  });
+
+  it('describes customer self-editing accurately, including what an edit may NOT change', async () => {
+    const body = await howItWorksBody();
+    // PUT /:slug/bookings/:id — dates, pets, arrival time, answers; never the service.
+    expect(body).toContain('cannot change is which service it is');
+    // A confirmed booking returns to pending for re-approval, and no fee is assessed.
+    expect(body).toMatch(/comes straight back to you as pending/i);
+    expect(body).toMatch(/[Rr]escheduling is not cancelling/);
+    // Every create-time rule is re-run on the edit (booking-ops.ts editBooking).
+    expect(body).toMatch(/can&rsquo;t squeeze past a cap/i);
+  });
+
+  it('is truthful that a fee-bearing cancellation KEEPS its calendar event', async () => {
+    const body = await howItWorksBody();
+    // keepsCalendarEventOnCancel (server/lib/calendar-sync.ts): fee > 0 retitles, fee 0 deletes.
+    expect(body).toContain('[CANCELLED]');
+    // The old absolute claimed every cancellation removed the event, which fee-bearing ones do not.
+    expect(body).not.toContain('Cancelled means gone');
+    expect(body).not.toContain('Cancel or decline in Pawservation and the event is removed');
+  });
+
+  it('claims no MINIMUM stay, because there is no MinNights column to set one with', async () => {
+    const body = await howItWorksBody();
+    // sql/schema.sql: "There is deliberately NO MinNights and NO MinPetCount". Both retired
+    // sentences promised a dial the settings PUT would reject.
+    expect(body).not.toContain('shortest and longest stay');
+    expect(body).not.toContain('set a minimum and a maximum number of nights');
+    expect(body).toMatch(/no minimum/i);
+  });
+
+  it('describes the house-sit/boarding handover as the sitter&rsquo;s own setting (0006)', async () => {
+    const body = await howItWorksBody();
+    // Tenants.HousesitBoardingOverlapDays: 0 / 1 (default) / 2 / NULL, not a hardcoded one day.
+    expect(body).not.toContain('won&rsquo;t overlap an occupied boarding stay by more than a day');
+    expect(body).toContain('one handover day (the default)');
+    expect(body).toMatch(/never overlap/i);
+    // The directional half of the rule: a shared day must be a genuine handover.
+    expect(body).toMatch(/one thing ending as the other begins/i);
+  });
+
+  it('covers the booking window: per-service notice and the business-wide horizon (0004)', async () => {
+    const body = await howItWorksBody();
+    expect(body).toMatch(/days of notice/i);
+    // createTenantFromSignup stamps MaxAdvanceMonths = 12 for a new tenant.
+    expect(body).toContain('twelve months');
+  });
+
+  it('covers saved intake answers and per-service species defaults', async () => {
+    const body = await howItWorksBody();
+    // SavedAnswers (0007): pre-fill only, and a reworded question drops its stale answer.
+    expect(body).toMatch(/already filled in the next time/i);
+    expect(body).toMatch(/stale answer is dropped/i);
+    // SERVICE_TEMPLATES.defaultAcceptedPetTypes — a create-time default, not a rule.
+    expect(body).toContain('walks and daycare start dogs-only');
+    expect(body).toContain('check-ins start cats-only');
+  });
+
   it('never claims an unbuilt capability as available', async () => {
     const body = await howItWorksBody();
     // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features.
@@ -230,5 +296,56 @@ describe('the landing page points at /how-it-works', () => {
     expect(body).toContain('href="/how-it-works"');
     // Nav link + footer Product column entry.
     expect(body.match(/href="\/how-it-works"/g)!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/**
+ * The landing page makes fewer claims than the tour, but the ones it does make are absolutes
+ * ("No.", "Just your clients."), which is exactly why they want pinning: an absolute is either
+ * true or it is a lie, with no middle reading a reader could charitably take.
+ */
+describe('the landing page claims only what ships', () => {
+  async function landingBody(): Promise<string> {
+    const { env } = createTestEnv();
+    const res = await app.request('/', {}, env);
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  it('is script-free under the locked CSP, with the embed snippet escaped', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/', {}, env);
+    const body = await res.text();
+    expect(body).not.toContain('<script');
+    expect(body).toContain('&lt;script');
+    expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
+  });
+
+  it('backs the "can it double-book me? No." answer with what actually holds a day', async () => {
+    const body = await landingBody();
+    // A pending request occupies capacity (repo.ts's capacity reads include 'pending'), and both
+    // the pool path and the per-option slot path now ask whether the whole SET fits.
+    expect(body).toContain('Can it double-book me?');
+    expect(body).toMatch(/holds its space from the moment it arrives/i);
+    expect(body).toMatch(/three dogs needs three spaces/i);
+  });
+
+  it('tells sitters their clients can reschedule and cancel without going through them', async () => {
+    const body = await landingBody();
+    expect(body).toContain('Can a client change or cancel a booking themselves?');
+    // The two facts that make it safe for the sitter: re-approval, and a fee she never negotiates.
+    expect(body).toMatch(/comes back to you as pending/i);
+    expect(body).toMatch(/not typed in by them/i);
+  });
+
+  it('still shows Pro as unbuilt, and never badges it available', async () => {
+    const body = await landingBody();
+    // The Pro tier does not exist. Nothing about it may read as purchasable.
+    expect(body).toContain('In development');
+    expect(body).toContain('Not available yet');
+    expect(body.match(/Available now/g)!.length).toBe(1); // the Free card, and only the Free card
+    expect(body).not.toMatch(/start (your |a )?free trial/i);
+    expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
   });
 });

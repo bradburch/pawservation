@@ -44,7 +44,10 @@ export function buildLlmsTxt(
     '## API',
     `- Config (services, rates, pet types): GET ${origin}/api/${tenant.Slug}/config`,
     `- Availability & quote: GET ${origin}/api/${tenant.Slug}/availability?type=&option=&start=&end=&petIds= (email-code auth required; petIds is a comma-joined list of the caller's own pet ids, priced as the exact set requested)`,
-    `- Booking requests: POST ${origin}/api/${tenant.Slug}/bookings (email-code auth; supports Idempotency-Key header)`,
+    `- Booking requests: POST ${origin}/api/${tenant.Slug}/bookings (email-code auth; supports Idempotency-Key header). Every request starts as 'pending' and is confirmed or declined by the sitter — nothing is confirmed on creation.`,
+    `- The caller's own bookings: GET ${origin}/api/${tenant.Slug}/bookings/mine (email-code auth; each row carries whether it can still be changed or cancelled, and the cancellation fee that would apply today)`,
+    `- Change a booking: PUT ${origin}/api/${tenant.Slug}/bookings/{id} (email-code auth; dates, pets, arrival time and intake answers only — the service and option cannot change, and a confirmed booking returns to 'pending' for the sitter to re-approve. No cancellation fee is assessed on a change.)`,
+    `- Cancel a booking: POST ${origin}/api/${tenant.Slug}/bookings/{id}/cancel (email-code auth; no request body — any cancellation fee is computed server-side from the sitter's stored policy and returned on the response. A request the sitter has not confirmed is always free to withdraw.)`,
     `- Booking widget: ${origin}/embed/${tenant.Slug}`,
   );
   return lines.join('\n') + '\n';

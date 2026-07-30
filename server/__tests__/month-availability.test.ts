@@ -294,6 +294,52 @@ describe('GET /api/:slug/availability/month', () => {
     expect(d13.status).toBe('available');
   });
 
+  it('per-option slot: a day with room left is unavailable to a set that does not fit', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `UPDATE TenantServiceOptions SET Capacity = 2
+         WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'walk' AND OptionKey = 'd30'`,
+      )
+      .run();
+    // 1 of 2 pets used on Nov 12: the grid used to paint that `available` for everyone, so a
+    // two-dog household saw a bookable day the quote then refused.
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'walk',
+      startDate: '2026-11-12',
+      endDate: null,
+      optionKey: 'd30',
+      petCount: 1,
+      startTime: null,
+      estCost: null,
+      status: 'confirmed',
+    });
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const daysFor = async (petIds?: string) => {
+      const res = await app.request(
+        '/api/sunny-paws/availability/month?type=walk&option=d30&month=2026-11' +
+          (petIds === undefined ? '' : `&petIds=${petIds}`),
+        { headers: { Authorization: `Bearer ${token}` } },
+        env,
+      );
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { days: MonthDay[] }).days;
+    };
+
+    const two = await daysFor('pet_sp_bella,pet_sp_mochi');
+    expect(two.find((d) => d.date === '2026-11-12')).toMatchObject({
+      status: 'unavailable',
+      reason: 'Not enough room for 2 pets',
+    });
+    // One pet still fits, and the reason stays null on an open day.
+    const one = await daysFor('pet_sp_bella');
+    expect(one.find((d) => d.date === '2026-11-12')).toMatchObject({
+      status: 'available',
+      reason: null,
+    });
+  });
+
   it('house-sit month grid denominates capacity in pets (MaxConcurrentPets)', async () => {
     const { env, raw } = createTestEnv();
     // Give Sunny Paws' seeded house-sit service a 2-pet cap.

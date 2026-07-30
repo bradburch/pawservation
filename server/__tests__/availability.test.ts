@@ -730,6 +730,65 @@ describe('checkAvailability', () => {
     expect(full).toMatchObject({ available: false });
   });
 
+  it('refuses a multi-pet request that would OVERFILL a windowed slot with room left', async () => {
+    const { env } = createTestEnv();
+    const t = tenant();
+    const slotOption = opt({ OptionKey: 'morning-walk', Capacity: 2 });
+
+    // 1 of 2 pets used. The old check asked only `count >= Capacity` (1 >= 2 → false), so a
+    // 3-pet request was ACCEPTED and put 4 pets in a 2-pet slot. The requested set has to fit.
+    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'walk',
+      startDate: '2028-09-01',
+      endDate: null,
+      optionKey: 'morning-walk',
+      petCount: 1,
+      startTime: '11:00',
+      estCost: null,
+      status: 'confirmed',
+    });
+
+    const three = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-01',
+      '',
+      threePets,
+      noRates,
+    );
+    expect(three).toMatchObject({ available: false });
+    // A slot with room says so specifically, rather than claiming to be full.
+    expect((three as { reason: string }).reason).toContain('room for 3 pets');
+
+    const two = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-01',
+      '',
+      twoPets,
+      noRates,
+    );
+    expect(two).toMatchObject({ available: false });
+
+    // The one pet that does fit is still offered — the fix tightens nothing for a single pet.
+    const one = await checkAvailability(
+      env,
+      t,
+      svc('walk'),
+      slotOption,
+      '2028-09-01',
+      '',
+      onePet,
+      noRates,
+    );
+    expect(one).toMatchObject({ available: true });
+  });
+
   it('house-sit pool cap is read from MaxConcurrentPets, in pets', async () => {
     const { env } = createTestEnv();
     const t = tenant();

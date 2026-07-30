@@ -248,7 +248,7 @@ const LANDING_HTML = `<!doctype html>
               <div class="step-body">
                 <span class="step-no">02</span>
                 <h3>They pick the dates</h3>
-                <p>Days you can&rsquo;t take aren&rsquo;t offered: full days and the weekends of a weekday-only service are struck out as unavailable.</p>
+                <p>Days you can&rsquo;t take aren&rsquo;t offered: a full day, the weekends of a weekday-only service, anything sooner than your notice or further out than your horizon. It counts the pets they picked, so a day with one space left isn&rsquo;t offered to a two-dog household.</p>
               </div>
             </li>
             <li class="step-card">
@@ -328,7 +328,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Caps &amp; time off</h3>
-              <p>A boarding cap, a house-sits-per-day cap, a longest stay, your days off. A full day isn&rsquo;t offered.</p>
+              <p>A boarding cap, a house-sit cap, a longest stay, days of notice, how far ahead people may book, your days off. A full day isn&rsquo;t offered.</p>
             </div>
             <div class="feature">
               <h3>Clients &amp; pets</h3>
@@ -345,6 +345,10 @@ const LANDING_HTML = `<!doctype html>
             <div class="feature">
               <h3>Google Calendar</h3>
               <p>Requests land on your calendar instantly and update when you confirm, so your week is where you already look.</p>
+            </div>
+            <div class="feature">
+              <h3>Clients change their own bookings</h3>
+              <p>New dates, a different pet, a cancellation &mdash; they do it themselves instead of texting you. A change comes back for your approval; a cancellation applies whatever fee your policy says and emails you.</p>
             </div>
           </div>
         </div>
@@ -442,10 +446,12 @@ const LANDING_HTML = `<!doctype html>
               <ul class="price-list">
                 <li>Booking widget on your own site, unlimited bookings</li>
                 <li>Availability, capacity caps, and conflict rules</li>
+                <li>Minimum notice and a booking horizon</li>
                 <li>Rates, logged payments, and outstanding balances</li>
-                <li>Cancellation policies</li>
+                <li>Cancellation policies, applied for you</li>
+                <li>Clients reschedule and cancel their own bookings</li>
                 <li>Client accounts and pet profiles</li>
-                <li>Google Calendar sync</li>
+                <li>Google Calendar sync, both directions</li>
               </ul>
               <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
               <p class="note">New sitters are added by hand for now &mdash; ask, and we&rsquo;ll email you a sign-up link.</p>
@@ -512,7 +518,11 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Can it double-book me?</h3>
-              <p><strong>No.</strong> Your caps and time off hold the day, and a full day isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways.</p>
+              <p><strong>No.</strong> Your caps and your time off hold the day, and a request holds its space from the moment it arrives &mdash; not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways.</p>
+            </div>
+            <div class="qa-item">
+              <h3>Can a client change or cancel a booking themselves?</h3>
+              <p><strong>Yes &mdash; that&rsquo;s the point.</strong> They can move the dates, swap the pets, or cancel, from the same page they booked on. A change comes back to you as pending, so you re-approve it rather than discovering it. A cancellation applies the fee your own policy says &mdash; worked out here, not typed in by them &mdash; and emails you either way.</p>
             </div>
             <div class="qa-item">
               <h3>Can anyone book, or just my clients?</h3>
@@ -660,11 +670,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Boarding &middot; per night</h3>
-              <p>Overnight stays at your place, over a range of dates. Set the most pets you&rsquo;ll keep at once, and the shortest and longest stay you&rsquo;ll accept.</p>
+              <p>Overnight stays at your place, over a range of dates. Set the most pets you&rsquo;ll keep at once and the longest stay you&rsquo;ll accept. There is no minimum stay to set: one night is the shortest thing anyone can ask for.</p>
             </div>
             <div class="feature">
               <h3>House sitting &middot; per night</h3>
-              <p>You stay at the client&rsquo;s home, again over a range of dates, under its own cap. And because you can&rsquo;t be in two places at once, a house sit won&rsquo;t overlap an occupied boarding stay by more than a day.</p>
+              <p>You stay at the client&rsquo;s home, again over a range of dates, under its own cap. And because you can&rsquo;t be in two places at once, house sitting and boarding are held apart &mdash; by however much you say (see below).</p>
             </div>
             <div class="feature">
               <h3>Daycare &middot; per day</h3>
@@ -695,15 +705,19 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">A per-day limit on each option.</p>
-              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk &mdash; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date.</p>
+              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk &mdash; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date, and it counts animals rather than bookings: with one place left, a household bringing two dogs isn&rsquo;t offered that day either.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Weekdays only, where that&rsquo;s the truth.</p>
               <p>Mark an option weekdays-only and its weekends are struck out in the calendar rather than quietly accepted and then declined.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">A shortest and longest stay.</p>
-              <p>For the per-night services, set a minimum and a maximum number of nights. A request outside that range never gets as far as your queue.</p>
+              <p class="wf-keep">The longest stay you&rsquo;ll do.</p>
+              <p>For the per-night services, set a maximum number of nights and a request longer than that never gets as far as your queue. There is deliberately no minimum: a stay is at least one night by its nature, so there was nothing honest for that box to do.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">How much notice you need.</p>
+              <p>Set the days of notice a service needs and everything sooner than that is struck out. Two days on boarding means the earliest a client can ask for is the day after tomorrow &mdash; so &ldquo;can you take him tonight?&rdquo; stops being a question you have to answer. Leave it blank and same-day is fine.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">One thing that isn&rsquo;t here yet: a repeating schedule.</p>
@@ -731,11 +745,19 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Only the animals you actually take.</p>
-              <p>Accepted pet types are set per service, so you can board dogs and do check-ins for cats without accidentally agreeing to board the cat.</p>
+              <p>Accepted pet types are set per service, so you can board dogs and do check-ins for cats without accidentally agreeing to board the cat. Each new service starts from the likely answer rather than from nothing &mdash; walks and daycare start dogs-only, check-ins start cats-only, boarding and house sitting start open to everything &mdash; and you re-tick the boxes if your business is different.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Where you physically are, when boarding meets a house sit.</p>
+              <p>You can&rsquo;t sleep at a client&rsquo;s house and keep a boarder at your own, so the two are held apart, and you say by how much: never overlap, one handover day (the default), one handover day at each end of a stay, or no limit if you&rsquo;d rather sort clashes out yourself. A shared day only ever counts as a genuine handover &mdash; one thing ending as the other begins. A boarding dropped into the middle of a house sit is refused however high you set the number, because no number makes that possible.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">How far ahead anyone can book.</p>
+              <p>One setting for the whole business: months out, and beyond it the calendar simply stops. New accounts start at twelve months, so nobody books your Christmas two Christmases early. Clear it and there&rsquo;s no horizon at all.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Your questions, asked at booking time.</p>
-              <p>Write your own intake questions &mdash; medications, the gate code, which vet, anything you always end up asking &mdash; and they arrive answered, with the request, instead of over six texts on the day.</p>
+              <p>Write your own intake questions &mdash; medications, the gate code, which vet, anything you always end up asking &mdash; and they arrive answered, with the request, instead of over six texts on the day. A regular&rsquo;s answers come back already filled in the next time they book that service, so nobody retypes the gate code every month; reword the question and the stale answer is dropped rather than pre-filled.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Time off, in whole days.</p>
@@ -743,7 +765,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Cancellation fees in your own windows.</p>
-              <p>Set up to five windows, each a percentage of the estimated cost. When a client cancels, the tightest window that applies is the one that wins. Leave it blank and there&rsquo;s no fee at all &mdash; the policy is only what you wrote.</p>
+              <p>Set up to five windows, each a percentage of the estimated cost. When a client cancels, the tightest window that applies is the one that wins. Leave it blank and there&rsquo;s no fee at all &mdash; the policy is only what you wrote. The client cancels from the booking page and the fee is worked out here, from your stored policy, and recorded as owed &mdash; they never get to name the figure, and you never have to do the arithmetic in a difficult conversation. A request you hadn&rsquo;t confirmed yet is always free to withdraw.</p>
             </div>
           </div>
         </div>
@@ -772,11 +794,19 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
               <li class="wf-step">
                 <span class="step-no">03</span>
-                <p><strong>They pick a service, then dates.</strong> The widget offers only what you&rsquo;ve set up, only where your rules allow it. The price is worked out by Pawservation itself, so the page can never show you one number and charge another &mdash; the figure your client is shown is the figure the booking is stamped with.</p>
+                <p><strong>They pick a service, then dates.</strong> The widget offers only what you&rsquo;ve set up, only where your rules allow it, and it knows which animals they&rsquo;re bringing while they choose &mdash; a day with one space left is struck out for a two-dog household rather than accepted and then refused. The nights and the price sit next to the button before they press it. That price is worked out by Pawservation itself, so the page can never show one number and charge another &mdash; the figure your client is shown is the figure the booking is stamped with.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">04</span>
                 <p><strong>You confirm, or you decline.</strong> Every request is pending until you confirm it, and nothing gets confirmed on its own. A request does land on your calendar straight away, but the event title starts with <code>[REQUEST]</code> until you act, so a maybe never looks like a yes. Declines and cancellations stay on the record rather than disappearing, so the history of what was asked still reads straight months later.</p>
+              </li>
+              <li class="wf-step">
+                <span class="step-no">05</span>
+                <p><strong>They change it or cancel it themselves &mdash; without texting you.</strong> New dates, a different pet, a different arrival time, a corrected answer: they edit their own booking on the same page they made it on. What they cannot change is which service it is &mdash; a boarding does not quietly become a house sit. Because you agreed to specific dates for specific animals, an edit to a confirmed booking comes straight back to you as pending, and you re-approve it or decline it like any other request. Rescheduling is not cancelling, so an edit never charges a fee. Every rule that applied when they booked applies again to the change, so an edit can&rsquo;t squeeze past a cap the original request respected.</p>
+              </li>
+              <li class="wf-step">
+                <span class="step-no">06</span>
+                <p><strong>A cancellation reaches you as an email, with the number already worked out.</strong> They cancel, your policy decides the fee, and you get a message saying which it was and whether anything is owed. Nothing is deleted: the booking stays on the record as cancelled, and a fee that&rsquo;s owed shows up in what&rsquo;s outstanding like any other money. Even a stay already under way can be cancelled &mdash; refusing would only push the conversation back onto your phone.</p>
               </li>
             </ol>
           </div>
@@ -844,8 +874,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>Service, dates, times, the pets by name, the estimated cost, and the client&rsquo;s email address &mdash; enough to answer from your phone without opening anything else.</p>
             </div>
             <div class="feature">
-              <h3>Cancelled means gone</h3>
-              <p>Cancel or decline in Pawservation and the event is removed from the calendar, so a dead booking never sits there looking alive.</p>
+              <h3>Nothing dead looks alive</h3>
+              <p>Decline a request, or cancel with nothing owed, and the event is removed. A cancellation that carries a fee keeps its event and retitles it <code>[CANCELLED]</code> instead &mdash; the dates are free again, but money you&rsquo;re still owed doesn&rsquo;t vanish out of your week.</p>
             </div>
             <div class="feature">
               <h3>Optional, and skippable</h3>
@@ -914,7 +944,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <ol class="wf-steps">
               <li class="wf-step">
                 <span class="step-no">01</span>
-                <p><strong>Your business.</strong> What you&rsquo;re called, how clients reach you, your brand color, and which timezone your dates are in.</p>
+                <p><strong>Your business.</strong> What you&rsquo;re called, how clients reach you, your brand color, which timezone your dates are in, and how far ahead people may book (twelve months to begin with).</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">02</span>

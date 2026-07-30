@@ -110,6 +110,17 @@ export const PAGE_STYLE = /* css */ `
       @media (min-width: 780px) {
         .nav-links { display: flex; }
       }
+      /* Below 780px the header is only the wordmark, "Sign in", and "Try the demo" — and at
+         360px those three plus a 28px gap and the wrap's own padding did not fit, so the whole
+         page picked up ~13px of horizontal scroll: the nav is a no-wrap flex row, so it pushed
+         the document wider rather than wrapping. Tighten the gaps and the wordmark instead of
+         hiding anything: those two links are the page's only calls to action. */
+      @media (max-width: 430px) {
+        .nav-inner { gap: 10px; }
+        .nav-right { gap: 12px; }
+        .nav-right .btn-sm { padding: 8px 12px; }
+        .logo { font-size: 1.15rem; gap: 7px; }
+      }
 
       /* ── Buttons ────────────────────────────────────────────────── */
       .btn {

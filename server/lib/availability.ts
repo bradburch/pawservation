@@ -501,8 +501,21 @@ async function checkSingle(
       date,
       excludeBookingId,
     );
-    if (count >= option.Capacity) {
-      return { available: false, reason: 'That session is full.' };
+    // The requested SET has to fit, not just one pet: `count + petCount > cap` is the same
+    // arithmetic `dayBlocksRequest` applies to the boarding/house-sit pools. Asking only
+    // `count >= cap` let a 3-pet request into a slot with one spot left — the exact class of
+    // over-capacity accept the pool path removed, and a direct contradiction of the sitter-facing
+    // promise that "a booking with three dogs uses three spots". Identical for a single pet
+    // (`count + 1 > cap` ⇔ `count >= cap`), so nothing about one-pet behaviour moves.
+    const petCount = Math.max(dedupePets(pets).length, 1);
+    if (count + petCount > option.Capacity) {
+      return {
+        available: false,
+        reason:
+          count >= option.Capacity
+            ? 'That session is full.'
+            : `That session doesn't have room for ${petCount} pets.`,
+      };
     }
   }
   // ONE call — see checkRange's comment above for why this replaces a direct holidayAwareCost call.
@@ -732,12 +745,19 @@ export async function monthAvailability(
       // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
       // capacity check when the option has one. Customers never see raw counts — only status.
       const blocked = walkHasConflict(date, cap);
-      const full = capacityLimit !== null && (slotCounts!.get(date) ?? 0) >= capacityLimit;
-      status = blocked || full ? 'unavailable' : 'available';
+      // `slotUsed + pets > cap`, mirroring the pool branch above and `checkSingle`: a slot with one
+      // spot left is not available to a two-pet request, and painting it `available` would put the
+      // grid ahead of the quote in the one direction it may never lead.
+      const slotUsed = capacityLimit !== null ? (slotCounts!.get(date) ?? 0) : 0;
+      const noRoom = capacityLimit !== null && slotUsed + pets > capacityLimit;
+      status = blocked || noRoom ? 'unavailable' : 'available';
       used = null;
       max = null;
       if (blocked) reason = REASON.blocked;
-      else if (full) reason = REASON.full;
+      // A slot at its cap is "Fully booked" whoever asks; one with room that still can't seat this
+      // set gets the specific answer, same split as the pool branch.
+      else if (noRoom)
+        reason = slotUsed >= (capacityLimit ?? 0) ? REASON.full : REASON.noRoom(pets);
     }
 
     // The window overrides both the status and the reason: a day the customer could never request

@@ -28,7 +28,18 @@ the availability/conflict math.
   scratch) with per-option label/duration/price, time windows, weekday-only scheduling,
   slot capacity, and custom intake questions.
 - **Per-service capacity & rules** — boarding caps, house-sits-per-day, max stay nights,
-  and accepted animal types are all service-level attributes; blank means unlimited.
+  and accepted animal types are all service-level attributes; blank means unlimited. Every
+  cap is denominated in **pets, not bookings**, and every check asks whether the requested
+  _set_ fits (`used + petCount > cap`) — the boarding/house-sit pools and the per-option
+  daily slot cap alike, so a slot with one place left refuses a two-pet request. The
+  customer's month grid takes the selected `petIds` and is painted with the same arithmetic,
+  so the calendar can't offer a day the quote then refuses. There is deliberately no minimum
+  stay and no minimum pet count.
+- **House-sit / boarding handover rule** — the sitter can only be in one place, so the two
+  are held apart by a tenant-wide allowance (`HousesitBoardingOverlapDays`): never overlap,
+  one handover day (the default), one at each end of a stay, or no limit. A shared day only
+  ever counts as a genuine handover — one stay ending as the other begins — so a boarding
+  dropped into the middle of a house sit is refused at any allowance.
 - **Custom animal types** — tenants aren't limited to dogs and cats; add any species and
   accept it per service.
 - **Pet co-ownership** — a pet can belong to more than one customer account (e.g.
@@ -46,7 +57,13 @@ the availability/conflict math.
 - **Per-service minimum notice + booking horizon** — a service can require N days' notice
   before its earliest bookable start, and a tenant-wide advance-booking horizon caps how
   far out anyone can book; both are optional (NULL = unlimited) and enforced identically
-  at the quote, the calendar grid, and the booking POST.
+  at the quote, the calendar grid, and the booking POST. New tenants are stamped with a
+  12-month horizon at signup.
+- **Species defaults per service** — a newly created service starts from the likely answer
+  rather than from nothing: walks and daycare dog-only, check-ins cat-only, boarding and
+  house sitting open to every registered type. It is a create-time default intersected with
+  the tenant's own pet-type registry, never a constraint — the sitter re-ticks the boxes,
+  and existing services are not backfilled.
 - **Pet-set rates + a per-service multi-pet mode** — a sitter can set an exact-match rate for
   a specific combination of pets or a species mix (e.g. "two dogs" priced as its own line),
   and those stored rates always win. For a combination with no rate of its own, each service
@@ -65,7 +82,22 @@ the availability/conflict math.
   booking (including a stay already in progress) from the widget. The fee is computed
   server-side from the service's stored cancellation tiers — the client never names a
   price — and the same number is previewed before confirming and stamped on the row. A
-  pending request is always free to withdraw; the sitter is emailed either way.
+  pending request is always free to withdraw; the sitter is emailed either way. The row is
+  never deleted: a fee-free cancellation deletes the Google Calendar event, while a
+  fee-bearing one keeps it and retitles it `[CANCELLED]` so money still owed stays visible.
+- **Customer self-editing** — `PUT /:slug/bookings/:id` lets a customer change their own
+  booking's dates, pet set, arrival time, and intake answers (never the service, never the
+  option). Every rule a create runs is re-run by calling the same code, capacity is
+  re-checked excluding the booking's own row with a verbatim rollback on refusal, a
+  confirmed booking drops back to `pending` for the sitter to re-approve, and no
+  cancellation fee is ever assessed — rescheduling is not cancelling. The estimate is
+  re-quoted only when something price-relevant moved (the dates or the pet set).
+- **Saved intake answers** — a customer's last answer per
+  `(tenant, customer, service, question)` is mirrored into `SavedAnswers` after a booking
+  create or edit and re-offered as the pre-fill next time. A reworded, retyped, deleted, or
+  narrowed question drops its stale answer instead of pre-filling it, and a blank answer
+  deletes the saved row. The pre-fill carries no authority — it is re-validated as an
+  ordinary answer on submit.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
   sitter admins (PBKDF2, with timing-safe user-enumeration defenses). Sitter and owner
   passwords must be at least 12 characters and clear a short denylist of keyboard-walks
