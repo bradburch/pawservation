@@ -2937,6 +2937,122 @@ export async function addPetOwner(
 }
 
 /**
+ * The pets named by `petIds` that exist in `tenantId`, with their liveness. Used by the co-owner
+ * creation route to tell "no such pet / another tenant's pet" (404) apart from "that pet has passed
+ * away" (400) BEFORE it writes anything — the wording is the whole reason this read exists; the
+ * write itself is guarded independently in SQL (see `coOwnerLinkStmt`).
+ */
+export async function listPetsByIds(
+  db: D1Database,
+  tenantId: string,
+  petIds: string[],
+): Promise<{ Id: string; DeceasedAt: string | null }[]> {
+  if (petIds.length === 0) return [];
+  const placeholders = petIds.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT Id, DeceasedAt FROM EndUserPets WHERE TenantId = ? AND Id IN (${placeholders})`,
+    )
+    .bind(tenantId, ...petIds)
+    .all<{ Id: string; DeceasedAt: string | null }>();
+  return results;
+}
+
+/**
+ * ONE guarded owner<->pet insert, shared by both co-owner paths below. Two properties, both in the
+ * SQL rather than in a caller-side pre-check:
+ *
+ *  - **A pet that is not a LIVE pet of `tenantId` aborts the whole batch.** The TenantId column is
+ *    written from a scalar subquery over `EndUserPets`, so an unknown id, another tenant's id or a
+ *    deceased pet resolves it to NULL and trips `PetOwners.TenantId NOT NULL`. That is deliberate,
+ *    and it is why `INSERT OR IGNORE` must NOT be used here: OR IGNORE would swallow that very
+ *    violation and skip the row, which on the create path would commit a pet-less client — the one
+ *    thing this whole feature exists to prevent.
+ *  - **Re-linking an existing owner is a no-op, not a conflict.** The `NOT EXISTS` guard does the
+ *    job `INSERT OR IGNORE` would otherwise have done, so a repeat call is harmless.
+ */
+function coOwnerLinkStmt(
+  db: D1Database,
+  tenantId: string,
+  petId: string,
+  endUserId: string,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO PetOwners (TenantId, PetId, EndUserId)
+       SELECT (SELECT p.TenantId FROM EndUserPets p
+                WHERE p.Id = ? AND p.TenantId = ? AND p.DeceasedAt IS NULL), ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM PetOwners po
+                           WHERE po.TenantId = ? AND po.PetId = ? AND po.EndUserId = ?)`,
+    )
+    .bind(petId, tenantId, petId, endUserId, tenantId, petId, endUserId);
+}
+
+/**
+ * Create a customer who brings NO pet of their own and link them to pets that already exist, as ONE
+ * atomic batch (`insertInvitedCustomerWithPet`'s precedent): EndUsers → one PetOwners row per pet.
+ *
+ * This is the second half of "no owners without pets". The first half — a client created together
+ * with their first pet — is `insertInvitedCustomerWithPet`; this one is "Rob, Tina's husband", who
+ * shares Tina's pets rather than bringing a new animal. Because the insert and every link commit or
+ * roll back together, a bad pet id can never leave a pet-less client standing, and the bare pet-less
+ * `insertInvitedCustomer` stays what it is: a test-seeding helper.
+ *
+ * `petIds` must be de-duplicated by the caller (PetOwners' PRIMARY KEY would otherwise abort the
+ * batch) and non-empty (a zero-link call is exactly the pet-less create this refuses to be).
+ * EndUsers' UNIQUE (TenantId, Email) aborts the batch on a concurrent duplicate create, so the
+ * caller looks the email up first and uses `addCoOwnerToPets` for an existing client.
+ */
+export async function insertInvitedCustomerAsCoOwner(
+  db: D1Database,
+  tenantId: string,
+  email: string,
+  name: string,
+  phone: string | null,
+  petIds: string[],
+): Promise<EndUser> {
+  if (petIds.length === 0) throw new Error('insertInvitedCustomerAsCoOwner needs at least one pet');
+  const id = crypto.randomUUID();
+  const invitedAt = new Date().toISOString();
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status, InvitedAt)
+         VALUES (?, ?, ?, ?, ?, 'invited', ?)`,
+      )
+      .bind(id, tenantId, email, name, phone, invitedAt),
+    ...petIds.map((petId) => coOwnerLinkStmt(db, tenantId, petId, id)),
+  ]);
+  return {
+    Id: id,
+    TenantId: tenantId,
+    Email: email,
+    Name: name,
+    Phone: phone,
+    VenmoUsername: null,
+    Status: 'invited',
+    InvitedAt: invitedAt,
+  };
+}
+
+/**
+ * Link an EXISTING customer to several pets at once — the merge half of the same action (the email
+ * the sitter typed turned out to be a client already, possibly one with pets of their own, so the
+ * two billing accounts become one). All-or-nothing for the same reason: a half-linked person can see
+ * some of the household's pets and not others, which is a data question the sitter cannot see.
+ * `addPetOwner` remains the single-pet, one-at-a-time route-level action.
+ */
+export async function addCoOwnerToPets(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  petIds: string[],
+): Promise<void> {
+  if (petIds.length === 0) return;
+  await db.batch(petIds.map((petId) => coOwnerLinkStmt(db, tenantId, petId, endUserId)));
+}
+
+/**
  * Unlink one owner from a co-owned pet. Three outcomes, because the caller must tell them apart:
  * 'not-found' (no such edge in this tenant → 404), 'last-owner' (refused: a pet with zero owners
  * would be invisible to everyone and unreachable from the account graph → 409, delete the pet

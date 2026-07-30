@@ -513,6 +513,25 @@ export const adminApi = {
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ email, name, phone, petName, petType }),
       }),
+    /**
+     * A second HUMAN on an existing account, bringing no new animal. `petIds` is the account's LIVE
+     * pet set: the server creates the client and every ownership link in one batch, so there is no
+     * moment at which a pet-less client exists. `created: false` means the email was already a
+     * client and the two accounts merged — a materially different outcome the UI must not blur.
+     */
+    addCoOwner: (
+      slug: string,
+      token: string,
+      body: { email: string; name: string; phone: string; petIds: string[] },
+    ) =>
+      request<{ id: string; created: boolean; linkedPets: number }>(
+        `/api/${slug}/admin/customers/co-owner`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(body),
+        },
+      ),
     remove: (slug: string, token: string, id: string) =>
       request<unknown>(`/api/${slug}/admin/customers/${id}`, {
         method: 'DELETE',

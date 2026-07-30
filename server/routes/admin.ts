@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
+  addCoOwnerToPets,
   addEndUserPet,
   addPetOwner,
   clearProviderConnection,
@@ -28,6 +29,7 @@ import {
   insertBookingCharge,
   keepBookingCredit,
   insertBookingRequest,
+  insertInvitedCustomerAsCoOwner,
   insertInvitedCustomerWithPet,
   insertPayment,
   listAllEndUserPetsByTenant,
@@ -42,6 +44,7 @@ import {
   listPaymentExternalRefs,
   listPaymentsForBooking,
   listPetNamesForBooking,
+  listPetsByIds,
   listPetTypes,
   listProviderConnections,
   listServiceOptions,
@@ -210,6 +213,12 @@ async function loadVenmoMatchInputs(
  * with an actionable error instead of a platform crash.
  */
 const MAX_IMPORT_ROWS = 500;
+
+/**
+ * How many pets one co-owner add may link in a single call. A household's pet set is small; this
+ * only bounds the batch a hostile body could ask for (every link is a statement in one db.batch).
+ */
+const MAX_ACCOUNT_PET_LINKS = 25;
 
 /**
  * A service's Description is a SHORT blurb under the service name in the widget's picker, not a
@@ -1513,6 +1522,100 @@ export const adminRoutes = new Hono<AppEnv>()
         phone: customer.Phone,
         status: customer.Status,
         created: !existing,
+      },
+      201,
+    );
+  })
+
+  /**
+   * A second HUMAN on an existing account — "Rob, Tina's husband" — who brings no new animal.
+   *
+   * The many-to-many model was already here (PetOwners edges + union-find billing accounts); the one
+   * thing missing was a way to CREATE such a person, since POST /admin/customers hard-requires a new
+   * pet. Without it the sitter had to invent a throwaway duplicate pet, merge, then delete it.
+   *
+   * "No owners without pets" is preserved rather than punched through: the client row and every
+   * ownership link are ONE `db.batch` (`insertInvitedCustomerAsCoOwner`), so a pet id that cannot be
+   * linked leaves no client standing at all — not even for an instant. The bare pet-less
+   * `insertInvitedCustomer` is deliberately not reachable from here.
+   *
+   * Keyed on PET IDS, not on an account id, for the reason the other co-ownership routes are
+   * (`POST /admin/pets/:petId/owners`): an account is derived client-side by union-find and has no
+   * server-side identity to nest under. LIVE pets only — a deceased pet is not a pet for this rule,
+   * the same live-only count the manual add and the CSV import apply — so a memorial account (no
+   * live pets) legitimately has nothing to share and is refused; the sitter adds a pet first, which
+   * revives the account, and can then add the person.
+   *
+   * An email that already belongs to a client is LINKED rather than rejected: that is the
+   * account-merge case, and it is what the sitter meant. Their stored name and phone are kept
+   * untouched (the manual-add route's rule), and `created: false` says so. No email is ever sent from
+   * here — the welcome mail stays the explicit POST /admin/customers/:id/welcome.
+   */
+  .post('/:slug/admin/customers/co-owner', async (c) => {
+    const tenant = c.get('tenant');
+    type Body = { email?: unknown; name?: unknown; phone?: unknown; petIds?: unknown };
+    const body = await c.req.json<Body>().catch(() => ({}) as Body);
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
+    const phone = rawPhone || null;
+    // De-duplicated here rather than trusted: a repeated id would trip PetOwners' PRIMARY KEY and
+    // abort the batch, turning a harmless double-send into a 500.
+    const petIds = Array.isArray(body.petIds)
+      ? [...new Set(body.petIds.filter((v): v is string => typeof v === 'string' && v !== ''))]
+      : [];
+    if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
+    if (email === DEMO_EMAIL)
+      return c.json({ error: 'That email is reserved for the Pawservation demo.' }, 400);
+    if (!name) return c.json({ error: "Enter this person's name." }, 400);
+    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
+    if (petIds.length === 0)
+      return c.json(
+        { error: 'Choose at least one pet — a client can never be added without pets.' },
+        400,
+      );
+    if (petIds.length > MAX_ACCOUNT_PET_LINKS)
+      return c.json({ error: `An account can share at most ${MAX_ACCOUNT_PET_LINKS} pets.` }, 400);
+
+    // One read, purely so the refusal can say WHICH problem it is. The write is guarded again in SQL
+    // (coOwnerLinkStmt), so nothing here is load-bearing for correctness.
+    const found = await listPetsByIds(c.env.PAWBOOK_DB, tenant.Id, petIds);
+    if (found.length !== petIds.length) return c.json({ error: 'Not found.' }, 404);
+    if (found.some((p) => p.DeceasedAt !== null))
+      return c.json(
+        {
+          error:
+            "A pet that has passed away can't be shared. Add a live pet to this account first, then add the person.",
+        },
+        400,
+      );
+
+    const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+    let customer;
+    if (existing) {
+      // The merge case. Never downgrade an active customer to invited, never rewrite the name or
+      // phone already on file — exactly the manual-add route's append semantics.
+      await addCoOwnerToPets(c.env.PAWBOOK_DB, tenant.Id, existing.Id, petIds);
+      customer = existing;
+    } else {
+      customer = await insertInvitedCustomerAsCoOwner(
+        c.env.PAWBOOK_DB,
+        tenant.Id,
+        email,
+        name,
+        phone,
+        petIds,
+      );
+    }
+    return c.json(
+      {
+        id: customer.Id,
+        email: customer.Email,
+        name: customer.Name,
+        phone: customer.Phone,
+        status: customer.Status,
+        created: !existing,
+        linkedPets: petIds.length,
       },
       201,
     );
