@@ -102,6 +102,32 @@ export function EarningsView({
   clearError?: () => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  /**
+   * "The client said keep it." No amount is sent — the server computes it from the same expressions
+   * this row's `credit` came from, so what gets logged is exactly what she just read. Confirmed
+   * first, like every other money action in the dashboard.
+   */
+  const keepIt = async (c: AnalyticsPayload['credits'][number]) => {
+    if (!session || !onChanged || !handleError || busyId) return;
+    const who = c.name || c.email || 'your client';
+    if (
+      !window.confirm(
+        `Log the $${c.credit} overpayment as kept on this booking? Use this when ${who} agreed you keep it — your Earnings total doesn't change, the booking is just owed $${c.credit} more.`,
+      )
+    )
+      return;
+    setBusyId(c.bookingId);
+    try {
+      await adminApi.payments.keepCredit(session.slug, session.token, c.bookingId);
+      await onChanged();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const hasPayments = data.byService.length > 0;
   const maxService = Math.max(1, ...data.byService.map((s) => s.total));
@@ -253,10 +279,16 @@ export function EarningsView({
       )}
 
       {/* Overpayments. Rendered only when there are any — a sitter with a clean book should not have
-          to read a "nothing here" line — and with NO payment button: this is money going the other
-          way, and the product has no refund path, so the honest thing is to name it and let her
-          settle it with her client. The commonest source is an edit: a stay paid in full and then
-          shortened re-stamps a lower EstCost. */}
+          to read a "nothing here" line — and with NO *Record payment* button: this is money going the
+          other way. The commonest source is an edit: a stay paid in full and then shortened
+          re-stamps a lower EstCost.
+          
+          Two ways to CLOSE one, because they mean opposite things about her revenue: the money went
+          back (correct the ledger — delete the payment, then re-record what was actually kept, which
+          is what makes Earnings fall), or the client agreed she keeps it (logged as a charge on the
+          booking, so revenue stays put and the booking is simply owed more). "Keep it" is hidden when
+          the server says it cannot close this row — a declined request may keep nothing — so no
+          button here is one that does nothing. */}
       {data.credits.length > 0 && (
         <>
           <h3>Owed back to clients</h3>
@@ -270,6 +302,39 @@ export function EarningsView({
                   overpaid ${c.credit} (paid ${c.paidTotal}
                   {c.keepable > 0 ? ` of $${c.keepable}` : ', now owes nothing'})
                 </span>
+                {session && onChanged && handleError && (
+                  <span>
+                    {c.canKeep && (
+                      <button disabled={busyId === c.bookingId} onClick={() => void keepIt(c)}>
+                        Keep it
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setOpenId(openId === c.bookingId ? null : c.bookingId)}
+                      aria-label={`Correct the payments on ${c.name ?? 'this booking'}`}
+                    >
+                      {openId === c.bookingId ? 'Close' : 'Refund…'}
+                    </button>
+                  </span>
+                )}
+                {session && onChanged && handleError && openId === c.bookingId && (
+                  <>
+                    <p className="pb-hint">
+                      Send the ${c.credit} back however you paid it, then correct the record here:
+                      delete the payment and re-record what you actually kept.
+                    </p>
+                    {/* allowRecord=false on purpose: on a credit row the ledger is delete-only. Once
+                        the overpayment is gone the booking is either settled or shows up under
+                        Outstanding, where *Record payment* is proven to work. */}
+                    <PaymentsPanel
+                      session={session}
+                      bookingId={c.bookingId}
+                      onChanged={onChanged}
+                      handleError={handleError}
+                      allowRecord={false}
+                    />
+                  </>
+                )}
               </li>
             ))}
           </ul>

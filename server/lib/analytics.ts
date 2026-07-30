@@ -30,7 +30,9 @@ export function serializeAnalytics(data: AnalyticsData) {
    * can leave a client in credit becomes visible: `credit` is `paidTotal - keepable`, the same
    * one-rule arithmetic the outstanding row's `balance` uses, read in the other direction. There is
    * deliberately no *Record payment* affordance on these rows (see `CREDIT_WHERE_SQL`): a credit is
-   * a negative balance, not a payable one.
+   * a negative balance, not a payable one — the *resolution* affordances are `credit/keep` (the client
+   * agreed she keeps it) and correcting the payment ledger (the money went back). See
+   * `keepBookingCredit`.
    */
   const credits = data.credits.map((c) => ({
     bookingId: c.BookingId,
@@ -42,6 +44,15 @@ export function serializeAnalytics(data: AnalyticsData) {
     keepable: c.Keepable,
     paidTotal: c.PaidTotal,
     credit: c.PaidTotal - c.Keepable,
+    /**
+     * Can this credit be closed by KEEPING it (`POST /credit/keep` logs it as a charge), or only by
+     * refunding it? A `'declined'` request may keep nothing at all — `CREDITABLE_AMOUNT_SQL` is 0
+     * for it by rule, so a charge cannot close its credit — and offering a button that does not work
+     * is the mirror of the "balance whose *Record payment* 404s" defect the outstanding pairing
+     * exists to prevent. Derived here from the SAME status rule the SQL applies, so the client never
+     * restates it.
+     */
+    canKeep: c.Status !== 'declined',
   }));
   return {
     tiles: {

@@ -1314,6 +1314,95 @@ const CREDITABLE_AMOUNT_SQL = `(CASE WHEN b.Status = 'declined' THEN 0 ELSE ${EX
 const CREDIT_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
      AND COALESCE(paid.Total, 0) > ${CREDITABLE_AMOUNT_SQL}`;
 
+/**
+ * The `paid` subquery `CREDIT_WHERE_SQL` and the outstanding predicate both expect in scope. One
+ * bind param (tenantId), like `CHARGES_JOIN_SQL`.
+ */
+const PAYMENTS_JOIN_SQL = `LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+       ) paid ON paid.BookingRequestId = b.Id`;
+
+/** How much this booking is over-paid by, as the Earnings page displays it. */
+const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`;
+
+/** The label every kept-overpayment charge carries. One string, so the UI and the ledger agree. */
+export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
+
+export type KeepCreditResult =
+  { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };
+
+/**
+ * CLOSE AN OVER-PAYMENT THE CLIENT AGREED THE SITTER KEEPS, by logging it as a `BookingCharges` row.
+ *
+ * The credit was previously display-only: `CREDIT_WHERE_SQL` surfaced the money and nothing could
+ * resolve it, so it sat on the Earnings page forever. There are exactly two honest resolutions, and
+ * they must not be conflated because they say opposite things about revenue:
+ *
+ *   - **the money went back** — correct the payment ledger (`deletePayment`, then re-record what was
+ *     actually kept). Every earnings figure sums `Payments`, so revenue falls, which is right;
+ *   - **the client agreed she keeps it** (toward the next stay, a tip, a rounding) — the money really
+ *     was received, so revenue must NOT move. What changes is what this booking is OWED, which is a
+ *     charge. That is this function.
+ *
+ * **The amount is computed in the SQL from the very expressions the Earnings page displays the credit
+ * with** (`CREDIT_AMOUNT_SQL` over `CREDITABLE_AMOUNT_SQL`), never passed in — the same doctrine as
+ * the cancellation fee, and the reason the charge can never differ from the figure the sitter was
+ * shown. `INSERT ... SELECT ... WHERE` (insertPayment's idiom) makes the guard atomic with the write,
+ * and the guard IS `CREDIT_WHERE_SQL`: a booking that is not in credit inserts nothing. Since the new
+ * charge raises `EXPECTED_AMOUNT_SQL` by exactly the credit, the row afterwards is neither in credit
+ * nor outstanding — the two predicates stay mutually exclusive, which is what keeps this from
+ * disturbing the standing rule that `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in
+ * both directions.
+ *
+ * A `'declined'` row is refused: it may keep NOTHING (`CREDITABLE_AMOUNT_SQL` is 0 for it by rule),
+ * so a charge cannot close its credit, and offering the action anyway would be a button that does not
+ * work — the mirror of the "balance whose *Record payment* 404s" defect. Its only resolution is the
+ * refund path. `serializeAnalytics` publishes `canKeep` from the same rule so the UI never offers it.
+ *
+ * Reversible by design: deleting the charge re-opens the credit, because both figures are derived
+ * rather than stamped.
+ */
+export async function keepBookingCredit(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<KeepCreditResult> {
+  const id = crypto.randomUUID();
+  const inserted = await db
+    .prepare(
+      `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
+       SELECT ?, b.TenantId, b.Id, ?, ${CREDIT_AMOUNT_SQL}
+       FROM BookingRequests b
+       ${PAYMENTS_JOIN_SQL}
+       ${CHARGES_JOIN_SQL}
+       WHERE b.TenantId = ? AND b.Id = ? AND b.Status != 'declined' AND ${CREDIT_WHERE_SQL}
+       RETURNING Amount`,
+    )
+    .bind(id, KEPT_OVERPAYMENT_LABEL, tenantId, tenantId, tenantId, bookingId)
+    .first<{ Amount: number }>();
+  if (inserted) return { outcome: 'kept', amount: inserted.Amount };
+
+  // Refused, and nothing was written. One read to say WHICH refusal, so the sitter is told something
+  // she can act on. 'blocked'/'external' rows read as absent, the same existence answer every other
+  // money route gives them.
+  const row = await db
+    .prepare(
+      `SELECT b.Status AS Status, ${CREDIT_AMOUNT_SQL} AS Credit
+       FROM BookingRequests b
+       ${PAYMENTS_JOIN_SQL}
+       ${CHARGES_JOIN_SQL}
+       WHERE b.TenantId = ? AND b.Id = ? AND b.ServiceType NOT IN ('blocked', 'external')`,
+    )
+    .bind(tenantId, tenantId, tenantId, bookingId)
+    .first<{ Status: string; Credit: number }>();
+  if (!row) return { outcome: 'not-found' };
+  // "Nothing to close" is checked first: it is the more useful thing to say even about a declined
+  // row, and it is the answer to a double-click on a credit that has already been closed.
+  if (row.Credit <= 0) return { outcome: 'no-credit' };
+  return row.Status === 'declined' ? { outcome: 'declined' } : { outcome: 'no-credit' };
+}
+
 export type OutstandingBookingRow = {
   BookingId: string;
   EndUserId: string | null;

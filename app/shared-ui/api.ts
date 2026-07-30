@@ -275,7 +275,8 @@ export type AnalyticsPayload = {
    * The mirror of `outstanding`: bookings paid MORE than they may keep, which is where a booking
    * edited down below what was already paid now shows up. `credit` is `paidTotal - keepable`. These
    * rows deliberately carry no *Record payment* affordance — a credit is a negative balance, not a
-   * payable one.
+   * payable one. What they DO carry is the two ways to close one: keep it (`keepCredit`, when
+   * `canKeep`) or correct the payment ledger (the money went back).
    */
   credits: {
     bookingId: string;
@@ -287,6 +288,12 @@ export type AnalyticsPayload = {
     keepable: number;
     paidTotal: number;
     credit: number;
+    /**
+     * Server-derived: may this credit be closed by KEEPING it? False for a declined request, which
+     * may keep nothing at all — so the button is not offered rather than offered and refused. The
+     * client never re-derives this rule.
+     */
+    canKeep: boolean;
   }[];
 };
 
@@ -573,6 +580,16 @@ export const adminApi = {
     remove: (slug: string, token: string, bookingId: string, paymentId: string) =>
       request<unknown>(`/api/${slug}/admin/bookings/${bookingId}/payments/${paymentId}`, {
         method: 'DELETE',
+        headers: authHeaders(token),
+      }),
+    /**
+     * Close an over-payment the client agreed the sitter keeps. NO amount is sent — the server
+     * computes it from the same expressions Earnings displayed the credit with, so the charge it
+     * logs can never differ from the figure she was shown.
+     */
+    keepCredit: (slug: string, token: string, bookingId: string) =>
+      request<{ kept: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
+        method: 'POST',
         headers: authHeaders(token),
       }),
     venmoPreview: (slug: string, token: string, csv: string) =>

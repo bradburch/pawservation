@@ -26,6 +26,7 @@ import {
   getProviderConnection,
   getTenantUserEmailById,
   insertBookingCharge,
+  keepBookingCredit,
   insertBookingRequest,
   insertInvitedCustomerWithPet,
   insertPayment,
@@ -2052,6 +2053,38 @@ export const adminRoutes = new Hono<AppEnv>()
       },
       201,
     );
+  })
+
+  /**
+   * Close an over-payment the client agreed the sitter KEEPS, by logging it as a charge. The amount
+   * is computed server-side from the same expressions the Earnings page displays the credit with —
+   * the request carries no figure at all (same doctrine as the cancellation fee) — so the charge can
+   * never differ from what she was shown. The other resolution, "the money went back", is the
+   * payments ledger: DELETE the payment and re-record what was actually kept.
+   */
+  .post('/:slug/admin/bookings/:id/credit/keep', async (c) => {
+    const tenant = c.get('tenant');
+    const result = await keepBookingCredit(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    switch (result.outcome) {
+      case 'kept':
+        return c.json({ kept: result.amount });
+      case 'not-found':
+        return c.json({ error: 'Not found.' }, 404);
+      case 'declined':
+        return c.json(
+          {
+            error:
+              'A declined request may keep nothing — refund the client and delete the payment instead.',
+          },
+          409,
+        );
+      case 'no-credit':
+        return c.json({ error: 'That booking is not in credit.' }, 409);
+      default: {
+        const unhandled: never = result;
+        return c.json({ error: `Cannot close this credit (${String(unhandled)}).` }, 409);
+      }
+    }
   })
 
   .get('/:slug/admin/bookings/:id/payments', async (c) => {
