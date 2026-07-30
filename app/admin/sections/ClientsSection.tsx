@@ -644,12 +644,22 @@ export function ClientsSection({
         appear once. Every client needs at least one pet: rows that would leave a client with none,
         or a new client with no name, are skipped and listed back to you.
       </p>
+      <p className="pb-applies">
+        <strong>Two people sharing a pet?</strong> Put the other owner&rsquo;s email in the last
+        column (<em>Co-owner Emails</em>; separate several with semicolons) and give them a row of
+        their own with their name and no pet — they&rsquo;ll be added to the same account and billed
+        together. Repeating the pet on a second row instead creates a <em>second</em> pet, because
+        two clients can each own a &ldquo;Bella&rdquo;.
+      </p>
       {importResult && (
         <div className="pb-row">
           <p>
             Imported {importResult.importedCustomers} client
             {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
             {importResult.importedPets === 1 ? '' : 's'}.
+            {importResult.coOwnerLinks > 0
+              ? ` Shared ${importResult.coOwnerLinks} pet${importResult.coOwnerLinks === 1 ? '' : 's'} with a co-owner.`
+              : ''}
             {importResult.invitesSent > 0
               ? ` Sent ${importResult.invitesSent} welcome email${importResult.invitesSent === 1 ? '' : 's'}.`
               : ''}

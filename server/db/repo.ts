@@ -2415,6 +2415,10 @@ export async function insertInvitedCustomer(
  * pet-less customer is left standing. EndUsers' UNIQUE (TenantId, Email) likewise aborts the
  * batch on a concurrent duplicate create, so the caller must look the customer up first and only
  * call this for a genuinely new email (use addEndUserPet for an existing customer).
+ *
+ * Returns the customer WITH the id of the pet it just created (`PetId`), because the CSV import may
+ * have to attach a co-owner to that very pet in its deferred second pass — a widening of the old
+ * `EndUser` return, so every existing call site is untouched.
  */
 export async function insertInvitedCustomerWithPet(
   db: D1Database,
@@ -2424,7 +2428,7 @@ export async function insertInvitedCustomerWithPet(
   phone: string | null,
   petName: string,
   petType: PetType,
-): Promise<EndUser> {
+): Promise<EndUser & { PetId: string }> {
   const id = crypto.randomUUID();
   const petId = crypto.randomUUID();
   const invitedAt = new Date().toISOString();
@@ -2453,6 +2457,7 @@ export async function insertInvitedCustomerWithPet(
     VenmoUsername: null,
     Status: 'invited',
     InvitedAt: invitedAt,
+    PetId: petId,
   };
 }
 

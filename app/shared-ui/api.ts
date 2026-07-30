@@ -175,6 +175,8 @@ export type PetGroupRate = {
 export type ImportResult = {
   importedCustomers: number;
   importedPets: number;
+  /** Pets the file shared with a second owner via the "Co-owner Emails" column. */
+  coOwnerLinks: number;
   invitesSent: number;
   invitesFailed: number;
   skippedRows: { row: number; reason: string }[];

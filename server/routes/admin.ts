@@ -221,6 +221,14 @@ const MAX_IMPORT_ROWS = 500;
 const MAX_ACCOUNT_PET_LINKS = 25;
 
 /**
+ * How many co-owners one CSV row may name. A household has a handful of humans; the cap is what
+ * stops MAX_IMPORT_ROWS × an unbounded cell from becoming an unbounded pile of writes inside one
+ * request. Exceeding it links NONE of that row's co-owners — a partial application of a list the
+ * sitter clearly mistyped is worse than a clear refusal — while the row's PET still imports.
+ */
+const MAX_CO_OWNERS_PER_ROW = 5;
+
+/**
  * A service's Description is a SHORT blurb under the service name in the widget's picker, not a
  * body of copy — cap it so one service can't push the whole picker off the page.
  */
@@ -1842,16 +1850,22 @@ export const adminRoutes = new Hono<AppEnv>()
     // (which reads listEndUserPets, itself live-only): "does this client already own a pet by this
     // name" and "does this client have a pet at all". A deceased pet is neither bookable nor a
     // reason to refuse the name again.
-    const livePetNames = new Map<string, Set<string>>();
+    //
+    // Name → pet ID rather than a bare set of names, because the co-owner pass needs the ID of a pet
+    // the row merely REFERRED to (one that already existed, or was created earlier in this file) in
+    // order to link a second owner to it. `.size` / `.has` answer the two dedup questions exactly as
+    // the old Set did.
+    const livePetNames = new Map<string, Map<string, string>>();
     for (const pet of await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id)) {
       if (pet.DeceasedAt) continue;
-      const set = livePetNames.get(pet.EndUserId) ?? new Set<string>();
-      set.add(pet.Name.toLowerCase());
-      livePetNames.set(pet.EndUserId, set);
+      const byName = livePetNames.get(pet.EndUserId) ?? new Map<string, string>();
+      byName.set(pet.Name.toLowerCase(), pet.Id);
+      livePetNames.set(pet.EndUserId, byName);
     }
 
     let importedCustomers = 0;
     let importedPets = 0;
+    let coOwnerLinks = 0;
     let invitesSent = 0;
     let invitesFailed = 0;
     const skippedRows: { row: number; reason: string }[] = [];
@@ -1872,6 +1886,54 @@ export const adminRoutes = new Hono<AppEnv>()
       const id = idByEmail.get(email);
       return id ? (livePetNames.get(id)?.size ?? 0) : 0;
     };
+    /**
+     * One "also owned by" reference from the fifth column, resolved in a DEFERRED pass for the same
+     * reason the pet-less verdict is: the co-owner may be a client this file has not created yet (the
+     * canonical shape puts their own name-bearing row anywhere in the file), and a single-pass import
+     * with immediate writes could only ever look backwards.
+     */
+    const coOwnerRefs: { row: number; email: string; petId: string; petName: string }[] = [];
+    /**
+     * Parse one co-owner cell. Anything wrong with an individual email is reported and dropped — the
+     * PET on that row is still perfectly importable, so a bad co-owner never costs the sitter the
+     * animal. Naming the row's own client is a no-op rather than an error (a sitter listing both
+     * owners on both rows is being thorough, not wrong).
+     */
+    const noteCoOwners = (
+      row: number,
+      ownerEmail: string,
+      pet: { id: string; name: string },
+      cell: string,
+    ) => {
+      // Semicolons are the documented separator (a comma inside a CSV cell has to be quoted, which
+      // is exactly what a sitter editing in Excel will forget), but commas and spaces are accepted
+      // too: no email contains any of them, so being lenient here cannot misread anything.
+      const raws = cell
+        .split(/[;,\s]+/)
+        .map((v) => v.trim())
+        .filter((v) => v !== '');
+      if (raws.length === 0) return;
+      if (raws.length > MAX_CO_OWNERS_PER_ROW) {
+        skippedRows.push({
+          row,
+          reason: `At most ${MAX_CO_OWNERS_PER_ROW} co-owner emails per row — none on this row were linked`,
+        });
+        return;
+      }
+      for (const raw of raws) {
+        const email = raw.toLowerCase();
+        if (email === ownerEmail) continue;
+        if (!EMAIL_RE.test(email)) {
+          skippedRows.push({ row, reason: `'${raw}' is not a valid co-owner email` });
+          continue;
+        }
+        if (email === DEMO_EMAIL) {
+          skippedRows.push({ row, reason: `'${raw}' is reserved for the Pawservation demo` });
+          continue;
+        }
+        coOwnerRefs.push({ row, email, petId: pet.id, petName: pet.name });
+      }
+    };
 
     for (const [i, cells] of rows.entries()) {
       const row = i + 2; // 1-indexed against the sitter's file; +1 since the header was sliced off
@@ -1881,6 +1943,9 @@ export const adminRoutes = new Hono<AppEnv>()
         continue;
       }
       const [rawEmail, rawName, rawPetName, rawPetType] = cells;
+      // Fifth column, added later and therefore OPTIONAL: a four-column file (every file exported
+      // before this existed) reads it as blank and behaves exactly as it always did.
+      const rawCoOwners = cells[4] ?? '';
       const email = rawEmail.trim().toLowerCase();
       if (!EMAIL_RE.test(email)) {
         skippedRows.push({ row, reason: 'Invalid email address' });
@@ -1899,8 +1964,8 @@ export const adminRoutes = new Hono<AppEnv>()
         const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
         if (existing) idByEmail.set(email, existing.Id);
         const petSet = existing
-          ? (livePetNames.get(existing.Id) ?? new Set<string>())
-          : new Set<string>();
+          ? (livePetNames.get(existing.Id) ?? new Map<string, string>())
+          : new Map<string, string>();
 
         const petName = rawPetName.trim();
         const petType = rawPetType.trim().toLowerCase();
@@ -1929,14 +1994,26 @@ export const adminRoutes = new Hono<AppEnv>()
           skippedRows.push({ row, reason: `'${rawPetType.trim()}' is not one of your pet types` });
           continue;
         }
-        if (petSet.has(petName.toLowerCase())) {
+        const already = petSet.get(petName.toLowerCase());
+        if (already !== undefined) {
+          // The pet is a duplicate, but the SHARING on this row may still be new — a re-run of a
+          // file whose first pass failed part-way must converge, so the co-owner reference is
+          // recorded before the row is reported as a duplicate.
+          noteCoOwners(row, email, { id: already, name: petName }, rawCoOwners);
           skippedRows.push({ row, reason: 'Pet already exists for this client' });
           continue;
         }
         if (existing) {
-          await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, existing.Id, petName, petType);
-          petSet.add(petName.toLowerCase());
+          const pet = await addEndUserPet(
+            c.env.PAWBOOK_DB,
+            tenant.Id,
+            existing.Id,
+            petName,
+            petType,
+          );
+          petSet.set(petName.toLowerCase(), pet.Id);
           livePetNames.set(existing.Id, petSet);
+          noteCoOwners(row, email, { id: pet.Id, name: petName }, rawCoOwners);
         } else {
           // Customer + first pet in one atomic batch — a failed pet insert leaves no customer.
           const customer = await insertInvitedCustomerWithPet(
@@ -1948,14 +2025,83 @@ export const adminRoutes = new Hono<AppEnv>()
             petName,
             petType,
           );
-          livePetNames.set(customer.Id, new Set([petName.toLowerCase()]));
+          livePetNames.set(customer.Id, new Map([[petName.toLowerCase(), customer.PetId]]));
           idByEmail.set(email, customer.Id);
           importedCustomers++;
           freshCustomers.push(email);
+          noteCoOwners(row, email, { id: customer.PetId, name: petName }, rawCoOwners);
         }
         importedPets++;
       } catch {
         skippedRows.push({ row, reason: 'Could not import this row' });
+      }
+    }
+
+    // ── The deferred co-ownership pass ────────────────────────────────────────────────────────────
+    // Grouped by PERSON, not by row, so each co-owner is resolved once and linked to all of their
+    // pets in ONE write. This must run BEFORE the pet-less verdict below: a co-owner-only human is
+    // legitimately pet-less in their own rows (their row exists only to give them a name) and ends
+    // the import owning pets, so judging them first would report them as skipped.
+    const coOwnerPets = new Map<string, { pets: Map<string, string>; rows: number[] }>();
+    for (const ref of coOwnerRefs) {
+      const entry = coOwnerPets.get(ref.email) ?? { pets: new Map<string, string>(), rows: [] };
+      entry.pets.set(ref.petId, ref.petName);
+      if (!entry.rows.includes(ref.row)) entry.rows.push(ref.row);
+      coOwnerPets.set(ref.email, entry);
+    }
+    for (const [email, { pets, rows }] of coOwnerPets) {
+      const petIds = [...pets.keys()];
+      try {
+        let ownerId = idByEmail.get(email);
+        if (!ownerId) {
+          // Tenant-scoped, like every other lookup here: the same email in another tenant is a
+          // different person and must never be linked.
+          const found = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+          if (found) {
+            ownerId = found.Id;
+            idByEmail.set(email, found.Id);
+          }
+        }
+        if (ownerId) {
+          // An existing client keeps their stored name and phone; they simply gain the pets, which
+          // is what merges the two billing accounts into one.
+          await addCoOwnerToPets(c.env.PAWBOOK_DB, tenant.Id, ownerId, petIds);
+        } else {
+          const createName = nameByEmail.get(email);
+          if (!createName) {
+            // There is no name to create them with — the pet is already imported, so say what the
+            // sitter has to add rather than failing anything.
+            for (const row of rows)
+              skippedRows.push({
+                row,
+                reason: `Co-owner ${email} needs a row of their own with their name`,
+              });
+            continue;
+          }
+          // Human + every ownership link in ONE batch (the same repo function the co-owner route
+          // uses), so this path can never commit a pet-less client either.
+          const customer = await insertInvitedCustomerAsCoOwner(
+            c.env.PAWBOOK_DB,
+            tenant.Id,
+            email,
+            createName,
+            null,
+            petIds,
+          );
+          ownerId = customer.Id;
+          idByEmail.set(email, ownerId);
+          importedCustomers++;
+          freshCustomers.push(email);
+        }
+        // Record the pets they now own so the pet-less verdict counts them, and so a later row
+        // naming the same pet for them reads as the duplicate it is.
+        const byName = livePetNames.get(ownerId) ?? new Map<string, string>();
+        for (const [petId, petName] of pets) byName.set(petName.toLowerCase(), petId);
+        livePetNames.set(ownerId, byName);
+        coOwnerLinks += petIds.length;
+      } catch {
+        for (const row of rows)
+          skippedRows.push({ row, reason: `Could not link co-owner ${email}` });
       }
     }
 
@@ -1967,7 +2113,9 @@ export const adminRoutes = new Hono<AppEnv>()
         skippedRows.push({ row, reason: 'Every client needs at least one pet' });
     }
     // …which means skips are no longer discovered in file order. Sort so the sitter reads them
-    // against their spreadsheet top to bottom (at most one skip per row, so this is total).
+    // against their spreadsheet top to bottom. A row can now carry more than one note (a duplicate
+    // pet AND an unresolvable co-owner), so this leans on Array#sort being stable to keep those in
+    // the order they were found rather than pretending the key is unique.
     skippedRows.sort((a, b) => a.row - b.row);
 
     if (sendInvites && isEmailConfigured(c.env)) {
@@ -1982,7 +2130,14 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
 
-    return c.json({ importedCustomers, importedPets, invitesSent, invitesFailed, skippedRows });
+    return c.json({
+      importedCustomers,
+      importedPets,
+      coOwnerLinks,
+      invitesSent,
+      invitesFailed,
+      skippedRows,
+    });
   })
 
   .get('/:slug/admin/bookings', async (c) => {
