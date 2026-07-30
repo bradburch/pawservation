@@ -12,6 +12,7 @@ import {
   getToken,
   isAuthExpired,
   type Availability,
+  type Booking,
   type Pet,
   type TenantConfig,
 } from '../shared-ui/api';
@@ -46,27 +47,60 @@ function petSummary(names: string[]): string {
 export function BookTab({
   config,
   pets,
+  savedAnswers,
+  editing,
+  onEditSaved,
+  onEditCancel,
   onAuthExpired,
 }: {
   config: TenantConfig;
   pets: Pet[] | null;
+  /** Server-vetted intake pre-fills, `{ serviceType: { questionId: value } }`; null until /me
+   *  lands. Convenience only — the POST re-validates every answer, typed or pre-filled. */
+  savedAnswers: Record<string, Record<string, string>> | null;
+  /**
+   * The booking being CHANGED, or null for a new request. Everything below is the same form, the
+   * same mirrored validators and the same silent quote — which is the point: an edit that had its
+   * own form would drift from the create it is meant to re-run. What edit mode changes is small
+   * and deliberate: the service is fixed (the server reads it off the stored row), the initial
+   * state comes from the booking, the quote and the calendar exclude this booking from capacity,
+   * and the primary button PUTs instead of POSTing.
+   *
+   * The component is keyed on the booking id by its parent, so these initial values are read once
+   * per edit rather than fought over by an effect.
+   */
+  editing: Booking | null;
+  onEditSaved: () => void;
+  onEditCancel: () => void;
   onAuthExpired: () => void;
 }) {
-  const [type, setType] = useState(config.services[0]?.type ?? 'boarding');
+  const [type, setType] = useState(editing?.type ?? config.services[0]?.type ?? 'boarding');
   const service = config.services.find((s) => s.type === type) ?? config.services[0];
-  const [optionKey, setOptionKey] = useState(service?.options[0]?.optionKey ?? '');
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [startTime, setStartTime] = useState('');
+  const [optionKey, setOptionKey] = useState(
+    editing?.optionKey ?? service?.options[0]?.optionKey ?? '',
+  );
+  const [month, setMonth] = useState(
+    () => editing?.startDate.slice(0, 7) ?? new Date().toISOString().slice(0, 7),
+  );
+  const [start, setStart] = useState(editing?.startDate ?? '');
+  const [end, setEnd] = useState(editing?.endDate ?? '');
+  const [startTime, setStartTime] = useState(editing?.startTime ?? '');
   // null = "still the default", which is EVERY accepted pet (see `defaultPetIds`). Held as a
   // sentinel rather than seeded into state so the default can be recomputed as the async pet list
   // arrives and as the service — and with it which pets are accepted — changes, without an effect
   // that would clobber a selection the customer had already made.
-  const [petSelection, setPetSelection] = useState<string[] | null>(null);
+  const [petSelection, setPetSelection] = useState<string[] | null>(editing?.petIds ?? null);
   // null = "not decided by the customer", which falls through to `autoExpand`.
   const [petsOpen, setPetsOpen] = useState<boolean | null>(null);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  // Only what the customer has TYPED this session. The answers actually in play are these laid
+  // over the saved pre-fills for the selected service — held apart, and as a sentinel, for the
+  // same reason `petSelection` is: /me arrives after first paint and the service can change
+  // under them, and an effect that seeded state from either would clobber an edit already made.
+  // A cleared field is a real `''` entry here, so it wins over its pre-fill rather than looking
+  // like "not answered yet".
+  // Seeded from the booking's OWN stored answers when editing — what they submitted, not the
+  // saved pre-fill, which may have moved on since.
+  const [answerEdits, setAnswerEdits] = useState<Record<string, string>>(editing?.answers ?? {});
   const [calReloadKey, setCalReloadKey] = useState(0);
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
@@ -76,6 +110,7 @@ export function BookTab({
   const [submitting, setSubmitting] = useState(false);
   const attemptKey = useRef<string | null>(null);
 
+  const editingId = editing?.id ?? null;
   const selectedOption = service?.options.find((o) => o.optionKey === optionKey);
   const petTypeLabels = new Map(config.petTypes.map((p) => [p.slug, p.label]));
   const labelOf = (petSlug: string) => petTypeLabels.get(petSlug) ?? petSlug;
@@ -114,6 +149,12 @@ export function BookTab({
         labelOf,
       )
     : null;
+  // Pre-fills are per service, so switching services swaps them rather than carrying an answer
+  // across. Only this service's own question ids are submitted — `answerEdits` can still hold a
+  // previously-selected service's keys, which are not this service's to send or to save.
+  const answers: Record<string, string> = {};
+  for (const q of service?.questions ?? [])
+    answers[q.id] = answerEdits[q.id] ?? savedAnswers?.[type]?.[q.id] ?? '';
   const questionsError = service ? validateAnswers(service.questions, answers) : null;
   const nights = service?.shape === 'range' && start && end ? nightsBetween(start, end) : null;
   const constraintsError = service
@@ -169,7 +210,10 @@ export function BookTab({
     // Back to the default for the NEW service — acceptance and the pet cap are both per service.
     setPetSelection(null);
     setPetsOpen(null);
-    setAnswers({});
+    // Edits are dropped with the service that asked for them — `answers` is rebuilt from the new
+    // service's questions and ITS pre-fills, so a stale edit could otherwise outrank a pre-fill
+    // on any question id the two services happen to share.
+    setAnswerEdits({});
     resetCheck();
   };
 
@@ -202,6 +246,10 @@ export function BookTab({
       petIds: petKey,
     };
     if (isRange) params.end = end;
+    // While editing, the stay must not collide with ITSELF: the server drops this row from the
+    // capacity read (after proving the caller owns it) so re-timing inside a tight pool is
+    // possible at all.
+    if (editingId) params.excludeBookingId = editingId;
     try {
       return await api.availability(slug, token, params);
     } catch (e) {
@@ -212,7 +260,7 @@ export function BookTab({
       }
       throw e;
     }
-  }, [quoteReady, type, optionKey, start, end, petKey, isRange]);
+  }, [quoteReady, type, optionKey, start, end, petKey, isRange, editingId]);
 
   const { data: quoteData, error: quoteError, loading: quoting } = useAsync(fetchQuote);
   // useAsync retains the last success across a dependency change, so a result is only THIS
@@ -258,6 +306,18 @@ export function BookTab({
         answers,
         ...(isRange ? { endDate: end, ...(startTime ? { startTime } : {}) } : {}),
       };
+      if (editing) {
+        // The PUT carries no service and no idempotency key: the server reads the service off the
+        // stored row, and a replayed edit simply re-applies the same values.
+        const saved = await api.editBooking(slug, token, editing.id, body);
+        const moved =
+          quoted !== null && quoted !== saved.estCost ? ` (the estimate showed $${quoted})` : '';
+        setConfirmation(
+          `Changes sent! $${saved.estCost}${moved} — ${config.displayName} confirms the new dates.`,
+        );
+        onEditSaved();
+        return;
+      }
       const res = await api.createBooking(slug, token, body, attemptKey.current);
       const changed =
         quoted !== null && quoted !== res.estCost ? ` (the estimate showed $${quoted})` : '';
@@ -272,7 +332,10 @@ export function BookTab({
       setStartTime('');
       setPetSelection(null);
       setPetsOpen(null);
-      setAnswers({});
+      // The answers deliberately SURVIVE the reset that clears the dates. The server has just
+      // saved them as this customer's pre-fill for this service, so blanking the fields here
+      // would show them an empty form the very next render and then refill it on the next /me —
+      // and "these carry over to your next booking" is the whole feature.
       setCalReloadKey((k) => k + 1);
       // Both families, for HTTP-cached pre-rebrand loaders (see the resize note in App.tsx):
       // the current loader handles `pawservation:booked`, legacy loaders handle `pawbook:booked`.
@@ -350,40 +413,60 @@ export function BookTab({
 
   return (
     <div className="bp-book">
-      <div className="bp-service-grid">
-        {config.services.map((s) => {
-          const Icon = SERVICE_ICONS[s.icon] ?? IconPaw;
-          return (
-            <button
-              key={s.type}
-              type="button"
-              className={`bp-service-card${type === s.type ? ' bp-selected' : ''}`}
-              aria-pressed={type === s.type}
-              onClick={() => onServiceChange(s.type)}
-            >
-              <span className="bp-service-emoji" aria-hidden="true">
-                <Icon />
-              </span>
-              <span className="bp-service-label">{s.label}</span>
-              {/* Selection must not be color-only: the selected card also gets a check. It is a
-                  SIBLING of the label, never a child, and it is ALWAYS rendered — hidden by CSS
-                  when unselected, not removed. Inside the label it was one more inline word the
-                  text wrapped around, so selecting a long-named service pushed the label onto an
-                  extra line and grew the card; rendered conditionally, its box appeared and
-                  disappeared. Either way the grid's height moved on a tap, and with it the height
-                  this widget posts to its host iframe. See widget.css. */}
-              <span className="bp-service-check" aria-hidden="true">
-                <IconCheck size={13} />
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {editing ? (
+        /* Editing changes dates, pets, arrival time and answers — never the SERVICE. Switching
+           Boarding→Daycare changes shape, rate unit, capacity pool and questions, which is a new
+           request rather than an amendment, so the picker is replaced by a statement of what is
+           being changed plus the way out. */
+        <div className="bp-editing-banner">
+          <p className="bp-editing-what">
+            Changing your <strong>{service?.label ?? editing.type}</strong> booking
+          </p>
+          <button type="button" className="bp-editing-back" onClick={onEditCancel}>
+            Never mind
+          </button>
+        </div>
+      ) : null}
+      {!editing && (
+        <div className="bp-service-grid">
+          {config.services.map((s) => {
+            const Icon = SERVICE_ICONS[s.icon] ?? IconPaw;
+            return (
+              <button
+                key={s.type}
+                type="button"
+                className={`bp-service-card${type === s.type ? ' bp-selected' : ''}`}
+                aria-pressed={type === s.type}
+                onClick={() => onServiceChange(s.type)}
+              >
+                {/* Selection must not be color-only: the selected card also gets a check. It lives
+                  INSIDE the leading icon, as an absolutely-positioned badge on that icon's corner
+                  (see widget.css), and it is ALWAYS rendered — hidden by CSS when unselected,
+                  never removed. Both facts are load-bearing. Rendered conditionally, its box
+                  appeared and disappeared on a tap; as an in-flow sibling of the label it was one
+                  more inline word the text wrapped around, so selecting a long-named service
+                  pushed the label onto an extra line. Either way the grid's height moved on a tap,
+                  and with it the height this widget posts to its host iframe. Out of flow it costs
+                  the label's line box nothing, which is what lets the grid keep narrow columns. */}
+                <span className="bp-service-emoji" aria-hidden="true">
+                  <Icon />
+                  <span className="bp-service-check">
+                    <IconCheck size={11} />
+                  </span>
+                </span>
+                <span className="bp-service-label">{s.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       {/* Reserved height (see widget.css) so tapping between services doesn't resize the
           widget — and with it, the host page's iframe. */}
-      <p className="bp-service-desc">{service.description}</p>
+      {!editing && <p className="bp-service-desc">{service.description}</p>}
 
-      {service?.hasDuration && (
+      {/* The option is part of the booking's identity for pricing and capacity, so an edit keeps
+          the one it was made on — the picker is a create-time control only. */}
+      {!editing && service?.hasDuration && (
         <label className="bp-field">
           Duration
           <select
@@ -474,11 +557,14 @@ export function BookTab({
             )}
           </fieldset>
         )}
+        {/* The pet-count refusals belong beside the control that causes them, not only in the
+            post-dates note slot the customer may not have reached yet. Reserved height, always
+            rendered — see .bp-pets-note. A SIBLING of the disclosure inside `.bp-pets-block`,
+            never a child of the collapsible fieldset, so a collapsed roster still can't hide it;
+            keeping it in the block is what lets one 8px gap separate all three rows instead of
+            the note paying `.bp-book`'s gap plus a margin of its own. */}
+        <p className={`bp-pets-note${petsNote ? ' bp-note-bad' : ''}`}>{petsNote}</p>
       </div>
-      {/* The pet-count refusals belong beside the control that causes them, not only in the
-          post-dates note slot the customer may not have reached yet. Reserved height, always
-          rendered — see .bp-pets-note. */}
-      <p className={`bp-pets-note${petsNote ? ' bp-note-bad' : ''}`}>{petsNote}</p>
 
       <Calendar
         slug={slug}
@@ -495,6 +581,7 @@ export function BookTab({
         onMonthChange={setMonth}
         value={{ start, end: end || undefined }}
         reloadKey={calReloadKey}
+        excludeBookingId={editingId ?? undefined}
         onChange={(v) => {
           setStart(v.start ?? '');
           setEnd(v.end ?? '');
@@ -534,7 +621,7 @@ export function BookTab({
                   // Same reason as the arrival time: answers ride in the request body, so an
                   // edited answer is a different attempt and must not inherit the old key.
                   onChange={(value) => {
-                    setAnswers((cur) => ({ ...cur, [q.id]: value }));
+                    setAnswerEdits((cur) => ({ ...cur, [q.id]: value }));
                     resetCheck();
                   }}
                 />
@@ -547,7 +634,13 @@ export function BookTab({
               an error appearing never changes the widget's height. */}
           <div className="bp-actions">
             <button className="bp-primary" onClick={submit} disabled={!canSubmit}>
-              {submitting ? 'Sending…' : 'Request Booking'}
+              {submitting
+                ? editing
+                  ? 'Saving…'
+                  : 'Sending…'
+                : editing
+                  ? 'Save changes'
+                  : 'Request Booking'}
             </button>
             <p className="bp-quote">
               {typeof quoteLine === 'string' ? (

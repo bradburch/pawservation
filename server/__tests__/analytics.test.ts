@@ -207,6 +207,99 @@ describe('getAnalytics (repo)', () => {
     ).toBe(45);
   });
 
+  /**
+   * OVERPAYMENT. `outstanding` deliberately asks only "does this booking still owe something", so
+   * money the customer no longer owes had nowhere to appear: a $250 stay paid in full and then
+   * edited down to $100 left $150 of the sitter's client's money invisible on every screen, and
+   * after re-confirmation `100 > 250` is false so it never came back as outstanding either.
+   *
+   * `credits` is the mirror of the outstanding predicate, and mutually exclusive with it: for the
+   * two statuses `OUTSTANDING_WHERE_SQL` covers (confirmed, cancelled) the "keepable" amount is
+   * byte-identical to `EXPECTED_AMOUNT_SQL`, so no booking can be both owing and in credit. It is
+   * NOT a payable balance and gets no *Record payment* button — which is why it does not disturb
+   * the rule that `insertPayment`'s guard and the outstanding predicate must agree in both
+   * directions.
+   */
+  it('credits: a booking edited down below what was already paid surfaces the overpayment', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 250 });
+    await pay(env, TENANT_C, bookingId, 250);
+    const paidUp = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    expect(paidUp.credits).toEqual([]);
+    expect(paidUp.outstanding).toEqual([]);
+
+    // The edit path re-stamps EstCost and returns the row to 'pending'.
+    await env.PAWBOOK_DB.prepare(
+      "UPDATE BookingRequests SET EstCost = 100, Status = 'pending' WHERE TenantId = ? AND Id = ?",
+    )
+      .bind(TENANT_C, bookingId)
+      .run();
+
+    const after = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    expect(after.credits).toMatchObject([{ BookingId: bookingId, Keepable: 100, PaidTotal: 250 }]);
+    // Still not outstanding, and now not silent either.
+    expect(after.outstanding).toEqual([]);
+    const payload = serializeAnalytics(after);
+    expect(payload.credits[0]).toMatchObject({ bookingId, credit: 150, paidTotal: 250 });
+    expect(payload.tiles.creditTotal).toBe(150);
+  });
+
+  it('credits: a DECLINED booking that took a deposit owes the whole deposit back', async () => {
+    const { env } = createTestEnv();
+    // A declined row is never billed (insertPayment refuses it, the outstanding predicate skips
+    // it), so every dollar taken against it is a credit — not just the part above its old quote.
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 250, status: 'pending' });
+    await pay(env, TENANT_C, bookingId, 100);
+    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, bookingId, 'declined');
+    const { credits } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    expect(credits).toMatchObject([{ BookingId: bookingId, Keepable: 0, PaidTotal: 100 }]);
+  });
+
+  it('credits: a fee-free cancellation that had been paid is a credit for the whole amount', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 200 });
+    await pay(env, TENANT_C, bookingId, 200);
+    // A customer self-cancel outside every tier stores a real 0 — nothing owed, so nothing keepable.
+    await env.PAWBOOK_DB.prepare(
+      "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 0 WHERE TenantId = ? AND Id = ?",
+    )
+      .bind(TENANT_C, bookingId)
+      .run();
+    const { credits, outstanding } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    expect(credits).toMatchObject([{ BookingId: bookingId, Keepable: 0, PaidTotal: 200 }]);
+    expect(outstanding).toEqual([]);
+  });
+
+  it('credits: extra charges reduce the credit, and an under-paid booking is never one', async () => {
+    const { env } = createTestEnv();
+    // Overpaid by 150, then the sitter logs a $45 vet visit: she may keep 145 of the 250.
+    const overpaid = await makeBooking(env, TENANT_C, { estCost: 100 });
+    await pay(env, TENANT_C, overpaid, 250);
+    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+      bookingRequestId: overpaid,
+      label: 'Vet visit',
+      amount: 45,
+    });
+    // …and a partly-paid booking stays purely outstanding.
+    const partial = await makeBooking(env, TENANT_C, { estCost: 300 });
+    await pay(env, TENANT_C, partial, 40);
+
+    const data = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    expect(data.credits).toMatchObject([{ BookingId: overpaid, Keepable: 145, PaidTotal: 250 }]);
+    expect(data.outstanding.map((o) => o.BookingId)).toEqual([partial]);
+    expect(serializeAnalytics(data).credits[0].credit).toBe(105);
+  });
+
+  it('credits are tenant-isolated, and blocked/external rows never appear', async () => {
+    const { env } = createTestEnv();
+    const mine = await makeBooking(env, TENANT_C, { estCost: 10 });
+    await pay(env, TENANT_C, mine, 50);
+    expect((await getAnalytics(env.PAWBOOK_DB, TENANT_B, TODAY)).credits).toEqual([]);
+    expect(
+      (await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY)).credits.map((c) => c.BookingId),
+    ).toEqual([mine]);
+  });
+
   it('ytd + quarterly derive from monthly[]; prior-year payment excluded from ytd but present in monthly', async () => {
     const { env } = createTestEnv();
     const b = await makeBooking(env, TENANT_A);
@@ -252,17 +345,20 @@ describe('GET /:slug/admin/analytics (route)', () => {
         lastMonth: number;
         outstandingTotal: number;
         outstandingCount: number;
+        creditTotal: number;
       };
       monthly: { month: string; total: number }[];
       byService: unknown[];
       topClients: unknown[];
       outstanding: unknown[];
+      credits: unknown[];
     };
     expect(body.tiles).toEqual({
       thisMonth: 0,
       lastMonth: 0,
       outstandingTotal: 0,
       outstandingCount: 0,
+      creditTotal: 0,
     });
     expect(body.monthly).toHaveLength(12);
     expect(body.monthly.every((m) => m.total === 0)).toBe(true);
@@ -270,6 +366,7 @@ describe('GET /:slug/admin/analytics (route)', () => {
     expect(body.byService).toEqual([]);
     expect(body.topClients).toEqual([]);
     expect(body.outstanding).toEqual([]);
+    expect(body.credits).toEqual([]);
   });
 
   it('derives tiles in JS and maps every aggregate to camelCase', async () => {
@@ -290,6 +387,7 @@ describe('GET /:slug/admin/analytics (route)', () => {
         lastMonth: number;
         outstandingTotal: number;
         outstandingCount: number;
+        creditTotal: number;
       };
       monthly: { month: string; total: number }[];
       byService: { serviceType: string; label: string; total: number }[];
@@ -313,6 +411,8 @@ describe('GET /:slug/admin/analytics (route)', () => {
       lastMonth: 60,
       outstandingTotal: 140, // 300 est - 160 paid
       outstandingCount: 1,
+      // Never netted against `outstandingTotal` — see serializeAnalytics.
+      creditTotal: 0,
     });
     expect(body.monthly[11]).toEqual({ month: today.slice(0, 7), total: 100 });
     expect(body.byService).toEqual([{ serviceType: 'boarding', label: 'Boarding', total: 160 }]);

@@ -29,12 +29,18 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  crossKindDayBlocked,
+  overlapReadWindow,
+  rangeConflictReason,
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
   type DayCapacity,
+  type EventSpan,
+  type KindOccupancy,
   type PoolKind,
+  type RangeConflict,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
 export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';
@@ -83,6 +89,7 @@ export {
   type RangeValue,
 } from './booking/calendar-ui.js';
 export {
+  questionShape,
   validateAnswer,
   validateAnswers,
   validateServiceConstraints,

@@ -109,6 +109,33 @@ export function BusinessSection({
           }
         />
       </label>
+      <label>
+        <span className="pb-labelrow">
+          House sitting and boarding
+          <Hint label="House sitting and boarding">
+            You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
+            day. This is the exception you allow for <em>handovers</em> — a boarding that starts as
+            a house sit wraps up, or the other way round. It only ever covers a day one stay is
+            leaving on as the other arrives, so a boarding can never sit in the middle of a house
+            sit however high you set this.
+          </Hint>
+        </span>
+        <select
+          aria-label="How much house sitting and boarding may overlap"
+          value={settings.housesitBoardingOverlapDays ?? ''}
+          onChange={(e) =>
+            setSettings({
+              ...settings,
+              housesitBoardingOverlapDays: e.target.value === '' ? null : Number(e.target.value),
+            })
+          }
+        >
+          <option value="0">May never overlap</option>
+          <option value="1">May overlap by one handover day</option>
+          <option value="2">May overlap by one handover day at each end of a stay</option>
+          <option value="">No limit — I&rsquo;ll sort out any clashes myself</option>
+        </select>
+      </label>
       <div className="pb-inline-save">
         <button type="button" disabled={!dirty || saveBlocked} onClick={onSave}>
           Save changes

@@ -600,6 +600,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         contactEmail: settings.contactEmail,
         contactPhone: settings.contactPhone,
         maxAdvanceMonths: settings.maxAdvanceMonths,
+        housesitBoardingOverlapDays: settings.housesitBoardingOverlapDays,
         services: settings.services.map((s): ServicePayload => ({
           type: s.type,
           enabled: s.enabled,

@@ -34,7 +34,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, DisabledAt';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -216,6 +216,12 @@ export async function deleteService(
       .bind(tenantId, serviceType),
     db
       .prepare('DELETE FROM TenantServicePetRates WHERE TenantId = ? AND ServiceType = ?')
+      .bind(tenantId, serviceType),
+    // Same argument for saved intake answers: they key on the ServiceType STRING too, so a
+    // re-created service would otherwise pre-fill its form with answers to questions it never
+    // asked. (The shape guard would drop most of them on read; scrubbing is the real fix.)
+    db
+      .prepare('DELETE FROM SavedAnswers WHERE TenantId = ? AND ServiceType = ?')
       .bind(tenantId, serviceType),
     db
       .prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ? AND ServiceType = ?')
@@ -549,6 +555,10 @@ export async function countSlotBookings(
  * Per-date pet counts against one option over [fromDate, toDateExclusive) — ONE query for
  * a whole month grid, so `monthAvailability` never issues one DB round-trip per day (the
  * "build the map once" pattern `buildCapacity` already uses for boarding/house-sit).
+ *
+ * `excludeId` mirrors `countSlotBookings`': a customer repainting the grid while EDITING a
+ * booking must not see their own row occupying the slot they already hold, or a stay they are
+ * merely re-timing reads as full.
  */
 export async function listSlotBookingCounts(
   db: D1Database,
@@ -557,15 +567,25 @@ export async function listSlotBookingCounts(
   optionKey: string,
   fromDate: string,
   toDateExclusive: string,
+  excludeId?: string,
 ): Promise<Map<string, number>> {
   const { results } = await db
     .prepare(
       `SELECT StartDate, COALESCE(SUM(PetCount), 0) AS n FROM BookingRequests
        WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ?
          AND StartDate >= ? AND StartDate < ? AND Status IN ('pending', 'confirmed')
+         AND (? IS NULL OR Id != ?)
        GROUP BY StartDate`,
     )
-    .bind(tenantId, serviceType, optionKey, fromDate, toDateExclusive)
+    .bind(
+      tenantId,
+      serviceType,
+      optionKey,
+      fromDate,
+      toDateExclusive,
+      excludeId ?? null,
+      excludeId ?? null,
+    )
     .all<{ StartDate: string; n: number }>();
   return new Map(results.map((r) => [r.StartDate, r.n]));
 }
@@ -646,20 +666,26 @@ export async function deleteBookingRequest(
     .run();
 }
 
+/**
+ * This customer's own bookings. `Answers` rides along (it is not in `BOOKING_COLS`, which every
+ * other booking read shares) because the widget's edit form has to open showing what was actually
+ * answered — re-fetching it per row, or re-deriving it from `SavedAnswers`, would show a customer
+ * the pre-fill instead of what they submitted on THIS booking.
+ */
 export async function listBookingsForUser(
   db: D1Database,
   tenantId: string,
   endUserId: string,
-): Promise<BookingRow[]> {
+): Promise<(BookingRow & { Answers: string })[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${BOOKING_COLS}
+      `SELECT ${BOOKING_COLS}, Answers
        FROM BookingRequests
        WHERE TenantId = ? AND EndUserId = ?
        ORDER BY StartDate DESC`,
     )
     .bind(tenantId, endUserId)
-    .all<BookingRow>();
+    .all<BookingRow & { Answers: string }>();
   return results;
 }
 
@@ -785,21 +811,25 @@ export async function updateBookingStatus(
  * read it has access to to carry `EndUserId = ?` in its own SQL. The 'blocked'/'external'
  * sentinels are excluded here too, so they read as "no such booking" (a 404) rather than as an
  * existence oracle for rows the customer has no business knowing about.
+ *
+ * Carries `Answers` (raw JSON) beyond `BOOKING_COLS` so the edit path can snapshot the whole
+ * mutable state of the row in ONE read — a rollback that restored the dates but not the answers
+ * would be a rollback that half-happened.
  */
 export async function getBookingForUser(
   db: D1Database,
   tenantId: string,
   endUserId: string,
   id: string,
-): Promise<BookingRow | null> {
+): Promise<(BookingRow & { Answers: string }) | null> {
   return await db
     .prepare(
-      `SELECT ${BOOKING_COLS} FROM BookingRequests
+      `SELECT ${BOOKING_COLS}, Answers FROM BookingRequests
        WHERE TenantId = ? AND EndUserId = ? AND Id = ?
          AND ServiceType NOT IN ('blocked', 'external')`,
     )
     .bind(tenantId, endUserId, id)
-    .first<BookingRow>();
+    .first<BookingRow & { Answers: string }>();
 }
 
 /**
@@ -837,6 +867,107 @@ export async function cancelBookingForUser(
     .bind(cancellationFee, tenantId, endUserId, id, expectedStatus)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Customer-initiated EDIT of an existing booking — dates, arrival time, pet count, the re-quoted
+ * estimate and the intake answers. Scoped by `EndUserId` as well as tenant for exactly the reason
+ * `cancelBookingForUser` is: the ownership constraint lives in this statement, not in a caller's
+ * pre-check, so it cannot be forgotten.
+ *
+ * Three things this statement does deliberately:
+ *
+ *  - `Status = 'pending'`. An edited booking always goes back to the sitter. She agreed to
+ *    specific dates for specific pets, not to whatever they become.
+ *  - `SyncPending = 1`, so the outbox moves and retitles the Google event even if the inline push
+ *    fails — the same write-ahead flag every other state change sets.
+ *  - `CancellationFee` is untouched (it is NULL on any editable row anyway): rescheduling is not a
+ *    cancellation and must never assess one.
+ *
+ * `expectedStatus` is the status the caller READ and priced from, matching `cancelBookingForUser`'s
+ * guard: a sitter who confirms or declines in the gap between the read and this write wins the
+ * race, and the edit is refused rather than landing on a row whose state it no longer describes.
+ */
+export async function updateBookingForEdit(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  id: string,
+  next: {
+    startDate: string;
+    endDate: string | null;
+    startTime: string | null;
+    petCount: number;
+    estCost: number;
+    answers: Record<string, string>;
+    expectedStatus: 'pending' | 'confirmed';
+  },
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE BookingRequests
+          SET StartDate = ?, EndDate = ?, StartTime = ?, PetCount = ?, EstCost = ?, Answers = ?,
+              Status = 'pending', SyncPending = 1
+        WHERE TenantId = ? AND EndUserId = ? AND Id = ?
+          AND ServiceType NOT IN ('blocked', 'external')
+          AND Status = ?`,
+    )
+    .bind(
+      next.startDate,
+      next.endDate,
+      next.startTime,
+      next.petCount,
+      next.estCost,
+      JSON.stringify(next.answers),
+      tenantId,
+      endUserId,
+      id,
+      next.expectedStatus,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Put a booking back exactly as it was after an edit was applied optimistically and then refused
+ * (a capacity conflict, or a throw part-way through). Deliberately NOT status-guarded: the row's
+ * status is whatever `updateBookingForEdit` just made it, and a guard that missed would strand the
+ * customer's booking describing dates nobody asked for — the one outcome worse than a lost race.
+ * Tenant + id scoped, and only ever called with values this same request just read off the row.
+ */
+export async function restoreBookingAfterEdit(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+  previous: {
+    startDate: string;
+    endDate: string | null;
+    startTime: string | null;
+    petCount: number;
+    estCost: number | null;
+    answers: string;
+    status: string;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE BookingRequests
+          SET StartDate = ?, EndDate = ?, StartTime = ?, PetCount = ?, EstCost = ?, Answers = ?,
+              Status = ?
+        WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(
+      previous.startDate,
+      previous.endDate,
+      previous.startTime,
+      previous.petCount,
+      previous.estCost,
+      previous.answers,
+      previous.status,
+      tenantId,
+      id,
+    )
+    .run();
 }
 
 /** One booking joined with its customer's contact details — for status-change notifications. */
@@ -1119,6 +1250,35 @@ const OUTSTANDING_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
      AND b.Status IN ('confirmed', 'cancelled')
      AND ${EXPECTED_AMOUNT_SQL} > COALESCE(paid.Total, 0)`;
 
+/**
+ * How much of the money received against a booking the sitter may legitimately KEEP. Identical to
+ * `EXPECTED_AMOUNT_SQL` for every status except `'declined'`, which is never billed at all (see
+ * `insertPayment`'s guard and the outstanding predicate above) and may therefore keep nothing — so a
+ * deposit taken on a request the sitter went on to decline is owed back in full, not merely the part
+ * above its old quote. Written as a CASE over the expected amount rather than as a second formula,
+ * so that "the same figure, minus one status" is literal in the SQL.
+ */
+const CREDITABLE_AMOUNT_SQL = `(CASE WHEN b.Status = 'declined' THEN 0 ELSE ${EXPECTED_AMOUNT_SQL} END)`;
+
+/**
+ * A booking is IN CREDIT when more has been paid against it than it may keep — the exact mirror of
+ * `OUTSTANDING_WHERE_SQL`'s arithmetic, and the reason an edit can no longer swallow money in
+ * silence: `updateBookingForEdit` re-stamps `EstCost` and returns the row to `'pending'`, so a $250
+ * stay paid in full and edited down to $100 left $150 of the customer's money on no screen at all
+ * (outstanding asks only whether something is still OWED, and it filters to confirmed/cancelled).
+ *
+ * **Mutually exclusive with the outstanding predicate, by construction.** For the two statuses
+ * outstanding covers, `CREDITABLE_AMOUNT_SQL` IS `EXPECTED_AMOUNT_SQL`, so `expected > paid` and
+ * `paid > keepable` cannot both hold; for `'pending'`/`'declined'` outstanding deliberately does not
+ * run at all. That is what lets this exist without disturbing the standing rule that
+ * `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in both directions: a credit is not
+ * a payable balance, it is a NEGATIVE one, and the UI gives it no *Record payment* button. There is
+ * no refund path in this product — the sitter settles it with her client — so surfacing the figure
+ * is the whole job. Expects `paid` and `chg` subqueries aliased in scope.
+ */
+const CREDIT_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
+     AND COALESCE(paid.Total, 0) > ${CREDITABLE_AMOUNT_SQL}`;
+
 export type OutstandingBookingRow = {
   BookingId: string;
   EndUserId: string | null;
@@ -1179,7 +1339,7 @@ export async function getAnalytics(
   const nextMonth = new Date(Date.UTC(y, m, 1));
   const windowEnd = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}-01`;
 
-  const [monthlyRes, byServiceRes, topClientsRes, outstandingRes] = await Promise.all([
+  const [monthlyRes, byServiceRes, topClientsRes, outstandingRes, creditsRes] = await Promise.all([
     db
       .prepare(
         `SELECT substr(PaidDate, 1, 7) AS Month, SUM(Amount) AS Total
@@ -1239,6 +1399,27 @@ export async function getAnalytics(
       )
       .bind(tenantId, tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
+    db
+      .prepare(
+        // OVER-payments: the mirror of the query above (see CREDIT_WHERE_SQL). `Keepable` is what
+        // this booking may keep in total — charges included — so the UI derives the credit as
+        // `PaidTotal - Keepable` with the same one-rule arithmetic the outstanding row uses.
+        `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
+                b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
+                ${CREDITABLE_AMOUNT_SQL} AS Keepable,
+                COALESCE(paid.Total, 0) AS PaidTotal
+         FROM BookingRequests b
+         LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
+         LEFT JOIN (
+           SELECT BookingRequestId, SUM(Amount) AS Total
+           FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+         ) paid ON paid.BookingRequestId = b.Id
+         ${CHARGES_JOIN_SQL}
+         WHERE b.TenantId = ? AND ${CREDIT_WHERE_SQL}
+         ORDER BY COALESCE(paid.Total, 0) - (${CREDITABLE_AMOUNT_SQL}) DESC, b.Id`,
+      )
+      .bind(tenantId, tenantId, tenantId)
+      .all<AnalyticsData['credits'][number]>(),
   ]);
 
   const byMonth = new Map(monthlyRes.results.map((r) => [r.Month, r.Total]));
@@ -1251,6 +1432,7 @@ export async function getAnalytics(
     byService: byServiceRes.results,
     topClients: topClientsRes.results,
     outstanding: outstandingRes.results,
+    credits: creditsRes.results,
   };
 }
 
@@ -1290,12 +1472,17 @@ export async function updateTenantSettings(
     contactPhone?: string | null;
     /** Booking horizon in months (0004); null = no limit. */
     maxAdvanceMonths?: number | null;
+    /** House-sit/boarding tail-end overlap allowance in days (0006); null = no limit. REQUIRED,
+     *  unlike the older optional fields above: this UPDATE overwrites the column unconditionally,
+     *  so an omitted value would silently turn a tenant's rule OFF. Callers must state it. */
+    housesitBoardingOverlapDays: number | null;
   },
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, Timezone = ?,
-         ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ? WHERE Id = ?`,
+         ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ?,
+         HousesitBoardingOverlapDays = ? WHERE Id = ?`,
     )
     .bind(
       settings.displayName,
@@ -1304,6 +1491,7 @@ export async function updateTenantSettings(
       settings.contactEmail ?? null,
       settings.contactPhone ?? null,
       settings.maxAdvanceMonths ?? null,
+      settings.housesitBoardingOverlapDays,
       tenantId,
     )
     .run();
@@ -1905,6 +2093,72 @@ export async function getEndUserById(
     .first<EndUser>();
 }
 
+/** One stored pre-fill: the customer's last answer to a question, with the question's shape at
+ *  the time they gave it. See sql/schema.sql's SavedAnswers comment. */
+export type SavedAnswerRow = {
+  ServiceType: string;
+  QuestionId: string;
+  Shape: string;
+  Value: string;
+};
+
+/** Every saved answer this customer has, across services. One indexed read per widget load. */
+export async function listSavedAnswers(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<SavedAnswerRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ServiceType, QuestionId, Shape, Value
+         FROM SavedAnswers WHERE TenantId = ? AND EndUserId = ?`,
+    )
+    .bind(tenantId, endUserId)
+    .all<SavedAnswerRow>();
+  return results ?? [];
+}
+
+/**
+ * Replaces this customer's saved answers FOR ONE SERVICE with what they just submitted. Each
+ * entry is upserted under its question's CURRENT shape (so the next read compares against the
+ * question as it stood when the answer was given); a question the customer left blank has its
+ * saved row DELETED rather than kept, because a cleared answer that silently came back next time
+ * would be the feature working against them.
+ *
+ * Callers pass only questions that belong to `serviceType` — an answer to a key the service never
+ * asked about is not saved.
+ */
+export async function replaceSavedAnswers(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  serviceType: string,
+  entries: { questionId: string; shape: string; value: string }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  await db.batch(
+    entries.map((e) =>
+      e.value === ''
+        ? db
+            .prepare(
+              `DELETE FROM SavedAnswers
+                 WHERE TenantId = ? AND EndUserId = ? AND ServiceType = ? AND QuestionId = ?`,
+            )
+            .bind(tenantId, endUserId, serviceType, e.questionId)
+        : db
+            .prepare(
+              `INSERT INTO SavedAnswers (TenantId, EndUserId, ServiceType, QuestionId, Shape, Value)
+                    VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT (TenantId, EndUserId, ServiceType, QuestionId)
+                 DO UPDATE SET Shape = excluded.Shape,
+                               Value = excluded.Value,
+                               UpdatedAt = datetime('now')`,
+            )
+            .bind(tenantId, endUserId, serviceType, e.questionId, e.shape, e.value),
+    ),
+  );
+}
+
 export async function getEndUserByEmail(
   db: D1Database,
   tenantId: string,
@@ -2142,7 +2396,7 @@ export async function deleteCustomer(
                                  WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
                                    AND po.EndUserId <> ?)
                 AND EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id))`;
-  const [, , , , endUsersResult] = await db.batch([
+  const [, , , , , endUsersResult] = await db.batch([
     db
       .prepare(
         `UPDATE EndUserPets
@@ -2173,6 +2427,16 @@ export async function deleteCustomer(
     db
       .prepare(
         `DELETE FROM LoginCodes
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    // Saved intake answers (0007) also FK to EndUsers. Unreachable on today's paths — a saved
+    // answer only exists because a booking POST succeeded, and `bookingGuard` refuses the delete
+    // outright in that case — but the FK is real, so cascade it rather than rely on that
+    // coincidence surviving a future change. Same guards as everything else in the batch.
+    db
+      .prepare(
+        `DELETE FROM SavedAnswers
            WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
@@ -2599,6 +2863,30 @@ export async function addBookingPets(
 }
 
 /**
+ * Set a booking's pet links to exactly `petIds` — the edit path's counterpart to `addBookingPets`,
+ * which only ever adds. The DELETE is scoped through the parent booking's tenant (the same route
+ * tenancy takes in every other `BookingRequestPets` statement, since the table has no `TenantId`
+ * of its own), so it can never clear the links of a booking belonging to another sitter; the
+ * inserts reuse `addBookingPets` and so keep its per-row tenant guard verbatim.
+ */
+export async function replaceBookingPets(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+  petIds: string[],
+): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM BookingRequestPets
+        WHERE BookingRequestId = ?
+          AND EXISTS (SELECT 1 FROM BookingRequests WHERE Id = ? AND TenantId = ?)`,
+    )
+    .bind(bookingId, bookingId, tenantId)
+    .run();
+  await addBookingPets(db, tenantId, bookingId, petIds);
+}
+
+/**
  * Pet names linked to ONE booking, tenant-scoped (BookingRequestPets has no TenantId, so tenancy
  * flows in via the join to BookingRequests + EndUserPets — a foreign pet id contributes nothing).
  * Ordered by Name for a deterministic, human-readable event summary.
@@ -2949,6 +3237,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
     db.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM SavedAnswers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM PetGroupPricing WHERE TenantId = ?').bind(tenantId),

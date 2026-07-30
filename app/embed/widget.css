@@ -118,6 +118,15 @@ body {
   gap: 14px;
 }
 
+/* Tighter than the sign-in column. The book tab stacks the service pills, the blurb, the roster
+   and the calendar in a row, so a 14px gap repeated four times reads as drift rather than
+   structure — and each of those gaps used to be paid TWICE, because the blocks carried their own
+   top margins on top of it. Those margins are gone (see .bp-service-desc / .bp-pets-block /
+   .bp-cal); this gap is now the only spacing between them. */
+.bp-book {
+  gap: 12px;
+}
+
 /* ── Fields ────────────────────────────────────────────────────── */
 .bp-field,
 .bp-book label.bp-field,
@@ -194,31 +203,40 @@ body {
 }
 
 /* ── Service pills ─────────────────────────────────────────────── */
-/* auto-fit keeps cells equal width/height per row; at the widget's 420px content width this gives
-   2 columns (tenants have at most 6 services, realistically 2-4), collapsing to one column on
-   narrow host pages.
-   The floor is SIZED FOR THE CHECK, not chosen for looks. A card spends 27px of padding, a 20px
-   icon, two 8px gaps and the 13px selection check — 76px — before a single letter of the label is
-   drawn, and "Boarding" alone measures 64px, so a track narrower than ~140px cannot hold the
-   shortest built-in label and its check on one line. The old 104px floor (3 columns of ~135px)
-   left 59px, which is why the check either pushed the label onto a second line or, once the check
-   was moved out of the label, sat on top of the text. 148px keeps a comfortable margin over that
-   140px minimum at every width auto-fit can produce. Lower it and the overlap comes straight
-   back. */
+/* auto-fit keeps cells equal width/height per row; tenants have at most 6 services, realistically
+   2-4. The floor is what decides how many columns a host page gets, so it is MEASURED, not
+   guessed, and it is measured against the LABEL alone: the selection check is a badge on the icon
+   (below) and takes no width on the card's flex line.
+   A card spends 22px of padding, a 20px icon and one 8px gap — 50px — before a letter is drawn.
+   The widest built-in label WORD is "Boarding" at 62.8px (system-ui 700, 14.72px, -0.02em), and a
+   word narrower than its track is what keeps `overflow-wrap: anywhere` from breaking mid-word, so
+   a track needs ~113px to hold any built-in word whole. 118px is that plus margin for a wider
+   platform font, and it is also the largest floor that still yields 3 columns at the widget's
+   374px content width ((374 - 2 gaps) / 3 = 119.3px). Raising it past 119 costs that third
+   column outright — which is exactly what the old 148px floor did (1 / 2 / 2 columns at 294 /
+   380 / 420px host widths, against 2 / 2 / 3 here). Lowering it below ~113 buys a third column at
+   380px only by breaking "Boarding" across two lines mid-word. */
 .bp-service-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 8px;
 }
 
 .bp-book .bp-service-card {
+  /* One surface colour for the card and for the check badge that punches out of the icon on top
+     of it — declared once here and overridden once on .bp-selected, so the badge can never paint
+     a disc in a colour the card behind it isn't. */
+  --bp-card-surface: var(--bp-card);
   display: inline-flex;
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  padding: 10px 15px 10px 12px;
+  /* Asymmetric on purpose: the icon sits closer to the pill's edge than the label does, which
+     buys the label 5px of the track back. Everything the check used to be paid in width — the
+     old 15px right padding and the second 8px gap — is gone with it. */
+  padding: 10px 12px 10px 10px;
   min-height: 44px;
-  background: var(--bp-card);
+  background: var(--bp-card-surface);
   border: 1.5px solid var(--bp-line);
   border-radius: 999px;
   color: var(--bp-soft);
@@ -238,12 +256,15 @@ body {
 }
 
 .bp-book .bp-service-card.bp-selected {
+  --bp-card-surface: color-mix(in srgb, var(--bp-accent) 9%, var(--bp-card));
   border-color: var(--bp-accent);
-  background: color-mix(in srgb, var(--bp-accent) 9%, var(--bp-card));
   color: var(--bp-ink);
 }
 
+/* The check badge's positioning context. `position: relative` establishes it without changing
+   the icon's own 20px box, so the badge is laid out against the icon and out of the flex flow. */
 .bp-service-emoji {
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   color: inherit;
@@ -267,10 +288,11 @@ body {
 
 /* The selected service's description, below the grid. min-height reserves space for the
    longest realistic 1-2 line blurb so switching services (including to one with no
-   description) never changes the widget's height. */
+   description) never changes the widget's height. No top margin: `.bp-book`'s gap is the only
+   spacing between blocks, and this line belongs to the card above it anyway. */
 .bp-service-desc {
   min-height: 2.6em;
-  margin: 6px 0 0;
+  margin: 0;
   font-size: 0.85rem;
   line-height: 1.3;
   color: var(--bp-soft);
@@ -278,7 +300,8 @@ body {
 
 /* ── Calendar ──────────────────────────────────────────────────── */
 .bp-cal {
-  margin-top: 4px;
+  /* No top margin — `.bp-book`'s gap already separates it from the roster above. */
+  margin-top: 0;
 }
 
 .bp-cal-nav {
@@ -523,6 +546,22 @@ body {
   color: var(--bp-soft);
 }
 
+/* Two lines, on narrow hosts only. WHICH entries the legend carries is a property of the month
+   on screen ("Almost full" only appears if some day is partial), so the number of lines it needs
+   changes as the customer pages months — the same class of host-page bounce every reserve in
+   this file exists to stop, and it was measurably live: 1033px ⇄ 1053px paging Aug→Oct at a
+   294px host. The three entries measure 74 + 91 + 78px plus their dots and gaps, which needs
+   ~271px of column and so cannot share one line inside a 248px one.
+   Reserved by media query rather than unconditionally because the widget's width IS the iframe's
+   width: at 420px the column is 376px and one line is provably enough, so a typical embed pays
+   nothing for a wrap that cannot happen to it. Shrinking the type until three entries fit at
+   248px was measured too — it takes 0.66rem (10.5px), which is not a legend anyone can read. */
+@media (max-width: 380px) {
+  .bp-cal-legend {
+    min-height: 3.3em;
+  }
+}
+
 .bp-cal-legend li::before {
   content: '';
   display: inline-block;
@@ -640,23 +679,35 @@ body {
   transform: rotate(180deg);
 }
 
-/* Sits between the service blurb and the calendar, outside `.bp-details` — so its own margin
-   replaces the gap `.bp-details` used to supply. */
+/* Sits between the service blurb and the calendar, outside `.bp-details`. It owns the roster's
+   whole stack — the disclosure, the expanded chips, AND `.bp-pets-note` — so those three share
+   ONE 8px gap instead of the note paying `.bp-book`'s gap plus a margin of its own on top. No
+   top margin here either: `.bp-book`'s gap is the only spacing above it. */
 .bp-pets-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 0;
 }
 
-/* The pet-count / acceptance refusal, beside the control that causes it. Always rendered: it
-   appears and disappears as pets are ticked, and that is exactly the interaction the
-   reserved-space rule exists for. THREE lines, from the same 294px measurement as `.bp-note` —
-   this slot carries the acceptance error verbatim ("House sitting doesn't accept guinea pigs —
-   Bartholomew can't join this booking."), which is the longest string either slot can hold. */
+/* The pet-count refusal, beside the control that causes it. Always rendered: it appears and
+   disappears as pets are ticked, and that is exactly the interaction the reserved-space rule
+   exists for.
+   ONE line, sized for the worst case this slot can REACH rather than the worst case it can
+   HOLD. Measured at a 294px host (a 248px column, the narrowest sidebar embed worth
+   supporting): every string a customer can produce here wraps to one line — "Choose at least
+   one pet." and the pet cap at its widest, "This service allows at most 15 pets." (15 is
+   MAX_PET_COUNT_CAP), both fit with room to spare.
+   The three-line reserve this used to carry was sized for `acceptanceError` ("House sitting
+   doesn't accept guinea pigs — Bartholomew can't join this booking.", three lines here), which
+   is NOT reachable from the widget: a pet the service doesn't accept renders as a `disabled`
+   checkbox, and `defaultPets` is filtered to accepted pets and reset to that default on every
+   service change — so no interaction can put a rejected pet into the selection. Should stale or
+   corrupt data ever produce it anyway, min-height is a floor, so it grows to three lines and
+   stays legible rather than being clipped. */
 .bp-pets-note {
-  min-height: 3.6em;
-  margin: 6px 0 0;
+  min-height: 1.2em;
+  margin: 0;
   font-size: 0.85rem;
   line-height: 1.2;
   overflow-wrap: break-word;
@@ -976,16 +1027,82 @@ body {
   font-size: 0.85rem;
 }
 
-/* Always present, even when it holds nothing — see the block comment above. */
+/* Always present, even when it holds nothing — see the block comment above. It may hold TWO
+   buttons ("Change booking" + "Cancel booking"), and it must be exactly as tall either way:
+   `nowrap` plus shrinkable, ellipsising buttons is what guarantees one line at every embed width,
+   so the card's height — and the scrollHeight this widget posts to its host page — never depends
+   on how many actions a booking happens to offer. */
 .bp-mine-actions {
   margin-top: auto;
   padding-top: 10px;
   min-height: 44px;
   display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
   align-items: flex-end;
 }
 
-.bp-mine-cancel {
+.bp-mine-cancel,
+.bp-mine-edit {
+  background: none;
+  border: 1px solid var(--bp-line);
+  border-radius: 8px;
+  color: var(--bp-soft);
+  font-family: var(--bp-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  min-height: 44px;
+  cursor: pointer;
+  /* Shrink rather than wrap — see the block above. */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bp-mine-cancel:hover,
+.bp-mine-edit:hover {
+  color: var(--bp-ink);
+  background: var(--bp-sage-wash);
+}
+
+/* The primary of the two: changing a booking is the outcome a sitter usually prefers, so it
+   reads as the encouraged path and the cancel keeps the quieter outline. */
+.bp-mine-edit {
+  border-color: var(--bp-accent);
+  color: var(--bp-accent);
+}
+
+/* Edit mode's header: what is being changed, and the way out. One line, fixed height — it stands
+   where the service picker would be, and the form below it is otherwise identical to a new
+   request's. */
+.bp-editing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.bp-editing-what {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--bp-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-editing-what strong {
+  color: var(--bp-ink);
+}
+
+/* Scoped under .bp-book to beat `.bp-book button` on specificity — backing out of an edit is the
+   quiet action; "Save changes" is the only primary on this screen. */
+.bp-book .bp-editing-back {
+  flex: 0 0 auto;
   background: none;
   border: 1px solid var(--bp-line);
   border-radius: 8px;
@@ -998,7 +1115,7 @@ body {
   cursor: pointer;
 }
 
-.bp-mine-cancel:hover {
+.bp-book .bp-editing-back:hover {
   color: var(--bp-ink);
   background: var(--bp-sage-wash);
 }
@@ -1129,19 +1246,42 @@ body {
   color: var(--bp-accent);
 }
 
-/* The selected service card's non-color cue (this widget never says "selected" in colour alone).
-   Two rules keep it from moving the page:
-   - It is a SIBLING of `.bp-service-label`, so it sits on the card's own flex line and can never
-     be wrapped by the label's text. Inside the label it was an extra inline word, and "House
-     sitting ✓" broke to a third line while "House sitting" needed two.
-   - It is always in the DOM, hidden rather than removed when the card is unselected, so its box is
-     reserved in EVERY card. Selecting a service therefore changes no geometry at all — which
-     matters because this widget lives in an iframe that resizes its host to `scrollHeight` on
-     every ResizeObserver tick, so a card that grows on a tap bounces the host page. */
+/* The selected service card's non-color cue (this widget never says "selected" in colour alone),
+   drawn as a badge punched out of the leading icon's bottom-right corner. Three rules, each of
+   which a previous attempt broke:
+   - It is OUT OF FLOW (absolutely positioned inside the icon's own box), so it takes no width on
+     the card's flex line and the label gets the whole rest of the track. In flow it was an extra
+     inline item the label had to make room for, and the only way to stop "House sitting ✓" from
+     wrapping was a 148px column floor — paying for the check in column count on every host page.
+   - It therefore cannot reach the label either: its box ends 1px past the icon's right edge, 7px
+     short of where the label's box begins, at every track width and for every label length. That
+     is a geometric fact, not a spacing hope — which the corner-of-the-CARD placement, where a
+     long label runs underneath, would not have been.
+   - It is always in the DOM, hidden rather than removed when the card is unselected. Selecting a
+     service therefore changes no geometry at all — which matters because this widget lives in an
+     iframe that resizes its host to `scrollHeight` on every ResizeObserver tick, so a card that
+     grows on a tap bounces the host page.
+   Colours are unchanged from the in-flow check it replaces: accent mark on the card's own
+   surface. A disc filled with the tenant's accent would be the obvious badge, but the accent is
+   the tenant's to choose and a pale one would put a white check on a near-white circle. */
 .bp-service-check {
+  position: absolute;
+  right: -1px;
+  bottom: -3px;
   display: inline-flex;
-  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--bp-card-surface);
   color: var(--bp-accent);
+}
+
+/* Heavier than the icon set's 1.75, because the mark is drawn at 11px instead of 20px and the
+   badge has to read at a glance against the icon underneath it. */
+.bp-service-check svg {
+  stroke-width: 3.25;
 }
 
 .bp-book .bp-service-card:not(.bp-selected) .bp-service-check {

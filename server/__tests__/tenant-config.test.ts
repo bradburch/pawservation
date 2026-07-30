@@ -90,6 +90,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       displayName: 'Sunny Paws',
       accentColor: '#2563eb',
       timezone: 'Europe/London',
+      housesitBoardingOverlapDays: 1,
     });
     const t = await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws');
     expect(t!.Timezone).toBe('Europe/London');
@@ -97,6 +98,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       displayName: 'Sunny Paws',
       accentColor: '#2563eb',
       timezone: null,
+      housesitBoardingOverlapDays: 1,
     });
     expect((await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!.Timezone).toBeNull();
   });

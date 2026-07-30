@@ -275,15 +275,16 @@ describe('sql/seed-demo.sql — shape', () => {
     // Seed a FOURTH tenant — unrelated to the three this file knows about — with its own services,
     // apply seed-demo.sql, and prove those rows survive unchanged. EVERY column this file UPDATEs
     // needs a witness here, seeded to a DIFFERENT value than any statement would write, so an
-    // unscoped write is visible rather than accidentally idempotent: Tenants.MaxAdvanceMonths,
+    // unscoped write is visible rather than accidentally idempotent: Tenants.MaxAdvanceMonths and
+    // Tenants.HousesitBoardingOverlapDays,
     // plus PetRateMode / MinLeadDays / MaxNights / MaxPetCount / MaxConcurrentPets /
     // CancellationTiers / HolidayRate / Questions and an AcceptedPetTypes row for each of the
     // three acceptance writes (dog-only, cat-only, and the NULL that opens house sitting).
     const { raw } = createTestEnv(); // base seed only — demoActivity applied by hand below
     raw
       .prepare(
-        `INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths)
-         VALUES ('tnt_other', 'other-co', 'Other Co', 3)`,
+        `INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths, HousesitBoardingOverlapDays)
+         VALUES ('tnt_other', 'other-co', 'Other Co', 3, 2)`,
       )
       .run();
     const addService = (type: string, accepted: string | null) =>
@@ -305,8 +306,12 @@ describe('sql/seed-demo.sql — shape', () => {
     raw.exec(readFileSync(join(import.meta.dirname, '..', '..', 'sql', 'seed-demo.sql'), 'utf8'));
 
     expect(
-      raw.prepare(`SELECT MaxAdvanceMonths FROM Tenants WHERE Id = 'tnt_other'`).get(),
-    ).toEqual({ MaxAdvanceMonths: 3 });
+      raw
+        .prepare(
+          `SELECT MaxAdvanceMonths, HousesitBoardingOverlapDays FROM Tenants WHERE Id = 'tnt_other'`,
+        )
+        .get(),
+    ).toEqual({ MaxAdvanceMonths: 3, HousesitBoardingOverlapDays: 2 });
     const untouched = {
       PetRateMode: 'exact',
       MinLeadDays: 9,
@@ -389,6 +394,7 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
       kind: 'boarding',
       cap: 2, // Sunny Paws boarding MaxConcurrentPets
       petCount: 1,
+      overlapAllowance: 1, // Sunny Paws takes the schema default (0006)
     };
     // Exactly what the sitter's confirm path asks: is there room for this booking, ignoring the
     // booking itself? Bookend sharing does not rescue it — its endpoints are interior days of two
@@ -499,6 +505,12 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
         kind: 'housesit',
         cap: null, // both tenants' house sitting is unlimited
         petCount: 1,
+        // Read from the row rather than hardcoded: seed-demo.sql gives Paws & Relax 0 (0006).
+        overlapAllowance: (
+          raw
+            .prepare(`SELECT HousesitBoardingOverlapDays AS d FROM Tenants WHERE Id = ?`)
+            .get(tenantId) as { d: number | null }
+        ).d,
       };
       expect({
         id,

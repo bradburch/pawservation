@@ -50,6 +50,32 @@ export const MAX_LEAD_DAYS_CAP = 90;
 /** Sanity rail for Tenants.MaxAdvanceMonths: 1..24 months of booking horizon. */
 export const MAX_ADVANCE_MONTHS_CAP = 24;
 
+/**
+ * Business cap for Tenants.HousesitBoardingOverlapDays (0006). TWO, not a rail: a shared day has to
+ * be a HANDOVER — the request arriving as everything else departs, or departing as everything else
+ * arrives — and a stay can do that at most twice, once at each of its own ends. So 3 and 300 behave
+ * identically to 2, and refusing them keeps the stored number honest about what it buys instead of
+ * implying mid-stay overlap can be unlocked with a bigger figure.
+ */
+export const MAX_OVERLAP_DAYS_CAP = 2;
+
+/** The product default for `Tenants.HousesitBoardingOverlapDays` — one handover day. Mirrors the
+ *  column's own `DEFAULT 1`, and is the fallback for a tenant row that predates the column (a
+ *  cached one, see `checkRange`); reading a missing value as "no limit" would silently switch the
+ *  rule off for everybody. */
+export const DEFAULT_OVERLAP_DAYS = 1;
+
+/** True for the overlap allowance's accepted domain: null (= no limit) or a whole 0..2. */
+export function isValidOverlapDays(value: unknown): value is number | null {
+  return (
+    value === null ||
+    (typeof value === 'number' &&
+      Number.isInteger(value) &&
+      value >= 0 &&
+      value <= MAX_OVERLAP_DAYS_CAP)
+  );
+}
+
 /** True for a whole number in [1, DEFENSIVE_MAX_PET_COUNT]. */
 export function isValidPetCount(value: unknown): value is number {
   return (

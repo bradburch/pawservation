@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- months from today (tenant timezone, day-clamped). NULL = no limit. One value for the whole
   -- business — the per-service knob is TenantServices.MinLeadDays.
   MaxAdvanceMonths INTEGER,
+  -- How many days a request may overlap OPPOSITE-kind occupancy — a house sit over boarding or
+  -- boarding over a house sit (0006). Tenant-wide because it models the sitter's own whereabouts,
+  -- not a pool. A shared day only ever counts as a HANDOVER: the request arrives on a day
+  -- everything else departs on, or departs on a day everything else arrives on. 0 = never; 1 = the
+  -- default; 2 = one at each end of the stay; NULL = no limit. Above 2 is unreachable.
+  HousesitBoardingOverlapDays INTEGER DEFAULT 1,
   -- NULL = active; timestamp = disabled by the owner (widget dark + admin read-only).
   DisabledAt TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -183,6 +189,31 @@ CREATE TABLE IF NOT EXISTS LoginCodes (
   -- Failed verify attempts; capped in consumeLoginCode so a 6-digit code can't be brute-forced.
   Attempts INTEGER NOT NULL DEFAULT 0
 );
+
+-- Intake answers a customer has already given, re-offered as the PRE-FILL on their next booking
+-- for the same service (0007). Customer-authored content about their own pets: written only by
+-- the booking POST, from what that customer actually submitted, and read only back to them.
+--
+-- Keyed (TenantId, EndUserId, ServiceType, QuestionId): the question's own stable id, scoped to
+-- the service that asked it, because ids are unique only within a service's Questions JSON.
+-- `Shape` is `questionShape()` (src/shared/booking/service-rules.ts) AS OF THE ANSWER — a saved
+-- answer pre-fills only when the question still has that shape, so a sitter who rewords or
+-- retypes a question drops the stale answer instead of resurrecting it against a changed
+-- question. The pre-fill is re-validated on read AND re-validated as a normal answer on the next
+-- POST; it is never trusted.
+CREATE TABLE IF NOT EXISTS SavedAnswers (
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
+  ServiceType TEXT NOT NULL,
+  QuestionId TEXT NOT NULL,
+  Shape TEXT NOT NULL,
+  Value TEXT NOT NULL,
+  UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (TenantId, EndUserId, ServiceType, QuestionId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_SavedAnswers_Lookup
+  ON SavedAnswers (TenantId, EndUserId);
 
 -- Blocked days are rows with ServiceType='blocked' (EndUserId NULL, Status 'confirmed'),
 -- mirroring how production models blocked time as calendar events of type 'blocked'.

@@ -23,6 +23,11 @@ export type Tenant = {
   /** Booking horizon in calendar months (0004): a request may not START further out than this.
    *  null = no limit. Profile-level — one value for the whole business. */
   MaxAdvanceMonths: number | null;
+  /** How many days a request may overlap OPPOSITE-kind occupancy — a house sit over boarding or
+   *  boarding over a house sit (0006) — counted only where the day is a real handover. 0 = never;
+   *  1 = the default; 2 = one at each end of the stay; null = no limit. Tenant-wide: the sitter's
+   *  whereabouts, not a pool. Fed to the engine as `CapacityRequest.overlapAllowance`. */
+  HousesitBoardingOverlapDays: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
 };
 
@@ -219,6 +224,22 @@ export type AnalyticsData = {
     Status: string;
     EstCost: number;
     ChargesTotal: number;
+    PaidTotal: number;
+  }[];
+  /**
+   * Bookings paid MORE than they may keep — the mirror of `outstanding` (see `CREDIT_WHERE_SQL` in
+   * `server/db/repo.ts`), and mutually exclusive with it. `Keepable` is the whole amount the booking
+   * may keep (quote or assessed fee, plus charges; zero for a declined row), so the credit is
+   * `PaidTotal - Keepable` — derived once in `serializeAnalytics`, never restated.
+   */
+  credits: {
+    BookingId: string;
+    Name: string | null;
+    Email: string | null;
+    ServiceType: string;
+    StartDate: string;
+    Status: string;
+    Keepable: number;
     PaidTotal: number;
   }[];
 };
