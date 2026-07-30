@@ -198,6 +198,16 @@ export type CalendarBooking = {
   startDate: string;
   endDate: string | null;
   startTime: string | null;
+  /**
+   * Owner-set departure time, 'HH:MM' (0008); null = none. What it does depends on the shape, and
+   * only one of the two is negotiable:
+   * - RANGE stay: it is a time on the END date, so the event stays ALL-DAY (a timed dateTime event
+   *   is single-day-only and would collapse a multi-night stay into a block). It appears in the
+   *   description instead — the same treatment the arrival time already gets.
+   * - SINGLE-DAY booking: both times are on `startDate`, so this IS the event's end and the event
+   *   gets a real duration instead of `durationMinutes`' guess.
+   */
+  departureTime: string | null;
   durationMinutes: number | null;
   petCount: number;
   petNames: string[];
@@ -252,7 +262,9 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   const summary = `${marker}${b.serviceLabel} — ${petsText}`;
   const lines = [`Service: ${b.serviceLabel}`, `Pets: ${petsText}`];
   if (b.customerEmail) lines.push(`Customer: ${b.customerEmail}`);
+  // A RANGE stay's times live in the description, because its event must stay all-day (below).
   if (b.startTime && b.endDate) lines.push(`Arrival: ${b.startTime}`);
+  if (b.departureTime && b.endDate) lines.push(`Departure: ${b.departureTime}`);
   if (b.estCost != null) lines.push(`Estimated cost: $${b.estCost}`);
   if (b.status === 'pending')
     lines.push('Requested via Pawservation — confirm or decline in your dashboard.');
@@ -274,7 +286,14 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   // an all-day multi-day event (the timed branch would collapse it to a 60-minute block).
   if (b.startTime && !b.endDate) {
     const startDateTime = `${b.startDate}T${b.startTime}:00`;
-    const endDateTime = addMinutesToLocal(b.startDate, b.startTime, b.durationMinutes ?? 60);
+    // An owner-set departure time on a single-day booking is a REAL end, so prefer it over the
+    // option's duration guess: a daycare day dropped at 08:00 and collected at 16:30 is an
+    // eight-and-a-half-hour block on the sitter's calendar, not a 60-minute one. Ordering is
+    // already guaranteed here (`resolveBookingTimes` refuses a single-day departure that is not
+    // strictly later than its arrival), so this can never produce an end before its start.
+    const endDateTime = b.departureTime
+      ? `${b.startDate}T${b.departureTime}:00`
+      : addMinutesToLocal(b.startDate, b.startTime, b.durationMinutes ?? 60);
     return {
       summary,
       description,

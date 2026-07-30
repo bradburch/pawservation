@@ -92,6 +92,13 @@ export type Availability =
        *  includes them; the widget must never re-derive a total from these. */
       holidayUnits?: number;
       holidayRate?: number;
+      /** The extra-time surcharge the chosen arrival/departure times attract (0009) and its total,
+       *  both absent unless a fee applies. NOT included in `estCost` — it becomes a separate charge
+       *  on the booking, so what the client will owe is `estCost + extraTimeTotal`. Render these
+       *  verbatim: the amounts are the server's, and the widget must never derive a fee from a time
+       *  of day (it is not sent the sitter's standard hours at all, precisely so it cannot). */
+      extraTimeFees?: { label: string; amount: number }[];
+      extraTimeTotal?: number;
     }
   | {
       /** The dates are free but the sitter has never priced this set of pets. The widget shows
@@ -110,8 +117,11 @@ export type Booking = {
   type: string;
   startDate: string;
   endDate: string | null;
-  /** Customer-chosen arrival time on a range stay; null = none given. */
+  /** Owner-chosen arrival time; null = none given. */
   startTime: string | null;
+  /** Owner-chosen departure time (0008); null = none given. On a range stay it is a time on the
+   *  END date, so it may legally be earlier in the day than `startTime`. */
+  departureTime: string | null;
   /** Which priced option the booking is on. An edit never changes it — it is here so the edit
    *  form paints the calendar against the right option's capacity. */
   optionKey: string | null;
@@ -165,6 +175,8 @@ export type PetGroupRate = {
 export type ImportResult = {
   importedCustomers: number;
   importedPets: number;
+  /** Pets the file shared with a second owner via the "Co-owner Emails" column. */
+  coOwnerLinks: number;
   invitesSent: number;
   invitesFailed: number;
   skippedRows: { row: number; reason: string }[];
@@ -178,6 +190,8 @@ export type AdminBooking = {
   startDate: string;
   endDate: string | null;
   startTime: string | null;
+  /** Owner-chosen departure time (0008); null = none given. */
+  departureTime: string | null;
   optionKey: string | null;
   petCount: number;
   /** True for a materialized Google Calendar event: read-only, blocks capacity, no customer. */
@@ -275,7 +289,8 @@ export type AnalyticsPayload = {
    * The mirror of `outstanding`: bookings paid MORE than they may keep, which is where a booking
    * edited down below what was already paid now shows up. `credit` is `paidTotal - keepable`. These
    * rows deliberately carry no *Record payment* affordance — a credit is a negative balance, not a
-   * payable one.
+   * payable one. What they DO carry is the two ways to close one: keep it (`keepCredit`, when
+   * `canKeep`) or correct the payment ledger (the money went back).
    */
   credits: {
     bookingId: string;
@@ -287,6 +302,12 @@ export type AnalyticsPayload = {
     keepable: number;
     paidTotal: number;
     credit: number;
+    /**
+     * Server-derived: may this credit be closed by KEEPING it? False for a declined request, which
+     * may keep nothing at all — so the button is not offered rather than offered and refused. The
+     * client never re-derives this rule.
+     */
+    canKeep: boolean;
   }[];
 };
 
@@ -374,8 +395,11 @@ export const api = {
       optionKey: string;
       startDate: string;
       endDate?: string;
-      /** Range services only: customer-chosen arrival time 'HH:MM'. */
+      /** Owner-chosen arrival time 'HH:MM'. Accepted only where the option does not own the
+       *  clock (boarding, house sitting, daycare); the server refuses it elsewhere. */
       startTime?: string;
+      /** Owner-chosen departure time 'HH:MM'; same gate as `startTime`. */
+      departureTime?: string;
       petIds: string[];
       answers: Record<string, string>;
     },
@@ -414,6 +438,7 @@ export const api = {
       startDate: string;
       endDate?: string;
       startTime?: string;
+      departureTime?: string;
       petIds: string[];
       answers: Record<string, string>;
     },
@@ -490,6 +515,25 @@ export const adminApi = {
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ email, name, phone, petName, petType }),
       }),
+    /**
+     * A second HUMAN on an existing account, bringing no new animal. `petIds` is the account's LIVE
+     * pet set: the server creates the client and every ownership link in one batch, so there is no
+     * moment at which a pet-less client exists. `created: false` means the email was already a
+     * client and the two accounts merged — a materially different outcome the UI must not blur.
+     */
+    addCoOwner: (
+      slug: string,
+      token: string,
+      body: { email: string; name: string; phone: string; petIds: string[] },
+    ) =>
+      request<{ id: string; created: boolean; linkedPets: number }>(
+        `/api/${slug}/admin/customers/co-owner`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(body),
+        },
+      ),
     remove: (slug: string, token: string, id: string) =>
       request<unknown>(`/api/${slug}/admin/customers/${id}`, {
         method: 'DELETE',
@@ -575,6 +619,16 @@ export const adminApi = {
         method: 'DELETE',
         headers: authHeaders(token),
       }),
+    /**
+     * Close an over-payment the client agreed the sitter keeps. NO amount is sent — the server
+     * computes it from the same expressions Earnings displayed the credit with, so the charge it
+     * logs can never differ from the figure she was shown.
+     */
+    keepCredit: (slug: string, token: string, bookingId: string) =>
+      request<{ kept: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
+        method: 'POST',
+        headers: authHeaders(token),
+      }),
     venmoPreview: (slug: string, token: string, csv: string) =>
       request<VenmoPreview>(`/api/${slug}/admin/payments/venmo/preview`, {
         method: 'POST',
@@ -635,13 +689,23 @@ export const adminApi = {
       // Only sent when the sitter opts to charge the prospective cancellation fee; the server
       // ignores it for non-cancel transitions, so it's omitted unless explicitly true.
       chargeFee?: boolean,
+      /**
+       * The sitter's ACKNOWLEDGEMENT that confirming will overbook her. Sent only on the second
+       * attempt, after the server answered 409 `capacity_conflict` and she said yes to the warning
+       * it wrote — never pre-emptively, or the warning would be one she never saw.
+       */
+      overrideCapacity?: boolean,
     ) =>
       request<{ status: string; notified: boolean; cancellationFee: number | null }>(
         `/api/${slug}/admin/bookings/${id}/status`,
         {
           method: 'POST',
           headers: { ...jsonHeaders, ...authHeaders(token) },
-          body: JSON.stringify(chargeFee ? { status, chargeFee: true } : { status }),
+          body: JSON.stringify({
+            status,
+            ...(chargeFee ? { chargeFee: true } : {}),
+            ...(overrideCapacity ? { overrideCapacity: true } : {}),
+          }),
         },
       ),
   },

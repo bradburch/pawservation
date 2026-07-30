@@ -128,10 +128,11 @@ describe('PetOwners write-side repo', () => {
     const { env, raw } = createTestEnv();
     const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
     await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', co.Id);
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi')).toBe(true);
+    // 'removed'/'not-found' rather than true/false — see removeEndUserPet's third outcome.
+    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi')).toBe('removed');
     expect(ownersOf(raw, 'pet_sp_mochi')).toEqual([]);
     // Wrong tenant: no delete, edges intact.
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella')).toBe(false);
+    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella')).toBe('not-found');
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_sp_jess']);
   });
 

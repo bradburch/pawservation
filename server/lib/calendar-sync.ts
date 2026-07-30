@@ -41,6 +41,9 @@ export type SyncInput = {
   startDate: string;
   endDate: string | null;
   startTime: string | null;
+  /** Owner-set departure time (0008); null = none. On a RANGE stay it only reaches the event's
+   *  description — a range event stays all-day. On a single-day booking it IS the event's end. */
+  departureTime: string | null;
   durationMinutes: number | null;
   petCount: number;
   petNames: string[];
@@ -85,6 +88,7 @@ async function resourceForBooking(env: Env, tenant: Tenant, b: SyncInput) {
     startDate: b.startDate,
     endDate: b.endDate,
     startTime: b.startTime,
+    departureTime: b.departureTime,
     durationMinutes: b.durationMinutes,
     petCount: b.petCount,
     petNames: b.petNames,
@@ -277,6 +281,7 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
         startDate: r.StartDate,
         endDate: r.EndDate,
         startTime: r.StartTime,
+        departureTime: r.DepartureTime,
         durationMinutes: r.DurationMinutes,
         petCount: r.PetCount,
         petNames,
@@ -358,6 +363,7 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
         startDate: r.StartDate,
         endDate: r.EndDate,
         startTime: r.StartTime,
+        departureTime: r.DepartureTime,
         durationMinutes: r.DurationMinutes,
         petCount: r.PetCount,
         petNames,

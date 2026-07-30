@@ -38,6 +38,10 @@ describe('cancellation tiers config round-trip', () => {
       cancellationTiers: tiers,
       holidayRate: before.HolidayRate,
       petRateMode: before.PetRateMode,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     expect(ok).toBe(true);
 
@@ -66,6 +70,10 @@ describe('cancellation tiers config round-trip', () => {
       cancellationTiers: tiers,
       holidayRate: before.HolidayRate,
       petRateMode: before.PetRateMode,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     expect(setOk).toBe(true);
 
@@ -86,6 +94,10 @@ describe('cancellation tiers config round-trip', () => {
       cancellationTiers: null,
       holidayRate: before.HolidayRate,
       petRateMode: before.PetRateMode,
+      standardArrivalTime: null,
+      standardDepartureTime: null,
+      earlyArrivalFee: null,
+      lateDepartureFee: null,
     });
     expect(clearOk).toBe(true);
 

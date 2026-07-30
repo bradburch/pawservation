@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import {
   countSlotBookings,
@@ -57,6 +57,10 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     // asked for explicitly (`svc('boarding', { PetRateMode: 'linear' })`), so no existing
     // expectation can quietly change meaning when the multiplier lands.
     PetRateMode: 'exact',
+    StandardArrivalTime: null,
+    StandardDepartureTime: null,
+    EarlyArrivalFee: null,
+    LateDepartureFee: null,
     ...over,
   };
 }
@@ -417,6 +421,7 @@ describe('rowsToCapacityEvents', () => {
         OptionKey: null,
         PetCount: 1,
         StartTime: null,
+        DepartureTime: null,
         GCalEventId: null,
         EstCost: null,
         CancellationFee: null,
@@ -434,6 +439,7 @@ describe('rowsToCapacityEvents', () => {
         OptionKey: null,
         PetCount: 2,
         StartTime: null,
+        DepartureTime: null,
         GCalEventId: null,
         EstCost: 100,
         CancellationFee: null,
@@ -1863,5 +1869,82 @@ describe('the availability quote is authenticated and pet-identified', () => {
     });
     // The refusal carries no money at all — not 0, not null, not undefined-but-present.
     expect(body).not.toHaveProperty('estCost');
+  });
+});
+
+/**
+ * A stored booking whose dates do not parse used to be dropped on the floor by `buildCapacity`,
+ * so the day it occupies read as FREE and both the quote and the month grid offered it. Corrupt
+ * data now fails toward occupied (a hard `blocked` day), and the server names the offending rows
+ * in a log a human can actually find.
+ */
+describe('a booking row with corrupt dates blocks its day rather than vanishing', () => {
+  const corrupt = (raw: { exec: (sql: string) => void }, id: string, endDate: string) =>
+    raw.exec(
+      `INSERT INTO BookingRequests
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, Status)
+       VALUES ('${id}', '${TENANT_A}', NULL, 'boarding', '2028-12-10', '${endDate}', 'standard', 1, 'confirmed')`,
+    );
+
+  it('the quote refuses the dates it overlaps', async () => {
+    const { env, raw } = createTestEnv();
+    corrupt(raw, 'bk_corrupt_quote', 'not-a-date');
+    const res = await quote(env, 'sunny-paws', 'type=boarding&start=2028-12-10&end=2028-12-12', [
+      'pet_sp_bella',
+    ]);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      available: false,
+      reason: 'Those dates are not available.',
+    });
+  });
+
+  it('the month grid paints the day unavailable, so grid and quote still agree', async () => {
+    const { env, raw } = createTestEnv();
+    corrupt(raw, 'bk_corrupt_month', 'not-a-date');
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/availability/month?type=boarding&month=2028-12',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const { days } = (await res.json()) as {
+      days: { date: string; status: string; reason: string | null }[];
+    };
+    const day = days.find((d) => d.date === '2028-12-10');
+    expect(day?.status).toBe('unavailable');
+    expect(day?.reason).toBe('Sitter unavailable');
+  });
+
+  it('a BLANKED end date is still read: it cannot sort itself out of the window', async () => {
+    // The window predicate compares dates as strings, so `''` sorts below every real date and used
+    // to drop the row from the query — before the engine ever saw it. A row the read never returns
+    // is a row nothing can fail safe on.
+    const { env, raw } = createTestEnv();
+    corrupt(raw, 'bk_corrupt_blank', '');
+    const res = await quote(env, 'sunny-paws', 'type=boarding&start=2028-12-10&end=2028-12-12', [
+      'pet_sp_bella',
+    ]);
+    expect(await res.json()).toMatchObject({
+      available: false,
+      reason: 'Those dates are not available.',
+    });
+  });
+
+  it('names the corrupt row in a log, so it is fixable rather than silently blocking forever', async () => {
+    const { env, raw } = createTestEnv();
+    corrupt(raw, 'bk_corrupt_logged', 'not-a-date');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await quote(env, 'sunny-paws', 'type=boarding&start=2028-12-10&end=2028-12-12', [
+        'pet_sp_bella',
+      ]);
+      const logged = spy.mock.calls.map((args) => args.join(' ')).join('\n');
+      expect(logged).toContain('bk_corrupt_logged');
+      expect(logged).toContain(TENANT_A);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -286,10 +286,100 @@ function AccountRateRow({
   );
 }
 
+/**
+ * Another PERSON on this account, bringing no animal of their own — a partner, a grown-up child, the
+ * neighbour who does the handovers. Posts to the one route that can do this without ever committing a
+ * pet-less client (the client row and every ownership link are one `db.batch` server-side), so there
+ * is deliberately no "create them, then link them" two-step here to get half-done.
+ *
+ * Unlike adding a PET, adding a person does not change the account's pet set — so it cannot orphan a
+ * saved pet-group rate, and this form says nothing about rates.
+ */
+function PersonAdder({
+  group,
+  slug,
+  token,
+  onAdded,
+  onError,
+  clearError,
+}: {
+  group: AccountGroup;
+  slug: string;
+  token: string;
+  /** Called with the new/linked client id and whether they were newly created. */
+  onAdded: (result: { id: string; created: boolean }) => void;
+  onError: (e: unknown) => void;
+  clearError: () => void;
+}) {
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ready = email.trim() !== '' && name.trim() !== '' && group.livePetIds.length > 0;
+
+  const add = async () => {
+    if (!ready || busy) return;
+    clearError();
+    setBusy(true);
+    try {
+      const res = await adminApi.customers.addCoOwner(slug, token, {
+        email: email.trim().toLowerCase(),
+        name: name.trim(),
+        phone: phone.trim(),
+        petIds: group.livePetIds,
+      });
+      setEmail('');
+      setName('');
+      setPhone('');
+      onAdded({ id: res.id, created: res.created });
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pb-row pb-add-person">
+      <input
+        type="email"
+        placeholder="their@email.com"
+        aria-label="New person's email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      />
+      <input
+        type="text"
+        placeholder="Name"
+        aria-label="New person's name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <input
+        type="tel"
+        placeholder="Phone (optional)"
+        aria-label="New person's phone (optional)"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+      />
+      <button onClick={() => void add()} disabled={busy || !ready}>
+        {busy ? 'Adding…' : 'Add person'}
+      </button>
+    </div>
+  );
+}
+
+/** Pets summarised for one table row: "Bella (Dog), Mochi (Cat)". Deceased pets are named too, so a
+ *  memorial account isn't a blank cell. */
+function petSummary(pets: Pet[], labelBySlug: Map<string, string>): string {
+  return pets.map((p) => `${p.name} (${labelBySlug.get(p.petType) ?? p.petType})`).join(', ');
+}
+
 export function ClientsSection({
   customers,
   petTypes,
   services,
+  selectedAccountKey,
   slug,
   token,
   onCustomersChanged,
@@ -299,6 +389,13 @@ export function ClientsSection({
   customers: Customer[];
   petTypes: PetType[];
   services: ServiceForm[];
+  /**
+   * The account whose DETAIL view is open, from the URL hash (`#clients/<group key>`), or null for
+   * the list. Owned by App.tsx so the browser's back button and a refresh both work; an unknown key
+   * (an account whose pet set changed, so its key moved) falls back to the list rather than to an
+   * empty screen.
+   */
+  selectedAccountKey: string | null;
   slug: string;
   token: string;
   onCustomersChanged: () => void;
@@ -321,7 +418,15 @@ export function ClientsSection({
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [welcomeHint, setWelcomeHint] = useState<string | null>(null);
+  /** The outcome of the last add/welcome action. Rendered as `.pb-flash`, NOT as the muted
+   *  `.pb-applies` helper copy every static paragraph here uses — an outcome that looks exactly like
+   *  boilerplate is an outcome the sitter never reads. */
+  const [flash, setFlash] = useState<string | null>(null);
+  /** Free-text filter over owner names/emails/phones and pet names. The list is the scannable view;
+   *  a sitter with 60 clients scans by typing, not by scrolling. */
+  const [query, setQuery] = useState('');
+  /** The account row to mark as just-changed when the sitter comes back to the list. */
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
 
   /** Matches the old Dashboard run() semantics: clear the error banner at the START of each
    * action (so a stale error from an earlier failure doesn't outlive a later action), run the
@@ -421,13 +526,18 @@ export function ClientsSection({
     }
   }
 
-  const groups = groupIntoAccounts(
-    customers.map((cust) => ({
-      ownerId: cust.id,
-      livePetIds: cust.pets.filter((p) => !p.deceasedAt).map((p) => p.id),
-      deceasedPetIds: cust.pets.filter((p) => p.deceasedAt).map((p) => p.id),
-    })),
-  );
+  /** The same union-find grouping the section renders, over ANY customer list — so the post-add jump
+   *  below can regroup a freshly-fetched list without restating the rule. */
+  const groupsOf = (list: Customer[]): AccountGroup[] =>
+    groupIntoAccounts(
+      list.map((cust) => ({
+        ownerId: cust.id,
+        livePetIds: cust.pets.filter((p) => !p.deceasedAt).map((p) => p.id),
+        deceasedPetIds: cust.pets.filter((p) => p.deceasedAt).map((p) => p.id),
+      })),
+    );
+
+  const groups = groupsOf(customers);
 
   const petsOf = (ids: string[]): Pet[] =>
     ids
@@ -452,6 +562,33 @@ export function ClientsSection({
       return an.localeCompare(bn) || a.group.key.localeCompare(b.group.key);
     });
 
+  const openAccount = (key: string) => {
+    window.location.hash = `clients/${key}`;
+  };
+
+  /**
+   * Where an add LANDS the sitter. The old behaviour was to leave them on an alphabetical list with a
+   * grey line of text: the new client was somewhere unpredictable and nothing pointed at them. Instead
+   * we open the account the person now belongs to (and mark its row, for when they come back).
+   *
+   * An add answers with an OWNER id, and the account's key is derived from its pet ids — which only
+   * settle once the list is re-read — so this re-reads it. That one extra GET is also what makes the
+   * MERGE case land correctly: joining an existing client's pets can change which pet id is first,
+   * and therefore the key.
+   */
+  const focusOwner = async (ownerId: string) => {
+    try {
+      const { customers: fresh } = await adminApi.customers.list(slug, token);
+      const found = groupsOf(fresh).find((g) => g.ownerIds.includes(ownerId));
+      if (!found) return;
+      setHighlightKey(found.key);
+      openAccount(found.key);
+    } catch {
+      // Landing somewhere useful is a nicety; the add itself has already succeeded and the list
+      // refresh is the parent's business.
+    }
+  };
+
   // Every client is added WITH their first pet — the server refuses a pet-less create, so the
   // form requires name + pet before Add enables.
   const canAddCustomer =
@@ -462,7 +599,7 @@ export function ClientsSection({
 
   const addCustomer = () =>
     mutate(async () => {
-      setWelcomeHint(null);
+      setFlash(null);
       const email = custEmail.trim().toLowerCase();
       const res = await adminApi.customers.add(
         slug,
@@ -475,11 +612,12 @@ export function ClientsSection({
       );
       // The append path keeps the client's stored name/phone and only adds the pet — saying
       // "added" there would misreport what happened to what the sitter just typed.
-      setWelcomeHint(
+      setFlash(
         res.created
-          ? `${email} added. No email has been sent — use "Send welcome email" on their row when you're ready.`
-          : `${email} already exists — ${custPetName.trim()} was added to their account. Their stored name and phone were kept.`,
+          ? `${email} added, with ${custPetName.trim()}. No email has been sent — use “Send welcome email” on their row when you’re ready.`
+          : `${email} was already a client — ${custPetName.trim()} was added to their existing account, and their stored name and phone were kept.`,
       );
+      await focusOwner(res.id);
       setCustEmail('');
       setCustName('');
       setCustPhone('');
@@ -490,16 +628,16 @@ export function ClientsSection({
 
   const sendWelcome = (cust: Customer) =>
     mutate(async () => {
-      setWelcomeHint(null);
+      setFlash(null);
       await adminApi.customers.sendWelcome(slug, token, cust.id);
-      setWelcomeHint(`Welcome email sent to ${cust.email}.`);
+      setFlash(`Welcome email sent to ${cust.email}.`);
     });
 
   const removePet = (endUserId: string, petId: string) =>
     mutate(() => adminApi.customers.removePet(slug, token, endUserId, petId));
 
   // Co-ownership (0019): a pet can have several owners, so pets are listed once per ACCOUNT
-  // rather than once per client. Owner-level linking lives on the account card (see below).
+  // rather than once per client. Owner-level linking lives on the account detail (see below).
   const setPetDeceased = (petId: string, deceased: boolean) =>
     mutate(() => adminApi.customers.setPetDeceased(slug, token, petId, deceased));
 
@@ -540,14 +678,263 @@ export function ClientsSection({
     }
   };
 
+  /**
+   * The account the hash names. A group's key is DERIVED (`account:<first live pet id>` /
+   * `memorial:<pet id>` / `owner:<owner id>`), so it MOVES when the household changes — marking its
+   * last pet deceased, or adding a pet whose id sorts first. Falling back on the id inside the key
+   * keeps the sitter on the account they were looking at instead of bouncing them to the list for
+   * doing something the detail view itself offers. A genuinely gone account still lands on the list.
+   */
+  const keyId = selectedAccountKey?.slice(selectedAccountKey.indexOf(':') + 1) ?? '';
+  const selected = selectedAccountKey
+    ? (cards.find((card) => card.group.key === selectedAccountKey) ??
+      cards.find(
+        (card) =>
+          card.group.livePetIds.includes(keyId) ||
+          card.group.deceasedPetIds.includes(keyId) ||
+          card.group.ownerIds.includes(keyId),
+      ))
+    : undefined;
+
+  const flashBanner = flash ? (
+    <p className="pb-flash" role="status">
+      {flash}
+      <button type="button" className="pb-linklike" onClick={() => setFlash(null)}>
+        Dismiss
+      </button>
+    </p>
+  ) : null;
+
+  // ── One account, in full: this is where every editor lives now ───────────────────────────────
+  if (selected) {
+    const { group, owners } = selected;
+    const livePets = petsOf(group.livePetIds);
+    const gonePets = petsOf(group.deceasedPetIds);
+    const title = owners.map(ownerShort).join(' & ');
+    // "Remove pet" is keyed on the pet server-side; the customer id in the URL is only
+    // required to be a real client of this tenant. Pass an owner who actually owns the pet.
+    const ownerIdFor = (pet: Pet): string =>
+      owners.find((o) => ownerIdsByPet.get(pet.id)?.has(o.id))?.id ?? owners[0]?.id ?? '';
+    return (
+      <>
+        <p className="pb-crumb">
+          <a href="#clients">← All clients</a>
+        </p>
+        <h2>
+          <IconUsers size={18} /> {title}
+          {group.active ? null : <span className="pb-chip pb-chip-warn">No active pets</span>}
+        </h2>
+        {flashBanner}
+        <div className="pb-account pb-account-detail">
+          <h3>People on this account</h3>
+          <ul className="pb-owners">
+            {owners.map((owner) => (
+              <li key={owner.id}>
+                <span>
+                  {ownerLabel(owner)}
+                  {owner.phone ? ` · ${owner.phone}` : ''}{' '}
+                  <span
+                    className={`pb-chip${owner.status === 'active' ? ' pb-chip-ok' : ' pb-chip-warn'}`}
+                  >
+                    {owner.status.charAt(0).toUpperCase() + owner.status.slice(1)}
+                  </span>
+                </span>
+                <VenmoField
+                  customer={owner}
+                  slug={slug}
+                  token={token}
+                  onSaved={onCustomersChanged}
+                  onError={handleError}
+                  clearError={clearError}
+                />
+                <button onClick={() => void sendWelcome(owner)} disabled={busy}>
+                  Send welcome email
+                </button>
+                <button
+                  onClick={() => removeOwnerFromAccount(group, owner.id)}
+                  disabled={busy || owners.length < 2 || group.livePetIds.length === 0}
+                  title={
+                    owners.length < 2
+                      ? 'The only owner of these pets — remove the client instead.'
+                      : group.livePetIds.length === 0
+                        ? 'This account has no active pets — there is nothing to unlink.'
+                        : undefined
+                  }
+                >
+                  Remove from account
+                </button>
+                <button onClick={() => void removeCustomer(owner.id)} disabled={busy}>
+                  Remove client
+                </button>
+              </li>
+            ))}
+          </ul>
+          {group.active ? (
+            <>
+              <p className="pb-applies">
+                Add another person — a partner, a grown-up child, whoever else books. They share
+                every pet on this account and are billed together. It doesn&rsquo;t change the
+                account&rsquo;s pets, so any saved rate here is untouched, and nothing is emailed.
+              </p>
+              <PersonAdder
+                group={group}
+                slug={slug}
+                token={token}
+                onAdded={({ id, created }) => {
+                  setFlash(
+                    created
+                      ? `Added to this account. No email has been sent — use “Send welcome email” on their row when you’re ready.`
+                      : `They were already one of your clients, so their account has been merged into this one: they now share these pets, and their own pets (if any) are here too. Their stored name and phone were kept.`,
+                  );
+                  onCustomersChanged();
+                  void focusOwner(id);
+                }}
+                onError={handleError}
+                clearError={clearError}
+              />
+              {customers.length > owners.length ? (
+                <div className="pb-row pb-add-owner">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) addOwnerToAccount(group, e.target.value);
+                    }}
+                    disabled={busy}
+                    aria-label={`Add an existing client to ${title}`}
+                  >
+                    <option value="">…or add an existing client…</option>
+                    {customers
+                      .filter((c) => !group.ownerIds.includes(c.id))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {ownerLabel(c)}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="pb-hint">
+                    Links them to every pet on this account. If they already have pets of their own,
+                    the two accounts merge into one.
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="pb-applies">
+              This account has no active pets, so there is nothing for another person to share. Add
+              a pet below first — that makes it a live account again — then add the person.
+            </p>
+          )}
+
+          <h3>Pets</h3>
+          {livePets.length + gonePets.length === 0 ? (
+            <p className="pb-applies">No pets on this account — add one below.</p>
+          ) : (
+            <ul className="pb-pets">
+              {[...livePets, ...gonePets].map((p) => (
+                <li key={p.id}>
+                  {p.name} <em>{labelBySlug.get(p.petType) ?? p.petType}</em>
+                  {p.deceasedAt ? <span className="pb-chip pb-chip-warn">Deceased</span> : null}
+                  {p.notes ? <span className="pb-hint"> — {p.notes}</span> : null}
+                  <button onClick={() => void setPetDeceased(p.id, !p.deceasedAt)} disabled={busy}>
+                    {p.deceasedAt ? 'Mark alive' : 'Mark deceased'}
+                  </button>
+                  <button onClick={() => void removePet(ownerIdFor(p), p.id)} disabled={busy}>
+                    Remove pet
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {petTypes.length > 0 && owners[0] ? (
+            <>
+              {!group.active && (
+                // A memorial account has no live pets; adding one makes it a live account
+                // again. That's a legitimate action (a client gets a new pet), but it must
+                // not happen silently — say what the add will do before it does it.
+                <p className="pb-hint">
+                  Adding a pet makes this a live account again — it returns to the client list and
+                  can book.
+                </p>
+              )}
+              <PetAdder
+                owners={owners}
+                petTypes={petTypes}
+                slug={slug}
+                token={token}
+                onAdded={onCustomersChanged}
+                onError={handleError}
+                clearError={clearError}
+              />
+            </>
+          ) : null}
+          {group.active && (
+            <details className="pb-account-rates">
+              <summary>Rates for this account</summary>
+              <p className="pb-hint">
+                Rates for specific pets beat species rates beat the base rate. A set you
+                haven&rsquo;t priced has no price — multi-pet bookings without one are refused.
+              </p>
+              <p className="pb-hint">
+                Covers all of this account&rsquo;s pets together. Pricing a subset of the
+                account&rsquo;s pets isn&rsquo;t editable in the dashboard yet. Changing this
+                account&rsquo;s pets clears its saved rate.
+              </p>
+              {enabledOptions.length === 0 ? (
+                <p className="pb-applies">
+                  No enabled services with saved options yet — save your services first.
+                </p>
+              ) : (
+                enabledOptions.map((option) => {
+                  const key = buildGroupKey(group.livePetIds);
+                  const override = groupRates?.find(
+                    (r) =>
+                      r.serviceType === option.serviceType &&
+                      r.optionKey === option.optionKey &&
+                      buildGroupKey(r.petIds) === key,
+                  );
+                  return (
+                    <AccountRateRow
+                      key={`${option.serviceType}:${option.optionKey}:${override?.id ?? 'new'}`}
+                      slug={slug}
+                      token={token}
+                      group={group}
+                      option={option}
+                      override={override}
+                      busy={busy}
+                      mutateRates={mutateRates}
+                    />
+                  );
+                })
+              )}
+            </details>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  // ── The list: scannable, and nothing to edit until you click into an account ─────────────────
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? cards.filter(({ group, owners }) => {
+        const haystack = [
+          ...owners.map((o) => `${o.name ?? ''} ${o.email} ${o.phone ?? ''}`),
+          ...petsOf([...group.livePetIds, ...group.deceasedPetIds]).map((p) => p.name),
+        ]
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(needle);
+      })
+    : cards;
+
   return (
     <>
       <h2>
         <IconUsers size={18} /> Your clients
         <Hint label="Clients">
           Only people on this list can book with you. Clients who share a pet are grouped into one
-          account — add an owner to an account and they get access to all of its pets. Adding a
-          client never emails them — send the welcome email from their row when you're ready.
+          account — click an account to add people or pets, set a Venmo handle, price that
+          household, or send a welcome email. Adding a client never emails them.
         </Hint>
       </h2>
       <p className="pb-applies">
@@ -603,11 +990,7 @@ export function ClientsSection({
           {busy ? 'Adding…' : 'Add account'}
         </button>
       </div>
-      {welcomeHint && (
-        <p className="pb-applies" role="status">
-          {welcomeHint}
-        </p>
-      )}
+      {flashBanner}
       {petTypes.length === 0 && (
         <p className="pb-applies">
           Add a pet type in Pet types first — a client can only be added together with a pet.
@@ -644,12 +1027,22 @@ export function ClientsSection({
         appear once. Every client needs at least one pet: rows that would leave a client with none,
         or a new client with no name, are skipped and listed back to you.
       </p>
+      <p className="pb-applies">
+        <strong>Two people sharing a pet?</strong> Put the other owner&rsquo;s email in the last
+        column (<em>Co-owner Emails</em>; separate several with semicolons) and give them a row of
+        their own with their name and no pet — they&rsquo;ll be added to the same account and billed
+        together. Repeating the pet on a second row instead creates a <em>second</em> pet, because
+        two clients can each own a &ldquo;Bella&rdquo;.
+      </p>
       {importResult && (
         <div className="pb-row">
           <p>
             Imported {importResult.importedCustomers} client
             {importResult.importedCustomers === 1 ? '' : 's'} and {importResult.importedPets} pet
             {importResult.importedPets === 1 ? '' : 's'}.
+            {importResult.coOwnerLinks > 0
+              ? ` Shared ${importResult.coOwnerLinks} pet${importResult.coOwnerLinks === 1 ? '' : 's'} with a co-owner.`
+              : ''}
             {importResult.invitesSent > 0
               ? ` Sent ${importResult.invitesSent} welcome email${importResult.invitesSent === 1 ? '' : 's'}.`
               : ''}
@@ -660,7 +1053,7 @@ export function ClientsSection({
           {importResult.skippedRows.length > 0 && (
             <ul>
               {importResult.skippedRows.map((r) => (
-                <li key={r.row}>
+                <li key={`${r.row}:${r.reason}`}>
                   Row {r.row}: {r.reason}
                 </li>
               ))}
@@ -668,177 +1061,80 @@ export function ClientsSection({
           )}
         </div>
       )}
-      <ul className="pb-accounts">
-        {cards.map(({ group, owners }) => {
-          const livePets = petsOf(group.livePetIds);
-          const gonePets = petsOf(group.deceasedPetIds);
-          const title = owners.map(ownerShort).join(' & ');
-          // "Remove pet" is keyed on the pet server-side; the customer id in the URL is only
-          // required to be a real client of this tenant. Pass an owner who actually owns the pet.
-          const ownerIdFor = (pet: Pet): string =>
-            owners.find((o) => ownerIdsByPet.get(pet.id)?.has(o.id))?.id ?? owners[0]?.id ?? '';
-          return (
-            <li key={group.key} className="pb-account">
-              <div className="pb-account-head">
-                <strong>{title}</strong>
-                {group.active ? null : <span className="pb-chip pb-chip-warn">No active pets</span>}
-              </div>
-              <ul className="pb-owners">
-                {owners.map((owner) => (
-                  <li key={owner.id}>
-                    <span>
-                      {ownerLabel(owner)}
-                      {owner.phone ? ` · ${owner.phone}` : ''}{' '}
-                      <span
-                        className={`pb-chip${owner.status === 'active' ? ' pb-chip-ok' : ' pb-chip-warn'}`}
-                      >
-                        {owner.status.charAt(0).toUpperCase() + owner.status.slice(1)}
-                      </span>
-                    </span>
-                    <VenmoField
-                      customer={owner}
-                      slug={slug}
-                      token={token}
-                      onSaved={onCustomersChanged}
-                      onError={handleError}
-                      clearError={clearError}
-                    />
-                    <button onClick={() => void sendWelcome(owner)} disabled={busy}>
-                      Send welcome email
-                    </button>
-                    <button
-                      onClick={() => removeOwnerFromAccount(group, owner.id)}
-                      disabled={busy || owners.length < 2 || group.livePetIds.length === 0}
-                      title={
-                        owners.length < 2
-                          ? 'The only owner of these pets — remove the client instead.'
-                          : group.livePetIds.length === 0
-                            ? 'This account has no active pets — there is nothing to unlink.'
-                            : undefined
-                      }
-                    >
-                      Remove from account
-                    </button>
-                    <button onClick={() => void removeCustomer(owner.id)} disabled={busy}>
-                      Remove client
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {livePets.length + gonePets.length === 0 ? (
-                <p className="pb-applies">No pets on this account — add one below.</p>
-              ) : (
-                <ul className="pb-pets">
-                  {[...livePets, ...gonePets].map((p) => (
-                    <li key={p.id}>
-                      {p.name} <em>{labelBySlug.get(p.petType) ?? p.petType}</em>
-                      {p.deceasedAt ? <span className="pb-chip pb-chip-warn">Deceased</span> : null}
-                      {p.notes ? <span className="pb-hint"> — {p.notes}</span> : null}
-                      <button
-                        onClick={() => void setPetDeceased(p.id, !p.deceasedAt)}
-                        disabled={busy}
-                      >
-                        {p.deceasedAt ? 'Mark alive' : 'Mark deceased'}
-                      </button>
-                      <button onClick={() => void removePet(ownerIdFor(p), p.id)} disabled={busy}>
-                        Remove pet
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {group.active && customers.length > owners.length ? (
-                <div className="pb-row pb-add-owner">
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) addOwnerToAccount(group, e.target.value);
-                    }}
-                    disabled={busy}
-                    aria-label={`Add owner to ${title}`}
+      {cards.length > 0 && (
+        <div className="pb-row pb-clients-search">
+          <label className="pb-inline">
+            Search
+            <input
+              type="search"
+              placeholder="Name, email or pet"
+              aria-label="Search clients"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+          <span className="pb-hint">
+            {visible.length} of {cards.length} account{cards.length === 1 ? '' : 's'}
+          </span>
+        </div>
+      )}
+      {cards.length === 0 ? (
+        <p className="pb-applies">No clients yet — add your first one above, or import a CSV.</p>
+      ) : visible.length === 0 ? (
+        <p className="pb-applies">Nothing matches “{query.trim()}”.</p>
+      ) : (
+        <div className="pb-table-wrap">
+          <table className="pb-clients-table">
+            <thead>
+              <tr>
+                <th scope="col">Account</th>
+                <th scope="col">Pets</th>
+                <th scope="col">People</th>
+                <th scope="col">Contact</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(({ group, owners }) => {
+                const title = owners.map(ownerShort).join(' & ');
+                const pets = petsOf([...group.livePetIds, ...group.deceasedPetIds]);
+                const first = owners[0];
+                const statuses = [...new Set(owners.map((o) => o.status))];
+                return (
+                  <tr
+                    key={group.key}
+                    className={group.key === highlightKey ? 'pb-row-hit' : undefined}
                   >
-                    <option value="">Add owner to this account…</option>
-                    {customers
-                      .filter((c) => !group.ownerIds.includes(c.id))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {ownerLabel(c)}
-                        </option>
+                    <th scope="row">
+                      <a href={`#clients/${group.key}`}>{title || '(no name)'}</a>
+                      {group.active ? null : (
+                        <span className="pb-chip pb-chip-warn">No active pets</span>
+                      )}
+                    </th>
+                    <td>{pets.length === 0 ? '—' : petSummary(pets, labelBySlug)}</td>
+                    <td>{owners.length}</td>
+                    <td>
+                      {first ? first.email : '—'}
+                      {first?.phone ? ` · ${first.phone}` : ''}
+                      {owners.length > 1 ? ` +${owners.length - 1} more` : ''}
+                    </td>
+                    <td>
+                      {statuses.map((s) => (
+                        <span
+                          key={s}
+                          className={`pb-chip${s === 'active' ? ' pb-chip-ok' : ' pb-chip-warn'}`}
+                        >
+                          {s.charAt(0).toUpperCase() + s.slice(1)}
+                        </span>
                       ))}
-                  </select>
-                  <span className="pb-hint">
-                    Links them to every pet on this account. If they already have pets of their own,
-                    the two accounts merge into one.
-                  </span>
-                </div>
-              ) : null}
-              {petTypes.length > 0 && owners[0] ? (
-                <>
-                  {!group.active && (
-                    // A memorial account has no live pets; adding one makes it a live account
-                    // again. That's a legitimate action (a client gets a new pet), but it must
-                    // not happen silently — say what the add will do before it does it.
-                    <p className="pb-hint">
-                      Adding a pet makes this a live account again — it returns to the client list
-                      and can book.
-                    </p>
-                  )}
-                  <PetAdder
-                    owners={owners}
-                    petTypes={petTypes}
-                    slug={slug}
-                    token={token}
-                    onAdded={onCustomersChanged}
-                    onError={handleError}
-                    clearError={clearError}
-                  />
-                </>
-              ) : null}
-              {group.active && (
-                <details className="pb-account-rates">
-                  <summary>Rates for this account</summary>
-                  <p className="pb-hint">
-                    Rates for specific pets beat species rates beat the base rate. A set you
-                    haven&rsquo;t priced has no price — multi-pet bookings without one are refused.
-                  </p>
-                  <p className="pb-hint">
-                    Covers all of this account&rsquo;s pets together. Pricing a subset of the
-                    account&rsquo;s pets isn&rsquo;t editable in the dashboard yet. Changing this
-                    account&rsquo;s pets clears its saved rate.
-                  </p>
-                  {enabledOptions.length === 0 ? (
-                    <p className="pb-applies">
-                      No enabled services with saved options yet — save your services first.
-                    </p>
-                  ) : (
-                    enabledOptions.map((option) => {
-                      const key = buildGroupKey(group.livePetIds);
-                      const override = groupRates?.find(
-                        (r) =>
-                          r.serviceType === option.serviceType &&
-                          r.optionKey === option.optionKey &&
-                          buildGroupKey(r.petIds) === key,
-                      );
-                      return (
-                        <AccountRateRow
-                          key={`${option.serviceType}:${option.optionKey}:${override?.id ?? 'new'}`}
-                          slug={slug}
-                          token={token}
-                          group={group}
-                          option={option}
-                          override={override}
-                          busy={busy}
-                          mutateRates={mutateRates}
-                        />
-                      );
-                    })
-                  )}
-                </details>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   );
 }

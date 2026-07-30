@@ -87,6 +87,17 @@ export type TenantService = {
    *  charges the option rate × the number of distinct pets. Defaults to 'exact'; a stored pet-set
    *  rate always beats the multiplier. See `estimateCost`. */
   PetRateMode: PetRateMode;
+  /**
+   * Extra-time surcharge config (0009), all nullable and each SIDE needing both its time and its
+   * fee — NULL anywhere = the feature is off, the `HolidayRate` convention. The two fees are FLAT
+   * whole dollars charged at most once PER STAY, never per hour and never per day, and never part of
+   * `EstCost`: the fee is a `BookingCharges` row, so `estimateCost` stays "units of time × a stored
+   * rate". See `server/lib/booking-times.ts`.
+   */
+  StandardArrivalTime: string | null;
+  StandardDepartureTime: string | null;
+  EarlyArrivalFee: number | null;
+  LateDepartureFee: number | null;
 };
 
 export type TenantServiceOption = {
@@ -167,6 +178,9 @@ export type BookingRow = {
   OptionKey: string | null;
   PetCount: number;
   StartTime: string | null;
+  /** Owner-set departure time, 'HH:MM' (0008); null = not given. NEVER an option's clock — see
+   *  server/lib/booking-times.ts, and note the ordering rule is single-day only. */
+  DepartureTime: string | null;
   GCalEventId: string | null;
   EstCost: number | null;
   /** Fee assessed at cancel time, whole dollars; null = none assessed (0016). */
@@ -189,6 +203,18 @@ export type PaymentRow = {
   CreatedAt: string;
 };
 
+/**
+ * `BookingCharges.Origin` values a DERIVED charge may carry (0009) — today only the two sides of the
+ * extra-time surcharge. NULL/absent Origin means the sitter typed the charge herself, which is every
+ * row that predates the column and every row the admin Charges panel writes.
+ *
+ * Lives here rather than in `server/lib/booking-times.ts` so `server/db/repo.ts` (which owns the
+ * DELETE that scopes an edit's re-derivation to exactly these rows) and that module can both name
+ * the same domain without the repo importing from `lib/`.
+ */
+export const EXTRA_TIME_ORIGINS = ['extra_time_early', 'extra_time_late'] as const;
+export type ExtraTimeOrigin = (typeof EXTRA_TIME_ORIGINS)[number];
+
 /** One extra charge on a booking (vet visit, haircut). Amount is whole dollars >= 1. */
 export type BookingChargeRow = {
   Id: string;
@@ -196,6 +222,8 @@ export type BookingChargeRow = {
   BookingRequestId: string;
   Label: string;
   Amount: number;
+  /** Provenance (0009): null = sitter-typed, otherwise the rule that derived it. */
+  Origin: ExtraTimeOrigin | null;
   CreatedAt: string;
 };
 

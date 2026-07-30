@@ -85,6 +85,7 @@ export function BookTab({
   const [start, setStart] = useState(editing?.startDate ?? '');
   const [end, setEnd] = useState(editing?.endDate ?? '');
   const [startTime, setStartTime] = useState(editing?.startTime ?? '');
+  const [departureTime, setDepartureTime] = useState(editing?.departureTime ?? '');
   // null = "still the default", which is EVERY accepted pet (see `defaultPetIds`). Held as a
   // sentinel rather than seeded into state so the default can be recomputed as the async pet list
   // arrives and as the service — and with it which pets are accepted — changes, without an effect
@@ -207,6 +208,7 @@ export function BookTab({
     setStart('');
     setEnd('');
     setStartTime('');
+    setDepartureTime('');
     // Back to the default for the NEW service — acceptance and the pet cap are both per service.
     setPetSelection(null);
     setPetsOpen(null);
@@ -246,6 +248,11 @@ export function BookTab({
       petIds: petKey,
     };
     if (isRange) params.end = end;
+    // The chosen times ride along so the quote refuses exactly what the POST would refuse and can
+    // disclose the extra-time surcharge they attract. The widget still computes no money — the fee
+    // it renders is the server's own number.
+    if (startTime) params.startTime = startTime;
+    if (departureTime) params.departureTime = departureTime;
     // While editing, the stay must not collide with ITSELF: the server drops this row from the
     // capacity read (after proving the caller owns it) so re-timing inside a tight pool is
     // possible at all.
@@ -260,7 +267,18 @@ export function BookTab({
       }
       throw e;
     }
-  }, [quoteReady, type, optionKey, start, end, petKey, isRange, editingId]);
+  }, [
+    quoteReady,
+    type,
+    optionKey,
+    start,
+    end,
+    startTime,
+    departureTime,
+    petKey,
+    isRange,
+    editingId,
+  ]);
 
   const { data: quoteData, error: quoteError, loading: quoting } = useAsync(fetchQuote);
   // useAsync retains the last success across a dependency change, so a result is only THIS
@@ -304,7 +322,11 @@ export function BookTab({
         startDate: start,
         petIds: selectedPets,
         answers,
-        ...(isRange ? { endDate: end, ...(startTime ? { startTime } : {}) } : {}),
+        ...(isRange ? { endDate: end } : {}),
+        // Sent for every service whose clock the option does NOT own (the same mirror the inputs
+        // are rendered under) — an empty string is "not given" and is simply omitted.
+        ...(!service?.hasDuration && startTime ? { startTime } : {}),
+        ...(!service?.hasDuration && departureTime ? { departureTime } : {}),
       };
       if (editing) {
         // The PUT carries no service and no idempotency key: the server reads the service off the
@@ -330,6 +352,7 @@ export function BookTab({
       setStart('');
       setEnd('');
       setStartTime('');
+      setDepartureTime('');
       setPetSelection(null);
       setPetsOpen(null);
       // The answers deliberately SURVIVE the reset that clears the dates. The server has just
@@ -388,6 +411,21 @@ export function BookTab({
           const unit = quote.unit ?? service.rateUnit;
           return `Includes ${quote.holidayUnits} holiday ${unit}${quote.holidayUnits === 1 ? '' : 's'} at $${quote.holidayRate}${unit ? `/${unit}` : ''}.`;
         })()
+      : '';
+
+  /**
+   * The extra-time surcharge (0009), said out loud BEFORE the customer commits — a fee driven by a
+   * time they chose has to be consented to, not discovered on an invoice. Every figure here is the
+   * server's own (`extraTimeFees`, from the same function that stamps the charge): the widget is not
+   * even told the sitter's standard hours, so it cannot derive a fee, and `+$` says plainly that the
+   * amount sits ON TOP of the price beside the button rather than inside it.
+   *
+   * Rendered in its own reserved-height slot (`.bp-extratime`), so a fee appearing as a time is
+   * typed never changes the widget's height — and so never moves the host page.
+   */
+  const extraTimeNote =
+    quote && quote.available && quote.priced && quote.extraTimeFees?.length
+      ? `Extra time: ${quote.extraTimeFees.map((f) => `${f.label} +$${f.amount}`).join(' · ')}`
       : '';
 
   const policyNote = service.cancellationTiers
@@ -592,21 +630,41 @@ export function BookTab({
 
       {datesReady && (
         <div className="bp-details">
-          {service.shape === 'range' && (
-            <label className="bp-field">
-              Arrival time (optional)
-              <input
-                type="time"
-                value={startTime}
-                // resetCheck, like every other input: the arrival time is part of the request
-                // BODY, so an attempt key held across an edit to it would replay the booking that
-                // carried the old time (and leave a stale error on screen while they type).
-                onChange={(e) => {
-                  setStartTime(e.target.value);
-                  resetCheck();
-                }}
-              />
-            </label>
+          {/* Mirror of the server's rule (server/lib/booking-times.ts): a DURATION-priced option
+              (walk, check-in) IS the appointment, so its clock is not the customer's to move.
+              Everything else — boarding, house sitting, daycare — takes owner-set times. Both
+              inputs are rendered together, so the panel's height does not move as they are filled
+              in. The ordering rule is deliberately NOT mirrored here: it is a single-day rule (on a
+              range stay the departure is on the end date and may be earlier in the day), and the
+              silent quote already reports the server's own sentence in the note slot below. */}
+          {!service.hasDuration && (
+            <div className="bp-timerow">
+              <label className="bp-field">
+                {isRange ? 'Arrival time' : 'Drop-off'} (optional)
+                <input
+                  type="time"
+                  value={startTime}
+                  // resetCheck, like every other input: the arrival time is part of the request
+                  // BODY, so an attempt key held across an edit to it would replay the booking that
+                  // carried the old time (and leave a stale error on screen while they type).
+                  onChange={(e) => {
+                    setStartTime(e.target.value);
+                    resetCheck();
+                  }}
+                />
+              </label>
+              <label className="bp-field">
+                {isRange ? 'Departure time' : 'Pick-up'} (optional)
+                <input
+                  type="time"
+                  value={departureTime}
+                  onChange={(e) => {
+                    setDepartureTime(e.target.value);
+                    resetCheck();
+                  }}
+                />
+              </label>
+            </div>
           )}
           {service && service.questions.length > 0 && (
             <fieldset className="bp-questions">
@@ -656,6 +714,11 @@ export function BookTab({
           {/* Both lines share ONE gap from .bp-details: they are reserved space, and reserved
               space should cost the layout as little as it can while still never collapsing. */}
           <div className="bp-below-action">
+            {/* Its OWN reserved slot rather than another clause in `.bp-fineprint`: that slot already
+                reserves exactly three lines for the holiday + cancellation notes, and adding a third
+                clause to it would overflow into a fourth line at a narrow host width — which is a
+                host-page bounce. Two lines is the worst case here (both fees, each with a time). */}
+            <p className="bp-extratime">{extraTimeNote}</p>
             <p className="bp-fineprint">{[holidayNote, policyNote].filter(Boolean).join(' · ')}</p>
             <p className={`bp-note${noteLine ? ' bp-note-bad' : ''}`}>{noteLine}</p>
           </div>
@@ -726,7 +789,12 @@ function srStatus(
       quote.billedUnits != null && quote.unit != null
         ? `${quote.billedUnits} ${quote.unit}${quote.billedUnits === 1 ? '' : 's'}, `
         : '';
-    return `${units}$${quote.estCost}.`;
+    // The surcharge is spoken with the price, not left to the visual line alone: a fee driven by a
+    // time the customer chose has to reach them however they are reading the page.
+    const extra = quote.extraTimeTotal
+      ? ` Plus $${quote.extraTimeTotal} for extra time: ${quote.extraTimeFees?.map((f) => f.label).join(', ')}.`
+      : '';
+    return `${units}$${quote.estCost}.${extra}`;
   }
   return '';
 }

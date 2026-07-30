@@ -698,6 +698,95 @@ export function ServiceEditor({
           /{s.rateUnit}
         </label>
       </div>
+      {/* Extra-time surcharge. Rendered only where the OWNER sets the booking's times — a
+          duration-priced service (walk, check-in) takes its clock from the option the client picked,
+          so a "standard hour" there could never fire and the server rejects it outright rather than
+          storing config that silently never applies. */}
+      {!s.hasDuration && (
+        <div className="pb-extratime">
+          <span className="pb-labelrow">
+            Standard hours &amp; extra-time fees (optional)
+            <Hint label="Extra-time fees">
+              The hours a {s.label.toLowerCase()} normally starts and ends, plus what you charge
+              when a client asks to arrive earlier or leave later. Each side needs BOTH a time and a
+              fee to do anything — leave either blank and nothing is charged. The fee is a FLAT
+              amount charged once per booking, not per hour and not per day, and it is added as a
+              separate line on the booking rather than folded into the stay price. Clients see it in
+              their quote before they book, so nobody is surprised by it.
+            </Hint>
+          </span>
+          <div className="pb-inline">
+            <label className="pb-inline">
+              Normally starts
+              <input
+                type="time"
+                aria-label="The time a booking normally starts, optional"
+                value={s.standardArrivalTime ?? ''}
+                onChange={(e) => setService({ ...s, standardArrivalTime: e.target.value || null })}
+              />
+            </label>
+            <label className="pb-inline">
+              Earlier costs $
+              <input
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                placeholder="No fee"
+                aria-label="Early arrival fee in dollars, optional"
+                aria-invalid={
+                  s.earlyArrivalFee !== '' &&
+                  s.earlyArrivalFee != null &&
+                  !isValidRate(s.earlyArrivalFee)
+                }
+                value={s.earlyArrivalFee ?? ''}
+                onChange={(e) =>
+                  setService({
+                    ...s,
+                    earlyArrivalFee: e.target.value === '' ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="pb-inline">
+            <label className="pb-inline">
+              Normally ends
+              <input
+                type="time"
+                aria-label="The time a booking normally ends, optional"
+                value={s.standardDepartureTime ?? ''}
+                onChange={(e) =>
+                  setService({ ...s, standardDepartureTime: e.target.value || null })
+                }
+              />
+            </label>
+            <label className="pb-inline">
+              Later costs $
+              <input
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                placeholder="No fee"
+                aria-label="Late departure fee in dollars, optional"
+                aria-invalid={
+                  s.lateDepartureFee !== '' &&
+                  s.lateDepartureFee != null &&
+                  !isValidRate(s.lateDepartureFee)
+                }
+                value={s.lateDepartureFee ?? ''}
+                onChange={(e) =>
+                  setService({
+                    ...s,
+                    lateDepartureFee: e.target.value === '' ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+          </div>
+        </div>
+      )}
       {/* Covers both pricing shapes above. A price left blank blocks the save bar (App.tsx), so say
           so where the empty input is rather than only in the bar at the bottom of the page. */}
       {s.options.some((o) => o.rate === '') && (

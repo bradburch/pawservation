@@ -636,6 +636,14 @@ body {
   align-items: flex-end;
 }
 
+/* Standard hours + extra-time fees: a label row over two "time, fee" pairs. Column-stacked so the
+   two sides read as a pair rather than four unrelated inputs on one wrapped line. */
+.pb-extratime {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .pb-error {
   color: var(--bad);
   font-weight: 600;
@@ -860,6 +868,95 @@ body {
 
 .pb-account-rate-row input[type='number'] {
   flex: 0 1 7rem;
+}
+
+/* ── Clients: the scannable LIST, and one account's detail ────── */
+/* The list is a table so the eye can run down one column; every editor lives in the detail view
+   behind a click, which is what stops this section being a wall of always-open forms. */
+.pb-clients-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 4px;
+  font-size: 0.92rem;
+}
+
+.pb-clients-table th,
+.pb-clients-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pb-clients-table thead th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--soft);
+  white-space: nowrap;
+}
+
+.pb-clients-table tbody th {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Emails and long pet lists are the two cells that can force the table wider than a phone. */
+.pb-clients-table td:nth-child(2),
+.pb-clients-table td:nth-child(4) {
+  overflow-wrap: anywhere;
+}
+
+.pb-clients-table tbody tr:hover {
+  background: var(--sage-wash);
+}
+
+/* The account just added to / created, so coming back from its detail view doesn't mean hunting an
+   alphabetical list for a row that moved. */
+.pb-clients-table tr.pb-row-hit > * {
+  background: var(--ok-wash);
+}
+
+.pb-clients-search {
+  margin-top: 14px;
+  align-items: baseline;
+}
+
+.pb-crumb {
+  margin: 0 0 6px;
+  font-size: 0.88rem;
+}
+
+.pb-account-detail {
+  margin-top: 4px;
+}
+
+.pb-account-detail h3 {
+  margin: 16px 0 4px;
+  font-size: 0.95rem;
+  color: var(--deep);
+}
+
+.pb-add-person {
+  margin-left: 18px;
+  margin-top: 4px;
+}
+
+/* The outcome of the LAST action — deliberately not `.pb-applies`, the muted grey every static
+   helper paragraph in this section uses: an outcome styled like boilerplate is one nobody reads. */
+.pb-flash {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin: 10px 0 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--ok);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--ok-wash);
+  color: var(--deep);
+  font-size: 0.92rem;
 }
 
 /* ── Payments panel (shared by Bookings rows + Earnings outstanding table) ── */

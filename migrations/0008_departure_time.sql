@@ -1,0 +1,19 @@
+-- Migration 0008. Owner-set DEPARTURE time on a booking.
+--
+-- `BookingRequests.StartTime` is already dual-purpose: on a duration-priced service (walk,
+-- check-in — `TenantServices.HasDuration = 1`) it is the OPTION's slot time; on everything else
+-- (boarding, house sitting, daycare) it is the owner's optional arrival time. `DepartureTime` is
+-- deliberately NOT a mirror of that ambiguity: it is ALWAYS owner-set, never an option's clock.
+--
+-- It is also deliberately not called `EndTime`. `TenantServiceOptions.StartTime`/`EndTime` already
+-- mean the two edges of a bookable WINDOW, and a `BookingRequests.EndTime` sitting beside them
+-- would read as the same thing.
+--
+-- Ordering is a SINGLE-DAY rule only. On a range stay the departure falls on the END date, so a
+-- departure earlier in the day than the arrival ("drop off Friday 17:00, collect Monday 08:00") is
+-- the most ordinary boarding there is; an ordering CHECK here would refuse it. Enforced in
+-- `server/lib/booking-times.ts`, which knows the service's shape.
+--
+-- Additive only: one nullable column, NULL for every existing row, which is exactly
+-- "no departure time given" — the pre-migration behaviour of every booking ever taken.
+ALTER TABLE BookingRequests ADD COLUMN DepartureTime TEXT;

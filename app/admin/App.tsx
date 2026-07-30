@@ -350,13 +350,34 @@ const SETTINGS_SECTIONS = SECTIONS.filter((s) => s.group === 'settings');
 const META_SECTIONS = SECTIONS.filter((s) => s.group === 'meta');
 
 /** Reads the initial section from the URL hash (e.g. `/admin#clients`) so deep links and page
- * refreshes land on the right section, same as the old anchor-nav did. */
+ * refreshes land on the right section, same as the old anchor-nav did. A hash may now carry ONE
+ * sub-path after the section (`#clients/account:pet_123`) — see `subFromHash` — so only the first
+ * segment names the section. */
 function sectionFromHash(): SectionKey {
-  const hash = window.location.hash.slice(1);
+  const hash = window.location.hash.slice(1).split('/')[0] ?? '';
   // Default to Calendar — the sitter's morning question is "what needs my reply?", not their
   // own settings, and the calendar's grid + pending list answers that plus "what does my
   // month look like?" in one view.
   return SECTIONS.some((s) => s.key === hash) ? (hash as SectionKey) : 'calendar';
+}
+
+/**
+ * Everything after the section in the hash — the section's own selection, if it has one. Today only
+ * Clients uses it (`#clients/<account group key>`), which is what makes an account's detail view
+ * deep-linkable, bookmarkable and back-button-able without a router. Rejoined on '/' rather than
+ * taking segment 1, so a key containing a slash survives; decoded because the browser may percent-
+ * encode what we put there.
+ */
+function subFromHash(): string | null {
+  const parts = window.location.hash.slice(1).split('/');
+  if (parts.length < 2) return null;
+  const rest = parts.slice(1).join('/');
+  if (rest === '') return null;
+  try {
+    return decodeURIComponent(rest);
+  } catch {
+    return rest; // a stray '%' is not worth throwing over
+  }
 }
 
 /** The navbar's "Settings" cluster: a trigger button opening a menu of the settings-group
@@ -436,6 +457,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   // Bumped after a successful save so the embed preview remounts and pulls the fresh config.
   const [previewKey, setPreviewKey] = useState(0);
   const [activeSection, setActiveSection] = useState<SectionKey>(sectionFromHash);
+  const [sectionSub, setSectionSub] = useState<string | null>(subFromHash);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<'full' | 'services'>('full');
   // The per-account rate editor writes real PetGroupPricing rows keyed by (serviceType,
@@ -511,6 +533,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
   useEffect(() => {
     const onHashChange = () => {
       setActiveSection(sectionFromHash());
+      setSectionSub(subFromHash());
       // An error banner describes the action just attempted; carrying it into another
       // section reads as a live, unexplained failure there.
       setError('');
@@ -611,6 +634,14 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
           // '' means the sitter emptied the box — that is "no holiday pricing", i.e. null, not 0.
           holidayRate: s.holidayRate === '' || s.holidayRate == null ? null : s.holidayRate,
           petRateMode: s.petRateMode,
+          // Same '' = "the sitter emptied the box" = null rule the holiday rate uses. A blank
+          // standard hour and a blank fee both mean that side of the surcharge is off.
+          standardArrivalTime: s.standardArrivalTime || null,
+          standardDepartureTime: s.standardDepartureTime || null,
+          earlyArrivalFee:
+            s.earlyArrivalFee === '' || s.earlyArrivalFee == null ? null : s.earlyArrivalFee,
+          lateDepartureFee:
+            s.lateDepartureFee === '' || s.lateDepartureFee == null ? null : s.lateDepartureFee,
           options: s.options.map((o): ServiceOptionForm => ({
             optionKey: o.optionKey,
             label: o.label,
@@ -885,6 +916,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         customers={customers ?? []}
         petTypes={settings.petTypes}
         services={savedServices}
+        selectedAccountKey={activeSection === 'clients' ? sectionSub : null}
         slug={slug}
         token={token}
         onCustomersChanged={reloadCustomers}

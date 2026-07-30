@@ -9,6 +9,7 @@ import {
   DEFAULT_TIMEZONE,
   dedupePets,
   getPacificDateStr,
+  isWellFormedCapacityEvent,
   mixFromPetTypes,
   nightsBetween,
   overlapReadWindow,
@@ -17,6 +18,7 @@ import {
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
+  type DayCapacity,
   type GroupRate,
   type MixRate,
   type PoolKind,
@@ -27,12 +29,15 @@ import {
   listCapacityRows,
   countSlotBookings,
   listPetGroupPricing,
+  listServiceOptions,
   listServicePetRates,
+  listServices,
   listSlotBookingCounts,
   listUserBookingDatesInRange,
   type CapacityRow,
+  type OccupancyScope,
 } from '../db/repo';
-import type { Tenant, TenantService, TenantServiceOption } from '../types';
+import type { BookingRow, Tenant, TenantService, TenantServiceOption } from '../types';
 import { holidayAwareCost, splitUnits, type UnitSplit } from './holiday-cost';
 import { DEFAULT_OVERLAP_DAYS } from './validation';
 
@@ -53,6 +58,30 @@ export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
           petCount: row.PetCount,
         },
   );
+}
+
+/**
+ * The capacity map, plus the one thing the pure engine deliberately cannot do: TELL SOMEONE about a
+ * row it could not read. `buildCapacity` treats an event whose dates don't parse as a blocked day
+ * (fail toward occupied — see `isWellFormedCapacityEvent`), which keeps the calendar sound but
+ * silent, and a corrupt row quietly blocking a date forever is its own bug. Every server-side
+ * capacity read goes through here so the log happens once, at the boundary where the booking IDS
+ * are still in hand (the engine only ever sees normalized events).
+ *
+ * Logged, never thrown: a single bad row must not 500 the whole availability read, and treating it
+ * as occupied has already made the answer safe.
+ */
+function capacityFromRows(tenantId: string, rows: CapacityRow[]): Map<string, DayCapacity> {
+  const events = rowsToCapacityEvents(rows);
+  const corrupt = rows.filter((_, i) => !isWellFormedCapacityEvent(events[i]));
+  if (corrupt.length > 0) {
+    console.error(
+      `capacity: tenant ${tenantId} has ${corrupt.length} booking row(s) with unusable dates — ` +
+        `treated as BLOCKED days, fix or delete them: ` +
+        corrupt.map((r) => `${r.Id} (${r.StartDate} → ${r.EndDate ?? 'null'})`).join(', '),
+    );
+  }
+  return buildCapacity(events);
 }
 
 export type AvailabilityResult =
@@ -89,6 +118,22 @@ export type AvailabilityResult =
        */
       holidayUnits?: number;
       holidayRate?: number;
+      /**
+       * The extra-time surcharge the owner's chosen times attract (0009), and its total — DISPLAY
+       * ONLY, and deliberately NOT part of `estCost`. `estCost` is the price of the stay;
+       * `extraTimeTotal` is what will be added to it as `BookingCharges` rows when the booking is
+       * created, so `totalDue` stays `EstCost + chargesTotal` at every read site.
+       *
+       * Both fields are absent unless a fee actually applies, so a quote for a service with no
+       * standard hours (every service until a sitter sets some) is byte-identical to what it was
+       * before the feature. Written by `booking-ops`' `quoteBooking` from `extraTimeSurcharges` —
+       * the SAME function that stamps the charges — so the previewed number and the stamped one
+       * cannot drift, exactly as `feeToCancelToday` serves both the cancellation preview and its
+       * stamp. Attached OUTSIDE `estimateCost`/`checkAvailability` on purpose: the price formula
+       * never sees a time, and a surcharge never passes through it.
+       */
+      extraTimeFees?: { label: string; amount: number }[];
+      extraTimeTotal?: number;
     }
   | {
       /**
@@ -355,6 +400,13 @@ function overlapAllowanceOf(tenant: Tenant): number | null {
 }
 
 /**
+ * Why a single-day request cannot have a date. The engine's own `RangeConflict` covers ranges; a
+ * single-day service is governed by blocked days and by its OPTION's per-session slot cap, which
+ * lives outside the engine (CALENDAR_LOGIC.md §3 subtlety 1) and so needs its own vocabulary.
+ */
+type SingleConflict = 'blocked_day' | 'slot_full' | 'slot_no_room';
+
+/**
  * Turn the engine's refusal into the customer's answer. The cross-kind overlap rule gets its own
  * sentence and its own `code` because "those dates are not available" is simply untrue of it — the
  * dates have room; the SITTER does not, and a customer told the truth can move by one day instead
@@ -364,6 +416,18 @@ function rangeRefusal(
   conflict: RangeConflict,
   kind: PoolKind,
 ): { available: false; reason: string; code?: string } {
+  // The "more pets than the service could ever seat" answer, unchanged: it used to be produced by a
+  // fast path inside checkRange, which now reports it as the engine's own `'over_cap'` instead (see
+  // `rangeConflictFor`). Same string, same conditions, one fewer place that decides the wording.
+  if (conflict === 'over_cap') {
+    return {
+      available: false,
+      reason:
+        kind === 'boarding'
+          ? 'That exceeds our boarding capacity.'
+          : 'That exceeds our house-sitting capacity.',
+    };
+  }
   if (conflict !== 'cross_kind_overlap') {
     return { available: false, reason: 'Those dates are not available.' };
   }
@@ -377,20 +441,26 @@ function rangeRefusal(
   };
 }
 
-async function checkRange(
+/**
+ * WOULD THIS RANGE FIT, and if not, which rule refused? The capacity/conflict half of `checkRange`,
+ * on its own, because it has two audiences that must never drift apart: the customer quote (which
+ * turns the answer into a customer-facing phrase via `rangeRefusal`) and the sitter's confirm
+ * re-check (which turns the same answer into a warning she can override, via
+ * `confirmOverbookWarning`). A second walk of the same rules is exactly how the two would come to
+ * disagree, so there is only one.
+ *
+ * `scope` is the only thing the two callers ask differently — see `OccupancyScope`.
+ */
+async function rangeConflictFor(
   env: Env,
   tenant: Tenant,
   service: TenantService,
-  option: TenantServiceOption,
   startDate: string,
   endDateExclusive: string,
-  pets: PricedPet[],
-  rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
+  petCount: number,
   excludeBookingId?: string,
-): Promise<AvailabilityResult> {
-  // Math.max(…, 1) preserves today's behaviour for the (route-unreachable) empty set: capacity
-  // has always been checked for at least one pet.
-  const petCount = Math.max(dedupePets(pets).length, 1);
+  scope: OccupancyScope = 'all-live',
+): Promise<RangeConflict | null> {
   const request: CapacityRequest = {
     serviceType: service.ServiceType,
     kind: service.CapacityKind === 'housesit' ? 'housesit' : 'boarding',
@@ -402,18 +472,10 @@ async function checkRange(
     // check), which is what stops them disagreeing.
     overlapAllowance: overlapAllowanceOf(tenant),
   };
-  // The engine (rangeHasConflict) already rejects an over-cap request on its own. This fast path
-  // is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the generic
-  // "dates not available") and short-circuits before the capacity DB read. Unlimited skips it.
-  if (request.cap !== null && petCount > request.cap) {
-    return {
-      available: false,
-      reason:
-        request.kind === 'boarding'
-          ? 'That exceeds our boarding capacity.'
-          : 'That exceeds our house-sitting capacity.',
-    };
-  }
+  // The engine (rangeConflictReason) already rejects an over-cap request on its own; this short-
+  // circuit exists purely to skip the capacity DB read when the answer cannot depend on it.
+  // Unlimited skips it.
+  if (request.cap !== null && petCount > request.cap) return 'over_cap';
   // Fetch one day PAST checkout. This used to feed the engine's soft-bookend look-ahead, which is
   // gone (it forgave an over-full LAST OCCUPIED NIGHT as if it were a checkout day); the over-read
   // is kept because it still buys something and can never cost correctness. An opposite-kind
@@ -426,8 +488,9 @@ async function checkRange(
     startDate,
     addDays(endDateExclusive, 1),
     excludeBookingId,
+    scope,
   );
-  let capacity = buildCapacity(rowsToCapacityEvents(rows));
+  let capacity = capacityFromRows(tenant.Id, rows);
 
   // The overlap rule judges the bookings this request TOUCHES as well as the request itself (it is
   // symmetric, so the verdict cannot depend on which of two stays was booked first), and a touched
@@ -447,12 +510,39 @@ async function checkRange(
       need.from < startDate ? need.from : startDate,
       need.toExclusive > readEnd ? need.toExclusive : readEnd,
       excludeBookingId,
+      scope,
     );
-    capacity = buildCapacity(rowsToCapacityEvents(widened));
+    capacity = capacityFromRows(tenant.Id, widened);
   }
 
-  const conflict = rangeConflictReason(startDate, endDateExclusive, request, capacity);
-  if (conflict !== null) return rangeRefusal(conflict, request.kind);
+  return rangeConflictReason(startDate, endDateExclusive, request, capacity);
+}
+
+async function checkRange(
+  env: Env,
+  tenant: Tenant,
+  service: TenantService,
+  option: TenantServiceOption,
+  startDate: string,
+  endDateExclusive: string,
+  pets: PricedPet[],
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
+  excludeBookingId?: string,
+): Promise<AvailabilityResult> {
+  // Math.max(…, 1) preserves today's behaviour for the (route-unreachable) empty set: capacity
+  // has always been checked for at least one pet.
+  const petCount = Math.max(dedupePets(pets).length, 1);
+  const conflict = await rangeConflictFor(
+    env,
+    tenant,
+    service,
+    startDate,
+    endDateExclusive,
+    petCount,
+    excludeBookingId,
+  );
+  if (conflict !== null)
+    return rangeRefusal(conflict, service.CapacityKind === 'housesit' ? 'housesit' : 'boarding');
   // ONE call — estimateCost resolves the rate, prices, AND splits for holidays; the estCost and
   // the reported breakdown below come from this single result, so no site recomputes the formula.
   const price = estimateCost(service, option, startDate, endDateExclusive, pets, rates);
@@ -471,6 +561,58 @@ async function checkRange(
   };
 }
 
+/**
+ * Why a SINGLE-DAY request can't have this date — the mirror of `rangeConflictFor`, same two
+ * audiences and the same reason for existing (one walk of the rules, two wordings). `'slot_full'`
+ * and `'slot_no_room'` are kept apart because the customer needs to hear different things: the
+ * session is gone, versus the session has room but not for THIS many pets.
+ *
+ * `option` is nullable only for the confirm re-check, which can meet a booking whose option the
+ * sitter has since deleted: with no option there is no slot cap to test, and the blocked-day check
+ * still stands.
+ */
+async function singleConflictFor(
+  env: Env,
+  tenant: Tenant,
+  service: TenantService,
+  option: TenantServiceOption | null,
+  date: string,
+  petCount: number,
+  excludeBookingId?: string,
+  scope: OccupancyScope = 'all-live',
+): Promise<SingleConflict | null> {
+  const rows = await listCapacityRows(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    date,
+    addDays(date, 1),
+    excludeBookingId,
+    scope,
+  );
+  const capacity = capacityFromRows(tenant.Id, rows);
+  if (walkHasConflict(date, capacity)) return 'blocked_day';
+  if (option !== null && option.Capacity !== null) {
+    const count = await countSlotBookings(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      service.ServiceType,
+      option.OptionKey,
+      date,
+      excludeBookingId,
+      scope,
+    );
+    // The requested SET has to fit, not just one pet: `count + petCount > cap` is the same
+    // arithmetic `dayBlocksRequest` applies to the boarding/house-sit pools. Asking only
+    // `count >= cap` let a 3-pet request into a slot with one spot left — the exact class of
+    // over-capacity accept the pool path removed, and a direct contradiction of the sitter-facing
+    // promise that "a booking with three dogs uses three spots". Identical for a single pet
+    // (`count + 1 > cap` ⇔ `count >= cap`), so nothing about one-pet behaviour moves.
+    if (count + petCount > option.Capacity)
+      return count >= option.Capacity ? 'slot_full' : 'slot_no_room';
+  }
+  return null;
+}
+
 async function checkSingle(
   env: Env,
   tenant: Tenant,
@@ -481,42 +623,25 @@ async function checkSingle(
   rates: { groupRates: GroupRate[]; mixRates: MixRate[] },
   excludeBookingId?: string,
 ): Promise<AvailabilityResult> {
-  const rows = await listCapacityRows(
-    env.PAWBOOK_DB,
-    tenant.Id,
+  const petCount = Math.max(dedupePets(pets).length, 1);
+  const conflict = await singleConflictFor(
+    env,
+    tenant,
+    service,
+    option,
     date,
-    addDays(date, 1),
+    petCount,
     excludeBookingId,
   );
-  const capacity = buildCapacity(rowsToCapacityEvents(rows));
-  if (walkHasConflict(date, capacity)) {
-    return { available: false, reason: 'That day is blocked off.' };
-  }
-  if (option.Capacity !== null) {
-    const count = await countSlotBookings(
-      env.PAWBOOK_DB,
-      tenant.Id,
-      service.ServiceType,
-      option.OptionKey,
-      date,
-      excludeBookingId,
-    );
-    // The requested SET has to fit, not just one pet: `count + petCount > cap` is the same
-    // arithmetic `dayBlocksRequest` applies to the boarding/house-sit pools. Asking only
-    // `count >= cap` let a 3-pet request into a slot with one spot left — the exact class of
-    // over-capacity accept the pool path removed, and a direct contradiction of the sitter-facing
-    // promise that "a booking with three dogs uses three spots". Identical for a single pet
-    // (`count + 1 > cap` ⇔ `count >= cap`), so nothing about one-pet behaviour moves.
-    const petCount = Math.max(dedupePets(pets).length, 1);
-    if (count + petCount > option.Capacity) {
-      return {
-        available: false,
-        reason:
-          count >= option.Capacity
-            ? 'That session is full.'
-            : `That session doesn't have room for ${petCount} pets.`,
-      };
-    }
+  if (conflict === 'blocked_day') return { available: false, reason: 'That day is blocked off.' };
+  if (conflict !== null) {
+    return {
+      available: false,
+      reason:
+        conflict === 'slot_full'
+          ? 'That session is full.'
+          : `That session doesn't have room for ${petCount} pets.`,
+    };
   }
   // ONE call — see checkRange's comment above for why this replaces a direct holidayAwareCost call.
   const price = estimateCost(service, option, date, date, pets, rates);
@@ -554,6 +679,123 @@ export function checkAvailability(
         excludeBookingId,
       )
     : checkSingle(env, tenant, service, option, startDate, pets, rates, excludeBookingId);
+}
+
+/** The stored fields the confirm re-check needs. `BookingRow` satisfies it. */
+export type ConfirmableBooking = Pick<
+  BookingRow,
+  'Id' | 'ServiceType' | 'OptionKey' | 'StartDate' | 'EndDate' | 'PetCount'
+>;
+
+/**
+ * WOULD CONFIRMING THIS STORED REQUEST OVERBOOK THE SITTER? Returns the sentence to show her, or
+ * `null` when the dates are genuinely clear.
+ *
+ * A pending request holds capacity, but nothing re-validated when the sitter CONFIRMED it — so two
+ * pending requests for one scarce day could both be confirmed, and a confirm could break a rule
+ * that did not exist when the request was made: the 0006 handover rule, a day blocked off since, a
+ * cap she has since lowered. This is that missing check, and it deliberately WARNS rather than
+ * refuses: it is her calendar, and hard-refusing a double-booking she wants on purpose (the regular
+ * client she will squeeze in) would be worse than the hole. What she must never be able to do is end
+ * up over capacity without having been TOLD, which is what the caller's
+ * acknowledgement-then-override flow provides.
+ *
+ * **Scope is `'committed-only'` on purpose.** Other PENDING requests are not commitments — they are
+ * what she is adjudicating. Counting them would fire on the FIRST of two competing requests, where
+ * confirming is exactly the right move, and a warning that cries wolf on the safe case is how the
+ * dangerous case (the second confirm) gets clicked through. With commitments only, the first confirm
+ * is silent and the second one warns.
+ *
+ * The booking's OWN row is excluded (`booking.Id`) — a pending request already occupies the pool, so
+ * without that it would conflict with itself. Pet count comes from the stored `PetCount`, the same
+ * number `rowsToCapacityEvents` gives every other row in the map.
+ *
+ * The booking WINDOW (0004) is deliberately not re-checked: minimum notice and the advance horizon
+ * are the customer's constraints on asking, not the sitter's on accepting, and a request that has
+ * simply grown old must not become unconfirmable.
+ */
+export async function confirmOverbookWarning(
+  env: Env,
+  tenant: Tenant,
+  booking: ConfirmableBooking,
+): Promise<string | null> {
+  const service = (await listServices(env.PAWBOOK_DB, tenant.Id)).find(
+    (s) => s.ServiceType === booking.ServiceType,
+  );
+  // A service the sitter has since deleted has no cap, no pool and no rules left to break; the
+  // stored row is all there is, and refusing to let her answer her client would help nobody.
+  if (!service) return null;
+  const petCount = Math.max(1, booking.PetCount);
+
+  if (service.Shape === 'range') {
+    const conflict = await rangeConflictFor(
+      env,
+      tenant,
+      service,
+      booking.StartDate,
+      // A range row always stores an end date; `+1 day` is the same one-night fallback
+      // `listUserBookingDatesInRange` uses, so a malformed row is checked rather than skipped.
+      booking.EndDate ?? addDays(booking.StartDate, 1),
+      petCount,
+      booking.Id,
+      'committed-only',
+    );
+    return conflict === null ? null : rangeWarning(conflict, service, petCount);
+  }
+
+  const option =
+    (await listServiceOptions(env.PAWBOOK_DB, tenant.Id)).find(
+      (o) => o.ServiceType === booking.ServiceType && o.OptionKey === booking.OptionKey,
+    ) ?? null;
+  const conflict = await singleConflictFor(
+    env,
+    tenant,
+    service,
+    option,
+    booking.StartDate,
+    petCount,
+    booking.Id,
+    'committed-only',
+  );
+  return conflict === null ? null : singleWarning(conflict, service, option, petCount);
+}
+
+/** The sitter's wording for a range conflict — her calendar and her caps, not a customer's dates. */
+function rangeWarning(conflict: RangeConflict, service: TenantService, petCount: number): string {
+  const overbooks = 'Confirming anyway will double-book you.';
+  if (conflict === 'cross_kind_overlap') {
+    return (
+      (service.CapacityKind === 'housesit'
+        ? 'You already have boarding confirmed over those nights — a house sit can only meet it on a handover day, not across the whole stay.'
+        : 'You are already house-sitting over those nights — boarding can only meet it on a handover day, not across the whole stay.') +
+      ` ${overbooks}`
+    );
+  }
+  const pets = `${petCount} pet${petCount === 1 ? '' : 's'}`;
+  const seats =
+    service.MaxConcurrentPets === null
+      ? ''
+      : ` ${service.Label} seats ${service.MaxConcurrentPets} pet${service.MaxConcurrentPets === 1 ? '' : 's'} a day.`;
+  if (conflict === 'over_cap')
+    return `This request is for ${pets}, which is more than ${service.Label} can take at once.${seats} ${overbooks}`;
+  return `Your calendar is already full or blocked off on those dates, and this request adds ${pets}.${seats} ${overbooks}`;
+}
+
+/** The same, for a single-day service's own day and per-session slot cap. */
+function singleWarning(
+  conflict: SingleConflict,
+  service: TenantService,
+  option: TenantServiceOption | null,
+  petCount: number,
+): string {
+  const overbooks = 'Confirming anyway will double-book you.';
+  if (conflict === 'blocked_day') return `That day is blocked off on your calendar. ${overbooks}`;
+  const slot = option ? `${service.Label} — ${option.Label}` : service.Label;
+  const holds =
+    option?.Capacity != null
+      ? ` That slot holds ${option.Capacity} pet${option.Capacity === 1 ? '' : 's'}.`
+      : '';
+  return `${slot} is already full on that date, and this request adds ${petCount} pet${petCount === 1 ? '' : 's'}.${holds} ${overbooks}`;
 }
 
 export type MonthDay = {
@@ -693,7 +935,7 @@ export async function monthAvailability(
     }
   }
 
-  const cap = buildCapacity(rowsToCapacityEvents(capacityRows));
+  const cap = capacityFromRows(tenant.Id, capacityRows);
 
   // The booking window (0004): days the customer could never request — before the service's
   // minimum notice or past the business-wide horizon — paint as unavailable, so the grid, the

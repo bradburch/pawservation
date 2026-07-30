@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { adminApi, type AdminBooking } from '../../shared-ui/api.js';
+import { ApiError, adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
 import { ChargesPanel } from '../ChargesPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
@@ -7,15 +7,29 @@ import { totalDue, type ServiceForm, type Session } from '../shared.js';
 import { formatFriendlyDate } from '../../../src/shared/index.js';
 import { Hint } from '../Hint';
 
-/** Renders the dates for one row: single date (+ time, for timed services), or a range with the
- * customer's optional arrival time. Humanized ("Jul 29 – 31" not "2026-07-29 – 2026-07-31") —
- * this is the sitter's densest view, and it was the last surface still speaking raw ISO. */
+/**
+ * Renders the dates for one row: single date (+ times), or a range with the owner's optional
+ * arrival and departure times. Humanized ("Jul 29 – 31" not "2026-07-29 – 2026-07-31") — this is
+ * the sitter's densest view, and it was the last surface still speaking raw ISO.
+ *
+ * A RANGE says "arriving 17:00, leaving 08:00" without implying an ordering: those are times on
+ * two different dates, so 08:00 after 17:00 is not a mistake. A single day joins them with an en
+ * dash, where they ARE ordered (the server refuses a pick-up that is not later than its drop-off).
+ */
 function formatWhen(b: AdminBooking): string {
   const range = b.endDate
     ? `${formatFriendlyDate(b.startDate)} – ${formatFriendlyDate(b.endDate)}`
     : formatFriendlyDate(b.startDate);
-  if (!b.startTime) return range;
-  return b.endDate ? `${range}, arriving ${b.startTime}` : `${range} at ${b.startTime}`;
+  if (!b.startTime && !b.departureTime) return range;
+  if (b.endDate) {
+    const parts = [
+      b.startTime ? `arriving ${b.startTime}` : null,
+      b.departureTime ? `leaving ${b.departureTime}` : null,
+    ].filter(Boolean);
+    return `${range}, ${parts.join(', ')}`;
+  }
+  if (b.startTime && b.departureTime) return `${range}, ${b.startTime}–${b.departureTime}`;
+  return `${range} at ${b.startTime ?? b.departureTime}`;
 }
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
@@ -110,13 +124,30 @@ function BookingList({
     setMessage('');
     setBusyId(b.id);
     try {
-      const { notified, cancellationFee } = await adminApi.bookings.setStatus(
-        session.slug,
-        session.token,
-        b.id,
-        status,
-        chargeFee,
-      );
+      const post = (overrideCapacity?: boolean) =>
+        adminApi.bookings.setStatus(
+          session.slug,
+          session.token,
+          b.id,
+          status,
+          chargeFee,
+          overrideCapacity,
+        );
+      // A confirm that would overbook her comes back 409 `capacity_conflict` carrying the server's
+      // own sentence about WHAT will collide (her cap, a blocked day, a house sit). She is the
+      // authority over her own calendar, so she is asked rather than refused — but she cannot end up
+      // over capacity without having read this. Declining the prompt leaves the request pending.
+      let result;
+      try {
+        result = await post();
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.code !== 'capacity_conflict') throw e;
+        // Backing out changes nothing: the request stays pending and she can decline it instead.
+        // `finally` below clears the busy flag.
+        if (!window.confirm(`${e.message}\n\nConfirm anyway?`)) return;
+        result = await post(true);
+      }
+      const { notified, cancellationFee } = result;
       const who = b.customerName || b.customerEmail || 'the client';
       const verb =
         status === 'confirmed' ? 'Confirmed' : status === 'declined' ? 'Declined' : 'Cancelled';

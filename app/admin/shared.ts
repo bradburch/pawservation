@@ -46,6 +46,16 @@ export type ServiceForm = ServiceConstraints & {
    *  'linear' charges the option rate x the pet count. Rendered and edited here; the PRICE that
    *  results is still computed only by the server. */
   petRateMode: PetRateMode;
+  /**
+   * Extra-time surcharge (0009): the hours a stay normally starts and ends, plus a FLAT whole-dollar
+   * fee for an arrival before / a departure after each. Null = that side is off. `''` on a fee is an
+   * emptied box (normalized to null on save), the same idiom `holidayRate` uses. Edited here; the
+   * fee a CLIENT is shown still only ever comes from the server's own quote.
+   */
+  standardArrivalTime: string | null;
+  standardDepartureTime: string | null;
+  earlyArrivalFee: number | '' | null;
+  lateDepartureFee: number | '' | null;
   /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
    * feeding the "multi-pet but unpriced" warning; never sent back on the PUT. */
   multiPetGroupRateCount: number;
@@ -101,6 +111,10 @@ export type ServicePayload = ServiceConstraints & {
   minLeadDays: number | null;
   holidayRate: number | null;
   petRateMode: PetRateMode;
+  standardArrivalTime: string | null;
+  standardDepartureTime: string | null;
+  earlyArrivalFee: number | null;
+  lateDepartureFee: number | null;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
   acceptedPetTypes: string[] | null;

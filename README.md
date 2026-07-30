@@ -86,12 +86,20 @@ the availability/conflict math.
   never deleted: a fee-free cancellation deletes the Google Calendar event, while a
   fee-bearing one keeps it and retitles it `[CANCELLED]` so money still owed stays visible.
 - **Customer self-editing** — `PUT /:slug/bookings/:id` lets a customer change their own
-  booking's dates, pet set, arrival time, and intake answers (never the service, never the
+  booking's dates, pet set, arrival and departure times, and intake answers (never the service, never the
   option). Every rule a create runs is re-run by calling the same code, capacity is
   re-checked excluding the booking's own row with a verbatim rollback on refusal, a
   confirmed booking drops back to `pending` for the sitter to re-approve, and no
   cancellation fee is ever assessed — rescheduling is not cancelling. The estimate is
   re-quoted only when something price-relevant moved (the dates or the pet set).
+- **Arrival and departure times, and extra-time fees** — on a service whose clock the option
+  does not own (boarding, house sitting, daycare) the owner may name an arrival and a
+  departure time. Ordering is a single-day rule only: on a stay the departure is a time on
+  the end date, so collecting at 08:00 after dropping off at 17:00 is ordinary. A sitter can
+  optionally store the hours a service normally runs plus a flat fee for an earlier arrival
+  or a later departure; the fee is shown in the quote before booking and then added as a
+  separate line on the booking, never folded into the stay price and never multiplied by
+  anything.
 - **Saved intake answers** — a customer's last answer per
   `(tenant, customer, service, question)` is mirrored into `SavedAnswers` after a booking
   create or edit and re-offered as the pre-fill next time. A reworded, retyped, deleted, or

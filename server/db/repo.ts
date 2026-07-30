@@ -6,6 +6,7 @@ import type {
   CancellationTier,
   EndUser,
   EndUserPet,
+  ExtraTimeOrigin,
   OwnerUser,
   PaymentRow,
   PetGroupPricingRow,
@@ -19,6 +20,7 @@ import type {
   TenantServicePetRateRow,
   TenantUser,
 } from '../types';
+import { EXTRA_TIME_ORIGINS } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
@@ -37,7 +39,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -135,7 +137,8 @@ export async function listServices(db: D1Database, tenantId: string): Promise<Te
     .prepare(
       `SELECT TenantId, ServiceType, Enabled, Label, Icon, Description, Shape, RateUnit, HasDuration,
               CapacityKind, SortOrder, Questions, MaxNights, MaxPetCount, MinLeadDays,
-              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate, PetRateMode
+              AcceptedPetTypes, MaxConcurrentPets, CancellationTiers, HolidayRate, PetRateMode,
+              StandardArrivalTime, StandardDepartureTime, EarlyArrivalFee, LateDepartureFee
        FROM TenantServices WHERE TenantId = ? ORDER BY SortOrder, Label`,
     )
     .bind(tenantId)
@@ -474,10 +477,40 @@ export async function consumeLoginCode(
 export type CapacityRow = BookingRow & { CapacityKind: Exclude<CapacityKind, 'none'> | null };
 
 /**
+ * WHICH existing rows a capacity read counts.
+ *
+ * - `'all-live'` — pending AND confirmed, the customer-facing rule: a pending request holds the
+ *   slot, so nobody else can take it while the sitter decides.
+ * - `'committed-only'` — confirmed rows (plus blocked/external rows, which are always stored
+ *   `'confirmed'`), i.e. what the sitter has actually COMMITTED to. Used by the admin confirm
+ *   re-check, where counting other pending requests would warn her about the very requests she is
+ *   adjudicating: the first of two competing requests is the one she SHOULD confirm, and a warning
+ *   there would train her to click through the one that matters (the second).
+ */
+export type OccupancyScope = 'all-live' | 'committed-only';
+
+const statusFilterSql = (scope: OccupancyScope): string =>
+  scope === 'committed-only' ? `Status = 'confirmed'` : `Status IN ('pending', 'confirmed')`;
+
+/**
+ * A stored EndDate that is present but is not a `YYYY-MM-DD` date. The window predicate below
+ * compares dates as STRINGS, so a corrupt end date can sort BELOW the window's start (`''` is the
+ * easy example) and drop the row from the read entirely — and a row the query never returns is a
+ * row the capacity engine never gets to fail safe on, however carefully it treats what it is given
+ * (`isWellFormedCapacityEvent`). So the window fails toward INCLUSION: anything starting before the
+ * window's end whose end date is unusable comes back, and `buildCapacity` turns it into a blocked
+ * day. A corrupt row from outside the window can only add a blocked day outside the window, which
+ * costs nothing. GLOB (not LIKE) because it is case-sensitive and has real character classes.
+ */
+const CORRUPT_END_DATE_SQL = `(b.EndDate IS NOT NULL
+       AND b.EndDate NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')`;
+
+/**
  * Rows that feed the capacity map: bookings whose service draws from a capacity pool
- * (CapacityKind boarding/housesit — custom services included) + blocked ranges, pending or
- * confirmed, overlapping [from, to). `excludeId` omits one row — used by the post-insert race
- * check so a just-created booking re-asks "do I still fit, ignoring myself?" against everyone else.
+ * (CapacityKind boarding/housesit — custom services included) + blocked ranges, overlapping
+ * [from, to). `excludeId` omits one row — used by the post-insert race check so a just-created
+ * booking re-asks "do I still fit, ignoring myself?" against everyone else. `scope` chooses which
+ * rows count (see `OccupancyScope`); the default is the customer-facing "pending holds the slot".
  */
 export async function listCapacityRows(
   db: D1Database,
@@ -485,6 +518,7 @@ export async function listCapacityRows(
   fromDate: string,
   toDateExclusive: string,
   excludeId?: string,
+  scope: OccupancyScope = 'all-live',
 ): Promise<CapacityRow[]> {
   const cols = BOOKING_COLS.split(', ')
     .map((c) => `b.${c}`)
@@ -494,9 +528,10 @@ export async function listCapacityRows(
       `SELECT ${cols}, s.CapacityKind
        FROM BookingRequests b
        LEFT JOIN TenantServices s ON s.TenantId = b.TenantId AND s.ServiceType = b.ServiceType
-       WHERE b.TenantId = ? AND b.Status IN ('pending', 'confirmed')
+       WHERE b.TenantId = ? AND b.${statusFilterSql(scope)}
          AND (b.ServiceType IN ('blocked', 'external') OR s.CapacityKind IN ('boarding', 'housesit'))
-         AND b.StartDate < ? AND COALESCE(b.EndDate, b.StartDate) >= ?
+         AND b.StartDate < ?
+         AND (COALESCE(b.EndDate, b.StartDate) >= ? OR ${CORRUPT_END_DATE_SQL})
          AND (? IS NULL OR b.Id != ?)`,
     )
     .bind(tenantId, toDateExclusive, fromDate, excludeId ?? null, excludeId ?? null)
@@ -530,7 +565,9 @@ export async function listUserBookingDatesInRange(
 /**
  * Sum the pets across non-cancelled bookings against one option on one date — enforces a windowed option's
  * Capacity. `excludeId` lets the post-insert race check ask "do I still fit, ignoring myself?",
- * matching the pattern `listCapacityRows` already uses for boarding/house-sit.
+ * matching the pattern `listCapacityRows` already uses for boarding/house-sit — as does `scope`
+ * (see `OccupancyScope`), so the sitter's confirm re-check counts slot commitments the same way it
+ * counts pool ones.
  */
 export async function countSlotBookings(
   db: D1Database,
@@ -539,12 +576,13 @@ export async function countSlotBookings(
   optionKey: string,
   date: string,
   excludeId?: string,
+  scope: OccupancyScope = 'all-live',
 ): Promise<number> {
   const row = await db
     .prepare(
       `SELECT COALESCE(SUM(PetCount), 0) AS n FROM BookingRequests
        WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ? AND StartDate = ?
-         AND Status IN ('pending', 'confirmed') AND (? IS NULL OR Id != ?)`,
+         AND ${statusFilterSql(scope)} AND (? IS NULL OR Id != ?)`,
     )
     .bind(tenantId, serviceType, optionKey, date, excludeId ?? null, excludeId ?? null)
     .first<{ n: number }>();
@@ -602,6 +640,8 @@ export async function insertBookingRequest(
     optionKey: string | null;
     petCount: number;
     startTime?: string | null;
+    /** Owner-set departure time (0008); undefined/null = none given. */
+    departureTime?: string | null;
     estCost: number | null;
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
@@ -613,8 +653,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -626,6 +666,7 @@ export async function insertBookingRequest(
       row.optionKey,
       row.petCount,
       row.startTime ?? null,
+      row.departureTime ?? null,
       row.estCost,
       JSON.stringify(row.answers ?? {}),
       row.status,
@@ -897,6 +938,7 @@ export async function updateBookingForEdit(
     startDate: string;
     endDate: string | null;
     startTime: string | null;
+    departureTime: string | null;
     petCount: number;
     estCost: number;
     answers: Record<string, string>;
@@ -906,8 +948,8 @@ export async function updateBookingForEdit(
   const result = await db
     .prepare(
       `UPDATE BookingRequests
-          SET StartDate = ?, EndDate = ?, StartTime = ?, PetCount = ?, EstCost = ?, Answers = ?,
-              Status = 'pending', SyncPending = 1
+          SET StartDate = ?, EndDate = ?, StartTime = ?, DepartureTime = ?, PetCount = ?,
+              EstCost = ?, Answers = ?, Status = 'pending', SyncPending = 1
         WHERE TenantId = ? AND EndUserId = ? AND Id = ?
           AND ServiceType NOT IN ('blocked', 'external')
           AND Status = ?`,
@@ -916,6 +958,7 @@ export async function updateBookingForEdit(
       next.startDate,
       next.endDate,
       next.startTime,
+      next.departureTime,
       next.petCount,
       next.estCost,
       JSON.stringify(next.answers),
@@ -943,6 +986,7 @@ export async function restoreBookingAfterEdit(
     startDate: string;
     endDate: string | null;
     startTime: string | null;
+    departureTime: string | null;
     petCount: number;
     estCost: number | null;
     answers: string;
@@ -952,14 +996,15 @@ export async function restoreBookingAfterEdit(
   await db
     .prepare(
       `UPDATE BookingRequests
-          SET StartDate = ?, EndDate = ?, StartTime = ?, PetCount = ?, EstCost = ?, Answers = ?,
-              Status = ?
+          SET StartDate = ?, EndDate = ?, StartTime = ?, DepartureTime = ?, PetCount = ?,
+              EstCost = ?, Answers = ?, Status = ?
         WHERE TenantId = ? AND Id = ?`,
     )
     .bind(
       previous.startDate,
       previous.endDate,
       previous.startTime,
+      previous.departureTime,
       previous.petCount,
       previous.estCost,
       previous.answers,
@@ -1141,6 +1186,62 @@ export async function insertBookingCharge(
 }
 
 /**
+ * SET a booking's DERIVED extra-time charges to exactly this list (0009) — used by the create path
+ * (where the delete is a no-op on a fresh row) and by the edit path, which is what makes "the
+ * surcharge follows the booking's times" one rule written once.
+ *
+ * Three deliberate properties:
+ *
+ *  - **One `db.batch`**, so a delete can never land without its replacement insert. Half-applied,
+ *    this would silently WAIVE money the customer was quoted.
+ *  - **Scoped to `Origin IN (…)`**, so a charge the sitter typed herself (`Origin IS NULL`) is
+ *    untouched — the invariant that an edit never disturbs her extras, preserved exactly.
+ *  - **Each INSERT carries `insertBookingCharge`'s existence guard** (`INSERT … SELECT … FROM
+ *    BookingRequests WHERE TenantId = ? AND Id = ?`), so a charge can never attach to a foreign
+ *    tenant's booking, a nonexistent id, or a 'blocked'/'external' sentinel.
+ *
+ * The caller decides WHETHER to call this at all: `editBooking` only does so when the times actually
+ * moved, which is what lets a fee the sitter deliberately deleted stay deleted through every edit
+ * that does not re-open the question.
+ */
+export async function replaceExtraTimeCharges(
+  db: D1Database,
+  tenantId: string,
+  bookingRequestId: string,
+  charges: { label: string; amount: number; origin: ExtraTimeOrigin }[],
+): Promise<void> {
+  const origins = EXTRA_TIME_ORIGINS.map(() => '?').join(', ');
+  const statements = [
+    db
+      .prepare(
+        `DELETE FROM BookingCharges
+          WHERE TenantId = ? AND BookingRequestId = ? AND Origin IN (${origins})`,
+      )
+      .bind(tenantId, bookingRequestId, ...EXTRA_TIME_ORIGINS),
+    ...charges.map((charge) =>
+      db
+        .prepare(
+          `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount, Origin)
+           SELECT ?, ?, ?, ?, ?, ?
+           FROM BookingRequests
+           WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          tenantId,
+          bookingRequestId,
+          charge.label,
+          charge.amount,
+          charge.origin,
+          tenantId,
+          bookingRequestId,
+        ),
+    ),
+  ];
+  await db.batch(statements);
+}
+
+/**
  * Delete one charge. The WHERE includes BookingRequestId so a charge id paired with the wrong
  * booking id in the URL reports false (route 404s) instead of silently deleting — deletePayment's
  * rule, for the same reason. Deleting is the only correction mechanism; there is no edit.
@@ -1165,7 +1266,7 @@ export async function listChargesForBooking(
 ): Promise<BookingChargeRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
        FROM BookingCharges WHERE TenantId = ? AND BookingRequestId = ?
        ORDER BY CreatedAt, Id`,
     )
@@ -1182,7 +1283,7 @@ export async function listChargesForTenant(
 ): Promise<BookingChargeRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, BookingRequestId, Label, Amount, CreatedAt
+      `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
        FROM BookingCharges WHERE TenantId = ? ORDER BY BookingRequestId, CreatedAt, Id`,
     )
     .bind(tenantId)
@@ -1278,6 +1379,95 @@ const CREDITABLE_AMOUNT_SQL = `(CASE WHEN b.Status = 'declined' THEN 0 ELSE ${EX
  */
 const CREDIT_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
      AND COALESCE(paid.Total, 0) > ${CREDITABLE_AMOUNT_SQL}`;
+
+/**
+ * The `paid` subquery `CREDIT_WHERE_SQL` and the outstanding predicate both expect in scope. One
+ * bind param (tenantId), like `CHARGES_JOIN_SQL`.
+ */
+const PAYMENTS_JOIN_SQL = `LEFT JOIN (
+         SELECT BookingRequestId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
+       ) paid ON paid.BookingRequestId = b.Id`;
+
+/** How much this booking is over-paid by, as the Earnings page displays it. */
+const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`;
+
+/** The label every kept-overpayment charge carries. One string, so the UI and the ledger agree. */
+export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
+
+export type KeepCreditResult =
+  { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };
+
+/**
+ * CLOSE AN OVER-PAYMENT THE CLIENT AGREED THE SITTER KEEPS, by logging it as a `BookingCharges` row.
+ *
+ * The credit was previously display-only: `CREDIT_WHERE_SQL` surfaced the money and nothing could
+ * resolve it, so it sat on the Earnings page forever. There are exactly two honest resolutions, and
+ * they must not be conflated because they say opposite things about revenue:
+ *
+ *   - **the money went back** — correct the payment ledger (`deletePayment`, then re-record what was
+ *     actually kept). Every earnings figure sums `Payments`, so revenue falls, which is right;
+ *   - **the client agreed she keeps it** (toward the next stay, a tip, a rounding) — the money really
+ *     was received, so revenue must NOT move. What changes is what this booking is OWED, which is a
+ *     charge. That is this function.
+ *
+ * **The amount is computed in the SQL from the very expressions the Earnings page displays the credit
+ * with** (`CREDIT_AMOUNT_SQL` over `CREDITABLE_AMOUNT_SQL`), never passed in — the same doctrine as
+ * the cancellation fee, and the reason the charge can never differ from the figure the sitter was
+ * shown. `INSERT ... SELECT ... WHERE` (insertPayment's idiom) makes the guard atomic with the write,
+ * and the guard IS `CREDIT_WHERE_SQL`: a booking that is not in credit inserts nothing. Since the new
+ * charge raises `EXPECTED_AMOUNT_SQL` by exactly the credit, the row afterwards is neither in credit
+ * nor outstanding — the two predicates stay mutually exclusive, which is what keeps this from
+ * disturbing the standing rule that `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in
+ * both directions.
+ *
+ * A `'declined'` row is refused: it may keep NOTHING (`CREDITABLE_AMOUNT_SQL` is 0 for it by rule),
+ * so a charge cannot close its credit, and offering the action anyway would be a button that does not
+ * work — the mirror of the "balance whose *Record payment* 404s" defect. Its only resolution is the
+ * refund path. `serializeAnalytics` publishes `canKeep` from the same rule so the UI never offers it.
+ *
+ * Reversible by design: deleting the charge re-opens the credit, because both figures are derived
+ * rather than stamped.
+ */
+export async function keepBookingCredit(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<KeepCreditResult> {
+  const id = crypto.randomUUID();
+  const inserted = await db
+    .prepare(
+      `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
+       SELECT ?, b.TenantId, b.Id, ?, ${CREDIT_AMOUNT_SQL}
+       FROM BookingRequests b
+       ${PAYMENTS_JOIN_SQL}
+       ${CHARGES_JOIN_SQL}
+       WHERE b.TenantId = ? AND b.Id = ? AND b.Status != 'declined' AND ${CREDIT_WHERE_SQL}
+       RETURNING Amount`,
+    )
+    .bind(id, KEPT_OVERPAYMENT_LABEL, tenantId, tenantId, tenantId, bookingId)
+    .first<{ Amount: number }>();
+  if (inserted) return { outcome: 'kept', amount: inserted.Amount };
+
+  // Refused, and nothing was written. One read to say WHICH refusal, so the sitter is told something
+  // she can act on. 'blocked'/'external' rows read as absent, the same existence answer every other
+  // money route gives them.
+  const row = await db
+    .prepare(
+      `SELECT b.Status AS Status, ${CREDIT_AMOUNT_SQL} AS Credit
+       FROM BookingRequests b
+       ${PAYMENTS_JOIN_SQL}
+       ${CHARGES_JOIN_SQL}
+       WHERE b.TenantId = ? AND b.Id = ? AND b.ServiceType NOT IN ('blocked', 'external')`,
+    )
+    .bind(tenantId, tenantId, tenantId, bookingId)
+    .first<{ Status: string; Credit: number }>();
+  if (!row) return { outcome: 'not-found' };
+  // "Nothing to close" is checked first: it is the more useful thing to say even about a declined
+  // row, and it is the answer to a double-click on a credit that has already been closed.
+  if (row.Credit <= 0) return { outcome: 'no-credit' };
+  return row.Status === 'declined' ? { outcome: 'declined' } : { outcome: 'no-credit' };
+}
 
 export type OutstandingBookingRow = {
   BookingId: string;
@@ -1522,6 +1712,11 @@ export async function setServiceConfig(
     holidayRate: number | null;
     /** The sitter's stored choice for pricing an otherwise-unpriced pet set (0005). */
     petRateMode: PetRateMode;
+    /** Extra-time surcharge config (0009); null clears a side back to "no surcharge". */
+    standardArrivalTime: string | null;
+    standardDepartureTime: string | null;
+    earlyArrivalFee: number | null;
+    lateDepartureFee: number | null;
   },
 ): Promise<boolean> {
   const result = await db
@@ -1529,7 +1724,9 @@ export async function setServiceConfig(
       `UPDATE TenantServices SET
          Enabled = ?, Description = ?, Questions = ?, MaxNights = ?,
          MaxPetCount = ?, MinLeadDays = ?, AcceptedPetTypes = ?, MaxConcurrentPets = ?,
-         CancellationTiers = ?, HolidayRate = ?, PetRateMode = ?
+         CancellationTiers = ?, HolidayRate = ?, PetRateMode = ?,
+         StandardArrivalTime = ?, StandardDepartureTime = ?, EarlyArrivalFee = ?,
+         LateDepartureFee = ?
        WHERE TenantId = ? AND ServiceType = ?`,
     )
     .bind(
@@ -1544,6 +1741,10 @@ export async function setServiceConfig(
       config.cancellationTiers === null ? null : JSON.stringify(config.cancellationTiers),
       config.holidayRate,
       config.petRateMode,
+      config.standardArrivalTime,
+      config.standardDepartureTime,
+      config.earlyArrivalFee,
+      config.lateDepartureFee,
       tenantId,
       serviceType,
     )
@@ -2214,6 +2415,10 @@ export async function insertInvitedCustomer(
  * pet-less customer is left standing. EndUsers' UNIQUE (TenantId, Email) likewise aborts the
  * batch on a concurrent duplicate create, so the caller must look the customer up first and only
  * call this for a genuinely new email (use addEndUserPet for an existing customer).
+ *
+ * Returns the customer WITH the id of the pet it just created (`PetId`), because the CSV import may
+ * have to attach a co-owner to that very pet in its deferred second pass — a widening of the old
+ * `EndUser` return, so every existing call site is untouched.
  */
 export async function insertInvitedCustomerWithPet(
   db: D1Database,
@@ -2223,7 +2428,7 @@ export async function insertInvitedCustomerWithPet(
   phone: string | null,
   petName: string,
   petType: PetType,
-): Promise<EndUser> {
+): Promise<EndUser & { PetId: string }> {
   const id = crypto.randomUUID();
   const petId = crypto.randomUUID();
   const invitedAt = new Date().toISOString();
@@ -2252,6 +2457,7 @@ export async function insertInvitedCustomerWithPet(
     VenmoUsername: null,
     Status: 'invited',
     InvitedAt: invitedAt,
+    PetId: petId,
   };
 }
 
@@ -2657,41 +2863,53 @@ export async function addEndUserPet(
 }
 
 /**
- * Count bookings referencing a pet, scoped to the tenant. BookingRequestPets has no TenantId, so
- * tenancy flows in via a join to EndUserPets — a foreign pet id counts as 0 (never a cross-tenant
- * existence oracle) regardless of D1's own foreign-key enforcement, since BookingRequestPets' FKs
- * reference BookingRequests(Id)/EndUserPets(Id) without a TenantId and so can't detect a
- * cross-tenant mismatch on their own.
+ * Delete one pet — unless a booking names it. Three outcomes, because the caller must tell them
+ * apart: 'not-found' (unknown or another tenant's pet → 404), 'has-bookings' (refused → 409), and
+ * 'removed'.
+ *
+ * **A pet on a booking is part of that booking's record.** Clearing its `BookingRequestPets` rows
+ * to make the delete succeed would rewrite what the stay says it was for and leave `PetCount`
+ * describing pets that are no longer listed; cancel and decline are SOFT, so the join row outlives
+ * the booking's active life on purpose. Refusal is therefore the right answer, and it was already
+ * the intended one — the admin route's 409 and `deleteCustomer`'s `cascadingPetGuard` both say so.
+ * The sitter's remedy for a pet that has died is `setPetDeceased`, which keeps the history.
+ *
+ * The guard is IN THE SQL, on every statement in the batch (the `deleteCustomer` pattern), not a
+ * read-then-write in the caller. `BookingRequestPets` has no `ON DELETE CASCADE` and D1 enforces
+ * foreign keys, so a caller-side pre-check left two ways to get a raw constraint error — i.e. a 500
+ * — instead of an answer: a new call site that forgets the check, and a booking POST landing between
+ * the check and the delete. Carrying the guard here means a refusal writes NOTHING (the batch is a
+ * transaction) and the race cannot produce an FK error at all.
+ *
+ * `BookingRequestPets` has no TenantId, so the reference test is unqualified — it does not need to
+ * be: the DELETEs are already scoped by `EndUserPets.TenantId`, pet ids are UUIDs, and a reference
+ * from anywhere is a reason to refuse, which is the safe direction regardless.
+ *
+ * PetOwners is deleted first: it FKs to EndUserPets, so the other order would fail the constraint
+ * rather than silently orphan a row.
  */
-export async function countBookingPetRefs(
-  db: D1Database,
-  tenantId: string,
-  petId: string,
-): Promise<number> {
-  const row = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM BookingRequestPets brp
-       JOIN EndUserPets p ON p.Id = brp.PetId
-       WHERE brp.PetId = ? AND p.TenantId = ?`,
-    )
-    .bind(petId, tenantId)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
-}
-
 export async function removeEndUserPet(
   db: D1Database,
   tenantId: string,
   petId: string,
-): Promise<boolean> {
-  // PetOwners (0019) FKs to EndUserPets, so its row(s) for this pet must be deleted first — D1
-  // enforces foreign keys, so deleting EndUserPets first would fail with a constraint error rather
-  // than silently leave an orphaned PetOwners row.
+): Promise<'removed' | 'not-found' | 'has-bookings'> {
+  const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = ?)`;
   const [, petResult] = await db.batch([
-    db.prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ?').bind(tenantId, petId),
-    db.prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?').bind(tenantId, petId),
+    db
+      .prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ? AND ${bookingGuard}`)
+      .bind(tenantId, petId, petId),
+    db
+      .prepare(`DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ? AND ${bookingGuard}`)
+      .bind(tenantId, petId, petId),
   ]);
-  return (petResult.meta as { changes?: number }).changes !== 0;
+  if ((petResult.meta as { changes?: number }).changes !== 0) return 'removed';
+  // Refused, and nothing was written. One read to choose which refusal it was: a pet that is not
+  // there at all can have no bookings, so "still present" is exactly "the guard stopped us".
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM EndUserPets WHERE TenantId = ? AND Id = ?`)
+    .bind(tenantId, petId)
+    .first<{ n: number }>();
+  return (row?.n ?? 0) > 0 ? 'has-bookings' : 'not-found';
 }
 
 /**
@@ -2721,6 +2939,122 @@ export async function addPetOwner(
     .bind(tenantId, petId, endUserId)
     .run();
   return true;
+}
+
+/**
+ * The pets named by `petIds` that exist in `tenantId`, with their liveness. Used by the co-owner
+ * creation route to tell "no such pet / another tenant's pet" (404) apart from "that pet has passed
+ * away" (400) BEFORE it writes anything — the wording is the whole reason this read exists; the
+ * write itself is guarded independently in SQL (see `coOwnerLinkStmt`).
+ */
+export async function listPetsByIds(
+  db: D1Database,
+  tenantId: string,
+  petIds: string[],
+): Promise<{ Id: string; DeceasedAt: string | null }[]> {
+  if (petIds.length === 0) return [];
+  const placeholders = petIds.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT Id, DeceasedAt FROM EndUserPets WHERE TenantId = ? AND Id IN (${placeholders})`,
+    )
+    .bind(tenantId, ...petIds)
+    .all<{ Id: string; DeceasedAt: string | null }>();
+  return results;
+}
+
+/**
+ * ONE guarded owner<->pet insert, shared by both co-owner paths below. Two properties, both in the
+ * SQL rather than in a caller-side pre-check:
+ *
+ *  - **A pet that is not a LIVE pet of `tenantId` aborts the whole batch.** The TenantId column is
+ *    written from a scalar subquery over `EndUserPets`, so an unknown id, another tenant's id or a
+ *    deceased pet resolves it to NULL and trips `PetOwners.TenantId NOT NULL`. That is deliberate,
+ *    and it is why `INSERT OR IGNORE` must NOT be used here: OR IGNORE would swallow that very
+ *    violation and skip the row, which on the create path would commit a pet-less client — the one
+ *    thing this whole feature exists to prevent.
+ *  - **Re-linking an existing owner is a no-op, not a conflict.** The `NOT EXISTS` guard does the
+ *    job `INSERT OR IGNORE` would otherwise have done, so a repeat call is harmless.
+ */
+function coOwnerLinkStmt(
+  db: D1Database,
+  tenantId: string,
+  petId: string,
+  endUserId: string,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO PetOwners (TenantId, PetId, EndUserId)
+       SELECT (SELECT p.TenantId FROM EndUserPets p
+                WHERE p.Id = ? AND p.TenantId = ? AND p.DeceasedAt IS NULL), ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM PetOwners po
+                           WHERE po.TenantId = ? AND po.PetId = ? AND po.EndUserId = ?)`,
+    )
+    .bind(petId, tenantId, petId, endUserId, tenantId, petId, endUserId);
+}
+
+/**
+ * Create a customer who brings NO pet of their own and link them to pets that already exist, as ONE
+ * atomic batch (`insertInvitedCustomerWithPet`'s precedent): EndUsers → one PetOwners row per pet.
+ *
+ * This is the second half of "no owners without pets". The first half — a client created together
+ * with their first pet — is `insertInvitedCustomerWithPet`; this one is "Rob, Tina's husband", who
+ * shares Tina's pets rather than bringing a new animal. Because the insert and every link commit or
+ * roll back together, a bad pet id can never leave a pet-less client standing, and the bare pet-less
+ * `insertInvitedCustomer` stays what it is: a test-seeding helper.
+ *
+ * `petIds` must be de-duplicated by the caller (PetOwners' PRIMARY KEY would otherwise abort the
+ * batch) and non-empty (a zero-link call is exactly the pet-less create this refuses to be).
+ * EndUsers' UNIQUE (TenantId, Email) aborts the batch on a concurrent duplicate create, so the
+ * caller looks the email up first and uses `addCoOwnerToPets` for an existing client.
+ */
+export async function insertInvitedCustomerAsCoOwner(
+  db: D1Database,
+  tenantId: string,
+  email: string,
+  name: string,
+  phone: string | null,
+  petIds: string[],
+): Promise<EndUser> {
+  if (petIds.length === 0) throw new Error('insertInvitedCustomerAsCoOwner needs at least one pet');
+  const id = crypto.randomUUID();
+  const invitedAt = new Date().toISOString();
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status, InvitedAt)
+         VALUES (?, ?, ?, ?, ?, 'invited', ?)`,
+      )
+      .bind(id, tenantId, email, name, phone, invitedAt),
+    ...petIds.map((petId) => coOwnerLinkStmt(db, tenantId, petId, id)),
+  ]);
+  return {
+    Id: id,
+    TenantId: tenantId,
+    Email: email,
+    Name: name,
+    Phone: phone,
+    VenmoUsername: null,
+    Status: 'invited',
+    InvitedAt: invitedAt,
+  };
+}
+
+/**
+ * Link an EXISTING customer to several pets at once — the merge half of the same action (the email
+ * the sitter typed turned out to be a client already, possibly one with pets of their own, so the
+ * two billing accounts become one). All-or-nothing for the same reason: a half-linked person can see
+ * some of the household's pets and not others, which is a data question the sitter cannot see.
+ * `addPetOwner` remains the single-pet, one-at-a-time route-level action.
+ */
+export async function addCoOwnerToPets(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  petIds: string[],
+): Promise<void> {
+  if (petIds.length === 0) return;
+  await db.batch(petIds.map((petId) => coOwnerLinkStmt(db, tenantId, petId, endUserId)));
 }
 
 /**
@@ -2920,6 +3254,7 @@ export type BookingSyncRow = {
   StartDate: string;
   EndDate: string | null;
   StartTime: string | null;
+  DepartureTime: string | null;
   DurationMinutes: number | null;
   PetCount: number;
   EstCost: number | null;
@@ -2928,7 +3263,8 @@ export type BookingSyncRow = {
 
 const BOOKING_SYNC_COLS = `b.Id AS Id, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
        COALESCE(s.Label, b.ServiceType) AS ServiceLabel, b.StartDate AS StartDate,
-       b.EndDate AS EndDate, b.StartTime AS StartTime, o.DurationMinutes AS DurationMinutes,
+       b.EndDate AS EndDate, b.StartTime AS StartTime, b.DepartureTime AS DepartureTime,
+       o.DurationMinutes AS DurationMinutes,
        b.PetCount AS PetCount, b.EstCost AS EstCost, b.Status AS Status`;
 
 const BOOKING_SYNC_JOINS = `FROM BookingRequests b

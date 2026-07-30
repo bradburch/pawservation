@@ -736,6 +736,20 @@ body {
   margin-top: 12px;
 }
 
+/* Arrival + departure, side by side. BOTH are always rendered together (BookTab), so this row's
+   height is fixed the moment `.bp-details` mounts — filling a time in never resizes the widget, and
+   with it the host page's iframe. `minmax(0, 1fr)` rather than `1fr` so a native time input's
+   intrinsic width cannot push the row wider than its column and start a horizontal scroll. */
+.bp-timerow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.bp-timerow input {
+  min-width: 0;
+}
+
 .bp-pet-chips {
   display: flex;
   flex-wrap: wrap;
@@ -867,6 +881,20 @@ body {
    but that text is FIXED per service, so it cannot change under a pet or day tap — only across a
    service switch, which is the same tail `.bp-service-desc` accepts. Money terms are never
    clamped away to make a box fit. */
+/* The extra-time surcharge line. TWO lines reserved, measured against the longest string this slot
+   can carry — "Extra time: Early arrival (07:00) +$20 · Late departure (13:00) +$15" — at a 294px
+   host (a 248px content column, the narrowest sidebar embed worth supporting). Always rendered and
+   never conditionally mounted, because it appears and disappears as a time input is filled in, and
+   an appearing line is a height change the widget posts straight to its host iframe. */
+.bp-extratime {
+  min-height: 2.4em;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  color: var(--bp-soft);
+}
+
 .bp-fineprint {
   min-height: 3.6em;
   margin: 0;

@@ -55,6 +55,7 @@ import {
   listServiceOptions,
   listServices,
   replaceBookingPets,
+  replaceExtraTimeCharges,
   replaceSavedAnswers,
   restoreBookingAfterEdit,
   updateBookingForEdit,
@@ -78,9 +79,9 @@ import {
 import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
 import { isUniqueViolation } from './db-errors';
+import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
 import {
   isValidPetCount,
-  isValidTimeString,
   validateBoardingRange,
   validateBookingWindow,
   validateSingleDate,
@@ -97,7 +98,7 @@ import {
   validateServiceConstraints,
   type CancellationTier,
 } from '../../src/shared/index.js';
-import type { BookingRow, Tenant } from '../types';
+import type { BookingRow, Tenant, TenantService } from '../types';
 
 // ─── The result contract ─────────────────────────────────────────────────────
 
@@ -211,6 +212,34 @@ function conflictFailure(check: { reason: string; code?: string }): OpFailure {
 }
 
 /**
+ * Attach the extra-time surcharge PREVIEW to a quote (0009). Decorates only the arm that carries a
+ * price, and only when a fee actually applies, so an ordinary quote's payload is byte-identical to
+ * what it was before the feature.
+ *
+ * Applied HERE rather than inside `checkAvailability`/`estimateCost`, deliberately: the price
+ * formula never learns that a time of day exists, and a surcharge never passes through it. What
+ * makes the preview trustworthy is not where it is attached but that it comes from
+ * `extraTimeSurcharges` — the same function `createBooking`/`editBooking` stamp the charges from,
+ * the way `feeToCancelToday` serves both the cancellation preview and the cancellation stamp.
+ *
+ * The `origin` tag is stripped: it is provenance for the DB, not for the wire.
+ */
+function withExtraTimePreview(
+  result: AvailabilityResult,
+  service: TenantService,
+  times: { startTime: string | null; departureTime: string | null },
+): AvailabilityResult {
+  if (!(result.available && result.priced)) return result;
+  const fees = extraTimeSurcharges(service, times);
+  if (fees.length === 0) return result;
+  return {
+    ...result,
+    extraTimeFees: fees.map(({ label, amount }) => ({ label, amount })),
+    extraTimeTotal: fees.reduce((sum, fee) => sum + fee.amount, 0),
+  };
+}
+
+/**
  * Do these two id lists name the same SET? Order-insensitive and duplicate-insensitive, because a
  * pet set is a set: `[a, b]` and `[b, a]` are one request, and `[a, a]` names one pet. Used by the
  * edit path to decide whether anything price-relevant moved (see `editBooking`).
@@ -234,6 +263,14 @@ export type QuoteInput = {
   end?: string;
   /** The caller's own pet ids, already de-duplicated by the adapter. */
   petIds: string[];
+  /**
+   * The owner's chosen arrival/departure times, if any. They affect neither capacity nor the stay's
+   * price — the quote takes them so it can (a) refuse exactly what the booking POST would refuse
+   * (`resolveBookingTimes`) rather than quoting happily for a request that cannot be submitted, and
+   * (b) disclose the extra-time surcharge they attract before the customer commits.
+   */
+  startTime?: string | null;
+  departureTime?: string | null;
   /**
    * A booking of the CALLER's own to leave out of the capacity read — set while they are EDITING
    * it, so a stay being re-timed does not collide with itself and read as "those dates are full".
@@ -292,6 +329,17 @@ export async function quoteBooking(
     : serviceOptions[0];
   if (!option) return fail(400, 'Unknown service option.');
 
+  // The same time rules the booking POST enforces, run here so the quote cannot report a price for
+  // a request the POST would refuse. The `code` is dropped: every quote 400 is `{ error }` on the
+  // wire (see the module docblock), and widening that is a separate, deliberate change.
+  const times = resolveBookingTimes(
+    service,
+    option,
+    input.startTime ?? null,
+    input.departureTime ?? null,
+  );
+  if (isTimesError(times)) return fail(times.status, times.error);
+
   // Mirrors the POST's acceptance gate (validatePetTypeAcceptance, run before pricing there
   // too): a cat quoted against a dogs-only service must get the acceptance message, not
   // "unpriced-pet-set" — the two are different refusals and the customer needs the right one.
@@ -331,16 +379,20 @@ export async function quoteBooking(
     // paths above — behavior is identical since checkAvailability is the only consumer.
     const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
     return ok(
-      await checkAvailability(
-        env,
-        tenant,
+      withExtraTimePreview(
+        await checkAvailability(
+          env,
+          tenant,
+          service,
+          option,
+          start,
+          end,
+          pets,
+          rates,
+          input.excludeBookingId,
+        ),
         service,
-        option,
-        start,
-        end,
-        pets,
-        rates,
-        input.excludeBookingId,
+        times,
       ),
     );
   }
@@ -360,16 +412,20 @@ export async function quoteBooking(
   if (constraintsError) return fail(400, constraintsError);
   const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
   return ok(
-    await checkAvailability(
-      env,
-      tenant,
+    withExtraTimePreview(
+      await checkAvailability(
+        env,
+        tenant,
+        service,
+        option,
+        start,
+        '',
+        pets,
+        rates,
+        input.excludeBookingId,
+      ),
       service,
-      option,
-      start,
-      '',
-      pets,
-      rates,
-      input.excludeBookingId,
+      times,
     ),
   );
 }
@@ -519,8 +575,14 @@ export type CreateBookingInput = {
   optionKey?: unknown;
   petIds: string[];
   answers: Record<string, string>;
-  /** Range services only; `null` = not given. */
+  /**
+   * The owner's ARRIVAL time; `null` = not given. Accepted only where the option does not own the
+   * clock (`TenantServices.HasDuration = 0`: boarding, house sitting, daycare) — see
+   * `resolveBookingTimes`.
+   */
   startTime: string | null;
+  /** The owner's DEPARTURE time (0008); `null` = not given. Same gate as `startTime`. */
+  departureTime: string | null;
   /** `Idempotency-Key`, already trimmed by the adapter; `null` = none. */
   idempotencyKey: string | null;
 };
@@ -623,16 +685,15 @@ export async function createBooking(
   );
   if (windowError) return fail(windowError.status, windowError.error, windowError.code);
 
-  // Optional customer-chosen arrival time — range stays only. Timed (single-day) services take
-  // their clock from the option, so a client-supplied time there is a bug, not a preference.
-  if (rawStartTime !== null) {
-    if (shape !== 'range')
-      return fail(400, 'An arrival time only applies to multi-day stays.', 'invalid_start_time');
-    if (!isValidTimeString(rawStartTime))
-      return fail(400, 'Arrival time must look like 14:30 (24-hour HH:MM).', 'invalid_start_time');
-  }
-  // One resolved value feeds BOTH the insert and the calendar sync so they can never disagree.
-  const bookingStartTime = shape === 'range' ? rawStartTime : option.StartTime;
+  // The owner's arrival/departure times, resolved in ONE place (`resolveBookingTimes`) shared with
+  // the edit path: who may set a time at all, what shape it must have, and the ordering rule —
+  // which is SINGLE-DAY ONLY, because on a range stay the departure falls on the end date.
+  const resolvedTimes = resolveBookingTimes(service, option, rawStartTime, input.departureTime);
+  if (isTimesError(resolvedTimes))
+    return fail(resolvedTimes.status, resolvedTimes.error, resolvedTimes.code);
+  // One resolved pair feeds BOTH the insert and the calendar sync so they can never disagree.
+  const bookingStartTime = resolvedTimes.startTime;
+  const bookingDepartureTime = resolvedTimes.departureTime;
 
   // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. The flag is
   // settable on ANY option, including range-shaped services (boarding/housesitting) — a stay
@@ -726,6 +787,7 @@ export async function createBooking(
       optionKey: option.OptionKey,
       petCount: pets,
       startTime: bookingStartTime,
+      departureTime: bookingDepartureTime,
       estCost,
       status: 'pending',
       answers,
@@ -756,6 +818,17 @@ export async function createBooking(
       return conflictFailure(check);
     }
     await addBookingPets(env.PAWBOOK_DB, tenant.Id, id, petIds);
+    // The extra-time surcharge the times attract (0009), from the SAME function the quote previewed
+    // it with — so the fee the customer just read and the fee now owed are one number. Inside this
+    // try, not after it: money owed must not be best-effort, and a throw here rolls the whole
+    // booking back rather than committing an under-billed one. Nothing is written when no fee
+    // applies (the common case) — `replaceExtraTimeCharges` with an empty list is one no-op DELETE.
+    await replaceExtraTimeCharges(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      id,
+      extraTimeSurcharges(service, resolvedTimes),
+    );
   } catch (err) {
     // The optimistic row is already persisted; if the capacity check or pet insert fails,
     // don't leave it orphaned (a pending row counts against capacity and never expires).
@@ -790,6 +863,7 @@ export async function createBooking(
       startDate: start,
       endDate,
       startTime: bookingStartTime,
+      departureTime: bookingDepartureTime,
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       petNames: chosen.map((p) => p!.Name),
@@ -886,6 +960,7 @@ export async function cancelBooking(
               startDate: sync.StartDate,
               endDate: sync.EndDate,
               startTime: sync.StartTime,
+              departureTime: sync.DepartureTime,
               durationMinutes: sync.DurationMinutes,
               petCount: sync.PetCount,
               petNames,
@@ -939,6 +1014,7 @@ export type EditBookingInput = {
   petIds: string[];
   answers: Record<string, string>;
   startTime: string | null;
+  departureTime: string | null;
 };
 
 export type EditBookingPayload = { id: string; estCost: number; status: 'pending' };
@@ -1069,13 +1145,12 @@ export async function editBooking(
   );
   if (windowError) return fail(windowError.status, windowError.error, windowError.code);
 
-  if (rawStartTime !== null) {
-    if (shape !== 'range')
-      return fail(400, 'An arrival time only applies to multi-day stays.', 'invalid_start_time');
-    if (!isValidTimeString(rawStartTime))
-      return fail(400, 'Arrival time must look like 14:30 (24-hour HH:MM).', 'invalid_start_time');
-  }
-  const bookingStartTime = shape === 'range' ? rawStartTime : option.StartTime;
+  // The same resolution the create path runs — one function, so the two cannot drift.
+  const resolvedTimes = resolveBookingTimes(service, option, rawStartTime, input.departureTime);
+  if (isTimesError(resolvedTimes))
+    return fail(resolvedTimes.status, resolvedTimes.error, resolvedTimes.code);
+  const bookingStartTime = resolvedTimes.startTime;
+  const bookingDepartureTime = resolvedTimes.departureTime;
 
   if (option.WeekdaysOnly) {
     const spanNights = shape === 'range' ? nightsBetween(start, end) : 1;
@@ -1111,6 +1186,7 @@ export async function editBooking(
     startDate: booking.StartDate,
     endDate: booking.EndDate,
     startTime: booking.StartTime,
+    departureTime: booking.DepartureTime,
     petCount: booking.PetCount,
     estCost: booking.EstCost,
     answers: booking.Answers,
@@ -1163,6 +1239,7 @@ export async function editBooking(
     startDate: start,
     endDate,
     startTime: bookingStartTime,
+    departureTime: bookingDepartureTime,
     petCount: pets,
     estCost,
     answers,
@@ -1187,6 +1264,29 @@ export async function editBooking(
       await restoreBookingAfterEdit(env.PAWBOOK_DB, tenant.Id, id, previous);
       await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, previousPetIds);
       return conflictFailure(check);
+    }
+    // The extra-time surcharge follows the booking's TIMES (0009), so it is re-derived exactly when
+    // those times moved — and left completely alone when they did not. That condition is the whole
+    // design, not an optimisation:
+    //
+    //  - Re-deriving on EVERY edit would resurrect a fee the sitter deliberately WAIVED (deleting is
+    //    the only correction `BookingCharges` has), turning her decision into something the customer
+    //    could undo by nudging a date.
+    //  - Re-deriving on NO edit would leave a $20 early-arrival fee standing against an arrival time
+    //    that no longer exists.
+    //
+    // Scoped by `Origin` in the SQL, so a charge the sitter typed herself is untouched either way —
+    // the "an edit never disturbs her extras" invariant, preserved exactly. Inside this try, like the
+    // create path's write and for the same reason: money owed is not best-effort.
+    const timesMoved =
+      bookingStartTime !== booking.StartTime || bookingDepartureTime !== booking.DepartureTime;
+    if (timesMoved) {
+      await replaceExtraTimeCharges(
+        env.PAWBOOK_DB,
+        tenant.Id,
+        id,
+        extraTimeSurcharges(service, resolvedTimes),
+      );
     }
   } catch (err) {
     // Best-effort rollback, then surface the original error — a half-applied edit would leave the
@@ -1225,6 +1325,7 @@ export async function editBooking(
         startDate: start,
         endDate,
         startTime: bookingStartTime,
+        departureTime: bookingDepartureTime,
         durationMinutes: option.DurationMinutes,
         petCount: pets,
         petNames,
@@ -1250,6 +1351,7 @@ export type MyBooking = {
   startDate: string;
   endDate: string | null;
   startTime: string | null;
+  departureTime: string | null;
   optionKey: string | null;
   petIds: string[];
   petCount: number;
@@ -1317,6 +1419,8 @@ export async function listMyBookings(
         endDate: r.EndDate,
         /** The stored arrival time — what the edit form must open showing. */
         startTime: r.StartTime,
+        /** The stored departure time (0008), for the same reason. */
+        departureTime: r.DepartureTime,
         /** Which priced option (walk length, check-in slot) this booking is on. An edit never
          *  changes it — it is here so the edit form paints the grid against the RIGHT option's
          *  capacity instead of falling back to the service's first one. */
