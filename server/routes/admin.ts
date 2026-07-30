@@ -68,6 +68,7 @@ import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
   getCalendarAccessToken,
+  keepsCalendarEventOnCancel,
   reconcileIfStale,
   repointCalendarTarget,
   syncBookingToCalendar,
@@ -88,6 +89,7 @@ import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
 import {
   isTemplateId,
+  MAX_OPTIONS_PER_SERVICE,
   MAX_QUESTIONS_PER_SERVICE,
   MAX_SERVICES,
   RESERVED_SERVICE_SLUGS,
@@ -114,11 +116,14 @@ import {
   EMAIL_RE,
   isNullableLimit,
   isPaymentMethod,
+  isPetRateMode,
   isRealDate,
   isValidDuration,
   isValidRate,
   isValidTimeString,
   MAX_ADVANCE_MONTHS_CAP,
+  MAX_OVERLAP_DAYS_CAP,
+  isValidOverlapDays,
   MAX_LEAD_DAYS_CAP,
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
@@ -298,6 +303,24 @@ function resolveServiceOptions(
   existingKeys: Set<string>,
 ): { error: string } | { resolved: ResolvedOption[] } {
   const resolved: ResolvedOption[] = [];
+  // Server-side bound on the "Add an option" / "Add another slot" buttons. Checked before any
+  // per-row work so an oversized payload is one clear message, not the first row's complaint.
+  //
+  // The cap blocks GROWTH, not existence. "Add an option" was unbounded before this cap landed,
+  // so a live sitter may already hold more rows than the limit — and a flat `> MAX` check would
+  // lock her out of saving ANYTHING in Settings (a name, a question, a holiday rate) until she
+  // deleted options she still uses. A rule introduced today must never retroactively invalidate
+  // a configuration that was legal when it was made. So the effective ceiling is the higher of
+  // the cap and what this service ALREADY has: an over-cap service stays fully editable and
+  // saveable, it simply cannot get bigger, and every deletion ratchets it down toward the cap.
+  const ceiling = Math.max(MAX_OPTIONS_PER_SERVICE, existingKeys.size);
+  if (opts.length > ceiling)
+    return {
+      error:
+        existingKeys.size > MAX_OPTIONS_PER_SERVICE
+          ? `${serviceLabel}: this service already has ${existingKeys.size} options, more than the limit of ${MAX_OPTIONS_PER_SERVICE}. You can keep and edit the ones you have, but you'll need to remove one before adding another.`
+          : `${serviceLabel}: a service can have at most ${MAX_OPTIONS_PER_SERVICE} options. Remove one to add another.`,
+    };
   // Duplicate names are the only collision a sitter should ever have to fix by hand — keys are
   // derived plumbing and are de-duped automatically below (two same-duration options are fine).
   const seenLabels = new Set<string>();
@@ -475,6 +498,10 @@ type ServiceBody = {
   cancellationTiers?: CancellationTier[] | null;
   /** Explicit whole-dollar holiday rate; null clears it. PATCH: absent = keep current. */
   holidayRate?: number | null;
+  /** How an otherwise-unpriced pet set is priced (0005): 'exact' refuses it, 'linear' charges the
+   *  option rate x the pet count. PATCH: absent = keep current — never coerced to a default here,
+   *  because coercing it would silently re-mode a service on any partial save. */
+  petRateMode?: unknown;
 };
 type SettingsBody = {
   displayName?: string;
@@ -484,6 +511,10 @@ type SettingsBody = {
   contactPhone?: string | null;
   /** Booking horizon in months, profile-level (0004); null = no limit. PATCH: absent = keep. */
   maxAdvanceMonths?: number | null;
+  /** House-sit/boarding tail-end overlap allowance in days (0006); null = no limit. Same PATCH
+   *  semantics — and 0 is a MEANINGFUL value here ("never overlap"), which is why `patchNullable`
+   *  keys off `in`, not falsiness. */
+  housesitBoardingOverlapDays?: number | null;
   services?: ServiceBody[];
 };
 
@@ -494,7 +525,12 @@ type SettingsBody = {
  */
 function patchNullable<T extends number | string>(
   body: SettingsBody,
-  key: 'timezone' | 'contactEmail' | 'contactPhone' | 'maxAdvanceMonths',
+  key:
+    | 'timezone'
+    | 'contactEmail'
+    | 'contactPhone'
+    | 'maxAdvanceMonths'
+    | 'housesitBoardingOverlapDays',
   current: T | null,
 ): T | null {
   return key in body ? ((body[key] as T | null | undefined) ?? null) : current;
@@ -546,6 +582,7 @@ export const adminRoutes = new Hono<AppEnv>()
       contactEmail: tenant.ContactEmail,
       contactPhone: tenant.ContactPhone,
       maxAdvanceMonths: tenant.MaxAdvanceMonths,
+      housesitBoardingOverlapDays: tenant.HousesitBoardingOverlapDays,
       // The signed-in sitter's own login email — never a client-settable field; the setup wizard
       // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
       adminEmail,
@@ -569,6 +606,7 @@ export const adminRoutes = new Hono<AppEnv>()
         capacityKind: svc.CapacityKind,
         maxConcurrentPets: svc.MaxConcurrentPets,
         holidayRate: svc.HolidayRate,
+        petRateMode: svc.PetRateMode,
         // How many SPECIFIC-pet rates cover 2+ pets — feeds the client's coarse "multi-pet but
         // unpriced" warning (spec §6). A comma in GroupKey means 2+ pet ids by construction.
         multiPetGroupRateCount: groupRates.filter(
@@ -626,6 +664,18 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json(
         {
           error: `Booking horizon must be between 1 and ${MAX_ADVANCE_MONTHS_CAP} months, or blank for no limit.`,
+        },
+        400,
+      );
+    const housesitBoardingOverlapDays = patchNullable<number>(
+      body,
+      'housesitBoardingOverlapDays',
+      tenant.HousesitBoardingOverlapDays,
+    );
+    if (!isValidOverlapDays(housesitBoardingOverlapDays))
+      return c.json(
+        {
+          error: `House sitting and boarding may overlap by 0 to ${MAX_OVERLAP_DAYS_CAP} days, or leave it blank for no limit.`,
         },
         400,
       );
@@ -787,6 +837,11 @@ export const adminRoutes = new Hono<AppEnv>()
           { error: `${meta.Label}: Holiday rate must be whole dollars, $1 or more (or blank).` },
           400,
         );
+      // The pet-rate mode is a STORED CHOICE, so an unrecognised value is rejected rather than
+      // coerced: coercing to 'exact' would silently discard a sitter's opt-in, and coercing to
+      // 'linear' would multiply money nobody asked to multiply.
+      if ('petRateMode' in svc && !isPetRateMode(svc.petRateMode))
+        return c.json({ error: `${meta.Label}: unknown multi-pet pricing mode.` }, 400);
       // Per-service acceptance list: PATCH semantics (absent = keep current). An explicit list
       // must be a subset of the tenant's slugs; the EFFECTIVE list (incoming or kept) may not be
       // empty on an enabled service — "accepts nothing" is expressed by disabling the service.
@@ -836,6 +891,7 @@ export const adminRoutes = new Hono<AppEnv>()
       contactEmail,
       contactPhone,
       maxAdvanceMonths,
+      housesitBoardingOverlapDays,
     });
     for (const svc of services) {
       const svcType = svc.type as string;
@@ -867,6 +923,7 @@ export const adminRoutes = new Hono<AppEnv>()
         cancellationTiers:
           'cancellationTiers' in svc ? (svc.cancellationTiers ?? null) : current.CancellationTiers,
         holidayRate: 'holidayRate' in svc ? (svc.holidayRate ?? null) : current.HolidayRate,
+        petRateMode: isPetRateMode(svc.petRateMode) ? svc.petRateMode : current.PetRateMode,
       });
       // The service existed when validated above but was deleted by a concurrent request since —
       // stop before writing options for a slug that no longer exists.
@@ -931,6 +988,15 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'A service with that name already exists.' }, 400);
 
     const tpl = SERVICE_TEMPLATES[body.template];
+    // The template's species guess, INTERSECTED with this tenant's actual registry. A tenant that
+    // deleted 'cat' would otherwise get a check-in service whose accepted list is empty — an
+    // enabled service accepting nothing, which the settings PUT rejects on every subsequent save.
+    // An empty intersection falls back to NULL (= every registry type), never to `[]`.
+    const registry = new Set(
+      (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).map((p) => p.PetType),
+    );
+    const wanted = tpl.defaultAcceptedPetTypes?.filter((t) => registry.has(t)) ?? null;
+    const acceptedPetTypes = wanted && wanted.length > 0 ? [...wanted] : null;
     try {
       await createService(c.env.PAWBOOK_DB, tenant.Id, {
         serviceType: slug,
@@ -941,6 +1007,14 @@ export const adminRoutes = new Hono<AppEnv>()
         hasDuration: tpl.hasDuration,
         capacityKind: tpl.capacityKind,
         sortOrder: Math.max(0, ...existing.map((s) => s.SortOrder)) + 1,
+        acceptedPetTypes,
+        // Owner directive (2026-07-28): a service created from here on starts with per-pet
+        // multiplication ON, so a two-dog household can book the moment the sitter types one
+        // price. This is the ONE place that default is chosen, and it applies to NEW rows only —
+        // the column's own default is 'exact', so every service that already exists keeps
+        // refusing unpriced sets exactly as before. The service editor states the mode in plain
+        // English right above the price, so it is a disclosed default, not a silent one.
+        petRateMode: 'linear',
       });
     } catch (err) {
       // The listServices check above can't see a concurrent insert of the same slug — fall back
@@ -1827,12 +1901,20 @@ export const adminRoutes = new Hono<AppEnv>()
     // Calendar hooks are best-effort and never block the response (waitUntil in production; awaited
     // in tests, which have no ExecutionContext — see routes/bookings.ts).
     let calendarTask: Promise<void> | null = null;
-    if (status === 'confirmed') {
+    const retitle = keepsCalendarEventOnCancel('cancelled', fee ?? null) && status === 'cancelled';
+    if (status === 'confirmed' || retitle) {
       // Confirm: retitle the existing event (drop the [REQUEST] marker), or — if the booking has
       // NO event yet (booked before the calendar was connected, or a Google outage swallowed the
       // request-time create) — create it now as a catch-up, already in the confirmed state.
+      //
+      // Cancel-WITH-A-FEE lands here too, retitling to [CANCELLED] rather than deleting: the stay
+      // isn't happening but the receivable is, and this must agree with the outbox's own
+      // delete-vs-retitle derivation or a failed push here would be resolved the other way by the
+      // next sweep. It differs from confirm in one respect — a fee-cancelled booking with no
+      // event is NOT created now, since putting a [CANCELLED] event on a calendar that never had
+      // the booking helps nobody.
       const syncData = await getBookingSyncData(c.env.PAWBOOK_DB, tenant.Id, id);
-      if (syncData) {
+      if (syncData && !(retitle && !booking?.GCalEventId)) {
         const petNames = await listPetNamesForBooking(c.env.PAWBOOK_DB, tenant.Id, id);
         const input: SyncInput = {
           bookingId: id,
@@ -1846,7 +1928,7 @@ export const adminRoutes = new Hono<AppEnv>()
           petCount: syncData.PetCount,
           petNames,
           estCost: syncData.EstCost,
-          status: 'confirmed',
+          status: retitle ? 'cancelled' : 'confirmed',
         };
         calendarTask = booking?.GCalEventId
           ? updateBookingCalendarEvent(c.env, tenant, booking.GCalEventId, input)
@@ -1906,7 +1988,8 @@ export const adminRoutes = new Hono<AppEnv>()
       note,
       externalRef: null,
     });
-    // Guard refused: foreign, blocked, or cancelled booking (pending is deliberately allowed).
+    // Guard refused: foreign, blocked/external, declined, or a cancelled booking that owes
+    // nothing — no fee and no live charges (pending is deliberately allowed).
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
     const payments = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
     const created = payments.find((p) => p.Id === paymentId);

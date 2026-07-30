@@ -1768,3 +1768,219 @@ describe('settings PUT caps', () => {
     expect(cfg.services.find((s) => s.type === 'boarding')!.holidayRate).toBe(75);
   });
 });
+
+describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005)', () => {
+  const putMode = async (env: Env, petRateMode: unknown) =>
+    app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+              petRateMode,
+            },
+          ],
+        }),
+      },
+      env,
+    );
+
+  it("every seeded service starts 'exact' — the multiplier is never the ambient default", async () => {
+    const { env } = createTestEnv();
+    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(services.length).toBeGreaterThan(0);
+    for (const svc of services) expect(svc.PetRateMode).toBe('exact');
+  });
+
+  it('round-trips the mode through the settings PUT and back out of the GET', async () => {
+    const { env } = createTestEnv();
+    expect((await putMode(env, 'linear')).status).toBe(204);
+    const read = async () => {
+      const res = await app.request(
+        '/api/sunny-paws/admin/settings',
+        { headers: await auth(TENANT_A) },
+        env,
+      );
+      const body = (await res.json()) as { services: { type: string; petRateMode: string }[] };
+      return body.services.find((s) => s.type === 'boarding')!.petRateMode;
+    };
+    expect(await read()).toBe('linear');
+    expect(
+      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+        .PetRateMode,
+    ).toBe('linear');
+    expect((await putMode(env, 'exact')).status).toBe(204);
+    expect(await read()).toBe('exact');
+  });
+
+  it('keeps the stored mode when the field is absent (PATCH semantics — no silent re-moding)', async () => {
+    const { env } = createTestEnv();
+    expect((await putMode(env, 'linear')).status).toBe(204);
+    // A later save that says nothing about pricing mode must not quietly reset the opt-in.
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'boarding',
+              enabled: true,
+              options: [{ label: 'Standard', durationMinutes: null, rate: 50 }],
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(204);
+    expect(
+      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+        .PetRateMode,
+    ).toBe('linear');
+  });
+
+  it('rejects an unknown mode rather than coercing it in either direction', async () => {
+    const { env } = createTestEnv();
+    for (const bad of ['sliding', '', 1, true, null]) {
+      const res = await putMode(env, bad);
+      expect(res.status).toBe(400);
+    }
+    // Nothing was written by any of those attempts.
+    expect(
+      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+        .PetRateMode,
+    ).toBe('exact');
+  });
+
+  it('the mode is per SERVICE and per TENANT — one opt-in moves exactly one row', async () => {
+    const { env } = createTestEnv();
+    expect((await putMode(env, 'linear')).status).toBe(204);
+    const sunny = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(sunny.find((s) => s.ServiceType === 'boarding')!.PetRateMode).toBe('linear');
+    for (const svc of sunny.filter((s) => s.ServiceType !== 'boarding'))
+      expect(svc.PetRateMode).toBe('exact');
+    for (const svc of await listServices(env.PAWBOOK_DB, TENANT_B))
+      expect(svc.PetRateMode).toBe('exact');
+  });
+});
+
+describe('settings PUT — the per-service option cap', () => {
+  const optionRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      label: `Pack ${i + 1}`,
+      durationMinutes: 60,
+      rate: 25,
+    }));
+  const putOptions = async (env: Env, n: number) =>
+    app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [{ type: 'walk', enabled: true, options: optionRows(n) }],
+        }),
+      },
+      env,
+    );
+
+  it('accepts a service at exactly the cap', async () => {
+    const { env } = createTestEnv();
+    expect((await putOptions(env, 8)).status).toBe(204);
+  });
+
+  /**
+   * The cap blocks GROWTH, not existence. "Add an option" was unbounded before the cap landed, so
+   * a live sitter can already hold more rows than the limit — and a flat `> MAX` check would lock
+   * her out of saving ANYTHING in Settings until she deleted options she still uses. A rule
+   * introduced today must not retroactively invalidate a configuration that was legal when made.
+   */
+  it('an ALREADY over-cap service stays saveable — the cap is not retroactive', async () => {
+    const { env, raw } = createTestEnv();
+    // 11 stored walk options, the way a pre-cap sitter's row looks. Written directly, since the
+    // PUT is exactly the thing being proven not to lock her out.
+    raw
+      .prepare(`DELETE FROM TenantServiceOptions WHERE TenantId=? AND ServiceType='walk'`)
+      .run(TENANT_A);
+    for (let i = 1; i <= 11; i++)
+      raw
+        .prepare(
+          `INSERT INTO TenantServiceOptions (Id, TenantId, ServiceType, OptionKey, Label, DurationMinutes, Rate)
+           VALUES (?, ?, 'walk', ?, ?, ?, 25)`,
+        )
+        .run(`opt_over_${i}`, TENANT_A, `d${i * 10}`, `${i * 10} min`, i * 10);
+
+    // Re-saving all 11 unchanged — plus an unrelated edit — must succeed.
+    const resave = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              description: 'Neighbourhood walks',
+              options: Array.from({ length: 11 }, (_, i) => ({
+                optionKey: `d${(i + 1) * 10}`,
+                label: `${(i + 1) * 10} min`,
+                durationMinutes: (i + 1) * 10,
+                rate: 25,
+              })),
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(resave.status).toBe(204);
+
+    // But she still cannot GROW it — and the message says why, naming both numbers.
+    const grow = await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        method: 'PUT',
+        headers: await auth(TENANT_A, true),
+        body: JSON.stringify({
+          services: [
+            {
+              type: 'walk',
+              enabled: true,
+              options: Array.from({ length: 12 }, (_, i) => ({
+                label: `${(i + 1) * 10} min`,
+                durationMinutes: (i + 1) * 10,
+                rate: 25,
+              })),
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(grow.status).toBe(400);
+    const msg = ((await grow.json()) as { error: string }).error;
+    expect(msg).toContain('already has 11 options');
+    expect(msg).toContain('limit of 8');
+  });
+
+  it('refuses one option past the cap, in plain language, and writes nothing', async () => {
+    const { env } = createTestEnv();
+    expect((await putOptions(env, 8)).status).toBe(204);
+    const res = await putOptions(env, 9);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('at most 8 options');
+    // The rejected payload left the 8 saved rows alone rather than half-applying.
+    const rows = (await (
+      await app.request('/api/sunny-paws/admin/settings', { headers: await auth(TENANT_A) }, env)
+    ).json()) as { services: { type: string; options: unknown[] }[] };
+    expect(rows.services.find((s) => s.type === 'walk')!.options).toHaveLength(8);
+  });
+});

@@ -18,8 +18,30 @@ export function serializeAnalytics(data: AnalyticsData) {
     // Total due is the stay price (or fee) PLUS extra charges; EstCost stays the quoted price.
     balance: o.EstCost + o.ChargesTotal - o.PaidTotal,
     // The subquery's EstCost is aliased from CancellationFee on a cancelled row, so the UI
-    // needs this flag to label the amount as a fee rather than a live booking balance.
-    isCancellationFee: o.Status === 'cancelled',
+    // needs this flag to label the amount as a fee rather than a live booking balance. Status
+    // alone is NOT enough: a fee-FREE cancellation can still be outstanding purely for its extra
+    // charges (EstCost resolves to the stored 0), and labelling those $45 of extras a
+    // "cancellation fee" tells the sitter she assessed a fee she waived. The flag means "the base
+    // amount on this row IS a fee", so it needs the fee to actually be there.
+    isCancellationFee: o.Status === 'cancelled' && o.EstCost > 0,
+  }));
+  /**
+   * OVER-payments — money the customer no longer owes. The one place an edit's re-stamped `EstCost`
+   * can leave a client in credit becomes visible: `credit` is `paidTotal - keepable`, the same
+   * one-rule arithmetic the outstanding row's `balance` uses, read in the other direction. There is
+   * deliberately no *Record payment* affordance on these rows (see `CREDIT_WHERE_SQL`): a credit is
+   * a negative balance, not a payable one.
+   */
+  const credits = data.credits.map((c) => ({
+    bookingId: c.BookingId,
+    name: c.Name,
+    email: c.Email,
+    serviceType: c.ServiceType,
+    startDate: c.StartDate,
+    status: c.Status,
+    keepable: c.Keepable,
+    paidTotal: c.PaidTotal,
+    credit: c.PaidTotal - c.Keepable,
   }));
   return {
     tiles: {
@@ -27,6 +49,9 @@ export function serializeAnalytics(data: AnalyticsData) {
       lastMonth: data.monthly.at(-2)?.Total ?? 0,
       outstandingTotal: outstanding.reduce((sum, o) => sum + o.balance, 0),
       outstandingCount: outstanding.length,
+      // Never netted against `outstandingTotal`: one client owing $100 and another being owed $100
+      // is not a settled book, and showing $0 would say it was.
+      creditTotal: credits.reduce((sum, c) => sum + c.credit, 0),
     },
     monthly: data.monthly.map((m) => ({ month: m.Month, total: m.Total })),
     ytd: data.ytd,
@@ -44,5 +69,6 @@ export function serializeAnalytics(data: AnalyticsData) {
       bookings: t.Bookings,
     })),
     outstanding,
+    credits,
   };
 }

@@ -1,0 +1,22 @@
+-- House-sit / boarding overlap allowance (owner directive 2026-07-29):
+--   Tenants.HousesitBoardingOverlapDays — how many days a request may overlap OPPOSITE-kind
+--   occupancy (a house sit over boarding, or boarding over a house sit), and only ever as a
+--   HANDOVER: the request arriving on a day everything else departs on, or departing on a day
+--   everything else arrives on. One value for the whole business, because the rule models the
+--   sitter's own whereabouts — she cannot sleep at a client's house and keep a boarder at her
+--   own — not a capacity pool.
+--
+--     0    = never overlap.
+--     1    = the DEFAULT: one handover day, e.g. a boarding that starts as a house sit wraps up.
+--     2    = a stay may touch a tail at each of its own ends.
+--     NULL = no limit (the repo-wide NULL-=-unlimited convention; the rule stops running).
+--
+-- Values above 2 are unreachable by construction — a stay hands over at most twice, once at each
+-- of its own ends — so the admin PUT validates 0..2 or NULL.
+--
+-- DEFAULT 1 (nullable) is what makes this additive AND correct: SQLite stamps every existing row
+-- with 1, which is the intent the previous hardcoded rule already had, and every future signup
+-- inherits it without `createTenantFromSignup` naming the column. What changes on apply is that
+-- the rule now also runs in the BOARDING direction and only forgives a day that is a real handover.
+
+ALTER TABLE Tenants ADD COLUMN HousesitBoardingOverlapDays INTEGER DEFAULT 1;

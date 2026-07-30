@@ -14,6 +14,21 @@ describe('llms.txt + JSON-LD', () => {
     expect(body).toContain('/api/sunny-paws/availability');
   });
 
+  it('publishes the whole booking lifecycle, not just creation', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/embed/sunny-paws/llms.txt', {}, env)).text();
+    // An agent that can create a booking but cannot discover how to change or cancel one will
+    // fall back to creating a second booking — so the two self-service routes are published too.
+    expect(body).toContain('- Change a booking: PUT ');
+    expect(body).toContain('/api/sunny-paws/bookings/{id}');
+    expect(body).toContain('/api/sunny-paws/bookings/{id}/cancel');
+    expect(body).toContain('/api/sunny-paws/bookings/mine');
+    // …with the three facts an agent would otherwise get wrong.
+    expect(body).toContain('the service and option cannot change');
+    expect(body).toContain('computed server-side');
+    expect(body).toContain("Every request starts as 'pending'");
+  });
+
   it("lists each service's short description, on one line, and omits it when absent", async () => {
     const { env, raw } = createTestEnv();
     raw.exec(

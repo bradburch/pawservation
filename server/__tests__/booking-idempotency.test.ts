@@ -39,6 +39,30 @@ describe('booking idempotency + error codes', () => {
     expect(b.estCost).toBe(a.estCost);
   });
 
+  // The widget now sends a key on every attempt (one primary "Request Booking" button makes a
+  // double-tap likelier), so "the replay returned the same id" is not enough on its own — the
+  // second POST must leave no second row, and no second set of pet links, behind it.
+  it('a replay persists nothing: one booking row, one set of pet links', async () => {
+    const { env, raw } = createTestEnv();
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const first = (await (await post(env, token, 'idem-once')).json()) as { id: string };
+    const second = (await (await post(env, token, 'idem-once')).json()) as { id: string };
+    expect(second.id).toBe(first.id);
+
+    const rows = raw
+      .prepare(
+        `SELECT COUNT(*) AS n FROM BookingRequests
+         WHERE TenantId = 'tnt_sunnypaws' AND ServiceType = 'boarding' AND StartDate = ?`,
+      )
+      .get(BOOKING.startDate) as { n: number };
+    expect(rows.n).toBe(1);
+
+    const pets = raw
+      .prepare(`SELECT COUNT(*) AS n FROM BookingRequestPets WHERE BookingRequestId = ?`)
+      .get(first.id) as { n: number };
+    expect(pets.n).toBe(1);
+  });
+
   it('different keys create different bookings; no key never dedupes', async () => {
     const { env } = createTestEnv();
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');

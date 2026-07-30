@@ -24,6 +24,20 @@ const MONTH_NAMES = [
   'Dec',
 ];
 
+/**
+ * The ", incl. …" tail on an outstanding balance. Each component is named with its OWN amount, so
+ * a cancelled booking that owes only its extras never reads as a cancellation fee the sitter
+ * waived: `isCancellationFee` means "the base amount on this row is a fee" (server-side it also
+ * requires that fee to be non-zero), and the extras are always a separate figure.
+ */
+function breakdown(o: AnalyticsPayload['outstanding'][number]): string {
+  const parts = [
+    ...(o.isCancellationFee ? [`$${o.estCost} cancellation fee`] : []),
+    ...(o.chargesTotal > 0 ? [`$${o.chargesTotal} extras`] : []),
+  ];
+  return parts.length ? `, incl. ${parts.join(' + ')}` : '';
+}
+
 /** '2026-07' → 'Jul 26'. */
 function monthLabel(month: string): string {
   const [y, m] = month.split('-');
@@ -124,6 +138,14 @@ export function EarningsView({
           <strong>{data.tiles.outstandingCount}</strong>
           <span>{data.tiles.outstandingCount === 1 ? 'Unpaid booking' : 'Unpaid bookings'}</span>
         </div>
+        {/* Only when there IS one: a permanent "$0 in credit" tile would be noise on a healthy
+            book, and this figure is never netted into Outstanding (see the server comment). */}
+        {data.tiles.creditTotal > 0 && (
+          <div className="pb-tile">
+            <strong>${data.tiles.creditTotal}</strong>
+            <span>Owed back</span>
+          </div>
+        )}
       </div>
 
       <h3>Revenue over time</h3>
@@ -208,8 +230,7 @@ export function EarningsView({
                 {o.serviceType} ({formatFriendlyDate(o.startDate)})
                 <br />
                 owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost + o.chargesTotal}
-                {o.chargesTotal > 0 ? `, incl. $${o.chargesTotal} extras` : ''}
-                {o.isCancellationFee ? ' cancellation fee' : ''})
+                {breakdown(o)})
               </span>
               {session && onChanged && handleError && (
                 <>
@@ -229,6 +250,30 @@ export function EarningsView({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Overpayments. Rendered only when there are any — a sitter with a clean book should not have
+          to read a "nothing here" line — and with NO payment button: this is money going the other
+          way, and the product has no refund path, so the honest thing is to name it and let her
+          settle it with her client. The commonest source is an edit: a stay paid in full and then
+          shortened re-stamps a lower EstCost. */}
+      {data.credits.length > 0 && (
+        <>
+          <h3>Owed back to clients</h3>
+          <ul>
+            {data.credits.map((c) => (
+              <li key={c.bookingId}>
+                <span className="pb-truncate-block" title={c.name || c.email || 'Unknown client'}>
+                  <span className="pb-truncate">{c.name || c.email || 'Unknown client'}</span> —{' '}
+                  {c.serviceType} ({formatFriendlyDate(c.startDate)})
+                  <br />
+                  overpaid ${c.credit} (paid ${c.paidTotal}
+                  {c.keepable > 0 ? ` of $${c.keepable}` : ', now owes nothing'})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </>
   );

@@ -181,7 +181,7 @@ describe('POST /api/signup/complete — sitter', () => {
     const t = await getSetupToken(env, ALLOWED_EMAIL);
     const res = await complete(env, {
       token: t,
-      password: 'hunter22',
+      password: 'RiverStone2026',
       businessName: "Rex's Best Walks!",
     });
     expect(res.status).toBe(200);
@@ -219,7 +219,7 @@ describe('POST /api/signup/complete — sitter', () => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: ALLOWED_EMAIL, password: 'hunter22' }),
+        body: JSON.stringify({ email: ALLOWED_EMAIL, password: 'RiverStone2026' }),
       },
       env,
     );
@@ -230,7 +230,11 @@ describe('POST /api/signup/complete — sitter', () => {
   it('never publishes the signup email — it is a login credential, not a public contact', async () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);
-    const res = await complete(env, { token: t, password: 'hunter22', businessName: 'Rex Walks' });
+    const res = await complete(env, {
+      token: t,
+      password: 'RiverStone2026',
+      businessName: 'Rex Walks',
+    });
     const { slug, token } = (await res.json()) as { slug: string; token: string };
 
     // Tenants.ContactEmail is PUBLIC: the unauthenticated /config feeds the widget's live mailto:
@@ -259,7 +263,7 @@ describe('POST /api/signup/complete — sitter', () => {
     const t = await getSetupToken(env, ALLOWED_EMAIL);
     const res = await complete(env, {
       token: t,
-      password: 'hunter22',
+      password: 'RiverStone2026',
       businessName: 'Sunny Paws', // collides with the seeded sunny-paws tenant
     });
     expect(((await res.json()) as { slug: string }).slug).toBe('sunny-paws-2');
@@ -268,7 +272,11 @@ describe('POST /api/signup/complete — sitter', () => {
   it('skips reserved slugs ("Admin" → admin-2)', async () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);
-    const res = await complete(env, { token: t, password: 'hunter22', businessName: 'Admin' });
+    const res = await complete(env, {
+      token: t,
+      password: 'RiverStone2026',
+      businessName: 'Admin',
+    });
     expect(((await res.json()) as { slug: string }).slug).toBe('admin-2');
   });
 
@@ -280,16 +288,30 @@ describe('POST /api/signup/complete — sitter', () => {
     ).toBe(400);
     // The link survived the rejection and still works.
     expect(
-      (await complete(env, { token: t, password: 'eightchr', businessName: 'Biz' })).status,
+      (await complete(env, { token: t, password: 'RiverStone2026', businessName: 'Biz' })).status,
+    ).toBe(200);
+  });
+
+  it("rejects a password derived from the signup link's own email (400) — link still usable after", async () => {
+    const { env } = createTestEnv();
+    const t = await getSetupToken(env, ALLOWED_EMAIL); // local part "newsitter"
+    expect(
+      (await complete(env, { token: t, password: 'mynewsitteraccount', businessName: 'Biz' }))
+        .status,
+    ).toBe(400);
+    // The link survived the rejection and still works — the email-similarity check runs before
+    // the nonce is consumed, same as the length floor.
+    expect(
+      (await complete(env, { token: t, password: 'RiverStone2026', businessName: 'Biz' })).status,
     ).toBe(200);
   });
 
   it('rejects a missing/undeliverable business name (400)', async () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);
-    expect((await complete(env, { token: t, password: 'hunter22' })).status).toBe(400);
+    expect((await complete(env, { token: t, password: 'RiverStone2026' })).status).toBe(400);
     expect(
-      (await complete(env, { token: t, password: 'hunter22', businessName: '!!!' })).status,
+      (await complete(env, { token: t, password: 'RiverStone2026', businessName: '!!!' })).status,
     ).toBe(400); // slugifies to '' — no derivable identity
   });
 
@@ -305,13 +327,15 @@ describe('POST /api/signup/complete — sitter', () => {
       exp: Date.now() - 1000,
     });
     expect(
-      (await complete(env, { token: expired, password: 'hunter22', businessName: 'B' })).status,
+      (await complete(env, { token: expired, password: 'RiverStone2026', businessName: 'B' }))
+        .status,
     ).toBe(400);
     // Tampered signature.
     const good = await getSetupToken(env, ALLOWED_EMAIL);
     const tampered = good.slice(0, -1) + (good.endsWith('A') ? 'B' : 'A');
     expect(
-      (await complete(env, { token: tampered, password: 'hunter22', businessName: 'B' })).status,
+      (await complete(env, { token: tampered, password: 'RiverStone2026', businessName: 'B' }))
+        .status,
     ).toBe(400);
   });
 
@@ -319,10 +343,12 @@ describe('POST /api/signup/complete — sitter', () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);
     expect(
-      (await complete(env, { token: t, password: 'hunter22', businessName: 'Once Biz' })).status,
+      (await complete(env, { token: t, password: 'RiverStone2026', businessName: 'Once Biz' }))
+        .status,
     ).toBe(200);
     expect(
-      (await complete(env, { token: t, password: 'hunter22', businessName: 'Twice Biz' })).status,
+      (await complete(env, { token: t, password: 'RiverStone2026', businessName: 'Twice Biz' }))
+        .status,
     ).toBe(400); // nonce gone → treated as expired/used
   });
 
@@ -332,12 +358,13 @@ describe('POST /api/signup/complete — sitter', () => {
     const t1 = await getSetupToken(env, ALLOWED_EMAIL);
     const t2 = await getSetupToken(env, ALLOWED_EMAIL); // second link, its own live nonce
     expect(
-      (await complete(env, { token: t1, password: 'hunter22', businessName: 'First Biz' })).status,
+      (await complete(env, { token: t1, password: 'RiverStone2026', businessName: 'First Biz' }))
+        .status,
     ).toBe(200);
     const before = (raw.prepare('SELECT COUNT(*) AS n FROM Tenants').get() as { n: number }).n;
     const res = await complete(env, {
       token: t2,
-      password: 'hunter22',
+      password: 'RiverStone2026',
       businessName: 'Second Biz',
     });
     expect(res.status).toBe(409); // TenantUsers.Email UNIQUE aborted the whole batch
@@ -357,7 +384,7 @@ describe('POST /api/signup/complete — sitter', () => {
     raw.prepare('DROP TABLE TenantPetTypes').run();
     const res = await complete(env, {
       token: t,
-      password: 'hunter22',
+      password: 'RiverStone2026',
       businessName: 'Broken Biz',
     });
     expect(res.status).toBe(500);
@@ -382,7 +409,7 @@ describe('POST /api/signup/complete — sitter', () => {
     ).n;
     const res = await complete(env, {
       token: t,
-      password: 'hunter22',
+      password: 'RiverStone2026',
       businessName: 'Ghost Biz',
     });
     expect(res.status).toBe(400);
@@ -395,7 +422,8 @@ describe('POST /api/signup/complete — sitter', () => {
     expect(raw.prepare('SELECT 1 FROM Tenants WHERE Slug = ?').get('ghost-biz')).toBeFalsy();
     // Nonce was already consumed before the claim check ran — no replay resurrection.
     expect(
-      (await complete(env, { token: t, password: 'hunter22', businessName: 'Ghost Biz' })).status,
+      (await complete(env, { token: t, password: 'RiverStone2026', businessName: 'Ghost Biz' }))
+        .status,
     ).toBe(400);
   });
 });
@@ -406,7 +434,7 @@ describe('POST /api/signup/complete — owner', () => {
   it('creates the OwnerUsers row and returns an owner token', async () => {
     const { env, raw } = createTestEnv();
     const t = await getSetupToken(env, OWNER_EMAIL);
-    const res = await complete(env, { token: t, password: 'ownerpass1' });
+    const res = await complete(env, { token: t, password: 'MeadowBright99' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { token: string; role: string; email: string };
     expect(body.role).toBe('owner');
@@ -421,7 +449,7 @@ describe('POST /api/signup/complete — owner', () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, OWNER_EMAIL);
     env.OWNER_EMAILS = ''; // secret changed since the link was issued
-    expect((await complete(env, { token: t, password: 'ownerpass1' })).status).toBe(400);
+    expect((await complete(env, { token: t, password: 'MeadowBright99' })).status).toBe(400);
   });
 
   it('a non-UNIQUE insert failure is a 500, NOT a false "already set up" 409', async () => {
@@ -432,7 +460,7 @@ describe('POST /api/signup/complete — owner', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const t = await getSetupToken(env, OWNER_EMAIL);
     raw.prepare('DROP TABLE OwnerUsers').run();
-    const res = await complete(env, { token: t, password: 'ownerpass1' });
+    const res = await complete(env, { token: t, password: 'MeadowBright99' });
     expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).not.toBe(ALREADY_SET_UP_ERROR);
     expect(errSpy).toHaveBeenCalledWith('owner signup insert failed', expect.anything());
@@ -443,8 +471,8 @@ describe('POST /api/signup/complete — owner', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const t1 = await getSetupToken(env, OWNER_EMAIL);
     const t2 = await getSetupToken(env, OWNER_EMAIL);
-    expect((await complete(env, { token: t1, password: 'ownerpass1' })).status).toBe(200);
-    expect((await complete(env, { token: t2, password: 'ownerpass1' })).status).toBe(409);
+    expect((await complete(env, { token: t1, password: 'MeadowBright99' })).status).toBe(200);
+    expect((await complete(env, { token: t2, password: 'MeadowBright99' })).status).toBe(409);
     expect(errSpy).toHaveBeenCalledWith('owner signup insert failed', expect.anything());
   });
 });

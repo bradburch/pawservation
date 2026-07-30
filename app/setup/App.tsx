@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { MIN_PASSWORD_LENGTH, validatePassword } from '../../src/shared/index.js';
 import '../admin/admin.css';
 
 /**
@@ -11,9 +12,6 @@ import '../admin/admin.css';
  */
 
 const TOKEN_KEY = 'pawservation-admin-token'; // must match app/admin/App.tsx
-
-/** Mirrors the server-side floor in POST /api/signup/complete (client-side is UX only). */
-const MIN_PASSWORD_LENGTH = 8;
 
 type LinkPayload = { email: string; kind: 'sitter' | 'owner'; exp: number };
 
@@ -74,8 +72,9 @@ export default function App() {
       setError('Enter your business name.');
       return;
     }
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    const passwordError = validatePassword(password, { email: payload.email });
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
     if (password !== confirm) {
@@ -145,6 +144,10 @@ export default function App() {
           onKeyDown={(e) => e.key === 'Enter' && void submit()}
         />
       </label>
+      <p className="pb-hint">
+        At least {MIN_PASSWORD_LENGTH} characters. Avoid common passwords and anything based on your
+        email address.
+      </p>
       <label>
         Confirm password
         <input

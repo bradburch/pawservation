@@ -30,6 +30,7 @@ async function setLeadDays(env: Env, days: number | null): Promise<void> {
     maxConcurrentPets: current.MaxConcurrentPets,
     cancellationTiers: current.CancellationTiers,
     holidayRate: current.HolidayRate,
+    petRateMode: current.PetRateMode,
   });
 }
 
@@ -42,6 +43,7 @@ async function setHorizon(env: Env, months: number | null): Promise<void> {
     contactEmail: t.ContactEmail,
     contactPhone: t.ContactPhone,
     maxAdvanceMonths: months,
+    housesitBoardingOverlapDays: t.HousesitBoardingOverlapDays,
   });
 }
 

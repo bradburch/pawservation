@@ -19,6 +19,12 @@ import {
  * disables a service and never overwrites an existing service's options or prices.
  */
 
+/** Mirrors MAX_OPTIONS_PER_SERVICE in server/lib/services.ts — UX only (it hides the Add button);
+ * the settings PUT is the authority and rejects an oversized payload independently. Mirrored
+ * rather than imported for the same reason MAX_SERVICES' 6 is below: the admin bundle does not
+ * import server modules. */
+const MAX_PACK_ROWS = 8;
+
 type PresetState = {
   preset: ServicePreset;
   existing: Settings['services'][number] | undefined;
@@ -36,14 +42,28 @@ type PresetState = {
 function PresetOptionFields({
   option,
   onChange,
+  onRemove,
 }: {
   option: PresetOption;
   onChange: (next: PresetOption) => void;
+  /** Absent on the last remaining row — a preset must always write at least one option. */
+  onRemove?: () => void;
 }) {
   const windowed = option.startTime !== null && option.endTime !== null;
   return (
     <div>
-      <strong>{option.label}</strong>
+      <div className="pb-inline">
+        <input
+          aria-label={`Name for the "${option.label}" slot`}
+          value={option.label}
+          onChange={(e) => onChange({ ...option, label: e.target.value })}
+        />
+        {onRemove && (
+          <button type="button" onClick={onRemove}>
+            Remove
+          </button>
+        )}
+      </div>
       <div className="pb-inline">
         Pickup window (optional)
         <input
@@ -76,6 +96,46 @@ function PresetOptionFields({
       </div>
     </div>
   );
+}
+
+/** Minutes since midnight for an "HH:MM" clock string. */
+function minutesOf(hhmm: string): number {
+  const [h, m] = hhmm.split(':');
+  return Number(h) * 60 + Number(m);
+}
+function clockOf(minutes: number): string {
+  const m = Math.min(Math.max(minutes, 0), 23 * 60 + 59);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * The next row an "Add another slot" click appends — the ServiceEditor `addTier` idiom: derive
+ * sensible values from the LAST row instead of dropping an empty one on the sitter.
+ *
+ * Capacity and the weekdays-only flag are cloned outright (a sitter running two packs runs them
+ * the same way), and a windowed row's clock window is pushed forward by its own length so the new
+ * slot starts where the last one ended rather than overlapping it. The label gets a numeric suffix
+ * because the settings PUT rejects two options of one service sharing a name.
+ */
+function nextPresetOption(rows: PresetOption[]): PresetOption {
+  const last = rows[rows.length - 1];
+  const windowed = last?.startTime != null && last?.endTime != null;
+  const span = windowed ? minutesOf(last.endTime!) - minutesOf(last.startTime!) : 0;
+  const startTime = windowed ? last.endTime! : null;
+  const endTime = windowed ? clockOf(minutesOf(last.endTime!) + span) : null;
+  const base = (last?.label ?? 'Slot').replace(/\s+\d+$/, '');
+  let label = `${base} ${rows.length + 1}`;
+  for (let n = rows.length + 1; rows.some((r) => r.label === label); n++)
+    label = `${base} ${n + 1}`;
+  return {
+    label,
+    // Windowed options derive their duration server-side; unwindowed ones keep the last row's.
+    durationMinutes: windowed ? null : (last?.durationMinutes ?? null),
+    startTime,
+    endTime,
+    capacity: last?.capacity ?? null,
+    weekdaysOnly: last?.weekdaysOnly ?? false,
+  };
 }
 
 export function SetupWizard({
@@ -157,6 +217,26 @@ export function SetupWizard({
   /** Options the apply loop will stamp the rate onto for a preset this run. */
   const presetOptions = (preset: ServicePreset): PresetOption[] =>
     optionEdits[preset.id] ?? preset.options;
+
+  /**
+   * What a SECOND pet will cost on this preset, in the sitter's own money language.
+   *
+   * This wizard is the primary creation path for a new tenant, and a sitter can finish the whole
+   * of it without ever opening Services & Rates — so if the multi-pet setting is not disclosed
+   * HERE, it is not disclosed at all, and "your rate x the number of pets" becomes a price nobody
+   * was told about. That is the one thing the pricing invariant exists to prevent.
+   *
+   * Read per preset rather than stated once, because the answer genuinely differs: a preset with
+   * no existing row will be CREATED by the apply loop, and `POST /admin/services` stamps new
+   * services 'linear'; a preset that matches a row already in the database keeps whatever that
+   * row stores. The wizard's settings PUT deliberately does NOT send `petRateMode`, so an
+   * existing service's stored choice is never overwritten by a Quick setup re-run — which is
+   * exactly why this line must read the stored value instead of assuming.
+   */
+  const multiPetNote = (ps: PresetState): string =>
+    (ps.existing?.petRateMode ?? 'linear') === 'linear'
+      ? 'More than one pet: two pets cost twice this, three cost three times. Change it, or price exact combinations like “two dogs $60”, under Services & Rates.'
+      : 'More than one pet: only combinations you have priced under Services & Rates can be booked together.';
 
   // Escape closes the dialog (same as Skip for now), except mid-apply — matching the
   // Skip button, which is also disabled while a run is in flight.
@@ -474,10 +554,15 @@ export function SetupWizard({
                     /{SERVICE_TEMPLATES[ps.preset.template].rateUnit}
                   </label>
                 )}
+                <span className="pb-hint">{multiPetNote(ps)}</span>
                 {!ps.alreadyPriced &&
                   ['visit', 'walk'].includes(SERVICE_TEMPLATES[ps.preset.template].rateUnit) && (
                     <details className="pb-wizard-custom">
                       <summary>Customize</summary>
+                      <p className="pb-hint">
+                        Each row is one slot clients can book, with its own window and capacity. One
+                        price covers them all — change any of it later in Services &amp; Rates.
+                      </p>
                       {presetOptions(ps.preset).map((o, oi) => (
                         <PresetOptionFields
                           key={oi}
@@ -487,8 +572,40 @@ export function SetupWizard({
                             options[oi] = next;
                             setOptionEdits((cur) => ({ ...cur, [ps.preset.id]: options }));
                           }}
+                          onRemove={
+                            presetOptions(ps.preset).length > 1
+                              ? () =>
+                                  setOptionEdits((cur) => ({
+                                    ...cur,
+                                    [ps.preset.id]: presetOptions(ps.preset).filter(
+                                      (_, k) => k !== oi,
+                                    ),
+                                  }))
+                              : undefined
+                          }
                         />
                       ))}
+                      {presetOptions(ps.preset).length < MAX_PACK_ROWS ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOptionEdits((cur) => ({
+                              ...cur,
+                              [ps.preset.id]: [
+                                ...presetOptions(ps.preset),
+                                nextPresetOption(presetOptions(ps.preset)),
+                              ],
+                            }))
+                          }
+                        >
+                          Add another slot
+                        </button>
+                      ) : (
+                        <p className="pb-hint">
+                          That&rsquo;s the limit of {MAX_PACK_ROWS} slots on one service. Remove one
+                          to add another.
+                        </p>
+                      )}
                     </details>
                   )}
               </div>
@@ -525,7 +642,7 @@ export function SetupWizard({
                 disabled={applying || !chosen.every(priceValid)}
                 onClick={() => void apply()}
               >
-                {applying ? 'Setting up…' : error ? 'Retry' : 'Finish setup'}
+                {applying ? 'Setting up…' : error ? 'Retry' : 'Save and continue'}
               </button>
             </div>
           </>
@@ -577,15 +694,13 @@ export function SetupWizard({
               </p>
             )}
             <div className="pb-wizard-nav">
-              {settings.calendar.status === 'connected' ? (
-                <button type="button" onClick={() => goTo(5)}>
-                  Continue
-                </button>
-              ) : (
-                <button type="button" className="pb-wizard-skip" onClick={() => goTo(5)}>
-                  Skip for now
-                </button>
-              )}
+              {/* Step 4 is the last COUNTED step ("Step 4 of 4") — this is where "Finish setup"
+                  belongs, regardless of whether the sitter connected a calendar. Services/prices
+                  are already persisted (apply() ran on step 3); this button only advances to the
+                  done screen (step 5), same as both branches did before this label unified them. */}
+              <button type="button" onClick={() => goTo(5)}>
+                Finish setup
+              </button>
               <button type="button" className="pb-wizard-back" onClick={() => goTo(3)}>
                 Back
               </button>

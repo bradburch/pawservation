@@ -37,7 +37,10 @@ describe('sendInvite', () => {
       .mockResolvedValue(new Response('{}', { status: 200 }));
     await sendInvite(env, 'guest@example.com', '<img src=x onerror=alert(1)>', 'https://w/embed/x');
     const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.html).not.toContain('<img');
+    expect(body.html).not.toContain('<img src=x');
     expect(body.html).toContain('&lt;img');
+    // The shell's own brand logo is the ONLY <img> that survives into the body.
+    expect((body.html.match(/<img/g) ?? []).length).toBe(1);
+    expect(body.html).toContain('<img src="https://pawservation.com/brand/pawservation-logo.png"');
   });
 });

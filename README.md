@@ -28,7 +28,18 @@ the availability/conflict math.
   scratch) with per-option label/duration/price, time windows, weekday-only scheduling,
   slot capacity, and custom intake questions.
 - **Per-service capacity & rules** — boarding caps, house-sits-per-day, max stay nights,
-  and accepted animal types are all service-level attributes; blank means unlimited.
+  and accepted animal types are all service-level attributes; blank means unlimited. Every
+  cap is denominated in **pets, not bookings**, and every check asks whether the requested
+  _set_ fits (`used + petCount > cap`) — the boarding/house-sit pools and the per-option
+  daily slot cap alike, so a slot with one place left refuses a two-pet request. The
+  customer's month grid takes the selected `petIds` and is painted with the same arithmetic,
+  so the calendar can't offer a day the quote then refuses. There is deliberately no minimum
+  stay and no minimum pet count.
+- **House-sit / boarding handover rule** — the sitter can only be in one place, so the two
+  are held apart by a tenant-wide allowance (`HousesitBoardingOverlapDays`): never overlap,
+  one handover day (the default), one at each end of a stay, or no limit. A shared day only
+  ever counts as a genuine handover — one stay ending as the other begins — so a boarding
+  dropped into the middle of a house sit is refused at any allowance.
 - **Custom animal types** — tenants aren't limited to dogs and cats; add any species and
   accept it per service.
 - **Pet co-ownership** — a pet can belong to more than one customer account (e.g.
@@ -38,17 +49,28 @@ the availability/conflict math.
   CSV import, services & rates card grid, time off, embed codes, and in-app help.
 - **Google Calendar sync is two-way** — per-tenant OAuth connect; bookings are pushed out
   with retry via an outbox, and a 15-minute cron sweep reconciles both directions: a
-  booking cancelled/declined in Pawservation deletes its event, an event deleted in
-  Google reconciles the booking back to cancelled, and a foreign event hand-kept on the
-  connected calendar is read back and blocks new requests like a time-off day.
+  booking declined (or cancelled with nothing owed) in Pawservation deletes its event
+  while a cancellation carrying a fee keeps it and retitles it `[CANCELLED]`, an event
+  deleted in Google reconciles the booking back to cancelled, and a foreign event
+  hand-kept on the connected calendar is read back and blocks new requests like a time-off
+  day.
 - **Per-service minimum notice + booking horizon** — a service can require N days' notice
   before its earliest bookable start, and a tenant-wide advance-booking horizon caps how
   far out anyone can book; both are optional (NULL = unlimited) and enforced identically
-  at the quote, the calendar grid, and the booking POST.
-- **Pet-set rates** — beyond the base per-pet price, a sitter can set an exact-match rate
-  for a specific combination of pets or a species mix (e.g. "two dogs" priced as its own
-  line); an unpriced multi-pet set is refused rather than guessed at by multiplying the
-  single-pet rate.
+  at the quote, the calendar grid, and the booking POST. New tenants are stamped with a
+  12-month horizon at signup.
+- **Species defaults per service** — a newly created service starts from the likely answer
+  rather than from nothing: walks and daycare dog-only, check-ins cat-only, boarding and
+  house sitting open to every registered type. It is a create-time default intersected with
+  the tenant's own pet-type registry, never a constraint — the sitter re-ticks the boxes,
+  and existing services are not backfilled.
+- **Pet-set rates + a per-service multi-pet mode** — a sitter can set an exact-match rate for
+  a specific combination of pets or a species mix (e.g. "two dogs" priced as its own line),
+  and those stored rates always win. For a combination with no rate of its own, each service
+  carries a stored `PetRateMode`: `'linear'` charges the option rate × the number of pets,
+  `'exact'` refuses the booking rather than guessing a price. Services created from here on
+  start `'linear'`; every service that existed before the mode shipped stays `'exact'`, and
+  nothing is backfilled.
 - **Onboarding wizard** — first login walks a new sitter through business profile,
   services, and pricing presets; skippable and re-runnable, always additive.
 - **Invite-only signup + owner console** — the platform owner (identified by the
@@ -56,8 +78,31 @@ the availability/conflict math.
   via an emailed single-use setup link. No open signup. The owner console can also disable
   or permanently remove a joined sitter — a disabled tenant's widget goes dark and its
   admin dashboard drops to read-only; removal deletes the tenant and every row it owns.
+- **Customer self-cancellation** — a customer can cancel their own pending or confirmed
+  booking (including a stay already in progress) from the widget. The fee is computed
+  server-side from the service's stored cancellation tiers — the client never names a
+  price — and the same number is previewed before confirming and stamped on the row. A
+  pending request is always free to withdraw; the sitter is emailed either way. The row is
+  never deleted: a fee-free cancellation deletes the Google Calendar event, while a
+  fee-bearing one keeps it and retitles it `[CANCELLED]` so money still owed stays visible.
+- **Customer self-editing** — `PUT /:slug/bookings/:id` lets a customer change their own
+  booking's dates, pet set, arrival time, and intake answers (never the service, never the
+  option). Every rule a create runs is re-run by calling the same code, capacity is
+  re-checked excluding the booking's own row with a verbatim rollback on refusal, a
+  confirmed booking drops back to `pending` for the sitter to re-approve, and no
+  cancellation fee is ever assessed — rescheduling is not cancelling. The estimate is
+  re-quoted only when something price-relevant moved (the dates or the pet set).
+- **Saved intake answers** — a customer's last answer per
+  `(tenant, customer, service, question)` is mirrored into `SavedAnswers` after a booking
+  create or edit and re-offered as the pre-fill next time. A reworded, retyped, deleted, or
+  narrowed question drops its stale answer instead of pre-filling it, and a blank answer
+  deletes the saved row. The pre-fill carries no authority — it is re-validated as an
+  ordinary answer on submit.
 - **Two auth flows** — passwordless email-code sessions for customers; password + JWT for
-  sitter admins (PBKDF2, with timing-safe user-enumeration defenses).
+  sitter admins (PBKDF2, with timing-safe user-enumeration defenses). Sitter and owner
+  passwords must be at least 12 characters and clear a short denylist of keyboard-walks
+  and leaked-password filler — one validator in `src/shared/auth/password-policy.ts`,
+  mirrored by the setup page for UX and enforced independently by the server.
 - **Billing accounts** — co-owned pets collapse into one household billing account (union-
   find over owner↔pet links), so a shared client sees one balance, not one per owner.
 - **Venmo CSV import** — upload a Venmo export to preview matched transactions against
@@ -78,7 +123,7 @@ Prereqs: **Node 24** (`nvm use` reads `.nvmrc` — the test harness needs the bu
 
 ```bash
 npm install
-npm run seed:local   # applies sql/schema.sql + sql/seed.sql to the local D1 (resets local data)
+npm run seed:local   # applies sql/schema.sql + sql/seed.sql + sql/seed-demo.sql to the local D1
 npm run build        # build the four Vite bundles into dist/
 npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEND_FROM_NOREPLY: --var RESEND_FROM_BOOKING:
 ```
@@ -119,7 +164,7 @@ Seeded demo logins:
 | Command                                                | What it does                                                                          |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `npm run dev`                                          | Build + watch widgets, run `wrangler dev` (reads `.dev.vars` → real email; see above) |
-| `npm run seed:local`                                   | Reset the local D1 from `sql/schema.sql` + `sql/seed.sql`                             |
+| `npm run seed:local`                                   | Reset the local D1 from `sql/schema.sql` + `sql/seed.sql` + `sql/seed-demo.sql`       |
 | `npm test`                                             | Vitest against a real in-memory SQLite (`server/**/*.test.ts`)                        |
 | `npx vitest run server/__tests__/availability.test.ts` | Run one test file                                                                     |
 | `npx vitest run -t "conflict"`                         | Filter tests by name                                                                  |
@@ -140,7 +185,7 @@ server/       Hono Worker — routes, tenant middleware, auth/tokens, availabili
 app/          Three React apps: embed/ (widget), admin/ (dashboard + owner console),
               setup/ (signup-link page), plus shared-ui/ (API client, icons, hooks)
 src/shared/   Pure booking/capacity/pricing/date logic — zero runtime dependencies
-sql/          schema.sql (canonical DDL) + seed.sql (demo tenants)
+sql/          schema.sql (canonical DDL), seed.sql (base fixture), seed-demo.sql (demo activity + config)
 migrations/   New incremental DB changes only, numbered from the 2026-07-27 re-baseline
 public/       embed.js loader, demo host script, landing images, CSV import example
 ```
@@ -161,8 +206,8 @@ consistent):
 
 - **`sql/schema.sql` IS the baseline.** Every database — local, remote, and the Vitest
   harness — is expected to match it exactly. `npm run seed:local` / `seed:remote` apply
-  `sql/schema.sql` (+ optional demo `sql/seed.sql`) directly; there is nothing to replay
-  on top.
+  `sql/schema.sql` (+ the demo `sql/seed.sql` and `sql/seed-demo.sql`) directly; there is
+  nothing to replay on top.
 - **`migrations/` numbering restarts from the 2026-07-27 re-baseline.** The incremental
   history that built the old schema (`0001`–`0025`) was deleted in the re-baseline; it
   lives in git (`git log -- migrations/`), not on disk. See `migrations/README.md` for

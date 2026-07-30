@@ -23,7 +23,8 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
   payment/earnings tracking (Venmo CSV reconciliation, holiday pricing, one-off booking
   charges, multi-owner billing accounts), two-way Google Calendar sync (bookings pushed
   out with retry; busy events, edits, and deletions on the connected calendar read back on
-  a 15-minute sweep), and owner-console sitter
+  a 15-minute sweep), customer self-service (reschedule and cancel, with the cancellation
+  fee priced server-side from the sitter's stored policy), and owner-console sitter
   lifecycle management (disable/remove), all shipped as incremental, reviewed PRs.
 - **Edge-native architecture** — Cloudflare Workers (Hono) + D1 (SQLite) + KV, chosen for
   low-latency global delivery of a widget that lives on third-party sites.
@@ -35,7 +36,7 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
   book are easy to test in isolation and can't be broken by a transitive dependency update.
 - **Two real auth flows** — passwordless email-code sessions for customers and password +
   JWT sessions for tenant admins, including invite-only customer lists.
-- **Tested like it matters** — 117 test files backed by in-memory SQLite (`node:sqlite`),
+- **Tested like it matters** — 124 test files backed by in-memory SQLite (`node:sqlite`),
   gating a CI pipeline that runs typecheck, lint, format, test, and build on every PR
   before an automatic deploy to Cloudflare on merge to `main`.
 - **Security-conscious by habit** — a documented [`SECURITY.md`](../SECURITY.md) policy,

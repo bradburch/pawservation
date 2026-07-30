@@ -5,12 +5,14 @@ import {
   buildCapacity,
   buildGroupKey,
   buildMixKey,
+  crossKindDayBlocked,
   DEFAULT_TIMEZONE,
   dedupePets,
   getPacificDateStr,
   mixFromPetTypes,
   nightsBetween,
-  rangeHasConflict,
+  overlapReadWindow,
+  rangeConflictReason,
   resolvePetSetRate,
   walkHasConflict,
   type CapacityEvent,
@@ -19,6 +21,7 @@ import {
   type MixRate,
   type PoolKind,
   type PricedPet,
+  type RangeConflict,
 } from '../../src/shared/index.js';
 import {
   listCapacityRows,
@@ -31,12 +34,13 @@ import {
 } from '../db/repo';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import { holidayAwareCost, splitUnits, type UnitSplit } from './holiday-cost';
+import { DEFAULT_OVERLAP_DAYS } from './validation';
 
 // Per-tenant availability built on the shared capacity engine. Each pool-drawing service carries
 // its own nullable cap (MaxConcurrentPets; null = unlimited / auto pass-through).
 
-// External rows are deliberately blocked-kind (hard stop, no bookend sharing) — a Google event
-// tells us the sitter is busy, not which pool is busy.
+// External rows are deliberately blocked-kind (an unconditional hard stop) — a Google event tells us
+// the sitter is busy, not which pool is busy.
 export function rowsToCapacityEvents(rows: CapacityRow[]): CapacityEvent[] {
   return rows.map((row) =>
     row.ServiceType === 'blocked' || row.ServiceType === 'external'
@@ -101,7 +105,18 @@ export type AvailabilityResult =
       groupKey: string;
       mixKey: string;
     }
-  | { available: false; reason: string };
+  | {
+      available: false;
+      /** Customer-facing "why not", rendered verbatim by the widget (`BookTab`'s quoteRefusal). */
+      reason: string;
+      /**
+       * A stable snake_case identifier for the refusal, present ONLY where the generic
+       * "those dates just filled up" would misdescribe it — today just the house-sit/boarding
+       * overlap rule, whose dates are NOT full. The booking POST forwards it (and this `reason`)
+       * as its `{ error, code }`, so an agent gets the same distinction a person does.
+       */
+      code?: string;
+    };
 
 /**
  * The result of pricing a booking. `priced: false` carries NO cost — the failure cannot be
@@ -141,31 +156,37 @@ export type PriceResult =
  * displays and the price it sits next to can never disagree.
  *
  * INVARIANT — no inferred pricing. A price must never come from an algorithm the sitter did not
- * configure:
+ * configure. The rule is not "pet count may never be multiplied"; it is **"a rate the sitter did
+ * not type is a price they did not agree to."** Concretely:
  *
- * - **Pet count never affects price.** Two dogs for three nights cost the same as one dog for
- *   three nights UNLESS the sitter stored a rate for that exact set — and then the price is that
- *   stored number, not a function of the count.
  * - The only arithmetic permitted here is over **units of time** (nights, days, per-visit) times
- *   a stored `Rate`. Nothing else may be multiplied, scaled, or surcharged.
- * - A per-pet or per-combination rate requires an explicit stored rate entry the sitter chose. It
- *   must never be inferred (no "×1.5 for the second dog", no per-pet multiplier).
+ *   a stored `Rate`, and — only where the sitter stored `PetRateMode = 'linear'` — times the
+ *   number of distinct pets. Nothing else may be multiplied, scaled, or surcharged.
+ * - A per-combination rate is never GUESSED. `resolvePetSetRate` does exact matching and no
+ *   arithmetic of any kind, and an explicitly stored pet-set rate always WINS over the multiplier:
+ *   a sitter who typed a two-dog rate gets that rate, never 2× the one-dog rate.
+ * - There is still no "×1.5 for the second dog", no percentage surcharge, no proration, and no
+ *   nearest-match — the multiplier is exactly ×N or nothing.
  *
- * The structural guarantee: the ONLY thing `pets` can do in this function is select a stored rate
- * by EXACT match (`resolvePetSetRate`, which does no arithmetic of any kind), or, for a single
- * pet, fall through to the option's own rate. There is no expression anywhere below in which a
- * pet count is an operand. When no rate matches a set of two or more, the function REFUSES —
- * inventing a number from the single-pet rate is precisely the defect this comment prevents, and
- * `server/__tests__/availability.test.ts`'s "a three-dog quote is refused, not tripled" is its
- * lock.
+ * The structural guarantee, restated for `PetRateMode` (2026-07-28): the ONLY things `pets` can do
+ * in this function are (a) select a stored rate by EXACT match, (b) for a single pet, fall through
+ * to the option's own rate, and (c) multiply by its own DISTINCT COUNT — and (c) is reachable only
+ * when the service row itself says `'linear'`, which is a value a sitter stored. `'exact'` is the
+ * default for every row that has never been given one, and under `'exact'` a set of two or more
+ * with no matching stored rate REFUSES exactly as it always has. Inventing a number from the
+ * single-pet rate for a service that did NOT opt in is precisely the defect this comment prevents;
+ * `server/__tests__/availability.test.ts`'s "a three-dog quote is refused, not tripled (mode
+ * 'exact')" is its lock, and its `'linear'` sibling pins the opted-in multiplication next to it so
+ * neither can be deleted as "the other one covers it".
  *
  * Holiday units (2026-07-27, WS-H) obey every rule above: a service's optional `HolidayRate` is an
  * explicit stored rate the sitter typed, charged per UNIT OF TIME that lands on a listed US
  * holiday, applied to whatever base rate `r` the pet-set resolution above produced — never a
- * multiplier, never derived, never scaled by pet count. A NULL `HolidayRate` — every service until
- * a sitter sets one — prices identically to before the feature existed. Composing the two features
- * is a single call to `holidayAwareCost(r, service.HolidayRate, split)` below; neither the pet-set
- * resolution nor `holiday-cost.ts` learns anything about the other.
+ * multiplier, never derived. A NULL `HolidayRate` — every service until a sitter sets one — prices
+ * identically to before the feature existed. Composing the two features is a single call to
+ * `holidayAwareCost(r, service.HolidayRate, split)` below; `holiday-cost.ts` still never learns
+ * that pets exist. Under `'linear'` the pet multiplier is applied to that composed total, so the
+ * holiday leg scales too — see the `petMultiplier` comment at the call site for why.
  */
 export function estimateCost(
   service: TenantService,
@@ -185,16 +206,32 @@ export function estimateCost(
   });
 
   let rate: number;
+  // 1 unless the sitter stored `PetRateMode = 'linear'` AND nothing exact matched. It is the only
+  // pet-count operand in this function, and it can only ever be the DISTINCT pet count — never a
+  // percentage, never a per-pet surcharge.
+  let petMultiplier = 1;
   if (resolved) {
+    // A stored pet-set rate ALWAYS wins, in both modes. The sitter typed a number for exactly
+    // this set; multiplying it would price a set they already priced.
     rate = resolved.rate;
   } else if (distinct.length === 1) {
     // Spec §2 step 3: a single pet keeps the option's flat rate. This is explicit sitter config,
     // not inference, and scoping the refusal to 2+ pets is what stops this feature breaking every
     // booking on deploy (spec §2 "Why single-pet keeps the flat-rate fallback").
     rate = option.Rate;
+  } else if (distinct.length >= 2 && service.PetRateMode === 'linear') {
+    // The opted-in fallback (0005): N pets cost N times the one-pet rate. Two guards, both
+    // load-bearing. `>= 2` keeps ZERO pets out: `petMultiplier = 0` would price an empty set at
+    // $0 — a free booking is the same defect as an inferred one, and `priced: false` carrying no
+    // cost at all is the shape that makes it unrepresentable. And the mode is compared against
+    // 'linear' explicitly rather than "not 'exact'", so an unrecognised or legacy column value
+    // reads as the REFUSING mode — the safe direction, since the unsafe one invents money.
+    rate = option.Rate;
+    petMultiplier = distinct.length;
   } else {
-    // Spec §2 step 4. Zero pets lands here too: an empty set has nothing to price, and the routes
-    // reject it earlier — this is the structural backstop, not the user-facing check.
+    // Spec §2 step 4, still the behaviour of every service that has not opted in. Zero pets lands
+    // here in BOTH modes: an empty set has nothing to price, and the routes reject it earlier —
+    // this is the structural backstop, not the user-facing check.
     return {
       priced: false,
       reason: 'unpriced-pet-set',
@@ -206,8 +243,14 @@ export function estimateCost(
   // Holidays split the SAME units the base formula bills — they never change how many units
   // there are, only which stored rate each one is charged at. `rate` is the base rate `r`
   // resolved above (pet-set rate, or the option's flat rate for a single pet).
+  //
+  // The pet multiplier scales the COMPOSED total, not the base rate, so the holiday leg scales
+  // with it: a sitter who opted into "N pets cost N times as much" would be astonished if the
+  // third dog were free on Christmas, and pricing the holiday nights flat while the ordinary
+  // nights scale is a discontinuity nobody typed either. `holidayAwareCost` therefore still never
+  // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
-  const cost = holidayAwareCost(rate, service.HolidayRate, split);
+  const cost = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
 
   if (service.Shape !== 'range') return { priced: true, cost, ...holidayFields(service, split) };
   return {
@@ -297,6 +340,43 @@ export async function loadPetSetRates(
   };
 }
 
+/**
+ * The tenant's overlap allowance, with a last-resort default for a row that somehow lacks the
+ * column. The window that made this necessary is closed at the source — `tenantCacheKey` is
+ * versioned (`…:config:v2`), so a row cached by a worker that predates migration 0006 is never
+ * read back — and this stays as the backstop for any other path that hands us a partial row. It
+ * falls back to the product default rather than `?? null`, because reading a missing value as
+ * "no limit" switches the rule OFF for everybody, which is the one direction that cannot be
+ * recovered from: an overbooking the sitter did not agree to, versus a refusal she can widen.
+ */
+function overlapAllowanceOf(tenant: Tenant): number | null {
+  const stored: number | null | undefined = tenant.HousesitBoardingOverlapDays;
+  return stored === undefined ? DEFAULT_OVERLAP_DAYS : stored;
+}
+
+/**
+ * Turn the engine's refusal into the customer's answer. The cross-kind overlap rule gets its own
+ * sentence and its own `code` because "those dates are not available" is simply untrue of it — the
+ * dates have room; the SITTER does not, and a customer told the truth can move by one day instead
+ * of giving up. Every other refusal keeps the pre-existing generic wording verbatim.
+ */
+function rangeRefusal(
+  conflict: RangeConflict,
+  kind: PoolKind,
+): { available: false; reason: string; code?: string } {
+  if (conflict !== 'cross_kind_overlap') {
+    return { available: false, reason: 'Those dates are not available.' };
+  }
+  return {
+    available: false,
+    reason:
+      kind === 'housesit'
+        ? 'Your sitter has boarding on those dates — a house sit can only overlap it on the day one is ending as the other begins, never for the whole stay.'
+        : 'Your sitter is house-sitting on those dates — a boarding can only overlap it on the day one is ending as the other begins, never for the whole stay.',
+    code: 'overlap_not_allowed',
+  };
+}
+
 async function checkRange(
   env: Env,
   tenant: Tenant,
@@ -316,6 +396,11 @@ async function checkRange(
     kind: service.CapacityKind === 'housesit' ? 'housesit' : 'boarding',
     cap: service.MaxConcurrentPets,
     petCount,
+    // The tenant's own handover allowance (0006). Read HERE, from the tenant row, because the
+    // engine is pure and must never learn what a database is — and because this one call site is
+    // reached by all three enforcement paths (the quote, the demo POST check, the real POST
+    // check), which is what stops them disagreeing.
+    overlapAllowance: overlapAllowanceOf(tenant),
   };
   // The engine (rangeHasConflict) already rejects an over-cap request on its own. This fast path
   // is kept purely for UX + cost: it returns a SPECIFIC "exceeds capacity" reason (vs the generic
@@ -329,8 +414,12 @@ async function checkRange(
           : 'That exceeds our house-sitting capacity.',
     };
   }
-  // Fetch one day PAST checkout so the soft-bookend look-ahead sees a booking starting on the
-  // checkout day (without +1, listCapacityRows clips that row and a final night can double-book).
+  // Fetch one day PAST checkout. This used to feed the engine's soft-bookend look-ahead, which is
+  // gone (it forgave an over-full LAST OCCUPIED NIGHT as if it were a checkout day); the over-read
+  // is kept because it still buys something and can never cost correctness. An opposite-kind
+  // neighbour that departs on our own checkout day is a common shape, and with the extra day
+  // already in the map `overlapReadWindow` below asks for no widening — one D1 query saved, and a
+  // wider map can only ever make the verdict stricter, never wrong.
   const rows = await listCapacityRows(
     env.PAWBOOK_DB,
     tenant.Id,
@@ -338,10 +427,32 @@ async function checkRange(
     addDays(endDateExclusive, 1),
     excludeBookingId,
   );
-  const capacity = buildCapacity(rowsToCapacityEvents(rows));
-  if (rangeHasConflict(startDate, endDateExclusive, request, capacity)) {
-    return { available: false, reason: 'Those dates are not available.' };
+  let capacity = buildCapacity(rowsToCapacityEvents(rows));
+
+  // The overlap rule judges the bookings this request TOUCHES as well as the request itself (it is
+  // symmetric, so the verdict cannot depend on which of two stays was booked first), and a touched
+  // house sit or boarding routinely starts before this request or ends after it. When one does,
+  // re-read the calendar over the union of their spans so those neighbours are whole; without it a
+  // neighbour's own days would fall outside the map and read as free. Costs a second D1 read only
+  // when an overlap actually exists — and never when the tenant has switched the rule off.
+  const need =
+    request.overlapAllowance === null
+      ? null
+      : overlapReadWindow(startDate, endDateExclusive, request.kind, capacity);
+  const readEnd = addDays(endDateExclusive, 1);
+  if (need !== null && (need.from < startDate || need.toExclusive > readEnd)) {
+    const widened = await listCapacityRows(
+      env.PAWBOOK_DB,
+      tenant.Id,
+      need.from < startDate ? need.from : startDate,
+      need.toExclusive > readEnd ? need.toExclusive : readEnd,
+      excludeBookingId,
+    );
+    capacity = buildCapacity(rowsToCapacityEvents(widened));
   }
+
+  const conflict = rangeConflictReason(startDate, endDateExclusive, request, capacity);
+  if (conflict !== null) return rangeRefusal(conflict, request.kind);
   // ONE call — estimateCost resolves the rate, prices, AND splits for holidays; the estCost and
   // the reported breakdown below come from this single result, so no site recomputes the formula.
   const price = estimateCost(service, option, startDate, endDateExclusive, pets, rates);
@@ -390,8 +501,21 @@ async function checkSingle(
       date,
       excludeBookingId,
     );
-    if (count >= option.Capacity) {
-      return { available: false, reason: 'That session is full.' };
+    // The requested SET has to fit, not just one pet: `count + petCount > cap` is the same
+    // arithmetic `dayBlocksRequest` applies to the boarding/house-sit pools. Asking only
+    // `count >= cap` let a 3-pet request into a slot with one spot left — the exact class of
+    // over-capacity accept the pool path removed, and a direct contradiction of the sitter-facing
+    // promise that "a booking with three dogs uses three spots". Identical for a single pet
+    // (`count + 1 > cap` ⇔ `count >= cap`), so nothing about one-pet behaviour moves.
+    const petCount = Math.max(dedupePets(pets).length, 1);
+    if (count + petCount > option.Capacity) {
+      return {
+        available: false,
+        reason:
+          count >= option.Capacity
+            ? 'That session is full.'
+            : `That session doesn't have room for ${petCount} pets.`,
+      };
     }
   }
   // ONE call — see checkRange's comment above for why this replaces a direct holidayAwareCost call.
@@ -438,6 +562,48 @@ export type MonthDay = {
   used: number | null;
   max: number | null;
   mine: boolean;
+  /**
+   * Why this day can't be booked, in one short customer-facing phrase — `null` when it can.
+   * Derived from the SAME branch that produced `status`, so the widget can explain a greyed-out
+   * day (title/aria-label) without re-deriving any rule client-side.
+   */
+  reason: string | null;
+};
+
+/** The one place the customer-facing "why not" phrases live — see `MonthDay.reason`. */
+const REASON = {
+  blocked: 'Sitter unavailable',
+  full: 'Fully booked',
+  tooSoon: 'Too soon to book',
+  tooFarAhead: 'Too far ahead to book',
+  /**
+   * The day has room, but not `petCount` pets' worth — the refusal `checkRange` would give and
+   * the one a "1/2" cell used to hide. Always plural: a single pet that does not fit means the
+   * pool is at its cap, which is `full`.
+   */
+  noRoom: (petCount: number) => `Not enough room for ${petCount} pets`,
+  /**
+   * The cross-kind handover rule (0006), named by where the SITTER is rather than by a full pool —
+   * the dates have room, she does not. Reads from the requesting service's point of view, so it is
+   * symmetric with `rangeRefusal`'s longer sentence for the quote.
+   */
+  crossKind: (kind: PoolKind) =>
+    kind === 'housesit' ? 'Sitter has boarders' : 'Sitter is house-sitting',
+} as const;
+
+/** The month grid's response: the day states plus the booking window RESOLVED TO DATES. */
+export type MonthAvailability = {
+  today: string;
+  /**
+   * First and last date this service may be booked for, already resolved from the booking-window
+   * knobs (`TenantServices.MinLeadDays` / `Tenants.MaxAdvanceMonths`) against the TENANT's
+   * timezone. `latestBookable` is null when the business sets no horizon (= unlimited).
+   * Published as dates, never as the knobs: the rule stays server-side (CLAUDE.md), and the
+   * widget only compares strings to decide whether paging further is pointless.
+   */
+  earliestBookable: string;
+  latestBookable: string | null;
+  days: MonthDay[];
 };
 
 /**
@@ -457,8 +623,24 @@ export async function monthAvailability(
   month: string, // YYYY-MM
   callerEndUserId: string,
   option: TenantServiceOption | null = null,
-): Promise<{ today: string; days: MonthDay[] }> {
+  /**
+   * How many pets the grid is being painted FOR. The pool check below is the same
+   * `dayBlocksRequest` arithmetic `checkRange` runs (`used + petCount > cap`), not "does at least
+   * one pet fit" — otherwise a 1/2 day reads bookable to a two-dog household and the booking POST
+   * then refuses it. Defaults to 1, which is exactly the pre-change behaviour.
+   */
+  petCount = 1,
+  /**
+   * A booking of the CALLER's own to leave out of the capacity map — set while they are editing
+   * it. Without it the grid paints the days they already hold as occupied by someone, and a stay
+   * being re-timed inside a tight pool reads as unavailable on its own dates. Ownership of this id
+   * is verified by the caller (`booking-ops`' `monthGrid`) against customer-scoped SQL before it
+   * ever reaches here.
+   */
+  excludeBookingId?: string,
+): Promise<MonthAvailability> {
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const pets = Math.max(1, petCount);
 
   const monthStart = `${month}-01`;
   // new Date(year, month, 0) — month is 1-based here, day 0 = last day of prior month = last day of `month`
@@ -468,6 +650,10 @@ export async function monthAvailability(
   const monthEndExclusive = addDays(lastDay, 1);
 
   const poolKind: PoolKind | null = service.CapacityKind === 'none' ? null : service.CapacityKind;
+  // The tenant's handover allowance, read here for the same reason `checkRange` reads it there: the
+  // engine is pure and must never learn what a database is. Same function, same row, so the grid
+  // and the quote can only ever disagree in the direction the grid is allowed to (see below).
+  const overlapDays = overlapAllowanceOf(tenant);
 
   // Slot capacity is fetched ONCE for the whole grid (not per day), matching buildCapacity's
   // "build the map once" pattern, and run concurrently with the other D1 reads since none of
@@ -482,11 +668,12 @@ export async function monthAvailability(
           option!.OptionKey,
           monthStart,
           monthEndExclusive,
+          excludeBookingId,
         )
       : Promise.resolve(null);
 
   const [capacityRows, slotCounts, mineRows] = await Promise.all([
-    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive),
+    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive, excludeBookingId),
     slotCountsPromise,
     listUserBookingDatesInRange(
       env.PAWBOOK_DB,
@@ -528,28 +715,59 @@ export async function monthAvailability(
     let status: 'available' | 'partial' | 'unavailable';
     let used: number | null;
     let max: number | null;
+    let reason: string | null = null;
 
     if (poolKind !== null) {
       // Range service (boarding / housesitting): capacity-aware against ITS OWN pool + cap.
       const rawUsed = day?.byService.get(service.ServiceType) ?? 0;
       max = service.MaxConcurrentPets;
       const blocked = (day?.blocked ?? 0) >= 1;
-      const unavailable = blocked || (max != null && rawUsed >= max);
+      // The requested SET has to fit, not just one pet — `used + pets > cap` is `dayBlocksRequest`
+      // verbatim. `partial` still means "occupied but the set fits", so a cell showing 1/2 is now
+      // true for the pets actually selected rather than for a hypothetical single pet.
+      const noRoom = max != null && rawUsed + pets > max;
+      // The cross-kind handover rule (0006), asked of THIS DAY only. The engine owns the question
+      // (`crossKindDayBlocked`) and answers it conservatively: true only where NO request of this
+      // kind could arrive, depart or span, whatever its dates. The rest of the rule is a property
+      // of a range and stays deliberately unpainted — see CALENDAR_LOGIC.md §9 — so a day left open
+      // here can still be refused by the quote, but a day the quote and the POST always refuse can
+      // no longer paint `available`.
+      const crossKind = day !== undefined && crossKindDayBlocked(day, date, poolKind, overlapDays);
+      const unavailable = blocked || noRoom || crossKind;
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';
       used = max != null ? rawUsed : null;
+      if (blocked) reason = REASON.blocked;
+      // A pool at its cap is "Fully booked" however many pets you asked for; a pool with room
+      // that still can't seat this set gets the specific answer instead of a misleading one.
+      else if (noRoom) reason = max != null && rawUsed >= max ? REASON.full : REASON.noRoom(pets);
+      else if (crossKind) reason = REASON.crossKind(poolKind);
     } else {
       // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
       // capacity check when the option has one. Customers never see raw counts — only status.
       const blocked = walkHasConflict(date, cap);
-      const full = capacityLimit !== null && (slotCounts!.get(date) ?? 0) >= capacityLimit;
-      status = blocked || full ? 'unavailable' : 'available';
+      // `slotUsed + pets > cap`, mirroring the pool branch above and `checkSingle`: a slot with one
+      // spot left is not available to a two-pet request, and painting it `available` would put the
+      // grid ahead of the quote in the one direction it may never lead.
+      const slotUsed = capacityLimit !== null ? (slotCounts!.get(date) ?? 0) : 0;
+      const noRoom = capacityLimit !== null && slotUsed + pets > capacityLimit;
+      status = blocked || noRoom ? 'unavailable' : 'available';
       used = null;
       max = null;
+      if (blocked) reason = REASON.blocked;
+      // A slot at its cap is "Fully booked" whoever asks; one with room that still can't seat this
+      // set gets the specific answer, same split as the pool branch.
+      else if (noRoom)
+        reason = slotUsed >= (capacityLimit ?? 0) ? REASON.full : REASON.noRoom(pets);
     }
 
-    if (outsideWindow) status = 'unavailable';
-    days.push({ date, status, used, max, mine: mineDays.has(date) });
+    // The window overrides both the status and the reason: a day the customer could never request
+    // is explained by the window, not by whatever capacity happens to sit on it.
+    if (outsideWindow) {
+      status = 'unavailable';
+      reason = date < earliestBookable ? REASON.tooSoon : REASON.tooFarAhead;
+    }
+    days.push({ date, status, used, max, mine: mineDays.has(date), reason });
   }
 
-  return { today, days };
+  return { today, earliestBookable, latestBookable, days };
 }

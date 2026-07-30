@@ -15,6 +15,45 @@ export type ServiceQuestion = {
 // NOTE: text questions once carried an optional `pattern` (regex) — retired. Old stored
 // Questions JSON may still hold a `pattern` key; it parses fine and is simply ignored.
 
+/**
+ * Label normalized for IDENTITY comparison only (never for display): case, punctuation and
+ * spacing are cosmetic, the words are the question. So "Vet's phone number?" and
+ * "vet s phone number" are the same question, while "Emergency contact" is not.
+ */
+function normalizeQuestionLabel(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      // Apostrophes are DELETED rather than treated as a separator, so that adding or fixing one
+      // — the single most common cosmetic label edit — keeps "Vets phone" and "Vet's phone" one
+      // question. Every other punctuation mark separates.
+      .replace(/['‘’]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+  );
+}
+
+/**
+ * What a question IS, for the purpose of deciding whether an answer given to it earlier still
+ * answers it — the guard on saved intake answers (see `SavedAnswers` in sql/schema.sql). A
+ * question's `id` is stable across sitter edits (the admin editor mints one UUID per row and the
+ * server preserves it), so the id alone would happily pre-fill "Bella eats at 7am" against a
+ * question relabelled "Emergency vet phone number". The shape is what catches that.
+ *
+ * Deliberately just `type` + normalized `label`:
+ *  - a RENAME (real rewording) or a RETYPE means a different question — the saved answer is
+ *    dropped rather than re-offered;
+ *  - `options`, `min`, `max` and `required` are NOT included, because they are constraints on the
+ *    answer rather than a change to what is being asked, and `validateAnswer` already refuses a
+ *    saved value that no longer satisfies them. Including them would wipe every customer's saved
+ *    entry method just because the sitter added a fourth way to get in.
+ *
+ * If a field is ever added to `ServiceQuestion`, decide here whether it changes the question.
+ */
+export function questionShape(question: ServiceQuestion): string {
+  return `${question.type}|${normalizeQuestionLabel(question.label)}`;
+}
+
 export type ServiceConstraints = {
   maxNights: number | null;
   maxPetCount: number | null;

@@ -29,15 +29,21 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  crossKindDayBlocked,
+  overlapReadWindow,
+  rangeConflictReason,
   rangeHasConflict,
   walkHasConflict,
   type CapacityEvent,
   type CapacityRequest,
   type DayCapacity,
+  type EventSpan,
+  type KindOccupancy,
   type PoolKind,
+  type RangeConflict,
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
-export { isValidRate } from './pricing/rate.js';
+export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';
 export {
   buildGroupKey,
   buildMixKey,
@@ -83,6 +89,7 @@ export {
   type RangeValue,
 } from './booking/calendar-ui.js';
 export {
+  questionShape,
   validateAnswer,
   validateAnswers,
   validateServiceConstraints,
@@ -100,3 +107,9 @@ export {
   type QuarterTotal,
   type QuarterlyBreakdown,
 } from './analytics/periods.js';
+export {
+  validatePassword,
+  MIN_PASSWORD_LENGTH,
+  MAX_PASSWORD_LENGTH,
+  type ValidatePasswordOptions,
+} from './auth/password-policy.js';

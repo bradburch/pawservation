@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
-import { mintAdminToken } from '../lib/token';
-import { calendarSyncKey } from '../lib/calendar-sync';
+import { createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
+import { mintAdminToken, mintToken } from '../lib/token';
+import { calendarSyncKey, calendarWidgetSyncKey } from '../lib/calendar-sync';
 import { getProviderConnection } from '../db/repo';
 import { signState } from '../lib/oauth-state';
 
@@ -22,7 +22,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200); // read-only view still works
-    // reconcileIfStale writes calendarSyncKey in its finally; skipping means the key is never set.
+    // reconcileIfStale claims calendarSyncKey before it pulls; skipping means the key is never set.
     expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 
@@ -46,7 +46,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200); // read-only view still works
-    // reconcileIfStale writes calendarSyncKey in its finally; skipping means the key is never set.
+    // reconcileIfStale claims calendarSyncKey before it pulls; skipping means the key is never set.
     expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 
@@ -59,6 +59,35 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     );
     expect(res.status).toBe(200);
     expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
+  });
+
+  it('skips the widget-scoped reconcile on the month grid when disabled', async () => {
+    const { env, raw } = createTestEnv();
+    disable(raw);
+    // Minted, not obtained through /identify: the login handshake is a POST, which
+    // tenantMiddleware rejects outright for a disabled tenant (and the resolved-tenant cache it
+    // would warm would then hide the DisabledAt flag from this GET). A customer already holding
+    // a valid token is the case under test.
+    const token = await mintToken('eu_sp_jess', TENANT_A, TEST_SECRET);
+    const res = await app.request(
+      '/api/sunny-paws/availability/month?type=boarding&month=2026-10',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200); // read-only view still works
+    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBeNull();
+  });
+
+  it('runs the widget-scoped reconcile on the month grid for an ACTIVE tenant — control', async () => {
+    const { env } = createTestEnv();
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/availability/month?type=boarding&month=2026-10',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
   });
 
   it('blocks GET oauth/start when disabled with account_disabled 403', async () => {

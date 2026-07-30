@@ -11,7 +11,7 @@ import {
 import { isEmailConfigured, sendSignupLink } from '../lib/email';
 import { RESERVED_SLUGS } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
-import { hashPassword } from '../lib/password';
+import { hashPassword, validatePassword } from '../lib/password';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
 import { slugifyServiceLabel } from '../lib/services';
 import {
@@ -33,8 +33,6 @@ import type { AppEnv } from '../types';
 const StartBody = v.object({
   email: v.pipe(v.string(), v.trim(), v.toLowerCase(), v.regex(EMAIL_RE)),
 });
-
-export const MIN_PASSWORD_LENGTH = 8;
 
 const CompleteBody = v.object({
   token: v.string(),
@@ -137,12 +135,16 @@ export const signupRoutes = new Hono<AppEnv>()
     if (!parsed.success) return c.json({ error: 'Invalid request.' }, 400);
     const { token, password, businessName } = parsed.output;
 
-    // Password floor first — a policy rejection must not burn the single-use link.
-    if (password.length < MIN_PASSWORD_LENGTH)
-      return c.json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` }, 400);
-
     const payload = await verifySignupLink(c.env.TOKEN_SECRET, token, Date.now());
     if (!payload) return c.json({ error: EXPIRED_ERROR }, 400);
+
+    // Password floor next — a policy rejection must not burn the single-use link, so this still
+    // runs before the nonce consume below. It can't run before verifySignupLink (moved up from
+    // there): the email-similarity rule needs payload.email, which only exists once the token is
+    // verified. verifySignupLink itself is stateless (no KV read/write), so checking after it
+    // doesn't touch single-use-ness.
+    const passwordError = validatePassword(password, { email: payload.email });
+    if (passwordError) return c.json({ error: passwordError }, 400);
 
     // Sitter-only input validation BEFORE the nonce is consumed, for the same reason.
     let displayName = '';

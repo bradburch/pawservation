@@ -43,6 +43,11 @@ function svc(type: TemplateId, over: Partial<TenantService> = {}): TenantService
     MaxConcurrentPets: null,
     CancellationTiers: null,
     HolidayRate: null,
+    // 'exact' on purpose: this fixture is the DEFAULT service, and every pricing
+    // assertion below is written against the refusing mode. A 'linear' service must be
+    // asked for explicitly (`svc('boarding', { PetRateMode: 'linear' })`), so no existing
+    // expectation can quietly change meaning when the multiplier lands.
+    PetRateMode: 'exact',
     ...over,
   };
 }

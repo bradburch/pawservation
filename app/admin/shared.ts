@@ -1,4 +1,9 @@
-import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
+import type {
+  PetRateMode,
+  ServiceConstraints,
+  ServiceOption,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 import { request, type AdminBooking } from '../shared-ui/api.js';
 
 /** Sitter-dashboard session. `role` mirrors the server's login/session responses. */
@@ -37,6 +42,10 @@ export type ServiceForm = ServiceConstraints & {
   minLeadDays: number | null;
   /** Optional explicit holiday rate in the service's own unit; null = no holiday pricing. */
   holidayRate: number | '' | null;
+  /** The sitter's stored choice for a pet set with no rate of its own: 'exact' refuses it,
+   *  'linear' charges the option rate x the pet count. Rendered and edited here; the PRICE that
+   *  results is still computed only by the server. */
+  petRateMode: PetRateMode;
   /** From the settings GET: how many stored specific-pet rates cover 2+ pets. Read-only fact
    * feeding the "multi-pet but unpriced" warning; never sent back on the PUT. */
   multiPetGroupRateCount: number;
@@ -54,6 +63,9 @@ export type Settings = {
   contactPhone: string | null;
   /** Booking horizon in months for the whole business; null = no limit (0004). */
   maxAdvanceMonths: number | null;
+  /** How many days a house sit and a boarding may overlap, at the tail ends only (0006).
+   *  0 = never; 1 = the default; 2 = one at each end; null = no limit. */
+  housesitBoardingOverlapDays: number | null;
   /** The authenticated admin's own login email — wizard prefill for a missing contactEmail. */
   adminEmail: string | null;
   petTypes: { petType: string; label: string }[];
@@ -88,6 +100,7 @@ export type ServicePayload = ServiceConstraints & {
   maxConcurrentPets: number | null;
   minLeadDays: number | null;
   holidayRate: number | null;
+  petRateMode: PetRateMode;
   options: ServiceOptionForm[];
   questions: QuestionForm[];
   acceptedPetTypes: string[] | null;
@@ -100,6 +113,7 @@ export type SettingsPayload = {
   contactEmail: string | null;
   contactPhone: string | null;
   maxAdvanceMonths: number | null;
+  housesitBoardingOverlapDays: number | null;
   services: ServicePayload[];
 };
 
@@ -110,9 +124,18 @@ export type SettingsPayload = {
  *
  * `estCost` is NEVER mutated by a charge. The quote promised a price; extras are separate line
  * items, summed at read time. Returns null when there is nothing to owe against.
+ *
+ * A cancelled booking that owes no fee is "nothing to owe against" whichever way that was
+ * recorded — NULL when the sitter waived it, a real 0 when the customer cancelled themselves
+ * (server/db/repo.ts's cancelBookingForUser). The two are the same event and must read the same:
+ * without the normalization a fee-free customer cancel carrying a $100 deposit computes a $0
+ * balance and renders "paid in full", hiding from the sitter that she is holding money to refund,
+ * while the identical sitter-side cancel still says "paid $100".
  */
 export function totalDue(b: AdminBooking): number | null {
-  const base = b.status === 'cancelled' ? b.cancellationFee : b.estCost;
+  const cancelled = b.status === 'cancelled';
+  const raw = cancelled ? b.cancellationFee : b.estCost;
+  const base = cancelled && raw === 0 ? null : raw;
   if (base == null) return b.chargesTotal > 0 ? b.chargesTotal : null;
   return base + b.chargesTotal;
 }

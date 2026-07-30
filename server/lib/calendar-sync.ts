@@ -1,4 +1,4 @@
-import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+import { addDays, addMonths, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
   chunkArray,
   clearBookingCalendarEventIds,
@@ -45,8 +45,30 @@ export type SyncInput = {
   petCount: number;
   petNames: string[];
   estCost: number | null;
-  status: 'pending' | 'confirmed';
+  status: 'pending' | 'confirmed' | 'cancelled';
 };
+
+/**
+ * THE rule for what a cancellation does to its Google event, in one place because three call
+ * sites must never disagree: the customer cancel route, the admin status route, and the outbox
+ * re-drive.
+ *
+ * - Cancelled with an assessed fee (> 0) → KEEP the event and retitle it `[CANCELLED] …`. The
+ *   stay isn't happening but a receivable is, and deleting it would erase the sitter's only
+ *   calendar-side trace of that.
+ * - Cancelled fee-free (fee 0 or none assessed) and every decline → DELETE the event. Nothing is
+ *   owed and nothing happened, so the day should simply be free again.
+ *
+ * Getting this wrong is invisible for 15 minutes and then catastrophic: `redriveCalendarOutbox`
+ * derives its op from row state, and every status write re-arms `SyncPending`, so a retitle that
+ * this predicate doesn't cover is deleted by the very next cron sweep.
+ */
+export function keepsCalendarEventOnCancel(
+  status: BookingRow['Status'],
+  cancellationFee: number | null,
+): boolean {
+  return status === 'cancelled' && cancellationFee != null && cancellationFee > 0;
+}
 
 /**
  * Build the Google event resource for a booking, resolving the customer's email for the
@@ -165,6 +187,13 @@ export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInp
  * id in place of the stale one. This re-asserts the booking the sitter just confirmed, so a later
  * reconcile won't cancel it for having no live event. If the CAS loses to a concurrent writer, the
  * replacement is deleted rather than orphaned (persistEventIdOrCleanup).
+ *
+ * The recreate is skipped for a `'cancelled'` retitle. Re-asserting is the right move for a live
+ * booking and the wrong one for a dead one: an event the sitter already deleted by hand is
+ * already in the state a fee-free cancel would have put it in, and springing a `[CANCELLED]`
+ * event back onto her calendar is exactly what the outbox's own no-event branch refuses to do.
+ * Nothing is lost — a cancelled row is invisible to reconcile (`listSyncedBookingIds` excludes
+ * it), so there is no later pass to protect the booking from.
  */
 export async function updateBookingCalendarEvent(
   env: Env,
@@ -179,7 +208,7 @@ export async function updateBookingCalendarEvent(
   const calendarId = conn.CalendarId ?? 'primary';
   const resource = await resourceForBooking(env, tenant, b);
   const { gone } = await updateEvent(accessToken, calendarId, gcalEventId, resource);
-  if (gone) {
+  if (gone && b.status !== 'cancelled') {
     const { id } = await createEvent(accessToken, calendarId, resource);
     await persistEventIdOrCleanup(
       env,
@@ -267,8 +296,9 @@ const OUTBOX_LIMIT = 100;
 
 /**
  * Re-drive every pending calendar push for this tenant. The op is derived from row state
- * (terminal status + event id → delete; no event id → create; otherwise → update), so a row can
- * never replay a stale intent — it always pushes the row's CURRENT state (as of the batch fetch).
+ * (terminal status + event id → delete, EXCEPT a fee-bearing cancellation, which retitles and
+ * keeps its event — see keepsCalendarEventOnCancel; no event id → create; otherwise → update),
+ * so a row can never replay a stale intent — it always pushes the row's CURRENT state (as of the batch fetch).
  * Per-row best-effort: a Google failure leaves that row pending for the next sweep and moves on.
  * This function plus the SyncPending write-ahead flag is the "no event exists only in
  * Pawservation" guarantee: while a connection exists, every state change either cleared the flag
@@ -295,7 +325,12 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
   );
   for (const r of rows) {
     try {
-      if (r.Status === 'cancelled' || r.Status === 'declined') {
+      // A terminal row DELETES its event — unless it is a cancellation carrying an assessed fee,
+      // which retitles instead and so falls through to the update path below. Without that
+      // exception the retitle done inline by the cancel route would be undone (the event deleted
+      // outright) by the next sweep, because this row is still SyncPending until a push lands.
+      const retitle = keepsCalendarEventOnCancel(r.Status, r.CancellationFee);
+      if (!retitle && (r.Status === 'cancelled' || r.Status === 'declined')) {
         if (r.GCalEventId) {
           await deleteBookingCalendarEvent(env, tenant, r.GCalEventId, r.Id, r.Status);
         } else {
@@ -303,6 +338,17 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
         }
         continue;
       }
+      if (retitle && !r.GCalEventId) {
+        // Nothing to retitle and nothing to create: a cancelled booking that never synced must
+        // not be pushed into Google now — a create here would put a [CANCELLED] event on the
+        // sitter's calendar for a stay that was never on it.
+        await clearSyncPending(env.PAWBOOK_DB, tenant.Id, r.Id, r.Status);
+        continue;
+      }
+      // Unreachable — 'declined' always takes the delete branch above (keepsCalendarEventOnCancel
+      // is false for it). Present so the union handed to SyncInput is narrowed by the compiler
+      // rather than by a comment, and so a future edit to the branches above fails loudly here.
+      if (r.Status === 'declined') continue;
       const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
       const input: SyncInput = {
         bookingId: r.Id,
@@ -356,6 +402,19 @@ export async function deleteBookingCalendarEvent(
 export const CALENDAR_SYNC_TTL_SECONDS = 120;
 export const calendarSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:last`;
 
+/**
+ * The customer widget's own reconcile throttle — a SEPARATE key from `calendarSyncKey`, on
+ * purpose. The 15-minute cron writes `calendarSyncKey` after every sweep, so sharing it would
+ * hand the cron the whole budget and a widget-triggered pull would essentially never fire.
+ * KV is eventually consistent (~60s), so this is best-effort by design: an occasional double
+ * pull is cheaper than a lock, and reconcile is idempotent.
+ */
+export const CALENDAR_WIDGET_SYNC_TTL_SECONDS = 600;
+export const calendarWidgetSyncKey = (tenantId: string) => `calendar-sync:${tenantId}:widget`;
+
+/** Which throttle a `reconcileIfStale` caller draws on — see `calendarWidgetSyncKey`. */
+export type SyncScope = 'dashboard' | 'widget';
+
 /** Cap on how many foreign Google events one reconcile pass MATERIALIZES (writes a row for) — a
  * shared calendar can trivially carry thousands of events, and reconcileIfStale runs synchronously
  * on a user-facing GET (the dashboard load), so an unbounded per-event awaited-write loop there is
@@ -389,8 +448,43 @@ function externalSpan(e: CalendarEvent): { startDate: string; endDateExclusive: 
 }
 
 /**
+ * Floor for how far ahead reconcile treats Google as authoritative. Also the whole window when the
+ * tenant sets no booking horizon (`MaxAdvanceMonths` NULL = unlimited) — Google can't be polled to
+ * infinity, so an unlimited horizon keeps exactly today's behaviour.
+ */
+export const RECONCILE_MIN_HORIZON_DAYS = 180;
+
+/**
+ * Reconcile's authoritative window, `[today-1, end)`, stretched to cover the tenant's whole
+ * BOOKING HORIZON (`Tenants.MaxAdvanceMonths`, day-clamped by `addMonths`; +1 day because the
+ * horizon date is itself bookable and the window end is exclusive) but never shorter than
+ * RECONCILE_MIN_HORIZON_DAYS.
+ *
+ * The one function every consumer of the window derives from, which is what makes widening SAFE:
+ * `reconcileBookingsWithCalendar` feeds the identical pair of dates to Google's query, to
+ * `listSyncedBookingIds` and to `listExternalEventRowsInWindow`. Those last two are the
+ * delete-detection truth sets — widening the Google query without widening them in lockstep would
+ * read "absent from the response" as "deleted by hand" and spuriously cancel real bookings.
+ * Bounded because `MaxAdvanceMonths` is capped at 24 (validation.ts), and a Google page overflow
+ * throws rather than returning a partial list (google-calendar.ts), so a too-large window fails
+ * loudly instead of silently deleting.
+ */
+export function reconcileWindow(
+  tenant: Tenant,
+  today: string,
+): { start: string; endExclusive: string } {
+  const floor = addDays(today, RECONCILE_MIN_HORIZON_DAYS);
+  const horizonEnd =
+    tenant.MaxAdvanceMonths != null ? addDays(addMonths(today, tenant.MaxAdvanceMonths), 1) : null;
+  return {
+    start: addDays(today, -1),
+    endExclusive: horizonEnd !== null && horizonEnd > floor ? horizonEnd : floor,
+  };
+}
+
+/**
  * Reconciles this tenant against Google Calendar — Google is authoritative for the window
- * [today-1, today+180):
+ * `reconcileWindow` returns:
  *  (a) a Pawservation-synced booking whose event is gone from Google is cancelled, and the
  *      customer is emailed (best-effort, spec decision: notify via sendBookingStatusEmail);
  *  (b) every foreign event (no private.bookingId) is materialized as a read-only
@@ -405,8 +499,9 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
-  const windowStart = addDays(today, -1);
-  const windowEndExclusive = addDays(today, 180);
+  // ONE derivation, three consumers (Google's query, listSyncedBookingIds,
+  // listExternalEventRowsInWindow) — see reconcileWindow on why they must never drift apart.
+  const { start: windowStart, endExclusive: windowEndExclusive } = reconcileWindow(tenant, today);
   const events = await listCalendarEvents(
     accessToken,
     conn.CalendarId ?? 'primary',
@@ -495,20 +590,40 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   await deleteExternalEventsMissing(env.PAWBOOK_DB, tenant.Id, existingRows, liveIds);
 }
 
-/** Reconciles at most once per CALENDAR_SYNC_TTL_SECONDS per tenant, via PAWBOOK_CACHE. The
- * dashboard freshness path does the same two-step the cron sweep does — flush the outbox, then
- * pull — throttled per tenant. */
-export async function reconcileIfStale(env: Env, tenant: Tenant): Promise<void> {
-  const key = calendarSyncKey(tenant.Id);
+/** Reconciles at most once per scope TTL per tenant, via PAWBOOK_CACHE. Both freshness paths do
+ * the same two-step the cron sweep does — flush the outbox, then pull — throttled per tenant, each
+ * against its OWN key: the sitter dashboard on `calendarSyncKey` (120s, shared with the cron) and
+ * the customer widget on `calendarWidgetSyncKey` (600s, its own budget). Never throws: a Google
+ * outage leaves the caller with current DB state, which is the whole point of reconcile writing
+ * Google's reality INTO the DB rather than availability ever reading Google.
+ *
+ * The marker is CLAIMED BEFORE the work, not written after it. Written afterwards it throttles
+ * only non-overlapping pulls and gives no exclusion at all: N simultaneous month-grid GETs each
+ * read an empty key and each start a full reconcile. That is not merely wasteful — if one pull's
+ * outbox stamps a GCalEventId in the gap between another's `listCalendarEvents` and its
+ * `listSyncedBookingIds`, the second reads a live booking as hand-deleted from Google and cancels
+ * it (emailing the customer). Claiming first collapses that window to the KV read itself.
+ *
+ * The trade is deliberate: a pull that dies early now suppresses retries for the rest of the TTL
+ * (120s dashboard / 600s widget). That is the cheaper failure — the 15-minute cron re-drives the
+ * outbox and reconciles unconditionally, so nothing is lost, only delayed by less than one cron
+ * period. KV is eventually consistent (~60s), so this stays best-effort by nature; do not mistake
+ * it for a lock, and do not build a stronger one here.
+ */
+export async function reconcileIfStale(
+  env: Env,
+  tenant: Tenant,
+  scope: SyncScope = 'dashboard',
+): Promise<void> {
+  const widget = scope === 'widget';
+  const key = widget ? calendarWidgetSyncKey(tenant.Id) : calendarSyncKey(tenant.Id);
+  const ttl = widget ? CALENDAR_WIDGET_SYNC_TTL_SECONDS : CALENDAR_SYNC_TTL_SECONDS;
   if (await env.PAWBOOK_CACHE.get(key).catch(() => null)) return;
+  await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: ttl }).catch(() => {});
   try {
     await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);
   } catch {
-    /* best-effort; the dashboard falls back to current DB state */
-  } finally {
-    await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: CALENDAR_SYNC_TTL_SECONDS }).catch(
-      () => {},
-    );
+    /* best-effort; the caller falls back to current DB state */
   }
 }

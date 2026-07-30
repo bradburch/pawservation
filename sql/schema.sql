@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- months from today (tenant timezone, day-clamped). NULL = no limit. One value for the whole
   -- business — the per-service knob is TenantServices.MinLeadDays.
   MaxAdvanceMonths INTEGER,
+  -- How many days a request may overlap OPPOSITE-kind occupancy — a house sit over boarding or
+  -- boarding over a house sit (0006). Tenant-wide because it models the sitter's own whereabouts,
+  -- not a pool. A shared day only ever counts as a HANDOVER: the request arrives on a day
+  -- everything else departs on, or departs on a day everything else arrives on. 0 = never; 1 = the
+  -- default; 2 = one at each end of the stay; NULL = no limit. Above 2 is unreachable.
+  HousesitBoardingOverlapDays INTEGER DEFAULT 1,
   -- NULL = active; timestamp = disabled by the owner (widget dark + admin read-only).
   DisabledAt TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -77,6 +83,13 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- RateUnit. A STORED rate, never a multiplier and never pet-count-scaled — the price formula
   -- (server/lib/holiday-cost.ts) may only multiply a stored rate by units of time.
   HolidayRate INTEGER CHECK (HolidayRate IS NULL OR HolidayRate >= 1),
+  -- How a pet SET with no stored pet-set rate is priced (0005). 'exact' = REFUSE it (the original
+  -- no-inferred-pricing behaviour); 'linear' = the option's own rate x the number of distinct
+  -- pets. The default is 'exact', so a row nobody chose a mode for prices exactly as it did before
+  -- this column existed. A stored pet-set rate ALWAYS wins over the multiplier — the multiplier is
+  -- only the fallback the sitter opted into, and their stored choice IS the typed consent that
+  -- keeps "a rate the sitter did not type is a price they did not agree to" true.
+  PetRateMode TEXT NOT NULL DEFAULT 'exact' CHECK (PetRateMode IN ('exact', 'linear')),
   UNIQUE (TenantId, ServiceType)
 );
 
@@ -176,6 +189,31 @@ CREATE TABLE IF NOT EXISTS LoginCodes (
   -- Failed verify attempts; capped in consumeLoginCode so a 6-digit code can't be brute-forced.
   Attempts INTEGER NOT NULL DEFAULT 0
 );
+
+-- Intake answers a customer has already given, re-offered as the PRE-FILL on their next booking
+-- for the same service (0007). Customer-authored content about their own pets: written only by
+-- the booking POST, from what that customer actually submitted, and read only back to them.
+--
+-- Keyed (TenantId, EndUserId, ServiceType, QuestionId): the question's own stable id, scoped to
+-- the service that asked it, because ids are unique only within a service's Questions JSON.
+-- `Shape` is `questionShape()` (src/shared/booking/service-rules.ts) AS OF THE ANSWER — a saved
+-- answer pre-fills only when the question still has that shape, so a sitter who rewords or
+-- retypes a question drops the stale answer instead of resurrecting it against a changed
+-- question. The pre-fill is re-validated on read AND re-validated as a normal answer on the next
+-- POST; it is never trusted.
+CREATE TABLE IF NOT EXISTS SavedAnswers (
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
+  ServiceType TEXT NOT NULL,
+  QuestionId TEXT NOT NULL,
+  Shape TEXT NOT NULL,
+  Value TEXT NOT NULL,
+  UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (TenantId, EndUserId, ServiceType, QuestionId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_SavedAnswers_Lookup
+  ON SavedAnswers (TenantId, EndUserId);
 
 -- Blocked days are rows with ServiceType='blocked' (EndUserId NULL, Status 'confirmed'),
 -- mirroring how production models blocked time as calendar events of type 'blocked'.

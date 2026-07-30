@@ -113,6 +113,32 @@ describe('resolvePetSetRate — precedence, exact match only', () => {
     ).toBeNull();
   });
 
+  it('stays a pure EXACT-MATCH resolver even though PetRateMode exists (0005)', () => {
+    // The per-service multiplier lives in `estimateCost` (server-only), never here. This module
+    // has no mode parameter, no fallback and no arithmetic: given a two-dog set and only a
+    // one-dog rate it returns null in every world, and it is `estimateCost` — reading the
+    // sitter's stored mode — that decides whether null means "refuse" or "x2".
+    const args = {
+      ...base,
+      pets: [
+        { id: 'p_a', petType: 'dog' },
+        { id: 'p_b', petType: 'dog' },
+      ],
+      mixRates: [{ mixKey: 'dog:1', rate: 20, serviceType: 'walk', optionKey: 'w30' }],
+    };
+    expect(resolvePetSetRate(args)).toBeNull();
+    // A stray mode-shaped argument cannot change the answer — there is nothing to change it with.
+    expect(resolvePetSetRate({ ...args, petRateMode: 'linear' } as typeof args)).toBeNull();
+    // And the exported signature takes exactly these five keys; a sixth would be a design change.
+    expect(Object.keys(args).sort()).toEqual([
+      'groupRates',
+      'mixRates',
+      'optionKey',
+      'pets',
+      'serviceType',
+    ]);
+  });
+
   it('NEVER sums across species', () => {
     expect(
       resolvePetSetRate({

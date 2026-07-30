@@ -41,6 +41,12 @@ export const MAX_SERVICES = 6;
 /** Owner directive: intake forms stay short — at most this many questions per service. */
 export const MAX_QUESTIONS_PER_SERVICE = 5;
 
+/** Owner directive: cap the priced options (durations, pack windows) one service may hold. The
+ * settings PUT is the only place options are written, and enforces this; the wizard's and the
+ * service editor's "add a row" buttons are convenience mirrors. Sized for a sitter running a
+ * handful of walk packs a day — an unbounded add button with no server bound is the defect. */
+export const MAX_OPTIONS_PER_SERVICE = 8;
+
 /** 'blocked' = admin time off; 'external' = a Google-owned mirror row (calendar-sync
  * materialization). Neither is ever a bookable service slug. */
 export const RESERVED_SERVICE_SLUGS = ['blocked', 'external'];

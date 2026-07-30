@@ -121,6 +121,85 @@ describe('custom services — creation', () => {
     expect(del.status).toBe(204);
   });
 
+  it("a walk service starts accepting only the template's species — ['dog'], not everything", async () => {
+    const { env } = createTestEnv();
+    await freeASlot(env);
+    const { status, json } = await createSvc(env, { template: 'walk', label: 'Afternoon Walk' });
+    expect(status).toBe(201);
+    const created = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+      (s) => s.ServiceType === json.type,
+    )!;
+    expect(created.AcceptedPetTypes).toEqual(['dog']);
+  });
+
+  it("a check-in service starts at ['cat'], and boarding stays NULL = every species", async () => {
+    const { env } = createTestEnv();
+    await freeASlot(env);
+    const chk = await createSvc(env, { template: 'checkin', label: 'Cat Sitting' });
+    expect(chk.status).toBe(201);
+    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(services.find((s) => s.ServiceType === chk.json.type)!.AcceptedPetTypes).toEqual([
+      'cat',
+    ]);
+    // The seeded built-in boarding row is untouched by any of this — no backfill, ever.
+    expect(services.find((s) => s.ServiceType === 'boarding')!.AcceptedPetTypes).toBeNull();
+  });
+
+  it('the template default is INTERSECTED with the tenant registry, and falls back to NULL when empty', async () => {
+    const { env, raw } = createTestEnv();
+    await freeASlot(env);
+    // Happy Tails keeps only dogs. A check-in service defaulting to ['cat'] would otherwise be
+    // created accepting NOTHING — which the settings PUT then rejects on every later save.
+    raw.prepare(`DELETE FROM TenantPetTypes WHERE TenantId = ? AND PetType = 'cat'`).run(TENANT_B);
+    const res = await app.request(
+      '/api/happy-tails/admin/services',
+      {
+        method: 'POST',
+        headers: await auth(TENANT_B, true),
+        body: JSON.stringify({ template: 'checkin', label: 'Quick Visit' }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    const created = (await listServices(env.PAWBOOK_DB, TENANT_B)).find(
+      (s) => s.ServiceType === 'quick-visit',
+    )!;
+    // NULL (= every registry type), never `[]`.
+    expect(created.AcceptedPetTypes).toBeNull();
+  });
+
+  it("a NEWLY created service starts 'linear', while every existing row keeps 'exact'", async () => {
+    // Owner directive 2026-07-28: per-pet multiplication is the default for services created from
+    // here on, so a two-dog household can book the moment the sitter types one price. It is a
+    // create-time default only — nothing backfills, so a live tenant's existing services keep
+    // refusing unpriced sets until the sitter opts them in from the service editor.
+    const { env } = createTestEnv();
+    const before = await listServices(env.PAWBOOK_DB, TENANT_A);
+    for (const svc of before) expect(svc.PetRateMode).toBe('exact');
+    await freeASlot(env);
+    const { json } = await createSvc(env, { template: 'walk', label: 'Evening Walk' });
+    const after = await listServices(env.PAWBOOK_DB, TENANT_A);
+    expect(after.find((s) => s.ServiceType === json.type)!.PetRateMode).toBe('linear');
+    for (const svc of after.filter((s) => s.ServiceType !== json.type))
+      expect(svc.PetRateMode).toBe('exact');
+  });
+
+  it("createService takes the mode explicitly — the COLUMN's own default is still 'exact'", async () => {
+    // A direct insert that names no mode (seeds, migrations, hand SQL) must land on 'exact'. That
+    // is what makes "applying 0005 moves no price" true.
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `INSERT INTO TenantServices (TenantId, ServiceType, Label, Shape, RateUnit)
+         VALUES (?, 'bare-insert', 'Bare', 'single', 'visit')`,
+      )
+      .run(TENANT_B);
+    const created = (await listServices(env.PAWBOOK_DB, TENANT_B)).find(
+      (s) => s.ServiceType === 'bare-insert',
+    )!;
+    expect(created.PetRateMode).toBe('exact');
+  });
+
   it('createService rejects a duplicate (TenantId, ServiceType) at the DB level', async () => {
     const { env } = createTestEnv();
     const svc = {
@@ -132,6 +211,8 @@ describe('custom services — creation', () => {
       hasDuration: true,
       capacityKind: 'none' as const,
       sortOrder: 99,
+      acceptedPetTypes: null,
+      petRateMode: 'exact' as const,
     };
     await createService(env.PAWBOOK_DB, TENANT_A, svc);
     await expect(createService(env.PAWBOOK_DB, TENANT_A, svc)).rejects.toThrow(
@@ -319,6 +400,7 @@ describe('custom services — deletion', () => {
       maxConcurrentPets: null,
       cancellationTiers: null,
       holidayRate: null,
+      petRateMode: 'exact',
     });
     expect(updated).toBe(false);
   });

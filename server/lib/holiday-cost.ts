@@ -24,9 +24,20 @@ import { addDays, holidayNameOn } from '../../src/shared/index.js';
  * - **No multipliers.** `holidayRate` is an explicit whole-dollar rate the sitter stored. There is
  *   no "x1.5 on holidays" here and there must never be — a rate the sitter did not type is a
  *   price they did not agree to. A holiday rate BELOW the base rate is legal and priced as given.
- * - **No pet count.** Neither function takes one. Two dogs over Christmas cost what one dog costs
- *   unless the sitter stored a different rate; the holiday split multiplies UNITS OF TIME only.
+ * - **No pet count.** Neither function takes one, and neither ever will. Nothing in this file can
+ *   tell a one-dog booking from a three-dog one.
  * - **Units of time only.** The single arithmetic here is (stored rate) x (count of units).
+ *
+ * ── What the CALLER may do with the result (0005, PetRateMode) ─────────────────────────────────
+ * `estimateCost` multiplies this function's return by the distinct pet count when — and only
+ * when — the service row stores `PetRateMode = 'linear'`, the sitter's own opt-in. So the whole
+ * cost scales, holiday units included: `(r x n_normal + h x n_holiday) x N`. Two dogs over
+ * Christmas cost twice what one dog costs on such a service, and cost the SAME as one dog on an
+ * `'exact'` service (the default).
+ *
+ * That composition lives entirely at the call site, deliberately: this module stays the place
+ * where "holidays are units of time at a stored rate" is unconditionally true, and the pet-count
+ * question stays the one thing `estimateCost` answers. Do not add a count parameter here.
  */
 
 /** A booking's billed units, partitioned by whether they fall on a listed US holiday. */
