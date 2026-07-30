@@ -2671,41 +2671,53 @@ export async function addEndUserPet(
 }
 
 /**
- * Count bookings referencing a pet, scoped to the tenant. BookingRequestPets has no TenantId, so
- * tenancy flows in via a join to EndUserPets — a foreign pet id counts as 0 (never a cross-tenant
- * existence oracle) regardless of D1's own foreign-key enforcement, since BookingRequestPets' FKs
- * reference BookingRequests(Id)/EndUserPets(Id) without a TenantId and so can't detect a
- * cross-tenant mismatch on their own.
+ * Delete one pet — unless a booking names it. Three outcomes, because the caller must tell them
+ * apart: 'not-found' (unknown or another tenant's pet → 404), 'has-bookings' (refused → 409), and
+ * 'removed'.
+ *
+ * **A pet on a booking is part of that booking's record.** Clearing its `BookingRequestPets` rows
+ * to make the delete succeed would rewrite what the stay says it was for and leave `PetCount`
+ * describing pets that are no longer listed; cancel and decline are SOFT, so the join row outlives
+ * the booking's active life on purpose. Refusal is therefore the right answer, and it was already
+ * the intended one — the admin route's 409 and `deleteCustomer`'s `cascadingPetGuard` both say so.
+ * The sitter's remedy for a pet that has died is `setPetDeceased`, which keeps the history.
+ *
+ * The guard is IN THE SQL, on every statement in the batch (the `deleteCustomer` pattern), not a
+ * read-then-write in the caller. `BookingRequestPets` has no `ON DELETE CASCADE` and D1 enforces
+ * foreign keys, so a caller-side pre-check left two ways to get a raw constraint error — i.e. a 500
+ * — instead of an answer: a new call site that forgets the check, and a booking POST landing between
+ * the check and the delete. Carrying the guard here means a refusal writes NOTHING (the batch is a
+ * transaction) and the race cannot produce an FK error at all.
+ *
+ * `BookingRequestPets` has no TenantId, so the reference test is unqualified — it does not need to
+ * be: the DELETEs are already scoped by `EndUserPets.TenantId`, pet ids are UUIDs, and a reference
+ * from anywhere is a reason to refuse, which is the safe direction regardless.
+ *
+ * PetOwners is deleted first: it FKs to EndUserPets, so the other order would fail the constraint
+ * rather than silently orphan a row.
  */
-export async function countBookingPetRefs(
-  db: D1Database,
-  tenantId: string,
-  petId: string,
-): Promise<number> {
-  const row = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM BookingRequestPets brp
-       JOIN EndUserPets p ON p.Id = brp.PetId
-       WHERE brp.PetId = ? AND p.TenantId = ?`,
-    )
-    .bind(petId, tenantId)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
-}
-
 export async function removeEndUserPet(
   db: D1Database,
   tenantId: string,
   petId: string,
-): Promise<boolean> {
-  // PetOwners (0019) FKs to EndUserPets, so its row(s) for this pet must be deleted first — D1
-  // enforces foreign keys, so deleting EndUserPets first would fail with a constraint error rather
-  // than silently leave an orphaned PetOwners row.
+): Promise<'removed' | 'not-found' | 'has-bookings'> {
+  const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = ?)`;
   const [, petResult] = await db.batch([
-    db.prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ?').bind(tenantId, petId),
-    db.prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?').bind(tenantId, petId),
+    db
+      .prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ? AND ${bookingGuard}`)
+      .bind(tenantId, petId, petId),
+    db
+      .prepare(`DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ? AND ${bookingGuard}`)
+      .bind(tenantId, petId, petId),
   ]);
-  return (petResult.meta as { changes?: number }).changes !== 0;
+  if ((petResult.meta as { changes?: number }).changes !== 0) return 'removed';
+  // Refused, and nothing was written. One read to choose which refusal it was: a pet that is not
+  // there at all can have no bookings, so "still present" is exactly "the guard stopped us".
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM EndUserPets WHERE TenantId = ? AND Id = ?`)
+    .bind(tenantId, petId)
+    .first<{ n: number }>();
+  return (row?.n ?? 0) > 0 ? 'has-bookings' : 'not-found';
 }
 
 /**

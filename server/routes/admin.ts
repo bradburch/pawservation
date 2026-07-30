@@ -5,7 +5,6 @@ import {
   addEndUserPet,
   addPetOwner,
   clearProviderConnection,
-  countBookingPetRefs,
   countBookingsForService,
   countBookingsForUser,
   countPetTypeReferences,
@@ -1547,11 +1546,29 @@ export const adminRoutes = new Hono<AppEnv>()
   })
   .delete('/:slug/admin/customers/:id/pets/:petId', async (c) => {
     const tenant = c.get('tenant');
-    const refs = await countBookingPetRefs(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
-    if (refs > 0) return c.json({ error: 'Pet has bookings; cannot remove.' }, 409);
-    const removed = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
-    if (!removed) return c.json({ error: 'Not found.' }, 404);
-    return c.body(null, 204);
+    // The "is it on a booking" refusal lives in removeEndUserPet's own SQL, not in a pre-check
+    // here: BookingRequestPets has no ON DELETE CASCADE, so a check-then-delete could still lose
+    // the race to a booking POST and surface a raw FK error as a 500. Exhaustive switch for
+    // deleteCustomer's reason — success must be reached by a POSITIVE test, so a fourth outcome
+    // added later fails to compile instead of falling through to "204 No Content".
+    const outcome = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
+    switch (outcome) {
+      case 'removed':
+        return c.body(null, 204);
+      case 'not-found':
+        return c.json({ error: 'Not found.' }, 404);
+      case 'has-bookings':
+        // Names the remedy that keeps the record intact: a pet on a booking is part of what that
+        // booking was for, and marking it deceased is the product's answer for a pet that has died.
+        return c.json(
+          { error: 'Pet has bookings; cannot remove. Mark them as passed away instead.' },
+          409,
+        );
+      default: {
+        const unhandled: never = outcome;
+        return c.json({ error: `Cannot remove this pet (${String(unhandled)}).` }, 409);
+      }
+    }
   })
   // Co-ownership (0019). Keyed on the pet, not on a customer, because a co-owned pet has no single
   // owning customer to nest under. Covered by this app's one `.use('/:slug/admin/*', adminAuth)`
