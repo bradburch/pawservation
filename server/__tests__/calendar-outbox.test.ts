@@ -53,6 +53,7 @@ const syncInputFor = (id: string) => ({
   startDate: addDays(TODAY, 10),
   endDate: addDays(TODAY, 13),
   startTime: null,
+  departureTime: null,
   durationMinutes: null,
   petCount: 1,
   petNames: ['Bella'],

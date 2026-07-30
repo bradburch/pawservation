@@ -227,9 +227,16 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
   PetCount INTEGER NOT NULL DEFAULT 1 CHECK (PetCount >= 1),
-  -- 'HH:MM' wall-clock. Timed services (walk/check-in): the option's slot time. Range services:
-  -- the customer's optional arrival time. NULL = all-day / not given.
+  -- 'HH:MM' wall-clock. Duration-priced services (walk/check-in, HasDuration = 1): the option's
+  -- slot time. Everything else (boarding, house sitting, daycare): the owner's optional ARRIVAL
+  -- time. NULL = all-day / not given.
   StartTime TEXT,
+  -- 'HH:MM' wall-clock, ALWAYS owner-set and never an option's clock (0008) — deliberately not a
+  -- mirror of StartTime's dual purpose, and deliberately not named EndTime, which on
+  -- TenantServiceOptions means the far edge of a bookable WINDOW. On a range stay it is the
+  -- departure time on the END date, so it may legally be earlier in the day than StartTime; on a
+  -- single-day booking both times are on StartDate and it must be strictly later. NULL = not given.
+  DepartureTime TEXT,
   GCalEventId TEXT, -- Google Calendar event id created for this booking; NULL if none/unsynced
   -- Calendar-sync outbox: 1 = this row has a state change Google has not confirmed yet
   -- (create/update/delete derived from Status+GCalEventId at re-drive time). Set in the SAME

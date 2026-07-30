@@ -110,8 +110,11 @@ export type Booking = {
   type: string;
   startDate: string;
   endDate: string | null;
-  /** Customer-chosen arrival time on a range stay; null = none given. */
+  /** Owner-chosen arrival time; null = none given. */
   startTime: string | null;
+  /** Owner-chosen departure time (0008); null = none given. On a range stay it is a time on the
+   *  END date, so it may legally be earlier in the day than `startTime`. */
+  departureTime: string | null;
   /** Which priced option the booking is on. An edit never changes it — it is here so the edit
    *  form paints the calendar against the right option's capacity. */
   optionKey: string | null;
@@ -178,6 +181,8 @@ export type AdminBooking = {
   startDate: string;
   endDate: string | null;
   startTime: string | null;
+  /** Owner-chosen departure time (0008); null = none given. */
+  departureTime: string | null;
   optionKey: string | null;
   petCount: number;
   /** True for a materialized Google Calendar event: read-only, blocks capacity, no customer. */
@@ -381,8 +386,11 @@ export const api = {
       optionKey: string;
       startDate: string;
       endDate?: string;
-      /** Range services only: customer-chosen arrival time 'HH:MM'. */
+      /** Owner-chosen arrival time 'HH:MM'. Accepted only where the option does not own the
+       *  clock (boarding, house sitting, daycare); the server refuses it elsewhere. */
       startTime?: string;
+      /** Owner-chosen departure time 'HH:MM'; same gate as `startTime`. */
+      departureTime?: string;
       petIds: string[];
       answers: Record<string, string>;
     },
@@ -421,6 +429,7 @@ export const api = {
       startDate: string;
       endDate?: string;
       startTime?: string;
+      departureTime?: string;
       petIds: string[];
       answers: Record<string, string>;
     },

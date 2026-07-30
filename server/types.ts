@@ -167,6 +167,9 @@ export type BookingRow = {
   OptionKey: string | null;
   PetCount: number;
   StartTime: string | null;
+  /** Owner-set departure time, 'HH:MM' (0008); null = not given. NEVER an option's clock — see
+   *  server/lib/booking-times.ts, and note the ordering rule is single-day only. */
+  DepartureTime: string | null;
   GCalEventId: string | null;
   EstCost: number | null;
   /** Fee assessed at cancel time, whole dollars; null = none assessed (0016). */

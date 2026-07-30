@@ -74,6 +74,7 @@ type EditBody = {
   startDate?: string;
   endDate?: string;
   startTime?: string;
+  departureTime?: string;
   petIds?: string[];
   answers?: Record<string, string>;
   // Not part of the contract — present only so a test can prove it is IGNORED.
@@ -95,7 +96,7 @@ async function edit(env: Env, token: string, id: string, body: EditBody): Promis
 
 async function row(env: Env, id: string) {
   return (await env.PAWBOOK_DB.prepare(
-    `SELECT StartDate, EndDate, StartTime, PetCount, EstCost, Status, Answers,
+    `SELECT StartDate, EndDate, StartTime, DepartureTime, PetCount, EstCost, Status, Answers,
             CancellationFee, GCalEventId, SyncPending
        FROM BookingRequests WHERE Id = ?`,
   )
@@ -104,6 +105,7 @@ async function row(env: Env, id: string) {
       StartDate: string;
       EndDate: string | null;
       StartTime: string | null;
+      DepartureTime: string | null;
       PetCount: number;
       EstCost: number | null;
       Status: string;
@@ -820,13 +822,60 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     expect(((await res.json()) as { code: string }).code).toBe('unknown_booking');
   });
 
-  it('a single-day service edits its one date and rejects an arrival time', async () => {
+  /**
+   * DELIBERATE BEHAVIOUR CHANGE (0008). This test used to assert that a DAYCARE edit rejected an
+   * arrival time, under the old rule "the option owns the clock on a single-day service". Daycare's
+   * option never owned a clock — it is a whole day with no fixed appointment and simply had no time
+   * at all — so it now takes owner-set times like a stay does. The rule survives, narrowed to the
+   * services it is actually true of (`HasDuration = 1`: walks and check-ins, whose option slot IS
+   * the appointment) and pinned below on a walk, with the daycare case rewritten to assert the new
+   * behaviour rather than deleted.
+   */
+  it('a single-day service edits its one date and takes both owner-set times', async () => {
     const { env } = createTestEnv();
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const id = await seedBooking(env, {
       serviceType: 'daycare',
       endDate: null,
       estCost: 40,
+    });
+
+    // Both times on ONE day, so the departure must be strictly later than the arrival.
+    const bad = await edit(env, token, id, {
+      startDate: addDays(TODAY, 45),
+      startTime: '10:00',
+      departureTime: '09:00',
+      petIds: [BELLA],
+      answers: {},
+    });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { code: string }).code).toBe('invalid_departure_time');
+
+    const good = await edit(env, token, id, {
+      startDate: addDays(TODAY, 45),
+      startTime: '08:00',
+      departureTime: '17:00',
+      petIds: [BELLA],
+      answers: {},
+    });
+    expect(good.status).toBe(200);
+    const after = await row(env, id);
+    expect(after.StartDate).toBe(addDays(TODAY, 45));
+    expect(after.EndDate).toBeNull();
+    expect(after.StartTime).toBe('08:00');
+    expect(after.DepartureTime).toBe('17:00');
+    // A time is not price-relevant: the stored estimate is kept verbatim.
+    expect(after.EstCost).toBe(40);
+  });
+
+  it('a duration-priced option still owns the clock — a walk edit rejects an arrival time', async () => {
+    const { env } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const id = await seedBooking(env, {
+      serviceType: 'walk',
+      optionKey: 'd30',
+      endDate: null,
+      estCost: 25,
     });
 
     const bad = await edit(env, token, id, {
@@ -837,16 +886,5 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as { code: string }).code).toBe('invalid_start_time');
-
-    const good = await edit(env, token, id, {
-      startDate: addDays(TODAY, 45),
-      petIds: [BELLA],
-      answers: {},
-    });
-    expect(good.status).toBe(200);
-    const after = await row(env, id);
-    expect(after.StartDate).toBe(addDays(TODAY, 45));
-    expect(after.EndDate).toBeNull();
-    expect(after.EstCost).toBe(40);
   });
 });

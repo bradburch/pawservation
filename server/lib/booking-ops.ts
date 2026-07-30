@@ -78,9 +78,9 @@ import {
 import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
 import { isUniqueViolation } from './db-errors';
+import { isTimesError, resolveBookingTimes } from './booking-times';
 import {
   isValidPetCount,
-  isValidTimeString,
   validateBoardingRange,
   validateBookingWindow,
   validateSingleDate,
@@ -235,6 +235,14 @@ export type QuoteInput = {
   /** The caller's own pet ids, already de-duplicated by the adapter. */
   petIds: string[];
   /**
+   * The owner's chosen arrival/departure times, if any. They affect neither capacity nor the stay's
+   * price — the quote takes them so it can (a) refuse exactly what the booking POST would refuse
+   * (`resolveBookingTimes`) rather than quoting happily for a request that cannot be submitted, and
+   * (b) disclose the extra-time surcharge they attract before the customer commits.
+   */
+  startTime?: string | null;
+  departureTime?: string | null;
+  /**
    * A booking of the CALLER's own to leave out of the capacity read — set while they are EDITING
    * it, so a stay being re-timed does not collide with itself and read as "those dates are full".
    * Ownership is proved here with the same customer-scoped SQL the edit and cancel paths use; an
@@ -291,6 +299,17 @@ export async function quoteBooking(
     ? serviceOptions.find((o) => o.OptionKey === optionKey)
     : serviceOptions[0];
   if (!option) return fail(400, 'Unknown service option.');
+
+  // The same time rules the booking POST enforces, run here so the quote cannot report a price for
+  // a request the POST would refuse. The `code` is dropped: every quote 400 is `{ error }` on the
+  // wire (see the module docblock), and widening that is a separate, deliberate change.
+  const times = resolveBookingTimes(
+    service,
+    option,
+    input.startTime ?? null,
+    input.departureTime ?? null,
+  );
+  if (isTimesError(times)) return fail(times.status, times.error);
 
   // Mirrors the POST's acceptance gate (validatePetTypeAcceptance, run before pricing there
   // too): a cat quoted against a dogs-only service must get the acceptance message, not
@@ -519,8 +538,14 @@ export type CreateBookingInput = {
   optionKey?: unknown;
   petIds: string[];
   answers: Record<string, string>;
-  /** Range services only; `null` = not given. */
+  /**
+   * The owner's ARRIVAL time; `null` = not given. Accepted only where the option does not own the
+   * clock (`TenantServices.HasDuration = 0`: boarding, house sitting, daycare) — see
+   * `resolveBookingTimes`.
+   */
   startTime: string | null;
+  /** The owner's DEPARTURE time (0008); `null` = not given. Same gate as `startTime`. */
+  departureTime: string | null;
   /** `Idempotency-Key`, already trimmed by the adapter; `null` = none. */
   idempotencyKey: string | null;
 };
@@ -623,16 +648,15 @@ export async function createBooking(
   );
   if (windowError) return fail(windowError.status, windowError.error, windowError.code);
 
-  // Optional customer-chosen arrival time — range stays only. Timed (single-day) services take
-  // their clock from the option, so a client-supplied time there is a bug, not a preference.
-  if (rawStartTime !== null) {
-    if (shape !== 'range')
-      return fail(400, 'An arrival time only applies to multi-day stays.', 'invalid_start_time');
-    if (!isValidTimeString(rawStartTime))
-      return fail(400, 'Arrival time must look like 14:30 (24-hour HH:MM).', 'invalid_start_time');
-  }
-  // One resolved value feeds BOTH the insert and the calendar sync so they can never disagree.
-  const bookingStartTime = shape === 'range' ? rawStartTime : option.StartTime;
+  // The owner's arrival/departure times, resolved in ONE place (`resolveBookingTimes`) shared with
+  // the edit path: who may set a time at all, what shape it must have, and the ordering rule —
+  // which is SINGLE-DAY ONLY, because on a range stay the departure falls on the end date.
+  const resolvedTimes = resolveBookingTimes(service, option, rawStartTime, input.departureTime);
+  if (isTimesError(resolvedTimes))
+    return fail(resolvedTimes.status, resolvedTimes.error, resolvedTimes.code);
+  // One resolved pair feeds BOTH the insert and the calendar sync so they can never disagree.
+  const bookingStartTime = resolvedTimes.startTime;
+  const bookingDepartureTime = resolvedTimes.departureTime;
 
   // Weekday-only options (set per-option in admin) are never bookable on Sat/Sun. The flag is
   // settable on ANY option, including range-shaped services (boarding/housesitting) — a stay
@@ -726,6 +750,7 @@ export async function createBooking(
       optionKey: option.OptionKey,
       petCount: pets,
       startTime: bookingStartTime,
+      departureTime: bookingDepartureTime,
       estCost,
       status: 'pending',
       answers,
@@ -790,6 +815,7 @@ export async function createBooking(
       startDate: start,
       endDate,
       startTime: bookingStartTime,
+      departureTime: bookingDepartureTime,
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       petNames: chosen.map((p) => p!.Name),
@@ -886,6 +912,7 @@ export async function cancelBooking(
               startDate: sync.StartDate,
               endDate: sync.EndDate,
               startTime: sync.StartTime,
+              departureTime: sync.DepartureTime,
               durationMinutes: sync.DurationMinutes,
               petCount: sync.PetCount,
               petNames,
@@ -939,6 +966,7 @@ export type EditBookingInput = {
   petIds: string[];
   answers: Record<string, string>;
   startTime: string | null;
+  departureTime: string | null;
 };
 
 export type EditBookingPayload = { id: string; estCost: number; status: 'pending' };
@@ -1069,13 +1097,12 @@ export async function editBooking(
   );
   if (windowError) return fail(windowError.status, windowError.error, windowError.code);
 
-  if (rawStartTime !== null) {
-    if (shape !== 'range')
-      return fail(400, 'An arrival time only applies to multi-day stays.', 'invalid_start_time');
-    if (!isValidTimeString(rawStartTime))
-      return fail(400, 'Arrival time must look like 14:30 (24-hour HH:MM).', 'invalid_start_time');
-  }
-  const bookingStartTime = shape === 'range' ? rawStartTime : option.StartTime;
+  // The same resolution the create path runs — one function, so the two cannot drift.
+  const resolvedTimes = resolveBookingTimes(service, option, rawStartTime, input.departureTime);
+  if (isTimesError(resolvedTimes))
+    return fail(resolvedTimes.status, resolvedTimes.error, resolvedTimes.code);
+  const bookingStartTime = resolvedTimes.startTime;
+  const bookingDepartureTime = resolvedTimes.departureTime;
 
   if (option.WeekdaysOnly) {
     const spanNights = shape === 'range' ? nightsBetween(start, end) : 1;
@@ -1111,6 +1138,7 @@ export async function editBooking(
     startDate: booking.StartDate,
     endDate: booking.EndDate,
     startTime: booking.StartTime,
+    departureTime: booking.DepartureTime,
     petCount: booking.PetCount,
     estCost: booking.EstCost,
     answers: booking.Answers,
@@ -1163,6 +1191,7 @@ export async function editBooking(
     startDate: start,
     endDate,
     startTime: bookingStartTime,
+    departureTime: bookingDepartureTime,
     petCount: pets,
     estCost,
     answers,
@@ -1225,6 +1254,7 @@ export async function editBooking(
         startDate: start,
         endDate,
         startTime: bookingStartTime,
+        departureTime: bookingDepartureTime,
         durationMinutes: option.DurationMinutes,
         petCount: pets,
         petNames,
@@ -1250,6 +1280,7 @@ export type MyBooking = {
   startDate: string;
   endDate: string | null;
   startTime: string | null;
+  departureTime: string | null;
   optionKey: string | null;
   petIds: string[];
   petCount: number;
@@ -1317,6 +1348,8 @@ export async function listMyBookings(
         endDate: r.EndDate,
         /** The stored arrival time — what the edit form must open showing. */
         startTime: r.StartTime,
+        /** The stored departure time (0008), for the same reason. */
+        departureTime: r.DepartureTime,
         /** Which priced option (walk length, check-in slot) this booking is on. An edit never
          *  changes it — it is here so the edit form paints the grid against the RIGHT option's
          *  capacity instead of falling back to the service's first one. */

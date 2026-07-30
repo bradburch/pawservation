@@ -81,6 +81,16 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   idempotent `IF NOT EXISTS` forms), but do not count on `seed:remote` to apply a migration in
   general — see the warning below.
 
+- **`0008_departure_time.sql`** (`hardening-and-remaining-features`) — adds
+  `BookingRequests.DepartureTime` (nullable 'HH:MM'), the owner's estimated departure/pick-up time.
+  Additive only (one `ALTER TABLE … ADD COLUMN`); NULL for every existing row, which is exactly
+  "no departure time given" — the behaviour of every booking taken before it. Deliberately no
+  ordering `CHECK`: on a range stay the departure is a time on the END date and may legally be
+  earlier in the day than the arrival, so the rule is single-day-only and lives in
+  `server/lib/booking-times.ts`, which knows the service's shape. No `Tenants` column, so the KV
+  tenant-config cache key needs **no** bump. **NOT YET APPLIED to the remote DB** — must be
+  hand-applied before this branch merges, or the new worker's `BOOKING_COLS` SELECT 500s.
+
 **All three of the above (0005, 0006, 0007) are applied to the remote DB as of this writing.**
 Do **not** re-run `0005_pet_rate_mode.sql` or `0006_overlap_days.sql` by hand against the remote
 DB — each is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and

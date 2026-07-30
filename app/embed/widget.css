@@ -736,6 +736,20 @@ body {
   margin-top: 12px;
 }
 
+/* Arrival + departure, side by side. BOTH are always rendered together (BookTab), so this row's
+   height is fixed the moment `.bp-details` mounts — filling a time in never resizes the widget, and
+   with it the host page's iframe. `minmax(0, 1fr)` rather than `1fr` so a native time input's
+   intrinsic width cannot push the row wider than its column and start a horizontal scroll. */
+.bp-timerow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.bp-timerow input {
+  min-width: 0;
+}
+
 .bp-pet-chips {
   display: flex;
   flex-wrap: wrap;

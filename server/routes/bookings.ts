@@ -90,6 +90,10 @@ export const bookingRoutes = new Hono<AppEnv>()
         start: c.req.query('start') ?? '',
         end: c.req.query('end') ?? '',
         petIds: petIdsFromQuery(c.req.query('petIds')),
+        // The owner's chosen times. Present ONLY so the quote can disclose the extra-time
+        // surcharge they attract (0009) — they never touch capacity or the stay's price.
+        startTime: c.req.query('startTime') || null,
+        departureTime: c.req.query('departureTime') || null,
         // Set by the widget while EDITING a booking, so the stay does not collide with itself.
         excludeBookingId: c.req.query('excludeBookingId'),
       }),
@@ -121,6 +125,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         petIds?: unknown;
         answers?: unknown;
         startTime?: unknown;
+        departureTime?: unknown;
       }>()
       .catch(() => ({}) as Record<string, never>);
     const rawPetIds = Array.isArray(body.petIds)
@@ -146,6 +151,10 @@ export const bookingRoutes = new Hono<AppEnv>()
         answers,
         startTime:
           typeof body.startTime === 'string' && body.startTime !== '' ? body.startTime : null,
+        departureTime:
+          typeof body.departureTime === 'string' && body.departureTime !== ''
+            ? body.departureTime
+            : null,
         idempotencyKey: c.req.header('Idempotency-Key')?.trim() || null,
       }),
     );
@@ -164,6 +173,7 @@ export const bookingRoutes = new Hono<AppEnv>()
         petIds?: unknown;
         answers?: unknown;
         startTime?: unknown;
+        departureTime?: unknown;
       }>()
       .catch(() => ({}) as Record<string, never>);
     const rawPetIds = Array.isArray(body.petIds)
@@ -188,6 +198,10 @@ export const bookingRoutes = new Hono<AppEnv>()
         answers,
         startTime:
           typeof body.startTime === 'string' && body.startTime !== '' ? body.startTime : null,
+        departureTime:
+          typeof body.departureTime === 'string' && body.departureTime !== ''
+            ? body.departureTime
+            : null,
       }),
     );
   })

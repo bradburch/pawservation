@@ -82,6 +82,7 @@ const syncInput = (bookingId: string, endUserId: string) => ({
   startDate: IN_WINDOW_START,
   endDate: IN_WINDOW_END,
   startTime: null,
+  departureTime: null,
   durationMinutes: null,
   petCount: 1,
   petNames: [],

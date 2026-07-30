@@ -37,7 +37,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -637,6 +637,8 @@ export async function insertBookingRequest(
     optionKey: string | null;
     petCount: number;
     startTime?: string | null;
+    /** Owner-set departure time (0008); undefined/null = none given. */
+    departureTime?: string | null;
     estCost: number | null;
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
@@ -648,8 +650,8 @@ export async function insertBookingRequest(
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -661,6 +663,7 @@ export async function insertBookingRequest(
       row.optionKey,
       row.petCount,
       row.startTime ?? null,
+      row.departureTime ?? null,
       row.estCost,
       JSON.stringify(row.answers ?? {}),
       row.status,
@@ -932,6 +935,7 @@ export async function updateBookingForEdit(
     startDate: string;
     endDate: string | null;
     startTime: string | null;
+    departureTime: string | null;
     petCount: number;
     estCost: number;
     answers: Record<string, string>;
@@ -941,8 +945,8 @@ export async function updateBookingForEdit(
   const result = await db
     .prepare(
       `UPDATE BookingRequests
-          SET StartDate = ?, EndDate = ?, StartTime = ?, PetCount = ?, EstCost = ?, Answers = ?,
-              Status = 'pending', SyncPending = 1
+          SET StartDate = ?, EndDate = ?, StartTime = ?, DepartureTime = ?, PetCount = ?,
+              EstCost = ?, Answers = ?, Status = 'pending', SyncPending = 1
         WHERE TenantId = ? AND EndUserId = ? AND Id = ?
           AND ServiceType NOT IN ('blocked', 'external')
           AND Status = ?`,
@@ -951,6 +955,7 @@ export async function updateBookingForEdit(
       next.startDate,
       next.endDate,
       next.startTime,
+      next.departureTime,
       next.petCount,
       next.estCost,
       JSON.stringify(next.answers),
@@ -978,6 +983,7 @@ export async function restoreBookingAfterEdit(
     startDate: string;
     endDate: string | null;
     startTime: string | null;
+    departureTime: string | null;
     petCount: number;
     estCost: number | null;
     answers: string;
@@ -987,14 +993,15 @@ export async function restoreBookingAfterEdit(
   await db
     .prepare(
       `UPDATE BookingRequests
-          SET StartDate = ?, EndDate = ?, StartTime = ?, PetCount = ?, EstCost = ?, Answers = ?,
-              Status = ?
+          SET StartDate = ?, EndDate = ?, StartTime = ?, DepartureTime = ?, PetCount = ?,
+              EstCost = ?, Answers = ?, Status = ?
         WHERE TenantId = ? AND Id = ?`,
     )
     .bind(
       previous.startDate,
       previous.endDate,
       previous.startTime,
+      previous.departureTime,
       previous.petCount,
       previous.estCost,
       previous.answers,
@@ -3056,6 +3063,7 @@ export type BookingSyncRow = {
   StartDate: string;
   EndDate: string | null;
   StartTime: string | null;
+  DepartureTime: string | null;
   DurationMinutes: number | null;
   PetCount: number;
   EstCost: number | null;
@@ -3064,7 +3072,8 @@ export type BookingSyncRow = {
 
 const BOOKING_SYNC_COLS = `b.Id AS Id, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
        COALESCE(s.Label, b.ServiceType) AS ServiceLabel, b.StartDate AS StartDate,
-       b.EndDate AS EndDate, b.StartTime AS StartTime, o.DurationMinutes AS DurationMinutes,
+       b.EndDate AS EndDate, b.StartTime AS StartTime, b.DepartureTime AS DepartureTime,
+       o.DurationMinutes AS DurationMinutes,
        b.PetCount AS PetCount, b.EstCost AS EstCost, b.Status AS Status`;
 
 const BOOKING_SYNC_JOINS = `FROM BookingRequests b
