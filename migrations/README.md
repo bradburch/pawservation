@@ -88,8 +88,9 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   ordering `CHECK`: on a range stay the departure is a time on the END date and may legally be
   earlier in the day than the arrival, so the rule is single-day-only and lives in
   `server/lib/booking-times.ts`, which knows the service's shape. No `Tenants` column, so the KV
-  tenant-config cache key needs **no** bump. **NOT YET APPLIED to the remote DB** — must be
-  hand-applied before this branch merges, or the new worker's `BOOKING_COLS` SELECT 500s.
+  tenant-config cache key needs **no** bump. **APPLIED** to the remote DB by hand (belatedly —
+  PR #100 merged to `main` before this ran, leaving every `BookingRequests` read 500ing in
+  production until it was caught and applied).
 
 - **`0009_extra_time_surcharge.sql`** (`hardening-and-remaining-features`) — adds
   `TenantServices.StandardArrivalTime` / `StandardDepartureTime` / `EarlyArrivalFee` /
@@ -102,19 +103,19 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   `BookingCharges` row, so `estimateCost` stays "units of time × a stored rate" and total due stays
   `EstCost + SUM(charges)` — putting it inside `estimateCost` would have let the
   `PetRateMode = 'linear'` multiplier scale a $20 fee to $60 for three dogs. No `Tenants` column, so
-  the KV tenant-config cache key needs **no** bump. **NOT YET APPLIED to the remote DB** — must be
-  hand-applied before this branch merges, or `listServices`' SELECT and the settings PUT's UPDATE
-  500 on missing columns.
+  the KV tenant-config cache key needs **no** bump. **APPLIED** to the remote DB by hand.
 
-**All three of the above (0005, 0006, 0007) are applied to the remote DB as of this writing.**
-Do **not** re-run `0005_pet_rate_mode.sql` or `0006_overlap_days.sql` by hand against the remote
-DB — each is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and
-re-running either **will error** with "duplicate column name" against a DB that already has it.
-This repo has already produced exactly this confusion once from a stale ledger in this file
-claiming a migration was unapplied when it was not — check the actual remote schema
-(`wrangler d1 execute pawbook-db --remote --command "PRAGMA table_info(Tenants)"` or the
-equivalent table) before hand-applying anything numbered 0005–0007, rather than trusting a status
-word in this file alone.
+**All of 0005 through 0009 are applied to the remote DB as of this writing.**
+Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
+`0008_departure_time.sql`, or `0009_extra_time_surcharge.sql` by hand against the remote DB — each
+is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and re-running any
+of them **will error** with "duplicate column name" against a DB that already has it. This repo
+has already produced exactly this confusion twice from a stale ledger in this file — once claiming
+a migration was unapplied when it was not, and once (0008) claiming a migration was unapplied when
+it genuinely was, silently 500ing every `BookingRequests` read in production after PR #100 merged
+until it was caught — check the actual remote schema (`wrangler d1 execute pawbook-db --remote
+--command "PRAGMA table_info(Tenants)"` or the equivalent table) before hand-applying anything
+listed here, rather than trusting a status word in this file alone.
 
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long
