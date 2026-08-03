@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   EndUserId TEXT REFERENCES EndUsers(Id),
-  ServiceType TEXT NOT NULL, -- tenant service slug, or the reserved 'blocked'
+  ServiceType TEXT NOT NULL, -- tenant service slug, or the reserved 'blocked' or 'external'
   StartDate TEXT NOT NULL,
   EndDate TEXT, -- exclusive checkout for boarding/blocked ranges; NULL for single-day walks
   OptionKey TEXT, -- which TenantServiceOptions row the customer picked; NULL for blocked
@@ -261,7 +261,8 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- Calendar-sync outbox: 1 = this row has a state change Google has not confirmed yet
   -- (create/update/delete derived from Status+GCalEventId at re-drive time). Set in the SAME
   -- statement as the state change, cleared only on push success, re-driven by the cron sweep.
-  -- Always 0 for 'blocked' (time off is not synced) and 'external' (Google is the writer there).
+  -- Always 0 for 'external' (Google is the writer there); 'blocked' rows use the outbox exactly
+  -- like bookings.
   SyncPending INTEGER NOT NULL DEFAULT 0,
   -- ServiceType='external' rows only: the Google event's summary, shown on the admin calendar.
   -- External rows are Google-owned mirrors (EndUserId NULL, Status 'confirmed', EstCost NULL,
