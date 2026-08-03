@@ -158,6 +158,46 @@ describe('syncBookingToCalendar', () => {
   });
 });
 
+describe('resourceForBooking dispatch (blocked/time-off rows)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('dispatches a blocked ("time off") row to the UNAVAILABLE all-day shape, not the booking shape', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env, '2030-01-01T00:00:00Z');
+    raw.exec(`INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, Status)
+              VALUES ('blk1', '${TENANT_A}', 'blocked', '2030-04-01', '2030-04-03', 1, 'confirmed')`);
+    let body: { summary: string; start: unknown; end: unknown; description: string } | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      body = JSON.parse((init as RequestInit).body as string);
+      return new Response(JSON.stringify({ id: 'evt_blk1' }), { status: 200 });
+    });
+
+    await syncBookingToCalendar(env, tenant, {
+      bookingId: 'blk1',
+      endUserId: null,
+      serviceType: 'blocked',
+      serviceLabel: 'blocked',
+      startDate: '2030-04-01',
+      endDate: '2030-04-03',
+      startTime: null,
+      departureTime: null,
+      durationMinutes: null,
+      petCount: 1,
+      petNames: [],
+      estCost: null,
+      status: 'confirmed',
+    });
+
+    expect(body).toBeDefined();
+    // The UNAVAILABLE shape: a fixed summary and an all-day date range — never the booking shape's
+    // service label / pet-count text, and never a timed dateTime.
+    expect(body!.summary).toBe('UNAVAILABLE');
+    expect(body!.start).toEqual({ date: '2030-04-01' });
+    expect(body!.end).toEqual({ date: '2030-04-03' });
+    expect(body!.description).not.toMatch(/pet|Boarding/i);
+  });
+});
+
 describe('updateBookingCalendarEvent', () => {
   afterEach(() => vi.restoreAllMocks());
 

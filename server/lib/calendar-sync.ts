@@ -21,6 +21,7 @@ import {
 } from '../db/repo';
 import {
   buildEventResource,
+  buildUnavailableEventResource,
   createEvent,
   deleteEvent,
   listCalendarEvents,
@@ -78,6 +79,10 @@ export function keepsCalendarEventOnCancel(
  * description. Shared by the create / update / backfill paths so event shaping stays identical.
  */
 async function resourceForBooking(env: Env, tenant: Tenant, b: SyncInput) {
+  // Time off carries no customer/pets/service to shape a normal event from, and a blocked row's
+  // EndUserId is always NULL — so this must be checked before the customer lookup below, which a
+  // blocked row has no reason to need.
+  if (b.serviceType === 'blocked') return buildUnavailableEventResource(b);
   const customer = b.endUserId
     ? await getEndUserById(env.PAWBOOK_DB, tenant.Id, b.endUserId)
     : null;
