@@ -8,11 +8,13 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
+  listBlockedRowsWithEventsInWindow,
   listExternalEventRowsInWindow,
   listPetNamesForBooking,
   listSyncedBookingIds,
   listSyncPendingBookings,
   listUnsyncedFutureBookings,
+  markSyncPending,
   setBookingGCalEventId,
   setProviderAccessToken,
   setProviderCalendarId,
@@ -473,9 +475,14 @@ export const RECONCILE_MIN_HORIZON_DAYS = 180;
  *
  * The one function every consumer of the window derives from, which is what makes widening SAFE:
  * `reconcileBookingsWithCalendar` feeds the identical pair of dates to Google's query, to
- * `listSyncedBookingIds` and to `listExternalEventRowsInWindow`. Those last two are the
- * delete-detection truth sets — widening the Google query without widening them in lockstep would
- * read "absent from the response" as "deleted by hand" and spuriously cancel real bookings.
+ * `listSyncedBookingIds`, to `listExternalEventRowsInWindow`, and to
+ * `listBlockedRowsWithEventsInWindow` (the re-assertion pass for time-off rows, between steps (a)
+ * and (b) — see the function body). The first two of those three are the delete-detection truth
+ * sets — widening the Google query without widening them in lockstep would read "absent from the
+ * response" as "deleted by hand" and spuriously cancel real bookings or blocked rows; the same
+ * mismatch on `listBlockedRowsWithEventsInWindow` would either re-arm a blocked row forever (outside
+ * the window, so never actually in Google's response) or leave one un-re-armed (inside the real
+ * sync range but outside the narrower window this function computed).
  * Bounded because `MaxAdvanceMonths` is capped at 24 (validation.ts), and a Google page overflow
  * throws rather than returning a partial list (google-calendar.ts), so a too-large window fails
  * loudly instead of silently deleting.
@@ -498,6 +505,15 @@ export function reconcileWindow(
  * `reconcileWindow` returns:
  *  (a) a Pawservation-synced booking whose event is gone from Google is cancelled, and the
  *      customer is emailed (best-effort, spec decision: notify via sendBookingStatusEmail);
+ *  (a2) a blocked (time-off) row whose event is gone from Google is RE-ASSERTED, never cancelled —
+ *      time off is the sitter's own record of her unavailability, not a customer's commitment she
+ *      might withdraw, so a hand-deleted UNAVAILABLE event means "recreate it," not "the day is
+ *      free again." `listSyncedBookingIds` (step (a)'s candidate set) already excludes
+ *      `ServiceType = 'blocked'` rows entirely, which is what makes this its own pass rather than a
+ *      branch inside (a): a blocked row missing from Google must never take the cancel path at all.
+ *      `markSyncPending` re-arms the row (leaving `GCalEventId` and `Status = 'confirmed'` both
+ *      untouched) so the next outbox sweep's PATCH→404→recreate→CAS path in
+ *      `updateBookingCalendarEvent` recreates the event, using the stale id as `expectedOld`.
  *  (b) every foreign event (no private.bookingId) is materialized as a read-only
  *      ServiceType='external' row — created, moved, and deleted as Google changes — which is how
  *      pre-existing stays and hand-kept busy days block real capacity without availability ever
@@ -510,8 +526,9 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
-  // ONE derivation, three consumers (Google's query, listSyncedBookingIds,
-  // listExternalEventRowsInWindow) — see reconcileWindow on why they must never drift apart.
+  // ONE derivation, four consumers (Google's query, listSyncedBookingIds,
+  // listExternalEventRowsInWindow, listBlockedRowsWithEventsInWindow) — see reconcileWindow on why
+  // they must never drift apart.
   const { start: windowStart, endExclusive: windowEndExclusive } = reconcileWindow(tenant, today);
   const events = await listCalendarEvents(
     accessToken,
@@ -549,6 +566,22 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
     } catch (err) {
       console.error('reconcile-cancel notification failed for booking', id, err);
     }
+  }
+
+  // (a2) Blocked (time-off) rows whose event is gone from Google → re-asserted, never cancelled.
+  // Reuses the SAME windowStart/windowEndExclusive and the SAME liveBookingIds Google's response
+  // already produced above — a second Google call or a re-derived window here would be exactly the
+  // drift reconcileWindow's docblock warns against. Do NOT null GCalEventId: the outbox's
+  // PATCH→404→recreate→CAS path (updateBookingCalendarEvent) needs the stale id as `expectedOld`.
+  const blockedIds = await listBlockedRowsWithEventsInWindow(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    windowStart,
+    windowEndExclusive,
+  );
+  const missingBlocked = blockedIds.filter((id) => !liveBookingIds.has(id));
+  if (missingBlocked.length) {
+    await markSyncPending(env.PAWBOOK_DB, tenant.Id, missingBlocked);
   }
 
   // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
