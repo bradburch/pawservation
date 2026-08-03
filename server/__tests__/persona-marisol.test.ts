@@ -138,7 +138,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
 
     const resource = JSON.parse(capturedInit.body as string) as EventResource;
     // A pending request is marked [REQUEST], names the pets, and carries full booking metadata.
-    expect(resource.summary).toBe('[REQUEST] Boarding — Bella, Mochi');
+    expect(resource.summary).toBe('[REQUEST] Bella, Mochi — Boarding');
     expect(resource.description).toBe(
       'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
         'Requested via Pawservation — confirm or decline in your dashboard.',
@@ -190,7 +190,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     expect(init.method).toBe('PATCH');
     expect(url).toContain(`/calendars/${CALENDAR_ID}/events/evt_marisol_2`);
     const patched = JSON.parse(init.body as string) as EventResource;
-    expect(patched.summary).toBe('Boarding — Bella, Mochi');
+    expect(patched.summary).toBe('Bella, Mochi — Boarding');
     expect(patched.summary).not.toContain('[REQUEST]');
 
     const rowAfter = raw.prepare(`SELECT Status FROM BookingRequests WHERE Id = ?`).get(id) as {
@@ -233,7 +233,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     expect(init.method).toBe('POST'); // a create (catch-up), not a PATCH
     expect(url).toContain(`/calendars/${CALENDAR_ID}/events`);
     const created = JSON.parse(init.body as string) as EventResource;
-    expect(created.summary).toBe('Boarding — Bella, Mochi'); // confirmed, no [REQUEST]
+    expect(created.summary).toBe('Bella, Mochi — Boarding'); // confirmed, no [REQUEST]
 
     const row = raw
       .prepare(`SELECT Status, GCalEventId FROM BookingRequests WHERE Id = ?`)

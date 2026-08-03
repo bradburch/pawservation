@@ -612,6 +612,15 @@ body {
   flex: 1 1 12rem;
 }
 
+/* A native file input's content (its button + filename text) doesn't shrink the way a text
+   input does, so forcing it onto the same stretchy 12rem basis lets it render wider than its
+   assigned box and overlap the next .pb-row sibling instead of wrapping. Size it by its own
+   content and let flex-wrap break the row normally. */
+.pb-row > input[type='file'] {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
 .pb-options {
   display: flex;
   flex-direction: column;
@@ -901,10 +910,20 @@ body {
   color: var(--ink);
 }
 
-/* Emails and long pet lists are the two cells that can force the table wider than a phone. */
+/* Emails, long pet lists, and multi-owner names are the cells that can force the table wider
+   than a phone. Pets now leads each row as the th (column 1); Account (owner name, column 2)
+   and Contact (email, column 4) are the other two prone to overflow. */
+.pb-clients-table tbody th,
 .pb-clients-table td:nth-child(2),
 .pb-clients-table td:nth-child(4) {
   overflow-wrap: anywhere;
+}
+
+/* Pets lead the row (see the tbody th rule above for weight/color); owner name and contact
+   info are secondary — everything here is categorized by the pets first. */
+.pb-clients-table .pb-clients-secondary {
+  color: var(--soft);
+  font-weight: 400;
 }
 
 .pb-clients-table tbody tr:hover {
@@ -1152,9 +1171,21 @@ body {
   color: var(--leaf);
   font-weight: 700;
 }
-/* Wizard-only extras on top of the tile base. */
+/* Wizard-only extras on top of the tile base.
+
+   The background and text color are set EXPLICITLY here, the same way .pb-svc-open:hover and
+   .pb-svc-add:hover do it: this rule outranks `.pb-wrap button:hover` on border-color, but that
+   rule also paints `background: var(--deep)` (#1d3826) — which nothing here was overriding, so a
+   hovered tile went near-black behind unchanged --body/--soft text and the icon and words simply
+   disappeared. A card tile must keep its card face on hover. */
 .pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) {
   border-color: var(--sage);
+  background: var(--sage-wash);
+  color: var(--ink);
+}
+/* The summary line inside the tile is --soft on --card; keep it readable on the hover wash too. */
+.pb-wrap .pb-wizard-cardbtn:hover:not(:disabled) span {
+  color: var(--body);
 }
 .pb-wrap .pb-wizard-cardbtn:disabled {
   cursor: default;
@@ -1363,13 +1394,19 @@ body {
 
 .pb-svc-title {
   display: flex;
-  align-items: center;
+  /* flex-start, not center: the name is allowed to wrap onto multiple lines (see
+     .pb-truncate-block below) rather than ellipsis-truncate behind the Custom chip, so a
+     long custom name must not shove the icon/chip down to its vertical middle. */
+  align-items: flex-start;
   gap: 6px;
   max-width: 100%;
   color: var(--ink);
 }
 
 .pb-svc-title svg {
+  /* Nudge the icon down half a line so it lines up with the first line of text instead of
+     the top of the (possibly taller) text box, now that align-items is flex-start. */
+  margin-top: 0.15em;
   color: var(--leaf);
   flex: none;
 }
@@ -1871,6 +1908,14 @@ body {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* Pets lead each booking row (BookingsSection-only — CalendarSection renders its own separate
+   pending-request list, not this class); owner name/email is secondary, same convention as
+   .pb-clients-secondary on the Clients page — everything here is categorized by the pets first. */
+.pb-bookings-secondary {
+  color: var(--soft);
+  font-weight: 400;
 }
 
 /* Intake Q&A inside the expanded booking row (BookingsSection). Full-width on purpose: in the

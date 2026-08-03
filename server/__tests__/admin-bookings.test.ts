@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { insertBookingCharge, insertBookingRequest } from '../db/repo';
+import { addBookingPets, insertBookingCharge, insertBookingRequest } from '../db/repo';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 /** Books one dog (Bella, sunny-paws) for a 2-night boarding stay via the real customer flow. */
@@ -36,13 +36,21 @@ describe('admin booking lifecycle', () => {
     );
     expect(res.status).toBe(200);
     const { bookings } = (await res.json()) as {
-      bookings: { id: string; customerEmail: string | null; type: string; status: string }[];
+      bookings: {
+        id: string;
+        customerEmail: string | null;
+        type: string;
+        status: string;
+        petNames: string[];
+      }[];
     };
     const mine = bookings.find((b) => b.id === created.id);
     expect(mine).toBeTruthy();
     expect(mine?.customerEmail).toBe('jess@example.com');
     expect(mine?.type).toBe('boarding');
     expect(mine?.status).toBe('pending');
+    // Pet names ride along with the customer email — the row's primary label, not just a count.
+    expect(mine?.petNames).toEqual(['Bella']);
     // The seeded blocked range for sunny-paws must never appear in the admin bookings list.
     expect(bookings.some((b) => b.type === 'blocked')).toBe(false);
   });
@@ -333,5 +341,48 @@ describe('admin booking lifecycle', () => {
     // EstCost is NEVER mutated by a charge — total due is derived, not stored.
     const untouched = bookings.find((b) => b.id === untouchedBooking.id)!;
     expect(untouched.chargesTotal).toBe(0);
+  });
+
+  it('reports every pet name on a multi-pet booking, tenant-scoped', async () => {
+    const { env } = createTestEnv();
+    // Built directly via repo helpers (not the real booking POST): a 2-pet set with no stored
+    // pet-set rate is correctly REFUSED under the base seed's default 'exact' PetRateMode (see
+    // CLAUDE.md's no-inferred-pricing invariant), which is orthogonal to what this test checks —
+    // that the admin list surfaces every linked pet's name, tenant-scoped.
+    const multiPetId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess',
+      serviceType: 'boarding',
+      startDate: '2029-03-01',
+      endDate: '2029-03-03',
+      optionKey: 'standard',
+      petCount: 2,
+      estCost: 200,
+      status: 'pending',
+    });
+    await addBookingPets(env.PAWBOOK_DB, TENANT_A, multiPetId, ['pet_sp_bella', 'pet_sp_mochi']);
+    const multiPet = { id: multiPetId };
+
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { bookings } = (await res.json()) as {
+      bookings: { id: string; petNames: string[] }[];
+    };
+    const row = bookings.find((b) => b.id === multiPet.id)!;
+    // Ordered by name (listPetNamesForTenantBookings), same as the single-booking pet-names read.
+    expect(row.petNames).toEqual(['Bella', 'Mochi']);
+
+    // Tenant B's admin list must never see tenant A's pet names (or the booking at all).
+    const listB = (await (
+      await app.request(
+        '/api/happy-tails/admin/bookings',
+        { headers: await adminHeaders(TENANT_B) },
+        env,
+      )
+    ).json()) as { bookings: { id: string; petNames: string[] }[] };
+    expect(listB.bookings.some((b) => b.id === multiPet.id)).toBe(false);
+    expect(listB.bookings.every((b) => !b.petNames.includes('Bella'))).toBe(true);
   });
 });

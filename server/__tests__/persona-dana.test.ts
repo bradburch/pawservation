@@ -137,7 +137,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
       expect(init.method).toBe('POST'); // a create, not a PATCH (there was no prior event)
       expect(String(url)).toContain('/calendars/primary/events');
       const body = bearerBody(init) as { summary: string };
-      expect(body.summary).toBe('Walk — 1 pet'); // confirmed, so no [REQUEST] prefix
+      expect(body.summary).toBe('1 pet — Walk'); // confirmed, so no [REQUEST] prefix
     });
   });
 

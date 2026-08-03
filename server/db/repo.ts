@@ -628,7 +628,10 @@ export async function listSlotBookingCounts(
   return new Map(results.map((r) => [r.StartDate, r.n]));
 }
 
-/** Real bookings are born sync-pending; the outbox clears on push success. */
+/** Every row — including 'blocked' time off — is born sync-pending; the outbox clears on push
+ * success. 'blocked' rows sync as an all-day UNAVAILABLE event the same way a real booking syncs
+ * as its own event; only 'external' (Google-owned, materialized by reconcile) is never written
+ * here at all. */
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -672,7 +675,7 @@ export async function insertBookingRequest(
       row.status,
       row.source ?? null,
       row.idempotencyKey ?? null,
-      row.serviceType === 'blocked' ? 0 : 1,
+      1,
     )
     .run();
   return id;
@@ -1941,18 +1944,44 @@ export async function listBlockedRanges(db: D1Database, tenantId: string): Promi
   return results;
 }
 
-export async function deleteBlockedRange(
+/**
+ * Soft-cancel a confirmed blocked (time-off) row — replaces the old hard `DELETE`, which is unsafe
+ * the moment a blocked row can carry a live `GCalEventId`: a deleted row leaves no outbox entry to
+ * retry a failed Google delete, orphaning the event forever (the same hazard CLAUDE.md names for
+ * booking cancellations). Instead the row moves to `Status = 'cancelled'` and stays put — it is
+ * inert there (`listBlockedRanges` and `listCapacityRows` both filter it out, and a blocked row has
+ * no `BookingRequestPets`/`Payments`/`BookingCharges` children to orphan) — and `SyncPending` is
+ * re-armed so the outbox's next pass can delete the mirrored Google event, if one exists.
+ *
+ * `SyncPending = 1` is UNCONDITIONAL here — do not "optimize" it to
+ * `CASE WHEN GCalEventId IS NULL THEN 0 ELSE 1 END`. `setBookingGCalEventId`'s CAS guards only the
+ * *SyncPending clear* on `expectedStatus`, never the id write itself, so a concurrent create can
+ * land its id-stamp AFTER this UPDATE commits: it stamps `GCalEventId`, observes `Status =
+ * 'cancelled' != 'confirmed'`, and correctly leaves `SyncPending` untouched. If this UPDATE had
+ * computed 0 (no id here yet), the row is left with a live Google event and `SyncPending = 0` —
+ * orphaned forever, with nothing left to retry it. At unconditional 1, the same race just costs one
+ * redundant no-op sweep (PATCH/DELETE finds the event already right, or absent, and clears the
+ * flag). See spec §6 / plan risk section for the full argument.
+ *
+ * Returns `undefined` when no row matched — unknown id, wrong tenant, or already terminal — so the
+ * caller 404s exactly like the old hard DELETE's repeat-call behavior. Returns the matched row's
+ * `GCalEventId` otherwise (`null` when the block was never pushed to Google, the id to delete when
+ * it was) so the caller can decide whether to also delete the Google event.
+ */
+export async function cancelBlockedRange(
   db: D1Database,
   tenantId: string,
   id: string,
-): Promise<boolean> {
-  const result = await db
+): Promise<string | null | undefined> {
+  const row = await db
     .prepare(
-      "DELETE FROM BookingRequests WHERE TenantId = ? AND Id = ? AND ServiceType = 'blocked'",
+      `UPDATE BookingRequests SET Status = 'cancelled', SyncPending = 1
+       WHERE TenantId = ? AND Id = ? AND ServiceType = 'blocked' AND Status = 'confirmed'
+       RETURNING GCalEventId`,
     )
     .bind(tenantId, id)
-    .run();
-  return (result.meta as { changes?: number }).changes !== 0;
+    .first<{ GCalEventId: string | null }>();
+  return row === null ? undefined : row.GCalEventId;
 }
 
 /**
@@ -1971,12 +2000,77 @@ export async function listSyncedBookingIds(
     .prepare(
       `SELECT Id FROM BookingRequests
        WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
-         AND ServiceType != 'external'
+         AND ServiceType NOT IN ('external', 'blocked')
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
     .all<{ Id: string }>();
   return results.map((r) => r.Id);
+}
+
+/**
+ * Ids of confirmed blocked (time-off) rows that have a live `GCalEventId`, bounded to
+ * [windowStart, windowEndExclusive) — the same window-predicate shape as `listSyncedBookingIds` and
+ * `listExternalEventRowsInWindow`, and it must be handed the identical pair `reconcileWindow`
+ * derives for those (spec §7): a row outside the window was never spoken for by the Calendar
+ * response reconcile just read, so it must never be re-armed on the strength of that response's
+ * silence.
+ *
+ * Reconcile's re-assertion pass diffs this set against the ids Calendar's response actually
+ * returned live; whatever is missing gets `markSyncPending` so the next outbox pass PATCHes (and,
+ * on a 404/410 `gone`, recreates) the event — time off is re-asserted, never treated as removed by
+ * a hand-delete in Calendar (spec §2).
+ */
+export async function listBlockedRowsWithEventsInWindow(
+  db: D1Database,
+  tenantId: string,
+  windowStart: string,
+  windowEndExclusive: string,
+): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = 'blocked' AND Status = 'confirmed'
+         AND GCalEventId IS NOT NULL
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
+    )
+    .bind(tenantId, windowEndExclusive, windowStart)
+    .all<{ Id: string }>();
+  return results.map((r) => r.Id);
+}
+
+/**
+ * Re-arm `SyncPending` on exactly the given ids, tenant-scoped AND `ServiceType = 'blocked'`.
+ * Used by reconcile's re-assertion pass to mark a blocked row whose Google event has gone
+ * missing, so the next outbox sweep recreates it (see `listBlockedRowsWithEventsInWindow`).
+ * Chunked through `chunkArray` at `DELETE_CHUNK_SIZE` for the same D1 bound-parameter-count
+ * reason `deleteExternalEventsMissing` documents — `ids` is caller-controlled and can exceed the
+ * ~100-per-statement cap.
+ *
+ * The `ServiceType = 'blocked'` predicate is structural, not incidental — matching every sibling
+ * query in this file (e.g. `listSyncPendingBookings` excludes `'external'` explicitly rather than
+ * relying on those rows always being born `SyncPending = 0`). Today's only caller already sources
+ * ids from `listBlockedRowsWithEventsInWindow`, itself scoped to `'blocked'`, so this predicate is
+ * currently redundant — but without it, a future caller aiming this function at an `'external'`
+ * row's id would put a Google-owned row into the outbox, where the sync dispatch would build a
+ * booking-shaped event for it and push it back to Google, corrupting a foreign calendar's own
+ * event.
+ */
+export async function markSyncPending(
+  db: D1Database,
+  tenantId: string,
+  ids: string[],
+): Promise<void> {
+  for (const chunk of chunkArray(ids, DELETE_CHUNK_SIZE)) {
+    const placeholders = chunk.map(() => '?').join(', ');
+    await db
+      .prepare(
+        `UPDATE BookingRequests SET SyncPending = 1
+         WHERE TenantId = ? AND ServiceType = 'blocked' AND Id IN (${placeholders})`,
+      )
+      .bind(tenantId, ...chunk)
+      .run();
+  }
 }
 
 export async function getProviderConnection(
@@ -3244,6 +3338,31 @@ export async function listPetNamesForBooking(
   return results.map((r) => r.Name);
 }
 
+/**
+ * Pet names for EVERY booking in a tenant, ONE read that the admin bookings list groups in JS —
+ * the same `listChargesForTenant` shape (a per-row query here would be a round-trip per booking
+ * on the sitter's hottest admin GET). Tenancy flows in via the join to BookingRequests +
+ * EndUserPets exactly as `listPetNamesForBooking` does; ordered by BookingRequestId then Name so
+ * grouping produces a deterministic, human-readable per-row list.
+ */
+export async function listPetNamesForTenantBookings(
+  db: D1Database,
+  tenantId: string,
+): Promise<{ BookingRequestId: string; Name: string }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT brp.BookingRequestId AS BookingRequestId, p.Name AS Name
+       FROM BookingRequestPets brp
+       JOIN BookingRequests br ON br.Id = brp.BookingRequestId
+       JOIN EndUserPets p ON p.Id = brp.PetId AND p.TenantId = br.TenantId
+       WHERE br.TenantId = ?
+       ORDER BY brp.BookingRequestId, p.Name`,
+    )
+    .bind(tenantId)
+    .all<{ BookingRequestId: string; Name: string }>();
+  return results;
+}
+
 /** The fields the calendar sync layer (SyncInput) needs, joined from one booking + its service
  * label + its option's duration. Pet names are fetched separately (listPetNamesForBooking). */
 export type BookingSyncRow = {
@@ -3285,9 +3404,15 @@ export async function getBookingSyncData(
     .first<BookingSyncRow>();
 }
 
-/** Future (StartDate >= today), non-cancelled, real (non-'blocked') bookings that have NO calendar
- * event yet — the backfill candidate set when a sitter connects Google Calendar after already
- * taking bookings. Capped at LIMIT; ordered by date so the soonest are synced first. */
+/** Non-cancelled, non-'external' rows (real bookings AND 'blocked' time off) that have NO calendar
+ * event yet and are still current — the backfill candidate set when a sitter connects Google
+ * Calendar after already taking bookings/blocking time off, and the only path that ever recreates
+ * events lost to a repointed calendar target (`repointCalendarTarget` nulls every non-'external' id
+ * without re-arming SyncPending). Capped at LIMIT; ordered by date so the soonest are synced first.
+ *
+ * The bound is `COALESCE(EndDate, StartDate) >= fromDate`, the same shape `listSyncPendingBookings`
+ * uses and for the same reason: `StartDate >= fromDate` would skip a stay (or a block) already in
+ * progress, stranding the connect-later backfill for anything spanning today. */
 export async function listUnsyncedFutureBookings(
   db: D1Database,
   tenantId: string,
@@ -3298,7 +3423,7 @@ export async function listUnsyncedFutureBookings(
     .prepare(
       `SELECT ${BOOKING_SYNC_COLS} ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.GCalEventId IS NULL AND b.Status IN ('pending', 'confirmed')
-         AND b.ServiceType NOT IN ('blocked', 'external') AND b.StartDate >= ?
+         AND b.ServiceType != 'external' AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,
     )
@@ -3307,9 +3432,10 @@ export async function listUnsyncedFutureBookings(
   return results;
 }
 
-/** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings
- * only ('blocked' is never synced; 'external' is Google-owned). Bounded so ancient never-synced
- * history doesn't churn every sweep, soonest first. Status here can be any of the four, and
+/** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings AND
+ * 'blocked' time off ('external' is Google-owned and is the only exclusion — it is materialized
+ * by reconcile, never pushed by the outbox). Bounded so ancient never-synced history doesn't churn
+ * every sweep, soonest first. Status here can be any of the four, and
  * CancellationFee rides along because the delete-vs-retitle decision for a cancelled row turns on
  * it (keepsCalendarEventOnCancel) — the caller derives create/update/delete from Status +
  * CancellationFee + GCalEventId.
@@ -3337,7 +3463,7 @@ export async function listSyncPendingBookings(
       `SELECT ${BOOKING_SYNC_COLS}, b.CancellationFee AS CancellationFee,
               b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
-         AND b.ServiceType NOT IN ('blocked', 'external')
+         AND b.ServiceType != 'external'
          AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,

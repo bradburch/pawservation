@@ -1,4 +1,4 @@
-import { NullableNumberField } from './fields.js';
+import { blockNegativeNumberKeys, clampNullableNumber, NullableNumberField } from './fields.js';
 import type { QuestionForm, ServiceForm, ServiceOptionForm } from '../shared.js';
 import { Hint } from '../Hint';
 import {
@@ -888,7 +888,7 @@ export function ServiceEditor({
           </span>
           <input
             type="number"
-            min={1}
+            min={0}
             max={90}
             aria-label="Days of notice needed (blank = same-day OK)"
             aria-invalid={
@@ -896,10 +896,18 @@ export function ServiceEditor({
               (!Number.isInteger(s.minLeadDays) || s.minLeadDays < 0 || s.minLeadDays > 90)
             }
             value={s.minLeadDays ?? ''}
+            // Clamped to this input's OWN min/max as the sitter types, same as maxAdvanceMonths in
+            // BusinessSection — `min` alone is advisory and a negative/decimal value would
+            // otherwise reach the settings PUT and 400 (fields.js).
+            onKeyDown={blockNegativeNumberKeys(0)}
             onChange={(e) =>
               setService({
                 ...s,
-                minLeadDays: e.target.value === '' ? null : Number(e.target.value),
+                minLeadDays: clampNullableNumber(e.target.value, {
+                  min: 0,
+                  max: 90,
+                  current: s.minLeadDays,
+                }),
               })
             }
           />
@@ -921,7 +929,17 @@ export function ServiceEditor({
               min={0}
               aria-label={`Tier ${i + 1}: days before the start date`}
               value={t.withinDays}
-              onChange={(e) => updateTier(i, { ...t, withinDays: Number(e.target.value) })}
+              // Same clamp-as-you-type guard as the nullable fields (fields.js) — withinDays has
+              // no blank state, so a cleared/negative keystroke falls back to the floor (0) rather
+              // than reaching state as NaN or a negative number and 400ing the settings PUT.
+              onKeyDown={blockNegativeNumberKeys(0)}
+              onChange={(e) =>
+                updateTier(i, {
+                  ...t,
+                  withinDays:
+                    clampNullableNumber(e.target.value, { min: 0, current: t.withinDays }) ?? 0,
+                })
+              }
             />{' '}
             days of start:{' '}
             <input
@@ -930,7 +948,18 @@ export function ServiceEditor({
               max={100}
               aria-label={`Tier ${i + 1}: fee as percent of cost`}
               value={t.percent}
-              onChange={(e) => updateTier(i, { ...t, percent: Number(e.target.value) })}
+              onKeyDown={blockNegativeNumberKeys(1)}
+              onChange={(e) =>
+                updateTier(i, {
+                  ...t,
+                  percent:
+                    clampNullableNumber(e.target.value, {
+                      min: 1,
+                      max: 100,
+                      current: t.percent,
+                    }) ?? 1,
+                })
+              }
             />
             % of cost
             <button type="button" onClick={() => removeTier(i)}>

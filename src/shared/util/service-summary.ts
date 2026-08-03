@@ -29,8 +29,10 @@ export type ServiceSummary = { price: string; facts: string };
 
 /** '14:00' → '2', '08:30' → '8:30' — 12-hour hour, minutes only when non-zero,
  * no am/pm (the card's window fact reads "Weekdays 10–2" / "Daily 9–5").
- * Times are tenant-local wall-clock strings already; no timezone math. */
-function compactTime(hhmm: string): string {
+ * Times are tenant-local wall-clock strings already; no timezone math.
+ * Exported so any other caller displaying a stored 'HH:MM' window (e.g. the embed widget's
+ * option dropdown) reuses this single formatter instead of re-deriving it. */
+export function compactTime(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   return m ? `${hour12}:${String(m).padStart(2, '0')}` : String(hour12);

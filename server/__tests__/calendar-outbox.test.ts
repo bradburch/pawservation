@@ -6,10 +6,20 @@ import {
   syncBookingToCalendar,
   updateBookingCalendarEvent,
 } from '../lib/calendar-sync';
-import { insertBookingRequest, setProviderTokens, updateBookingStatus } from '../db/repo';
+import {
+  cancelBlockedRange,
+  insertBookingRequest,
+  listBlockedRowsWithEventsInWindow,
+  listSyncedBookingIds,
+  listSyncPendingBookings,
+  listUnsyncedFutureBookings,
+  markSyncPending,
+  setProviderTokens,
+  updateBookingStatus,
+} from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
+import { createTestEnv, endUserToken, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 import type { Tenant } from '../types';
 
 const tenant = { Id: TENANT_A, Slug: 'sunny-paws', Timezone: null } as Tenant;
@@ -98,7 +108,7 @@ describe('calendar outbox — write side', () => {
     void raw;
   });
 
-  it('a blocked-day row never enters the outbox', async () => {
+  it('a blocked-day row is born sync-pending, same as a real booking, and is returned by the outbox query', async () => {
     const { env } = createTestEnv();
     const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
@@ -110,7 +120,43 @@ describe('calendar outbox — write side', () => {
       estCost: null,
       status: 'confirmed',
     });
-    expect((await syncState(env, id)).SyncPending).toBe(0);
+    expect((await syncState(env, id)).SyncPending).toBe(1);
+    // Assert the query itself returns the row — that is the predicate that changed, not merely
+    // the SyncPending flag on a row fetched some other way.
+    const rows = await listSyncPendingBookings(env.PAWBOOK_DB, TENANT_A, addDays(TODAY, -1), 200);
+    expect(rows.map((r) => r.Id)).toContain(id);
+  });
+
+  it('listUnsyncedFutureBookings widened bound: an in-progress blocked row (StartDate past, EndDate future) is still a backfill candidate', async () => {
+    const { env } = createTestEnv();
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: addDays(TODAY, -3),
+      endDate: addDays(TODAY, 4),
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    expect(rows.map((r) => r.Id)).toContain(id);
+  });
+
+  it('listUnsyncedFutureBookings widened bound: an in-progress real booking (StartDate past, EndDate future) is still a backfill candidate', async () => {
+    const { env } = createTestEnv();
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: addDays(TODAY, -3),
+      endDate: addDays(TODAY, 4),
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 150,
+      status: 'confirmed',
+    });
+    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    expect(rows.map((r) => r.Id)).toContain(id);
   });
 
   it('every status transition re-marks the row pending', async () => {
@@ -283,5 +329,228 @@ describe('redriveCalendarOutbox', () => {
     await redriveCalendarOutbox(env, tenant);
     expect(spy.mock.calls[0]?.[0]).toContain('evt_raced');
     expect((await syncState(env, id)).SyncPending).toBe(0);
+  });
+});
+
+/** Seed a confirmed blocked (time-off) row, optionally with a stamped GCalEventId — mirrors how a
+ * real block looks once the outbox has already pushed it to Google. */
+async function seedBlocked(
+  env: Env,
+  opts?: { startDate?: string; endDate?: string; gcalEventId?: string | null; tenantId?: string },
+) {
+  const id = await insertBookingRequest(env.PAWBOOK_DB, opts?.tenantId ?? TENANT_A, {
+    endUserId: null,
+    serviceType: 'blocked',
+    startDate: opts?.startDate ?? addDays(TODAY, 5),
+    endDate: opts?.endDate ?? addDays(TODAY, 7),
+    optionKey: null,
+    petCount: 1,
+    estCost: null,
+    status: 'confirmed',
+  });
+  if (opts?.gcalEventId !== undefined) {
+    await env.PAWBOOK_DB.prepare('UPDATE BookingRequests SET GCalEventId = ? WHERE Id = ?')
+      .bind(opts.gcalEventId, id)
+      .run();
+  }
+  return id;
+}
+
+describe('cancelBlockedRange — soft delete', () => {
+  it('cancels a confirmed blocked row and returns its GCalEventId, unconditionally re-arming SyncPending', async () => {
+    const { env } = createTestEnv();
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_1' });
+    // Clear the flag first (it is born pending) so the assertion proves THIS call re-arms it,
+    // not merely that it was never cleared.
+    await clearFlag(env, id);
+
+    const result = await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id);
+    expect(result).toBe('evt_block_1');
+    expect(await syncState(env, id)).toMatchObject({
+      Status: 'cancelled',
+      SyncPending: 1,
+      GCalEventId: 'evt_block_1',
+    });
+  });
+
+  it('a confirmed blocked row with no GCalEventId yet cancels and returns null, not undefined', async () => {
+    const { env } = createTestEnv();
+    const id = await seedBlocked(env); // simulates the outbox not having pushed it yet — GCalEventId stays NULL
+    const result = await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id);
+    expect(result).toBeNull();
+    expect((await syncState(env, id)).Status).toBe('cancelled');
+  });
+
+  it('a repeated call against an already-cancelled row returns undefined (no second UPDATE succeeds)', async () => {
+    const { env } = createTestEnv();
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_2' });
+    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id)).toBe('evt_block_2');
+    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id)).toBeUndefined();
+    // The row was not further mutated by the second, refused call.
+    expect(await syncState(env, id)).toMatchObject({
+      Status: 'cancelled',
+      GCalEventId: 'evt_block_2',
+    });
+  });
+
+  it("another tenant's row id is refused — tenant scoping", async () => {
+    const { env } = createTestEnv();
+    const id = await seedBlocked(env, { tenantId: TENANT_B, gcalEventId: 'evt_block_3' });
+    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id)).toBeUndefined();
+    // Untouched — still confirmed under its own tenant.
+    const row = await env.PAWBOOK_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
+      .bind(id)
+      .first<{ Status: string }>();
+    expect(row?.Status).toBe('confirmed');
+  });
+
+  it('an unknown id is refused', async () => {
+    const { env } = createTestEnv();
+    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, 'no-such-id')).toBeUndefined();
+  });
+});
+
+describe('updateBookingStatus — a blocked row can never take a CancellationFee', () => {
+  it("the assessed-cancellation branch's SQL excludes ServiceType 'blocked': the call is refused and CancellationFee stays NULL", async () => {
+    const { env } = createTestEnv();
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_fee' });
+    // This is the only branch of updateBookingStatus that ever writes CancellationFee — proving it
+    // is refused here is what guarantees a removed blocked row can never carry an assessed fee,
+    // which in turn is what keeps keepsCalendarEventOnCancel false and the delete-not-retitle
+    // branch the only one that ever fires for time off (see cancelBlockedRange above, which never
+    // even offers a fee parameter).
+    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled', 25)).toBe(false);
+    const row = await env.PAWBOOK_DB.prepare(
+      'SELECT Status, CancellationFee FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ Status: string; CancellationFee: number | null }>();
+    expect(row).toMatchObject({ Status: 'confirmed', CancellationFee: null });
+  });
+});
+
+describe("listSyncedBookingIds excludes 'blocked' rows", () => {
+  it('a blocked row with a live GCalEventId never enters the delete-detection candidate set', async () => {
+    const { env } = createTestEnv();
+    await seedBlocked(env, { gcalEventId: 'evt_block_4' });
+    const ids = await listSyncedBookingIds(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      addDays(TODAY, -1),
+      addDays(TODAY, 180),
+    );
+    expect(ids).toEqual([]);
+  });
+});
+
+describe('listBlockedRowsWithEventsInWindow', () => {
+  it('returns a blocked row with an event inside the window, and excludes one outside it or with no event id', async () => {
+    const { env } = createTestEnv();
+    const inWindow = await seedBlocked(env, {
+      startDate: addDays(TODAY, 5),
+      endDate: addDays(TODAY, 7),
+      gcalEventId: 'evt_in',
+    });
+    const outsideWindow = await seedBlocked(env, {
+      startDate: addDays(TODAY, 400),
+      endDate: addDays(TODAY, 402),
+      gcalEventId: 'evt_far',
+    });
+    const noEventId = await seedBlocked(env, {
+      startDate: addDays(TODAY, 6),
+      endDate: addDays(TODAY, 8),
+      gcalEventId: null,
+    });
+
+    const ids = await listBlockedRowsWithEventsInWindow(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      addDays(TODAY, -1),
+      addDays(TODAY, 180),
+    );
+    expect(ids).toContain(inWindow);
+    expect(ids).not.toContain(outsideWindow);
+    expect(ids).not.toContain(noEventId);
+  });
+
+  it('is tenant-scoped', async () => {
+    const { env } = createTestEnv();
+    const otherTenantId = await seedBlocked(env, { tenantId: TENANT_B, gcalEventId: 'evt_b' });
+    const ids = await listBlockedRowsWithEventsInWindow(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      addDays(TODAY, -1),
+      addDays(TODAY, 180),
+    );
+    expect(ids).not.toContain(otherTenantId);
+  });
+});
+
+describe('markSyncPending', () => {
+  it('sets the flag on exactly the ids given, scoped to the tenant', async () => {
+    const { env } = createTestEnv();
+    const a = await seedBlocked(env, { startDate: addDays(TODAY, 5), endDate: addDays(TODAY, 7) });
+    const b = await seedBlocked(env, {
+      startDate: addDays(TODAY, 10),
+      endDate: addDays(TODAY, 12),
+    });
+    const untouched = await seedBlocked(env, {
+      startDate: addDays(TODAY, 20),
+      endDate: addDays(TODAY, 22),
+    });
+    const otherTenantRow = await seedBlocked(env, {
+      tenantId: TENANT_B,
+      startDate: addDays(TODAY, 5),
+      endDate: addDays(TODAY, 7),
+    });
+    // Start every row clean so the assertion proves markSyncPending's own effect.
+    await clearFlag(env, a);
+    await clearFlag(env, b);
+    await clearFlag(env, untouched);
+    await clearFlag(env, otherTenantRow);
+
+    await markSyncPending(env.PAWBOOK_DB, TENANT_A, [a, b]);
+
+    expect((await syncState(env, a)).SyncPending).toBe(1);
+    expect((await syncState(env, b)).SyncPending).toBe(1);
+    expect((await syncState(env, untouched)).SyncPending).toBe(0);
+    // Even though otherTenantRow's id was not in the list at all, this also proves the WHERE
+    // clause is tenant-scoped rather than relying solely on the ids not colliding.
+    expect((await syncState(env, otherTenantRow)).SyncPending).toBe(0);
+  });
+
+  it('chunks beyond DELETE_CHUNK_SIZE without exceeding D1s bound-parameter cap', async () => {
+    const { env } = createTestEnv();
+    const ids: string[] = [];
+    for (let i = 0; i < 95; i++) {
+      ids.push(
+        await seedBlocked(env, {
+          startDate: addDays(TODAY, 100 + i),
+          endDate: addDays(TODAY, 101 + i),
+        }),
+      );
+    }
+    for (const id of ids) await clearFlag(env, id);
+
+    await markSyncPending(env.PAWBOOK_DB, TENANT_A, ids);
+
+    for (const id of ids) {
+      expect((await syncState(env, id)).SyncPending).toBe(1);
+    }
+  });
+
+  it('is scoped to ServiceType = blocked — a real booking id is not re-armed', async () => {
+    // Structural guard, not incidental: today's only real caller already sources ids from
+    // listBlockedRowsWithEventsInWindow (itself scoped to 'blocked'), so this proves the WHERE
+    // clause itself refuses a non-blocked row rather than relying on callers to filter first —
+    // a future caller aiming this at an 'external' (Google-owned) row's id must not be able to
+    // put it in the outbox, where it would be pushed back to Google as a booking-shaped event.
+    const { env } = createTestEnv();
+    const bookingId = await seedBooking(env, 'confirmed');
+    await clearFlag(env, bookingId);
+
+    await markSyncPending(env.PAWBOOK_DB, TENANT_A, [bookingId]);
+
+    expect((await syncState(env, bookingId)).SyncPending).toBe(0);
   });
 });

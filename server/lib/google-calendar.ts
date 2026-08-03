@@ -55,6 +55,29 @@ function expiresAtFrom(expiresInSeconds: number): string {
   return new Date(Date.now() + (expiresInSeconds - 60) * 1000).toISOString();
 }
 
+/**
+ * Google's token endpoint puts the ACTUAL cause in the response BODY, not the status: a 400 is
+ * `redirect_uri_mismatch` (the Cloud Console entry doesn't match GOOGLE_OAUTH_REDIRECT_URI byte
+ * for byte), `invalid_client` (wrong id/secret), or `invalid_grant` (code spent or expired) — all
+ * of which need completely different remedies and are indistinguishable from "(400)" alone. Only
+ * `error`/`error_description` are lifted out, and the length is bounded, so this can be logged
+ * without a raw upstream body ending up in a log line.
+ */
+async function describeTokenError(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '');
+  try {
+    const j = JSON.parse(text) as { error?: unknown; error_description?: unknown };
+    if (typeof j.error === 'string')
+      return [j.error, typeof j.error_description === 'string' ? j.error_description : null]
+        .filter(Boolean)
+        .join(': ')
+        .slice(0, 300);
+  } catch {
+    /* not JSON — fall through to the truncated text */
+  }
+  return text.slice(0, 200);
+}
+
 export async function exchangeCode(env: Env, code: string): Promise<TokenSet> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
@@ -67,12 +90,30 @@ export async function exchangeCode(env: Env, code: string): Promise<TokenSet> {
       grant_type: 'authorization_code',
     }),
   });
-  if (!res.ok) throw new Error(`Google token exchange failed (${res.status})`);
+  if (!res.ok)
+    throw new Error(
+      `Google token exchange failed (${res.status}): ${await describeTokenError(res)}`,
+    );
   const j = (await res.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
   };
+  // `access_type=offline` + `prompt=consent` are what make Google issue a refresh token, and the
+  // refresh token IS the connection — every later sync runs off it. A response missing one must
+  // fail the connect loudly: encrypting `undefined` stores the literal string "undefined" and
+  // reports "Connected", so the sitter learns nothing until the access token lapses an hour later
+  // and her calendar quietly stops updating.
+  if (!j.access_token || !j.refresh_token || typeof j.expires_in !== 'number') {
+    const missing = [
+      j.access_token ? null : 'access_token',
+      j.refresh_token ? null : 'refresh_token',
+      typeof j.expires_in === 'number' ? null : 'expires_in',
+    ].filter(Boolean);
+    throw new Error(
+      `Google token exchange returned an incomplete token set (no ${missing.join(', ')})`,
+    );
+  }
   return {
     accessToken: j.access_token,
     refreshToken: j.refresh_token,
@@ -94,8 +135,27 @@ export async function refreshAccessToken(
       grant_type: 'refresh_token',
     }),
   });
-  if (!res.ok) throw new Error(`Google token refresh failed (${res.status})`);
-  const j = (await res.json()) as { access_token: string; expires_in: number };
+  // Same body-carries-the-cause rule as exchangeCode: a refresh 400 is almost always
+  // `invalid_grant` (the sitter revoked the grant in her Google account, or the refresh token was
+  // rotated), which the status alone cannot say.
+  if (!res.ok)
+    throw new Error(
+      `Google token refresh failed (${res.status}): ${await describeTokenError(res)}`,
+    );
+  const j = (await res.json()) as { access_token?: string; expires_in?: number };
+  // Same shape check as exchangeCode, and the same reason: a malformed 200 must fail loudly
+  // rather than let `expiresAtFrom(undefined)` compute NaN, whose `new Date(NaN).toISOString()`
+  // throws an unhelpful bare RangeError that a best-effort caller silently swallows — "calendar
+  // stopped syncing" with no useful log.
+  if (!j.access_token || typeof j.expires_in !== 'number') {
+    const missing = [
+      j.access_token ? null : 'access_token',
+      typeof j.expires_in === 'number' ? null : 'expires_in',
+    ].filter(Boolean);
+    throw new Error(
+      `Google token refresh returned an incomplete token set (no ${missing.join(', ')})`,
+    );
+  }
   return { accessToken: j.access_token, expiresAt: expiresAtFrom(j.expires_in) };
 }
 
@@ -250,6 +310,25 @@ function addMinutesToLocal(date: string, time: string, minutes: number): string 
   return d.toISOString().slice(0, 19); // YYYY-MM-DDTHH:MM:SS
 }
 
+/**
+ * The `extendedProperties.private` fields every Pawservation-authored event shares —
+ * `bookingId` above all: it is what tells reconcile's foreign-event filter this event is OURS
+ * (`!e.private.bookingId`), so a future builder that forgot the key would silently start a
+ * materialize-back loop for its own events. Shared by `buildEventResource` and
+ * `buildUnavailableEventResource` so that can never happen to only one of them.
+ */
+function privateProps({
+  bookingId,
+  category,
+  status,
+}: {
+  bookingId: string;
+  category: string;
+  status: string;
+}): Record<string, string> {
+  return { pawbook: 'true', category, bookingId, status };
+}
+
 export function buildEventResource(b: CalendarBooking): EventResource {
   const petsText =
     b.petNames.length > 0
@@ -259,7 +338,7 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   // alone, without opening the event.
   const marker =
     b.status === 'pending' ? '[REQUEST] ' : b.status === 'cancelled' ? '[CANCELLED] ' : '';
-  const summary = `${marker}${b.serviceLabel} — ${petsText}`;
+  const summary = `${marker}${petsText} — ${b.serviceLabel}`;
   const lines = [`Service: ${b.serviceLabel}`, `Pets: ${petsText}`];
   if (b.customerEmail) lines.push(`Customer: ${b.customerEmail}`);
   // A RANGE stay's times live in the description, because its event must stay all-day (below).
@@ -273,12 +352,9 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   const description = lines.join('\n');
   const extendedProperties = {
     private: {
-      pawbook: 'true',
-      category: b.category,
+      ...privateProps({ bookingId: b.bookingId, category: b.category, status: b.status }),
       petCount: String(b.petCount),
       customerEmail: b.customerEmail ?? '',
-      bookingId: b.bookingId,
-      status: b.status,
     },
   };
 
@@ -311,6 +387,48 @@ export function buildEventResource(b: CalendarBooking): EventResource {
     extendedProperties,
   };
 }
+
+/**
+ * The title Pawservation-authored time off always carries on Google Calendar. A constant, not a
+ * template: unlike a booking, time off has no lifecycle a human must read off the title (it exists
+ * or it does not — there is no `[CANCELLED] UNAVAILABLE`, because removal deletes the event, see
+ * `cancelBlockedRange`/outbox handling), so nothing ever interpolates into it.
+ */
+export const UNAVAILABLE_EVENT_SUMMARY = 'UNAVAILABLE';
+
+/**
+ * Builds the Google Calendar event for a sitter-blocked ("time off") day range. Always all-day —
+ * this signature takes no time operand at all, structurally, because a range stay's clock never
+ * belongs on a block: the blocked POST never writes a `StartTime`. `endDate` is already the
+ * EXCLUSIVE end this codebase uses everywhere (`BookingRequests.EndDate`), which is also what
+ * Google's all-day `end.date` expects, so the mapping is arithmetic-free except for the
+ * NULL-`endDate` legacy fallback (live rows always have one; the route refuses `end <= start`).
+ *
+ * `private.bookingId` is what keeps reconcile's foreign-event filter from materializing this
+ * event back as an `'external'` row — see `privateProps` above.
+ */
+export function buildUnavailableEventResource({
+  bookingId,
+  startDate,
+  endDate,
+}: {
+  bookingId: string;
+  startDate: string;
+  endDate: string | null;
+}): EventResource {
+  return {
+    summary: UNAVAILABLE_EVENT_SUMMARY,
+    description:
+      'Time off booked in Pawservation.\n' +
+      'Deleting this event does not free the day — remove it under Time off in your dashboard.',
+    start: { date: startDate },
+    end: { date: endDate ?? addDays(startDate, 1) },
+    extendedProperties: {
+      private: privateProps({ bookingId, category: 'blocked', status: 'confirmed' }),
+    },
+  };
+}
+
 /** Hard cap on pages one pull will follow (~25 000 events). Past it we still THROW rather than
  * return a partial list: callers infer deletion from absence, and a truncated list would read as
  * a mass deletion (see the reconcile mass-cancel hazard). */

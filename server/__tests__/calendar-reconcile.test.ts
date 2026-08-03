@@ -7,6 +7,7 @@ import {
   reconcileBookingsWithCalendar,
   reconcileIfStale,
   reconcileWindow,
+  redriveCalendarOutbox,
 } from '../lib/calendar-sync';
 import { insertBookingRequest, setBookingGCalEventId, setProviderTokens } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
@@ -379,14 +380,29 @@ describe('reconcile v2 — external materialization lifecycle', () => {
     expect(await externalRows(env)).toEqual([]);
   });
 
-  it('a Pawservation-tagged event is never materialized as external', async () => {
+  it('a Pawservation-tagged event is never materialized as external (booking or blocked/time-off)', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
-    const id = await seedSyncedBooking(env);
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([id]));
+    const bookingId = await seedSyncedBooking(env);
+    // A blocked (time-off) row's UNAVAILABLE event also carries private.bookingId (see
+    // buildUnavailableEventResource) — this is the SAME foreign-event filter (`!e.private.bookingId`)
+    // that must skip it too, not a second implementation.
+    const blockedId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: IN_WINDOW_START,
+      endDate: IN_WINDOW_END,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, blockedId, 'evt_block_tagged', null);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([bookingId, blockedId]));
     await reconcileBookingsWithCalendar(env, tenant);
     expect(await externalRows(env)).toEqual([]);
-    expect(await statusOf(env, id)).toBe('confirmed');
+    expect(await statusOf(env, bookingId)).toBe('confirmed');
+    expect(await statusOf(env, blockedId)).toBe('confirmed');
   });
 
   it("tenant isolation: tenant B's identically-named Google event ids never collide with A's rows", async () => {
@@ -475,6 +491,131 @@ describe('reconcile v2 — external materialization lifecycle', () => {
 
     const movedRow = rowsAfterPass2.find((r) => r.GCalEventId === 'gev_ov_0');
     expect(movedRow).toMatchObject({ StartDate: moved, EndDate: movedEnd }); // update applied, budget permitting
+  });
+});
+
+describe('reconcile v2 — blocked-row re-assertion (a2)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Seed a confirmed blocked (time-off) row with a stamped GCalEventId, starting from the
+   *  realistic "already synced, nothing owed" state — insertBookingRequest always stamps
+   *  SyncPending = 1 on insert, so this resets it to 0 first, meaning any SyncPending = 1 seen
+   *  after a reconcile call in these tests can only be attributed to the re-assertion pass under
+   *  test, never to the seed itself. */
+  async function seedBlocked(
+    env: Env,
+    opts?: { startDate?: string; endDate?: string; gcalEventId?: string },
+  ): Promise<string> {
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: opts?.startDate ?? IN_WINDOW_START,
+      endDate: opts?.endDate ?? IN_WINDOW_END,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(
+      env.PAWBOOK_DB,
+      TENANT_A,
+      id,
+      opts?.gcalEventId ?? 'evt_block',
+      null,
+    );
+    await env.PAWBOOK_DB.prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE Id = ?')
+      .bind(id)
+      .run();
+    return id;
+  }
+
+  async function rowState(
+    env: Env,
+    id: string,
+  ): Promise<{ Status: string; GCalEventId: string | null; SyncPending: number }> {
+    const row = await env.PAWBOOK_DB.prepare(
+      'SELECT Status, GCalEventId, SyncPending FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ Status: string; GCalEventId: string | null; SyncPending: number }>();
+    return row!;
+  }
+
+  it('re-arms a blocked row whose event is missing from Google, without cancelling it or clearing its stale event id', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_gone' });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([])); // hand-deleted in Google
+    await reconcileBookingsWithCalendar(env, tenant);
+    const row = await rowState(env, id);
+    expect(row.Status).toBe('confirmed'); // never cancelled — time off isn't a withdrawable commitment
+    expect(row.GCalEventId).toBe('evt_block_gone'); // stale id preserved for the outbox's CAS (expectedOld)
+    expect(row.SyncPending).toBe(1); // re-armed for the next outbox pass to recreate the event
+  });
+
+  it('leaves a blocked row outside the query window completely untouched, however absent it is from the response', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // Well outside any [today-1, today+180) window relative to actual real-world "today" — same
+    // out-of-window shape as the analogous booking test above.
+    const id = await seedBlocked(env, {
+      startDate: '2020-01-01',
+      endDate: '2020-01-03',
+      gcalEventId: 'evt_block_old',
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([])); // response never could have named it
+    await reconcileBookingsWithCalendar(env, tenant);
+    const row = await rowState(env, id);
+    expect(row.SyncPending).toBe(0); // untouched — outside the window, never spoken for by this response
+    expect(row.Status).toBe('confirmed');
+    expect(row.GCalEventId).toBe('evt_block_old');
+  });
+
+  it("does not re-arm a blocked row whose event is present in Google's response", async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_live' });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([id]));
+    await reconcileBookingsWithCalendar(env, tenant);
+    const row = await rowState(env, id);
+    expect(row.SyncPending).toBe(0); // still present in Google — no spurious re-arm
+    expect(row.Status).toBe('confirmed');
+    expect(row.GCalEventId).toBe('evt_block_live');
+  });
+
+  it('a re-armed blocked row is recreated by the next outbox pass, using its stale event id as expectedOld', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_stale' });
+
+    // Pass 1: reconcile sees the event gone from Google and re-arms the row.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect((await rowState(env, id)).SyncPending).toBe(1);
+
+    // Pass 2: the outbox re-drive PATCHes the stale id (404 → gone), then recreates via POST and
+    // CASes the new id in using the stale one as expectedOld (updateBookingCalendarEvent's path).
+    vi.restoreAllMocks();
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const method = (init as RequestInit).method;
+      if (method === 'PATCH') return new Response('gone', { status: 404 }); // stale id no longer exists
+      return new Response(JSON.stringify({ id: 'evt_block_new' }), { status: 200 }); // POST create
+    });
+    await redriveCalendarOutbox(env, tenant);
+
+    // Discriminates this path from a reconcile that had instead NULLED GCalEventId: that path would
+    // skip updateBookingCalendarEvent entirely and go straight to a create, issuing no PATCH at all
+    // — same final row state, but a materially different (and wrong — see the reconcile test above)
+    // request sequence. Asserting the PATCH itself, against the stale id, is what actually proves
+    // `expectedOld` was preserved rather than merely inferring it from the end state.
+    const patchCall = spy.mock.calls.find(([, i]) => (i as RequestInit)?.method === 'PATCH');
+    expect(patchCall).toBeDefined();
+    expect(patchCall?.[0]).toContain('evt_block_stale');
+
+    const row = await rowState(env, id);
+    expect(row.GCalEventId).toBe('evt_block_new'); // recreated — the POSITIVE outcome, not just "not cancelled"
+    expect(row.SyncPending).toBe(0); // retired from the outbox once the push landed
+    expect(row.Status).toBe('confirmed'); // still blocks capacity throughout
   });
 });
 

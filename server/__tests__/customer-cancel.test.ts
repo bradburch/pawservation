@@ -508,7 +508,7 @@ describe('a [CANCELLED] event must not block capacity', () => {
           items: [
             {
               id: 'evt_cap2',
-              summary: '[CANCELLED] Boarding — Bella',
+              summary: '[CANCELLED] Bella — Boarding',
               status: 'confirmed',
               updated: '2030-01-01T00:00:00Z',
               start: { date: start },

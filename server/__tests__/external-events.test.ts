@@ -132,7 +132,8 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     const { env } = createTestEnv();
     // A real materialized row always carries a GCalEventId, which alone would already exclude it
     // from listUnsyncedFutureBookings (GCalEventId IS NULL). Seed one WITHOUT a GCalEventId to
-    // prove the ServiceType exclusion added alongside 'blocked' is what actually guards backfill.
+    // prove the ServiceType != 'external' exclusion is what actually guards backfill — 'blocked'
+    // rows are NOT excluded here; they are legitimate backfill candidates in their own right.
     const id = await seedExternal(env, { gcalEventId: null });
     const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
     expect(rows.find((r) => r.Id === id)).toBeUndefined();

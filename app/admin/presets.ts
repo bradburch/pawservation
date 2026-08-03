@@ -33,11 +33,17 @@ const anyDay = {
   weekdaysOnly: false,
 };
 
-/** The 7 one-tap presets from docs/superpowers/specs/2026-07-18-onboarding-wizard-design.md.
- * The walk trio come from the docs/specs/*.md stubs (weekdays-only group/solo walks); the last
+/** The 6 one-tap presets from docs/superpowers/specs/2026-07-18-onboarding-wizard-design.md.
+ * The walk pair come from the docs/specs/*.md stubs (weekdays-only group/solo walks); the last
  * four simply enable the built-in template behaviors. The unit shown next to a price input is not
  * stored here — the wizard reads it from SERVICE_TEMPLATES[preset.template].rateUnit, the same
- * object the server stamps onto the row it creates, so the two can't drift. */
+ * object the server stamps onto the row it creates, so the two can't drift.
+ *
+ * There is exactly ONE pack-walk preset. A sitter who runs more than one pack per day adds the
+ * extra window as a second OPTION on that same service under Services & Rates (up to
+ * MAX_OPTIONS_PER_SERVICE), which is the general form of what a separate "Multiple Pack Walks"
+ * preset used to hardcode as a whole second service row — and it kept the picker offering two
+ * near-identical tiles for one offering. */
 export const SERVICE_PRESETS: ServicePreset[] = [
   {
     id: 'pack-walks',
@@ -46,43 +52,16 @@ export const SERVICE_PRESETS: ServicePreset[] = [
     summary: 'Group walks · weekdays 10–2 · up to 8 pets',
     icon: 'paw',
     createdSlug: 'pack-walks',
-    matchTypes: ['pack-walks'],
+    // The retired "Multiple Pack Walks" preset's slugs are matched here so a tenant who set that
+    // up before the consolidation is still recognised as offering pack walks — otherwise the
+    // wizard would stop seeing their service and create a second walk row beside it.
+    matchTypes: ['pack-walks', 'multi-pack-walks', 'multiple-pack-walks'],
     options: [
       {
         label: 'Pack walk',
         durationMinutes: null, // server derives from the window
         startTime: '10:00',
         endTime: '14:00',
-        capacity: 8,
-        weekdaysOnly: true,
-      },
-    ],
-  },
-  {
-    id: 'multi-pack-walks',
-    template: 'walk',
-    // "Multiple" = the sitter runs more than one pack per day (the two windows below).
-    label: 'Multiple Pack Walks',
-    summary: 'Two group walks · weekdays 10–2 and 2–5 · up to 8 pets each',
-    icon: 'paw',
-    createdSlug: 'multiple-pack-walks',
-    // Old slug kept so tenants who created the service under the previous label still match.
-    matchTypes: ['multi-pack-walks', 'multiple-pack-walks'],
-    options: [
-      // One price is applied to both windows (the wizard sets the same rate on each).
-      {
-        label: 'Morning pack',
-        durationMinutes: null,
-        startTime: '10:00',
-        endTime: '14:00',
-        capacity: 8,
-        weekdaysOnly: true,
-      },
-      {
-        label: 'Afternoon pack',
-        durationMinutes: null,
-        startTime: '14:00',
-        endTime: '17:00',
         capacity: 8,
         weekdaysOnly: true,
       },

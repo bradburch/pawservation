@@ -64,7 +64,7 @@ export function ServiceCard({
               ✓
             </span>
           )}
-          <strong className="pb-truncate">{service.label}</strong>
+          <strong className="pb-truncate-block">{service.label}</strong>
           {service.custom && <span className="pb-chip">Custom</span>}
         </span>
         <span className={`pb-svc-price${service.options.length === 0 ? ' pb-svc-price-soft' : ''}`}>
