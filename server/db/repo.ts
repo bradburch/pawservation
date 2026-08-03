@@ -628,7 +628,10 @@ export async function listSlotBookingCounts(
   return new Map(results.map((r) => [r.StartDate, r.n]));
 }
 
-/** Real bookings are born sync-pending; the outbox clears on push success. */
+/** Every row — including 'blocked' time off — is born sync-pending; the outbox clears on push
+ * success. 'blocked' rows sync as an all-day UNAVAILABLE event the same way a real booking syncs
+ * as its own event; only 'external' (Google-owned, materialized by reconcile) is never written
+ * here at all. */
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -672,7 +675,7 @@ export async function insertBookingRequest(
       row.status,
       row.source ?? null,
       row.idempotencyKey ?? null,
-      row.serviceType === 'blocked' ? 0 : 1,
+      1,
     )
     .run();
   return id;
@@ -3310,9 +3313,15 @@ export async function getBookingSyncData(
     .first<BookingSyncRow>();
 }
 
-/** Future (StartDate >= today), non-cancelled, real (non-'blocked') bookings that have NO calendar
- * event yet — the backfill candidate set when a sitter connects Google Calendar after already
- * taking bookings. Capped at LIMIT; ordered by date so the soonest are synced first. */
+/** Non-cancelled, non-'external' rows (real bookings AND 'blocked' time off) that have NO calendar
+ * event yet and are still current — the backfill candidate set when a sitter connects Google
+ * Calendar after already taking bookings/blocking time off, and the only path that ever recreates
+ * events lost to a repointed calendar target (`repointCalendarTarget` nulls every non-'external' id
+ * without re-arming SyncPending). Capped at LIMIT; ordered by date so the soonest are synced first.
+ *
+ * The bound is `COALESCE(EndDate, StartDate) >= fromDate`, the same shape `listSyncPendingBookings`
+ * uses and for the same reason: `StartDate >= fromDate` would skip a stay (or a block) already in
+ * progress, stranding the connect-later backfill for anything spanning today. */
 export async function listUnsyncedFutureBookings(
   db: D1Database,
   tenantId: string,
@@ -3323,7 +3332,7 @@ export async function listUnsyncedFutureBookings(
     .prepare(
       `SELECT ${BOOKING_SYNC_COLS} ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.GCalEventId IS NULL AND b.Status IN ('pending', 'confirmed')
-         AND b.ServiceType NOT IN ('blocked', 'external') AND b.StartDate >= ?
+         AND b.ServiceType != 'external' AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,
     )
@@ -3332,9 +3341,10 @@ export async function listUnsyncedFutureBookings(
   return results;
 }
 
-/** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings
- * only ('blocked' is never synced; 'external' is Google-owned). Bounded so ancient never-synced
- * history doesn't churn every sweep, soonest first. Status here can be any of the four, and
+/** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings AND
+ * 'blocked' time off ('external' is Google-owned and is the only exclusion — it is materialized
+ * by reconcile, never pushed by the outbox). Bounded so ancient never-synced history doesn't churn
+ * every sweep, soonest first. Status here can be any of the four, and
  * CancellationFee rides along because the delete-vs-retitle decision for a cancelled row turns on
  * it (keepsCalendarEventOnCancel) — the caller derives create/update/delete from Status +
  * CancellationFee + GCalEventId.
@@ -3362,7 +3372,7 @@ export async function listSyncPendingBookings(
       `SELECT ${BOOKING_SYNC_COLS}, b.CancellationFee AS CancellationFee,
               b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
-         AND b.ServiceType NOT IN ('blocked', 'external')
+         AND b.ServiceType != 'external'
          AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,

@@ -6,7 +6,13 @@ import {
   syncBookingToCalendar,
   updateBookingCalendarEvent,
 } from '../lib/calendar-sync';
-import { insertBookingRequest, setProviderTokens, updateBookingStatus } from '../db/repo';
+import {
+  insertBookingRequest,
+  listSyncPendingBookings,
+  listUnsyncedFutureBookings,
+  setProviderTokens,
+  updateBookingStatus,
+} from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import { createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
@@ -98,7 +104,7 @@ describe('calendar outbox — write side', () => {
     void raw;
   });
 
-  it('a blocked-day row never enters the outbox', async () => {
+  it('a blocked-day row is born sync-pending, same as a real booking, and is returned by the outbox query', async () => {
     const { env } = createTestEnv();
     const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
       endUserId: null,
@@ -110,7 +116,43 @@ describe('calendar outbox — write side', () => {
       estCost: null,
       status: 'confirmed',
     });
-    expect((await syncState(env, id)).SyncPending).toBe(0);
+    expect((await syncState(env, id)).SyncPending).toBe(1);
+    // Assert the query itself returns the row — that is the predicate that changed, not merely
+    // the SyncPending flag on a row fetched some other way.
+    const rows = await listSyncPendingBookings(env.PAWBOOK_DB, TENANT_A, addDays(TODAY, -1), 200);
+    expect(rows.map((r) => r.Id)).toContain(id);
+  });
+
+  it('listUnsyncedFutureBookings widened bound: an in-progress blocked row (StartDate past, EndDate future) is still a backfill candidate', async () => {
+    const { env } = createTestEnv();
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: addDays(TODAY, -3),
+      endDate: addDays(TODAY, 4),
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    expect(rows.map((r) => r.Id)).toContain(id);
+  });
+
+  it('listUnsyncedFutureBookings widened bound: an in-progress real booking (StartDate past, EndDate future) is still a backfill candidate', async () => {
+    const { env } = createTestEnv();
+    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: addDays(TODAY, -3),
+      endDate: addDays(TODAY, 4),
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 150,
+      status: 'confirmed',
+    });
+    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    expect(rows.map((r) => r.Id)).toContain(id);
   });
 
   it('every status transition re-marks the row pending', async () => {
