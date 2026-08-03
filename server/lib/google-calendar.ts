@@ -297,6 +297,25 @@ function addMinutesToLocal(date: string, time: string, minutes: number): string 
   return d.toISOString().slice(0, 19); // YYYY-MM-DDTHH:MM:SS
 }
 
+/**
+ * The `extendedProperties.private` fields every Pawservation-authored event shares —
+ * `bookingId` above all: it is what tells reconcile's foreign-event filter this event is OURS
+ * (`!e.private.bookingId`), so a future builder that forgot the key would silently start a
+ * materialize-back loop for its own events. Shared by `buildEventResource` and
+ * `buildUnavailableEventResource` so that can never happen to only one of them.
+ */
+function privateProps({
+  bookingId,
+  category,
+  status,
+}: {
+  bookingId: string;
+  category: string;
+  status: string;
+}): Record<string, string> {
+  return { pawbook: 'true', category, bookingId, status };
+}
+
 export function buildEventResource(b: CalendarBooking): EventResource {
   const petsText =
     b.petNames.length > 0
@@ -320,12 +339,9 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   const description = lines.join('\n');
   const extendedProperties = {
     private: {
-      pawbook: 'true',
-      category: b.category,
+      ...privateProps({ bookingId: b.bookingId, category: b.category, status: b.status }),
       petCount: String(b.petCount),
       customerEmail: b.customerEmail ?? '',
-      bookingId: b.bookingId,
-      status: b.status,
     },
   };
 
@@ -358,6 +374,48 @@ export function buildEventResource(b: CalendarBooking): EventResource {
     extendedProperties,
   };
 }
+
+/**
+ * The title Pawservation-authored time off always carries on Google Calendar. A constant, not a
+ * template: unlike a booking, time off has no lifecycle a human must read off the title (it exists
+ * or it does not — there is no `[CANCELLED] UNAVAILABLE`, because removal deletes the event, see
+ * `cancelBlockedRange`/outbox handling), so nothing ever interpolates into it.
+ */
+export const UNAVAILABLE_EVENT_SUMMARY = 'UNAVAILABLE';
+
+/**
+ * Builds the Google Calendar event for a sitter-blocked ("time off") day range. Always all-day —
+ * this signature takes no time operand at all, structurally, because a range stay's clock never
+ * belongs on a block: the blocked POST never writes a `StartTime`. `endDate` is already the
+ * EXCLUSIVE end this codebase uses everywhere (`BookingRequests.EndDate`), which is also what
+ * Google's all-day `end.date` expects, so the mapping is arithmetic-free except for the
+ * NULL-`endDate` legacy fallback (live rows always have one; the route refuses `end <= start`).
+ *
+ * `private.bookingId` is what keeps reconcile's foreign-event filter from materializing this
+ * event back as an `'external'` row — see `privateProps` above.
+ */
+export function buildUnavailableEventResource({
+  bookingId,
+  startDate,
+  endDate,
+}: {
+  bookingId: string;
+  startDate: string;
+  endDate: string | null;
+}): EventResource {
+  return {
+    summary: UNAVAILABLE_EVENT_SUMMARY,
+    description:
+      'Time off booked in Pawservation.\n' +
+      'Deleting this event does not free the day — remove it under Time off in your dashboard.',
+    start: { date: startDate },
+    end: { date: endDate ?? addDays(startDate, 1) },
+    extendedProperties: {
+      private: privateProps({ bookingId, category: 'blocked', status: 'confirmed' }),
+    },
+  };
+}
+
 /** Hard cap on pages one pull will follow (~25 000 events). Past it we still THROW rather than
  * return a partial list: callers infer deletion from absence, and a truncated list would read as
  * a mass deletion (see the reconcile mass-cancel hazard). */

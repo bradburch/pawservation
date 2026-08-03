@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAuthUrl,
   buildEventResource,
+  buildUnavailableEventResource,
   CalendarAuthError,
   createCalendar,
   createEvent,
@@ -9,6 +10,7 @@ import {
   exchangeCode,
   listCalendarEvents,
   refreshAccessToken,
+  UNAVAILABLE_EVENT_SUMMARY,
   updateEvent,
 } from '../lib/google-calendar';
 
@@ -357,6 +359,93 @@ describe('google-calendar', () => {
     expect(r.start).toEqual({ date: '2028-06-20' });
     expect(r.end).toEqual({ date: '2028-06-25' });
     expect(r.description).toContain('Arrival: 14:30');
+  });
+
+  describe('buildUnavailableEventResource', () => {
+    it('summary is exactly UNAVAILABLE, verbatim, no marker, no interpolation', () => {
+      const r = buildUnavailableEventResource({
+        bookingId: 'blk-1',
+        startDate: '2026-08-10',
+        endDate: '2026-08-18',
+      });
+      expect(r.summary).toBe('UNAVAILABLE');
+      expect(r.summary).toBe(UNAVAILABLE_EVENT_SUMMARY);
+    });
+
+    it('description is exactly the two documented lines', () => {
+      const r = buildUnavailableEventResource({
+        bookingId: 'blk-1',
+        startDate: '2026-08-10',
+        endDate: '2026-08-18',
+      });
+      expect(r.description).toBe(
+        'Time off booked in Pawservation.\n' +
+          'Deleting this event does not free the day — remove it under Time off in your dashboard.',
+      );
+    });
+
+    it('the date-convention lock: an already-exclusive endDate passes through verbatim, no +/-1', () => {
+      const r = buildUnavailableEventResource({
+        bookingId: 'blk-1',
+        startDate: '2026-08-10',
+        endDate: '2026-08-18',
+      });
+      expect(r.start).toEqual({ date: '2026-08-10' });
+      expect(r.end).toEqual({ date: '2026-08-18' });
+    });
+
+    it('a null endDate falls back to the day after startDate', () => {
+      const r = buildUnavailableEventResource({
+        bookingId: 'blk-1',
+        startDate: '2026-08-10',
+        endDate: null,
+      });
+      expect(r.start).toEqual({ date: '2026-08-10' });
+      expect(r.end).toEqual({ date: '2026-08-11' });
+    });
+
+    it('start/end are always the {date} shape, never {dateTime}', () => {
+      const r = buildUnavailableEventResource({
+        bookingId: 'blk-1',
+        startDate: '2026-08-10',
+        endDate: '2026-08-18',
+      });
+      expect(r.start).not.toHaveProperty('dateTime');
+      expect(r.end).not.toHaveProperty('dateTime');
+      expect(Object.keys(r.start)).toEqual(['date']);
+      expect(Object.keys(r.end)).toEqual(['date']);
+    });
+
+    it('private.bookingId is present and equals the id passed in, alongside category/status', () => {
+      const r = buildUnavailableEventResource({
+        bookingId: 'blk-42',
+        startDate: '2026-08-10',
+        endDate: '2026-08-18',
+      });
+      expect(r.extendedProperties?.private).toEqual({
+        pawbook: 'true',
+        category: 'blocked',
+        bookingId: 'blk-42',
+        status: 'confirmed',
+      });
+    });
+
+    it('never carries a marker regardless of the summary being a constant', () => {
+      // Structural check that nothing derives the summary from any state: two different
+      // bookingId/date inputs must produce the byte-identical summary.
+      const a = buildUnavailableEventResource({
+        bookingId: 'blk-a',
+        startDate: '2026-01-01',
+        endDate: '2026-01-02',
+      });
+      const b = buildUnavailableEventResource({
+        bookingId: 'blk-b',
+        startDate: '2027-12-25',
+        endDate: null,
+      });
+      expect(a.summary).toBe('UNAVAILABLE');
+      expect(b.summary).toBe('UNAVAILABLE');
+    });
   });
 
   describe('listCalendarEvents', () => {
