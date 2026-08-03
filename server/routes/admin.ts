@@ -18,7 +18,7 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
-  deleteBlockedRange,
+  cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
   deletePayment,
@@ -1281,8 +1281,12 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .delete('/:slug/admin/blocked/:id', async (c) => {
     const tenant = c.get('tenant');
-    const deleted = await deleteBlockedRange(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
-    if (!deleted) return c.json({ error: 'Not found.' }, 404);
+    // cancelBlockedRange is a soft delete (Status -> 'cancelled', SyncPending re-armed) and returns
+    // `undefined` when no row matched, matching the old hard-DELETE's repeat-call 404. The returned
+    // GCalEventId (present when the block was already pushed to Google) is not yet used here —
+    // deleting the mirrored Google event is Task 6's job, tracked separately.
+    const gcalEventId = await cancelBlockedRange(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    if (gcalEventId === undefined) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
 

@@ -1944,18 +1944,44 @@ export async function listBlockedRanges(db: D1Database, tenantId: string): Promi
   return results;
 }
 
-export async function deleteBlockedRange(
+/**
+ * Soft-cancel a confirmed blocked (time-off) row — replaces the old hard `DELETE`, which is unsafe
+ * the moment a blocked row can carry a live `GCalEventId`: a deleted row leaves no outbox entry to
+ * retry a failed Google delete, orphaning the event forever (the same hazard CLAUDE.md names for
+ * booking cancellations). Instead the row moves to `Status = 'cancelled'` and stays put — it is
+ * inert there (`listBlockedRanges` and `listCapacityRows` both filter it out, and a blocked row has
+ * no `BookingRequestPets`/`Payments`/`BookingCharges` children to orphan) — and `SyncPending` is
+ * re-armed so the outbox's next pass can delete the mirrored Google event, if one exists.
+ *
+ * `SyncPending = 1` is UNCONDITIONAL here — do not "optimize" it to
+ * `CASE WHEN GCalEventId IS NULL THEN 0 ELSE 1 END`. `setBookingGCalEventId`'s CAS guards only the
+ * *SyncPending clear* on `expectedStatus`, never the id write itself, so a concurrent create can
+ * land its id-stamp AFTER this UPDATE commits: it stamps `GCalEventId`, observes `Status =
+ * 'cancelled' != 'confirmed'`, and correctly leaves `SyncPending` untouched. If this UPDATE had
+ * computed 0 (no id here yet), the row is left with a live Google event and `SyncPending = 0` —
+ * orphaned forever, with nothing left to retry it. At unconditional 1, the same race just costs one
+ * redundant no-op sweep (PATCH/DELETE finds the event already right, or absent, and clears the
+ * flag). See spec §6 / plan risk section for the full argument.
+ *
+ * Returns `undefined` when no row matched — unknown id, wrong tenant, or already terminal — so the
+ * caller 404s exactly like the old hard DELETE's repeat-call behavior. Returns the matched row's
+ * `GCalEventId` otherwise (`null` when the block was never pushed to Google, the id to delete when
+ * it was) so the caller can decide whether to also delete the Google event.
+ */
+export async function cancelBlockedRange(
   db: D1Database,
   tenantId: string,
   id: string,
-): Promise<boolean> {
-  const result = await db
+): Promise<string | null | undefined> {
+  const row = await db
     .prepare(
-      "DELETE FROM BookingRequests WHERE TenantId = ? AND Id = ? AND ServiceType = 'blocked'",
+      `UPDATE BookingRequests SET Status = 'cancelled', SyncPending = 1
+       WHERE TenantId = ? AND Id = ? AND ServiceType = 'blocked' AND Status = 'confirmed'
+       RETURNING GCalEventId`,
     )
     .bind(tenantId, id)
-    .run();
-  return (result.meta as { changes?: number }).changes !== 0;
+    .first<{ GCalEventId: string | null }>();
+  return row === null ? undefined : row.GCalEventId;
 }
 
 /**
@@ -1974,12 +2000,66 @@ export async function listSyncedBookingIds(
     .prepare(
       `SELECT Id FROM BookingRequests
        WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
-         AND ServiceType != 'external'
+         AND ServiceType NOT IN ('external', 'blocked')
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
     .all<{ Id: string }>();
   return results.map((r) => r.Id);
+}
+
+/**
+ * Ids of confirmed blocked (time-off) rows that have a live `GCalEventId`, bounded to
+ * [windowStart, windowEndExclusive) — the same window-predicate shape as `listSyncedBookingIds` and
+ * `listExternalEventRowsInWindow`, and it must be handed the identical pair `reconcileWindow`
+ * derives for those (spec §7): a row outside the window was never spoken for by the Calendar
+ * response reconcile just read, so it must never be re-armed on the strength of that response's
+ * silence.
+ *
+ * Reconcile's re-assertion pass diffs this set against the ids Calendar's response actually
+ * returned live; whatever is missing gets `markSyncPending` so the next outbox pass PATCHes (and,
+ * on a 404/410 `gone`, recreates) the event — time off is re-asserted, never treated as removed by
+ * a hand-delete in Calendar (spec §2).
+ */
+export async function listBlockedRowsWithEventsInWindow(
+  db: D1Database,
+  tenantId: string,
+  windowStart: string,
+  windowEndExclusive: string,
+): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id FROM BookingRequests
+       WHERE TenantId = ? AND ServiceType = 'blocked' AND Status = 'confirmed'
+         AND GCalEventId IS NOT NULL
+         AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
+    )
+    .bind(tenantId, windowEndExclusive, windowStart)
+    .all<{ Id: string }>();
+  return results.map((r) => r.Id);
+}
+
+/**
+ * Re-arm `SyncPending` on exactly the given ids, tenant-scoped. Used by reconcile's re-assertion
+ * pass to mark a blocked row whose Google event has gone missing, so the next outbox sweep
+ * recreates it (see `listBlockedRowsWithEventsInWindow`). Chunked through `chunkArray` at
+ * `DELETE_CHUNK_SIZE` for the same D1 bound-parameter-count reason `deleteExternalEventsMissing`
+ * documents — `ids` is caller-controlled and can exceed the ~100-per-statement cap.
+ */
+export async function markSyncPending(
+  db: D1Database,
+  tenantId: string,
+  ids: string[],
+): Promise<void> {
+  for (const chunk of chunkArray(ids, DELETE_CHUNK_SIZE)) {
+    const placeholders = chunk.map(() => '?').join(', ');
+    await db
+      .prepare(
+        `UPDATE BookingRequests SET SyncPending = 1 WHERE TenantId = ? AND Id IN (${placeholders})`,
+      )
+      .bind(tenantId, ...chunk)
+      .run();
+  }
 }
 
 export async function getProviderConnection(
