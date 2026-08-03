@@ -57,11 +57,11 @@ describe('sitter onboarding flow', () => {
     } = (await complete.json()) as { token: string; role: string; slug: string };
     expect(role).toBe('admin');
 
-    const adminHeaders = { Authorization: `Bearer ${adminBearer}` };
-    const adminJsonHeaders = { ...adminHeaders, 'Content-Type': 'application/json' };
+    const sitterHeaders = { Authorization: `Bearer ${adminBearer}` };
+    const adminJsonHeaders = { ...sitterHeaders, 'Content-Type': 'application/json' };
 
     const settingsBefore = (await (
-      await app.request(`/api/${slug}/admin/settings`, { headers: adminHeaders }, env)
+      await app.request(`/api/${slug}/admin/settings`, { headers: sitterHeaders }, env)
     ).json()) as {
       displayName: string;
       maxAdvanceMonths: number | null;
@@ -85,9 +85,9 @@ describe('sitter onboarding flow', () => {
     expect(type).toBe('morning-walk');
 
     // Disabled + unpriced at create time -> not yet in the public config.
-    const cfgBefore = (await (
-      await app.request(`/api/${slug}/config`, {}, env)
-    ).json()) as { services: { type: string }[] };
+    const cfgBefore = (await (await app.request(`/api/${slug}/config`, {}, env)).json()) as {
+      services: { type: string }[];
+    };
     expect(cfgBefore.services.some((s) => s.type === 'morning-walk')).toBe(false);
 
     const put = await app.request(
@@ -111,7 +111,7 @@ describe('sitter onboarding flow', () => {
     expect(put.status).toBe(204);
 
     const settingsAfter = (await (
-      await app.request(`/api/${slug}/admin/settings`, { headers: adminHeaders }, env)
+      await app.request(`/api/${slug}/admin/settings`, { headers: sitterHeaders }, env)
     ).json()) as {
       maxAdvanceMonths: number;
       services: {
@@ -127,9 +127,9 @@ describe('sitter onboarding flow', () => {
     expect(walk.petRateMode).toBe('linear'); // POST /admin/services stamps 'linear' at create time
     expect(walk.options[0].rate).toBe(25);
 
-    const cfgAfter = (await (
-      await app.request(`/api/${slug}/config`, {}, env)
-    ).json()) as { services: { type: string }[] };
+    const cfgAfter = (await (await app.request(`/api/${slug}/config`, {}, env)).json()) as {
+      services: { type: string }[];
+    };
     expect(cfgAfter.services.some((s) => s.type === 'morning-walk')).toBe(true);
   });
 });

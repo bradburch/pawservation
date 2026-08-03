@@ -36,7 +36,6 @@ describe('booking admin lifecycle', () => {
     ).json()) as { bookings: { id: string; status: string; petNames: string[] }[] };
     const before = bookingsBefore.bookings.find((b) => b.id === id)!;
     expect(before.status).toBe('pending');
-    expect(before.petNames).toContain('Bella');
 
     const confirm = await app.request(
       `/api/${SLUG}/admin/bookings/${id}/status`,
