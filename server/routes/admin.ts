@@ -1276,17 +1276,62 @@ export const adminRoutes = new Hono<AppEnv>()
       estCost: null,
       status: 'confirmed',
     });
+
+    // Best-effort push of an all-day "UNAVAILABLE" event, mirroring every other calendar hook in
+    // this file (waitUntil in production; awaited in tests, which have no ExecutionContext — see
+    // routes/bookings.ts). syncBookingToCalendar short-circuits to buildUnavailableEventResource
+    // for ServiceType 'blocked' before touching any of the customer/pet fields below, which exist
+    // only to satisfy SyncInput's shape.
+    const input: SyncInput = {
+      bookingId: id,
+      endUserId: null,
+      serviceType: 'blocked',
+      serviceLabel: 'Time off',
+      startDate: start,
+      endDate: end,
+      startTime: null,
+      departureTime: null,
+      durationMinutes: null,
+      petCount: 1,
+      petNames: [],
+      estCost: null,
+      status: 'confirmed',
+    };
+    const task = syncBookingToCalendar(c.env, tenant, input).catch((err) => {
+      console.error('calendar blocked sync failed', err);
+    });
+    try {
+      c.executionCtx.waitUntil(task);
+    } catch {
+      await task;
+    }
+
     return c.json({ id }, 201);
   })
 
   .delete('/:slug/admin/blocked/:id', async (c) => {
     const tenant = c.get('tenant');
     // cancelBlockedRange is a soft delete (Status -> 'cancelled', SyncPending re-armed) and returns
-    // `undefined` when no row matched, matching the old hard-DELETE's repeat-call 404. The returned
-    // GCalEventId (present when the block was already pushed to Google) is not yet used here —
-    // deleting the mirrored Google event is Task 6's job, tracked separately.
+    // a three-way result: `undefined` when no row matched (404, matching the old hard-DELETE's
+    // repeat-call behavior); `null` when the row was found and cancelled but was never synced to
+    // Google (every blocked row is born SyncPending regardless of connection state, so an
+    // unconnected sitter's block has GCalEventId = null too — that must NOT 404); a `string` when
+    // the row was found, cancelled, and HAD a live Google event, which is deleted best-effort below.
     const gcalEventId = await cancelBlockedRange(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
     if (gcalEventId === undefined) return c.json({ error: 'Not found.' }, 404);
+    if (gcalEventId) {
+      // Best-effort delete of the mirrored Google event, same dance as every other calendar hook.
+      const task = deleteBookingCalendarEvent(c.env, tenant, gcalEventId, c.req.param('id')).catch(
+        (err) => {
+          console.error('calendar blocked delete failed', err);
+        },
+      );
+      try {
+        c.executionCtx.waitUntil(task);
+      } catch {
+        await task;
+      }
+    }
     return c.body(null, 204);
   })
 

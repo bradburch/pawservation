@@ -54,6 +54,27 @@ describe('disabled tenant guard', () => {
     );
     expect(put.status).toBe(403);
     expect(await put.json()).toEqual({ error: 'account_disabled' });
+
+    // Time-off (blocked) create/delete are mutations too — same guard, no route-specific code.
+    const blockedPost = await app.request(
+      '/api/sunny-paws/admin/blocked',
+      {
+        method: 'POST',
+        headers: { ...(await adminHeaders()), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate: '2028-01-01', endDate: '2028-01-02' }),
+      },
+      env,
+    );
+    expect(blockedPost.status).toBe(403);
+    expect(await blockedPost.json()).toEqual({ error: 'account_disabled' });
+
+    const blockedDelete = await app.request(
+      '/api/sunny-paws/admin/blocked/some-id',
+      { method: 'DELETE', headers: await adminHeaders() },
+      env,
+    );
+    expect(blockedDelete.status).toBe(403);
+    expect(await blockedDelete.json()).toEqual({ error: 'account_disabled' });
   });
 
   it('does not affect an active tenant', async () => {

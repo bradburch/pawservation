@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { listServices } from '../db/repo';
+import { listServices, setProviderTokens } from '../db/repo';
 import { mintAdminToken, mintToken } from '../lib/token';
+import { encryptToken } from '../lib/token-crypto';
 import {
   adminHeaders,
   adminToken,
@@ -11,6 +12,16 @@ import {
   TENANT_B,
   TEST_SECRET,
 } from './helpers';
+
+/** Connected Google Calendar with a far-future token expiry — no refresh round-trip needed. */
+async function connectCalendar(env: Env, tenantId: string): Promise<void> {
+  await setProviderTokens(env.PAWBOOK_DB, tenantId, 'calendar', 'google-calendar', {
+    access: await encryptToken(TEST_SECRET, 'access-1'),
+    refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
+    expiresAt: '2030-01-01T00:00:00Z',
+    calendarId: 'primary',
+  });
+}
 
 /** Admin Bearer headers for a tenant, optionally with a JSON content type. */
 async function auth(tenantId: string, json = false): Promise<Record<string, string>> {
@@ -359,6 +370,139 @@ describe('tenant admin', () => {
       await quote(env, 'sunny-paws', 'type=walk&start=2028-09-01', ['pet_sp_bella'])
     ).json()) as { available: boolean };
     expect(walkAfter.available).toBe(true);
+  });
+
+  describe('POST/DELETE /admin/blocked — Google Calendar hooks', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('creates the blocked row SyncPending and pushes an all-day UNAVAILABLE event to Google', async () => {
+      const { env, raw } = createTestEnv();
+      await connectCalendar(env, TENANT_A);
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_blocked_1' }), { status: 200 }));
+
+      const created = (await (
+        await app.request(
+          '/api/sunny-paws/admin/blocked',
+          {
+            method: 'POST',
+            headers: await auth(TENANT_A, true),
+            body: JSON.stringify({ startDate: '2028-10-01', endDate: '2028-10-03' }),
+          },
+          env,
+        )
+      ).json()) as { id: string };
+
+      // insertBookingRequest always stamps SyncPending = 1 regardless of connection state; because
+      // the route awaits its calendar push under Vitest (no ExecutionContext), by the time the
+      // response lands a successful push has already cleared it via the same CAS that stamped
+      // GCalEventId — so a SyncPending of 0 here IS the proof the push round-tripped successfully.
+      const row = raw
+        .prepare('SELECT SyncPending, GCalEventId, Status FROM BookingRequests WHERE Id = ?')
+        .get(created.id) as { SyncPending: number; GCalEventId: string | null; Status: string };
+      expect(row.SyncPending).toBe(0);
+      expect(row.Status).toBe('confirmed');
+      expect(row.GCalEventId).toBe('evt_blocked_1');
+
+      expect(spy).toHaveBeenCalledOnce();
+      const [, init] = spy.mock.calls[0] as [string, RequestInit];
+      const sentBody = JSON.parse(init.body as string) as {
+        summary: string;
+        start: { date: string };
+        end: { date: string };
+      };
+      expect(sentBody.summary).toMatch(/unavailable/i);
+      expect(sentBody.start.date).toBe('2028-10-01');
+      expect(sentBody.end.date).toBe('2028-10-03');
+    });
+
+    it('DELETE removes the mirrored Google event, frees the day, then 404s on a repeat call', async () => {
+      const { env, raw } = createTestEnv();
+      await connectCalendar(env, TENANT_A);
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_blocked_2' }), { status: 200 }));
+
+      const created = (await (
+        await app.request(
+          '/api/sunny-paws/admin/blocked',
+          {
+            method: 'POST',
+            headers: await auth(TENANT_A, true),
+            body: JSON.stringify({ startDate: '2028-11-01', endDate: '2028-11-03' }),
+          },
+          env,
+        )
+      ).json()) as { id: string };
+
+      const blockedBoarding = (await (
+        await quote(env, 'sunny-paws', 'type=boarding&start=2028-11-01&end=2028-11-02', [
+          'pet_sp_bella',
+        ])
+      ).json()) as { available: boolean };
+      expect(blockedBoarding.available).toBe(false);
+
+      // Same spy instance as the create step (vi.spyOn on an already-spied fetch returns the
+      // existing mock) — clear its call history so the assertions below are scoped to the DELETE.
+      spy.mockClear();
+      spy.mockResolvedValue(new Response(null, { status: 204 }));
+      const first = await app.request(
+        `/api/sunny-paws/admin/blocked/${created.id}`,
+        { method: 'DELETE', headers: await auth(TENANT_A) },
+        env,
+      );
+      expect(first.status).toBe(204);
+      expect(spy).toHaveBeenCalledOnce();
+      const [deleteUrl, deleteInit] = spy.mock.calls[0] as [string, RequestInit];
+      expect(deleteUrl).toContain('evt_blocked_2');
+      expect(deleteInit.method).toBe('DELETE');
+
+      const row = raw
+        .prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
+        .get(created.id) as { Status: string };
+      expect(row.Status).toBe('cancelled');
+
+      const freed = (await (
+        await quote(env, 'sunny-paws', 'type=boarding&start=2028-11-01&end=2028-11-02', [
+          'pet_sp_bella',
+        ])
+      ).json()) as { available: boolean };
+      expect(freed.available).toBe(true);
+
+      const second = await app.request(
+        `/api/sunny-paws/admin/blocked/${created.id}`,
+        { method: 'DELETE', headers: await auth(TENANT_A) },
+        env,
+      );
+      expect(second.status).toBe(404);
+    });
+
+    it('DELETE on a never-synced blocked row (no calendar connected) 204s without a Google call', async () => {
+      const { env } = createTestEnv(); // no connectCalendar call
+      const spy = vi.spyOn(globalThis, 'fetch');
+
+      const created = (await (
+        await app.request(
+          '/api/sunny-paws/admin/blocked',
+          {
+            method: 'POST',
+            headers: await auth(TENANT_A, true),
+            body: JSON.stringify({ startDate: '2028-12-01', endDate: '2028-12-03' }),
+          },
+          env,
+        )
+      ).json()) as { id: string };
+      expect(spy).not.toHaveBeenCalled(); // no connection: create-side push no-ops
+
+      const del = await app.request(
+        `/api/sunny-paws/admin/blocked/${created.id}`,
+        { method: 'DELETE', headers: await auth(TENANT_A) },
+        env,
+      );
+      expect(del.status).toBe(204);
+      expect(spy).not.toHaveBeenCalled(); // GCalEventId was null — nothing to delete in Google
+    });
   });
 
   it('GET /admin/settings reports the calendar connection as disconnected by default', async () => {
