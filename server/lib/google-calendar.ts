@@ -142,7 +142,20 @@ export async function refreshAccessToken(
     throw new Error(
       `Google token refresh failed (${res.status}): ${await describeTokenError(res)}`,
     );
-  const j = (await res.json()) as { access_token: string; expires_in: number };
+  const j = (await res.json()) as { access_token?: string; expires_in?: number };
+  // Same shape check as exchangeCode, and the same reason: a malformed 200 must fail loudly
+  // rather than let `expiresAtFrom(undefined)` compute NaN, whose `new Date(NaN).toISOString()`
+  // throws an unhelpful bare RangeError that a best-effort caller silently swallows — "calendar
+  // stopped syncing" with no useful log.
+  if (!j.access_token || typeof j.expires_in !== 'number') {
+    const missing = [
+      j.access_token ? null : 'access_token',
+      typeof j.expires_in === 'number' ? null : 'expires_in',
+    ].filter(Boolean);
+    throw new Error(
+      `Google token refresh returned an incomplete token set (no ${missing.join(', ')})`,
+    );
+  }
   return { accessToken: j.access_token, expiresAt: expiresAtFrom(j.expires_in) };
 }
 

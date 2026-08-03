@@ -66,6 +66,17 @@ describe('google-calendar', () => {
     expect(new Date(r.expiresAt).getTime()).toBeGreaterThan(Date.now());
   });
 
+  it('refreshAccessToken throws a clear error on a malformed 200 response, same as exchangeCode', async () => {
+    // A shape-check regression here reintroduces expiresAtFrom(undefined) computing NaN, whose
+    // new Date(NaN).toISOString() throws an unhelpful bare RangeError instead of this named one.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 }),
+    );
+    await expect(refreshAccessToken(env, 'rt')).rejects.toThrow(
+      /incomplete token set.*access_token/,
+    );
+  });
+
   it('createCalendar POSTs summary + timeZone to /calendars and returns the new calendar id', async () => {
     const spy = vi
       .spyOn(globalThis, 'fetch')

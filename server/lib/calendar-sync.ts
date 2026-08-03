@@ -279,7 +279,14 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
 
   for (const r of rows) {
     try {
-      const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+      // Same skip as redriveCalendarOutbox: a blocked (time-off) row never has pets, and
+      // resourceForBooking's blocked branch never reads petNames — worth skipping here too now
+      // that the cron sweep runs this every 15 minutes for every connected tenant (see
+      // runCalendarSweep), not just once at connect/repoint time.
+      const petNames =
+        r.ServiceType === 'blocked'
+          ? []
+          : await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
       const resource = await resourceForBooking(env, tenant, {
         bookingId: r.Id,
         endUserId: r.EndUserId,
@@ -361,7 +368,12 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
       // is false for it). Present so the union handed to SyncInput is narrowed by the compiler
       // rather than by a comment, and so a future edit to the branches above fails loudly here.
       if (r.Status === 'declined') continue;
-      const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+      // A blocked (time-off) row never has pets — skip the guaranteed-empty read every sweep
+      // would otherwise make for it; resourceForBooking's blocked branch never reads petNames.
+      const petNames =
+        r.ServiceType === 'blocked'
+          ? []
+          : await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
       const input: SyncInput = {
         bookingId: r.Id,
         endUserId: r.EndUserId,

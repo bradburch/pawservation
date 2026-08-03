@@ -538,4 +538,19 @@ describe('markSyncPending', () => {
       expect((await syncState(env, id)).SyncPending).toBe(1);
     }
   });
+
+  it('is scoped to ServiceType = blocked — a real booking id is not re-armed', async () => {
+    // Structural guard, not incidental: today's only real caller already sources ids from
+    // listBlockedRowsWithEventsInWindow (itself scoped to 'blocked'), so this proves the WHERE
+    // clause itself refuses a non-blocked row rather than relying on callers to filter first —
+    // a future caller aiming this at an 'external' (Google-owned) row's id must not be able to
+    // put it in the outbox, where it would be pushed back to Google as a booking-shaped event.
+    const { env } = createTestEnv();
+    const bookingId = await seedBooking(env, 'confirmed');
+    await clearFlag(env, bookingId);
+
+    await markSyncPending(env.PAWBOOK_DB, TENANT_A, [bookingId]);
+
+    expect((await syncState(env, bookingId)).SyncPending).toBe(0);
+  });
 });

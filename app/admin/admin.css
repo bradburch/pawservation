@@ -1910,9 +1910,9 @@ body {
   flex-wrap: wrap;
 }
 
-/* Pets lead each booking row (BookingsSection, shared with CalendarSection's pending-request
-   list); owner name/email is secondary, same convention as .pb-clients-secondary on the Clients
-   page — everything here is categorized by the pets first. */
+/* Pets lead each booking row (BookingsSection-only — CalendarSection renders its own separate
+   pending-request list, not this class); owner name/email is secondary, same convention as
+   .pb-clients-secondary on the Clients page — everything here is categorized by the pets first. */
 .pb-bookings-secondary {
   color: var(--soft);
   font-weight: 400;

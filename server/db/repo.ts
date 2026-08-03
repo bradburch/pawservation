@@ -2040,11 +2040,21 @@ export async function listBlockedRowsWithEventsInWindow(
 }
 
 /**
- * Re-arm `SyncPending` on exactly the given ids, tenant-scoped. Used by reconcile's re-assertion
- * pass to mark a blocked row whose Google event has gone missing, so the next outbox sweep
- * recreates it (see `listBlockedRowsWithEventsInWindow`). Chunked through `chunkArray` at
- * `DELETE_CHUNK_SIZE` for the same D1 bound-parameter-count reason `deleteExternalEventsMissing`
- * documents — `ids` is caller-controlled and can exceed the ~100-per-statement cap.
+ * Re-arm `SyncPending` on exactly the given ids, tenant-scoped AND `ServiceType = 'blocked'`.
+ * Used by reconcile's re-assertion pass to mark a blocked row whose Google event has gone
+ * missing, so the next outbox sweep recreates it (see `listBlockedRowsWithEventsInWindow`).
+ * Chunked through `chunkArray` at `DELETE_CHUNK_SIZE` for the same D1 bound-parameter-count
+ * reason `deleteExternalEventsMissing` documents — `ids` is caller-controlled and can exceed the
+ * ~100-per-statement cap.
+ *
+ * The `ServiceType = 'blocked'` predicate is structural, not incidental — matching every sibling
+ * query in this file (e.g. `listSyncPendingBookings` excludes `'external'` explicitly rather than
+ * relying on those rows always being born `SyncPending = 0`). Today's only caller already sources
+ * ids from `listBlockedRowsWithEventsInWindow`, itself scoped to `'blocked'`, so this predicate is
+ * currently redundant — but without it, a future caller aiming this function at an `'external'`
+ * row's id would put a Google-owned row into the outbox, where the sync dispatch would build a
+ * booking-shaped event for it and push it back to Google, corrupting a foreign calendar's own
+ * event.
  */
 export async function markSyncPending(
   db: D1Database,
@@ -2055,7 +2065,8 @@ export async function markSyncPending(
     const placeholders = chunk.map(() => '?').join(', ');
     await db
       .prepare(
-        `UPDATE BookingRequests SET SyncPending = 1 WHERE TenantId = ? AND Id IN (${placeholders})`,
+        `UPDATE BookingRequests SET SyncPending = 1
+         WHERE TenantId = ? AND ServiceType = 'blocked' AND Id IN (${placeholders})`,
       )
       .bind(tenantId, ...chunk)
       .run();

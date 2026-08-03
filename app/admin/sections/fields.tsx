@@ -43,7 +43,11 @@ export function blockNegativeNumberKeys(min: number) {
   };
 }
 
-/** A nullable capacity/limit input: blank ⇒ null (no limit), a number ⇒ that value. */
+/** A nullable capacity/limit input: blank ⇒ null (no limit), a number ⇒ that value.
+ *
+ * `min` defaults to `1` (every current caller's floor is 1), and `clampNullableNumber` clamps a
+ * typed value UP to it — so a future field where `0` is a meaningful, distinct value MUST pass
+ * `min={0}` explicitly, or `0` silently becomes untypeable (every keystroke clamps it back to 1). */
 export function NullableNumberField({
   label,
   value,
