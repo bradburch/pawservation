@@ -375,7 +375,7 @@ describe('cancelBlockedRange — soft delete', () => {
 
   it('a confirmed blocked row with no GCalEventId yet cancels and returns null, not undefined', async () => {
     const { env } = createTestEnv();
-    const id = await seedBlocked(env); // never pushed to Google — GCalEventId stays NULL
+    const id = await seedBlocked(env); // simulates the outbox not having pushed it yet — GCalEventId stays NULL
     const result = await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id);
     expect(result).toBeNull();
     expect((await syncState(env, id)).Status).toBe('cancelled');
@@ -407,6 +407,25 @@ describe('cancelBlockedRange — soft delete', () => {
   it('an unknown id is refused', async () => {
     const { env } = createTestEnv();
     expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, 'no-such-id')).toBeUndefined();
+  });
+});
+
+describe('updateBookingStatus — a blocked row can never take a CancellationFee', () => {
+  it("the assessed-cancellation branch's SQL excludes ServiceType 'blocked': the call is refused and CancellationFee stays NULL", async () => {
+    const { env } = createTestEnv();
+    const id = await seedBlocked(env, { gcalEventId: 'evt_block_fee' });
+    // This is the only branch of updateBookingStatus that ever writes CancellationFee — proving it
+    // is refused here is what guarantees a removed blocked row can never carry an assessed fee,
+    // which in turn is what keeps keepsCalendarEventOnCancel false and the delete-not-retitle
+    // branch the only one that ever fires for time off (see cancelBlockedRange above, which never
+    // even offers a fee parameter).
+    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled', 25)).toBe(false);
+    const row = await env.PAWBOOK_DB.prepare(
+      'SELECT Status, CancellationFee FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ Status: string; CancellationFee: number | null }>();
+    expect(row).toMatchObject({ Status: 'confirmed', CancellationFee: null });
   });
 });
 

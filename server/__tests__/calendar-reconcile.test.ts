@@ -596,12 +596,21 @@ describe('reconcile v2 — blocked-row re-assertion (a2)', () => {
     // Pass 2: the outbox re-drive PATCHes the stale id (404 → gone), then recreates via POST and
     // CASes the new id in using the stale one as expectedOld (updateBookingCalendarEvent's path).
     vi.restoreAllMocks();
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       const method = (init as RequestInit).method;
       if (method === 'PATCH') return new Response('gone', { status: 404 }); // stale id no longer exists
       return new Response(JSON.stringify({ id: 'evt_block_new' }), { status: 200 }); // POST create
     });
     await redriveCalendarOutbox(env, tenant);
+
+    // Discriminates this path from a reconcile that had instead NULLED GCalEventId: that path would
+    // skip updateBookingCalendarEvent entirely and go straight to a create, issuing no PATCH at all
+    // — same final row state, but a materially different (and wrong — see the reconcile test above)
+    // request sequence. Asserting the PATCH itself, against the stale id, is what actually proves
+    // `expectedOld` was preserved rather than merely inferring it from the end state.
+    const patchCall = spy.mock.calls.find(([, i]) => (i as RequestInit)?.method === 'PATCH');
+    expect(patchCall).toBeDefined();
+    expect(patchCall?.[0]).toContain('evt_block_stale');
 
     const row = await rowState(env, id);
     expect(row.GCalEventId).toBe('evt_block_new'); // recreated — the POSITIVE outcome, not just "not cancelled"
