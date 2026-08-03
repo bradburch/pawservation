@@ -44,6 +44,7 @@ import {
   listPaymentExternalRefs,
   listPaymentsForBooking,
   listPetNamesForBooking,
+  listPetNamesForTenantBookings,
   listPetsByIds,
   listPetTypes,
   listProviderConnections,
@@ -1296,6 +1297,36 @@ export const adminRoutes = new Hono<AppEnv>()
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
     if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
+
+    // The nonce below is a COOKIE, and a cookie belongs to one host. GOOGLE_OAUTH_REDIRECT_URI
+    // names one host too — but this worker answers on several (the pawservation.com custom domain,
+    // workers.dev with `workers_dev: true`, and a fresh preview URL per `wrangler versions
+    // upload`). A dashboard opened on any host but the redirect's therefore sets the cookie
+    // somewhere the callback can never read it, and the connect dies at the login-CSRF check
+    // looking, to the sitter, exactly like Google refusing her. Refuse here with the host she must
+    // use, rather than handing back an authorize URL that is guaranteed to fail.
+    let callbackOrigin: string;
+    try {
+      callbackOrigin = new URL(c.env.GOOGLE_OAUTH_REDIRECT_URI).origin;
+    } catch {
+      console.error('calendar oauth start: GOOGLE_OAUTH_REDIRECT_URI is not a valid absolute URL');
+      return c.json({ error: 'Google Calendar is not configured correctly on this server.' }, 503);
+    }
+    const dashboardOrigin = new URL(c.req.url).origin;
+    if (dashboardOrigin !== callbackOrigin) {
+      console.error('calendar oauth start refused: dashboard host is not the redirect host', {
+        tenant: tenant.Slug,
+        dashboardOrigin,
+        callbackOrigin,
+      });
+      return c.json(
+        {
+          error: `Google Calendar can only be connected from ${callbackOrigin}. Open your dashboard at ${callbackOrigin}/admin and connect from there.`,
+        },
+        409,
+      );
+    }
+
     const nonce = crypto.randomUUID();
     await c.env.PAWBOOK_CACHE.put(NONCE_KEY(nonce), '1', { expirationTtl: 600 });
     const state = await signState(c.env.TOKEN_SECRET, {
@@ -1304,11 +1335,15 @@ export const adminRoutes = new Hono<AppEnv>()
       exp: Date.now() + 600_000,
     });
     // Bind the callback to THIS admin's browser: the nonce travels back as a cookie that an
-    // attacker cannot plant in a victim's browser, defeating OAuth login-CSRF. Secure in prod;
-    // omitted on http://localhost so local dev still works. Path-scoped to the callback only.
+    // attacker cannot plant in a victim's browser, defeating OAuth login-CSRF. Path-scoped to the
+    // callback only. `secure` is read off the REQUEST's own scheme rather than ENVIRONMENT: that
+    // var is unset in `.dev.vars`, so plain `npm run dev` was marking the cookie Secure over
+    // http://localhost — which Chrome tolerates on localhost and Safari does not, breaking the
+    // local connect in one browser only. The scheme is right in every environment with nothing to
+    // configure, and is still `https:` in production.
     setCookie(c, 'pawbook_gcal_nonce', nonce, {
       httpOnly: true,
-      secure: c.env.ENVIRONMENT !== 'development',
+      secure: new URL(c.req.url).protocol === 'https:',
       sameSite: 'Lax', // sent on Google's top-level redirect back to the callback
       path: '/oauth/google/callback',
       maxAge: 600,
@@ -2163,6 +2198,16 @@ export const adminRoutes = new Hono<AppEnv>()
       list.push(ch);
       chargesByBooking.set(ch.BookingRequestId, list);
     }
+    // Same one-read-grouped-in-JS shape as chargesByBooking above — pet names are what the
+    // sitter actually cares about identifying a row by (CLAUDE.md: "everything should be
+    // categorized by the pets"), so the admin list must carry them, not just a bare count.
+    const petNameRows = await listPetNamesForTenantBookings(c.env.PAWBOOK_DB, tenant.Id);
+    const petNamesByBooking = new Map<string, string[]>();
+    for (const pr of petNameRows) {
+      const list = petNamesByBooking.get(pr.BookingRequestId) ?? [];
+      list.push(pr.Name);
+      petNamesByBooking.set(pr.BookingRequestId, list);
+    }
     return c.json({
       bookings: rows.map((r) => ({
         id: r.Id,
@@ -2175,6 +2220,7 @@ export const adminRoutes = new Hono<AppEnv>()
         departureTime: r.DepartureTime,
         optionKey: r.OptionKey,
         petCount: r.PetCount,
+        petNames: petNamesByBooking.get(r.Id) ?? [],
         external: r.ServiceType === 'external',
         externalSummary: r.ExternalSummary,
         answers: r.Answers,

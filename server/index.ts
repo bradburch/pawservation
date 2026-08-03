@@ -948,7 +948,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
               <li class="wf-step">
                 <span class="step-no">02</span>
-                <p><strong>What you offer.</strong> Seven one-tap presets, each a whole service already shaped &mdash; &ldquo;Group walks &middot; weekdays 10&ndash;2 &middot; up to 8 pets&rdquo; is one tap, windows and limits included. Tap the ones that describe you.</p>
+                <p><strong>What you offer.</strong> Six one-tap presets, each a whole service already shaped &mdash; &ldquo;Group walks &middot; weekdays 10&ndash;2 &middot; up to 8 pets&rdquo; is one tap, windows and limits included. Tap the ones that describe you.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">03</span>

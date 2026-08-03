@@ -248,6 +248,14 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET
 npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI  # e.g. https://<your-worker>/oauth/google/callback — must match Google Cloud exactly
 ```
 
+The redirect URI's **host must be the host sitters open the dashboard on** (the custom domain, if
+you have one). The OAuth login-CSRF cookie is host-scoped, so connecting from `*.workers.dev` or a
+`wrangler versions upload` preview URL while the redirect points at the custom domain can never
+work; `/admin/providers/calendar/oauth/start` answers 409 naming the right host rather than
+starting a flow that is guaranteed to fail. Callback failures log one
+`google oauth callback failed { reason, … }` line — `npx wrangler tail` is the way to see which of
+its branches fired.
+
 Then:
 
 ```bash

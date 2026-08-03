@@ -34,6 +34,14 @@ function formatWhen(b: AdminBooking): string {
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
 
+/** The row's primary label — pet names, not the owner (CLAUDE.md: "everything should be
+ * categorized by the pets"). Falls back to the pet count for a pre-existing/edge-case row the
+ * server couldn't resolve any names for, so the row never renders blank. */
+function petNamesText(b: AdminBooking): string {
+  if (b.petNames.length > 0) return b.petNames.join(', ');
+  return `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`;
+}
+
 /** True for bookings that aren't cancelled/declined — the payments ledger is fully editable for
  * these; cancelled/declined rows show a read-only ledger only when they have payments to show. */
 const isActive = (b: AdminBooking) => b.status !== 'cancelled' && b.status !== 'declined';
@@ -211,9 +219,14 @@ function BookingList({
     return (
       <li key={b.id} data-booking-id={b.id}>
         <span>
-          {b.customerName || b.customerEmail || 'Unknown customer'} — {b.type}
+          {/* Pets lead the row; owner name/email is secondary — see petNamesText above. */}
+          <strong>{petNamesText(b)}</strong>{' '}
+          <span className="pb-bookings-secondary">
+            ({b.customerName || b.customerEmail || 'Unknown customer'})
+          </span>{' '}
+          — {b.type}
           <br />
-          {formatWhen(b)} · {b.petCount} pet{b.petCount === 1 ? '' : 's'}
+          {formatWhen(b)}
           {b.estCost != null ? ` · $${b.estCost}` : ''}
           {b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : ''}{' '}
           {/* Capitalized to match the client-status chips ("Active"/"Pending") in Clients. */}

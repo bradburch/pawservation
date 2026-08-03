@@ -3244,6 +3244,31 @@ export async function listPetNamesForBooking(
   return results.map((r) => r.Name);
 }
 
+/**
+ * Pet names for EVERY booking in a tenant, ONE read that the admin bookings list groups in JS —
+ * the same `listChargesForTenant` shape (a per-row query here would be a round-trip per booking
+ * on the sitter's hottest admin GET). Tenancy flows in via the join to BookingRequests +
+ * EndUserPets exactly as `listPetNamesForBooking` does; ordered by BookingRequestId then Name so
+ * grouping produces a deterministic, human-readable per-row list.
+ */
+export async function listPetNamesForTenantBookings(
+  db: D1Database,
+  tenantId: string,
+): Promise<{ BookingRequestId: string; Name: string }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT brp.BookingRequestId AS BookingRequestId, p.Name AS Name
+       FROM BookingRequestPets brp
+       JOIN BookingRequests br ON br.Id = brp.BookingRequestId
+       JOIN EndUserPets p ON p.Id = brp.PetId AND p.TenantId = br.TenantId
+       WHERE br.TenantId = ?
+       ORDER BY brp.BookingRequestId, p.Name`,
+    )
+    .bind(tenantId)
+    .all<{ BookingRequestId: string; Name: string }>();
+  return results;
+}
+
 /** The fields the calendar sync layer (SyncInput) needs, joined from one booking + its service
  * label + its option's duration. Pet names are fetched separately (listPetNamesForBooking). */
 export type BookingSyncRow = {

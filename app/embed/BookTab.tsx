@@ -1,4 +1,5 @@
 import {
+  compactTime,
   nightsBetween,
   validateAnswers,
   validatePetTypeAcceptance,
@@ -521,8 +522,10 @@ export function BookTab({
             {service.options.map((o) => (
               <option key={o.optionKey} value={o.optionKey}>
                 {o.label}
-                {o.startTime && o.endTime ? ` · ${o.startTime}–${o.endTime}` : ''} — ${o.rate}/
-                {service.rateUnit}
+                {o.startTime && o.endTime
+                  ? ` · ${compactTime(o.startTime)}–${compactTime(o.endTime)}`
+                  : ''}{' '}
+                — ${o.rate}/{service.rateUnit}
               </option>
             ))}
           </select>

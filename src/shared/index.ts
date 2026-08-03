@@ -2,6 +2,7 @@
 export { formatShortDate, formatFriendlyDate, formatBlockRange } from './util/date-format.js';
 export {
   serviceSummary,
+  compactTime,
   type ServiceSummary,
   type ServiceSummaryInput,
   type ServiceSummaryOption,

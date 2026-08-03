@@ -55,6 +55,29 @@ function expiresAtFrom(expiresInSeconds: number): string {
   return new Date(Date.now() + (expiresInSeconds - 60) * 1000).toISOString();
 }
 
+/**
+ * Google's token endpoint puts the ACTUAL cause in the response BODY, not the status: a 400 is
+ * `redirect_uri_mismatch` (the Cloud Console entry doesn't match GOOGLE_OAUTH_REDIRECT_URI byte
+ * for byte), `invalid_client` (wrong id/secret), or `invalid_grant` (code spent or expired) — all
+ * of which need completely different remedies and are indistinguishable from "(400)" alone. Only
+ * `error`/`error_description` are lifted out, and the length is bounded, so this can be logged
+ * without a raw upstream body ending up in a log line.
+ */
+async function describeTokenError(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '');
+  try {
+    const j = JSON.parse(text) as { error?: unknown; error_description?: unknown };
+    if (typeof j.error === 'string')
+      return [j.error, typeof j.error_description === 'string' ? j.error_description : null]
+        .filter(Boolean)
+        .join(': ')
+        .slice(0, 300);
+  } catch {
+    /* not JSON — fall through to the truncated text */
+  }
+  return text.slice(0, 200);
+}
+
 export async function exchangeCode(env: Env, code: string): Promise<TokenSet> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
@@ -67,12 +90,30 @@ export async function exchangeCode(env: Env, code: string): Promise<TokenSet> {
       grant_type: 'authorization_code',
     }),
   });
-  if (!res.ok) throw new Error(`Google token exchange failed (${res.status})`);
+  if (!res.ok)
+    throw new Error(
+      `Google token exchange failed (${res.status}): ${await describeTokenError(res)}`,
+    );
   const j = (await res.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
   };
+  // `access_type=offline` + `prompt=consent` are what make Google issue a refresh token, and the
+  // refresh token IS the connection — every later sync runs off it. A response missing one must
+  // fail the connect loudly: encrypting `undefined` stores the literal string "undefined" and
+  // reports "Connected", so the sitter learns nothing until the access token lapses an hour later
+  // and her calendar quietly stops updating.
+  if (!j.access_token || !j.refresh_token || typeof j.expires_in !== 'number') {
+    const missing = [
+      j.access_token ? null : 'access_token',
+      j.refresh_token ? null : 'refresh_token',
+      typeof j.expires_in === 'number' ? null : 'expires_in',
+    ].filter(Boolean);
+    throw new Error(
+      `Google token exchange returned an incomplete token set (no ${missing.join(', ')})`,
+    );
+  }
   return {
     accessToken: j.access_token,
     refreshToken: j.refresh_token,
@@ -94,7 +135,13 @@ export async function refreshAccessToken(
       grant_type: 'refresh_token',
     }),
   });
-  if (!res.ok) throw new Error(`Google token refresh failed (${res.status})`);
+  // Same body-carries-the-cause rule as exchangeCode: a refresh 400 is almost always
+  // `invalid_grant` (the sitter revoked the grant in her Google account, or the refresh token was
+  // rotated), which the status alone cannot say.
+  if (!res.ok)
+    throw new Error(
+      `Google token refresh failed (${res.status}): ${await describeTokenError(res)}`,
+    );
   const j = (await res.json()) as { access_token: string; expires_in: number };
   return { accessToken: j.access_token, expiresAt: expiresAtFrom(j.expires_in) };
 }
@@ -259,7 +306,7 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   // alone, without opening the event.
   const marker =
     b.status === 'pending' ? '[REQUEST] ' : b.status === 'cancelled' ? '[CANCELLED] ' : '';
-  const summary = `${marker}${b.serviceLabel} — ${petsText}`;
+  const summary = `${marker}${petsText} — ${b.serviceLabel}`;
   const lines = [`Service: ${b.serviceLabel}`, `Pets: ${petsText}`];
   if (b.customerEmail) lines.push(`Customer: ${b.customerEmail}`);
   // A RANGE stay's times live in the description, because its event must stay all-day (below).

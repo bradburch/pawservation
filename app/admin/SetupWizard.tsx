@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { isValidRate, SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { ApiError } from '../shared-ui/api.js';
-import { SERVICE_PRESETS, type PresetOption, type ServicePreset } from './presets.js';
-import { NullableNumberField } from './sections/fields.js';
+import { SERVICE_PRESETS, type ServicePreset } from './presets.js';
+import { blockNegativeNumberKeys } from './sections/fields.js';
 import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
 import {
   makeProfileDraft,
@@ -19,12 +19,6 @@ import {
  * disables a service and never overwrites an existing service's options or prices.
  */
 
-/** Mirrors MAX_OPTIONS_PER_SERVICE in server/lib/services.ts — UX only (it hides the Add button);
- * the settings PUT is the authority and rejects an oversized payload independently. Mirrored
- * rather than imported for the same reason MAX_SERVICES' 6 is below: the admin bundle does not
- * import server modules. */
-const MAX_PACK_ROWS = 8;
-
 type PresetState = {
   preset: ServicePreset;
   existing: Settings['services'][number] | undefined;
@@ -33,110 +27,6 @@ type PresetState = {
   /** Has options — selecting it enables it with its EXISTING options; no price input. */
   alreadyPriced: boolean;
 };
-
-/** One preset option's editable fields — time window, capacity, weekdays-only — mirroring the
- * Services & rates option-row idioms (the weekdays checkbox only exists while windowed, exactly
- * as there). Rendered only for per-walk/per-visit presets: the server rejects time windows on
- * non-duration services ("only services with timed options can have a time window"), and capacity for
- * boarding/house-sitting capacity is a per-service setting (Services & rates), not per-option. */
-function PresetOptionFields({
-  option,
-  onChange,
-  onRemove,
-}: {
-  option: PresetOption;
-  onChange: (next: PresetOption) => void;
-  /** Absent on the last remaining row — a preset must always write at least one option. */
-  onRemove?: () => void;
-}) {
-  const windowed = option.startTime !== null && option.endTime !== null;
-  return (
-    <div>
-      <div className="pb-inline">
-        <input
-          aria-label={`Name for the "${option.label}" slot`}
-          value={option.label}
-          onChange={(e) => onChange({ ...option, label: e.target.value })}
-        />
-        {onRemove && (
-          <button type="button" onClick={onRemove}>
-            Remove
-          </button>
-        )}
-      </div>
-      <div className="pb-inline">
-        Pickup window (optional)
-        <input
-          type="time"
-          aria-label="Pickup window start"
-          value={option.startTime ?? ''}
-          onChange={(e) => onChange({ ...option, startTime: e.target.value || null })}
-        />
-        <input
-          type="time"
-          aria-label="Pickup window end"
-          value={option.endTime ?? ''}
-          onChange={(e) => onChange({ ...option, endTime: e.target.value || null })}
-        />
-        <NullableNumberField
-          label="Capacity"
-          value={option.capacity}
-          onChange={(capacity) => onChange({ ...option, capacity })}
-        />
-        {windowed && (
-          <label className="pb-inline">
-            <input
-              type="checkbox"
-              checked={option.weekdaysOnly}
-              onChange={(e) => onChange({ ...option, weekdaysOnly: e.target.checked })}
-            />
-            Weekdays only
-          </label>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Minutes since midnight for an "HH:MM" clock string. */
-function minutesOf(hhmm: string): number {
-  const [h, m] = hhmm.split(':');
-  return Number(h) * 60 + Number(m);
-}
-function clockOf(minutes: number): string {
-  const m = Math.min(Math.max(minutes, 0), 23 * 60 + 59);
-  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-}
-
-/**
- * The next row an "Add another slot" click appends — the ServiceEditor `addTier` idiom: derive
- * sensible values from the LAST row instead of dropping an empty one on the sitter.
- *
- * Capacity and the weekdays-only flag are cloned outright (a sitter running two packs runs them
- * the same way), and a windowed row's clock window is pushed forward by its own length so the new
- * slot starts where the last one ended rather than overlapping it. The label gets a numeric suffix
- * because the settings PUT rejects two options of one service sharing a name.
- */
-function nextPresetOption(rows: PresetOption[]): PresetOption {
-  const last = rows[rows.length - 1];
-  const windowed = last?.startTime != null && last?.endTime != null;
-  const span = windowed ? minutesOf(last.endTime!) - minutesOf(last.startTime!) : 0;
-  const startTime = windowed ? last.endTime! : null;
-  const endTime = windowed ? clockOf(minutesOf(last.endTime!) + span) : null;
-  const base = (last?.label ?? 'Slot').replace(/\s+\d+$/, '');
-  let label = `${base} ${rows.length + 1}`;
-  for (let n = rows.length + 1; rows.some((r) => r.label === label); n++)
-    label = `${base} ${n + 1}`;
-  return {
-    label,
-    // Windowed options derive their duration server-side; unwindowed ones keep the last row's.
-    durationMinutes: windowed ? null : (last?.durationMinutes ?? null),
-    startTime,
-    endTime,
-    capacity: last?.capacity ?? null,
-    weekdaysOnly: last?.weekdaysOnly ?? false,
-  };
-}
 
 export function SetupWizard({
   settings,
@@ -186,12 +76,6 @@ export function SetupWizard({
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
 
-  // Opt-in customization (v2 spec): per-preset REPLACEMENT option payloads, edited via the
-  // step-3 "Customize" disclosure. Keyed by preset id; absent = the stock preset payload. These
-  // exist only in memory for THIS run — an existing service's saved options are never touched
-  // (alreadyPriced presets get no disclosure at all).
-  const [optionEdits, setOptionEdits] = useState<Record<string, PresetOption[]>>({});
-
   // Step 4 (calendar): connect is in flight while awaiting the popup open; disabled flips true
   // once a start 503s (server OAuth unconfigured), swapping the Connect button for a ⚠ note.
   // Connected-vs-not is read live from settings.calendar.status (App re-passes fresh settings
@@ -213,10 +97,6 @@ export function SetupWizard({
       setConnecting(false);
     }
   };
-
-  /** Options the apply loop will stamp the rate onto for a preset this run. */
-  const presetOptions = (preset: ServicePreset): PresetOption[] =>
-    optionEdits[preset.id] ?? preset.options;
 
   /**
    * What a SECOND pet will cost on this preset, in the sitter's own money language.
@@ -400,9 +280,12 @@ export function SetupWizard({
       // batch-contract tests), so a rejection leaves no service half-applied.
       const services = fulfilled.map(({ value: { ps, type } }) => {
         const rate = Number(prices[ps.preset.id]);
+        // The wizard sets PRICES only — the preset's own option payload is written verbatim with
+        // the sitter's rate stamped on it (slot names, windows and capacities are edited later
+        // under Services & Rates; see the step-3 "Customize" note).
         const options: ServiceOptionForm[] = ps.alreadyPriced
           ? ps.existing!.options // never overwrite existing options/prices — re-sent verbatim
-          : presetOptions(ps.preset).map((o) => ({ ...o, rate, petRates: [] }));
+          : ps.preset.options.map((o) => ({ ...o, rate, petRates: [] }));
         return { type, enabled: true, options };
       });
       await adminFetch(token, `/api/${slug}/admin/settings`, {
@@ -452,7 +335,7 @@ export function SetupWizard({
 
         {step === 2 && (
           <>
-            <h2>What do you offer?</h2>
+            <h2>What Services Do You Offer?</h2>
             <p className="pb-hint">Tap everything you offer — you can fine-tune it all later.</p>
             <div className="pb-wizard-grid">
               {states.map(({ preset, existing, alreadyOn }) => {
@@ -519,7 +402,7 @@ export function SetupWizard({
 
         {step === 3 && (
           <>
-            <h2>Set your prices</h2>
+            <h2>Set Your Prices</h2>
             <p className="pb-hint">
               Whole dollars. Times and capacities are prefilled — change anything later in Services
               &amp; Rates.
@@ -547,6 +430,11 @@ export function SetupWizard({
                         !isValidRate(Number(prices[ps.preset.id]))
                       }
                       value={prices[ps.preset.id] ?? ''}
+                      // Same inline prevention the nullable number fields got: a price can never
+                      // be negative, so the sign/exponent keys never reach the box. The value
+                      // itself stays a raw string — `priceValid` (isValidRate) is what gates the
+                      // button, and it must keep seeing a half-typed entry as it is.
+                      onKeyDown={blockNegativeNumberKeys(1)}
                       onChange={(e) =>
                         setPrices((cur) => ({ ...cur, [ps.preset.id]: e.target.value }))
                       }
@@ -559,53 +447,23 @@ export function SetupWizard({
                   ['visit', 'walk'].includes(SERVICE_TEMPLATES[ps.preset.template].rateUnit) && (
                     <details className="pb-wizard-custom">
                       <summary>Customize</summary>
+                      {/* Setting up = setting PRICES. Everything else about a service has a home
+                          on Services & Rates, where it is editable forever; asking a brand-new
+                          sitter to also name slots and pick capacities before she has a single
+                          client is work she cannot yet judge. This note is what a sitter who
+                          opens "Customize" looking for those fields finds instead. */}
                       <p className="pb-hint">
-                        Each row is one slot clients can book, with its own window and capacity. One
-                        price covers them all — change any of it later in Services &amp; Rates.
+                        Prices are the only thing to set right now — that&rsquo;s all a client needs
+                        to book you.
                       </p>
-                      {presetOptions(ps.preset).map((o, oi) => (
-                        <PresetOptionFields
-                          key={oi}
-                          option={o}
-                          onChange={(next) => {
-                            const options = [...presetOptions(ps.preset)];
-                            options[oi] = next;
-                            setOptionEdits((cur) => ({ ...cur, [ps.preset.id]: options }));
-                          }}
-                          onRemove={
-                            presetOptions(ps.preset).length > 1
-                              ? () =>
-                                  setOptionEdits((cur) => ({
-                                    ...cur,
-                                    [ps.preset.id]: presetOptions(ps.preset).filter(
-                                      (_, k) => k !== oi,
-                                    ),
-                                  }))
-                              : undefined
-                          }
-                        />
-                      ))}
-                      {presetOptions(ps.preset).length < MAX_PACK_ROWS ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOptionEdits((cur) => ({
-                              ...cur,
-                              [ps.preset.id]: [
-                                ...presetOptions(ps.preset),
-                                nextPresetOption(presetOptions(ps.preset)),
-                              ],
-                            }))
-                          }
-                        >
-                          Add another slot
-                        </button>
-                      ) : (
-                        <p className="pb-hint">
-                          That&rsquo;s the limit of {MAX_PACK_ROWS} slots on one service. Remove one
-                          to add another.
-                        </p>
-                      )}
+                      {/* Deliberately not a link: this step has unsaved prices and selections on
+                          it, and navigating away would throw them out mid-setup. */}
+                      <p className="pb-hint">
+                        Slot names, extra time windows (a second pack walk in the afternoon, say),
+                        how many pets fit in each one, and everything else about this service are
+                        waiting for you under Services &amp; Rates, in the Settings menu, whenever
+                        you want them. Nothing here is locked in.
+                      </p>
                     </details>
                   )}
               </div>
@@ -650,7 +508,7 @@ export function SetupWizard({
 
         {step === 4 && (
           <>
-            <h2>Connect your calendar</h2>
+            <h2>Connect Your Calendar</h2>
             {calendarDisabled ? (
               <p className="pb-hint">
                 ⚠ Calendar sync isn&rsquo;t set up on this server. You can finish setup now and
@@ -710,7 +568,7 @@ export function SetupWizard({
 
         {step === 5 && (
           <>
-            <h2>Services saved!</h2>
+            <h2>Services Saved!</h2>
             <p>Fine-tune options, capacities, and questions anytime in Services &amp; Rates.</p>
             <p>
               {/* Booking is invite-only, so a sitter with zero clients is NOT bookable yet —

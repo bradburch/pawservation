@@ -170,7 +170,7 @@ describe('google-calendar', () => {
     expect(r.start).toEqual({ date: '2030-01-10' });
     expect(r.end).toEqual({ date: '2030-01-13' });
     // Pet NAMES lead the summary (not a bare count), and the customer moved to the description.
-    expect(r.summary).toBe('Boarding — Rex, Fido');
+    expect(r.summary).toBe('Rex, Fido — Boarding');
     expect(r.description).toContain('Customer: a@b.c');
   });
 
@@ -233,7 +233,7 @@ describe('google-calendar', () => {
       status: 'pending',
       timezone: 'America/Los_Angeles',
     });
-    expect(r.summary).toBe('[REQUEST] Boarding — Bella, Mochi');
+    expect(r.summary).toBe('[REQUEST] Bella, Mochi — Boarding');
     expect(r.description).toBe(
       'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
         'Requested via Pawservation — confirm or decline in your dashboard.',
@@ -257,7 +257,7 @@ describe('google-calendar', () => {
       status: 'confirmed',
       timezone: 'America/Los_Angeles',
     });
-    expect(r.summary).toBe('Boarding — Bella, Mochi');
+    expect(r.summary).toBe('Bella, Mochi — Boarding');
     expect(r.description).toBe(
       'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150',
     );
@@ -281,7 +281,7 @@ describe('google-calendar', () => {
       status: 'pending',
       timezone: 'America/Los_Angeles',
     });
-    expect(r.summary).toBe('[REQUEST] Boarding — 3 pets');
+    expect(r.summary).toBe('[REQUEST] 3 pets — Boarding');
     // No customer + no cost lines when both are absent, but the pending line still appears.
     expect(r.description).toBe(
       'Service: Boarding\nPets: 3 pets\nRequested via Pawservation — confirm or decline in your dashboard.',

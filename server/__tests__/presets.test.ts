@@ -25,8 +25,10 @@ describe('service presets', () => {
 
   it('keeps the pre-rename slugs matchable so an existing service is never duplicated', () => {
     const matches = (id: string) => SERVICE_PRESETS.find((p) => p.id === id)!.matchTypes;
-    expect(matches('multi-pack-walks')).toEqual(
-      expect.arrayContaining(['multi-pack-walks', 'multiple-pack-walks']),
+    // The retired "Multiple Pack Walks" preset folded into the single pack-walks tile — its slugs
+    // stay matchable there so an existing service is recognised rather than duplicated.
+    expect(matches('pack-walks')).toEqual(
+      expect.arrayContaining(['pack-walks', 'multi-pack-walks', 'multiple-pack-walks']),
     );
     expect(matches('solo-walker')).toEqual(expect.arrayContaining(['solo-walker', 'solo-walks']));
     expect(matches('daycare')).toEqual(expect.arrayContaining(['daycare', 'day-care']));
@@ -38,10 +40,15 @@ describe('service presets', () => {
   it('carries the user-facing names verbatim (plural walk names are deliberate)', () => {
     const label = (id: string) => SERVICE_PRESETS.find((p) => p.id === id)!.label;
     expect(label('pack-walks')).toBe('Pack Walks');
-    expect(label('multi-pack-walks')).toBe('Multiple Pack Walks');
     expect(label('solo-walker')).toBe('Solo Walks');
     expect(label('daycare')).toBe('Daycare');
     expect(label('checkin')).toBe('Check-in');
+  });
+
+  it('offers exactly one pack-walk tile — a second daily pack is an OPTION, not a preset', () => {
+    expect(SERVICE_PRESETS.filter((p) => p.id.endsWith('pack-walks')).map((p) => p.id)).toEqual([
+      'pack-walks',
+    ]);
   });
 
   it('names a template that exists, so the create POST can never 400 on "Unknown template."', () => {

@@ -5,6 +5,7 @@ import type { Customer, ImportResult, Pet, PetGroupRate } from '../../shared-ui/
 import { adminApi } from '../../shared-ui/api.js';
 import { IconUsers } from '../../shared-ui/icons';
 import { Hint } from '../Hint';
+import { buildClientImportPrompt } from '../importPrompt.js';
 import type { ServiceForm } from '../shared.js';
 
 /** The full pet-type registry entry (slug + display label), same shape as `Settings.petTypes`. */
@@ -125,6 +126,33 @@ function PetAdder({
         {busy ? 'Adding…' : 'Add pet'}
       </button>
     </div>
+  );
+}
+
+/**
+ * Copies the AI-reformatting prompt (`buildClientImportPrompt`) to the clipboard, with THIS
+ * tenant's own pet types baked in at copy-time — the prompt has to name the exact codes this
+ * business's registry accepts, and that list is only known once the settings have loaded, so it is
+ * interpolated here rather than shipped as a static string. Disabled with no pet types configured
+ * for the same reason the manual add form and the CSV import are effectively unusable then: there's
+ * nothing valid to put in the Pet Type column yet.
+ */
+function CopyImportPromptButton({ petTypes }: { petTypes: PetType[] }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildClientImportPrompt(petTypes));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 5000);
+    } catch {
+      /* clipboard denied — there's no on-screen text box here to fall back to selecting; the
+       * sitter can still write their own prompt from the "Download example CSV" format. */
+    }
+  };
+  return (
+    <button type="button" onClick={() => void copy()} disabled={petTypes.length === 0}>
+      {copied ? 'Copied!' : 'Need help formatting your list? Copy AI prompt'}
+    </button>
   );
 }
 
@@ -1022,6 +1050,14 @@ export function ClientsSection({
           Download example CSV
         </a>
       </div>
+      <div className="pb-row">
+        <CopyImportPromptButton petTypes={petTypes} />
+        <span className="pb-hint">
+          Paste this into ChatGPT or Claude, then paste your own client list (from a spreadsheet,
+          notes app, anything) right after it — it hands back a CSV file in the format below, ready
+          to import.
+        </span>
+      </div>
       <p className="pb-applies">
         One row per pet, repeating the email for a client with several pets — the name only has to
         appear once. Every client needs at least one pet: rows that would leave a client with none,
@@ -1087,8 +1123,8 @@ export function ClientsSection({
           <table className="pb-clients-table">
             <thead>
               <tr>
-                <th scope="col">Account</th>
                 <th scope="col">Pets</th>
+                <th scope="col">Account</th>
                 <th scope="col">People</th>
                 <th scope="col">Contact</th>
                 <th scope="col">Status</th>
@@ -1106,14 +1142,18 @@ export function ClientsSection({
                     className={group.key === highlightKey ? 'pb-row-hit' : undefined}
                   >
                     <th scope="row">
-                      <a href={`#clients/${group.key}`}>{title || '(no name)'}</a>
+                      <a href={`#clients/${group.key}`}>
+                        {pets.length === 0 ? '—' : petSummary(pets, labelBySlug)}
+                      </a>
+                    </th>
+                    <td className="pb-clients-secondary">
+                      {title || '(no name)'}
                       {group.active ? null : (
                         <span className="pb-chip pb-chip-warn">No active pets</span>
                       )}
-                    </th>
-                    <td>{pets.length === 0 ? '—' : petSummary(pets, labelBySlug)}</td>
+                    </td>
                     <td>{owners.length}</td>
-                    <td>
+                    <td className="pb-clients-secondary">
                       {first ? first.email : '—'}
                       {first?.phone ? ` · ${first.phone}` : ''}
                       {owners.length > 1 ? ` +${owners.length - 1} more` : ''}

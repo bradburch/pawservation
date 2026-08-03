@@ -1,10 +1,11 @@
 import { DEFAULT_TIMEZONE } from '../../src/shared/index.js';
 import { Hint } from './Hint';
+import { blockNegativeNumberKeys, clampNullableNumber } from './sections/fields.js';
 import type { Settings, SettingsPayload } from './shared.js';
 import { TIMEZONES } from './timezones.js';
 
 /**
- * Step 1 of the setup wizard — "About your business"
+ * Step 1 of the setup wizard — "About Your Business"
  * (spec: docs/superpowers/specs/2026-07-18-onboarding-wizard-v2-design.md).
  *
  * Purely presentational: SetupWizard owns the draft state (so its single `applying` flag keeps
@@ -68,7 +69,7 @@ export function WizardProfileStep({
 }) {
   return (
     <>
-      <h2>About your business</h2>
+      <h2>About Your Business</h2>
       <p className="pb-hint">
         This is what clients see on your booking page — change any of it later under Business.
       </p>
@@ -89,7 +90,12 @@ export function WizardProfileStep({
         />
       </label>
       <label>
-        Contact phone <span className="pb-hint">(optional)</span>
+        {/* `.pb-wrap label` is a COLUMN flex container, so a bare "Contact phone" + hint span are
+            two flex items and "(optional)" drops onto its own line. One `.pb-labelrow` (inline-flex)
+            keeps the words and their hint on one line, exactly as the fields below do. */}
+        <span className="pb-labelrow">
+          Contact phone <span className="pb-hint">(optional)</span>
+        </span>
         <input
           type="tel"
           placeholder="(555) 555-0123"
@@ -113,8 +119,9 @@ export function WizardProfileStep({
       </label>
       <label>
         <span className="pb-labelrow">
-          How far ahead clients can book <span className="pb-hint">(months, blank = no limit)</span>
-          <Hint label="How far ahead clients can book">
+          How far ahead can clients book?{' '}
+          <span className="pb-hint">(months, blank = no limit)</span>
+          <Hint label="How far ahead can clients book?">
             One limit for your whole business. Set it to 8 and nobody can request a date more than 8
             months from today — days past that simply can&rsquo;t be picked. Each service can also
             require notice (&ldquo;days of notice needed&rdquo; under Services &amp; Rates).
@@ -124,7 +131,8 @@ export function WizardProfileStep({
           type="number"
           min={1}
           max={24}
-          aria-label="How far ahead clients can book, in months (blank = no limit)"
+          step={1}
+          aria-label="How far ahead can clients book, in months (blank = no limit)"
           aria-invalid={
             draft.maxAdvanceMonths !== null &&
             (!Number.isInteger(draft.maxAdvanceMonths) ||
@@ -132,10 +140,17 @@ export function WizardProfileStep({
               draft.maxAdvanceMonths > 24)
           }
           value={draft.maxAdvanceMonths ?? ''}
+          // Clamped to this input's OWN min/max as the sitter types — `min` alone is advisory and
+          // a negative/decimal month would otherwise reach the settings PUT and 400 (fields.js).
+          onKeyDown={blockNegativeNumberKeys(1)}
           onChange={(e) =>
             setDraft({
               ...draft,
-              maxAdvanceMonths: e.target.value === '' ? null : Number(e.target.value),
+              maxAdvanceMonths: clampNullableNumber(e.target.value, {
+                min: 1,
+                max: 24,
+                current: draft.maxAdvanceMonths,
+              }),
             })
           }
         />

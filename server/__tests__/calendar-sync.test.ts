@@ -192,7 +192,7 @@ describe('updateBookingCalendarEvent', () => {
     expect(init.method).toBe('PATCH');
     const resource = JSON.parse(init.body as string) as { summary: string };
     expect(resource.summary).not.toContain('[REQUEST]');
-    expect(resource.summary).toBe('Boarding — 1 pet');
+    expect(resource.summary).toBe('1 pet — Boarding');
   });
 
   it('recreates a hand-deleted event (PATCH 404 → create) and replaces the stored id', async () => {
@@ -350,8 +350,8 @@ describe('backfillCalendarEvents', () => {
 
     // Both future, unsynced bookings got an event, each with the status-correct summary. (The
     // shared test DB seeds other future TENANT_A bookings too; we assert about ours specifically.)
-    expect(bodies['bf_pending']).toBe('[REQUEST] Boarding — 1 pet');
-    expect(bodies['bf_confirmed']).toBe('Boarding — 1 pet');
+    expect(bodies['bf_pending']).toBe('[REQUEST] 1 pet — Boarding');
+    expect(bodies['bf_confirmed']).toBe('1 pet — Boarding');
     // The cancelled and past bookings were never sent to Google.
     expect(bodies).not.toHaveProperty('bf_cancelled');
     expect(bodies).not.toHaveProperty('bf_past');

@@ -3,6 +3,7 @@ import { IconStore } from '../../shared-ui/icons';
 import type { SettingsSectionProps } from '../shared.js';
 import { Hint } from '../Hint';
 import { TIMEZONES } from '../timezones.js';
+import { blockNegativeNumberKeys, clampNullableNumber } from './fields.js';
 
 export function BusinessSection({
   settings,
@@ -21,7 +22,7 @@ export function BusinessSection({
   return (
     <>
       <h2>
-        <IconStore size={18} /> Your business
+        <IconStore size={18} /> Your Business
         <Hint label="Business">
           The basics your booking page shows clients — your name, color, and contact details.
           Changes wait until you press Save.
@@ -82,8 +83,9 @@ export function BusinessSection({
       </label>
       <label>
         <span className="pb-labelrow">
-          How far ahead clients can book <span className="pb-hint">(months, blank = no limit)</span>
-          <Hint label="How far ahead clients can book">
+          How far ahead can clients book?{' '}
+          <span className="pb-hint">(months, blank = no limit)</span>
+          <Hint label="How far ahead can clients book?">
             One limit for your whole business. Set it to 8 and nobody can request a date more than 8
             months from today — days past that simply can&rsquo;t be picked. Each service can also
             require notice (&ldquo;days of notice needed&rdquo; under Services &amp; Rates).
@@ -93,7 +95,8 @@ export function BusinessSection({
           type="number"
           min={1}
           max={24}
-          aria-label="How far ahead clients can book, in months (blank = no limit)"
+          step={1}
+          aria-label="How far ahead can clients book, in months (blank = no limit)"
           aria-invalid={
             settings.maxAdvanceMonths !== null &&
             (!Number.isInteger(settings.maxAdvanceMonths) ||
@@ -101,10 +104,17 @@ export function BusinessSection({
               settings.maxAdvanceMonths > 24)
           }
           value={settings.maxAdvanceMonths ?? ''}
+          // Clamped to this input's OWN min/max as the sitter types — `min` alone is advisory and
+          // a negative/decimal month would otherwise reach the settings PUT and 400 (fields.js).
+          onKeyDown={blockNegativeNumberKeys(1)}
           onChange={(e) =>
             setSettings({
               ...settings,
-              maxAdvanceMonths: e.target.value === '' ? null : Number(e.target.value),
+              maxAdvanceMonths: clampNullableNumber(e.target.value, {
+                min: 1,
+                max: 24,
+                current: settings.maxAdvanceMonths,
+              }),
             })
           }
         />

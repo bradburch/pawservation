@@ -194,6 +194,11 @@ export type AdminBooking = {
   departureTime: string | null;
   optionKey: string | null;
   petCount: number;
+  /** Names of the pets on this booking, in the order the server grouped them (by name); [] for a
+   * materialized external/blocked row, which has no pets. This is the row's primary label — pet
+   * names lead, owner name/email is secondary (CLAUDE.md: "everything should be categorized by
+   * the pets"). */
+  petNames: string[];
   /** True for a materialized Google Calendar event: read-only, blocks capacity, no customer. */
   external: boolean;
   /** The Google event's title, for calendar display. Null unless external. */
