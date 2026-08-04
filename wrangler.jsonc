@@ -18,6 +18,18 @@
   "observability": {
     "enabled": true,
   },
+  // Where a premium surface lives, published on `GET /api/:slug/config` so an embed that cannot
+  // resolve a relative path — anything served from a *.workers.dev host, where the
+  // `/premium/*` zone route does not apply — has an absolute origin to use instead.
+  //
+  // A plain var, not a secret: it is a public URL that appears in every config response.
+  //
+  // `premiumOrigin()` returns null unless this is an absolute origin, and the flag it accompanies
+  // is UX only — the paid tier does its own server-side entitlement check on every request — so a
+  // wrong value here costs a surface that will not mount, never access that should not exist.
+  "vars": {
+    "PREMIUM_ORIGIN": "https://pawservation.com",
+  },
   // Calendar sweep: outbox re-drive + Google reconcile for every connected tenant.
   // server/index.ts exports the matching scheduled() handler.
   "triggers": {
