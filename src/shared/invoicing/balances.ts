@@ -31,7 +31,7 @@
  * `serializeAnalytics`). This module returns per-household figures only and computes no grand total,
  * so there is nothing here for a caller to net by accident.
  */
-import { buildAccounts, type OwnerPetLink } from './accounts.js';
+import { buildAccounts, type Account, type OwnerPetLink } from './accounts.js';
 
 /**
  * One booking's money, already reduced to two numbers by the caller. `ownerId` is the customer the
@@ -59,12 +59,67 @@ export type HouseholdBooking = {
  */
 export type HouseholdPayment = { accountId: string; amount: number };
 
+/**
+ * PAYMENT ANCHORS — which household a payment filed under a pet that is no longer in the account
+ * graph belongs to. The only pets that reach here are DECEASED ones: the caller drops them from
+ * `links` because a dead pet cannot be booked or quoted, which is a statement about BOOKINGS and
+ * was never a statement about money. A payment does not stop having been received when one of the
+ * household's pets dies.
+ *
+ * Resolution runs through the pet's OWNERS, over these very components: a deceased pet keeps its
+ * owner edges, those owners are still customers, and their household is still `buildAccounts`'s
+ * own answer. That is a READ of the existing graph, not an inference about where money should go —
+ * which is exactly why it resolves NOTHING in the two cases where it would become one:
+ *
+ *  - the anchor's owners hold no live pet between them, so there is no household to resolve to;
+ *  - the anchor's owners now sit in two different households (the edge that joined them was the
+ *    dead pet itself), so "which one" has no answer the data can give.
+ *
+ * Both leave the payment unresolved, and `buildHouseholdBalances` then reports it in
+ * `unattachedPaymentAccountIds`: visible, and attached to nobody.
+ */
+export function buildPaymentAnchors(
+  accounts: Account[],
+  anchorLinks: OwnerPetLink[],
+): Map<string, string> {
+  const accountByOwner = new Map<string, string>();
+  const componentPets = new Set<string>();
+  for (const account of accounts) {
+    for (const ownerId of account.ownerIds) accountByOwner.set(ownerId, account.id);
+    for (const petId of account.petIds) componentPets.add(petId);
+  }
+
+  // petId -> the distinct households its owners belong to. Exactly one of them ⇒ resolved.
+  const candidates = new Map<string, Set<string>>();
+  for (const link of anchorLinks) {
+    if (componentPets.has(link.petId)) continue; // already a member; it needs no anchor
+    const accountId = accountByOwner.get(link.ownerId);
+    const found = candidates.get(link.petId) ?? new Set<string>();
+    if (accountId !== undefined) found.add(accountId);
+    candidates.set(link.petId, found);
+  }
+
+  const anchors = new Map<string, string>();
+  for (const [petId, accountIds] of candidates) {
+    if (accountIds.size === 1) anchors.set(petId, [...accountIds][0]!);
+  }
+  return anchors;
+}
+
 /** One household's statement. `balance` negative means the household is IN CREDIT. */
 export type HouseholdBalance = {
   /** The account id `buildAccounts` produced: the lexicographically-first pet in the component. */
   accountId: string;
   ownerIds: string[];
   petIds: string[];
+  /**
+   * Pets that are NOT in the component (they have died) but under whose ids a payment still
+   * resolves here, by `buildPaymentAnchors`. Deliberately separate from `petIds`: these pets are
+   * not part of the account, they are only ids a payment may legitimately have been filed under.
+   * A reader resolving a payment — or an account id from before the death — must consider both
+   * lists; a reader asking "which pets does this household have?" wants `petIds` alone.
+   */
+  anchorPetIds: string[];
   /** Every booking rolled into this balance, in the order the caller supplied them. */
   bookingIds: string[];
   expectedTotal: number;
@@ -83,21 +138,33 @@ export type HouseholdBalances = {
    */
   unattachedBookingIds: string[];
   /**
-   * Account ids on household payments that resolve to no current household — the pet the payment
-   * was filed under has since died or been removed, so it holds no edge and no component contains
-   * it. Reported for the same reason as `unattachedBookingIds`: the money was received and still
-   * counts as revenue, and attaching it to a household it might not belong to is the one outcome
-   * worse than saying so.
+   * Account ids on household payments that resolve to no household AT ALL — not by membership, and
+   * not through `anchorLinks` either, which means the pet the payment was filed under has been
+   * REMOVED (a `deleteCustomer` cascade takes its owner edges with it) or its owners have since
+   * scattered across households. A pet that merely died is NOT here: it still anchors its payment.
+   *
+   * Reported for the same reason as `unattachedBookingIds`, and more urgently: the money was
+   * received, it still counts as revenue, and the caller must show it somewhere. Attaching it to a
+   * household that might not be its own is the one outcome worse than saying so out loud.
    */
   unattachedPaymentAccountIds: string[];
 };
 
 export function buildHouseholdBalances(input: {
   links: OwnerPetLink[];
+  /**
+   * Owner<->pet edges for pets that are NOT in `links` because they have died. Used only to
+   * resolve payments filed under them (`buildPaymentAnchors`) — never to form an account, never to
+   * name one, and never to add a pet to a household. Omitted ⇒ a payment whose anchor pet has died
+   * resolves to nothing and is reported unattached, which is what this module did before anchors
+   * existed.
+   */
+  anchorLinks?: OwnerPetLink[];
   bookings: HouseholdBooking[];
   payments?: HouseholdPayment[];
 }): HouseholdBalances {
   const accounts = buildAccounts(input.links);
+  const anchors = buildPaymentAnchors(accounts, input.anchorLinks ?? []);
 
   // Both indexes point at an account id, so attaching a booking is two map lookups rather than a
   // scan per booking. `buildAccounts` returns components, so neither key can appear twice.
@@ -146,7 +213,10 @@ export function buildHouseholdBalances(input: {
    */
   const unattachedPaymentAccountIds: string[] = [];
   for (const payment of input.payments ?? []) {
-    const accountId = accountByPet.get(payment.accountId);
+    // Membership first — the ordinary case. Then the anchor index, which covers the pet that has
+    // DIED since the payment was filed under it: same household, read through the owners the dead
+    // pet still holds edges to. Only when neither answers is the payment genuinely homeless.
+    const accountId = accountByPet.get(payment.accountId) ?? anchors.get(payment.accountId);
     if (accountId === undefined) {
       unattachedPaymentAccountIds.push(payment.accountId);
       continue;
@@ -169,6 +239,10 @@ export function buildHouseholdBalances(input: {
         accountId: account.id,
         ownerIds: account.ownerIds,
         petIds: account.petIds,
+        anchorPetIds: [...anchors.entries()]
+          .filter(([, id]) => id === account.id)
+          .map(([petId]) => petId)
+          .sort(),
         bookingIds: total.bookingIds,
         expectedTotal: total.expected,
         paidTotal: total.paid,

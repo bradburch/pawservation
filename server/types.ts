@@ -291,6 +291,17 @@ export type AnalyticsData = {
    * re-derives no part of it — balances are server-side money, like every other figure here.
    */
   households: HouseholdBalanceRow[];
+  /**
+   * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — the pet their `AccountId` names has been
+   * DELETED (a `deleteCustomer` cascade removes the pet and its owner edges together, and never
+   * touches `Payments`), so nothing left in the database can say whose money it was. Published
+   * beside the balances precisely because every revenue figure above still counts it:
+   * `Σ households.paidTotal + Σ orphanedPayments.total` is the whole of the household money, and
+   * this list is what keeps that identity true rather than leaving a payment counted in one view
+   * and silently absent from the other. A pet that merely DIED is never here — its payments still
+   * resolve to its own household (`buildPaymentAnchors`).
+   */
+  orphanedPayments: { accountId: string; total: number }[];
 };
 
 /**
@@ -305,6 +316,10 @@ export type HouseholdBalanceRow = {
   /** Every pet of the component. A household payment is matched against THIS, not against
    *  `accountId`: the account id is the first-sorted pet and a pet added later renames it. */
   petIds: string[];
+  /** Pets that have DIED but under whose ids payments of this household were filed, so those
+   *  payments still resolve here (`buildPaymentAnchors`). Not members of the household: kept apart
+   *  from `petIds` so a dead pet is never listed as one of a client's pets. */
+  anchorPetIds: string[];
   bookingIds: string[];
   expectedTotal: number;
   paidTotal: number;

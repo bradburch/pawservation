@@ -78,6 +78,7 @@ export {
 } from './invoicing/account-groups.js';
 export {
   buildHouseholdBalances,
+  buildPaymentAnchors,
   type HouseholdBalance,
   type HouseholdBalances,
   type HouseholdBooking,

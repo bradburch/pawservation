@@ -327,11 +327,22 @@ export type AnalyticsPayload = {
     owners: { endUserId: string; name: string | null; email: string | null }[];
     /** Every pet of the household. A household payment is recorded against one of these ids. */
     petIds: string[];
+    /** Pets that have died but that payments of this household are still filed under, so the money
+     *  stays on this balance. Not part of the household's pets; never rendered as one. */
+    anchorPetIds: string[];
     bookingIds: string[];
     expectedTotal: number;
     paidTotal: number;
     balance: number;
   }[];
+  /**
+   * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — the pet whose id the payment was filed under
+   * has been deleted along with its ownership edges, so nothing on the server can say whose money
+   * it is. It is still counted in the revenue tiles above, which is exactly why it is published
+   * here: shown, the sitter can re-record it against the right household and delete the stray;
+   * unpublished, it would be revenue with no statement anywhere that accounts for it.
+   */
+  orphanedPayments: { accountId: string; total: number }[];
 };
 
 /**

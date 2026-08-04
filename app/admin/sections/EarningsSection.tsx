@@ -395,6 +395,30 @@ export function EarningsView({
         </ul>
       )}
 
+      {/* PAYMENTS THAT BELONG TO NO HOUSEHOLD. A household payment is filed under a PET id, and a
+          deleted customer takes her pets — and their ownership edges — with her, leaving the
+          payment pointing at nothing. That money is still counted in the tiles above, so the one
+          thing this page must not do is drop it quietly: shown here, the sitter can re-record it
+          against the right household and delete the stray. The server never guesses a household
+          for it, and neither does this list. Nothing renders when there are none. */}
+      {data.orphanedPayments.length > 0 && (
+        <>
+          <h3>Payments with no household</h3>
+          <p className="pb-hint">
+            Recorded against a client or pet that has since been deleted, so they belong to no
+            balance below. They are still counted in the totals above. Re-record each one against
+            the right household, then delete the original.
+          </p>
+          <ul>
+            {data.orphanedPayments.map((o) => (
+              <li key={o.accountId}>
+                ${o.total} filed under a deleted pet ({o.accountId})
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
       <h3>Outstanding balances</h3>
       {data.outstanding.length === 0 ? (
         <p className="pb-hint">No outstanding balances.</p>

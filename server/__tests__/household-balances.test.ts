@@ -318,6 +318,7 @@ describe('household balances on the earnings payload', () => {
         accountId: string;
         owners: { endUserId: string; name: string | null; email: string | null }[];
         petIds: string[];
+        anchorPetIds: string[];
         bookingIds: string[];
         expectedTotal: number;
         paidTotal: number;
@@ -329,6 +330,8 @@ describe('household balances on the earnings payload', () => {
         accountId: rex,
         owners: [{ endUserId: jen.Id, name: 'Jen', email: 'jen@example.com' }],
         petIds: [rex],
+        // Empty until one of this household's pets dies holding a payment filed under its id.
+        anchorPetIds: [],
         bookingIds: [bookingId],
         expectedTotal: 100,
         paidTotal: 25,

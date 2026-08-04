@@ -29,6 +29,7 @@ import type { ServiceQuestion } from '../../src/shared/index.js';
 import {
   buildAccounts,
   buildHouseholdBalances,
+  buildPaymentAnchors,
   parseMixKey,
   quarterlyBreakdown,
 } from '../../src/shared/index.js';
@@ -1245,22 +1246,44 @@ export async function getAccountIdsByOwner(
 }
 
 /**
- * The pet ids of the household an account id names, or null when it names no household of this
- * tenant. Membership, not equality: the account id is the lexicographically-first pet of its
- * component, so a new pet sorting earlier RENAMES the household — and a payment filed under the old
- * name must still be found. Every household-payment read goes through this, so what the panel lists
- * and what the balance counts can never be two different sets.
+ * Every pet id a payment of this household may be FILED UNDER, or null when the account id names
+ * no household of this tenant.
+ *
+ * Membership, not equality: the account id is the lexicographically-first pet of its component, so
+ * a new pet sorting earlier RENAMES the household — and a payment filed under the old name must
+ * still be found. Every household-payment read goes through this, so what the panel lists and what
+ * the balance counts can never be two different sets.
+ *
+ * The set is the component's live pets PLUS its payment anchors — pets that have DIED since a
+ * payment was filed against them (`buildPaymentAnchors`). Without the anchors, marking the
+ * account-id pet deceased dropped its payments out of this list and out of `getHouseholdBalances`
+ * together, silently, while `Payments` kept counting them as revenue. Both lists are consulted for
+ * the same reason they are kept apart: a dead pet is a legitimate place for money to have been
+ * filed, and not a member of the household.
  */
 async function householdPetIds(
   db: D1Database,
   tenantId: string,
   accountId: string,
 ): Promise<string[] | null> {
-  const links = await listOwnerPetLinks(db, tenantId);
-  const account = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId }))).find(
-    (a) => a.petIds.includes(accountId),
+  const [links, deceasedLinks] = await Promise.all([
+    listOwnerPetLinks(db, tenantId),
+    listDeceasedOwnerPetLinks(db, tenantId),
+  ]);
+  const accounts = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })));
+  const anchors = buildPaymentAnchors(
+    accounts,
+    deceasedLinks.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })),
   );
-  return account ? account.petIds : null;
+  const anchoredAccountId = anchors.get(accountId);
+  const account = accounts.find(
+    (a) => a.petIds.includes(accountId) || a.id === anchoredAccountId,
+  );
+  if (!account) return null;
+  const anchorPetIds = [...anchors.entries()]
+    .filter(([, id]) => id === account.id)
+    .map(([petId]) => petId);
+  return [...account.petIds, ...anchorPetIds];
 }
 
 /** Every payment recorded against a household, newest paid-date first (listPaymentsForBooking's order). */
@@ -1663,7 +1686,42 @@ export async function getHouseholdBalances(
   db: D1Database,
   tenantId: string,
 ): Promise<HouseholdBalanceRow[]> {
-  const [moneyRes, petsRes, links, ownersRes, accountPaidRes] = await Promise.all([
+  return (await computeHouseholdRollup(db, tenantId)).households;
+}
+
+/**
+ * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — money received, still counted as revenue by
+ * every `Payments` aggregate, and attachable to nobody. Summed per stored account id.
+ *
+ * How a payment gets here at all: `Payments.AccountId` holds a PET id, and `deleteCustomer`
+ * cascades a pet nobody else owns — row and owner edges together — while deliberately never
+ * touching `Payments`. Once those edges are gone, no graph in this database can say which
+ * household the payment settled. A pet that merely DIED is NOT in this list: it keeps its owner
+ * edges, so `buildPaymentAnchors` still resolves it to its own household.
+ *
+ * Reported rather than guessed at, and rather than dropped. Guessing a household for money is the
+ * one thing this codebase refuses to do anywhere (`buildAccounts` refuses it, the Venmo importer
+ * refuses it); dropping it is worse still, because the analytics revenue line goes on counting it.
+ * `Σ household paidTotal + Σ orphaned = revenue` is the invariant that makes the two views agree,
+ * and it is only true because this list exists.
+ */
+export async function getOrphanedAccountPayments(
+  db: D1Database,
+  tenantId: string,
+): Promise<{ accountId: string; total: number }[]> {
+  return (await computeHouseholdRollup(db, tenantId)).orphanedPayments;
+}
+
+type HouseholdRollup = {
+  households: HouseholdBalanceRow[];
+  orphanedPayments: { accountId: string; total: number }[];
+};
+
+async function computeHouseholdRollup(
+  db: D1Database,
+  tenantId: string,
+): Promise<HouseholdRollup> {
+  const [moneyRes, petsRes, links, ownersRes, accountPaidRes, deceasedLinks] = await Promise.all([
     db
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId,
@@ -1702,6 +1760,9 @@ export async function getHouseholdBalances(
       )
       .bind(tenantId)
       .all<{ AccountId: string; Total: number }>(),
+    // Owner edges of DECEASED pets, which form no account and name none — they only let a payment
+    // filed under a pet that has since died still resolve to the household that made it.
+    listDeceasedOwnerPetLinks(db, tenantId),
   ]);
 
   const petsByBooking = new Map<string, string[]>();
@@ -1712,8 +1773,9 @@ export async function getHouseholdBalances(
   }
   const people = new Map(ownersRes.results.map((o) => [o.Id, o]));
 
-  const { households } = buildHouseholdBalances({
+  const { households, unattachedPaymentAccountIds } = buildHouseholdBalances({
     links: links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })),
+    anchorLinks: deceasedLinks.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })),
     bookings: moneyRes.results.map((row) => ({
       bookingId: row.BookingId,
       ownerId: row.EndUserId,
@@ -1731,19 +1793,32 @@ export async function getHouseholdBalances(
   // one in `outstanding`/`credits`, which is where their money already shows up. What must never
   // happen is attaching them to a household they are not in, which is why the pure module returns
   // them separately rather than guessing.
-  return households.map((h) => ({
-    accountId: h.accountId,
-    owners: h.ownerIds.map((id) => ({
-      endUserId: id,
-      name: people.get(id)?.Name ?? null,
-      email: people.get(id)?.Email ?? null,
+  //
+  // `unattachedPaymentAccountIds` IS published (see `getOrphanedAccountPayments`), and the
+  // asymmetry is the point: an unattached booking's money is still readable somewhere else on the
+  // page, whereas a household payment appears in exactly one place. Dropped here it would be
+  // invisible everywhere while `Payments` kept counting it as revenue.
+  const orphanedTotals = new Map(accountPaidRes.results.map((r) => [r.AccountId, r.Total]));
+  return {
+    households: households.map((h) => ({
+      accountId: h.accountId,
+      owners: h.ownerIds.map((id) => ({
+        endUserId: id,
+        name: people.get(id)?.Name ?? null,
+        email: people.get(id)?.Email ?? null,
+      })),
+      petIds: h.petIds,
+      anchorPetIds: h.anchorPetIds,
+      bookingIds: h.bookingIds,
+      expectedTotal: h.expectedTotal,
+      paidTotal: h.paidTotal,
+      balance: h.balance,
     })),
-    petIds: h.petIds,
-    bookingIds: h.bookingIds,
-    expectedTotal: h.expectedTotal,
-    paidTotal: h.paidTotal,
-    balance: h.balance,
-  }));
+    orphanedPayments: unattachedPaymentAccountIds.map((accountId) => ({
+      accountId,
+      total: orphanedTotals.get(accountId) ?? 0,
+    })),
+  };
 }
 
 /**
@@ -1780,7 +1855,12 @@ export async function getHouseholdDetail(
   accountId: string,
 ): Promise<HouseholdDetailRow | null> {
   const households = await getHouseholdBalances(db, tenantId);
-  const household = households.find((h) => h.petIds.includes(accountId));
+  // Membership over the component's pets OR its payment anchors: an account id from before the
+  // first-sorted pet DIED is still this household's id as far as the money filed under it is
+  // concerned, and a drill-down that 404'd on it would strand the payment it lists.
+  const household = households.find(
+    (h) => h.petIds.includes(accountId) || h.anchorPetIds.includes(accountId),
+  );
   if (!household) return null;
 
   const placeholders = household.bookingIds.map(() => '?').join(', ');
@@ -1877,7 +1957,9 @@ export async function getAnalytics(
 
   // Started before the aggregate round trip and awaited after it, so the household rollup rides
   // alongside the five aggregates rather than adding a serial hop to the dashboard's hottest read.
-  const householdsPending = getHouseholdBalances(db, tenantId);
+  // ONE rollup call gives both halves of the money: what each household holds, and what belongs to
+  // no household at all. Asking twice would read the whole tenant twice to answer one question.
+  const householdsPending = computeHouseholdRollup(db, tenantId);
 
   const [monthlyRes, byServiceRes, topClientsRes, outstandingRes, creditsRes] = await Promise.all([
     db
@@ -1965,6 +2047,7 @@ export async function getAnalytics(
   const byMonth = new Map(monthlyRes.results.map((r) => [r.Month, r.Total]));
   const monthly = months.map((month) => ({ Month: month, Total: byMonth.get(month) ?? 0 }));
   const { ytd, quarters } = quarterlyBreakdown(monthly, y);
+  const rollup = await householdsPending;
   return {
     monthly,
     ytd,
@@ -1973,7 +2056,8 @@ export async function getAnalytics(
     topClients: topClientsRes.results,
     outstanding: outstandingRes.results,
     credits: creditsRes.results,
-    households: await householdsPending,
+    households: rollup.households,
+    orphanedPayments: rollup.orphanedPayments,
   };
 }
 
@@ -3380,6 +3464,36 @@ export async function listOwnerPetLinks(db: D1Database, tenantId: string): Promi
        FROM PetOwners po
        JOIN EndUserPets p ON p.Id = po.PetId AND p.TenantId = po.TenantId
        WHERE po.TenantId = ? AND p.DeceasedAt IS NULL
+       ORDER BY po.PetId, po.EndUserId`,
+    )
+    .bind(tenantId)
+    .all<PetOwnerLink>();
+  return results;
+}
+
+/**
+ * The SAME edges for the pets `listOwnerPetLinks` leaves out — the DECEASED ones. Exactly one
+ * reader wants them, and only ever to answer one question: which household does a payment filed
+ * under this dead pet belong to (`buildPaymentAnchors`)?
+ *
+ * A deceased pet is excluded from the account graph because it cannot be booked or quoted, which
+ * is a rule about BOOKINGS. `Payments.AccountId` stores a pet id, so that same exclusion silently
+ * deleted household payments from every balance the moment the anchor pet died, while `Payments`
+ * went on counting them as revenue. These edges are what makes the money resolvable again — and
+ * they are kept in a SEPARATE list, never merged into `listOwnerPetLinks`, so a dead pet can never
+ * form a component, rename an account (the account id is the first-sorted pet), or reappear in a
+ * household's pet list.
+ */
+export async function listDeceasedOwnerPetLinks(
+  db: D1Database,
+  tenantId: string,
+): Promise<PetOwnerLink[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT po.EndUserId, po.PetId
+       FROM PetOwners po
+       JOIN EndUserPets p ON p.Id = po.PetId AND p.TenantId = po.TenantId
+       WHERE po.TenantId = ? AND p.DeceasedAt IS NOT NULL
        ORDER BY po.PetId, po.EndUserId`,
     )
     .bind(tenantId)
