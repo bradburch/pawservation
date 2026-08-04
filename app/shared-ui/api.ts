@@ -314,6 +314,23 @@ export type AnalyticsPayload = {
      */
     canKeep: boolean;
   }[];
+  /**
+   * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets that already shares an
+   * invoice number (two customers who share a single pet are one household), summed as
+   * `Σ(booking costs + charges) − Σ(payments)` across every booking of that household.
+   *
+   * Every figure arrives computed. The client adds nothing up: `balance` is money, money is
+   * server-side, and a total re-derived in the browser is a total that can disagree with the one
+   * the server would have printed. Negative `balance` = the household is in credit.
+   */
+  households: {
+    accountId: string;
+    owners: { endUserId: string; name: string | null; email: string | null }[];
+    bookingIds: string[];
+    expectedTotal: number;
+    paidTotal: number;
+    balance: number;
+  }[];
 };
 
 export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';

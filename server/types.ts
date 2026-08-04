@@ -270,6 +270,29 @@ export type AnalyticsData = {
     Keepable: number;
     PaidTotal: number;
   }[];
+  /**
+   * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets `buildAccounts` derives,
+   * summed as `Σ(booking costs + charges) − Σ(payments)` (`getHouseholdBalances` in
+   * `server/db/repo.ts`). Already camelCase, unlike every aggregate above it, because it is
+   * COMPUTED rather than selected: `serializeAnalytics` passes it through untouched, and the client
+   * re-derives no part of it — balances are server-side money, like every other figure here.
+   */
+  households: HouseholdBalanceRow[];
+};
+
+/**
+ * One household's statement, as `getHouseholdBalances` computes it and the dashboard renders it.
+ * `accountId` is the account id `buildAccounts` produces (the lexicographically-first pet of the
+ * component), the same identity invoice numbering keys off. `balance` is negative when the
+ * household is in CREDIT.
+ */
+export type HouseholdBalanceRow = {
+  accountId: string;
+  owners: { endUserId: string; name: string | null; email: string | null }[];
+  bookingIds: string[];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
 };
 
 export type ProviderConnection = {

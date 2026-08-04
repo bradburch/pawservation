@@ -38,6 +38,16 @@ function breakdown(o: AnalyticsPayload['outstanding'][number]): string {
   return parts.length ? `, incl. ${parts.join(' + ')}` : '';
 }
 
+/**
+ * Who a household IS, in the sitter's words: the people in it, joined. A household can hold two
+ * customers (they share a pet), so a single name would be a lie on exactly the rows this feature
+ * exists for. Falls back to the email, then to the same "Unknown client" every other list uses.
+ */
+function householdName(h: AnalyticsPayload['households'][number]): string {
+  const names = h.owners.map((o) => o.name || o.email).filter((n): n is string => !!n);
+  return names.length ? names.join(' & ') : 'Unknown client';
+}
+
 /** '2026-07' → 'Jul 26'. */
 function monthLabel(month: string): string {
   const [y, m] = month.split('-');
@@ -242,6 +252,36 @@ export function EarningsView({
           handleError={handleError}
           clearError={clearError}
         />
+      )}
+
+      {/* HOUSEHOLD BALANCES, above the per-booking lists because it is the question the sitter
+          actually asks — "does Jennifer owe me anything?" — and the per-booking rows below are the
+          working. Two customers who share a pet appear ONCE here, with one balance, exactly as they
+          share one invoice number. Every number is the server's; nothing on this page adds up a
+          household. Balances of different households are never combined into a total: one client
+          owing $100 while another is owed $100 is not a settled book, which is also why the tiles
+          above keep Outstanding and Owed back apart. */}
+      <h3>Balances by household</h3>
+      {data.households.length === 0 ? (
+        <p className="pb-hint">No household balances yet.</p>
+      ) : (
+        <ul>
+          {data.households.map((h) => (
+            <li key={h.accountId}>
+              <span className="pb-truncate-block" title={householdName(h)}>
+                <span className="pb-truncate">{householdName(h)}</span>
+                <br />
+                {h.balance > 0
+                  ? `owes $${h.balance}`
+                  : h.balance < 0
+                    ? `in credit $${-h.balance}`
+                    : 'settled up'}{' '}
+                (paid ${h.paidTotal} of ${h.expectedTotal} across {h.bookingIds.length} booking
+                {h.bookingIds.length === 1 ? '' : 's'})
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
 
       <h3>Outstanding balances</h3>
