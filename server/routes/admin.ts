@@ -35,6 +35,7 @@ import {
   insertAccountPayment,
   insertPayment,
   getHouseholdBalances,
+  getHouseholdDetail,
   listAllEndUserPetsByTenant,
   listAllPetGroupPricing,
   listBlockedRanges,
@@ -2540,6 +2541,20 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
+  })
+
+  /**
+   * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — every booking, its cost, its
+   * extra charges, and every payment, so the sitter can settle a dispute or check a cancellation
+   * fee without leaving the number she is questioning. Same 404-for-unowned-id answer as the
+   * sibling payment routes: `getHouseholdDetail` returns null for an account id of another tenant
+   * or no tenant at all, indistinguishably.
+   */
+  .get('/:slug/admin/accounts/:accountId', async (c) => {
+    const tenant = c.get('tenant');
+    const detail = await getHouseholdDetail(c.env.PAWBOOK_DB, tenant.Id, c.req.param('accountId'));
+    if (!detail) return c.json({ error: 'Not found.' }, 404);
+    return c.json(detail);
   })
 
   /**

@@ -8,6 +8,7 @@ import type {
   EndUserPet,
   ExtraTimeOrigin,
   HouseholdBalanceRow,
+  HouseholdDetailRow,
   OwnerUser,
   PaymentRow,
   PetGroupPricingRow,
@@ -1756,6 +1757,115 @@ export async function getHouseholdBalances(
     paidTotal: h.paidTotal,
     balance: h.balance,
   }));
+}
+
+/**
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — every booking, its cost, its
+ * extra charges, and every payment, so a sitter questioning a number can settle a dispute or check
+ * a cancellation fee without leaving it.
+ *
+ * Finds the household by asking `getHouseholdBalances` for the whole tenant and matching by
+ * MEMBERSHIP (`petIds.includes(accountId)`), the same resolution every other household read uses —
+ * deliberately NOT a second, narrower query, because a second query is a second place the account-id-
+ * renaming rule (see the 0011 migration header) could be forgotten. `expectedTotal`/`paidTotal`/
+ * `balance` are that household's own fields, passed through rather than recomputed, so this can
+ * never print a number the balance above it disagrees with.
+ *
+ * Each booking's `cost` and `expected` are read with the SAME `BASE_AMOUNT_SQL`/
+ * `CREDITABLE_AMOUNT_SQL` expressions the household sum is built from (declined zeroed, cancelled
+ * reading its assessed fee), which is what makes `Σ(bookings[].expected) === expectedTotal` a fact
+ * of the SQL rather than a coincidence two readers happen to agree on today.
+ */
+type HouseholdDetailBookingRow = {
+  BookingId: string;
+  ServiceType: string;
+  StartDate: string;
+  Status: string;
+  Cost: number;
+  ChargesTotal: number;
+  PaidTotal: number;
+  Expected: number;
+};
+
+export async function getHouseholdDetail(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<HouseholdDetailRow | null> {
+  const households = await getHouseholdBalances(db, tenantId);
+  const household = households.find((h) => h.petIds.includes(accountId));
+  if (!household) return null;
+
+  const placeholders = household.bookingIds.map(() => '?').join(', ');
+  const [bookingRes, chargeRes, householdPayments] = await Promise.all([
+    household.bookingIds.length === 0
+      ? Promise.resolve({ results: [] as HouseholdDetailBookingRow[] })
+      : db
+          .prepare(
+            `SELECT b.Id AS BookingId, b.ServiceType AS ServiceType, b.StartDate AS StartDate,
+                    b.Status AS Status,
+                    ${BASE_AMOUNT_SQL} AS Cost,
+                    COALESCE(chg.Total, 0) AS ChargesTotal,
+                    COALESCE(paid.Total, 0) AS PaidTotal,
+                    ${CREDITABLE_AMOUNT_SQL} AS Expected
+             FROM BookingRequests b
+             ${PAYMENTS_JOIN_SQL}
+             ${CHARGES_JOIN_SQL}
+             WHERE b.TenantId = ? AND b.Id IN (${placeholders})`,
+          )
+          .bind(tenantId, tenantId, tenantId, ...household.bookingIds)
+          .all<HouseholdDetailBookingRow>(),
+    household.bookingIds.length === 0
+      ? Promise.resolve({ results: [] as BookingChargeRow[] })
+      : db
+          .prepare(
+            `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
+             FROM BookingCharges WHERE TenantId = ? AND BookingRequestId IN (${placeholders})
+             ORDER BY BookingRequestId, CreatedAt, Id`,
+          )
+          .bind(tenantId, ...household.bookingIds)
+          .all<BookingChargeRow>(),
+    listPaymentsForAccount(db, tenantId, accountId),
+  ]);
+
+  const chargesByBooking = new Map<string, { id: string; label: string; amount: number }[]>();
+  for (const row of chargeRes.results) {
+    const list = chargesByBooking.get(row.BookingRequestId) ?? [];
+    list.push({ id: row.Id, label: row.Label, amount: row.Amount });
+    chargesByBooking.set(row.BookingRequestId, list);
+  }
+  const bookingsById = new Map(bookingRes.results.map((r) => [r.BookingId, r]));
+
+  return {
+    accountId: household.accountId,
+    // `household.bookingIds` is already ordered (getHouseholdBalances' money query sorts by
+    // StartDate, then Id) — reusing that order rather than the IN-clause's own row order keeps the
+    // detail list in the same sequence a sitter would expect a statement to read in.
+    bookings: household.bookingIds.map((bookingId) => {
+      const row = bookingsById.get(bookingId)!;
+      return {
+        bookingId,
+        serviceType: row.ServiceType,
+        startDate: row.StartDate,
+        status: row.Status,
+        cost: row.Cost,
+        charges: chargesByBooking.get(bookingId) ?? [],
+        chargesTotal: row.ChargesTotal,
+        paidTotal: row.PaidTotal,
+        expected: row.Expected,
+      };
+    }),
+    householdPayments: householdPayments.map((p) => ({
+      id: p.Id,
+      amount: p.Amount,
+      method: p.Method,
+      paidDate: p.PaidDate,
+      note: p.Note,
+    })),
+    expectedTotal: household.expectedTotal,
+    paidTotal: household.paidTotal,
+    balance: household.balance,
+  };
 }
 
 export async function getAnalytics(

@@ -305,6 +305,45 @@ export type HouseholdBalanceRow = {
   balance: number;
 };
 
+/**
+ * The drill-down behind one household balance (Story 2.4, FR-7c) — `getHouseholdDetail` in
+ * `server/db/repo.ts`. `expectedTotal`/`paidTotal`/`balance` are `getHouseholdBalances`'s own
+ * numbers for this household, passed through rather than recomputed, so the detail can never
+ * disagree with the balance it sits beneath.
+ */
+export type HouseholdDetailRow = {
+  accountId: string;
+  bookings: {
+    bookingId: string;
+    serviceType: string;
+    startDate: string;
+    status: string;
+    /** The quote, or the assessed cancellation fee on a cancelled row — EXCLUDING extra charges,
+     *  so a cancellation fee stays readable as its own figure rather than folded into one number. */
+    cost: number;
+    charges: { id: string; label: string; amount: number }[];
+    chargesTotal: number;
+    /** Payments recorded against THIS booking only — a household-level payment never appears here. */
+    paidTotal: number;
+    /** What this booking contributes to `expectedTotal`: `cost + chargesTotal`, or zero for a
+     *  declined request — declined bookings are never billed at all, the same rule
+     *  `CREDITABLE_AMOUNT_SQL` applies to the balance above. Sums to `expectedTotal` exactly. */
+    expected: number;
+  }[];
+  /** Payments recorded against the HOUSEHOLD (0011) rather than any one booking — never attributed
+   *  to a booking above, however convenient that would be to render. */
+  householdPayments: {
+    id: string;
+    amount: number;
+    method: string;
+    paidDate: string;
+    note: string | null;
+  }[];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
+};
+
 export type ProviderConnection = {
   Id: string;
   TenantId: string;

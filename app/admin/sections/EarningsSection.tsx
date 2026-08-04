@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { adminApi, type AnalyticsPayload } from '../../shared-ui/api.js';
+import { adminApi, type AnalyticsPayload, type HouseholdDetail } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
@@ -63,6 +63,72 @@ function monthLabel(month: string): string {
   return `${MONTH_NAMES[Number(m) - 1]} ${y.slice(2)}`;
 }
 
+/**
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c). Every booking's cost and extra
+ * charges stay attributed to that booking — a cancellation fee never reads as part of some other
+ * stay — and a household-level payment is listed on its own, never pinned to whichever booking
+ * happened to be open. Fetches independently of the summary row above it: the server's own
+ * `expectedTotal`/`paidTotal`/`balance` are printed here too, so there is nothing for a reader to
+ * add up that the server hasn't already added up identically.
+ */
+function HouseholdDetailPanel({ session, accountId }: { session: Session; accountId: string }) {
+  const [detail, setDetail] = useState<HouseholdDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    adminApi.households
+      .detail(session.slug, session.token, accountId)
+      .then((d) => active && setDetail(d))
+      .catch(() => active && setError('Could not load this household’s detail.'));
+    return () => {
+      active = false;
+    };
+  }, [session, accountId]);
+
+  if (error) return <p className="pb-hint">{error}</p>;
+  if (!detail) return <p className="pb-hint">Loading…</p>;
+
+  return (
+    <div className="pb-household-detail">
+      {detail.bookings.length === 0 && detail.householdPayments.length === 0 && (
+        <p className="pb-hint">Nothing recorded against this household yet.</p>
+      )}
+      {detail.bookings.length > 0 && (
+        <ul>
+          {detail.bookings.map((b) => (
+            <li key={b.bookingId}>
+              {b.serviceType} ({formatFriendlyDate(b.startDate)}) — {b.status}
+              <br />
+              {b.status === 'cancelled' && b.cost > 0 ? `$${b.cost} cancellation fee` : `$${b.cost}`}
+              {b.chargesTotal > 0 &&
+                ` + $${b.chargesTotal} extras (${b.charges.map((c) => `${c.label} $${c.amount}`).join(', ')})`}
+              {' — paid $'}
+              {b.paidTotal}
+              {b.paidTotal === 0 && b.expected > 0 && (
+                <span className="pb-hint"> — nothing recorded against this booking</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {detail.householdPayments.length > 0 && (
+        <>
+          <h4>Payments recorded against this household</h4>
+          <ul>
+            {detail.householdPayments.map((p) => (
+              <li key={p.id}>
+                ${p.amount} via {p.method} on {formatFriendlyDate(p.paidDate)}
+                {p.note ? ` — ${p.note}` : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Hand-rolled 12-bar SVG chart — no chart library (see the design's non-goals). */
 function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
   const max = Math.max(1, ...monthly.map((m) => m.total));
@@ -122,6 +188,9 @@ export function EarningsView({
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Separate from `openId` (which drives the payment panels): a sitter can have the "Record
+  // payment" form and the booking/charge/payment breakdown open on the same household at once.
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   /**
    * "The client said keep it." No amount is sent — the server computes it from the same expressions
@@ -306,6 +375,16 @@ export function EarningsView({
                       onChanged={onChanged}
                       handleError={handleError}
                     />
+                  )}
+                  {/* THE DRILL-DOWN (Story 2.4, FR-7c): every booking, its cost, its extra charges,
+                      and every payment — including household-level ones — behind THIS balance. */}
+                  <button
+                    onClick={() => setDetailId(detailId === h.accountId ? null : h.accountId)}
+                  >
+                    {detailId === h.accountId ? 'Hide detail' : 'Show detail'}
+                  </button>
+                  {detailId === h.accountId && (
+                    <HouseholdDetailPanel session={session} accountId={h.accountId} />
                   )}
                 </>
               )}

@@ -335,6 +335,37 @@ export type AnalyticsPayload = {
   }[];
 };
 
+/**
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — mirrors `HouseholdDetailRow` in
+ * `server/types.ts`. `expectedTotal`/`paidTotal`/`balance` are the same numbers the household row
+ * in `AnalyticsPayload.households` already carries, repeated here so the detail view reconciles to
+ * itself without the caller having to keep the summary row around.
+ */
+export type HouseholdDetail = {
+  accountId: string;
+  bookings: {
+    bookingId: string;
+    serviceType: string;
+    startDate: string;
+    status: string;
+    cost: number;
+    charges: { id: string; label: string; amount: number }[];
+    chargesTotal: number;
+    paidTotal: number;
+    expected: number;
+  }[];
+  householdPayments: {
+    id: string;
+    amount: number;
+    method: string;
+    paidDate: string;
+    note: string | null;
+  }[];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
+};
+
 export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';
 export type SitterRow = {
   tenantId: string;
@@ -698,6 +729,13 @@ export const adminApi = {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, choices }),
+      }),
+  },
+  households: {
+    /** The bookings, charges and payments behind one household balance (Story 2.4). */
+    detail: (slug: string, token: string, accountId: string) =>
+      request<HouseholdDetail>(`/api/${slug}/admin/accounts/${accountId}`, {
+        headers: authHeaders(token),
       }),
   },
   charges: {
