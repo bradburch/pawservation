@@ -40,11 +40,10 @@ import {
   cancelBookingForUser,
   deleteBookingRequest,
   findBookingByIdempotencyKey,
-  getAccountIdsByOwner,
   getBookingForUser,
   getBookingSyncData,
   getEndUserById,
-  getHouseholdDetail,
+  getHouseholdDetailForOwner,
   getSitterNotificationEmail,
   insertBookingRequest,
   listBookingPetsForUser,
@@ -1464,9 +1463,9 @@ export async function listMyBookings(
 /**
  * Same shape `getHouseholdDetail` returns for the admin drill-down, `accountId` widened to
  * `null`: a caller with no live pet at all holds no edge in the owner<->pet graph
- * (`buildAccounts`), so `getAccountIdsByOwner` names no household for them — genuinely "nothing
- * owed" rather than a lookup failure, the same distinction `MatchClient.accountId` draws for the
- * Venmo importer's first-ever payment.
+ * (`buildAccounts`), so no household names them — genuinely "nothing owed" rather than a lookup
+ * failure, the same distinction `MatchClient.accountId` draws for the Venmo importer's first-ever
+ * payment.
  */
 export type MyAccountBalance = {
   accountId: string | null;
@@ -1489,17 +1488,23 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
  * only from the admin dashboard; this is the same computation, unchanged, reached from the other
  * side of the same number.
  *
- * REUSES rather than reimplements: `getAccountIdsByOwner` resolves the caller's own household by
- * the SAME union-find `buildAccounts` graph every household read uses, and `getHouseholdDetail`
- * is the exact function `GET /:slug/admin/accounts/:accountId` calls — same SQL, same
- * `CREDITABLE_AMOUNT_SQL`, same rounding. A second "what does this household owe" formula here
- * would be exactly the drift `src/shared/invoicing/balances.ts`'s own docblock warns against.
+ * REUSES rather than reimplements: `getHouseholdDetailForOwner` resolves the caller's household by
+ * the SAME union-find `buildAccounts` graph every household read uses and then reads it through
+ * the SAME `householdDetailFor` the admin drill-down (`GET /:slug/admin/accounts/:accountId`)
+ * goes through — same SQL, same `CREDITABLE_AMOUNT_SQL`, same rounding. A second "what does this
+ * household owe" formula here would be exactly the drift `src/shared/invoicing/balances.ts`'s own
+ * docblock warns against.
  *
- * Two states `getHouseholdDetail` returns `null` for are folded into one honest zero rather than
- * a 404: a caller with no live pet (no household at all) and a caller whose household exists but
- * has never booked or paid (the same "first activity" edge case `getAccountIdsByOwner`'s own
- * docblock calls out). Neither is a lookup failure — a customer who has done nothing with this
- * sitter yet owes nothing, and `getMyAccount` says so instead of erroring on its own first call.
+ * IT IS ALSO THE POLLED ROUTE, which is why the read is scoped to this one household rather than
+ * rolled up from the whole tenant: `llms.txt` invites an agent to hold a personal access token and
+ * call this on a schedule, and a customer's balance cannot depend on how much anyone else booked.
+ * See `householdDetailFor`.
+ *
+ * Two states are folded into one honest zero rather than a 404: a caller with no live pet (no
+ * household at all, `accountId` null) and a caller whose household exists but has never booked or
+ * paid (the "first activity" edge case — such a household is deliberately dropped by
+ * `buildHouseholdBalances`). Neither is a lookup failure — a customer who has done nothing with
+ * this sitter yet owes nothing, and `getMyAccount` says so instead of erroring on its first call.
  *
  * A caller who shares a pet with someone else lands in the SAME household by `buildAccounts`,
  * on purpose (co-ownership already grants that pet's whole booking history — see `getMe`'s
@@ -1509,8 +1514,10 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
  */
 export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyAccountBalance>> {
   const { env, tenant, endUserId } = ctx;
-  const accountId = (await getAccountIdsByOwner(env.PAWBOOK_DB, tenant.Id)).get(endUserId) ?? null;
-  if (accountId === null) return ok(emptyAccount(null));
-  const detail = await getHouseholdDetail(env.PAWBOOK_DB, tenant.Id, accountId);
+  const { accountId, detail } = await getHouseholdDetailForOwner(
+    env.PAWBOOK_DB,
+    tenant.Id,
+    endUserId,
+  );
   return ok(detail ?? emptyAccount(accountId));
 }

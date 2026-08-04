@@ -25,7 +25,7 @@ import type {
 import { EXTRA_TIME_ORIGINS } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
-import type { ServiceQuestion } from '../../src/shared/index.js';
+import type { Account, ServiceQuestion } from '../../src/shared/index.js';
 import {
   buildAccounts,
   buildHouseholdBalances,
@@ -1266,24 +1266,8 @@ async function householdPetIds(
   tenantId: string,
   accountId: string,
 ): Promise<string[] | null> {
-  const [links, deceasedLinks] = await Promise.all([
-    listOwnerPetLinks(db, tenantId),
-    listDeceasedOwnerPetLinks(db, tenantId),
-  ]);
-  const accounts = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })));
-  const anchors = buildPaymentAnchors(
-    accounts,
-    deceasedLinks.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })),
-  );
-  const anchoredAccountId = anchors.get(accountId);
-  const account = accounts.find(
-    (a) => a.petIds.includes(accountId) || a.id === anchoredAccountId,
-  );
-  if (!account) return null;
-  const anchorPetIds = [...anchors.entries()]
-    .filter(([, id]) => id === account.id)
-    .map(([petId]) => petId);
-  return [...account.petIds, ...anchorPetIds];
+  const graph = await loadAccountGraph(db, tenantId);
+  return resolveHousehold(graph, { accountId })?.paymentPetIds ?? null;
 }
 
 /** Every payment recorded against a household, newest paid-date first (listPaymentsForBooking's order). */
@@ -1849,51 +1833,166 @@ type HouseholdDetailBookingRow = {
   Expected: number;
 };
 
-export async function getHouseholdDetail(
+/**
+ * The account graph in one place: the components `buildAccounts` derives, plus the payment anchors
+ * that keep a dead pet's payments findable. Two small, tenant-indexed reads of `PetOwners` — no
+ * money, no bookings — loaded ONCE per request so that resolving "which household is this?" and
+ * then reading that household do not each pay for their own copy.
+ */
+async function loadAccountGraph(db: D1Database, tenantId: string) {
+  const [links, deceasedLinks] = await Promise.all([
+    listOwnerPetLinks(db, tenantId),
+    listDeceasedOwnerPetLinks(db, tenantId),
+  ]);
+  const linkPairs = links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId }));
+  const anchorPairs = deceasedLinks.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId }));
+  const accounts = buildAccounts(linkPairs);
+  return {
+    links: linkPairs,
+    anchorLinks: anchorPairs,
+    accounts,
+    anchors: buildPaymentAnchors(accounts, anchorPairs),
+  };
+}
+
+type AccountGraph = Awaited<ReturnType<typeof loadAccountGraph>>;
+
+/**
+ * One household, found by account id or by one of its owners, together with every pet id a payment
+ * of it may be filed under (its live pets plus its anchors — see `householdPetIds`).
+ */
+function resolveHousehold(
+  graph: AccountGraph,
+  by: { accountId: string } | { ownerId: string },
+): { account: Account; paymentPetIds: string[] } | null {
+  const account =
+    'ownerId' in by
+      ? graph.accounts.find((a) => a.ownerIds.includes(by.ownerId))
+      : graph.accounts.find(
+          (a) => a.petIds.includes(by.accountId) || a.id === graph.anchors.get(by.accountId),
+        );
+  if (!account) return null;
+  const anchorPetIds = [...graph.anchors.entries()]
+    .filter(([, id]) => id === account.id)
+    .map(([petId]) => petId);
+  return { account, paymentPetIds: [...account.petIds, ...anchorPetIds] };
+}
+
+/**
+ * ONE household's statement, read WITHOUT reading the tenant.
+ *
+ * The bookings that can possibly belong to this household are exactly those whose customer is one
+ * of its owners, or which name one of its pets — everything else attaches elsewhere by
+ * `buildHouseholdBalances`'s own rule, whatever it is. So that predicate is asked of SQL, and the
+ * pure module is then handed the FULL owner<->pet graph (already loaded, and cheap) together with
+ * only those candidate bookings. It attaches each one exactly as it would have in the tenant-wide
+ * pass — including the edge case where a booking's customer holds no live pet and it falls back to
+ * the lexicographically-first of its pets' households, which is why the candidates' pets are read
+ * too and why the graph passed in is not narrowed. A candidate that turns out to belong to someone
+ * else lands in someone else's row here and is simply not read.
+ *
+ * This is a NARROWING, never a second money rule: `BASE_AMOUNT_SQL`/`CREDITABLE_AMOUNT_SQL`,
+ * `PAYMENTS_JOIN_SQL`, `CHARGES_JOIN_SQL` and `buildHouseholdBalances` are the same expressions
+ * `getHouseholdBalances` sums for the Earnings page, so the drill-down and the balance above it
+ * cannot drift.
+ */
+async function householdDetailFor(
   db: D1Database,
   tenantId: string,
-  accountId: string,
+  graph: AccountGraph,
+  resolved: { account: Account; paymentPetIds: string[] },
 ): Promise<HouseholdDetailRow | null> {
-  const households = await getHouseholdBalances(db, tenantId);
-  // Membership over the component's pets OR its payment anchors: an account id from before the
-  // first-sorted pet DIED is still this household's id as far as the money filed under it is
-  // concerned, and a drill-down that 404'd on it would strand the payment it lists.
-  const household = households.find(
-    (h) => h.petIds.includes(accountId) || h.anchorPetIds.includes(accountId),
-  );
-  if (!household) return null;
+  const { account, paymentPetIds } = resolved;
+  const owners = account.ownerIds.map(() => '?').join(', ');
+  const pets = account.petIds.map(() => '?').join(', ');
+  const paymentPets = paymentPetIds.map(() => '?').join(', ');
+  // "Mine, or possibly mine": customer is one of ours, or a pet of ours is on it. A superset of
+  // this household's bookings, and never the whole tenant's.
+  const candidateWhere = `b.TenantId = ? AND b.ServiceType NOT IN ('blocked', 'external')
+       AND (b.EndUserId IN (${owners})
+            OR b.Id IN (SELECT BookingRequestId FROM BookingRequestPets WHERE PetId IN (${pets})))`;
+  const candidateArgs = [tenantId, ...account.ownerIds, ...account.petIds];
 
-  const placeholders = household.bookingIds.map(() => '?').join(', ');
-  const [bookingRes, chargeRes, householdPayments] = await Promise.all([
-    household.bookingIds.length === 0
-      ? Promise.resolve({ results: [] as HouseholdDetailBookingRow[] })
+  const [bookingRes, paymentRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
+                b.StartDate AS StartDate, b.Status AS Status,
+                ${BASE_AMOUNT_SQL} AS Cost,
+                COALESCE(chg.Total, 0) AS ChargesTotal,
+                COALESCE(paid.Total, 0) AS PaidTotal,
+                ${CREDITABLE_AMOUNT_SQL} AS Expected
+         FROM BookingRequests b
+         ${PAYMENTS_JOIN_SQL}
+         ${CHARGES_JOIN_SQL}
+         WHERE ${candidateWhere}
+         ORDER BY b.StartDate, b.Id`,
+      )
+      .bind(tenantId, tenantId, ...candidateArgs)
+      .all<HouseholdDetailBookingRow & { EndUserId: string | null }>(),
+    // The household's own payments, read once and used twice: summed into `paidTotal` by the pure
+    // module and listed as `householdPayments`. Literally the same rows, so the statement can never
+    // list a payment the balance did not count.
+    db
+      .prepare(
+        `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
+         FROM Payments
+         WHERE TenantId = ? AND AccountId IN (${paymentPets})
+         ORDER BY PaidDate DESC, CreatedAt DESC`,
+      )
+      .bind(tenantId, ...paymentPetIds)
+      .all<PaymentRow>(),
+  ]);
+
+  const candidateIds = bookingRes.results.map((r) => r.BookingId);
+  const idList = candidateIds.map(() => '?').join(', ');
+  const [petsRes, chargeRes] = await Promise.all([
+    candidateIds.length === 0
+      ? Promise.resolve({ results: [] as { BookingId: string; PetId: string }[] })
       : db
           .prepare(
-            `SELECT b.Id AS BookingId, b.ServiceType AS ServiceType, b.StartDate AS StartDate,
-                    b.Status AS Status,
-                    ${BASE_AMOUNT_SQL} AS Cost,
-                    COALESCE(chg.Total, 0) AS ChargesTotal,
-                    COALESCE(paid.Total, 0) AS PaidTotal,
-                    ${CREDITABLE_AMOUNT_SQL} AS Expected
-             FROM BookingRequests b
-             ${PAYMENTS_JOIN_SQL}
-             ${CHARGES_JOIN_SQL}
-             WHERE b.TenantId = ? AND b.Id IN (${placeholders})`,
+            `SELECT BookingRequestId AS BookingId, PetId
+             FROM BookingRequestPets WHERE BookingRequestId IN (${idList})
+             ORDER BY BookingRequestId, PetId`,
           )
-          .bind(tenantId, tenantId, tenantId, ...household.bookingIds)
-          .all<HouseholdDetailBookingRow>(),
-    household.bookingIds.length === 0
+          .bind(...candidateIds)
+          .all<{ BookingId: string; PetId: string }>(),
+    candidateIds.length === 0
       ? Promise.resolve({ results: [] as BookingChargeRow[] })
       : db
           .prepare(
             `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
-             FROM BookingCharges WHERE TenantId = ? AND BookingRequestId IN (${placeholders})
+             FROM BookingCharges WHERE TenantId = ? AND BookingRequestId IN (${idList})
              ORDER BY BookingRequestId, CreatedAt, Id`,
           )
-          .bind(tenantId, ...household.bookingIds)
+          .bind(tenantId, ...candidateIds)
           .all<BookingChargeRow>(),
-    listPaymentsForAccount(db, tenantId, accountId),
   ]);
+
+  const petsByBooking = new Map<string, string[]>();
+  for (const row of petsRes.results) {
+    const list = petsByBooking.get(row.BookingId) ?? [];
+    list.push(row.PetId);
+    petsByBooking.set(row.BookingId, list);
+  }
+
+  const { households } = buildHouseholdBalances({
+    links: graph.links,
+    anchorLinks: graph.anchorLinks,
+    bookings: bookingRes.results.map((row) => ({
+      bookingId: row.BookingId,
+      ownerId: row.EndUserId,
+      petIds: petsByBooking.get(row.BookingId) ?? [],
+      expected: row.Expected,
+      paid: row.PaidTotal,
+    })),
+    payments: paymentRows.results.map((p) => ({ accountId: p.AccountId!, amount: p.Amount })),
+  });
+  // Dropped by the pure module when this household has no bookings AND no payments — "nothing
+  // recorded either side", which every caller already renders as an empty statement rather than an
+  // error, exactly as it did when this read the whole tenant.
+  const household = households.find((h) => h.accountId === account.id);
+  if (!household) return null;
 
   const chargesByBooking = new Map<string, { id: string; label: string; amount: number }[]>();
   for (const row of chargeRes.results) {
@@ -1905,9 +2004,9 @@ export async function getHouseholdDetail(
 
   return {
     accountId: household.accountId,
-    // `household.bookingIds` is already ordered (getHouseholdBalances' money query sorts by
-    // StartDate, then Id) — reusing that order rather than the IN-clause's own row order keeps the
-    // detail list in the same sequence a sitter would expect a statement to read in.
+    // `household.bookingIds` is already ordered (the candidate query sorts by StartDate, then Id)
+    // — reusing that order rather than the IN-clause's own row order keeps the detail list in the
+    // same sequence a sitter would expect a statement to read in.
     bookings: household.bookingIds.map((bookingId) => {
       const row = bookingsById.get(bookingId)!;
       return {
@@ -1922,7 +2021,7 @@ export async function getHouseholdDetail(
         expected: row.Expected,
       };
     }),
-    householdPayments: householdPayments.map((p) => ({
+    householdPayments: paymentRows.results.map((p) => ({
       id: p.Id,
       amount: p.Amount,
       method: p.Method,
@@ -1932,6 +2031,41 @@ export async function getHouseholdDetail(
     expectedTotal: household.expectedTotal,
     paidTotal: household.paidTotal,
     balance: household.balance,
+  };
+}
+
+export async function getHouseholdDetail(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<HouseholdDetailRow | null> {
+  const graph = await loadAccountGraph(db, tenantId);
+  // Membership over the component's pets OR its payment anchors: an account id from before the
+  // first-sorted pet DIED is still this household's id as far as the money filed under it is
+  // concerned, and a drill-down that 404'd on it would strand the payment it lists.
+  const resolved = resolveHousehold(graph, { accountId });
+  return resolved ? householdDetailFor(db, tenantId, graph, resolved) : null;
+}
+
+/**
+ * The SAME statement, asked by the CUSTOMER whose household it is (`GET /:slug/account`).
+ *
+ * Exists so the customer-facing route resolves its household and reads it from ONE loaded graph
+ * rather than loading it twice — once to turn `endUserId` into an account id, once to read that
+ * account id back. `accountId` comes back beside the detail because a caller who holds no live pet
+ * has no household at all: that is `null` and an empty statement, not an error (see `getMyAccount`).
+ */
+export async function getHouseholdDetailForOwner(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<{ accountId: string | null; detail: HouseholdDetailRow | null }> {
+  const graph = await loadAccountGraph(db, tenantId);
+  const resolved = resolveHousehold(graph, { ownerId: endUserId });
+  if (!resolved) return { accountId: null, detail: null };
+  return {
+    accountId: resolved.account.id,
+    detail: await householdDetailFor(db, tenantId, graph, resolved),
   };
 }
 
