@@ -42,9 +42,24 @@
 -- schema references `Payments`, so the rename rewrites no other table's clauses.
 --
 -- EVERY EXISTING ROW COMES OUT UNCHANGED, still pointing at its booking, with `AccountId` NULL —
--- which is exactly what "this payment was recorded against a booking" means under the new CHECK. The
--- copy names its columns explicitly rather than `SELECT *` so a future column added to the old table
--- would fail loudly here instead of shifting values silently into the wrong ones. All three indexes
+-- which is exactly what "this payment was recorded against a booking" means under the new CHECK.
+--
+-- THE COPY NAMES ITS COLUMNS EXPLICITLY ON BOTH SIDES, and what that buys is worth stating exactly,
+-- because the intuition runs backwards. It does NOT make a surprise column fail loudly: a column
+-- present on the old `Payments` and absent from these two lists is simply never selected, the INSERT
+-- succeeds, and that column goes out with the `DROP TABLE` below — SILENTLY, data included.
+-- `SELECT *` is the form that WOULD have raised here, on a column-count mismatch against
+-- `Payments_new`. So the risk this file actually carries is a dropped column, not a refused
+-- migration, and `server/__tests__/migration-0011-account-payments.test.ts` pins that behaviour so
+-- this paragraph cannot drift from the code again.
+--
+-- The explicit list is still the right choice, for the other reason: it pins every value to a NAMED
+-- destination, so no column reordering or insertion can shift `Amount` into `PaidDate`. Losing a
+-- column that nothing on this branch reads is recoverable from a backup; shifting money between
+-- columns is corruption that reads as data. Anyone adding a column to `Payments` on another branch
+-- must add it to BOTH lists here — this migration will not tell them.
+--
+-- All three indexes
 -- are recreated, `idx_Payments_Tenant_ExternalRef` included: that partial unique index IS the Venmo
 -- importer's idempotency mechanism (0001), and a rebuild that quietly dropped it would let a
 -- replayed CSV insert the same transaction twice. `server/__tests__/migration-0011-account-payments.test.ts`

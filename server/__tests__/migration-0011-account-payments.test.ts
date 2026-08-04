@@ -91,6 +91,33 @@ describe('migration 0011 (account-level payments) against a pre-migration databa
     ]);
   });
 
+  /**
+   * WHAT THE EXPLICIT COLUMN LIST ACTUALLY DOES, pinned because the header used to claim the
+   * opposite. `INSERT INTO … (cols) SELECT cols FROM Payments` names both sides, so a column the
+   * old table has and the list does not is simply not selected: the copy succeeds and the column
+   * and its data go out with the `DROP TABLE`. SILENTLY. `SELECT *` is the form that would have
+   * raised (a column-count mismatch against the new table), which is the reverse of "fails loudly".
+   *
+   * Nothing is wrong with the migration — an explicit list is still the right choice, because the
+   * failure mode it DOES prevent (values shifting into the wrong columns) corrupts money, while
+   * this one loses a column that by definition no code on this branch reads. The comment is what
+   * was wrong, and this test is what keeps the corrected one honest.
+   */
+  it('SILENTLY DROPS a column the old table had that the copy does not name', () => {
+    const raw = preMigrationDb();
+    // A column some other branch added to the old table before this migration ran.
+    raw.exec('ALTER TABLE Payments ADD COLUMN ReconciledAt TEXT;');
+    raw.exec("UPDATE Payments SET ReconciledAt = '2026-06-02' WHERE Id = 'pay_hand';");
+    expect(columns(raw).map((c) => c.name)).toContain('ReconciledAt');
+
+    // No error: this is the whole point. The migration applies cleanly…
+    expect(() => raw.exec(MIGRATION)).not.toThrow();
+
+    // …and the column, with everything in it, is gone.
+    expect(columns(raw).map((c) => c.name)).not.toContain('ReconciledAt');
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toEqual({ n: 2 });
+  });
+
   it('makes BookingRequestId nullable and adds AccountId', () => {
     const raw = preMigrationDb();
     raw.exec(MIGRATION);
