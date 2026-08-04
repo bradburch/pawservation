@@ -46,9 +46,20 @@ export function buildLlmsTxt(
     `- Availability & quote: GET ${origin}/api/${tenant.Slug}/availability?type=&option=&start=&end=&petIds= (email-code auth required; petIds is a comma-joined list of the caller's own pet ids, priced as the exact set requested)`,
     `- Booking requests: POST ${origin}/api/${tenant.Slug}/bookings (email-code auth; supports Idempotency-Key header). Every request starts as 'pending' and is confirmed or declined by the sitter — nothing is confirmed on creation.`,
     `- The caller's own bookings: GET ${origin}/api/${tenant.Slug}/bookings/mine (email-code auth; each row carries whether it can still be changed or cancelled, and the cancellation fee that would apply today)`,
+    `- The caller's own household balance: GET ${origin}/api/${tenant.Slug}/account (email-code auth; what the household is expected to have paid, what it has paid, and the resulting balance — a negative balance means the household is in credit, not an error)`,
     `- Change a booking: PUT ${origin}/api/${tenant.Slug}/bookings/{id} (email-code auth; dates, pets, arrival time and intake answers only — the service and option cannot change, and a confirmed booking returns to 'pending' for the sitter to re-approve. No cancellation fee is assessed on a change.)`,
     `- Cancel a booking: POST ${origin}/api/${tenant.Slug}/bookings/{id}/cancel (email-code auth; no request body — any cancellation fee is computed server-side from the sitter's stored policy and returned on the response. A request the sitter has not confirmed is always free to withdraw.)`,
     `- Booking widget: ${origin}/embed/${tenant.Slug}`,
+    '',
+    // Every route above needs auth, and the widget's session token lasts 24 hours — it is minted
+    // by the widget's own email-code flow and cannot be renewed without going back through it. A
+    // document that describes an API but not how to hold a credential for it describes an API
+    // nothing outside the widget can use, which is what these three lines fix. Written for the
+    // reader this file has: an agent acting for a pet owner who can read that owner's email.
+    '## Authentication',
+    '- Every route above except /config requires `Authorization: Bearer <token>`. The account holder signs in with an email code at the booking widget, which gives a 24-hour session — fine for a person at a keyboard, useless for anything that must keep working next week.',
+    `- For anything longer-lived, the account holder issues a personal access token: POST ${origin}/api/${tenant.Slug}/tokens with {"name": "..."} while signed in, naming the client so they recognise it later. The token comes back once, in that response, and is shown once and never again — store it on first sight. Send it as \`Authorization: Bearer <token>\` exactly where a session token would go; it acts as that one person, under this business only, and confers nothing they could not do in the widget themselves.`,
+    `- The holder can see what they have issued (GET ${origin}/api/${tenant.Slug}/tokens — names and dates, never the secrets) and cut one off at any time (DELETE ${origin}/api/${tenant.Slug}/tokens/{id}), which takes effect on the next request. Issuing and revoking require the email-code session: a personal access token cannot mint or revoke tokens, including itself.`,
   );
   return lines.join('\n') + '\n';
 }

@@ -234,17 +234,16 @@ export type VenmoPreviewRow = {
   from: string;
   note: string;
 };
+/**
+ * Story 2.5 — a matched row names a HOUSEHOLD, not a booking: once a payer resolves to one client,
+ * `buildAccounts` names their household unambiguously, so there is no "which booking?" step left to
+ * ask the sitter (no `ambiguous` bucket any more).
+ */
 export type VenmoPreview = {
   matched: (VenmoPreviewRow & {
     endUserId: string;
     clientLabel: string;
-    bookingId: string;
-    bookingLabel: string;
-  })[];
-  ambiguous: (VenmoPreviewRow & {
-    endUserId: string;
-    clientLabel: string;
-    candidates: { bookingId: string; label: string; balance: number }[];
+    accountId: string;
   })[];
   unmatched: (VenmoPreviewRow & { reason: string })[];
   alreadyImported: VenmoPreviewRow[];
@@ -314,6 +313,67 @@ export type AnalyticsPayload = {
      */
     canKeep: boolean;
   }[];
+  /**
+   * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets that already shares an
+   * invoice number (two customers who share a single pet are one household), summed as
+   * `Σ(booking costs + charges) − Σ(payments)` across every booking of that household.
+   *
+   * Every figure arrives computed. The client adds nothing up: `balance` is money, money is
+   * server-side, and a total re-derived in the browser is a total that can disagree with the one
+   * the server would have printed. Negative `balance` = the household is in credit.
+   */
+  households: {
+    accountId: string;
+    owners: { endUserId: string; name: string | null; email: string | null }[];
+    /** Every pet of the household. A household payment is recorded against one of these ids. */
+    petIds: string[];
+    /** Pets that have died but that payments of this household are still filed under, so the money
+     *  stays on this balance. Not part of the household's pets; never rendered as one. */
+    anchorPetIds: string[];
+    bookingIds: string[];
+    expectedTotal: number;
+    paidTotal: number;
+    balance: number;
+  }[];
+  /**
+   * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — the pet whose id the payment was filed under
+   * has been deleted along with its ownership edges, so nothing on the server can say whose money
+   * it is. It is still counted in the revenue tiles above, which is exactly why it is published
+   * here: shown, the sitter can re-record it against the right household and delete the stray;
+   * unpublished, it would be revenue with no statement anywhere that accounts for it.
+   */
+  orphanedPayments: { accountId: string; total: number }[];
+};
+
+/**
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — mirrors `HouseholdDetailRow` in
+ * `server/types.ts`. `expectedTotal`/`paidTotal`/`balance` are the same numbers the household row
+ * in `AnalyticsPayload.households` already carries, repeated here so the detail view reconciles to
+ * itself without the caller having to keep the summary row around.
+ */
+export type HouseholdDetail = {
+  accountId: string;
+  bookings: {
+    bookingId: string;
+    serviceType: string;
+    startDate: string;
+    status: string;
+    cost: number;
+    charges: { id: string; label: string; amount: number }[];
+    chargesTotal: number;
+    paidTotal: number;
+    expected: number;
+  }[];
+  householdPayments: {
+    id: string;
+    amount: number;
+    method: string;
+    paidDate: string;
+    note: string | null;
+  }[];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
 };
 
 export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';
@@ -634,6 +694,35 @@ export const adminApi = {
         method: 'POST',
         headers: authHeaders(token),
       }),
+    /**
+     * The HOUSEHOLD ledger (0011) — the same three operations as the booking ledger above, against
+     * an account id instead of a booking id. One payment covering several bookings is ONE row here;
+     * the sitter is never asked to split it, and `record` sends no balance because the server
+     * answers with the recomputed one.
+     */
+    listForAccount: (slug: string, token: string, accountId: string) =>
+      request<{ payments: Payment[] }>(`/api/${slug}/admin/accounts/${accountId}/payments`, {
+        headers: authHeaders(token),
+      }),
+    recordForAccount: (
+      slug: string,
+      token: string,
+      accountId: string,
+      body: { amount: number; method: string; paidDate: string; note?: string },
+    ) =>
+      request<{ payment: Payment; balance: number }>(
+        `/api/${slug}/admin/accounts/${accountId}/payments`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(body),
+        },
+      ),
+    removeForAccount: (slug: string, token: string, accountId: string, paymentId: string) =>
+      request<unknown>(`/api/${slug}/admin/accounts/${accountId}/payments/${paymentId}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+      }),
     venmoPreview: (slug: string, token: string, csv: string) =>
       request<VenmoPreview>(`/api/${slug}/admin/payments/venmo/preview`, {
         method: 'POST',
@@ -644,12 +733,19 @@ export const adminApi = {
       slug: string,
       token: string,
       csv: string,
-      choices: { txnId: string; bookingId: string }[],
+      choices: { txnId: string; accountId: string }[],
     ) =>
       request<VenmoImportResult>(`/api/${slug}/admin/payments/venmo/import`, {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, choices }),
+      }),
+  },
+  households: {
+    /** The bookings, charges and payments behind one household balance (Story 2.4). */
+    detail: (slug: string, token: string, accountId: string) =>
+      request<HouseholdDetail>(`/api/${slug}/admin/accounts/${accountId}`, {
+        headers: authHeaders(token),
       }),
   },
   charges: {

@@ -19,8 +19,15 @@ const TENANT_CACHE_TTL_SECONDS = 60;
  *
  * v2: `HousesitBoardingOverlapDays` (migration 0006). Reading it as `undefined` would have run a
  * tenant who chose "never overlap" at the product default for 60 seconds.
+ *
+ * v3: `PremiumUntil` (migration 0010). `/api/:slug/config` derives its published premium flag from
+ * this column on the cached row, and `isPremiumActive` reads anything that is not a string as "not
+ * premium" — fail-closed, and therefore silent. So a v2 entry would have reported a sitter who has
+ * paid as free for the remainder of its TTL: no error, no log, just a surface that declines to
+ * appear. Worth naming that the failure is one-directional — an entry can only understate
+ * entitlement, never grant it — because that is precisely what makes it easy to miss.
  */
-const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v2`;
+const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v3`;
 
 export async function resolveTenant(slug: string, env: Env): Promise<Tenant | null> {
   const key = tenantCacheKey(slug);

@@ -105,6 +105,77 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   `PetRateMode = 'linear'` multiplier scale a $20 fee to $60 for three dogs. No `Tenants` column, so
   the KV tenant-config cache key needs **no** bump. **APPLIED** to the remote DB by hand.
 
+- **`0010_premium_until.sql`** (`feat/premium-entitlement`) — adds `Tenants.PremiumUntil` (nullable
+  TEXT, no `DEFAULT`), the paid-through instant the platform owner sets and clears through
+  `PATCH /api/owner/sitters/:tenantId`. NULL = free, and SQLite stamps every existing row NULL, so
+  applying it makes nobody a paying customer. Stored in the `datetime('now')` shape
+  ('YYYY-MM-DD HH:MM:SS', UTC) like `DisabledAt`/`CreatedAt` — fixed-width and single-timezone, so
+  `PremiumUntil > now` is a plain string comparison whose lexicographic order IS chronological
+  order; `normalizePremiumUntil` (`server/lib/premium.ts`) is the only writer of that shape.
+  Entitlement is derived on every read and published as `premium.{assistant,chat,mcp,origin}` on
+  `GET /api/:slug/config`; a disabled tenant reports every flag false. Additive only (one
+  `ALTER TABLE … ADD COLUMN`). **This IS a `Tenants` column the request path reads, so the KV
+  tenant-config cache key was bumped `…:config:v2` → `…:config:v3` in the same commit** — a v2
+  entry would have reported a sitter who has paid as free for the remainder of its 60-second TTL,
+  silently, because the derived flag fails closed. **NOT YET APPLIED to the remote DB** — apply it
+  by hand (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0010_premium_until.sql`)
+  **before** this branch merges, since the new worker's `TENANT_COLS` SELECT names the column and
+  every tenant read 500s without it (this is the 0008 failure, verbatim).
+- **`0011_account_payments.sql`** (`feat/account-level-payments`) — adds `Payments.AccountId`, makes
+  `Payments.BookingRequestId` NULLABLE, and enforces `CHECK ((BookingRequestId IS NULL) <> (AccountId
+IS NULL))`: a payment settles a booking or a household, never both and never neither. A client who
+  pays weekly or monthly hands over ONE amount covering several bookings, and this is the place to
+  put it — previously the sitter had to invent a split across bookings that nobody agreed to.
+  **NUMBERED 0011 because 0010 was being written in parallel on another branch** — two files sharing a
+  number is a merge collision no additive change can defuse. Both have since merged here in order, so
+  the numbering is contiguous after all. **NOT additive: this is a
+  table REBUILD** (create/copy/drop/rename), because SQLite cannot drop a `NOT NULL` or add a
+  `CHECK` with `ALTER TABLE`. The file originally wrapped the rebuild in an explicit
+  `BEGIN TRANSACTION … COMMIT` with `PRAGMA defer_foreign_keys = ON` inside it — that failed against
+  the real remote DB (D1's remote executor rejects explicit SQL transactions; only
+  `state.storage.transaction()`/`transactionSync()` are allowed there) despite passing every local
+  check and its own dedicated migration test, because that test ran against `node:sqlite`, which is
+  more permissive than D1. The wrapper is gone from the file: nothing has a `REFERENCES Payments`
+  clause for `defer_foreign_keys` to have been protecting, and Wrangler applies a `--file` execution
+  atomically on its own, restoring the original state if any statement fails. All four
+  indexes are recreated, `idx_Payments_Tenant_ExternalRef` included — that partial unique index IS
+  the Venmo importer's idempotency mechanism, and losing it in a rebuild would let a replayed CSV
+  double-insert — plus a new `idx_Payments_Tenant_Account`. Every pre-existing row comes through
+  unchanged, still pointing at its booking, with `AccountId` NULL. `AccountId` deliberately carries
+  **no foreign key**: an account is DERIVED (the connected component `buildAccounts` returns), its id
+  is the lexicographically-first pet of that component and a pet added later can rename it, so
+  readers resolve a payment by MEMBERSHIP ("the household whose pets contain this id") rather than by
+  equality — and tenancy is enforced by the writer's `INSERT … SELECT … FROM EndUserPets WHERE
+TenantId = ?`. **NOT YET APPLIED to the remote DB** — apply it by hand
+  (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0011_account_payments.sql`)
+  **before** this branch merges, since merging auto-deploys and the new code selects `AccountId`.
+  Unlike the `ADD COLUMN` migrations above, a re-run fails at `CREATE TABLE Payments_new` rather than
+  half-applying, and D1 applies the file atomically, so a failed apply leaves the old table in place.
+  `server/__tests__/migration-0011-account-payments.test.ts` applies this exact file to a genuinely
+  pre-migration `Payments` table and asserts the surviving rows, the CHECK in both directions, the
+  re-import guard, and that the result is column- and index-identical to a fresh `sql/schema.sql`.
+
+**Applied to the remote DB as of this writing: 0005 through 0009.**
+**NOT applied: 0010, 0011, 0012.** Apply them by hand, IN NUMERIC ORDER, before this branch
+deploys — merging auto-deploys, and each one's code selects columns the remote table does not yet
+have. They were verified to apply cleanly in numeric order against a real pre-0010 database, and
+the resulting `Payments` and `PersonalAccessTokens` are `PRAGMA`-identical to a fresh `schema.sql`.
+- **`0012_personal_access_tokens.sql`** (`feat/personal-access-tokens`) — adds the
+  `PersonalAccessTokens` table and its two indexes: the long-lived credential a customer issues to
+  themselves so something other than the widget can call the booking API as them. `server/lib/llms.ts`
+  already publishes every booking endpoint, and all of them sit behind `endUserAuth`, whose only
+  other credential is a 24-hour widget JWT — so that document described an API nothing outside the
+  widget could keep using. Stores a SHA-256 of each token and never the token (the reasoning for
+  plain SHA-256 rather than `TenantUsers.PasswordHash`'s PBKDF2 is in
+  `server/lib/personal-access-token.ts`); revocation is a `RevokedAt` timestamp filtered by the auth
+  lookup, so it bites on the next request rather than at an expiry, and there is deliberately no
+  expiry column. Additive only (one `CREATE TABLE`, two `CREATE INDEX`, all `IF NOT EXISTS`). No
+  `Tenants` column, so the KV tenant-config cache key needs **no** bump. **NOT YET APPLIED to the
+  remote DB** — apply it by hand before this branch merges, since merging to `main` auto-deploys and
+  the new worker's PAT routes and `endUserAuth` both name the table.
+  **Numbered 0012 deliberately**: 0010 and 0011 are taken by two other unmerged branches, and the
+  numbers are first-come by branch point, not by merge order.
+
 **All of 0005 through 0009 are applied to the remote DB as of this writing.**
 Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
 `0008_departure_time.sql`, or `0009_extra_time_surcharge.sql` by hand against the remote DB — each
