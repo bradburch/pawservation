@@ -40,9 +40,11 @@ import {
   cancelBookingForUser,
   deleteBookingRequest,
   findBookingByIdempotencyKey,
+  getAccountIdsByOwner,
   getBookingForUser,
   getBookingSyncData,
   getEndUserById,
+  getHouseholdDetail,
   getSitterNotificationEmail,
   insertBookingRequest,
   listBookingPetsForUser,
@@ -98,7 +100,7 @@ import {
   validateServiceConstraints,
   type CancellationTier,
 } from '../../src/shared/index.js';
-import type { BookingRow, Tenant, TenantService } from '../types';
+import type { BookingRow, HouseholdDetailRow, Tenant, TenantService } from '../types';
 
 // ─── The result contract ─────────────────────────────────────────────────────
 
@@ -1455,4 +1457,60 @@ export async function listMyBookings(
       };
     }),
   });
+}
+
+// ─── The customer's own account balance ──────────────────────────────────────
+
+/**
+ * Same shape `getHouseholdDetail` returns for the admin drill-down, `accountId` widened to
+ * `null`: a caller with no live pet at all holds no edge in the owner<->pet graph
+ * (`buildAccounts`), so `getAccountIdsByOwner` names no household for them — genuinely "nothing
+ * owed" rather than a lookup failure, the same distinction `MatchClient.accountId` draws for the
+ * Venmo importer's first-ever payment.
+ */
+export type MyAccountBalance = {
+  accountId: string | null;
+  bookings: HouseholdDetailRow['bookings'];
+  householdPayments: HouseholdDetailRow['householdPayments'];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
+};
+
+/** A statement with no activity yet: not an error, just nothing recorded either side. */
+function emptyAccount(accountId: string | null): MyAccountBalance {
+  return { accountId, bookings: [], householdPayments: [], expectedTotal: 0, paidTotal: 0, balance: 0 };
+}
+
+/**
+ * "What do I owe?" — the one question `/bookings/mine` cannot answer, because a booking's own
+ * `estCost` is what THAT stay costs, not what the household owes across every stay and payment.
+ * The household balance already existed (`buildHouseholdBalances`, Story 2.1) and was reachable
+ * only from the admin dashboard; this is the same computation, unchanged, reached from the other
+ * side of the same number.
+ *
+ * REUSES rather than reimplements: `getAccountIdsByOwner` resolves the caller's own household by
+ * the SAME union-find `buildAccounts` graph every household read uses, and `getHouseholdDetail`
+ * is the exact function `GET /:slug/admin/accounts/:accountId` calls — same SQL, same
+ * `CREDITABLE_AMOUNT_SQL`, same rounding. A second "what does this household owe" formula here
+ * would be exactly the drift `src/shared/invoicing/balances.ts`'s own docblock warns against.
+ *
+ * Two states `getHouseholdDetail` returns `null` for are folded into one honest zero rather than
+ * a 404: a caller with no live pet (no household at all) and a caller whose household exists but
+ * has never booked or paid (the same "first activity" edge case `getAccountIdsByOwner`'s own
+ * docblock calls out). Neither is a lookup failure — a customer who has done nothing with this
+ * sitter yet owes nothing, and `getMyAccount` says so instead of erroring on its own first call.
+ *
+ * A caller who shares a pet with someone else lands in the SAME household by `buildAccounts`,
+ * on purpose (co-ownership already grants that pet's whole booking history — see `getMe`'s
+ * co-owner handling) — both callers legitimately see the one combined balance. What never
+ * happens is a SECOND, unrelated household leaking in: `endUserId` is the only input this
+ * function ever resolves an account from, so a caller can reach no `accountId` but their own.
+ */
+export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyAccountBalance>> {
+  const { env, tenant, endUserId } = ctx;
+  const accountId = (await getAccountIdsByOwner(env.PAWBOOK_DB, tenant.Id)).get(endUserId) ?? null;
+  if (accountId === null) return ok(emptyAccount(null));
+  const detail = await getHouseholdDetail(env.PAWBOOK_DB, tenant.Id, accountId);
+  return ok(detail ?? emptyAccount(accountId));
 }
