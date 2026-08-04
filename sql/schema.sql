@@ -235,6 +235,47 @@ CREATE TABLE IF NOT EXISTS SavedAnswers (
 CREATE INDEX IF NOT EXISTS idx_SavedAnswers_Lookup
   ON SavedAnswers (TenantId, EndUserId);
 
+-- A long-lived credential a customer issues to THEMSELVES (0012), so something other than the
+-- widget can call the booking API as them. `server/lib/llms.ts` publishes how to check
+-- availability, quote, book, change and cancel — and every one of those endpoints needs
+-- endUserAuth, whose only other credential is a 24h widget JWT minted by the widget's own
+-- email-code flow. Without this table that document describes an API nothing outside the widget
+-- can use. A token grants exactly what its owner could already do in the widget: same tenant,
+-- same end user, no more.
+--
+-- Only a SHA-256 of the token is stored, never the token. Plain SHA-256 rather than
+-- TenantUsers.PasswordHash's PBKDF2 because the input is 256 CSPRNG bits, not a human-chosen
+-- password: there is nothing to slow an attacker down about, and this hash is recomputed on every
+-- authenticated request. server/lib/personal-access-token.ts owns that argument in full.
+--
+-- RevokedAt is a timestamp rather than a DELETE, so the hash survives revocation (a dead secret
+-- can never land on a live row) and the owner keeps a record. There is deliberately no expiry
+-- column: the widget JWT's TTL *is* its revocation, and having a real one is the point of this
+-- table. LastUsedAt is a recognition aid ("is this the one my laptop uses?"), stamped at coarse
+-- resolution so a chatty client does not make a write out of every read.
+CREATE TABLE IF NOT EXISTS PersonalAccessTokens (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  EndUserId TEXT NOT NULL REFERENCES EndUsers(Id),
+  -- The owner's own label for the client they issued it to ("my laptop", "my assistant"): how they
+  -- tell one token from another in the revoke list, so it is required. Never interpreted.
+  Name TEXT NOT NULL,
+  TokenHash TEXT NOT NULL, -- lowercase hex SHA-256; the plaintext is disclosed once, at creation
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  LastUsedAt TEXT,
+  RevokedAt TEXT -- NULL = live; set = dead from that instant, filtered by the auth lookup
+);
+
+-- The authentication lookup, bound on every PAT-authenticated request. UNIQUE costs nothing here
+-- and turns a hash collision — or a bug that re-inserted a secret — into a write-time error
+-- rather than an ambiguous read.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_PersonalAccessTokens_Hash
+  ON PersonalAccessTokens (TenantId, TokenHash);
+
+-- The owner's own list, and the scope of every management route.
+CREATE INDEX IF NOT EXISTS idx_PersonalAccessTokens_Owner
+  ON PersonalAccessTokens (TenantId, EndUserId);
+
 -- Blocked days are rows with ServiceType='blocked' (EndUserId NULL, Status 'confirmed'),
 -- mirroring how production models blocked time as calendar events of type 'blocked'.
 -- Materialized Google events are rows with ServiceType='external' (see calendar-sync.ts).

@@ -105,6 +105,22 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   `PetRateMode = 'linear'` multiplier scale a $20 fee to $60 for three dogs. No `Tenants` column, so
   the KV tenant-config cache key needs **no** bump. **APPLIED** to the remote DB by hand.
 
+- **`0012_personal_access_tokens.sql`** (`feat/personal-access-tokens`) — adds the
+  `PersonalAccessTokens` table and its two indexes: the long-lived credential a customer issues to
+  themselves so something other than the widget can call the booking API as them. `server/lib/llms.ts`
+  already publishes every booking endpoint, and all of them sit behind `endUserAuth`, whose only
+  other credential is a 24-hour widget JWT — so that document described an API nothing outside the
+  widget could keep using. Stores a SHA-256 of each token and never the token (the reasoning for
+  plain SHA-256 rather than `TenantUsers.PasswordHash`'s PBKDF2 is in
+  `server/lib/personal-access-token.ts`); revocation is a `RevokedAt` timestamp filtered by the auth
+  lookup, so it bites on the next request rather than at an expiry, and there is deliberately no
+  expiry column. Additive only (one `CREATE TABLE`, two `CREATE INDEX`, all `IF NOT EXISTS`). No
+  `Tenants` column, so the KV tenant-config cache key needs **no** bump. **NOT YET APPLIED to the
+  remote DB** — apply it by hand before this branch merges, since merging to `main` auto-deploys and
+  the new worker's PAT routes and `endUserAuth` both name the table.
+  **Numbered 0012 deliberately**: 0010 and 0011 are taken by two other unmerged branches, and the
+  numbers are first-come by branch point, not by merge order.
+
 **All of 0005 through 0009 are applied to the remote DB as of this writing.**
 Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
 `0008_departure_time.sql`, or `0009_extra_time_surcharge.sql` by hand against the remote DB — each
