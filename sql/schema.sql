@@ -23,6 +23,14 @@ CREATE TABLE IF NOT EXISTS Tenants (
   HousesitBoardingOverlapDays INTEGER DEFAULT 1,
   -- NULL = active; timestamp = disabled by the owner (widget dark + admin read-only).
   DisabledAt TEXT,
+  -- Paid-through instant, set and cleared by the platform owner (0010). NULL = free, which is what
+  -- every tenant is until an owner says otherwise. Stored in the `datetime('now')` shape
+  -- ('YYYY-MM-DD HH:MM:SS', UTC) like DisabledAt/CreatedAt, because a fixed-width UTC string
+  -- compares lexicographically in chronological order — entitlement is the string comparison
+  -- `PremiumUntil > now`, evaluated on every read (server/lib/premium.ts). Deliberately a moment
+  -- and not a boolean: a boolean needs a job to flip it and is wrong for as long as that job is
+  -- late. The free product stores this and publishes one derived flag; it gates nothing itself.
+  PremiumUntil TEXT,
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

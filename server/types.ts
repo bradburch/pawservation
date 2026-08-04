@@ -29,6 +29,12 @@ export type Tenant = {
    *  whereabouts, not a pool. Fed to the engine as `CapacityRequest.overlapAllowance`. */
   HousesitBoardingOverlapDays: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
+  /** Paid-through instant in SQLite's `datetime('now')` shape ('YYYY-MM-DD HH:MM:SS', UTC), set
+   *  and cleared by the platform owner (0010). null = free. NOT a flag: entitlement is the
+   *  comparison `PremiumUntil > now`, made on every read by `isPremiumActive` — so a lapse takes
+   *  effect on its own, with nothing to run and nothing to flip. The free product publishes the
+   *  derived boolean on `/api/:slug/config`; it gates nothing on it. */
+  PremiumUntil: string | null;
 };
 
 export type TenantUser = {

@@ -36,7 +36,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -3668,6 +3668,29 @@ export async function setTenantDisabled(
         : 'UPDATE Tenants SET DisabledAt = NULL WHERE Id = ?',
     )
     .bind(tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Owner-scope: set or clear a tenant's paid-through instant (0010). `null` clears it, which is
+ * "free" — the same value every tenant carries until an owner grants premium. Returns whether a
+ * row changed (false = no such tenant, so the route can 404). Caller must invalidateTenantCache,
+ * or the change sits behind the tenant cache's TTL — for a REVOCATION that is a minute of access
+ * already paid for and stopped, which is the direction that matters.
+ *
+ * `until` is bound as-is and must already be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC);
+ * `normalizePremiumUntil` (server/lib/premium.ts) is the one place that shape is produced, so the
+ * comparison `PremiumUntil > now` stays a comparison of like with like.
+ */
+export async function setTenantPremiumUntil(
+  db: D1Database,
+  tenantId: string,
+  until: string | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
+    .bind(until, tenantId)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
 }

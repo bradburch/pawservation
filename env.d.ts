@@ -29,6 +29,15 @@ interface Env {
    * console unreachable (safe default). Set with `wrangler secret put OWNER_EMAILS`.
    */
   OWNER_EMAILS?: string;
+  /**
+   * Absolute origin (scheme + host, no path) of the separately-deployed premium surface, published
+   * on `GET /api/:slug/config` as `premium.origin`. Unset ⇒ `DEFAULT_PREMIUM_ORIGIN`
+   * (`server/lib/premium.ts`), the production custom domain. Not a secret — it exists so a staging
+   * deploy can point elsewhere without a code change. It must be ABSOLUTE: the widget and dashboard
+   * are also served from `*.workers.dev` hosts, which get no route matching, so a relative path
+   * there resolves against the wrong host and the surface never loads.
+   */
+  PREMIUM_ORIGIN?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /** Google OAuth2 client secret. `wrangler secret put GOOGLE_CLIENT_SECRET`. */

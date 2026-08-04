@@ -105,7 +105,24 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   `PetRateMode = 'linear'` multiplier scale a $20 fee to $60 for three dogs. No `Tenants` column, so
   the KV tenant-config cache key needs **no** bump. **APPLIED** to the remote DB by hand.
 
-**All of 0005 through 0009 are applied to the remote DB as of this writing.**
+- **`0010_premium_until.sql`** (`feat/premium-entitlement`) — adds `Tenants.PremiumUntil` (nullable
+  TEXT, no `DEFAULT`), the paid-through instant the platform owner sets and clears through
+  `PATCH /api/owner/sitters/:tenantId`. NULL = free, and SQLite stamps every existing row NULL, so
+  applying it makes nobody a paying customer. Stored in the `datetime('now')` shape
+  ('YYYY-MM-DD HH:MM:SS', UTC) like `DisabledAt`/`CreatedAt` — fixed-width and single-timezone, so
+  `PremiumUntil > now` is a plain string comparison whose lexicographic order IS chronological
+  order; `normalizePremiumUntil` (`server/lib/premium.ts`) is the only writer of that shape.
+  Entitlement is derived on every read and published as `premium.{assistant,chat,mcp,origin}` on
+  `GET /api/:slug/config`; a disabled tenant reports every flag false. Additive only (one
+  `ALTER TABLE … ADD COLUMN`). **This IS a `Tenants` column the request path reads, so the KV
+  tenant-config cache key was bumped `…:config:v2` → `…:config:v3` in the same commit** — a v2
+  entry would have reported a sitter who has paid as free for the remainder of its 60-second TTL,
+  silently, because the derived flag fails closed. **NOT YET APPLIED to the remote DB** — apply it
+  by hand (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0010_premium_until.sql`)
+  **before** this branch merges, since the new worker's `TENANT_COLS` SELECT names the column and
+  every tenant read 500s without it (this is the 0008 failure, verbatim).
+
+**All of 0005 through 0009 are applied to the remote DB as of this writing; 0010 is not.**
 Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
 `0008_departure_time.sql`, or `0009_extra_time_surcharge.sql` by hand against the remote DB — each
 is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and re-running any
