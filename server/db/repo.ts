@@ -1296,6 +1296,14 @@ export async function listPaymentsForAccount(
  * the booking id: a payment id paired with the wrong household in the URL must report false (the
  * route 404s) rather than silently deleting someone else's money. Deleting is the only correction
  * mechanism this ledger has, here as there.
+ *
+ * AN ORPHAN IS DELETABLE UNDER THE ID IT IS FILED AGAINST. When `accountId` resolves to no
+ * household — the pet it names was deleted with its owner edges — the payment is matched by exact
+ * `AccountId` equality instead of by household membership. Without this the sitter could SEE an
+ * orphan (`getOrphanedAccountPayments` puts it on the Earnings page) and have no way to clear it,
+ * which would leave the one correction this ledger has unavailable precisely where it is needed.
+ * Equality is not a loophole: an id that resolves to a household never reaches this branch, so it
+ * reaches exactly the payments nothing else can, and tenancy is enforced in the SQL either way.
  */
 export async function deleteAccountPayment(
   db: D1Database,
@@ -1303,8 +1311,8 @@ export async function deleteAccountPayment(
   accountId: string,
   paymentId: string,
 ): Promise<boolean> {
-  const petIds = await householdPetIds(db, tenantId, accountId);
-  if (!petIds) return false;
+  // No household ⇒ the id is an orphan's own account id, and only its own payments answer to it.
+  const petIds = (await householdPetIds(db, tenantId, accountId)) ?? [accountId];
   const placeholders = petIds.map(() => '?').join(', ');
   const result = await db
     .prepare(

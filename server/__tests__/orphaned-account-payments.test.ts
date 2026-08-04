@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildHouseholdBalances } from '../../src/shared/index.js';
 import {
   addBookingPets,
+  deleteAccountPayment,
   deleteCustomer,
   getAnalytics,
   getHouseholdBalances,
@@ -168,6 +169,35 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     // The row is still in Payments — the delete never touched it — so it MUST be visible somewhere.
     expect(await getOrphanedAccountPayments(env.PAWBOOK_DB, TENANT_C)).toEqual([
       { accountId: 'p_ana', total: 250 },
+    ]);
+  });
+
+  it('can be DELETED under the id it is filed against — the only correction this ledger has', async () => {
+    const { env, raw } = createTestEnv();
+    // Jen's household survives and holds a payment of its own; Ana's anchor is about to vanish.
+    const { paymentId: jensPayment } = await jenWithAPaymentAnchoredOnAlpha(env, raw);
+    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_ana', petType: 'dog' }]);
+    const orphan = await insertAccountPayment(env.PAWBOOK_DB, TENANT_C, {
+      accountId: 'p_ana',
+      amount: 250,
+      method: 'venmo',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    });
+    await deleteCustomer(env.PAWBOOK_DB, TENANT_C, ana.Id);
+
+    // Surfacing an orphan the sitter cannot then correct would leave it on the page forever.
+    // Re-record it against the right household, then delete the stray — this is the delete.
+    expect(await deleteAccountPayment(env.PAWBOOK_DB, TENANT_C, 'p_ana', orphan!)).toBe(true);
+    expect(await getOrphanedAccountPayments(env.PAWBOOK_DB, TENANT_C)).toEqual([]);
+
+    // The orphan's id is NOT a skeleton key: it reaches its own payment and nothing else, and a
+    // household that still exists is still only reachable through its own id.
+    expect(await deleteAccountPayment(env.PAWBOOK_DB, TENANT_C, 'p_ana', jensPayment!)).toBe(false);
+    expect(await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C)).toEqual([
+      expect.objectContaining({ paidTotal: 400 }),
     ]);
   });
 
