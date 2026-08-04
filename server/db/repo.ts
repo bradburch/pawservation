@@ -1179,9 +1179,12 @@ export async function listPaymentsForBooking(
  * Deliberately NO status or balance guard, unlike the booking form. There is no booking to be
  * cancelled or declined here, and a household that owes nothing yet may legitimately be paid — that
  * is prepayment, which shows up as a credit and is drawn down by the next booking through the same
- * arithmetic. `externalRef` is not a parameter: the Venmo importer still records against bookings,
- * and giving this path an import channel it does not have would be an idempotency mechanism nobody
- * is using.
+ * arithmetic.
+ *
+ * `externalRef` carries the Venmo transaction id for an import recorded against a household (Story
+ * 2.5) — NULL for a hand-recorded one, exactly `insertPayment`'s idiom. It shares that function's
+ * partial unique index on `(TenantId, ExternalRef)`, so a replayed CSV row throws here too rather
+ * than inserting a second time; the importer catches it with `isUniqueViolation`.
  */
 export async function insertAccountPayment(
   db: D1Database,
@@ -1192,13 +1195,14 @@ export async function insertAccountPayment(
     method: PaymentMethod;
     paidDate: string;
     note: string | null;
+    externalRef: string | null;
   },
 ): Promise<string | null> {
   const id = crypto.randomUUID();
   const result = await db
     .prepare(
-      `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note)
-       SELECT ?, ?, NULL, ?, ?, ?, ?, ?
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, ExternalRef)
+       SELECT ?, ?, NULL, ?, ?, ?, ?, ?, ?
        FROM EndUserPets
        WHERE TenantId = ? AND Id = ? AND DeceasedAt IS NULL`,
     )
@@ -1210,11 +1214,34 @@ export async function insertAccountPayment(
       payment.method,
       payment.paidDate,
       payment.note,
+      payment.externalRef,
       tenantId,
       payment.accountId,
     )
     .run();
   return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Every client's household account id, keyed by owner (EndUser) id — the same connected-component
+ * graph `buildAccounts` derives for invoice numbering and `getHouseholdBalances` derives for money,
+ * built here with NO activity filter. `getHouseholdBalances` deliberately drops a household with no
+ * bookings and no payments (a statement for a client who has never booked or paid is noise on the
+ * Earnings page) — but the Venmo importer (Story 2.5) needs to resolve a client's FIRST-EVER payment
+ * to their household, before any activity exists to filter on. An owner with no live pet holds no
+ * edge in the graph at all and is simply absent from the returned map — they belong to no household,
+ * and the importer surfaces that rather than guessing one.
+ */
+export async function getAccountIdsByOwner(
+  db: D1Database,
+  tenantId: string,
+): Promise<Map<string, string>> {
+  const links = await listOwnerPetLinks(db, tenantId);
+  const accounts = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })));
+  const map = new Map<string, string>();
+  for (const account of accounts)
+    for (const ownerId of account.ownerIds) map.set(ownerId, account.id);
+  return map;
 }
 
 /**
@@ -1598,46 +1625,6 @@ export async function keepBookingCredit(
   // row, and it is the answer to a double-click on a credit that has already been closed.
   if (row.Credit <= 0) return { outcome: 'no-credit' };
   return row.Status === 'declined' ? { outcome: 'declined' } : { outcome: 'no-credit' };
-}
-
-export type OutstandingBookingRow = {
-  BookingId: string;
-  EndUserId: string | null;
-  ServiceType: string;
-  StartDate: string;
-  Expected: number;
-  PaidTotal: number;
-};
-
-/**
- * Every under-paid booking for this tenant, carrying the client who owes it — the candidate set the
- * Venmo importer matches a received payment against. Same outstanding predicate as the earnings
- * payload (shared consts above), different projection: EndUserId matters here and nowhere else.
- * `Expected` already includes extra charges (see `EXPECTED_AMOUNT_SQL`), so a Venmo payment that
- * covers a booking's quote PLUS a logged charge still matches.
- */
-export async function listOutstandingBookings(
-  db: D1Database,
-  tenantId: string,
-): Promise<OutstandingBookingRow[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
-              b.StartDate AS StartDate,
-              ${EXPECTED_AMOUNT_SQL} AS Expected,
-              COALESCE(paid.Total, 0) AS PaidTotal
-       FROM BookingRequests b
-       LEFT JOIN (
-         SELECT BookingRequestId, SUM(Amount) AS Total
-         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
-       ) paid ON paid.BookingRequestId = b.Id
-       ${CHARGES_JOIN_SQL}
-       WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
-       ORDER BY b.StartDate DESC, b.Id`,
-    )
-    .bind(tenantId, tenantId, tenantId)
-    .all<OutstandingBookingRow>();
-  return results;
 }
 
 /**

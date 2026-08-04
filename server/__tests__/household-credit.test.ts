@@ -12,13 +12,7 @@ import { createTestEnv, seedPets } from './helpers';
 // tests use it — household assertions can be exact.
 const TENANT_C = 'tnt_pawsandrelax';
 
-const book = (
-  env: Env,
-  tenantId: string,
-  endUserId: string,
-  petIds: string[],
-  estCost: number,
-) =>
+const book = (env: Env, tenantId: string, endUserId: string, petIds: string[], estCost: number) =>
   insertBookingRequest(env.PAWBOOK_DB, tenantId, {
     endUserId,
     serviceType: 'boarding',
@@ -40,6 +34,7 @@ const prepay = (env: Env, tenantId: string, accountId: string, amount: number) =
     method: 'venmo',
     paidDate: '2026-07-01',
     note: null,
+    externalRef: null,
   });
 
 /**

@@ -138,13 +138,20 @@ describe('getHouseholdDetail (repo)', () => {
       method: 'venmo',
       paidDate: '2026-07-01',
       note: 'covers both stays',
+      externalRef: null,
     });
 
     const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, rex);
     // Neither booking picked up any of the $100 — it lives ONLY in householdPayments.
     for (const b of detail!.bookings) expect(b.paidTotal).toBe(0);
     expect(detail!.householdPayments).toEqual([
-      { id: paymentId, amount: 100, method: 'venmo', paidDate: '2026-07-01', note: 'covers both stays' },
+      {
+        id: paymentId,
+        amount: 100,
+        method: 'venmo',
+        paidDate: '2026-07-01',
+        note: 'covers both stays',
+      },
     ]);
     expect(detail).toMatchObject({ expectedTotal: 100, paidTotal: 100, balance: 0 });
     expect([b1, b2]).toHaveLength(2); // both bookings exist and are accounted for above
@@ -160,6 +167,7 @@ describe('getHouseholdDetail (repo)', () => {
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,
+      externalRef: null,
     });
     const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, mia);
     expect(detail).toMatchObject({ bookings: [], expectedTotal: 0, paidTotal: 200, balance: -200 });

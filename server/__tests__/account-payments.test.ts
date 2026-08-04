@@ -50,6 +50,7 @@ const accountPayment = (env: Env, tenantId: string, accountId: string, amount: n
     method: 'venmo',
     paidDate: '2026-07-01',
     note: null,
+    externalRef: null,
   });
 
 describe('account payments (repo)', () => {

@@ -234,17 +234,16 @@ export type VenmoPreviewRow = {
   from: string;
   note: string;
 };
+/**
+ * Story 2.5 — a matched row names a HOUSEHOLD, not a booking: once a payer resolves to one client,
+ * `buildAccounts` names their household unambiguously, so there is no "which booking?" step left to
+ * ask the sitter (no `ambiguous` bucket any more).
+ */
 export type VenmoPreview = {
   matched: (VenmoPreviewRow & {
     endUserId: string;
     clientLabel: string;
-    bookingId: string;
-    bookingLabel: string;
-  })[];
-  ambiguous: (VenmoPreviewRow & {
-    endUserId: string;
-    clientLabel: string;
-    candidates: { bookingId: string; label: string; balance: number }[];
+    accountId: string;
   })[];
   unmatched: (VenmoPreviewRow & { reason: string })[];
   alreadyImported: VenmoPreviewRow[];
@@ -723,7 +722,7 @@ export const adminApi = {
       slug: string,
       token: string,
       csv: string,
-      choices: { txnId: string; bookingId: string }[],
+      choices: { txnId: string; accountId: string }[],
     ) =>
       request<VenmoImportResult>(`/api/${slug}/admin/payments/venmo/import`, {
         method: 'POST',

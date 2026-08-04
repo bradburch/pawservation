@@ -100,7 +100,9 @@ function HouseholdDetailPanel({ session, accountId }: { session: Session; accoun
             <li key={b.bookingId}>
               {b.serviceType} ({formatFriendlyDate(b.startDate)}) — {b.status}
               <br />
-              {b.status === 'cancelled' && b.cost > 0 ? `$${b.cost} cancellation fee` : `$${b.cost}`}
+              {b.status === 'cancelled' && b.cost > 0
+                ? `$${b.cost} cancellation fee`
+                : `$${b.cost}`}
               {b.chargesTotal > 0 &&
                 ` + $${b.chargesTotal} extras (${b.charges.map((c) => `${c.label} $${c.amount}`).join(', ')})`}
               {' — paid $'}

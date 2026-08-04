@@ -34,6 +34,7 @@ import {
   insertInvitedCustomerWithPet,
   insertAccountPayment,
   insertPayment,
+  getAccountIdsByOwner,
   getHouseholdBalances,
   getHouseholdDetail,
   listAllEndUserPetsByTenant,
@@ -44,7 +45,6 @@ import {
   listChargesForTenant,
   listCustomers,
   listEndUserPets,
-  listOutstandingBookings,
   listPaymentExternalRefs,
   listPaymentsForAccount,
   listPaymentsForBooking,
@@ -114,10 +114,8 @@ import {
   MAX_VENMO_ROWS,
   matchVenmoTxns,
   parseVenmoCsv,
-  rankCandidates,
   resolveMatchClient,
   type MatchClient,
-  type OutstandingBooking,
 } from '../lib/venmo';
 import { NONCE_KEY } from './oauth';
 import {
@@ -144,7 +142,6 @@ import {
   buildGroupKey,
   buildMixKey,
   cancellationFee,
-  formatFriendlyDate,
   getPacificDateStr,
   isDedicatedCalendarId,
   parseMixKey,
@@ -172,42 +169,34 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
 }
 
 /**
- * The three tenant-scoped reads the Venmo importer matches against, plus the service labels the
- * preview prints. Loaded identically by the preview and the confirm step: the confirm re-derives
- * the whole candidate set rather than trusting what the preview told the browser.
+ * The tenant-scoped reads the Venmo importer matches against. Loaded identically by the preview and
+ * the confirm step: the confirm re-derives the whole match set rather than trusting what the preview
+ * told the browser.
+ *
+ * `accountId` (Story 2.5) is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
+ * latter only returns households with existing bookings or payments, and a client's first-ever
+ * Venmo payment must still resolve to their household with none of either on record yet.
  */
 async function loadVenmoMatchInputs(
   env: AppEnv['Bindings'],
   tenantId: string,
 ): Promise<{
   clients: MatchClient[];
-  outstanding: OutstandingBooking[];
   alreadyImported: Set<string>;
 }> {
-  const [customers, bookings, refs, services] = await Promise.all([
+  const [customers, accountsByOwner, refs] = await Promise.all([
     listCustomers(env.PAWBOOK_DB, tenantId),
-    listOutstandingBookings(env.PAWBOOK_DB, tenantId),
+    getAccountIdsByOwner(env.PAWBOOK_DB, tenantId),
     listPaymentExternalRefs(env.PAWBOOK_DB, tenantId),
-    listServices(env.PAWBOOK_DB, tenantId),
   ]);
-  const labelByType = new Map(services.map((s) => [s.ServiceType, s.Label]));
   return {
     clients: customers.map((u) => ({
       endUserId: u.Id,
       label: u.Name || u.Email,
       name: u.Name,
       venmoUsername: u.VenmoUsername,
+      accountId: accountsByOwner.get(u.Id) ?? null,
     })),
-    outstanding: bookings
-      // A booking whose client was removed has nobody to match it to.
-      .filter((b): b is typeof b & { EndUserId: string } => b.EndUserId !== null)
-      .map((b) => ({
-        bookingId: b.BookingId,
-        endUserId: b.EndUserId,
-        label: `${labelByType.get(b.ServiceType) ?? b.ServiceType} starting ${formatFriendlyDate(b.StartDate)}`,
-        startDate: b.StartDate,
-        balance: b.Expected - b.PaidTotal,
-      })),
     alreadyImported: new Set(refs),
   };
 }
@@ -2589,6 +2578,9 @@ export const adminRoutes = new Hono<AppEnv>()
       method: body.method,
       paidDate: body.paidDate,
       note,
+      // Hand-recorded, not from the Venmo importer — see insertAccountPayment for the shared
+      // dedupe index that field feeds when a value IS present.
+      externalRef: null,
     });
     // Guard refused: no household of THIS tenant is named by that id.
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
@@ -2732,11 +2724,13 @@ export const adminRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * Record the rows the sitter approved. The CSV comes back with the request and is parsed and
-   * matched AGAIN from scratch: the body supplies only which transaction goes on which booking, so
-   * every dollar figure, date and note is the server's own reading of the file. A bookingId is
-   * honoured only when it is one of the candidates this request just ranked — the preview is not a
-   * token of trust. The file itself is still never stored.
+   * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS (Story 2.5, 0011). The CSV comes
+   * back with the request and is parsed and matched AGAIN from scratch: the body supplies only
+   * which transaction goes on which household, so every dollar figure, date and note is the
+   * server's own reading of the file. An accountId is honoured only when it is EXACTLY the
+   * household this request independently resolves the transaction's sender to — the preview is not
+   * a token of trust, and there is no ranking step left to fool: a client resolves to at most one
+   * household. The file itself is still never stored.
    */
   .post('/:slug/admin/payments/venmo/import', async (c) => {
     const tenant = c.get('tenant');
@@ -2747,16 +2741,16 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Choose at least one payment to record.' }, 400);
     if (body.choices.length > MAX_VENMO_ROWS)
       return c.json({ error: `Record ${MAX_VENMO_ROWS} payments or fewer at a time.` }, 400);
-    const choices: { txnId: string; bookingId: string }[] = [];
+    const choices: { txnId: string; accountId: string }[] = [];
     for (const raw of body.choices) {
-      const choice = raw as { txnId?: unknown; bookingId?: unknown };
+      const choice = raw as { txnId?: unknown; accountId?: unknown };
       if (
         !isVenmoTxnId(choice.txnId) ||
-        typeof choice.bookingId !== 'string' ||
-        choice.bookingId === ''
+        typeof choice.accountId !== 'string' ||
+        choice.accountId === ''
       )
         return c.json({ error: 'That list of payments is malformed.' }, 400);
-      choices.push({ txnId: choice.txnId, bookingId: choice.bookingId });
+      choices.push({ txnId: choice.txnId, accountId: choice.accountId });
     }
 
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
@@ -2768,7 +2762,7 @@ export const adminRoutes = new Hono<AppEnv>()
     let imported = 0;
     let totalAmount = 0;
 
-    for (const { txnId, bookingId } of choices) {
+    for (const { txnId, accountId } of choices) {
       const txn = txnById.get(txnId);
       if (!txn) {
         skipped.push({ txnId, reason: 'That transaction is not in this file' });
@@ -2778,24 +2772,18 @@ export const adminRoutes = new Hono<AppEnv>()
         skipped.push({ txnId, reason: 'Already imported' });
         continue;
       }
-      // Re-rank from THIS request's data; the browser's idea of the candidates is never trusted.
+      // Re-resolve from THIS request's data; the browser's idea of the match is never trusted.
       // resolveMatchClient is the SAME function the preview uses — a name that's ambiguous there
       // is refused here too, never silently resolved by whichever client happened to sort last.
       const client = resolveMatchClient(inputs.clients, txn.from);
-      const candidates = client
-        ? rankCandidates(
-            txn,
-            inputs.outstanding.filter((b) => b.endUserId === client.endUserId),
-          )
-        : [];
-      if (!candidates.some((candidate) => candidate.bookingId === bookingId)) {
-        skipped.push({ txnId, reason: 'That booking is no longer a match for this payment' });
+      if (!client || client.accountId === null || client.accountId !== accountId) {
+        skipped.push({ txnId, reason: 'That household is no longer a match for this payment' });
         continue;
       }
       const note = `Venmo import — ${txn.from}${txn.note ? `: ${txn.note}` : ''} (txn ${txn.txnId})`;
       try {
-        const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
-          bookingRequestId: bookingId,
+        const paymentId = await insertAccountPayment(c.env.PAWBOOK_DB, tenant.Id, {
+          accountId,
           amount: txn.amount,
           method: 'venmo',
           paidDate: txn.date,
@@ -2803,7 +2791,7 @@ export const adminRoutes = new Hono<AppEnv>()
           externalRef: txn.txnId,
         });
         if (!paymentId) {
-          skipped.push({ txnId, reason: 'That booking can no longer take a payment' });
+          skipped.push({ txnId, reason: 'That household can no longer take a payment' });
           continue;
         }
         imported++;
