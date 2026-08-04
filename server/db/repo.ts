@@ -25,7 +25,12 @@ import { EXTRA_TIME_ORIGINS } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { ServiceQuestion } from '../../src/shared/index.js';
-import { buildHouseholdBalances, parseMixKey, quarterlyBreakdown } from '../../src/shared/index.js';
+import {
+  buildAccounts,
+  buildHouseholdBalances,
+  parseMixKey,
+  quarterlyBreakdown,
+} from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
@@ -1145,13 +1150,134 @@ export async function listPaymentsForBooking(
 ): Promise<PaymentRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, CreatedAt
+      `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
        FROM Payments WHERE TenantId = ? AND BookingRequestId = ?
        ORDER BY PaidDate DESC, CreatedAt DESC`,
     )
     .bind(tenantId, bookingRequestId)
     .all<PaymentRow>();
   return results;
+}
+
+/**
+ * RECORD ONE PAYMENT AGAINST A HOUSEHOLD (0011). A client who pays weekly or monthly sends one
+ * amount covering several bookings; this writes it as ONE row against the household, and the sitter
+ * is never asked to split it. `BookingRequestId` stays NULL — the database's `CHECK` is what makes
+ * "exactly one of the two" a fact rather than a convention, so no reader has to decide which side
+ * counts a row and none of them can count it twice.
+ *
+ * The guard is `insertPayment`'s idiom — `INSERT … SELECT … WHERE`, atomic with the write — asked of
+ * `EndUserPets` rather than of `BookingRequests`, because a household is identified by a pet id (see
+ * the schema's `AccountId` note). A pet of another tenant, a deceased pet, and an id that is no pet
+ * at all all insert nothing and return null, which the route reports as 404: tenancy is enforced in
+ * the SQL, never by a caller-side pre-check. It deliberately does NOT also test for a `PetOwners`
+ * edge: "no pets without owners" is a standing invariant of this schema, so a live pet always sits
+ * in some household and that clause could never fire — the same reason `buildAccounts` refuses to
+ * filter out components with no owners.
+ *
+ * Deliberately NO status or balance guard, unlike the booking form. There is no booking to be
+ * cancelled or declined here, and a household that owes nothing yet may legitimately be paid — that
+ * is prepayment, which shows up as a credit and is drawn down by the next booking through the same
+ * arithmetic. `externalRef` is not a parameter: the Venmo importer still records against bookings,
+ * and giving this path an import channel it does not have would be an idempotency mechanism nobody
+ * is using.
+ */
+export async function insertAccountPayment(
+  db: D1Database,
+  tenantId: string,
+  payment: {
+    accountId: string;
+    amount: number;
+    method: PaymentMethod;
+    paidDate: string;
+    note: string | null;
+  },
+): Promise<string | null> {
+  const id = crypto.randomUUID();
+  const result = await db
+    .prepare(
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note)
+       SELECT ?, ?, NULL, ?, ?, ?, ?, ?
+       FROM EndUserPets
+       WHERE TenantId = ? AND Id = ? AND DeceasedAt IS NULL`,
+    )
+    .bind(
+      id,
+      tenantId,
+      payment.accountId,
+      payment.amount,
+      payment.method,
+      payment.paidDate,
+      payment.note,
+      tenantId,
+      payment.accountId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * The pet ids of the household an account id names, or null when it names no household of this
+ * tenant. Membership, not equality: the account id is the lexicographically-first pet of its
+ * component, so a new pet sorting earlier RENAMES the household — and a payment filed under the old
+ * name must still be found. Every household-payment read goes through this, so what the panel lists
+ * and what the balance counts can never be two different sets.
+ */
+async function householdPetIds(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<string[] | null> {
+  const links = await listOwnerPetLinks(db, tenantId);
+  const account = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId }))).find(
+    (a) => a.petIds.includes(accountId),
+  );
+  return account ? account.petIds : null;
+}
+
+/** Every payment recorded against a household, newest paid-date first (listPaymentsForBooking's order). */
+export async function listPaymentsForAccount(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<PaymentRow[]> {
+  const petIds = await householdPetIds(db, tenantId, accountId);
+  if (!petIds) return [];
+  const placeholders = petIds.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
+       FROM Payments
+       WHERE TenantId = ? AND AccountId IN (${placeholders})
+       ORDER BY PaidDate DESC, CreatedAt DESC`,
+    )
+    .bind(tenantId, ...petIds)
+    .all<PaymentRow>();
+  return results;
+}
+
+/**
+ * Delete one household payment. Carries the account id for the same reason `deletePayment` carries
+ * the booking id: a payment id paired with the wrong household in the URL must report false (the
+ * route 404s) rather than silently deleting someone else's money. Deleting is the only correction
+ * mechanism this ledger has, here as there.
+ */
+export async function deleteAccountPayment(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+  paymentId: string,
+): Promise<boolean> {
+  const petIds = await householdPetIds(db, tenantId, accountId);
+  if (!petIds) return false;
+  const placeholders = petIds.map(() => '?').join(', ');
+  const result = await db
+    .prepare(
+      `DELETE FROM Payments WHERE TenantId = ? AND Id = ? AND AccountId IN (${placeholders})`,
+    )
+    .bind(tenantId, paymentId, ...petIds)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**
@@ -1549,7 +1675,7 @@ export async function getHouseholdBalances(
   db: D1Database,
   tenantId: string,
 ): Promise<HouseholdBalanceRow[]> {
-  const [moneyRes, petsRes, links, ownersRes] = await Promise.all([
+  const [moneyRes, petsRes, links, ownersRes, accountPaidRes] = await Promise.all([
     db
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId,
@@ -1578,6 +1704,16 @@ export async function getHouseholdBalances(
       .prepare('SELECT Id, Name, Email FROM EndUsers WHERE TenantId = ? ORDER BY Id')
       .bind(tenantId)
       .all<{ Id: string; Name: string | null; Email: string | null }>(),
+    // Payments recorded against a HOUSEHOLD rather than a booking (0011), summed per stored account
+    // id. The pure module resolves each id to its household by membership, so a household renamed by
+    // a newly-added pet keeps every payment ever filed against it.
+    db
+      .prepare(
+        `SELECT AccountId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? AND AccountId IS NOT NULL GROUP BY AccountId`,
+      )
+      .bind(tenantId)
+      .all<{ AccountId: string; Total: number }>(),
   ]);
 
   const petsByBooking = new Map<string, string[]>();
@@ -1597,6 +1733,10 @@ export async function getHouseholdBalances(
       expected: row.Expected,
       paid: row.PaidTotal,
     })),
+    payments: accountPaidRes.results.map((row) => ({
+      accountId: row.AccountId,
+      amount: row.Total,
+    })),
   });
 
   // `unattachedBookingIds` is deliberately not published: those bookings are still visible one by
@@ -1610,6 +1750,7 @@ export async function getHouseholdBalances(
       name: people.get(id)?.Name ?? null,
       email: people.get(id)?.Email ?? null,
     })),
+    petIds: h.petIds,
     bookingIds: h.bookingIds,
     expectedTotal: h.expectedTotal,
     paidTotal: h.paidTotal,

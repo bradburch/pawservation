@@ -7,10 +7,11 @@
  *
  *     balance = Σ(booking costs + charges) − Σ(payments), across every booking of the household
  *
- * and it needs **no schema change at all**. Payments are per-booking today; a household is a set of
- * bookings; so the rollup is a sum the database can already answer. (Recording ONE payment against
- * a household rather than against a booking is a separate, later change — this module is what makes
- * that change a matter of adding a term to a sum rather than reinterpreting one.)
+ * The per-booking form of that sum needed **no schema change at all**: payments were per-booking
+ * rows, a household is a set of bookings, so the rollup was a sum over data that already existed.
+ * `Payments.AccountId` (0011) then added the second term — one payment recorded against the
+ * HOUSEHOLD, covering however many bookings, because that is how clients actually pay — and it is
+ * exactly that: a term added to a sum, not a reinterpretation of one.
  *
  * Pure and dependency-free (src/shared/ rules), and — like `buildAccounts` — deliberately ignorant
  * of three things its callers own:
@@ -47,6 +48,17 @@ export type HouseholdBooking = {
   paid: number;
 };
 
+/**
+ * One payment recorded against a HOUSEHOLD rather than a booking (`Payments.AccountId`, 0011).
+ *
+ * `accountId` is an account id, which is a PET id — and it is matched by MEMBERSHIP ("the household
+ * whose pets contain this id"), never by equality against the household's own id. The account id is
+ * the lexicographically-first pet of its component, so adding a pet that sorts earlier RENAMES the
+ * household; resolving by membership means a payment recorded before that rename still lands on the
+ * same household afterwards.
+ */
+export type HouseholdPayment = { accountId: string; amount: number };
+
 /** One household's statement. `balance` negative means the household is IN CREDIT. */
 export type HouseholdBalance = {
   /** The account id `buildAccounts` produced: the lexicographically-first pet in the component. */
@@ -70,11 +82,20 @@ export type HouseholdBalances = {
    * that page for reasons nobody could see.
    */
   unattachedBookingIds: string[];
+  /**
+   * Account ids on household payments that resolve to no current household — the pet the payment
+   * was filed under has since died or been removed, so it holds no edge and no component contains
+   * it. Reported for the same reason as `unattachedBookingIds`: the money was received and still
+   * counts as revenue, and attaching it to a household it might not belong to is the one outcome
+   * worse than saying so.
+   */
+  unattachedPaymentAccountIds: string[];
 };
 
 export function buildHouseholdBalances(input: {
   links: OwnerPetLink[];
   bookings: HouseholdBooking[];
+  payments?: HouseholdPayment[];
 }): HouseholdBalances {
   const accounts = buildAccounts(input.links);
 
@@ -117,9 +138,29 @@ export function buildHouseholdBalances(input: {
     totals.set(accountId, total);
   }
 
+  /**
+   * Household payments: ONE row, however many bookings it covers, added to the household's paid
+   * total once. Nothing about it touches any booking — which is the point. The sitter records what
+   * her client actually did (paid $400 in July) rather than a split across eight stays that she
+   * invented, that nobody agreed to, and that an edit to any one of those stays would falsify.
+   */
+  const unattachedPaymentAccountIds: string[] = [];
+  for (const payment of input.payments ?? []) {
+    const accountId = accountByPet.get(payment.accountId);
+    if (accountId === undefined) {
+      unattachedPaymentAccountIds.push(payment.accountId);
+      continue;
+    }
+    const total = totals.get(accountId) ?? { bookingIds: [], expected: 0, paid: 0 };
+    total.paid += payment.amount;
+    totals.set(accountId, total);
+  }
+
   // Ordered by account id (which `buildAccounts` already sorted) so identical inputs always produce
-  // byte-identical output, however the rows arrived. Households with no bookings are dropped: they
-  // carry no money, and a statement for a client who has never booked is noise on the page.
+  // byte-identical output, however the rows arrived. A household with no activity at all is dropped
+  // — a statement for a client who has never booked and never paid is noise on the page — but one
+  // that has only PREPAID is kept, in credit: paying before the booking exists is a thing clients
+  // do, and the timing of a payment carries no meaning in this arithmetic.
   const households = accounts
     .filter((account) => totals.has(account.id))
     .map((account) => {
@@ -135,5 +176,5 @@ export function buildHouseholdBalances(input: {
       };
     });
 
-  return { households, unattachedBookingIds };
+  return { households, unattachedBookingIds, unattachedPaymentAccountIds };
 }

@@ -326,6 +326,8 @@ export type AnalyticsPayload = {
   households: {
     accountId: string;
     owners: { endUserId: string; name: string | null; email: string | null }[];
+    /** Every pet of the household. A household payment is recorded against one of these ids. */
+    petIds: string[];
     bookingIds: string[];
     expectedTotal: number;
     paidTotal: number;
@@ -649,6 +651,35 @@ export const adminApi = {
     keepCredit: (slug: string, token: string, bookingId: string) =>
       request<{ kept: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
         method: 'POST',
+        headers: authHeaders(token),
+      }),
+    /**
+     * The HOUSEHOLD ledger (0011) — the same three operations as the booking ledger above, against
+     * an account id instead of a booking id. One payment covering several bookings is ONE row here;
+     * the sitter is never asked to split it, and `record` sends no balance because the server
+     * answers with the recomputed one.
+     */
+    listForAccount: (slug: string, token: string, accountId: string) =>
+      request<{ payments: Payment[] }>(`/api/${slug}/admin/accounts/${accountId}/payments`, {
+        headers: authHeaders(token),
+      }),
+    recordForAccount: (
+      slug: string,
+      token: string,
+      accountId: string,
+      body: { amount: number; method: string; paidDate: string; note?: string },
+    ) =>
+      request<{ payment: Payment; balance: number }>(
+        `/api/${slug}/admin/accounts/${accountId}/payments`,
+        {
+          method: 'POST',
+          headers: { ...jsonHeaders, ...authHeaders(token) },
+          body: JSON.stringify(body),
+        },
+      ),
+    removeForAccount: (slug: string, token: string, accountId: string, paymentId: string) =>
+      request<unknown>(`/api/${slug}/admin/accounts/${accountId}/payments/${paymentId}`, {
+        method: 'DELETE',
         headers: authHeaders(token),
       }),
     venmoPreview: (slug: string, token: string, csv: string) =>

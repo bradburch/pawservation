@@ -48,6 +48,15 @@ function householdName(h: AnalyticsPayload['households'][number]): string {
   return names.length ? names.join(' & ') : 'Unknown client';
 }
 
+/**
+ * One `openId` drives every expandable row on this page, and an account id is a PET id while the
+ * other rows key off booking ids — so households are namespaced to keep a pet id that happens to
+ * equal a booking id from opening two panels at once (`groupIntoAccounts` prefixes its keys for the
+ * same reason).
+ */
+const householdKey = (h: AnalyticsPayload['households'][number]): string =>
+  `account:${h.accountId}`;
+
 /** '2026-07' → 'Jul 26'. */
 function monthLabel(month: string): string {
   const [y, m] = month.split('-');
@@ -279,6 +288,27 @@ export function EarningsView({
                 (paid ${h.paidTotal} of ${h.expectedTotal} across {h.bookingIds.length} booking
                 {h.bookingIds.length === 1 ? '' : 's'})
               </span>
+              {/* RECORD ONE PAYMENT FOR THE WHOLE HOUSEHOLD (0011). This is the affordance the
+                  feature exists for: a client who pays monthly hands over one amount covering
+                  several stays, and the sitter records that — one row, no split invented, nothing
+                  to allocate. The same panel the booking rows open, pointed at the household. */}
+              {session && onChanged && handleError && (
+                <>
+                  <button
+                    onClick={() => setOpenId(openId === householdKey(h) ? null : householdKey(h))}
+                  >
+                    {openId === householdKey(h) ? 'Close' : 'Record payment'}
+                  </button>
+                  {openId === householdKey(h) && (
+                    <PaymentsPanel
+                      session={session}
+                      target={{ accountId: h.accountId }}
+                      onChanged={onChanged}
+                      handleError={handleError}
+                    />
+                  )}
+                </>
+              )}
             </li>
           ))}
         </ul>
@@ -306,7 +336,7 @@ export function EarningsView({
                   {openId === o.bookingId && (
                     <PaymentsPanel
                       session={session}
-                      bookingId={o.bookingId}
+                      target={{ bookingId: o.bookingId }}
                       onChanged={onChanged}
                       handleError={handleError}
                     />
@@ -368,7 +398,7 @@ export function EarningsView({
                         Outstanding, where *Record payment* is proven to work. */}
                     <PaymentsPanel
                       session={session}
-                      bookingId={c.bookingId}
+                      target={{ bookingId: c.bookingId }}
                       onChanged={onChanged}
                       handleError={handleError}
                       allowRecord={false}

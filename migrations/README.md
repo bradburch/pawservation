@@ -105,6 +105,33 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   `PetRateMode = 'linear'` multiplier scale a $20 fee to $60 for three dogs. No `Tenants` column, so
   the KV tenant-config cache key needs **no** bump. **APPLIED** to the remote DB by hand.
 
+- **`0011_account_payments.sql`** (`feat/account-level-payments`) — adds `Payments.AccountId`, makes
+  `Payments.BookingRequestId` NULLABLE, and enforces `CHECK ((BookingRequestId IS NULL) <> (AccountId
+IS NULL))`: a payment settles a booking or a household, never both and never neither. A client who
+  pays weekly or monthly hands over ONE amount covering several bookings, and this is the place to
+  put it — previously the sitter had to invent a split across bookings that nobody agreed to.
+  **NUMBERED 0011, SKIPPING 0010, ON PURPOSE:** `0010_premium_until.sql` exists on an unmerged branch
+  and is not on `main`, and two files sharing a number is a merge collision no additive change can
+  defuse — a gap is fine here (see "Numbering" below), a duplicate is not. **NOT additive: this is a
+  table REBUILD** (create/copy/drop/rename inside one transaction, with `defer_foreign_keys` set
+  within it), because SQLite cannot drop a `NOT NULL` or add a `CHECK` with `ALTER TABLE`. All four
+  indexes are recreated, `idx_Payments_Tenant_ExternalRef` included — that partial unique index IS
+  the Venmo importer's idempotency mechanism, and losing it in a rebuild would let a replayed CSV
+  double-insert — plus a new `idx_Payments_Tenant_Account`. Every pre-existing row comes through
+  unchanged, still pointing at its booking, with `AccountId` NULL. `AccountId` deliberately carries
+  **no foreign key**: an account is DERIVED (the connected component `buildAccounts` returns), its id
+  is the lexicographically-first pet of that component and a pet added later can rename it, so
+  readers resolve a payment by MEMBERSHIP ("the household whose pets contain this id") rather than by
+  equality — and tenancy is enforced by the writer's `INSERT … SELECT … FROM EndUserPets WHERE
+TenantId = ?`. **NOT YET APPLIED to the remote DB** — apply it by hand
+  (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0011_account_payments.sql`)
+  **before** this branch merges, since merging auto-deploys and the new code selects `AccountId`.
+  Unlike the `ADD COLUMN` migrations above, a re-run fails at `CREATE TABLE Payments_new` rather than
+  half-applying, and the file is one transaction, so a failed apply leaves the old table in place.
+  `server/__tests__/migration-0011-account-payments.test.ts` applies this exact file to a genuinely
+  pre-migration `Payments` table and asserts the surviving rows, the CHECK in both directions, the
+  re-import guard, and that the result is column- and index-identical to a fresh `sql/schema.sql`.
+
 **All of 0005 through 0009 are applied to the remote DB as of this writing.**
 Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
 `0008_departure_time.sql`, or `0009_extra_time_surcharge.sql` by hand against the remote DB — each

@@ -192,10 +192,17 @@ export type BookingRow = {
   CreatedAt: string;
 };
 
+/**
+ * One row of the payments ledger. `BookingRequestId` and `AccountId` are EXACTLY ONE of the two —
+ * the database enforces it (0011) — so a NULL `BookingRequestId` reads as "this payment settles the
+ * household in `AccountId`", the form a client who pays monthly produces. `ExternalRef` is
+ * deliberately absent: the Venmo importer writes it and only aggregate reads touch it.
+ */
 export type PaymentRow = {
   Id: string;
   TenantId: string;
-  BookingRequestId: string;
+  BookingRequestId: string | null;
+  AccountId: string | null;
   Amount: number;
   Method: PaymentMethod;
   PaidDate: string;
@@ -289,6 +296,9 @@ export type AnalyticsData = {
 export type HouseholdBalanceRow = {
   accountId: string;
   owners: { endUserId: string; name: string | null; email: string | null }[];
+  /** Every pet of the component. A household payment is matched against THIS, not against
+   *  `accountId`: the account id is the first-sorted pet and a pet added later renames it. */
+  petIds: string[];
   bookingIds: string[];
   expectedTotal: number;
   paidTotal: number;

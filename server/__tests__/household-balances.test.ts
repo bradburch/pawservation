@@ -104,6 +104,48 @@ describe('buildHouseholdBalances (pure)', () => {
     expect(unattachedBookingIds).toEqual(['b1']);
   });
 
+  /**
+   * Story 2.2's half of the sum. A payment recorded against the HOUSEHOLD is one row covering
+   * however many bookings; it is resolved by MEMBERSHIP — "the household whose pets contain this
+   * id" — rather than by equality on the account id, because the account id is the
+   * lexicographically-first pet and a new pet can rename it.
+   */
+  it('subtracts a payment recorded against the household exactly once', () => {
+    const { households } = buildHouseholdBalances({
+      links,
+      bookings: [
+        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 200, paid: 0 },
+        { bookingId: 'b2', ownerId: 'o_sam', petIds: ['p_rex'], expected: 200, paid: 0 },
+      ],
+      payments: [{ accountId: 'p_rex', amount: 400 }],
+    });
+    expect(households).toMatchObject([{ expectedTotal: 400, paidTotal: 400, balance: 0 }]);
+  });
+
+  it('resolves a household payment stored against any pet of the household', () => {
+    // 'p_zed' sorts after 'p_rex', so the account id is 'p_rex' — a payment stored under either
+    // pet belongs to the same household.
+    const { households } = buildHouseholdBalances({
+      links: [
+        { ownerId: 'o_jen', petId: 'p_rex' },
+        { ownerId: 'o_jen', petId: 'p_zed' },
+      ],
+      bookings: [],
+      payments: [{ accountId: 'p_zed', amount: 75 }],
+    });
+    expect(households).toMatchObject([{ accountId: 'p_rex', paidTotal: 75, balance: -75 }]);
+  });
+
+  it('surfaces a household payment that resolves to no household', () => {
+    const { households, unattachedPaymentAccountIds } = buildHouseholdBalances({
+      links,
+      bookings: [],
+      payments: [{ accountId: 'p_gone', amount: 50 }],
+    });
+    expect(households).toEqual([]);
+    expect(unattachedPaymentAccountIds).toEqual(['p_gone']);
+  });
+
   it('returns households in a deterministic order however the rows arrive', () => {
     const bookings = [
       { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 100, paid: 0 },
@@ -275,6 +317,7 @@ describe('household balances on the earnings payload', () => {
       households: {
         accountId: string;
         owners: { endUserId: string; name: string | null; email: string | null }[];
+        petIds: string[];
         bookingIds: string[];
         expectedTotal: number;
         paidTotal: number;
@@ -285,6 +328,7 @@ describe('household balances on the earnings payload', () => {
       {
         accountId: rex,
         owners: [{ endUserId: jen.Id, name: 'Jen', email: 'jen@example.com' }],
+        petIds: [rex],
         bookingIds: [bookingId],
         expectedTotal: 100,
         paidTotal: 25,
