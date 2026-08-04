@@ -35,6 +35,8 @@ describe('llms.txt + JSON-LD', () => {
     expect(body).toContain('/api/sunny-paws/account');
     expect(body).toContain('negative');
     expect(body).toContain('credit');
+  });
+
   it('publishes how to get a credential that outlives the widget session', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/embed/sunny-paws/llms.txt', {}, env)).text();
