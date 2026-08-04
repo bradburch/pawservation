@@ -81,5 +81,16 @@ export function serializeAnalytics(data: AnalyticsData) {
     })),
     outstanding,
     credits,
+    /**
+     * HOUSEHOLD BALANCES, passed through verbatim. Every figure is already computed — by
+     * `getHouseholdBalances`, over the same `CREDITABLE_AMOUNT_SQL` the two lists above are built
+     * from — so there is deliberately nothing to map here: a balance is money, money is server-side,
+     * and a client that re-added the numbers could disagree with the page it is printed on.
+     *
+     * The tiles above are NOT rebuilt from these rows. `outstandingTotal` and `creditTotal` stay
+     * per-booking and stay un-netted: netting a debt against a credit is right WITHIN one household
+     * (that is what a statement is) and wrong across two, and the tiles speak for the whole book.
+     */
+    households: data.households,
   };
 }

@@ -198,10 +198,17 @@ export type BookingRow = {
   CreatedAt: string;
 };
 
+/**
+ * One row of the payments ledger. `BookingRequestId` and `AccountId` are EXACTLY ONE of the two —
+ * the database enforces it (0011) — so a NULL `BookingRequestId` reads as "this payment settles the
+ * household in `AccountId`", the form a client who pays monthly produces. `ExternalRef` is
+ * deliberately absent: the Venmo importer writes it and only aggregate reads touch it.
+ */
 export type PaymentRow = {
   Id: string;
   TenantId: string;
-  BookingRequestId: string;
+  BookingRequestId: string | null;
+  AccountId: string | null;
   Amount: number;
   Method: PaymentMethod;
   PaidDate: string;
@@ -276,6 +283,71 @@ export type AnalyticsData = {
     Keepable: number;
     PaidTotal: number;
   }[];
+  /**
+   * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets `buildAccounts` derives,
+   * summed as `Σ(booking costs + charges) − Σ(payments)` (`getHouseholdBalances` in
+   * `server/db/repo.ts`). Already camelCase, unlike every aggregate above it, because it is
+   * COMPUTED rather than selected: `serializeAnalytics` passes it through untouched, and the client
+   * re-derives no part of it — balances are server-side money, like every other figure here.
+   */
+  households: HouseholdBalanceRow[];
+};
+
+/**
+ * One household's statement, as `getHouseholdBalances` computes it and the dashboard renders it.
+ * `accountId` is the account id `buildAccounts` produces (the lexicographically-first pet of the
+ * component), the same identity invoice numbering keys off. `balance` is negative when the
+ * household is in CREDIT.
+ */
+export type HouseholdBalanceRow = {
+  accountId: string;
+  owners: { endUserId: string; name: string | null; email: string | null }[];
+  /** Every pet of the component. A household payment is matched against THIS, not against
+   *  `accountId`: the account id is the first-sorted pet and a pet added later renames it. */
+  petIds: string[];
+  bookingIds: string[];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
+};
+
+/**
+ * The drill-down behind one household balance (Story 2.4, FR-7c) — `getHouseholdDetail` in
+ * `server/db/repo.ts`. `expectedTotal`/`paidTotal`/`balance` are `getHouseholdBalances`'s own
+ * numbers for this household, passed through rather than recomputed, so the detail can never
+ * disagree with the balance it sits beneath.
+ */
+export type HouseholdDetailRow = {
+  accountId: string;
+  bookings: {
+    bookingId: string;
+    serviceType: string;
+    startDate: string;
+    status: string;
+    /** The quote, or the assessed cancellation fee on a cancelled row — EXCLUDING extra charges,
+     *  so a cancellation fee stays readable as its own figure rather than folded into one number. */
+    cost: number;
+    charges: { id: string; label: string; amount: number }[];
+    chargesTotal: number;
+    /** Payments recorded against THIS booking only — a household-level payment never appears here. */
+    paidTotal: number;
+    /** What this booking contributes to `expectedTotal`: `cost + chargesTotal`, or zero for a
+     *  declined request — declined bookings are never billed at all, the same rule
+     *  `CREDITABLE_AMOUNT_SQL` applies to the balance above. Sums to `expectedTotal` exactly. */
+    expected: number;
+  }[];
+  /** Payments recorded against the HOUSEHOLD (0011) rather than any one booking — never attributed
+   *  to a booking above, however convenient that would be to render. */
+  householdPayments: {
+    id: string;
+    amount: number;
+    method: string;
+    paidDate: string;
+    note: string | null;
+  }[];
+  expectedTotal: number;
+  paidTotal: number;
+  balance: number;
 };
 
 export type ProviderConnection = {

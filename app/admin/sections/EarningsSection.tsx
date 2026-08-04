@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { adminApi, type AnalyticsPayload } from '../../shared-ui/api.js';
+import { adminApi, type AnalyticsPayload, type HouseholdDetail } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
@@ -38,10 +38,97 @@ function breakdown(o: AnalyticsPayload['outstanding'][number]): string {
   return parts.length ? `, incl. ${parts.join(' + ')}` : '';
 }
 
+/**
+ * Who a household IS, in the sitter's words: the people in it, joined. A household can hold two
+ * customers (they share a pet), so a single name would be a lie on exactly the rows this feature
+ * exists for. Falls back to the email, then to the same "Unknown client" every other list uses.
+ */
+function householdName(h: AnalyticsPayload['households'][number]): string {
+  const names = h.owners.map((o) => o.name || o.email).filter((n): n is string => !!n);
+  return names.length ? names.join(' & ') : 'Unknown client';
+}
+
+/**
+ * One `openId` drives every expandable row on this page, and an account id is a PET id while the
+ * other rows key off booking ids — so households are namespaced to keep a pet id that happens to
+ * equal a booking id from opening two panels at once (`groupIntoAccounts` prefixes its keys for the
+ * same reason).
+ */
+const householdKey = (h: AnalyticsPayload['households'][number]): string =>
+  `account:${h.accountId}`;
+
 /** '2026-07' → 'Jul 26'. */
 function monthLabel(month: string): string {
   const [y, m] = month.split('-');
   return `${MONTH_NAMES[Number(m) - 1]} ${y.slice(2)}`;
+}
+
+/**
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c). Every booking's cost and extra
+ * charges stay attributed to that booking — a cancellation fee never reads as part of some other
+ * stay — and a household-level payment is listed on its own, never pinned to whichever booking
+ * happened to be open. Fetches independently of the summary row above it: the server's own
+ * `expectedTotal`/`paidTotal`/`balance` are printed here too, so there is nothing for a reader to
+ * add up that the server hasn't already added up identically.
+ */
+function HouseholdDetailPanel({ session, accountId }: { session: Session; accountId: string }) {
+  const [detail, setDetail] = useState<HouseholdDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    adminApi.households
+      .detail(session.slug, session.token, accountId)
+      .then((d) => active && setDetail(d))
+      .catch(() => active && setError('Could not load this household’s detail.'));
+    return () => {
+      active = false;
+    };
+  }, [session, accountId]);
+
+  if (error) return <p className="pb-hint">{error}</p>;
+  if (!detail) return <p className="pb-hint">Loading…</p>;
+
+  return (
+    <div className="pb-household-detail">
+      {detail.bookings.length === 0 && detail.householdPayments.length === 0 && (
+        <p className="pb-hint">Nothing recorded against this household yet.</p>
+      )}
+      {detail.bookings.length > 0 && (
+        <ul>
+          {detail.bookings.map((b) => (
+            <li key={b.bookingId}>
+              {b.serviceType} ({formatFriendlyDate(b.startDate)}) — {b.status}
+              <br />
+              {b.status === 'cancelled' && b.cost > 0
+                ? `$${b.cost} cancellation fee`
+                : `$${b.cost}`}
+              {b.chargesTotal > 0 &&
+                ` + $${b.chargesTotal} extras (${b.charges.map((c) => `${c.label} $${c.amount}`).join(', ')})`}
+              {' — paid $'}
+              {b.paidTotal}
+              {b.paidTotal === 0 && b.expected > 0 && (
+                <span className="pb-hint"> — nothing recorded against this booking</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {detail.householdPayments.length > 0 && (
+        <>
+          <h4>Payments recorded against this household</h4>
+          <ul>
+            {detail.householdPayments.map((p) => (
+              <li key={p.id}>
+                ${p.amount} via {p.method} on {formatFriendlyDate(p.paidDate)}
+                {p.note ? ` — ${p.note}` : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
 }
 
 /** Hand-rolled 12-bar SVG chart — no chart library (see the design's non-goals). */
@@ -103,6 +190,9 @@ export function EarningsView({
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Separate from `openId` (which drives the payment panels): a sitter can have the "Record
+  // payment" form and the booking/charge/payment breakdown open on the same household at once.
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   /**
    * "The client said keep it." No amount is sent — the server computes it from the same expressions
@@ -244,6 +334,67 @@ export function EarningsView({
         />
       )}
 
+      {/* HOUSEHOLD BALANCES, above the per-booking lists because it is the question the sitter
+          actually asks — "does Jennifer owe me anything?" — and the per-booking rows below are the
+          working. Two customers who share a pet appear ONCE here, with one balance, exactly as they
+          share one invoice number. Every number is the server's; nothing on this page adds up a
+          household. Balances of different households are never combined into a total: one client
+          owing $100 while another is owed $100 is not a settled book, which is also why the tiles
+          above keep Outstanding and Owed back apart. */}
+      <h3>Balances by household</h3>
+      {data.households.length === 0 ? (
+        <p className="pb-hint">No household balances yet.</p>
+      ) : (
+        <ul>
+          {data.households.map((h) => (
+            <li key={h.accountId}>
+              <span className="pb-truncate-block" title={householdName(h)}>
+                <span className="pb-truncate">{householdName(h)}</span>
+                <br />
+                {h.balance > 0
+                  ? `owes $${h.balance}`
+                  : h.balance < 0
+                    ? `in credit $${-h.balance}`
+                    : 'settled up'}{' '}
+                (paid ${h.paidTotal} of ${h.expectedTotal} across {h.bookingIds.length} booking
+                {h.bookingIds.length === 1 ? '' : 's'})
+              </span>
+              {/* RECORD ONE PAYMENT FOR THE WHOLE HOUSEHOLD (0011). This is the affordance the
+                  feature exists for: a client who pays monthly hands over one amount covering
+                  several stays, and the sitter records that — one row, no split invented, nothing
+                  to allocate. The same panel the booking rows open, pointed at the household. */}
+              {session && onChanged && handleError && (
+                <>
+                  <button
+                    onClick={() => setOpenId(openId === householdKey(h) ? null : householdKey(h))}
+                  >
+                    {openId === householdKey(h) ? 'Close' : 'Record payment'}
+                  </button>
+                  {openId === householdKey(h) && (
+                    <PaymentsPanel
+                      session={session}
+                      target={{ accountId: h.accountId }}
+                      onChanged={onChanged}
+                      handleError={handleError}
+                    />
+                  )}
+                  {/* THE DRILL-DOWN (Story 2.4, FR-7c): every booking, its cost, its extra charges,
+                      and every payment — including household-level ones — behind THIS balance. */}
+                  <button
+                    onClick={() => setDetailId(detailId === h.accountId ? null : h.accountId)}
+                  >
+                    {detailId === h.accountId ? 'Hide detail' : 'Show detail'}
+                  </button>
+                  {detailId === h.accountId && (
+                    <HouseholdDetailPanel session={session} accountId={h.accountId} />
+                  )}
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
       <h3>Outstanding balances</h3>
       {data.outstanding.length === 0 ? (
         <p className="pb-hint">No outstanding balances.</p>
@@ -266,7 +417,7 @@ export function EarningsView({
                   {openId === o.bookingId && (
                     <PaymentsPanel
                       session={session}
-                      bookingId={o.bookingId}
+                      target={{ bookingId: o.bookingId }}
                       onChanged={onChanged}
                       handleError={handleError}
                     />
@@ -328,7 +479,7 @@ export function EarningsView({
                         Outstanding, where *Record payment* is proven to work. */}
                     <PaymentsPanel
                       session={session}
-                      bookingId={c.bookingId}
+                      target={{ bookingId: c.bookingId }}
                       onChanged={onChanged}
                       handleError={handleError}
                       allowRecord={false}

@@ -333,12 +333,29 @@ CREATE TABLE IF NOT EXISTS PetOwners (
 );
 CREATE INDEX IF NOT EXISTS idx_PetOwners_Tenant_User ON PetOwners (TenantId, EndUserId);
 
--- Recorded payments against bookings (earnings analytics). Multiple rows per booking
--- (deposits/partials); whole dollars matching EstCost/Rate. PaidDate is sitter-entered.
+-- Recorded payments (earnings analytics). Multiple rows per booking (deposits/partials); whole
+-- dollars matching EstCost/Rate. PaidDate is sitter-entered.
+--
+-- A payment settles EITHER one booking OR one household — never both, never neither (0011). The
+-- household form exists because that is how clients actually pay: one cheque a month covering eight
+-- bookings is ONE row against the household, not a split the sitter had to invent. The `CHECK` is
+-- what keeps the two readable as one ledger: a row with neither is money attached to nothing, and a
+-- row with both is two readers disagreeing about which side counts it, which is how a payment gets
+-- counted twice.
 CREATE TABLE IF NOT EXISTS Payments (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
-  BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
+  -- NULL when this payment was recorded against the household in AccountId below.
+  BookingRequestId TEXT REFERENCES BookingRequests(Id),
+  -- The household this payment settles: an ACCOUNT ID, which is a pet id — the lexicographically-
+  -- first pet of the connected component `src/shared/invoicing/accounts.ts` derives, the same
+  -- identity invoice numbering keys off. Deliberately NO foreign key: an account is derived from
+  -- the owner<->pet graph rather than stored as a row, so there is nothing to reference, and the
+  -- first-sorted pet can change when pets are added. Readers therefore resolve a payment to "the
+  -- household whose pets CONTAIN this id" rather than by equality on the account id, which is
+  -- stable across that renaming. Tenancy is enforced by the writer (`insertAccountPayment` inserts
+  -- through a tenant-scoped SELECT over EndUserPets), like every other guarded write here.
+  AccountId TEXT,
   Amount INTEGER NOT NULL CHECK (Amount > 0), -- whole dollars, matching EstCost/Rate
   Method TEXT NOT NULL CHECK (Method IN ('cash', 'venmo', 'zelle', 'paypal', 'check', 'card', 'other')),
   PaidDate TEXT NOT NULL, -- 'YYYY-MM-DD', sitter-entered (defaults to today in the UI)
@@ -347,10 +364,14 @@ CREATE TABLE IF NOT EXISTS Payments (
   -- Deliberately absent from PaymentRow and from every payments wire payload: it is written by the
   -- importer and read only in aggregate, so the type system prevents anything else trusting it.
   ExternalRef TEXT,
-  CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  -- A payment settles a booking or a household, never both and never neither.
+  CHECK ((BookingRequestId IS NULL) <> (AccountId IS NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Date ON Payments (TenantId, PaidDate);
 CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Booking ON Payments (TenantId, BookingRequestId);
+-- Household payments are read per household, the way booking payments are read per booking.
+CREATE INDEX IF NOT EXISTS idx_Payments_Tenant_Account ON Payments (TenantId, AccountId);
 -- Idempotent re-import: a transaction id this tenant already recorded cannot be inserted twice.
 -- PARTIAL so the NULLs of hand-recorded payments are unconstrained.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_Payments_Tenant_ExternalRef

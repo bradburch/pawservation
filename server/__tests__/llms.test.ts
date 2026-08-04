@@ -29,6 +29,14 @@ describe('llms.txt + JSON-LD', () => {
     expect(body).toContain("Every request starts as 'pending'");
   });
 
+  it('publishes the household balance endpoint, so "what do I owe?" is answerable', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/embed/sunny-paws/llms.txt', {}, env)).text();
+    expect(body).toContain('/api/sunny-paws/account');
+    expect(body).toContain('negative');
+    expect(body).toContain('credit');
+  });
+
   it("lists each service's short description, on one line, and omits it when absent", async () => {
     const { env, raw } = createTestEnv();
     raw.exec(
