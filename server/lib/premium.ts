@@ -74,18 +74,31 @@ export function isPremiumActive(tenant: Tenant, now: Date = new Date()): boolean
 }
 
 /**
- * Where the paid surface is served from. Absolute (scheme + host, no path), because the widget and
- * the admin dashboard are also served from `*.workers.dev` hosts, and a `workers.dev` embed gets no
- * route matching — a relative path there resolves against the wrong host and the surface simply
- * fails to load. So this is published on the tenant's config and never assumed by a consumer.
+ * Where the paid surface is served from — READ ENTIRELY FROM `PREMIUM_ORIGIN`, with no default.
  *
- * Configurable via `PREMIUM_ORIGIN` so a staging deploy can point somewhere else without a code
- * change; the default is the custom domain, which is where it lives in production. Scheme + host
- * only, deliberately: a path prefix is the consuming surface's own routing decision, and baking one
- * in here would mean this repo asserting something about a product it does not contain.
+ * There used to be one, and it was the commercial deployment's own domain. That is wrong twice
+ * over. This repo is the free product and contains no premium code, so naming the paid product's
+ * host in it is this codebase asserting something about a codebase it does not contain; and any
+ * deployment that never set the variable — a fork, a self-hoster, a staging stack — would publish
+ * that host to its own customers' widgets, pointing them at a business that is not theirs. A value
+ * that is wrong for every deployment but one is a setting, not a default.
+ *
+ * Unset ⇒ `null`, meaning "this deployment has no premium surface". Every consumer already handles
+ * that state, because it is indistinguishable from what an unentitled tenant is shown — so the
+ * failure mode is a surface that does not mount, never one that mounts against the wrong host.
+ *
+ * ABSOLUTE, scheme + host, no path. The widget and the admin dashboard are also served from
+ * `*.workers.dev` hosts, which get no route matching: a relative path there resolves against the
+ * wrong host and the surface silently fails to load. So anything that is not an absolute origin is
+ * refused exactly as "unset" is — publishing a value the embed cannot use would trade a visible
+ * misconfiguration for an invisible one. A trailing slash is accepted and trimmed (the same origin,
+ * written differently); a PATH is not, because where the paid surface mounts is that surface's own
+ * routing decision.
  */
-export const DEFAULT_PREMIUM_ORIGIN = 'https://pawservation.com';
+const ABSOLUTE_ORIGIN = /^https?:\/\/[^/?#\s]+$/;
 
-export function premiumOrigin(env: Env): string {
-  return env.PREMIUM_ORIGIN?.trim() || DEFAULT_PREMIUM_ORIGIN;
+export function premiumOrigin(env: Env): string | null {
+  const configured = env.PREMIUM_ORIGIN?.trim().replace(/\/$/, '');
+  if (!configured) return null;
+  return ABSOLUTE_ORIGIN.test(configured) ? configured : null;
 }

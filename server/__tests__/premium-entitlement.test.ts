@@ -218,15 +218,51 @@ describe('GET /api/:slug/config publishes the derived premium block', () => {
 
   it('publishes an ABSOLUTE origin, because a workers.dev embed cannot assume a relative path', async () => {
     const { env } = createTestEnv();
-    const { premium } = await configOf(env, 'sunny-paws');
+    const configured = { ...env, PREMIUM_ORIGIN: 'https://premium.example' } as Env;
+    const { premium } = await configOf(configured, 'sunny-paws');
     expect(premium.origin).toMatch(/^https:\/\//);
-    // Present for a FREE tenant too: the origin is a deployment constant, not an entitlement.
+    // Published for a FREE tenant too: the origin is a property of the deployment, not of an
+    // entitlement.
     expect(premium.assistant).toBe(false);
   });
 
   it('takes the origin from PREMIUM_ORIGIN when the deployment sets one', async () => {
     const { env } = createTestEnv();
     const configured = { ...env, PREMIUM_ORIGIN: 'https://premium.example' } as Env;
+    expect((await configOf(configured, 'sunny-paws')).premium.origin).toBe(
+      'https://premium.example',
+    );
+  });
+
+  /**
+   * THE ORIGIN IS THE DEPLOYMENT'S OWN SETTING, NOT A CONSTANT OF THIS REPO. It used to fall back
+   * to the commercial deployment's domain, baked into a public, free codebase — so any deployment
+   * that did not configure one advertised somebody else's host to its own customers' widgets, and
+   * this repo named a product it deliberately does not contain. Unset now publishes `null`: "this
+   * deployment has no premium surface", which every consumer already copes with, because it is
+   * what an unentitled tenant renders anyway.
+   */
+  it('publishes NULL when the deployment sets no origin, naming no domain of its own', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/api/sunny-paws/config', {}, env);
+    const body = (await res.json()) as { premium: { origin: string | null } };
+    expect(body.premium.origin).toBeNull();
+    // And no fallback domain is hiding anywhere else in the payload.
+    expect(JSON.stringify(body)).not.toMatch(/pawservation\.com/);
+  });
+
+  it('refuses a value that is not an absolute origin rather than publishing an unusable one', async () => {
+    const { env } = createTestEnv();
+    for (const bad of ['/premium', 'premium.example', 'https://premium.example/app', '   ']) {
+      const configured = { ...env, PREMIUM_ORIGIN: bad } as Env;
+      const { premium } = await configOf(configured, 'sunny-paws');
+      expect(premium.origin, `PREMIUM_ORIGIN=${JSON.stringify(bad)}`).toBeNull();
+    }
+  });
+
+  it('tolerates a trailing slash, which is the same origin written differently', async () => {
+    const { env } = createTestEnv();
+    const configured = { ...env, PREMIUM_ORIGIN: 'https://premium.example/' } as Env;
     expect((await configOf(configured, 'sunny-paws')).premium.origin).toBe(
       'https://premium.example',
     );

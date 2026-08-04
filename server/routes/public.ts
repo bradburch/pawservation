@@ -23,9 +23,13 @@ export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) =>
       assistant: premiumActive,
       chat: premiumActive,
       mcp: premiumActive,
-      // A constant of the deployment, not of the tenant, so it is published whether or not this
+      // A setting of the DEPLOYMENT, not of the tenant, so it is published whether or not this
       // tenant is entitled: an embed on a `*.workers.dev` host has no route matching and cannot
       // resolve a relative path, so the absolute origin has to come from somewhere it can read.
+      // NULL when this deployment configures no `PREMIUM_ORIGIN` — there is no default, because a
+      // free, public codebase naming the paid product's domain would hand every other deployment
+      // somebody else's host. Null means "no premium surface here", which is what an unentitled
+      // tenant already renders.
       origin: premiumOrigin(c.env),
     },
     displayName: tenant.DisplayName,
