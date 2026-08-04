@@ -16,6 +16,7 @@ import { ownerRoutes } from './routes/owner';
 import { passwordResetRoutes } from './routes/password-reset';
 import { publicRoutes } from './routes/public';
 import { signupRoutes } from './routes/signup';
+import { tokenRoutes } from './routes/tokens';
 import type { AppEnv } from './types';
 
 /**
@@ -69,6 +70,7 @@ app.route('/api', adminAuthRoutes); // /api/admin/login, /api/admin/session (no 
 app.route('/api', publicRoutes);
 app.route('/api', authRoutes);
 app.route('/api', bookingRoutes);
+app.route('/api', tokenRoutes); // /api/:slug/tokens — the customer's own API credentials
 app.route('/api', adminRoutes);
 app.route('/api', signupRoutes); // /api/signup/* — no slug ('signup' is a reserved slug)
 app.route('/api', passwordResetRoutes); // /api/password-reset/* — no slug ('password-reset' is a reserved slug)

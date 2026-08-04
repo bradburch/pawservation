@@ -2802,6 +2802,131 @@ export async function replaceSavedAnswers(
   );
 }
 
+// --- Personal access tokens (0012) ---
+// A credential the customer issues to themselves so something other than the widget can call the
+// booking API as them. Only a SHA-256 of the token is ever stored; the reasoning behind that (and
+// behind hashing it WITHOUT an iterated KDF) lives in server/lib/personal-access-token.ts.
+// Every query below binds TenantId: there is deliberately no way to look a token up globally.
+
+/** One row as its OWNER sees it. `TokenHash` is absent by construction, not by omission at the
+ *  route — the secret and its digest have no read path out of this module. */
+export type PersonalAccessTokenRow = {
+  Id: string;
+  Name: string;
+  CreatedAt: string;
+  LastUsedAt: string | null;
+};
+
+/** Stores a new token's hash and returns the row id. The plaintext never reaches this layer. */
+export async function createPersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  name: string,
+  tokenHash: string,
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO PersonalAccessTokens (Id, TenantId, EndUserId, Name, TokenHash)
+            VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(id, tenantId, endUserId, name, tokenHash)
+    .run();
+  return id;
+}
+
+/** This customer's LIVE tokens, newest first. A revoked token is gone from their list — the row
+ *  survives (see the schema) but it is no longer something they can act on. */
+export async function listPersonalAccessTokens(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<PersonalAccessTokenRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, Name, CreatedAt, LastUsedAt
+         FROM PersonalAccessTokens
+        WHERE TenantId = ? AND EndUserId = ? AND RevokedAt IS NULL
+        ORDER BY CreatedAt DESC, Id`,
+    )
+    .bind(tenantId, endUserId)
+    .all<PersonalAccessTokenRow>();
+  return results ?? [];
+}
+
+/**
+ * THE AUTHENTICATION LOOKUP: one indexed read on (TenantId, TokenHash), which is the whole cost of
+ * authenticating a PAT request. `RevokedAt IS NULL` is in the WHERE clause rather than checked by
+ * the caller, so a revoked token is refused by the same query that would otherwise have found it —
+ * there is no window in which some other code path could forget the check.
+ *
+ * TenantId is bound, so a token minted under one sitter simply does not exist under another. That
+ * is Model A holding by construction: the query cannot see across the boundary to learn that the
+ * hash is valid elsewhere, which is also why the caller can only answer "no" rather than "wrong
+ * tenant" the way a widget JWT's `tid` claim lets it.
+ *
+ * `LastUsedAt` comes back with the row so the caller can decide whether a refresh is due without a
+ * second read.
+ */
+export async function findLivePersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  tokenHash: string,
+): Promise<{ Id: string; EndUserId: string; LastUsedAt: string | null } | null> {
+  return await db
+    .prepare(
+      `SELECT Id, EndUserId, LastUsedAt
+         FROM PersonalAccessTokens
+        WHERE TenantId = ? AND TokenHash = ? AND RevokedAt IS NULL`,
+    )
+    .bind(tenantId, tokenHash)
+    .first<{ Id: string; EndUserId: string; LastUsedAt: string | null }>();
+}
+
+/** Stamps a token as used now. Called only when the stamp is actually stale (see
+ *  `shouldRefreshLastUsed`) and only off the response path, so the ordinary request writes nothing.
+ *  Two concurrent uses may both write; they write the same minute, and last-writer-wins is right. */
+export async function touchPersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE PersonalAccessTokens SET LastUsedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(tenantId, id)
+    .run();
+}
+
+/**
+ * Revokes one of this customer's OWN tokens. Scoped by EndUserId as well as TenantId, so one
+ * customer can neither revoke nor probe for another's token — a stranger's id is indistinguishable
+ * from a nonexistent one, which is what the route's 404 says.
+ *
+ * `COALESCE` keeps the FIRST revocation's timestamp, so revoking twice is idempotent and does not
+ * rewrite history; SQLite still counts the row as changed, so a second call reports success rather
+ * than a confusing 404 for a token the caller can plainly see is already dead. Returns false only
+ * when no such token belongs to this customer.
+ */
+export async function revokePersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE PersonalAccessTokens SET RevokedAt = COALESCE(RevokedAt, datetime('now'))
+        WHERE TenantId = ? AND EndUserId = ? AND Id = ?`,
+    )
+    .bind(tenantId, endUserId, id)
+    .run();
+  return ((result.meta as { changes?: number }).changes ?? 0) > 0;
+}
+
 export async function getEndUserByEmail(
   db: D1Database,
   tenantId: string,
@@ -3044,7 +3169,10 @@ export async function deleteCustomer(
                                  WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
                                    AND po.EndUserId <> ?)
                 AND EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id))`;
-  const [, , , , , endUsersResult] = await db.batch([
+  // The EndUsers delete is deliberately LAST (children first — D1 has no ON DELETE CASCADE) and
+  // is read off the end rather than by ordinal, as deleteTenantCompletely does: adding a cascade
+  // statement in the middle silently renumbered a positional destructure once already.
+  const batchResults = await db.batch([
     db
       .prepare(
         `UPDATE EndUserPets
@@ -3088,6 +3216,17 @@ export async function deleteCustomer(
            WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    // Personal access tokens (0012) FK to EndUsers, and unlike SavedAnswers this one IS reachable:
+    // a customer can hold a token without ever having booked. It must also be the strongest reason
+    // in this batch to cascade rather than orphan — a live long-term credential that outlived the
+    // account it authenticates as is a credential nobody is left to revoke. Same guards as the
+    // rest, so a refused delete writes nothing here either.
+    db
+      .prepare(
+        `DELETE FROM PersonalAccessTokens
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
     db
       .prepare(
         `DELETE FROM EndUsers
@@ -3095,6 +3234,7 @@ export async function deleteCustomer(
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
   ]);
+  const endUsersResult = batchResults[batchResults.length - 1];
   if (((endUsersResult.meta as { changes?: number }).changes ?? 0) !== 0) return 'deleted';
   // Refused (or no such customer) — and because every statement carried both guards, NOTHING was
   // written on this path. One read, two counts, to choose the wording. Order matters only in that
@@ -4071,6 +4211,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM SavedAnswers WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM PersonalAccessTokens WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM PetGroupPricing WHERE TenantId = ?').bind(tenantId),

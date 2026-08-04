@@ -374,6 +374,12 @@ export type AppEnv = {
   Variables: {
     tenant: Tenant;
     endUserId: string;
+    /** Which end-user credential `endUserAuth` accepted: the widget's 24h session token, or a
+     *  personal access token (0012). Routes must NOT branch on this — both resolve to the same
+     *  end user and confer identical authority — with the single exception of token management
+     *  itself, which requires the widget session so a leaked token cannot mint its own
+     *  replacement (`widgetSessionOnly`). */
+    endUserCredential: 'widget' | 'token';
     /** Set by adminAuth: the authenticated sitter-admin's TenantUser id (AdminClaims.sub). */
     adminUserId: string;
     /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
