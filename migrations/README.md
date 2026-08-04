@@ -129,8 +129,15 @@ IS NULL))`: a payment settles a booking or a household, never both and never nei
   **NUMBERED 0011 because 0010 was being written in parallel on another branch** — two files sharing a
   number is a merge collision no additive change can defuse. Both have since merged here in order, so
   the numbering is contiguous after all. **NOT additive: this is a
-  table REBUILD** (create/copy/drop/rename inside one transaction, with `defer_foreign_keys` set
-  within it), because SQLite cannot drop a `NOT NULL` or add a `CHECK` with `ALTER TABLE`. All four
+  table REBUILD** (create/copy/drop/rename), because SQLite cannot drop a `NOT NULL` or add a
+  `CHECK` with `ALTER TABLE`. The file originally wrapped the rebuild in an explicit
+  `BEGIN TRANSACTION … COMMIT` with `PRAGMA defer_foreign_keys = ON` inside it — that failed against
+  the real remote DB (D1's remote executor rejects explicit SQL transactions; only
+  `state.storage.transaction()`/`transactionSync()` are allowed there) despite passing every local
+  check and its own dedicated migration test, because that test ran against `node:sqlite`, which is
+  more permissive than D1. The wrapper is gone from the file: nothing has a `REFERENCES Payments`
+  clause for `defer_foreign_keys` to have been protecting, and Wrangler applies a `--file` execution
+  atomically on its own, restoring the original state if any statement fails. All four
   indexes are recreated, `idx_Payments_Tenant_ExternalRef` included — that partial unique index IS
   the Venmo importer's idempotency mechanism, and losing it in a rebuild would let a replayed CSV
   double-insert — plus a new `idx_Payments_Tenant_Account`. Every pre-existing row comes through
@@ -143,7 +150,7 @@ TenantId = ?`. **NOT YET APPLIED to the remote DB** — apply it by hand
   (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0011_account_payments.sql`)
   **before** this branch merges, since merging auto-deploys and the new code selects `AccountId`.
   Unlike the `ADD COLUMN` migrations above, a re-run fails at `CREATE TABLE Payments_new` rather than
-  half-applying, and the file is one transaction, so a failed apply leaves the old table in place.
+  half-applying, and D1 applies the file atomically, so a failed apply leaves the old table in place.
   `server/__tests__/migration-0011-account-payments.test.ts` applies this exact file to a genuinely
   pre-migration `Payments` table and asserts the surviving rows, the CHECK in both directions, the
   re-import guard, and that the result is column- and index-identical to a fresh `sql/schema.sql`.

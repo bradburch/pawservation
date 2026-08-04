@@ -35,11 +35,24 @@
 --
 -- WHY A TABLE REBUILD. `BookingRequestId` is `NOT NULL` today and SQLite cannot drop a NOT NULL with
 -- `ALTER TABLE`; the CHECK above cannot be added by ALTER either. So this is the standard twelve-step
--- dance — create, copy, drop, rename — inside ONE transaction, because a half-applied rebuild is a
--- dropped payments table. `defer_foreign_keys` is set INSIDE the transaction (D1 cannot switch FK
--- enforcement off at all, only defer it within one; see the historical 0006_custom_services.sql) so
--- the intermediate state is judged at COMMIT rather than statement by statement. Nothing in the
--- schema references `Payments`, so the rename rewrites no other table's clauses.
+-- dance — create, copy, drop, rename.
+--
+-- THIS FILE MUST CONTAIN NO `BEGIN`/`COMMIT`/`SAVEPOINT`. It used to. The rebuild was wrapped in an
+-- explicit `BEGIN TRANSACTION … COMMIT`, with `PRAGMA defer_foreign_keys = ON` set inside it so the
+-- intermediate state (the moment `Payments` is briefly gone) would be judged at COMMIT rather than
+-- statement by statement. That reasoning holds for local SQLite and for `node:sqlite`, which is what
+-- the migration test below runs against — which is exactly why it passed every local check and its
+-- own dedicated test and STILL could not be applied: Cloudflare D1's remote executor rejects
+-- explicit SQL transactions outright, and `wrangler d1 execute --remote` on this file failed with
+-- "To execute a transaction, please use the state.storage.transaction() or
+-- state.storage.transactionSync() APIs instead of the SQL BEGIN TRANSACTION or SAVEPOINT
+-- statements." The test validated against an engine more permissive than the target; that is the
+-- defect, not the missing wrapper. Two things made the wrapper unnecessary anyway: `grep
+-- "REFERENCES Payments" sql/schema.sql` returns nothing, so no table has a foreign key into
+-- `Payments` for `defer_foreign_keys` to have been protecting in the first place; and D1 applies a
+-- `--file` execution atomically on its own, returning the database to its original state if any
+-- statement fails, which is the same guarantee the explicit transaction was written to provide.
+-- Nothing in the schema references `Payments`, so the rename rewrites no other table's clauses.
 --
 -- EVERY EXISTING ROW COMES OUT UNCHANGED, still pointing at its booking, with `AccountId` NULL —
 -- which is exactly what "this payment was recorded against a booking" means under the new CHECK.
@@ -65,10 +78,6 @@
 -- replayed CSV insert the same transaction twice. `server/__tests__/migration-0011-account-payments.test.ts`
 -- applies this file to a genuinely pre-migration table and asserts all of it, including that the
 -- result is column-for-column and index-for-index identical to what a fresh `sql/schema.sql` builds.
-BEGIN TRANSACTION;
-
-PRAGMA defer_foreign_keys = ON;
-
 CREATE TABLE Payments_new (
   Id TEXT PRIMARY KEY,
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
@@ -104,5 +113,3 @@ CREATE INDEX idx_Payments_Tenant_Account ON Payments (TenantId, AccountId);
 -- PARTIAL so the NULLs of hand-recorded payments are unconstrained.
 CREATE UNIQUE INDEX idx_Payments_Tenant_ExternalRef
   ON Payments (TenantId, ExternalRef) WHERE ExternalRef IS NOT NULL;
-
-COMMIT;

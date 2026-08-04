@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
@@ -173,5 +173,56 @@ describe('migration 0011 (account-level payments) against a pre-migration databa
     const { raw: fresh } = createTestEnv();
     expect(columns(migrated)).toEqual(columns(fresh));
     expect(indexNames(migrated)).toEqual(indexNames(fresh));
+  });
+});
+
+/**
+ * NO MIGRATION MAY CONTAIN AN EXPLICIT SQL TRANSACTION. This is the test that would have caught
+ * 0011's original bug: it wrapped its table rebuild in `BEGIN TRANSACTION … COMMIT` (with
+ * `PRAGMA defer_foreign_keys = ON` inside), which `node:sqlite` — the engine every test in this
+ * file and this suite runs against — happily accepts. Cloudflare D1's remote executor does not:
+ * `wrangler d1 execute --remote` on that file failed with "To execute a transaction, please use
+ * the state.storage.transaction() or state.storage.transactionSync() APIs instead of the SQL
+ * BEGIN TRANSACTION or SAVEPOINT statements." Every local check passed, the migration's own
+ * dedicated test passed, and it still could not be applied to production — because the test
+ * validated against an engine more permissive than the target. D1 applies a `--file` execution
+ * atomically on its own (and restores the original state on any failure), so no migration needs
+ * — or is allowed — to hand-roll a transaction.
+ *
+ * Statements are checked with SQL comments (`-- …`) stripped first, so a migration is free to
+ * DISCUSS `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` in its prose (as this file's own header now
+ * does, explaining exactly this bug) without tripping the check meant for actual SQL statements.
+ */
+describe('no migration file uses an explicit SQL transaction', () => {
+  const MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', 'migrations');
+  const REJECTED = /\b(BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/i;
+
+  // Drop `-- ...` line comments before scanning, so prose ABOUT these keywords (explaining why
+  // they're banned) doesn't false-positive as an occurrence of the keywords themselves.
+  const stripSqlComments = (sql: string): string =>
+    sql
+      .split('\n')
+      .map((line) => line.replace(/--.*$/, ''))
+      .join('\n');
+
+  const migrationFiles = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'));
+
+  it('found at least one migration file to check (the check itself is not vacuous)', () => {
+    expect(migrationFiles.length).toBeGreaterThan(0);
+    expect(migrationFiles).toContain('0011_account_payments.sql');
+  });
+
+  it.each(migrationFiles)('%s contains no BEGIN/COMMIT/ROLLBACK/SAVEPOINT statement', (file) => {
+    const sql = stripSqlComments(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+    expect(sql).not.toMatch(REJECTED);
+  });
+
+  it('0011_account_payments.sql specifically no longer wraps its rebuild in a transaction', () => {
+    // The exact regression: this file used to open with BEGIN TRANSACTION / PRAGMA
+    // defer_foreign_keys and close with COMMIT. Assert directly against the loaded MIGRATION
+    // constant (not just the directory scan above) so this fails even if the file ever moves.
+    const sql = stripSqlComments(MIGRATION);
+    expect(sql).not.toMatch(REJECTED);
+    expect(sql).not.toContain('defer_foreign_keys');
   });
 });
