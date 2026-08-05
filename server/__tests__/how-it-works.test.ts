@@ -226,7 +226,7 @@ describe('GET /how-it-works — the in-depth tour page', () => {
   it("distinguishes deleting a time-off block from deleting a booking's own event", async () => {
     const body = await howItWorksBody();
     expect(body).toContain('blocks those dates automatically');
-    expect(body).toMatch(/deleting a booking&rsquo;s event in Google cancels/i);
+    expect(body).toMatch(/deleting it in Google cancels the booking/i);
   });
 
   it('is truthful that the connected calendar is read back and blocks dates', async () => {
