@@ -451,7 +451,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Booking widget on your own site, unlimited bookings</li>
                 <li>Availability, capacity caps, and conflict rules</li>
                 <li>Minimum notice and a booking horizon</li>
-                <li>Rates, logged payments, and outstanding balances</li>
+                <li>Rates, logged payments, and outstanding balances &mdash; one bill for a whole household</li>
                 <li>Cancellation policies, applied for you</li>
                 <li>Clients reschedule and cancel their own bookings</li>
                 <li>Client accounts and pet profiles</li>
@@ -518,7 +518,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Do customers pay by card here?</h3>
-              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate.</p>
+              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate. Two clients sharing a pet are one household on your books, so you can send one bill for the whole household instead of chasing separate payments per booking.</p>
             </div>
             <div class="qa-item">
               <h3>Can it double-book me?</h3>

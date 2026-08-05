@@ -359,4 +359,9 @@ describe('the landing page claims only what ships', () => {
     const body = await landingBody();
     expect(body).toMatch(/deleting a booking&rsquo;s event in Google cancels/i);
   });
+
+  it('mentions paying once for a whole household instead of per booking', async () => {
+    const body = await landingBody();
+    expect(body).toMatch(/one (bill|payment) for (the |a )?(whole |entire )?household/i);
+  });
 });
