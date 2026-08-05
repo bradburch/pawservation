@@ -169,9 +169,9 @@ below about the two prior incidents). Nothing needs to be hand-applied before th
   **Numbered 0012 deliberately**: 0010 and 0011 are taken by two other unmerged branches, and the
   numbers are first-come by branch point, not by merge order.
 
-**All of 0005 through 0009 are applied to the remote DB as of this writing.**
+**The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** these are 0005, 0006, 0008, 0009, and 0010.
 Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
-`0008_departure_time.sql`, or `0009_extra_time_surcharge.sql` by hand against the remote DB — each
+`0008_departure_time.sql`, `0009_extra_time_surcharge.sql`, or `0010_premium_until.sql` against the remote DB — each
 is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and re-running any
 of them **will error** with "duplicate column name" against a DB that already has it. This repo
 has already produced exactly this confusion twice from a stale ledger in this file — once claiming
