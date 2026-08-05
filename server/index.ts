@@ -1047,12 +1047,130 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
 </html>
 `;
 
+/**
+ * The Privacy Policy at /privacy — same LOCKED_CSP, script-free, PAGE_STYLE-only constraints as
+ * every other static page here. Content is grounded in what this codebase actually does (see the
+ * design doc's audit); this is not a substitute for legal review before it is a real business's
+ * live policy.
+ */
+const PRIVACY_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy Policy &mdash; Pawservation</title>
+    <meta name="description" content="What Pawservation collects, who it's shared with, and how long it's kept." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+          Pawservation
+        </a>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">Legal</p>
+          <h1>Privacy Policy</h1>
+          <p class="sub">What we collect, who we share it with, and how long we keep it &mdash; written to match what the product actually does.</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap">
+          <div class="feature">
+            <h3>What we collect</h3>
+            <p>From customers: name, email, phone, your pets' names and any care notes you give your sitter, and the answers you give to your sitter's own booking questions. From sitters: your login email and a securely hashed password &mdash; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
+          </div>
+          <div class="feature">
+            <h3>Who we share it with</h3>
+            <p><strong>Resend</strong> sends our transactional email &mdash; login codes, booking confirmations, password-reset links &mdash; and nothing else; we don't use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider &mdash; everything above lives on Cloudflare's infrastructure.</p>
+          </div>
+          <div class="feature">
+            <h3>Cookies</h3>
+            <p>We set exactly one cookie, for ten minutes, only while a sitter is connecting Google Calendar &mdash; it exists purely to stop a cross-site request forgery attack during that one step. There are no cookies for signing in or for tracking you. Every login &mdash; customer, sitter, or platform owner &mdash; works without one.</p>
+          </div>
+          <div class="feature">
+            <h3>How long we keep it</h3>
+            <p>Cancelled and declined bookings stay on the record as part of your sitter's booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can't be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account's data.</p>
+          </div>
+          <div class="feature">
+            <h3>Children</h3>
+            <p>Pawservation is not directed at children, and we don't knowingly collect data from them.</p>
+          </div>
+          <div class="feature">
+            <h3>No tracking</h3>
+            <p>We run no analytics, no ad pixels, and no fingerprinting &mdash; on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
+          </div>
+          <div class="feature">
+            <h3>Where your data lives</h3>
+            <p>Everything is stored on Cloudflare's global network. We don't currently commit to a specific country or region.</p>
+          </div>
+          <div class="feature">
+            <h3>Questions</h3>
+            <p>Reach us at <a href="mailto:brad@pawservation.com">brad@pawservation.com</a>.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <a class="logo" href="/">
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+              Pawservation
+            </a>
+            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <ul>
+              <li><a href="/demo">Try the demo</a></li>
+              <li><a href="/admin">Sitter sign in</a></li>
+              <li><a href="/">Overview</a></li>
+              <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <p>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
+          </p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
+`;
+
 app.get('/', (c) => c.html(LANDING_HTML));
 // Listed in wrangler.jsonc's run_worker_first as the BARE path "/how-it-works" — a glob does not
 // match it. Today nothing is emitted at that path, so it would reach the worker regardless (as
 // "/" does, which is not listed); the entry is defensive, so that if a build ever emits an asset
 // there it can never shadow this route.
 app.get('/how-it-works', (c) => c.html(HOW_IT_WORKS_HTML));
+app.get('/privacy', (c) => c.html(PRIVACY_HTML));
 
 // Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
 // through to Hono's plain-text default and break the { error } contract every client parses.

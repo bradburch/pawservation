@@ -69,6 +69,7 @@
       "/setup",
       "/setup.html",
       "/how-it-works",
+      "/privacy",
       "/request-invite",
       "/request-invite/thanks",
       // Google redirects the sitter's popup here. Nothing is emitted at this path today, so it
