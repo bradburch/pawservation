@@ -319,7 +319,7 @@ describe('google-calendar', () => {
       timezone: 'America/Los_Angeles',
     });
     expect(r.extendedProperties?.private).toEqual({
-      pawbook: 'true',
+      pawservation: 'true',
       category: 'boarding',
       petCount: '2',
       customerEmail: 'jess@example.com',
@@ -346,7 +346,7 @@ describe('google-calendar', () => {
       timezone: 'America/Los_Angeles',
     });
     expect(r.extendedProperties?.private.customerEmail).toBe('');
-    expect(r.extendedProperties?.private.pawbook).toBe('true');
+    expect(r.extendedProperties?.private.pawservation).toBe('true');
     expect(r.extendedProperties?.private.status).toBe('confirmed');
   });
 
@@ -434,7 +434,7 @@ describe('google-calendar', () => {
         endDate: '2026-08-18',
       });
       expect(r.extendedProperties?.private).toEqual({
-        pawbook: 'true',
+        pawservation: 'true',
         category: 'blocked',
         bookingId: 'blk-42',
         status: 'confirmed',

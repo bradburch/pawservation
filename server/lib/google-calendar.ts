@@ -326,7 +326,7 @@ function privateProps({
   category: string;
   status: string;
 }): Record<string, string> {
-  return { pawbook: 'true', category, bookingId, status };
+  return { pawservation: 'true', category, bookingId, status };
 }
 
 export function buildEventResource(b: CalendarBooking): EventResource {

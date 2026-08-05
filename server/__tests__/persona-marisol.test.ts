@@ -144,7 +144,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
         'Requested via Pawservation — confirm or decline in your dashboard.',
     );
     expect(resource.extendedProperties?.private).toEqual({
-      pawbook: 'true',
+      pawservation: 'true',
       category: 'boarding',
       petCount: '2',
       customerEmail: 'jess@example.com',
