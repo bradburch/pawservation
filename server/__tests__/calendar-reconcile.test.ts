@@ -60,7 +60,7 @@ function calendarResponse(events: FakeEvent[]) {
         ...(e.bookingId
           ? {
               extendedProperties: {
-                private: { pawbook: 'true', category: 'boarding', bookingId: e.bookingId },
+                private: { pawservation: 'true', category: 'boarding', bookingId: e.bookingId },
               },
             }
           : {}),
@@ -186,7 +186,7 @@ describe('reconcileBookingsWithCalendar', () => {
               start: { date: shiftedStart },
               end: { date: shiftedEnd },
               extendedProperties: {
-                private: { pawbook: 'true', category: 'boarding', bookingId: id },
+                private: { pawservation: 'true', category: 'boarding', bookingId: id },
               },
             },
           ],

@@ -471,7 +471,7 @@ describe('google-calendar', () => {
             start: { date: '2030-06-01' },
             end: { date: '2030-06-04' },
             extendedProperties: {
-              private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
+              private: { pawservation: 'true', category: 'boarding', bookingId: 'bk-a' },
             },
           },
           {
@@ -482,7 +482,7 @@ describe('google-calendar', () => {
             start: { dateTime: '2030-06-05T09:30:00-07:00' },
             end: { dateTime: '2030-06-05T10:30:00-07:00' },
             extendedProperties: {
-              private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
+              private: { pawservation: 'true', category: 'walks', bookingId: 'bk-b' },
             },
           },
         ],
@@ -508,7 +508,7 @@ describe('google-calendar', () => {
         allDay: true,
         status: 'confirmed',
         updated: '2030-05-01T00:00:00Z',
-        private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
+        private: { pawservation: 'true', category: 'boarding', bookingId: 'bk-a' },
       });
       // timed event — dateTime sliced to date part
       expect(events[1]).toEqual({
@@ -519,7 +519,7 @@ describe('google-calendar', () => {
         allDay: false,
         status: 'confirmed',
         updated: '2030-05-01T00:00:00Z',
-        private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
+        private: { pawservation: 'true', category: 'walks', bookingId: 'bk-b' },
       });
     });
 

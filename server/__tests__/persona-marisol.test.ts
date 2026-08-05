@@ -13,7 +13,7 @@ import type { Tenant } from '../types';
  * expects every booking to show up there.
  *
  * These exercise the real HTTP routes (customer booking + admin status changes) end to end,
- * spying on globalThis.fetch to capture what Pawbook actually sends to the Google Calendar API,
+ * spying on globalThis.fetch to capture what Pawservation actually sends to the Google Calendar API,
  * following the patterns in calendar-sync.test.ts / calendar-delete-sync.test.ts.
  */
 

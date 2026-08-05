@@ -15,18 +15,18 @@ import { createTestEnv } from './helpers';
 describe('owner-scope repo: OwnerUsers', () => {
   it('inserts and reads an owner user by email', async () => {
     const { env } = createTestEnv();
-    expect(await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawbook.test')).toBeNull();
-    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawbook.test', 'pbkdf2$1$aa$bb');
-    const row = await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawbook.test');
+    expect(await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawservation.test')).toBeNull();
+    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawservation.test', 'pbkdf2$1$aa$bb');
+    const row = await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawservation.test');
     expect(row?.Id).toBe('ou_1');
     expect(row?.PasswordHash).toBe('pbkdf2$1$aa$bb');
   });
 
   it('enforces Email UNIQUE — a second insert throws', async () => {
     const { env } = createTestEnv();
-    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawbook.test', 'h1');
+    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawservation.test', 'h1');
     await expect(
-      insertOwnerUser(env.PAWSERVATION_DB, 'ou_2', 'owner@pawbook.test', 'h2'),
+      insertOwnerUser(env.PAWSERVATION_DB, 'ou_2', 'owner@pawservation.test', 'h2'),
     ).rejects.toThrow();
   });
 });

@@ -113,7 +113,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
   });
 
   // Mirrors oauth-callback.test.ts's happy-path setup exactly (state signing, nonce cache seed,
-  // pawbook_gcal_nonce cookie) — only the tenant is flipped to disabled.
+  // pawservation_gcal_nonce cookie) — only the tenant is flipped to disabled.
   it('rejects the OAuth callback for a disabled tenant, writing no ProviderConnections row', async () => {
     const { env, raw } = createTestEnv();
     disable(raw);
@@ -127,7 +127,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     const spy = vi.spyOn(globalThis, 'fetch');
     const res = await app.request(
       `/oauth/google/callback?code=auth-code&state=${encodeURIComponent(state)}`,
-      { headers: { Cookie: `pawbook_gcal_nonce=${NONCE}` } },
+      { headers: { Cookie: `pawservation_gcal_nonce=${NONCE}` } },
       env,
     );
     expect(res.status).toBe(400);

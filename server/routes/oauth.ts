@@ -83,7 +83,7 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   // while the redirect points at pawservation.com sets the cookie somewhere this request can never
   // read it. `/admin/providers/calendar/oauth/start` now refuses that combination up front, so a
   // hit here means the mismatch arose some other way — and the host is what says which.
-  const cookieNonce = getCookie(c, 'pawbook_gcal_nonce');
+  const cookieNonce = getCookie(c, 'pawservation_gcal_nonce');
   if (!cookieNonce)
     return fail('session', 'nonce_cookie_missing', {
       tenantId: payload.tenantId,

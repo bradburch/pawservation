@@ -16,7 +16,7 @@ async function primedState(env: Env, over: Partial<{ tenantId: string; exp: numb
 }
 function call(env: Env, state: string, code = 'auth-code', cookieNonce: string | null = NONCE) {
   const headers: Record<string, string> = {};
-  if (cookieNonce !== null) headers.Cookie = `pawbook_gcal_nonce=${cookieNonce}`;
+  if (cookieNonce !== null) headers.Cookie = `pawservation_gcal_nonce=${cookieNonce}`;
   return app.request(
     `/oauth/google/callback?code=${code}&state=${encodeURIComponent(state)}`,
     { headers },
@@ -175,7 +175,7 @@ describe('GET /:slug/admin/providers/calendar/oauth/start', () => {
     });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await app.request(
-      'https://pawbook.example.workers.dev/api/sunny-paws/admin/providers/calendar/oauth/start',
+      'https://pawservation.example.workers.dev/api/sunny-paws/admin/providers/calendar/oauth/start',
       { headers: await adminHeaders(TENANT_A) },
       env,
     );

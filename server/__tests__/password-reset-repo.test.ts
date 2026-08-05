@@ -11,20 +11,20 @@ import { ADMIN_EMAIL_A, createTestEnv } from './helpers';
 describe('updateOwnerPasswordHash', () => {
   it('updates the hash and reports a row changed', async () => {
     const { env } = createTestEnv();
-    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawbook.test', 'old-hash');
+    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawservation.test', 'old-hash');
     expect(
-      await updateOwnerPasswordHash(env.PAWSERVATION_DB, 'owner@pawbook.test', 'new-hash'),
+      await updateOwnerPasswordHash(env.PAWSERVATION_DB, 'owner@pawservation.test', 'new-hash'),
     ).toBe(true);
-    const row = await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawbook.test');
+    const row = await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawservation.test');
     expect(row?.PasswordHash).toBe('new-hash');
   });
 
   it('reports no change for an unknown email, and touches nothing', async () => {
     const { env } = createTestEnv();
-    expect(await updateOwnerPasswordHash(env.PAWSERVATION_DB, 'nobody@pawbook.test', 'h')).toBe(
-      false,
-    );
-    expect(await getOwnerUserByEmail(env.PAWSERVATION_DB, 'nobody@pawbook.test')).toBeNull();
+    expect(
+      await updateOwnerPasswordHash(env.PAWSERVATION_DB, 'nobody@pawservation.test', 'h'),
+    ).toBe(false);
+    expect(await getOwnerUserByEmail(env.PAWSERVATION_DB, 'nobody@pawservation.test')).toBeNull();
   });
 });
 

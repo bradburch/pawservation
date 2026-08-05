@@ -517,7 +517,7 @@ describe('a [CANCELLED] event must not block capacity', () => {
               updated: '2030-01-01T00:00:00Z',
               start: { date: start },
               end: { date: addDays(start, 3) },
-              extendedProperties: { private: { pawbook: 'true', bookingId: id } },
+              extendedProperties: { private: { pawservation: 'true', bookingId: id } },
             },
           ],
         }),

@@ -1392,7 +1392,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // http://localhost — which Chrome tolerates on localhost and Safari does not, breaking the
     // local connect in one browser only. The scheme is right in every environment with nothing to
     // configure, and is still `https:` in production.
-    setCookie(c, 'pawbook_gcal_nonce', nonce, {
+    setCookie(c, 'pawservation_gcal_nonce', nonce, {
       httpOnly: true,
       secure: new URL(c.req.url).protocol === 'https:',
       sameSite: 'Lax', // sent on Google's top-level redirect back to the callback
