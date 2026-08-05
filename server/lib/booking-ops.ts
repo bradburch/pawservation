@@ -1478,7 +1478,14 @@ export type MyAccountBalance = {
 
 /** A statement with no activity yet: not an error, just nothing recorded either side. */
 function emptyAccount(accountId: string | null): MyAccountBalance {
-  return { accountId, bookings: [], householdPayments: [], expectedTotal: 0, paidTotal: 0, balance: 0 };
+  return {
+    accountId,
+    bookings: [],
+    householdPayments: [],
+    expectedTotal: 0,
+    paidTotal: 0,
+    balance: 0,
+  };
 }
 
 /**

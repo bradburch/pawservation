@@ -1715,10 +1715,7 @@ type HouseholdRollup = {
   orphanedPayments: { accountId: string; total: number }[];
 };
 
-async function computeHouseholdRollup(
-  db: D1Database,
-  tenantId: string,
-): Promise<HouseholdRollup> {
+async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise<HouseholdRollup> {
   const [moneyRes, petsRes, links, ownersRes, accountPaidRes, deceasedLinks] = await Promise.all([
     db
       .prepare(

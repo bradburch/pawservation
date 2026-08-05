@@ -155,6 +155,7 @@ against the production database (`Tenants.PremiumUntil`, `Payments.AccountId`, a
 `PersonalAccessTokens` table are all present on `pawbook-db`) rather than trusted from an older
 status line here — this file has previously gone stale on exactly this claim (see the warning
 below about the two prior incidents). Nothing needs to be hand-applied before this branch merges.
+
 - **`0012_personal_access_tokens.sql`** (`feat/personal-access-tokens`) — adds the
   `PersonalAccessTokens` table and its two indexes: the long-lived credential a customer issues to
   themselves so something other than the widget can call the booking API as them. `server/lib/llms.ts`

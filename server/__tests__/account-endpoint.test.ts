@@ -103,9 +103,7 @@ describe('GET /:slug/account', () => {
     const body = (await res.json()) as AccountBody;
     expect(body.balance).toBe(-300);
     expect(body.bookings).toEqual([]);
-    expect(body.householdPayments).toEqual([
-      expect.objectContaining({ amount: 300 }),
-    ]);
+    expect(body.householdPayments).toEqual([expect.objectContaining({ amount: 300 })]);
   });
 
   it('answers zero for a brand-new customer with no bookings, no payments and no pets', async () => {
