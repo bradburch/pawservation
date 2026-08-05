@@ -31,7 +31,7 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
 - **New schema changes:** add a file here starting at **`0001_*.sql`** (numbering restarts from
   the new baseline) AND mirror the change into `sql/schema.sql` in the same branch — the test
   suite only sees what schema.sql has. Apply to the remote DB by hand (`npx wrangler d1 execute
-pawbook-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a single statement)
+pawservation-db --remote --file ./migrations/NNNN_*.sql`, or `--command "…"` for a single statement)
   **before merging** — merging to `main` auto-deploys, so the merge IS the deploy.
 - **Local DB drift:** `schema.sql` is `CREATE … IF NOT EXISTS`, so re-seeding never rebuilds an
   existing table. If your local DB predates a schema change:
@@ -152,7 +152,7 @@ TenantId = ?`. **Already applied to the remote DB** (verified 2026-08-04 — `Pa
 
 **Applied to the remote DB as of 2026-08-04: 0005 through 0012, all of them.** Verified directly
 against the production database (`Tenants.PremiumUntil`, `Payments.AccountId`, and the
-`PersonalAccessTokens` table are all present on `pawbook-db`) rather than trusted from an older
+`PersonalAccessTokens` table are all present on `pawservation-db`) rather than trusted from an older
 status line here — this file has previously gone stale on exactly this claim (see the warning
 below about the two prior incidents). Nothing needs to be hand-applied before this branch merges.
 
@@ -184,7 +184,7 @@ rather than an `ADD COLUMN` and fails differently on a re-run, also described ab
 from a stale ledger in this file — once claiming a migration was unapplied when it was not, and
 once (0008) claiming a migration was unapplied when it genuinely was, silently 500ing every
 `BookingRequests` read in production after PR #100 merged until it was caught — check the actual
-remote schema (`wrangler d1 execute pawbook-db --remote --command "PRAGMA table_info(Tenants)"` or
+remote schema (`wrangler d1 execute pawservation-db --remote --command "PRAGMA table_info(Tenants)"` or
 the equivalent table) before hand-applying anything listed here, rather than trusting a status word
 in this file alone.
 
