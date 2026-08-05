@@ -189,6 +189,27 @@ describe('owner sitter routes', () => {
     expect(body.window).toBe('all');
   });
 
+  it('list includes premiumUntil per sitter, null when unset', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    raw.exec("UPDATE Tenants SET PremiumUntil = '2099-01-01 00:00:00' WHERE Id = 't_a';");
+
+    const res = await app.request(
+      '/api/owner/sitters?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sitters: { tenantId: string; premiumUntil: string | null }[];
+    };
+    const a = body.sitters.find((s) => s.tenantId === 't_a');
+    const b = body.sitters.find((s) => s.tenantId === 't_b');
+    expect(a?.premiumUntil).toBe('2099-01-01 00:00:00');
+    expect(b?.premiumUntil).toBeNull();
+  });
+
   it('window=30d narrows bookings/earned vs all, while clients stay all-time', async () => {
     const { env, raw } = createTestEnv();
     seedWindowed(raw);

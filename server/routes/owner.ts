@@ -158,6 +158,7 @@ export const ownerRoutes = new Hono<AppEnv>()
       displayName: r.DisplayName,
       createdAt: r.CreatedAt,
       disabled: r.DisabledAt != null,
+      premiumUntil: r.PremiumUntil,
       clients: r.Clients,
       bookings: r.Bookings,
       earned: r.Earned,
