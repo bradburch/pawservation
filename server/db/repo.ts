@@ -1511,7 +1511,7 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
  * (see `server/lib/venmo.ts`). A cancelled booking with no assessed fee but a live charge still
  * surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
  *
- * `insertPayment`'s guard is the third reader of this rule (it cannot share the SQL — it has no
+ * `insertPayment`'s guard is the other reader of this rule (it cannot share the SQL — it has no
  * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
  * a non-zero CancellationFee OR a live charges total). It must keep agreeing with this predicate
  * in both directions, or the Earnings page shows a balance whose *Record payment* button 404s.

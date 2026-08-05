@@ -170,17 +170,23 @@ below about the two prior incidents). Nothing needs to be hand-applied before th
   **Numbered 0012 deliberately**: 0010 and 0011 are taken by two other unmerged branches, and the
   numbers are first-come by branch point, not by merge order.
 
-**The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** these are 0005, 0006, 0008, 0009, and 0010.
-Do **not** re-run any of `0005_pet_rate_mode.sql`, `0006_overlap_days.sql`,
-`0008_departure_time.sql`, `0009_extra_time_surcharge.sql`, or `0010_premium_until.sql` against the remote DB — each
-is a bare `ALTER TABLE … ADD COLUMN`, SQLite has no `ADD COLUMN IF NOT EXISTS`, and re-running any
-of them **will error** with "duplicate column name" against a DB that already has it. This repo
-has already produced exactly this confusion twice from a stale ledger in this file — once claiming
-a migration was unapplied when it was not, and once (0008) claiming a migration was unapplied when
-it genuinely was, silently 500ing every `BookingRequests` read in production after PR #100 merged
-until it was caught — check the actual remote schema (`wrangler d1 execute pawbook-db --remote
---command "PRAGMA table_info(Tenants)"` or the equivalent table) before hand-applying anything
-listed here, rather than trusting a status word in this file alone.
+**The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
+migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,
+`0002_holiday_and_charges.sql`, `0003_gcal_sync.sql`, `0004_booking_window.sql`,
+`0005_pet_rate_mode.sql`, `0006_overlap_days.sql`, `0008_departure_time.sql`,
+`0009_extra_time_surcharge.sql`, and `0010_premium_until.sql`. Do **not** re-run any of them
+against the remote DB — each contains at least one bare `ALTER TABLE … ADD COLUMN`, SQLite has no
+`ADD COLUMN IF NOT EXISTS`, and re-running any of them **will error** with "duplicate column name"
+against a DB that already has it. (0007 is `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT
+EXISTS` only, so re-running it is harmless — see its own entry above; 0011 is a table rebuild
+rather than an `ADD COLUMN` and fails differently on a re-run, also described above; 0012 is
+`IF NOT EXISTS` throughout like 0007.) This repo has already produced exactly this confusion twice
+from a stale ledger in this file — once claiming a migration was unapplied when it was not, and
+once (0008) claiming a migration was unapplied when it genuinely was, silently 500ing every
+`BookingRequests` read in production after PR #100 merged until it was caught — check the actual
+remote schema (`wrangler d1 execute pawbook-db --remote --command "PRAGMA table_info(Tenants)"` or
+the equivalent table) before hand-applying anything listed here, rather than trusting a status word
+in this file alone.
 
 Numbering is sequential by merge order: each new branch picks up the next unused number as of when
 it branches, and a gap or an out-of-order arrival is fine (additive changes don't collide) as long
