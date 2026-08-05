@@ -21,7 +21,6 @@ import {
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
-  deleteAccountPayment,
   deletePayment,
   deletePetGroupRateById,
   deleteService,
@@ -32,11 +31,7 @@ import {
   insertBookingRequest,
   insertInvitedCustomerAsCoOwner,
   insertInvitedCustomerWithPet,
-  insertAccountPayment,
   insertPayment,
-  getAccountIdsByOwner,
-  getHouseholdBalances,
-  getHouseholdDetail,
   listAllEndUserPetsByTenant,
   listAllPetGroupPricing,
   listBlockedRanges,
@@ -45,8 +40,8 @@ import {
   listChargesForTenant,
   listCustomers,
   listEndUserPets,
+  listOutstandingBookings,
   listPaymentExternalRefs,
-  listPaymentsForAccount,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetNamesForTenantBookings,
@@ -114,8 +109,10 @@ import {
   MAX_VENMO_ROWS,
   matchVenmoTxns,
   parseVenmoCsv,
+  rankCandidates,
   resolveMatchClient,
   type MatchClient,
+  type OutstandingBooking,
 } from '../lib/venmo';
 import { NONCE_KEY } from './oauth';
 import {
@@ -142,6 +139,7 @@ import {
   buildGroupKey,
   buildMixKey,
   cancellationFee,
+  formatFriendlyDate,
   getPacificDateStr,
   isDedicatedCalendarId,
   parseMixKey,
@@ -169,34 +167,42 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
 }
 
 /**
- * The tenant-scoped reads the Venmo importer matches against. Loaded identically by the preview and
- * the confirm step: the confirm re-derives the whole match set rather than trusting what the preview
- * told the browser.
- *
- * `accountId` (Story 2.5) is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
- * latter only returns households with existing bookings or payments, and a client's first-ever
- * Venmo payment must still resolve to their household with none of either on record yet.
+ * The three tenant-scoped reads the Venmo importer matches against, plus the service labels the
+ * preview prints. Loaded identically by the preview and the confirm step: the confirm re-derives
+ * the whole candidate set rather than trusting what the preview told the browser.
  */
 async function loadVenmoMatchInputs(
   env: AppEnv['Bindings'],
   tenantId: string,
 ): Promise<{
   clients: MatchClient[];
+  outstanding: OutstandingBooking[];
   alreadyImported: Set<string>;
 }> {
-  const [customers, accountsByOwner, refs] = await Promise.all([
+  const [customers, bookings, refs, services] = await Promise.all([
     listCustomers(env.PAWBOOK_DB, tenantId),
-    getAccountIdsByOwner(env.PAWBOOK_DB, tenantId),
+    listOutstandingBookings(env.PAWBOOK_DB, tenantId),
     listPaymentExternalRefs(env.PAWBOOK_DB, tenantId),
+    listServices(env.PAWBOOK_DB, tenantId),
   ]);
+  const labelByType = new Map(services.map((s) => [s.ServiceType, s.Label]));
   return {
     clients: customers.map((u) => ({
       endUserId: u.Id,
       label: u.Name || u.Email,
       name: u.Name,
       venmoUsername: u.VenmoUsername,
-      accountId: accountsByOwner.get(u.Id) ?? null,
     })),
+    outstanding: bookings
+      // A booking whose client was removed has nobody to match it to.
+      .filter((b): b is typeof b & { EndUserId: string } => b.EndUserId !== null)
+      .map((b) => ({
+        bookingId: b.BookingId,
+        endUserId: b.EndUserId,
+        label: `${labelByType.get(b.ServiceType) ?? b.ServiceType} starting ${formatFriendlyDate(b.StartDate)}`,
+        startDate: b.StartDate,
+        balance: b.Expected - b.PaidTotal,
+      })),
     alreadyImported: new Set(refs),
   };
 }
@@ -2532,115 +2538,6 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.body(null, 204);
   })
 
-  /**
-   * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — every booking, its cost, its
-   * extra charges, and every payment, so the sitter can settle a dispute or check a cancellation
-   * fee without leaving the number she is questioning. Same 404-for-unowned-id answer as the
-   * sibling payment routes: `getHouseholdDetail` returns null for an account id of another tenant
-   * or no tenant at all, indistinguishably.
-   */
-  .get('/:slug/admin/accounts/:accountId', async (c) => {
-    const tenant = c.get('tenant');
-    const detail = await getHouseholdDetail(c.env.PAWBOOK_DB, tenant.Id, c.req.param('accountId'));
-    if (!detail) return c.json({ error: 'Not found.' }, 404);
-    return c.json(detail);
-  })
-
-  /**
-   * RECORD ONE PAYMENT AGAINST A HOUSEHOLD (0011) — the way a client who pays weekly or monthly
-   * actually pays. The body is the booking form's body minus the booking: the SAME three validators
-   * in the same order (whole dollars ≥ 1, a known method, a real date), because a household payment
-   * and a booking payment are one ledger and a rule enforced on one of them only is a rule that
-   * moves depending on where the sitter clicked.
-   *
-   * `:accountId` is an account id — a pet id — and the tenant guard is inside `insertAccountPayment`'s
-   * SQL, so a household of another tenant is an indistinguishable 404, the same answer every other
-   * money route gives a row it cannot see. **The response carries the recomputed household balance,
-   * never a figure from the request**: the client sends what it collected from the sitter (amount,
-   * method, date) and is TOLD what that means for the balance, which keeps the number on her screen
-   * the number the server would print.
-   */
-  .post('/:slug/admin/accounts/:accountId/payments', async (c) => {
-    const tenant = c.get('tenant');
-    const accountId = c.req.param('accountId');
-    const body = await c.req
-      .json<{ amount?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
-      .catch(() => ({}) as Record<string, never>);
-    if (!isValidRate(body.amount))
-      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
-    if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
-    if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
-      return c.json({ error: 'Invalid payment date.' }, 400);
-    const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
-    const paymentId = await insertAccountPayment(c.env.PAWBOOK_DB, tenant.Id, {
-      accountId,
-      amount: body.amount,
-      method: body.method,
-      paidDate: body.paidDate,
-      note,
-      // Hand-recorded, not from the Venmo importer — see insertAccountPayment for the shared
-      // dedupe index that field feeds when a value IS present.
-      externalRef: null,
-    });
-    // Guard refused: no household of THIS tenant is named by that id.
-    if (!paymentId) return c.json({ error: 'Not found.' }, 404);
-    const payments = await listPaymentsForAccount(c.env.PAWBOOK_DB, tenant.Id, accountId);
-    const created = payments.find((p) => p.Id === paymentId);
-    if (!created) return c.json({ error: 'Not found.' }, 404);
-    const households = await getHouseholdBalances(c.env.PAWBOOK_DB, tenant.Id);
-    return c.json(
-      {
-        payment: {
-          id: created.Id,
-          amount: created.Amount,
-          method: created.Method,
-          paidDate: created.PaidDate,
-          note: created.Note,
-        },
-        // The household this payment landed on, found by MEMBERSHIP rather than by id equality for
-        // the reason the schema gives: the account id is the first-sorted pet and can be renamed by
-        // a pet added later, so `:accountId` is not necessarily the household's current id.
-        balance: households.find((h) => h.petIds.includes(accountId))?.balance ?? 0,
-      },
-      201,
-    );
-  })
-
-  .get('/:slug/admin/accounts/:accountId/payments', async (c) => {
-    const tenant = c.get('tenant');
-    const rows = await listPaymentsForAccount(
-      c.env.PAWBOOK_DB,
-      tenant.Id,
-      c.req.param('accountId'),
-    );
-    return c.json({
-      payments: rows.map((p) => ({
-        id: p.Id,
-        amount: p.Amount,
-        method: p.Method,
-        paidDate: p.PaidDate,
-        note: p.Note,
-      })),
-    });
-  })
-
-  /**
-   * Deleting is the only correction this ledger has (there is no edit, here or on the booking form).
-   * The account id is part of the identity for the same reason the booking id is on the sibling
-   * route: a payment id paired with the wrong household 404s rather than silently deleting money.
-   */
-  .delete('/:slug/admin/accounts/:accountId/payments/:paymentId', async (c) => {
-    const tenant = c.get('tenant');
-    const deleted = await deleteAccountPayment(
-      c.env.PAWBOOK_DB,
-      tenant.Id,
-      c.req.param('accountId'),
-      c.req.param('paymentId'),
-    );
-    if (!deleted) return c.json({ error: 'Not found.' }, 404);
-    return c.body(null, 204);
-  })
-
   .post('/:slug/admin/bookings/:id/charges', async (c) => {
     const tenant = c.get('tenant');
     const bookingId = c.req.param('id');
@@ -2724,13 +2621,11 @@ export const adminRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS (Story 2.5, 0011). The CSV comes
-   * back with the request and is parsed and matched AGAIN from scratch: the body supplies only
-   * which transaction goes on which household, so every dollar figure, date and note is the
-   * server's own reading of the file. An accountId is honoured only when it is EXACTLY the
-   * household this request independently resolves the transaction's sender to — the preview is not
-   * a token of trust, and there is no ranking step left to fool: a client resolves to at most one
-   * household. The file itself is still never stored.
+   * Record the rows the sitter approved. The CSV comes back with the request and is parsed and
+   * matched AGAIN from scratch: the body supplies only which transaction goes on which booking, so
+   * every dollar figure, date and note is the server's own reading of the file. A bookingId is
+   * honoured only when it is one of the candidates this request just ranked — the preview is not a
+   * token of trust. The file itself is still never stored.
    */
   .post('/:slug/admin/payments/venmo/import', async (c) => {
     const tenant = c.get('tenant');
@@ -2741,16 +2636,16 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Choose at least one payment to record.' }, 400);
     if (body.choices.length > MAX_VENMO_ROWS)
       return c.json({ error: `Record ${MAX_VENMO_ROWS} payments or fewer at a time.` }, 400);
-    const choices: { txnId: string; accountId: string }[] = [];
+    const choices: { txnId: string; bookingId: string }[] = [];
     for (const raw of body.choices) {
-      const choice = raw as { txnId?: unknown; accountId?: unknown };
+      const choice = raw as { txnId?: unknown; bookingId?: unknown };
       if (
         !isVenmoTxnId(choice.txnId) ||
-        typeof choice.accountId !== 'string' ||
-        choice.accountId === ''
+        typeof choice.bookingId !== 'string' ||
+        choice.bookingId === ''
       )
         return c.json({ error: 'That list of payments is malformed.' }, 400);
-      choices.push({ txnId: choice.txnId, accountId: choice.accountId });
+      choices.push({ txnId: choice.txnId, bookingId: choice.bookingId });
     }
 
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
@@ -2762,7 +2657,7 @@ export const adminRoutes = new Hono<AppEnv>()
     let imported = 0;
     let totalAmount = 0;
 
-    for (const { txnId, accountId } of choices) {
+    for (const { txnId, bookingId } of choices) {
       const txn = txnById.get(txnId);
       if (!txn) {
         skipped.push({ txnId, reason: 'That transaction is not in this file' });
@@ -2772,18 +2667,24 @@ export const adminRoutes = new Hono<AppEnv>()
         skipped.push({ txnId, reason: 'Already imported' });
         continue;
       }
-      // Re-resolve from THIS request's data; the browser's idea of the match is never trusted.
+      // Re-rank from THIS request's data; the browser's idea of the candidates is never trusted.
       // resolveMatchClient is the SAME function the preview uses — a name that's ambiguous there
       // is refused here too, never silently resolved by whichever client happened to sort last.
       const client = resolveMatchClient(inputs.clients, txn.from);
-      if (!client || client.accountId === null || client.accountId !== accountId) {
-        skipped.push({ txnId, reason: 'That household is no longer a match for this payment' });
+      const candidates = client
+        ? rankCandidates(
+            txn,
+            inputs.outstanding.filter((b) => b.endUserId === client.endUserId),
+          )
+        : [];
+      if (!candidates.some((candidate) => candidate.bookingId === bookingId)) {
+        skipped.push({ txnId, reason: 'That booking is no longer a match for this payment' });
         continue;
       }
       const note = `Venmo import — ${txn.from}${txn.note ? `: ${txn.note}` : ''} (txn ${txn.txnId})`;
       try {
-        const paymentId = await insertAccountPayment(c.env.PAWBOOK_DB, tenant.Id, {
-          accountId,
+        const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
+          bookingRequestId: bookingId,
           amount: txn.amount,
           method: 'venmo',
           paidDate: txn.date,
@@ -2791,7 +2692,7 @@ export const adminRoutes = new Hono<AppEnv>()
           externalRef: txn.txnId,
         });
         if (!paymentId) {
-          skipped.push({ txnId, reason: 'That household can no longer take a payment' });
+          skipped.push({ txnId, reason: 'That booking can no longer take a payment' });
           continue;
         }
         imported++;

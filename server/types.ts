@@ -29,12 +29,6 @@ export type Tenant = {
    *  whereabouts, not a pool. Fed to the engine as `CapacityRequest.overlapAllowance`. */
   HousesitBoardingOverlapDays: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
-  /** Paid-through instant in SQLite's `datetime('now')` shape ('YYYY-MM-DD HH:MM:SS', UTC), set
-   *  and cleared by the platform owner (0010). null = free. NOT a flag: entitlement is the
-   *  comparison `PremiumUntil > now`, made on every read by `isPremiumActive` — so a lapse takes
-   *  effect on its own, with nothing to run and nothing to flip. The free product publishes the
-   *  derived boolean on `/api/:slug/config`; it gates nothing on it. */
-  PremiumUntil: string | null;
 };
 
 export type TenantUser = {
@@ -198,17 +192,10 @@ export type BookingRow = {
   CreatedAt: string;
 };
 
-/**
- * One row of the payments ledger. `BookingRequestId` and `AccountId` are EXACTLY ONE of the two —
- * the database enforces it (0011) — so a NULL `BookingRequestId` reads as "this payment settles the
- * household in `AccountId`", the form a client who pays monthly produces. `ExternalRef` is
- * deliberately absent: the Venmo importer writes it and only aggregate reads touch it.
- */
 export type PaymentRow = {
   Id: string;
   TenantId: string;
-  BookingRequestId: string | null;
-  AccountId: string | null;
+  BookingRequestId: string;
   Amount: number;
   Method: PaymentMethod;
   PaidDate: string;
@@ -283,86 +270,6 @@ export type AnalyticsData = {
     Keepable: number;
     PaidTotal: number;
   }[];
-  /**
-   * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets `buildAccounts` derives,
-   * summed as `Σ(booking costs + charges) − Σ(payments)` (`getHouseholdBalances` in
-   * `server/db/repo.ts`). Already camelCase, unlike every aggregate above it, because it is
-   * COMPUTED rather than selected: `serializeAnalytics` passes it through untouched, and the client
-   * re-derives no part of it — balances are server-side money, like every other figure here.
-   */
-  households: HouseholdBalanceRow[];
-  /**
-   * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — the pet their `AccountId` names has been
-   * DELETED (a `deleteCustomer` cascade removes the pet and its owner edges together, and never
-   * touches `Payments`), so nothing left in the database can say whose money it was. Published
-   * beside the balances precisely because every revenue figure above still counts it:
-   * `Σ households.paidTotal + Σ orphanedPayments.total` is the whole of the household money, and
-   * this list is what keeps that identity true rather than leaving a payment counted in one view
-   * and silently absent from the other. A pet that merely DIED is never here — its payments still
-   * resolve to its own household (`buildPaymentAnchors`).
-   */
-  orphanedPayments: { accountId: string; total: number }[];
-};
-
-/**
- * One household's statement, as `getHouseholdBalances` computes it and the dashboard renders it.
- * `accountId` is the account id `buildAccounts` produces (the lexicographically-first pet of the
- * component), the same identity invoice numbering keys off. `balance` is negative when the
- * household is in CREDIT.
- */
-export type HouseholdBalanceRow = {
-  accountId: string;
-  owners: { endUserId: string; name: string | null; email: string | null }[];
-  /** Every pet of the component. A household payment is matched against THIS, not against
-   *  `accountId`: the account id is the first-sorted pet and a pet added later renames it. */
-  petIds: string[];
-  /** Pets that have DIED but under whose ids payments of this household were filed, so those
-   *  payments still resolve here (`buildPaymentAnchors`). Not members of the household: kept apart
-   *  from `petIds` so a dead pet is never listed as one of a client's pets. */
-  anchorPetIds: string[];
-  bookingIds: string[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
-};
-
-/**
- * The drill-down behind one household balance (Story 2.4, FR-7c) — `getHouseholdDetail` in
- * `server/db/repo.ts`. `expectedTotal`/`paidTotal`/`balance` are `getHouseholdBalances`'s own
- * numbers for this household, passed through rather than recomputed, so the detail can never
- * disagree with the balance it sits beneath.
- */
-export type HouseholdDetailRow = {
-  accountId: string;
-  bookings: {
-    bookingId: string;
-    serviceType: string;
-    startDate: string;
-    status: string;
-    /** The quote, or the assessed cancellation fee on a cancelled row — EXCLUDING extra charges,
-     *  so a cancellation fee stays readable as its own figure rather than folded into one number. */
-    cost: number;
-    charges: { id: string; label: string; amount: number }[];
-    chargesTotal: number;
-    /** Payments recorded against THIS booking only — a household-level payment never appears here. */
-    paidTotal: number;
-    /** What this booking contributes to `expectedTotal`: `cost + chargesTotal`, or zero for a
-     *  declined request — declined bookings are never billed at all, the same rule
-     *  `CREDITABLE_AMOUNT_SQL` applies to the balance above. Sums to `expectedTotal` exactly. */
-    expected: number;
-  }[];
-  /** Payments recorded against the HOUSEHOLD (0011) rather than any one booking — never attributed
-   *  to a booking above, however convenient that would be to render. */
-  householdPayments: {
-    id: string;
-    amount: number;
-    method: string;
-    paidDate: string;
-    note: string | null;
-  }[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
 };
 
 export type ProviderConnection = {
@@ -389,12 +296,6 @@ export type AppEnv = {
   Variables: {
     tenant: Tenant;
     endUserId: string;
-    /** Which end-user credential `endUserAuth` accepted: the widget's 24h session token, or a
-     *  personal access token (0012). Routes must NOT branch on this — both resolve to the same
-     *  end user and confer identical authority — with the single exception of token management
-     *  itself, which requires the widget session so a leaked token cannot mint its own
-     *  replacement (`widgetSessionOnly`). */
-    endUserCredential: 'widget' | 'token';
     /** Set by adminAuth: the authenticated sitter-admin's TenantUser id (AdminClaims.sub). */
     adminUserId: string;
     /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */

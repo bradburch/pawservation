@@ -10,10 +10,8 @@ import {
   listAllowedSitters,
   listSitterRoster,
   setTenantDisabled,
-  setTenantPremiumUntil,
 } from '../db/repo';
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
-import { normalizePremiumUntil } from '../lib/premium';
 import { serializeAnalytics } from '../lib/analytics';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
@@ -181,74 +179,19 @@ export const ownerRoutes = new Hono<AppEnv>()
     // 12-month breakdown, anchored to the sitter's own timezone.
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenantId, today);
-    // `premiumUntil` rides along beside `disabled` for the same reason it does: the console's two
-    // owner switches both need to render their CURRENT value, and this is the only read that has
-    // the tenant row. Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean —
-    // the owner is setting the date, so the date is what they need to see, and whether it has
-    // passed is a comparison the console can make for itself.
-    return c.json({
-      ...serializeAnalytics(data),
-      disabled: tenant.DisabledAt != null,
-      premiumUntil: tenant.PremiumUntil,
-    });
+    return c.json({ ...serializeAnalytics(data), disabled: tenant.DisabledAt != null });
   })
 
-  /**
-   * The two owner switches on a tenant: whether the account is switched off, and how long they
-   * have paid through. One PATCH rather than two endpoints because they are the same kind of
-   * thing — an owner-only edit of a column on the tenant row — and both need the same 404 and the
-   * same cache invalidation; a second endpoint would be a second place to forget either.
-   *
-   * Both fields are OPTIONAL and applied only when PRESENT, which is what keeps them independent:
-   * `{ disabled: true }` must not silently revoke a subscription, and `{ premiumUntil: … }` must
-   * not silently re-enable a disabled account. A body naming neither is a 400 rather than a
-   * do-nothing 200, because the only way to send one is by mistake.
-   *
-   * `premiumUntil: null` is meaningfully different from omitting it — it is how premium is
-   * CLEARED — so the field is `v.optional(v.nullable(…))` and the two cases are distinguished by
-   * `in`, never by falsiness.
-   */
   .patch('/owner/sitters/:tenantId', async (c) => {
     const tenantId = c.req.param('tenantId');
     const raw = await c.req.json<unknown>().catch(() => ({}));
-    const parsed = v.safeParse(
-      v.object({
-        disabled: v.optional(v.boolean()),
-        premiumUntil: v.optional(v.nullable(v.string())),
-      }),
-      raw,
-    );
-    if (!parsed.success || (!('disabled' in parsed.output) && !('premiumUntil' in parsed.output)))
-      return c.json(
-        { error: 'Expected { disabled?: boolean, premiumUntil?: string | null }.' },
-        400,
-      );
-    const { disabled, premiumUntil } = parsed.output;
-
-    // Normalise BEFORE the tenant lookup and before any write: an unparseable date must not leave
-    // a half-applied PATCH behind, and this is the last point at which nothing has happened yet.
-    let storedUntil: string | null = null;
-    if (premiumUntil != null) {
-      storedUntil = normalizePremiumUntil(premiumUntil);
-      if (storedUntil === null)
-        return c.json({ error: 'premiumUntil must be a date, or null to clear it.' }, 400);
-    }
-
+    const parsed = v.safeParse(v.object({ disabled: v.boolean() }), raw);
+    if (!parsed.success) return c.json({ error: 'Expected { disabled: boolean }.' }, 400);
     const tenant = await getTenantById(c.env.PAWBOOK_DB, tenantId);
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
-    if (disabled !== undefined) await setTenantDisabled(c.env.PAWBOOK_DB, tenantId, disabled);
-    if ('premiumUntil' in parsed.output)
-      await setTenantPremiumUntil(c.env.PAWBOOK_DB, tenantId, storedUntil);
+    await setTenantDisabled(c.env.PAWBOOK_DB, tenantId, parsed.output.disabled);
     await invalidateTenantCache(tenant.Slug, c.env); // widget/dashboard sees the change at once
-
-    // Report the tenant's state as it now IS, read back rather than assembled from the request:
-    // a PATCH that touched one field still answers for both, so the console never has to guess
-    // what the field it did not send is currently set to.
-    const after = await getTenantById(c.env.PAWBOOK_DB, tenantId);
-    return c.json({
-      disabled: after?.DisabledAt != null,
-      premiumUntil: after?.PremiumUntil ?? null,
-    });
+    return c.json({ disabled: parsed.output.disabled });
   })
 
   .delete('/owner/sitters/:tenantId', async (c) => {
