@@ -571,6 +571,13 @@ const LANDING_HTML = `<!doctype html>
               <li><a href="#faq">FAQ</a></li>
             </ul>
           </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
         </div>
         <div class="foot-bottom">
           <p>
@@ -1033,6 +1040,13 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <li><a href="/admin">Sitter sign in</a></li>
               <li><a href="/">Overview</a></li>
               <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
             </ul>
           </div>
         </div>

@@ -305,6 +305,24 @@ describe('the landing page points at /how-it-works', () => {
   });
 });
 
+describe('the footer links to the legal pages', () => {
+  it('landing page footer links /privacy and /terms', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/', {}, env);
+    const body = await res.text();
+    expect(body).toContain('href="/privacy"');
+    expect(body).toContain('href="/terms"');
+  });
+
+  it('how-it-works page footer links /privacy and /terms', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/how-it-works', {}, env);
+    const body = await res.text();
+    expect(body).toContain('href="/privacy"');
+    expect(body).toContain('href="/terms"');
+  });
+});
+
 /**
  * The landing page makes fewer claims than the tour, but the ones it does make are absolutes
  * ("No.", "Just your clients."), which is exactly why they want pinning: an absolute is either
