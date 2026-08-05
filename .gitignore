@@ -22,6 +22,7 @@ docs/*.png
 .DS_Store
 *.sql.bak
 0024-pre-migration-backup.sql
+backup-pre-*.sql
 .agents/
 _bmad/
 _bmad-output/
