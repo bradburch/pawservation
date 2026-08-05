@@ -386,6 +386,7 @@ export type SitterRow = {
   bookings: number;
   earned: number;
   disabled: boolean;
+  premiumUntil: string | null;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;
@@ -873,6 +874,12 @@ export const owner = {
       method: 'PATCH',
       headers: { ...jsonHeaders, ...authHeaders(token) },
       body: JSON.stringify({ disabled }),
+    }),
+  setSitterPremium: (token: string, tenantId: string, premiumUntil: string | null) =>
+    request<{ premiumUntil: string | null }>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {
+      method: 'PATCH',
+      headers: { ...jsonHeaders, ...authHeaders(token) },
+      body: JSON.stringify({ premiumUntil }),
     }),
   removeSitter: (token: string, tenantId: string) =>
     request<unknown>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {
