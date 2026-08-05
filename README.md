@@ -242,6 +242,8 @@ npx wrangler secret put OWNER_EMAILS               # comma-separated platform-ow
 npx wrangler secret put RESEND_API_KEY             # from https://resend.com — required for login codes & signup links
 npx wrangler secret put RESEND_FROM_NOREPLY        # e.g. "Pawservation <no_reply@pawservation.com>" — account access (login codes, password resets, signup links)
 npx wrangler secret put RESEND_FROM_BOOKING        # e.g. "Pawservation <booking@pawservation.com>" — booking mail (invites, confirm/decline/cancel)
+# PREMIUM_ORIGIN is set in wrangler.jsonc as a plain var (not a secret); edit the value there if needed.
+# It is published on /config as premium.origin for clients that cannot resolve relative paths (*.workers.dev embeds).
 # Optional — Google Calendar sync:
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET

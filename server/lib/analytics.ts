@@ -81,5 +81,26 @@ export function serializeAnalytics(data: AnalyticsData) {
     })),
     outstanding,
     credits,
+    /**
+     * HOUSEHOLD BALANCES, passed through verbatim. Every figure is already computed — by
+     * `getHouseholdBalances`, over the same `CREDITABLE_AMOUNT_SQL` the two lists above are built
+     * from — so there is deliberately nothing to map here: a balance is money, money is server-side,
+     * and a client that re-added the numbers could disagree with the page it is printed on.
+     *
+     * The tiles above are NOT rebuilt from these rows. `outstandingTotal` and `creditTotal` stay
+     * per-booking and stay un-netted: netting a debt against a credit is right WITHIN one household
+     * (that is what a statement is) and wrong across two, and the tiles speak for the whole book.
+     */
+    households: data.households,
+    /**
+     * MONEY THAT BELONGS TO NO HOUSEHOLD — a household payment whose account-id pet was deleted
+     * along with its owner edges (`deleteCustomer`), leaving nothing in the database able to say
+     * which household it settled. Passed through beside the balances rather than folded into one
+     * of them or quietly dropped: the revenue figures above already count this money, so
+     * `Σ households.paidTotal + Σ orphanedPayments.total` must equal it for the page to be telling
+     * the truth. Naming an orphan out loud is the only honest option; guessing it a household is
+     * the one thing worse than losing it.
+     */
+    orphanedPayments: data.orphanedPayments,
   };
 }

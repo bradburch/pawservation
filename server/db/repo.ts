@@ -7,6 +7,8 @@ import type {
   EndUser,
   EndUserPet,
   ExtraTimeOrigin,
+  HouseholdBalanceRow,
+  HouseholdDetailRow,
   OwnerUser,
   PaymentRow,
   PetGroupPricingRow,
@@ -23,8 +25,14 @@ import type {
 import { EXTRA_TIME_ORIGINS } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
-import type { ServiceQuestion } from '../../src/shared/index.js';
-import { parseMixKey, quarterlyBreakdown } from '../../src/shared/index.js';
+import type { Account, ServiceQuestion } from '../../src/shared/index.js';
+import {
+  buildAccounts,
+  buildHouseholdBalances,
+  buildPaymentAnchors,
+  parseMixKey,
+  quarterlyBreakdown,
+} from '../../src/shared/index.js';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
@@ -36,7 +44,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -1144,13 +1152,175 @@ export async function listPaymentsForBooking(
 ): Promise<PaymentRow[]> {
   const { results } = await db
     .prepare(
-      `SELECT Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, CreatedAt
+      `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
        FROM Payments WHERE TenantId = ? AND BookingRequestId = ?
        ORDER BY PaidDate DESC, CreatedAt DESC`,
     )
     .bind(tenantId, bookingRequestId)
     .all<PaymentRow>();
   return results;
+}
+
+/**
+ * RECORD ONE PAYMENT AGAINST A HOUSEHOLD (0011). A client who pays weekly or monthly sends one
+ * amount covering several bookings; this writes it as ONE row against the household, and the sitter
+ * is never asked to split it. `BookingRequestId` stays NULL — the database's `CHECK` is what makes
+ * "exactly one of the two" a fact rather than a convention, so no reader has to decide which side
+ * counts a row and none of them can count it twice.
+ *
+ * The guard is `insertPayment`'s idiom — `INSERT … SELECT … WHERE`, atomic with the write — asked of
+ * `EndUserPets` rather than of `BookingRequests`, because a household is identified by a pet id (see
+ * the schema's `AccountId` note). A pet of another tenant, a deceased pet, and an id that is no pet
+ * at all all insert nothing and return null, which the route reports as 404: tenancy is enforced in
+ * the SQL, never by a caller-side pre-check. It deliberately does NOT also test for a `PetOwners`
+ * edge: "no pets without owners" is a standing invariant of this schema, so a live pet always sits
+ * in some household and that clause could never fire — the same reason `buildAccounts` refuses to
+ * filter out components with no owners.
+ *
+ * Deliberately NO status or balance guard, unlike the booking form. There is no booking to be
+ * cancelled or declined here, and a household that owes nothing yet may legitimately be paid — that
+ * is prepayment, which shows up as a credit and is drawn down by the next booking through the same
+ * arithmetic.
+ *
+ * `externalRef` carries the Venmo transaction id for an import recorded against a household (Story
+ * 2.5) — NULL for a hand-recorded one, exactly `insertPayment`'s idiom. It shares that function's
+ * partial unique index on `(TenantId, ExternalRef)`, so a replayed CSV row throws here too rather
+ * than inserting a second time; the importer catches it with `isUniqueViolation`.
+ */
+export async function insertAccountPayment(
+  db: D1Database,
+  tenantId: string,
+  payment: {
+    accountId: string;
+    amount: number;
+    method: PaymentMethod;
+    paidDate: string;
+    note: string | null;
+    externalRef: string | null;
+  },
+): Promise<string | null> {
+  const id = crypto.randomUUID();
+  const result = await db
+    .prepare(
+      `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, ExternalRef)
+       SELECT ?, ?, NULL, ?, ?, ?, ?, ?, ?
+       FROM EndUserPets
+       WHERE TenantId = ? AND Id = ? AND DeceasedAt IS NULL`,
+    )
+    .bind(
+      id,
+      tenantId,
+      payment.accountId,
+      payment.amount,
+      payment.method,
+      payment.paidDate,
+      payment.note,
+      payment.externalRef,
+      tenantId,
+      payment.accountId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0 ? id : null;
+}
+
+/**
+ * Every client's household account id, keyed by owner (EndUser) id — the same connected-component
+ * graph `buildAccounts` derives for invoice numbering and `getHouseholdBalances` derives for money,
+ * built here with NO activity filter. `getHouseholdBalances` deliberately drops a household with no
+ * bookings and no payments (a statement for a client who has never booked or paid is noise on the
+ * Earnings page) — but the Venmo importer (Story 2.5) needs to resolve a client's FIRST-EVER payment
+ * to their household, before any activity exists to filter on. An owner with no live pet holds no
+ * edge in the graph at all and is simply absent from the returned map — they belong to no household,
+ * and the importer surfaces that rather than guessing one.
+ */
+export async function getAccountIdsByOwner(
+  db: D1Database,
+  tenantId: string,
+): Promise<Map<string, string>> {
+  const links = await listOwnerPetLinks(db, tenantId);
+  const accounts = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })));
+  const map = new Map<string, string>();
+  for (const account of accounts)
+    for (const ownerId of account.ownerIds) map.set(ownerId, account.id);
+  return map;
+}
+
+/**
+ * Every pet id a payment of this household may be FILED UNDER, or null when the account id names
+ * no household of this tenant.
+ *
+ * Membership, not equality: the account id is the lexicographically-first pet of its component, so
+ * a new pet sorting earlier RENAMES the household — and a payment filed under the old name must
+ * still be found. Every household-payment read goes through this, so what the panel lists and what
+ * the balance counts can never be two different sets.
+ *
+ * The set is the component's live pets PLUS its payment anchors — pets that have DIED since a
+ * payment was filed against them (`buildPaymentAnchors`). Without the anchors, marking the
+ * account-id pet deceased dropped its payments out of this list and out of `getHouseholdBalances`
+ * together, silently, while `Payments` kept counting them as revenue. Both lists are consulted for
+ * the same reason they are kept apart: a dead pet is a legitimate place for money to have been
+ * filed, and not a member of the household.
+ */
+async function householdPetIds(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<string[] | null> {
+  const graph = await loadAccountGraph(db, tenantId);
+  return resolveHousehold(graph, { accountId })?.paymentPetIds ?? null;
+}
+
+/** Every payment recorded against a household, newest paid-date first (listPaymentsForBooking's order). */
+export async function listPaymentsForAccount(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<PaymentRow[]> {
+  const petIds = await householdPetIds(db, tenantId, accountId);
+  if (!petIds) return [];
+  const placeholders = petIds.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
+       FROM Payments
+       WHERE TenantId = ? AND AccountId IN (${placeholders})
+       ORDER BY PaidDate DESC, CreatedAt DESC`,
+    )
+    .bind(tenantId, ...petIds)
+    .all<PaymentRow>();
+  return results;
+}
+
+/**
+ * Delete one household payment. Carries the account id for the same reason `deletePayment` carries
+ * the booking id: a payment id paired with the wrong household in the URL must report false (the
+ * route 404s) rather than silently deleting someone else's money. Deleting is the only correction
+ * mechanism this ledger has, here as there.
+ *
+ * AN ORPHAN IS DELETABLE UNDER THE ID IT IS FILED AGAINST. When `accountId` resolves to no
+ * household — the pet it names was deleted with its owner edges — the payment is matched by exact
+ * `AccountId` equality instead of by household membership. Without this the sitter could SEE an
+ * orphan (`getOrphanedAccountPayments` puts it on the Earnings page) and have no way to clear it,
+ * which would leave the one correction this ledger has unavailable precisely where it is needed.
+ * Equality is not a loophole: an id that resolves to a household never reaches this branch, so it
+ * reaches exactly the payments nothing else can, and tenancy is enforced in the SQL either way.
+ */
+export async function deleteAccountPayment(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+  paymentId: string,
+): Promise<boolean> {
+  // No household ⇒ the id is an orphan's own account id, and only its own payments answer to it.
+  const petIds = (await householdPetIds(db, tenantId, accountId)) ?? [accountId];
+  const placeholders = petIds.map(() => '?').join(', ');
+  const result = await db
+    .prepare(
+      `DELETE FROM Payments WHERE TenantId = ? AND Id = ? AND AccountId IN (${placeholders})`,
+    )
+    .bind(tenantId, paymentId, ...petIds)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**
@@ -1320,10 +1490,10 @@ const BASE_AMOUNT_SQL =
  * What a booking TOTALS to owing: the base amount above PLUS any extra charges logged against it
  * (BookingCharges) — a charge is owed on a stay that happened whether or not it was later
  * cancelled, and EstCost/CancellationFee are never mutated to absorb it. This is the single
- * "how much is this booking worth" figure shared by the earnings payload's outstanding predicate
- * AND the Venmo importer's candidate balances, so a charge logged in the admin panel is never
- * invisible to either. Expects a `chg` subquery (SUM(BookingCharges.Amount) per booking) aliased
- * in scope — see `CHARGES_JOIN_SQL`.
+ * "how much is this booking worth" figure the earnings payload's outstanding predicate is built
+ * on (see `OUTSTANDING_WHERE_SQL` below), and `CREDITABLE_AMOUNT_SQL` reuses it too, so a charge
+ * logged in the admin panel is never invisible to either. Expects a `chg` subquery
+ * (SUM(BookingCharges.Amount) per booking) aliased in scope — see `CHARGES_JOIN_SQL`.
  */
 const EXPECTED_AMOUNT_SQL = `(${BASE_AMOUNT_SQL} + COALESCE(chg.Total, 0))`;
 
@@ -1335,12 +1505,13 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
 
 /**
  * A booking is OUTSTANDING when it is live (confirmed or cancelled — declined rows are never
- * billed) and under-paid once charges are counted. Shared verbatim by the earnings payload and
- * the Venmo importer's candidate set so the sitter can never be offered a booking the Earnings
- * page does not consider owing, and a cancelled booking with no assessed fee but a live charge
- * still surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
+ * billed) and under-paid once charges are counted. Read only by the earnings payload as of the
+ * household-payments rework (0011) — the Venmo importer no longer ranks candidate bookings; it
+ * resolves a payer straight to a household via `resolveMatchClient`/`getAccountIdsByOwner` instead
+ * (see `server/lib/venmo.ts`). A cancelled booking with no assessed fee but a live charge still
+ * surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
  *
- * `insertPayment`'s guard is the third reader of this rule (it cannot share the SQL — it has no
+ * `insertPayment`'s guard is the other reader of this rule (it cannot share the SQL — it has no
  * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
  * a non-zero CancellationFee OR a live charges total). It must keep agreeing with this predicate
  * in both directions, or the Earnings page shows a balance whose *Record payment* button 404s.
@@ -1472,44 +1643,441 @@ export async function keepBookingCredit(
   return row.Status === 'declined' ? { outcome: 'declined' } : { outcome: 'no-credit' };
 }
 
-export type OutstandingBookingRow = {
+/**
+ * HOUSEHOLD BALANCES — what each household owes, rather than what each booking owes.
+ *
+ * The sitter's question is "does Jennifer owe me anything?", and until now the dashboard could only
+ * answer it one booking at a time. A household is not a new concept: it is the connected component
+ * of the owner<->pet graph that `buildAccounts` already derives for invoice numbering, which is why
+ * two customers who share a single pet get one statement here as they do there.
+ *
+ * Payments are per-booking rows by default; a household is a set of bookings; so the bulk of this
+ * rollup is a sum over data that already existed before this feature shipped. Migration 0011 later
+ * added `Payments.AccountId` for payments that settle a household directly rather than one booking
+ * (see `computeHouseholdRollup`'s account-payments read below) — those rows are the one piece of
+ * schema this rollup now depends on that did not exist when it first shipped.
+ *
+ * ONE MONEY RULE, not a second one. `Expected` is `CREDITABLE_AMOUNT_SQL` verbatim — the quote, or
+ * the assessed cancellation fee on a cancelled row, plus extra charges, and zero for a request that
+ * was declined (never billed, so every dollar taken against it is the client's). Reusing exactly
+ * that expression is what makes a household balance reconcile to the per-booking Earnings lists it
+ * sits above: summed over a household, `Expected - Paid` is precisely its outstanding rows minus its
+ * credit rows, because those two predicates are mutually exclusive over this same figure. Writing a
+ * fresh "what a booking is worth" expression here would be the drift this codebase exists to
+ * prevent.
+ *
+ * NETTING happens WITHIN a household and never across households. A credit on one booking cancelling
+ * a debt on another IS the household statement. Two different households are two rows, and the
+ * earnings tiles keep reporting `outstandingTotal` and `creditTotal` separately (see
+ * `serializeAnalytics`) — one client owing $100 while another is owed $100 is not a settled book.
+ *
+ * Six tenant-scoped reads, composed by the pure `buildHouseholdBalances`: the per-booking money,
+ * the booking<->pet edges (BookingRequestPets has no TenantId, so tenancy flows through its parent
+ * booking, the idiom everywhere else in this file), the owner<->pet edges the graph is built from,
+ * the customers themselves so a balance can carry a name, the household-level account payments
+ * (`Payments.AccountId`, see above), and the deceased-pet owner edges needed to anchor a payment to
+ * its household even after every pet on it has died. Deceased pets are excluded from the primary
+ * owner<->pet read by `listOwnerPetLinks`, as the pure module requires; the deceased edges are fed
+ * in separately as anchors, never as ordinary graph edges.
+ */
+export async function getHouseholdBalances(
+  db: D1Database,
+  tenantId: string,
+): Promise<HouseholdBalanceRow[]> {
+  return (await computeHouseholdRollup(db, tenantId)).households;
+}
+
+/**
+ * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — money received, still counted as revenue by
+ * every `Payments` aggregate, and attachable to nobody. Summed per stored account id.
+ *
+ * How a payment gets here at all: `Payments.AccountId` holds a PET id, and `deleteCustomer`
+ * cascades a pet nobody else owns — row and owner edges together — while deliberately never
+ * touching `Payments`. Once those edges are gone, no graph in this database can say which
+ * household the payment settled. A pet that merely DIED is NOT in this list: it keeps its owner
+ * edges, so `buildPaymentAnchors` still resolves it to its own household.
+ *
+ * Reported rather than guessed at, and rather than dropped. Guessing a household for money is the
+ * one thing this codebase refuses to do anywhere (`buildAccounts` refuses it, the Venmo importer
+ * refuses it); dropping it is worse still, because the analytics revenue line goes on counting it.
+ * `Σ household paidTotal + Σ orphaned = revenue` is the invariant that makes the two views agree,
+ * and it is only true because this list exists.
+ */
+export async function getOrphanedAccountPayments(
+  db: D1Database,
+  tenantId: string,
+): Promise<{ accountId: string; total: number }[]> {
+  return (await computeHouseholdRollup(db, tenantId)).orphanedPayments;
+}
+
+type HouseholdRollup = {
+  households: HouseholdBalanceRow[];
+  orphanedPayments: { accountId: string; total: number }[];
+};
+
+async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise<HouseholdRollup> {
+  const [moneyRes, petsRes, links, ownersRes, accountPaidRes, deceasedLinks] = await Promise.all([
+    db
+      .prepare(
+        `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId,
+                ${CREDITABLE_AMOUNT_SQL} AS Expected,
+                COALESCE(paid.Total, 0) AS PaidTotal
+         FROM BookingRequests b
+         ${PAYMENTS_JOIN_SQL}
+         ${CHARGES_JOIN_SQL}
+         WHERE b.TenantId = ? AND b.ServiceType NOT IN ('blocked', 'external')
+         ORDER BY b.StartDate, b.Id`,
+      )
+      .bind(tenantId, tenantId, tenantId)
+      .all<{ BookingId: string; EndUserId: string | null; Expected: number; PaidTotal: number }>(),
+    db
+      .prepare(
+        `SELECT brp.BookingRequestId AS BookingId, brp.PetId AS PetId
+         FROM BookingRequestPets brp
+         JOIN BookingRequests b ON b.Id = brp.BookingRequestId
+         WHERE b.TenantId = ?
+         ORDER BY brp.BookingRequestId, brp.PetId`,
+      )
+      .bind(tenantId)
+      .all<{ BookingId: string; PetId: string }>(),
+    listOwnerPetLinks(db, tenantId),
+    db
+      .prepare('SELECT Id, Name, Email FROM EndUsers WHERE TenantId = ? ORDER BY Id')
+      .bind(tenantId)
+      .all<{ Id: string; Name: string | null; Email: string | null }>(),
+    // Payments recorded against a HOUSEHOLD rather than a booking (0011), summed per stored account
+    // id. The pure module resolves each id to its household by membership, so a household renamed by
+    // a newly-added pet keeps every payment ever filed against it.
+    db
+      .prepare(
+        `SELECT AccountId, SUM(Amount) AS Total
+         FROM Payments WHERE TenantId = ? AND AccountId IS NOT NULL GROUP BY AccountId`,
+      )
+      .bind(tenantId)
+      .all<{ AccountId: string; Total: number }>(),
+    // Owner edges of DECEASED pets, which form no account and name none — they only let a payment
+    // filed under a pet that has since died still resolve to the household that made it.
+    listDeceasedOwnerPetLinks(db, tenantId),
+  ]);
+
+  const petsByBooking = new Map<string, string[]>();
+  for (const row of petsRes.results) {
+    const pets = petsByBooking.get(row.BookingId) ?? [];
+    pets.push(row.PetId);
+    petsByBooking.set(row.BookingId, pets);
+  }
+  const people = new Map(ownersRes.results.map((o) => [o.Id, o]));
+
+  const { households, unattachedPaymentAccountIds } = buildHouseholdBalances({
+    links: links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })),
+    anchorLinks: deceasedLinks.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })),
+    bookings: moneyRes.results.map((row) => ({
+      bookingId: row.BookingId,
+      ownerId: row.EndUserId,
+      petIds: petsByBooking.get(row.BookingId) ?? [],
+      expected: row.Expected,
+      paid: row.PaidTotal,
+    })),
+    payments: accountPaidRes.results.map((row) => ({
+      accountId: row.AccountId,
+      amount: row.Total,
+    })),
+  });
+
+  // `unattachedBookingIds` is deliberately not published: those bookings are still visible one by
+  // one in `outstanding`/`credits`, which is where their money already shows up. What must never
+  // happen is attaching them to a household they are not in, which is why the pure module returns
+  // them separately rather than guessing.
+  //
+  // `unattachedPaymentAccountIds` IS published (see `getOrphanedAccountPayments`), and the
+  // asymmetry is the point: an unattached booking's money is still readable somewhere else on the
+  // page, whereas a household payment appears in exactly one place. Dropped here it would be
+  // invisible everywhere while `Payments` kept counting it as revenue.
+  const orphanedTotals = new Map(accountPaidRes.results.map((r) => [r.AccountId, r.Total]));
+  return {
+    households: households.map((h) => ({
+      accountId: h.accountId,
+      owners: h.ownerIds.map((id) => ({
+        endUserId: id,
+        name: people.get(id)?.Name ?? null,
+        email: people.get(id)?.Email ?? null,
+      })),
+      petIds: h.petIds,
+      anchorPetIds: h.anchorPetIds,
+      bookingIds: h.bookingIds,
+      expectedTotal: h.expectedTotal,
+      paidTotal: h.paidTotal,
+      balance: h.balance,
+    })),
+    orphanedPayments: unattachedPaymentAccountIds.map((accountId) => ({
+      accountId,
+      total: orphanedTotals.get(accountId) ?? 0,
+    })),
+  };
+}
+
+/**
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — every booking, its cost, its
+ * extra charges, and every payment, so a sitter questioning a number can settle a dispute or check
+ * a cancellation fee without leaving it.
+ *
+ * Finds the household by asking `getHouseholdBalances` for the whole tenant and matching by
+ * MEMBERSHIP (`petIds.includes(accountId)`), the same resolution every other household read uses —
+ * deliberately NOT a second, narrower query, because a second query is a second place the account-id-
+ * renaming rule (see the 0011 migration header) could be forgotten. `expectedTotal`/`paidTotal`/
+ * `balance` are that household's own fields, passed through rather than recomputed, so this can
+ * never print a number the balance above it disagrees with.
+ *
+ * Each booking's `cost` and `expected` are read with the SAME `BASE_AMOUNT_SQL`/
+ * `CREDITABLE_AMOUNT_SQL` expressions the household sum is built from (declined zeroed, cancelled
+ * reading its assessed fee), which is what makes `Σ(bookings[].expected) === expectedTotal` a fact
+ * of the SQL rather than a coincidence two readers happen to agree on today.
+ */
+type HouseholdDetailBookingRow = {
   BookingId: string;
-  EndUserId: string | null;
   ServiceType: string;
   StartDate: string;
-  Expected: number;
+  Status: string;
+  Cost: number;
+  ChargesTotal: number;
   PaidTotal: number;
+  Expected: number;
 };
 
 /**
- * Every under-paid booking for this tenant, carrying the client who owes it — the candidate set the
- * Venmo importer matches a received payment against. Same outstanding predicate as the earnings
- * payload (shared consts above), different projection: EndUserId matters here and nowhere else.
- * `Expected` already includes extra charges (see `EXPECTED_AMOUNT_SQL`), so a Venmo payment that
- * covers a booking's quote PLUS a logged charge still matches.
+ * The account graph in one place: the components `buildAccounts` derives, plus the payment anchors
+ * that keep a dead pet's payments findable. Two small, tenant-indexed reads of `PetOwners` — no
+ * money, no bookings — loaded ONCE per request so that resolving "which household is this?" and
+ * then reading that household do not each pay for their own copy.
  */
-export async function listOutstandingBookings(
+async function loadAccountGraph(db: D1Database, tenantId: string) {
+  const [links, deceasedLinks] = await Promise.all([
+    listOwnerPetLinks(db, tenantId),
+    listDeceasedOwnerPetLinks(db, tenantId),
+  ]);
+  const linkPairs = links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId }));
+  const anchorPairs = deceasedLinks.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId }));
+  const accounts = buildAccounts(linkPairs);
+  return {
+    links: linkPairs,
+    anchorLinks: anchorPairs,
+    accounts,
+    anchors: buildPaymentAnchors(accounts, anchorPairs),
+  };
+}
+
+type AccountGraph = Awaited<ReturnType<typeof loadAccountGraph>>;
+
+/**
+ * One household, found by account id or by one of its owners, together with every pet id a payment
+ * of it may be filed under (its live pets plus its anchors — see `householdPetIds`).
+ */
+function resolveHousehold(
+  graph: AccountGraph,
+  by: { accountId: string } | { ownerId: string },
+): { account: Account; paymentPetIds: string[] } | null {
+  const account =
+    'ownerId' in by
+      ? graph.accounts.find((a) => a.ownerIds.includes(by.ownerId))
+      : graph.accounts.find(
+          (a) => a.petIds.includes(by.accountId) || a.id === graph.anchors.get(by.accountId),
+        );
+  if (!account) return null;
+  const anchorPetIds = [...graph.anchors.entries()]
+    .filter(([, id]) => id === account.id)
+    .map(([petId]) => petId);
+  return { account, paymentPetIds: [...account.petIds, ...anchorPetIds] };
+}
+
+/**
+ * ONE household's statement, read WITHOUT reading the tenant.
+ *
+ * The bookings that can possibly belong to this household are exactly those whose customer is one
+ * of its owners, or which name one of its pets — everything else attaches elsewhere by
+ * `buildHouseholdBalances`'s own rule, whatever it is. So that predicate is asked of SQL, and the
+ * pure module is then handed the FULL owner<->pet graph (already loaded, and cheap) together with
+ * only those candidate bookings. It attaches each one exactly as it would have in the tenant-wide
+ * pass — including the edge case where a booking's customer holds no live pet and it falls back to
+ * the lexicographically-first of its pets' households, which is why the candidates' pets are read
+ * too and why the graph passed in is not narrowed. A candidate that turns out to belong to someone
+ * else lands in someone else's row here and is simply not read.
+ *
+ * This is a NARROWING, never a second money rule: `BASE_AMOUNT_SQL`/`CREDITABLE_AMOUNT_SQL`,
+ * `PAYMENTS_JOIN_SQL`, `CHARGES_JOIN_SQL` and `buildHouseholdBalances` are the same expressions
+ * `getHouseholdBalances` sums for the Earnings page, so the drill-down and the balance above it
+ * cannot drift.
+ */
+async function householdDetailFor(
   db: D1Database,
   tenantId: string,
-): Promise<OutstandingBookingRow[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
-              b.StartDate AS StartDate,
-              ${EXPECTED_AMOUNT_SQL} AS Expected,
-              COALESCE(paid.Total, 0) AS PaidTotal
-       FROM BookingRequests b
-       LEFT JOIN (
-         SELECT BookingRequestId, SUM(Amount) AS Total
-         FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
-       ) paid ON paid.BookingRequestId = b.Id
-       ${CHARGES_JOIN_SQL}
-       WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
-       ORDER BY b.StartDate DESC, b.Id`,
-    )
-    .bind(tenantId, tenantId, tenantId)
-    .all<OutstandingBookingRow>();
-  return results;
+  graph: AccountGraph,
+  resolved: { account: Account; paymentPetIds: string[] },
+): Promise<HouseholdDetailRow | null> {
+  const { account, paymentPetIds } = resolved;
+  const owners = account.ownerIds.map(() => '?').join(', ');
+  const pets = account.petIds.map(() => '?').join(', ');
+  const paymentPets = paymentPetIds.map(() => '?').join(', ');
+  // "Mine, or possibly mine": customer is one of ours, or a pet of ours is on it. A superset of
+  // this household's bookings, and never the whole tenant's.
+  const candidateWhere = `b.TenantId = ? AND b.ServiceType NOT IN ('blocked', 'external')
+       AND (b.EndUserId IN (${owners})
+            OR b.Id IN (SELECT BookingRequestId FROM BookingRequestPets WHERE PetId IN (${pets})))`;
+  const candidateArgs = [tenantId, ...account.ownerIds, ...account.petIds];
+
+  const [bookingRes, paymentRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
+                b.StartDate AS StartDate, b.Status AS Status,
+                ${BASE_AMOUNT_SQL} AS Cost,
+                COALESCE(chg.Total, 0) AS ChargesTotal,
+                COALESCE(paid.Total, 0) AS PaidTotal,
+                ${CREDITABLE_AMOUNT_SQL} AS Expected
+         FROM BookingRequests b
+         ${PAYMENTS_JOIN_SQL}
+         ${CHARGES_JOIN_SQL}
+         WHERE ${candidateWhere}
+         ORDER BY b.StartDate, b.Id`,
+      )
+      .bind(tenantId, tenantId, ...candidateArgs)
+      .all<HouseholdDetailBookingRow & { EndUserId: string | null }>(),
+    // The household's own payments, read once and used twice: summed into `paidTotal` by the pure
+    // module and listed as `householdPayments`. Literally the same rows, so the statement can never
+    // list a payment the balance did not count.
+    db
+      .prepare(
+        `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
+         FROM Payments
+         WHERE TenantId = ? AND AccountId IN (${paymentPets})
+         ORDER BY PaidDate DESC, CreatedAt DESC`,
+      )
+      .bind(tenantId, ...paymentPetIds)
+      .all<PaymentRow>(),
+  ]);
+
+  const candidateIds = bookingRes.results.map((r) => r.BookingId);
+  const idList = candidateIds.map(() => '?').join(', ');
+  const [petsRes, chargeRes] = await Promise.all([
+    candidateIds.length === 0
+      ? Promise.resolve({ results: [] as { BookingId: string; PetId: string }[] })
+      : db
+          .prepare(
+            `SELECT BookingRequestId AS BookingId, PetId
+             FROM BookingRequestPets WHERE BookingRequestId IN (${idList})
+             ORDER BY BookingRequestId, PetId`,
+          )
+          .bind(...candidateIds)
+          .all<{ BookingId: string; PetId: string }>(),
+    candidateIds.length === 0
+      ? Promise.resolve({ results: [] as BookingChargeRow[] })
+      : db
+          .prepare(
+            `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
+             FROM BookingCharges WHERE TenantId = ? AND BookingRequestId IN (${idList})
+             ORDER BY BookingRequestId, CreatedAt, Id`,
+          )
+          .bind(tenantId, ...candidateIds)
+          .all<BookingChargeRow>(),
+  ]);
+
+  const petsByBooking = new Map<string, string[]>();
+  for (const row of petsRes.results) {
+    const list = petsByBooking.get(row.BookingId) ?? [];
+    list.push(row.PetId);
+    petsByBooking.set(row.BookingId, list);
+  }
+
+  const { households } = buildHouseholdBalances({
+    links: graph.links,
+    anchorLinks: graph.anchorLinks,
+    bookings: bookingRes.results.map((row) => ({
+      bookingId: row.BookingId,
+      ownerId: row.EndUserId,
+      petIds: petsByBooking.get(row.BookingId) ?? [],
+      expected: row.Expected,
+      paid: row.PaidTotal,
+    })),
+    payments: paymentRows.results.map((p) => ({ accountId: p.AccountId!, amount: p.Amount })),
+  });
+  // Dropped by the pure module when this household has no bookings AND no payments — "nothing
+  // recorded either side", which every caller already renders as an empty statement rather than an
+  // error, exactly as it did when this read the whole tenant.
+  const household = households.find((h) => h.accountId === account.id);
+  if (!household) return null;
+
+  const chargesByBooking = new Map<string, { id: string; label: string; amount: number }[]>();
+  for (const row of chargeRes.results) {
+    const list = chargesByBooking.get(row.BookingRequestId) ?? [];
+    list.push({ id: row.Id, label: row.Label, amount: row.Amount });
+    chargesByBooking.set(row.BookingRequestId, list);
+  }
+  const bookingsById = new Map(bookingRes.results.map((r) => [r.BookingId, r]));
+
+  return {
+    accountId: household.accountId,
+    // `household.bookingIds` is already ordered (the candidate query sorts by StartDate, then Id)
+    // — reusing that order rather than the IN-clause's own row order keeps the detail list in the
+    // same sequence a sitter would expect a statement to read in.
+    bookings: household.bookingIds.map((bookingId) => {
+      const row = bookingsById.get(bookingId)!;
+      return {
+        bookingId,
+        serviceType: row.ServiceType,
+        startDate: row.StartDate,
+        status: row.Status,
+        cost: row.Cost,
+        charges: chargesByBooking.get(bookingId) ?? [],
+        chargesTotal: row.ChargesTotal,
+        paidTotal: row.PaidTotal,
+        expected: row.Expected,
+      };
+    }),
+    householdPayments: paymentRows.results.map((p) => ({
+      id: p.Id,
+      amount: p.Amount,
+      method: p.Method,
+      paidDate: p.PaidDate,
+      note: p.Note,
+    })),
+    expectedTotal: household.expectedTotal,
+    paidTotal: household.paidTotal,
+    balance: household.balance,
+  };
+}
+
+export async function getHouseholdDetail(
+  db: D1Database,
+  tenantId: string,
+  accountId: string,
+): Promise<HouseholdDetailRow | null> {
+  const graph = await loadAccountGraph(db, tenantId);
+  // Membership over the component's pets OR its payment anchors: an account id from before the
+  // first-sorted pet DIED is still this household's id as far as the money filed under it is
+  // concerned, and a drill-down that 404'd on it would strand the payment it lists.
+  const resolved = resolveHousehold(graph, { accountId });
+  return resolved ? householdDetailFor(db, tenantId, graph, resolved) : null;
+}
+
+/**
+ * The SAME statement, asked by the CUSTOMER whose household it is (`GET /:slug/account`).
+ *
+ * Exists so the customer-facing route resolves its household and reads it from ONE loaded graph
+ * rather than loading it twice — once to turn `endUserId` into an account id, once to read that
+ * account id back. `accountId` comes back beside the detail because a caller who holds no live pet
+ * has no household at all: that is `null` and an empty statement, not an error (see `getMyAccount`).
+ */
+export async function getHouseholdDetailForOwner(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<{ accountId: string | null; detail: HouseholdDetailRow | null }> {
+  const graph = await loadAccountGraph(db, tenantId);
+  const resolved = resolveHousehold(graph, { ownerId: endUserId });
+  if (!resolved) return { accountId: null, detail: null };
+  return {
+    accountId: resolved.account.id,
+    detail: await householdDetailFor(db, tenantId, graph, resolved),
+  };
 }
 
 export async function getAnalytics(
@@ -1531,6 +2099,12 @@ export async function getAnalytics(
   // from the response instead of excluding it up front.
   const nextMonth = new Date(Date.UTC(y, m, 1));
   const windowEnd = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}-01`;
+
+  // Started before the aggregate round trip and awaited after it, so the household rollup rides
+  // alongside the five aggregates rather than adding a serial hop to the dashboard's hottest read.
+  // ONE rollup call gives both halves of the money: what each household holds, and what belongs to
+  // no household at all. Asking twice would read the whole tenant twice to answer one question.
+  const householdsPending = computeHouseholdRollup(db, tenantId);
 
   const [monthlyRes, byServiceRes, topClientsRes, outstandingRes, creditsRes] = await Promise.all([
     db
@@ -1618,6 +2192,7 @@ export async function getAnalytics(
   const byMonth = new Map(monthlyRes.results.map((r) => [r.Month, r.Total]));
   const monthly = months.map((month) => ({ Month: month, Total: byMonth.get(month) ?? 0 }));
   const { ytd, quarters } = quarterlyBreakdown(monthly, y);
+  const rollup = await householdsPending;
   return {
     monthly,
     ytd,
@@ -1626,6 +2201,8 @@ export async function getAnalytics(
     topClients: topClientsRes.results,
     outstanding: outstandingRes.results,
     credits: creditsRes.results,
+    households: rollup.households,
+    orphanedPayments: rollup.orphanedPayments,
   };
 }
 
@@ -2454,6 +3031,131 @@ export async function replaceSavedAnswers(
   );
 }
 
+// --- Personal access tokens (0012) ---
+// A credential the customer issues to themselves so something other than the widget can call the
+// booking API as them. Only a SHA-256 of the token is ever stored; the reasoning behind that (and
+// behind hashing it WITHOUT an iterated KDF) lives in server/lib/personal-access-token.ts.
+// Every query below binds TenantId: there is deliberately no way to look a token up globally.
+
+/** One row as its OWNER sees it. `TokenHash` is absent by construction, not by omission at the
+ *  route — the secret and its digest have no read path out of this module. */
+export type PersonalAccessTokenRow = {
+  Id: string;
+  Name: string;
+  CreatedAt: string;
+  LastUsedAt: string | null;
+};
+
+/** Stores a new token's hash and returns the row id. The plaintext never reaches this layer. */
+export async function createPersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  name: string,
+  tokenHash: string,
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO PersonalAccessTokens (Id, TenantId, EndUserId, Name, TokenHash)
+            VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(id, tenantId, endUserId, name, tokenHash)
+    .run();
+  return id;
+}
+
+/** This customer's LIVE tokens, newest first. A revoked token is gone from their list — the row
+ *  survives (see the schema) but it is no longer something they can act on. */
+export async function listPersonalAccessTokens(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<PersonalAccessTokenRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, Name, CreatedAt, LastUsedAt
+         FROM PersonalAccessTokens
+        WHERE TenantId = ? AND EndUserId = ? AND RevokedAt IS NULL
+        ORDER BY CreatedAt DESC, Id`,
+    )
+    .bind(tenantId, endUserId)
+    .all<PersonalAccessTokenRow>();
+  return results ?? [];
+}
+
+/**
+ * THE AUTHENTICATION LOOKUP: one indexed read on (TenantId, TokenHash), which is the whole cost of
+ * authenticating a PAT request. `RevokedAt IS NULL` is in the WHERE clause rather than checked by
+ * the caller, so a revoked token is refused by the same query that would otherwise have found it —
+ * there is no window in which some other code path could forget the check.
+ *
+ * TenantId is bound, so a token minted under one sitter simply does not exist under another. That
+ * is Model A holding by construction: the query cannot see across the boundary to learn that the
+ * hash is valid elsewhere, which is also why the caller can only answer "no" rather than "wrong
+ * tenant" the way a widget JWT's `tid` claim lets it.
+ *
+ * `LastUsedAt` comes back with the row so the caller can decide whether a refresh is due without a
+ * second read.
+ */
+export async function findLivePersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  tokenHash: string,
+): Promise<{ Id: string; EndUserId: string; LastUsedAt: string | null } | null> {
+  return await db
+    .prepare(
+      `SELECT Id, EndUserId, LastUsedAt
+         FROM PersonalAccessTokens
+        WHERE TenantId = ? AND TokenHash = ? AND RevokedAt IS NULL`,
+    )
+    .bind(tenantId, tokenHash)
+    .first<{ Id: string; EndUserId: string; LastUsedAt: string | null }>();
+}
+
+/** Stamps a token as used now. Called only when the stamp is actually stale (see
+ *  `shouldRefreshLastUsed`) and only off the response path, so the ordinary request writes nothing.
+ *  Two concurrent uses may both write; they write the same minute, and last-writer-wins is right. */
+export async function touchPersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE PersonalAccessTokens SET LastUsedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(tenantId, id)
+    .run();
+}
+
+/**
+ * Revokes one of this customer's OWN tokens. Scoped by EndUserId as well as TenantId, so one
+ * customer can neither revoke nor probe for another's token — a stranger's id is indistinguishable
+ * from a nonexistent one, which is what the route's 404 says.
+ *
+ * `COALESCE` keeps the FIRST revocation's timestamp, so revoking twice is idempotent and does not
+ * rewrite history; SQLite still counts the row as changed, so a second call reports success rather
+ * than a confusing 404 for a token the caller can plainly see is already dead. Returns false only
+ * when no such token belongs to this customer.
+ */
+export async function revokePersonalAccessToken(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE PersonalAccessTokens SET RevokedAt = COALESCE(RevokedAt, datetime('now'))
+        WHERE TenantId = ? AND EndUserId = ? AND Id = ?`,
+    )
+    .bind(tenantId, endUserId, id)
+    .run();
+  return ((result.meta as { changes?: number }).changes ?? 0) > 0;
+}
+
 export async function getEndUserByEmail(
   db: D1Database,
   tenantId: string,
@@ -2696,7 +3398,10 @@ export async function deleteCustomer(
                                  WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
                                    AND po.EndUserId <> ?)
                 AND EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id))`;
-  const [, , , , , endUsersResult] = await db.batch([
+  // The EndUsers delete is deliberately LAST (children first — D1 has no ON DELETE CASCADE) and
+  // is read off the end rather than by ordinal, as deleteTenantCompletely does: adding a cascade
+  // statement in the middle silently renumbered a positional destructure once already.
+  const batchResults = await db.batch([
     db
       .prepare(
         `UPDATE EndUserPets
@@ -2740,6 +3445,17 @@ export async function deleteCustomer(
            WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    // Personal access tokens (0012) FK to EndUsers, and unlike SavedAnswers this one IS reachable:
+    // a customer can hold a token without ever having booked. It must also be the strongest reason
+    // in this batch to cascade rather than orphan — a live long-term credential that outlived the
+    // account it authenticates as is a credential nobody is left to revoke. Same guards as the
+    // rest, so a refused delete writes nothing here either.
+    db
+      .prepare(
+        `DELETE FROM PersonalAccessTokens
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
     db
       .prepare(
         `DELETE FROM EndUsers
@@ -2747,6 +3463,7 @@ export async function deleteCustomer(
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
   ]);
+  const endUsersResult = batchResults[batchResults.length - 1];
   if (((endUsersResult.meta as { changes?: number }).changes ?? 0) !== 0) return 'deleted';
   // Refused (or no such customer) — and because every statement carried both guards, NOTHING was
   // written on this path. One read, two counts, to choose the wording. Order matters only in that
@@ -2892,6 +3609,36 @@ export async function listOwnerPetLinks(db: D1Database, tenantId: string): Promi
        FROM PetOwners po
        JOIN EndUserPets p ON p.Id = po.PetId AND p.TenantId = po.TenantId
        WHERE po.TenantId = ? AND p.DeceasedAt IS NULL
+       ORDER BY po.PetId, po.EndUserId`,
+    )
+    .bind(tenantId)
+    .all<PetOwnerLink>();
+  return results;
+}
+
+/**
+ * The SAME edges for the pets `listOwnerPetLinks` leaves out — the DECEASED ones. Exactly one
+ * reader wants them, and only ever to answer one question: which household does a payment filed
+ * under this dead pet belong to (`buildPaymentAnchors`)?
+ *
+ * A deceased pet is excluded from the account graph because it cannot be booked or quoted, which
+ * is a rule about BOOKINGS. `Payments.AccountId` stores a pet id, so that same exclusion silently
+ * deleted household payments from every balance the moment the anchor pet died, while `Payments`
+ * went on counting them as revenue. These edges are what makes the money resolvable again — and
+ * they are kept in a SEPARATE list, never merged into `listOwnerPetLinks`, so a dead pet can never
+ * form a component, rename an account (the account id is the first-sorted pet), or reappear in a
+ * household's pet list.
+ */
+export async function listDeceasedOwnerPetLinks(
+  db: D1Database,
+  tenantId: string,
+): Promise<PetOwnerLink[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT po.EndUserId, po.PetId
+       FROM PetOwners po
+       JOIN EndUserPets p ON p.Id = po.PetId AND p.TenantId = po.TenantId
+       WHERE po.TenantId = ? AND p.DeceasedAt IS NOT NULL
        ORDER BY po.PetId, po.EndUserId`,
     )
     .bind(tenantId)
@@ -3673,6 +4420,29 @@ export async function setTenantDisabled(
 }
 
 /**
+ * Owner-scope: set or clear a tenant's paid-through instant (0010). `null` clears it, which is
+ * "free" — the same value every tenant carries until an owner grants premium. Returns whether a
+ * row changed (false = no such tenant, so the route can 404). Caller must invalidateTenantCache,
+ * or the change sits behind the tenant cache's TTL — for a REVOCATION that is a minute of access
+ * already paid for and stopped, which is the direction that matters.
+ *
+ * `until` is bound as-is and must already be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC);
+ * `normalizePremiumUntil` (server/lib/premium.ts) is the one place that shape is produced, so the
+ * comparison `PremiumUntil > now` stays a comparison of like with like.
+ */
+export async function setTenantPremiumUntil(
+  db: D1Database,
+  tenantId: string,
+  until: string | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
+    .bind(until, tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
  * Owner-scope: irreversibly delete a tenant and ALL its data. One child-first batch (D1 enforces
  * FKs with no ON DELETE CASCADE, so leaves must go before parents; the single batch means a
  * failure leaves every table untouched together). Covers all tenant-keyed tables — including
@@ -3700,6 +4470,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
     db.prepare('DELETE FROM EndUserPets WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM LoginCodes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM SavedAnswers WHERE TenantId = ?').bind(tenantId),
+    db.prepare('DELETE FROM PersonalAccessTokens WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM EndUsers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantServiceOptions WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM PetGroupPricing WHERE TenantId = ?').bind(tenantId),
