@@ -117,10 +117,7 @@ QuestionId)`, re-offered as the pre-fill on their next booking of that service. 
   `ALTER TABLE … ADD COLUMN`). **This IS a `Tenants` column the request path reads, so the KV
   tenant-config cache key was bumped `…:config:v2` → `…:config:v3` in the same commit** — a v2
   entry would have reported a sitter who has paid as free for the remainder of its 60-second TTL,
-  silently, because the derived flag fails closed. **NOT YET APPLIED to the remote DB** — apply it
-  by hand (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0010_premium_until.sql`)
-  **before** this branch merges, since the new worker's `TENANT_COLS` SELECT names the column and
-  every tenant read 500s without it (this is the 0008 failure, verbatim).
+  silently, because the derived flag fails closed. **Already applied to the remote DB** (verified 2026-08-04 — `Tenants.PremiumUntil` exists in production). No hand-apply step remains for this migration.
 - **`0011_account_payments.sql`** (`feat/account-level-payments`) — adds `Payments.AccountId`, makes
   `Payments.BookingRequestId` NULLABLE, and enforces `CHECK ((BookingRequestId IS NULL) <> (AccountId
 IS NULL))`: a payment settles a booking or a household, never both and never neither. A client who
@@ -146,20 +143,18 @@ IS NULL))`: a payment settles a booking or a household, never both and never nei
   is the lexicographically-first pet of that component and a pet added later can rename it, so
   readers resolve a payment by MEMBERSHIP ("the household whose pets contain this id") rather than by
   equality — and tenancy is enforced by the writer's `INSERT … SELECT … FROM EndUserPets WHERE
-TenantId = ?`. **NOT YET APPLIED to the remote DB** — apply it by hand
-  (`npx wrangler d1 execute pawbook-db --remote --file ./migrations/0011_account_payments.sql`)
-  **before** this branch merges, since merging auto-deploys and the new code selects `AccountId`.
+TenantId = ?`. **Already applied to the remote DB** (verified 2026-08-04 — `Payments.AccountId` exists in production). No hand-apply step remains for this migration.
   Unlike the `ADD COLUMN` migrations above, a re-run fails at `CREATE TABLE Payments_new` rather than
   half-applying, and D1 applies the file atomically, so a failed apply leaves the old table in place.
   `server/__tests__/migration-0011-account-payments.test.ts` applies this exact file to a genuinely
   pre-migration `Payments` table and asserts the surviving rows, the CHECK in both directions, the
   re-import guard, and that the result is column- and index-identical to a fresh `sql/schema.sql`.
 
-**Applied to the remote DB as of this writing: 0005 through 0009.**
-**NOT applied: 0010, 0011, 0012.** Apply them by hand, IN NUMERIC ORDER, before this branch
-deploys — merging auto-deploys, and each one's code selects columns the remote table does not yet
-have. They were verified to apply cleanly in numeric order against a real pre-0010 database, and
-the resulting `Payments` and `PersonalAccessTokens` are `PRAGMA`-identical to a fresh `schema.sql`.
+**Applied to the remote DB as of 2026-08-04: 0005 through 0012, all of them.** Verified directly
+against the production database (`Tenants.PremiumUntil`, `Payments.AccountId`, and the
+`PersonalAccessTokens` table are all present on `pawbook-db`) rather than trusted from an older
+status line here — this file has previously gone stale on exactly this claim (see the warning
+below about the two prior incidents). Nothing needs to be hand-applied before this branch merges.
 - **`0012_personal_access_tokens.sql`** (`feat/personal-access-tokens`) — adds the
   `PersonalAccessTokens` table and its two indexes: the long-lived credential a customer issues to
   themselves so something other than the widget can call the booking API as them. `server/lib/llms.ts`
@@ -170,9 +165,7 @@ the resulting `Payments` and `PersonalAccessTokens` are `PRAGMA`-identical to a 
   `server/lib/personal-access-token.ts`); revocation is a `RevokedAt` timestamp filtered by the auth
   lookup, so it bites on the next request rather than at an expiry, and there is deliberately no
   expiry column. Additive only (one `CREATE TABLE`, two `CREATE INDEX`, all `IF NOT EXISTS`). No
-  `Tenants` column, so the KV tenant-config cache key needs **no** bump. **NOT YET APPLIED to the
-  remote DB** — apply it by hand before this branch merges, since merging to `main` auto-deploys and
-  the new worker's PAT routes and `endUserAuth` both name the table.
+  `Tenants` column, so the KV tenant-config cache key needs **no** bump. **Already applied to the remote DB** (verified 2026-08-04 — the `PersonalAccessTokens` table exists in production). No hand-apply step remains for this migration.
   **Numbered 0012 deliberately**: 0010 and 0011 are taken by two other unmerged branches, and the
   numbers are first-come by branch point, not by merge order.
 
