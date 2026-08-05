@@ -400,7 +400,7 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
     // booking itself? Bookend sharing does not rescue it — its endpoints are interior days of two
     // already-confirmed stays, and the day after is full too.
     const rows = await listCapacityRows(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       c.StartDate,
       addDays(c.EndDate!, 1),
@@ -414,7 +414,7 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
     const clearStart = addDays(c.StartDate, 60);
     const clearEnd = addDays(c.EndDate!, 60);
     const clearRows = await listCapacityRows(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       clearStart,
       addDays(clearEnd, 1),
@@ -494,7 +494,7 @@ describe('sql/seed-demo.sql — the conflicts are real', () => {
     ] as const) {
       const stay = bookingDates(raw, id);
       const rows = await listCapacityRows(
-        env.PAWBOOK_DB,
+        env.PAWSERVATION_DB,
         tenantId,
         stay.StartDate,
         addDays(stay.EndDate!, 1),
@@ -663,11 +663,11 @@ describe('sql/seed-demo.sql — time stability sweep', () => {
       // never be too SOON.
       raw.exec(`UPDATE Tenants SET MaxAdvanceMonths = NULL`);
       const tenants = {
-        sp: (await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!,
-        ht: (await getTenantBySlug(env.PAWBOOK_DB, 'happy-tails'))!,
+        sp: (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!,
+        ht: (await getTenantBySlug(env.PAWSERVATION_DB, 'happy-tails'))!,
       };
       const svc = async (tenant: Tenant, type: string) =>
-        (await listServices(env.PAWBOOK_DB, tenant.Id)).find((s) => s.ServiceType === type)!;
+        (await listServices(env.PAWSERVATION_DB, tenant.Id)).find((s) => s.ServiceType === type)!;
       const spBoarding = await svc(tenants.sp, 'boarding');
       const htBoarding = await svc(tenants.ht, 'boarding');
 

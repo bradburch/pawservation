@@ -16,7 +16,7 @@ import type { Tenant } from '../types';
 const CAL_ID = 'sitting@group.calendar.google.com';
 
 async function seedCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: 'enc-a',
     refresh: 'enc-r',
     expiresAt: '2030-01-01T00:00:00Z',
@@ -41,14 +41,14 @@ describe('setProviderCalendarId (repo)', () => {
     await seedCalendar(env);
 
     // Set a custom calendar id
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', CAL_ID);
-    const connections = await listProviderConnections(env.PAWBOOK_DB, TENANT_A);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', CAL_ID);
+    const connections = await listProviderConnections(env.PAWSERVATION_DB, TENANT_A);
     const row = connections.find((c) => c.Capability === 'calendar');
     expect(row?.CalendarId).toBe(CAL_ID);
 
     // Set to null clears it
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', null);
-    const connections2 = await listProviderConnections(env.PAWBOOK_DB, TENANT_A);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', null);
+    const connections2 = await listProviderConnections(env.PAWSERVATION_DB, TENANT_A);
     const row2 = connections2.find((c) => c.Capability === 'calendar');
     expect(row2?.CalendarId).toBeNull();
   });
@@ -74,7 +74,7 @@ describe('POST /:slug/admin/providers/calendar/calendar-id (route)', () => {
     );
     expect(res.status).toBe(204);
 
-    const connections = await listProviderConnections(env.PAWBOOK_DB, TENANT_A);
+    const connections = await listProviderConnections(env.PAWSERVATION_DB, TENANT_A);
     const row = connections.find((c) => c.Capability === 'calendar');
     expect(row?.CalendarId).toBe('x@group.calendar.google.com');
   });
@@ -86,7 +86,7 @@ describe('POST /:slug/admin/providers/calendar/calendar-id (route)', () => {
     const token = await adminToken(TENANT_A);
 
     // First set a non-primary id
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', CAL_ID);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', CAL_ID);
 
     // Now clear with empty string
     const res = await app.request(
@@ -100,7 +100,7 @@ describe('POST /:slug/admin/providers/calendar/calendar-id (route)', () => {
     );
     expect(res.status).toBe(204);
 
-    const connections = await listProviderConnections(env.PAWBOOK_DB, TENANT_A);
+    const connections = await listProviderConnections(env.PAWSERVATION_DB, TENANT_A);
     const row = connections.find((c) => c.Capability === 'calendar');
     expect(row?.CalendarId).toBeNull();
   });
@@ -110,7 +110,7 @@ describe('POST /:slug/admin/providers/calendar/calendar-id (route)', () => {
     await seedCalendar(env);
     const token = await adminToken(TENANT_A);
 
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', CAL_ID);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', CAL_ID);
 
     const res = await app.request(
       '/api/sunny-paws/admin/settings',
@@ -141,7 +141,7 @@ describe('switching the target calendar', () => {
 
   /** A connection with REAL ciphertext, so the backfill actually reaches (mocked) fetch. */
   async function connectCalendar(env: Env) {
-    await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+    await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
       access: await encryptToken(TEST_SECRET, 'access-1'),
       refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
       expiresAt: '2030-01-01T00:00:00Z', // far future — no refresh round-trip
@@ -150,7 +150,7 @@ describe('switching the target calendar', () => {
   }
 
   async function seedSyncedBooking(env: Env): Promise<string> {
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -160,7 +160,7 @@ describe('switching the target calendar', () => {
       estCost: 150,
       status: 'confirmed',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_in_old_calendar', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_in_old_calendar', null);
     return id;
   }
 
@@ -180,7 +180,9 @@ describe('switching the target calendar', () => {
   }
 
   async function bookingRow(env: Env, id: string) {
-    return env.PAWBOOK_DB.prepare('SELECT Status, GCalEventId FROM BookingRequests WHERE Id = ?')
+    return env.PAWSERVATION_DB.prepare(
+      'SELECT Status, GCalEventId FROM BookingRequests WHERE Id = ?',
+    )
       .bind(id)
       .first<{ Status: string; GCalEventId: string | null }>();
   }

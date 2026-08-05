@@ -366,8 +366,8 @@ export async function loadPetSetRates(
   serviceType: string,
 ): Promise<{ groupRates: GroupRate[]; mixRates: MixRate[] }> {
   const [groups, mixes] = await Promise.all([
-    listPetGroupPricing(env.PAWBOOK_DB, tenantId, serviceType),
-    listServicePetRates(env.PAWBOOK_DB, tenantId),
+    listPetGroupPricing(env.PAWSERVATION_DB, tenantId, serviceType),
+    listServicePetRates(env.PAWSERVATION_DB, tenantId),
   ]);
   return {
     groupRates: groups.map((r) => ({
@@ -483,7 +483,7 @@ async function rangeConflictFor(
   // already in the map `overlapReadWindow` below asks for no widening — one D1 query saved, and a
   // wider map can only ever make the verdict stricter, never wrong.
   const rows = await listCapacityRows(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     startDate,
     addDays(endDateExclusive, 1),
@@ -505,7 +505,7 @@ async function rangeConflictFor(
   const readEnd = addDays(endDateExclusive, 1);
   if (need !== null && (need.from < startDate || need.toExclusive > readEnd)) {
     const widened = await listCapacityRows(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       tenant.Id,
       need.from < startDate ? need.from : startDate,
       need.toExclusive > readEnd ? need.toExclusive : readEnd,
@@ -582,7 +582,7 @@ async function singleConflictFor(
   scope: OccupancyScope = 'all-live',
 ): Promise<SingleConflict | null> {
   const rows = await listCapacityRows(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     date,
     addDays(date, 1),
@@ -593,7 +593,7 @@ async function singleConflictFor(
   if (walkHasConflict(date, capacity)) return 'blocked_day';
   if (option !== null && option.Capacity !== null) {
     const count = await countSlotBookings(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       tenant.Id,
       service.ServiceType,
       option.OptionKey,
@@ -719,7 +719,7 @@ export async function confirmOverbookWarning(
   tenant: Tenant,
   booking: ConfirmableBooking,
 ): Promise<string | null> {
-  const service = (await listServices(env.PAWBOOK_DB, tenant.Id)).find(
+  const service = (await listServices(env.PAWSERVATION_DB, tenant.Id)).find(
     (s) => s.ServiceType === booking.ServiceType,
   );
   // A service the sitter has since deleted has no cap, no pool and no rules left to break; the
@@ -744,7 +744,7 @@ export async function confirmOverbookWarning(
   }
 
   const option =
-    (await listServiceOptions(env.PAWBOOK_DB, tenant.Id)).find(
+    (await listServiceOptions(env.PAWSERVATION_DB, tenant.Id)).find(
       (o) => o.ServiceType === booking.ServiceType && o.OptionKey === booking.OptionKey,
     ) ?? null;
   const conflict = await singleConflictFor(
@@ -904,7 +904,7 @@ export async function monthAvailability(
   const slotCountsPromise =
     capacityLimit !== null
       ? listSlotBookingCounts(
-          env.PAWBOOK_DB,
+          env.PAWSERVATION_DB,
           tenant.Id,
           service.ServiceType,
           option!.OptionKey,
@@ -915,10 +915,16 @@ export async function monthAvailability(
       : Promise.resolve(null);
 
   const [capacityRows, slotCounts, mineRows] = await Promise.all([
-    listCapacityRows(env.PAWBOOK_DB, tenant.Id, monthStart, monthEndExclusive, excludeBookingId),
+    listCapacityRows(
+      env.PAWSERVATION_DB,
+      tenant.Id,
+      monthStart,
+      monthEndExclusive,
+      excludeBookingId,
+    ),
     slotCountsPromise,
     listUserBookingDatesInRange(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       tenant.Id,
       callerEndUserId,
       monthStart,

@@ -7,7 +7,7 @@ import { adminHeaders, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 
 const NONCE = 'nonce-1';
 async function primedState(env: Env, over: Partial<{ tenantId: string; exp: number }> = {}) {
-  await env.PAWBOOK_CACHE.put(`gcal:nonce:${NONCE}`, '1');
+  await env.PAWSERVATION_CACHE.put(`gcal:nonce:${NONCE}`, '1');
   return signState(TEST_SECRET, {
     tenantId: over.tenantId ?? TENANT_A,
     nonce: NONCE,
@@ -16,7 +16,7 @@ async function primedState(env: Env, over: Partial<{ tenantId: string; exp: numb
 }
 function call(env: Env, state: string, code = 'auth-code', cookieNonce: string | null = NONCE) {
   const headers: Record<string, string> = {};
-  if (cookieNonce !== null) headers.Cookie = `pawbook_gcal_nonce=${cookieNonce}`;
+  if (cookieNonce !== null) headers.Cookie = `pawservation_gcal_nonce=${cookieNonce}`;
   return app.request(
     `/oauth/google/callback?code=${code}&state=${encodeURIComponent(state)}`,
     { headers },
@@ -36,7 +36,7 @@ describe('GET /oauth/google/callback', () => {
     );
     const res = await call(env, await primedState(env));
     expect(res.status).toBe(200);
-    const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(conn?.Status).toBe('connected');
     expect(conn?.AccessToken).not.toBe('at'); // stored encrypted
     expect(await decryptToken(TEST_SECRET, conn!.AccessToken!)).toBe('at');
@@ -153,7 +153,7 @@ describe('GET /oauth/google/callback', () => {
       new Response(JSON.stringify({ access_token: 'at', expires_in: 3600 }), { status: 200 }),
     );
     expect((await call(env, await primedState(env))).status).toBe(400);
-    const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(conn?.Status).not.toBe('connected');
     expect(conn?.RefreshToken).toBeFalsy();
   });
@@ -175,7 +175,7 @@ describe('GET /:slug/admin/providers/calendar/oauth/start', () => {
     });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await app.request(
-      'https://pawbook.example.workers.dev/api/sunny-paws/admin/providers/calendar/oauth/start',
+      'https://pawservation.example.workers.dev/api/sunny-paws/admin/providers/calendar/oauth/start',
       { headers: await adminHeaders(TENANT_A) },
       env,
     );

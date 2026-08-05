@@ -15,18 +15,18 @@ import { createTestEnv } from './helpers';
 describe('owner-scope repo: OwnerUsers', () => {
   it('inserts and reads an owner user by email', async () => {
     const { env } = createTestEnv();
-    expect(await getOwnerUserByEmail(env.PAWBOOK_DB, 'owner@pawbook.test')).toBeNull();
-    await insertOwnerUser(env.PAWBOOK_DB, 'ou_1', 'owner@pawbook.test', 'pbkdf2$1$aa$bb');
-    const row = await getOwnerUserByEmail(env.PAWBOOK_DB, 'owner@pawbook.test');
+    expect(await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawservation.test')).toBeNull();
+    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawservation.test', 'pbkdf2$1$aa$bb');
+    const row = await getOwnerUserByEmail(env.PAWSERVATION_DB, 'owner@pawservation.test');
     expect(row?.Id).toBe('ou_1');
     expect(row?.PasswordHash).toBe('pbkdf2$1$aa$bb');
   });
 
   it('enforces Email UNIQUE — a second insert throws', async () => {
     const { env } = createTestEnv();
-    await insertOwnerUser(env.PAWBOOK_DB, 'ou_1', 'owner@pawbook.test', 'h1');
+    await insertOwnerUser(env.PAWSERVATION_DB, 'ou_1', 'owner@pawservation.test', 'h1');
     await expect(
-      insertOwnerUser(env.PAWBOOK_DB, 'ou_2', 'owner@pawbook.test', 'h2'),
+      insertOwnerUser(env.PAWSERVATION_DB, 'ou_2', 'owner@pawservation.test', 'h2'),
     ).rejects.toThrow();
   });
 });
@@ -34,22 +34,24 @@ describe('owner-scope repo: OwnerUsers', () => {
 describe('owner-scope repo: AllowedSitters', () => {
   it('addAllowedSitter is idempotent and reads back unclaimed', async () => {
     const { env } = createTestEnv();
-    const a = await addAllowedSitter(env.PAWBOOK_DB, 'sitter@x.test');
-    const b = await addAllowedSitter(env.PAWBOOK_DB, 'sitter@x.test');
+    const a = await addAllowedSitter(env.PAWSERVATION_DB, 'sitter@x.test');
+    const b = await addAllowedSitter(env.PAWSERVATION_DB, 'sitter@x.test');
     expect(a.Email).toBe('sitter@x.test');
     expect(a.ClaimedAt).toBeNull();
     expect(b.AddedAt).toBe(a.AddedAt); // second add returned the existing row, not a fresh one
-    expect((await getAllowedSitter(env.PAWBOOK_DB, 'sitter@x.test'))?.Email).toBe('sitter@x.test');
+    expect((await getAllowedSitter(env.PAWSERVATION_DB, 'sitter@x.test'))?.Email).toBe(
+      'sitter@x.test',
+    );
   });
 
   it('deleteUnclaimedAllowedSitter deletes unclaimed rows only', async () => {
     const { env } = createTestEnv();
-    await addAllowedSitter(env.PAWBOOK_DB, 'gone@x.test');
-    expect(await deleteUnclaimedAllowedSitter(env.PAWBOOK_DB, 'gone@x.test')).toBe(true);
-    expect(await getAllowedSitter(env.PAWBOOK_DB, 'gone@x.test')).toBeNull();
+    await addAllowedSitter(env.PAWSERVATION_DB, 'gone@x.test');
+    expect(await deleteUnclaimedAllowedSitter(env.PAWSERVATION_DB, 'gone@x.test')).toBe(true);
+    expect(await getAllowedSitter(env.PAWSERVATION_DB, 'gone@x.test')).toBeNull();
 
-    await addAllowedSitter(env.PAWBOOK_DB, 'kept@x.test');
-    await createTenantFromSignup(env.PAWBOOK_DB, {
+    await addAllowedSitter(env.PAWSERVATION_DB, 'kept@x.test');
+    await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_kept',
       slug: 'kept-biz',
       displayName: 'Kept Biz',
@@ -57,14 +59,14 @@ describe('owner-scope repo: AllowedSitters', () => {
       email: 'kept@x.test',
       passwordHash: 'h',
     });
-    expect(await deleteUnclaimedAllowedSitter(env.PAWBOOK_DB, 'kept@x.test')).toBe(false);
-    expect((await getAllowedSitter(env.PAWBOOK_DB, 'kept@x.test'))?.ClaimedAt).toBeTruthy();
+    expect(await deleteUnclaimedAllowedSitter(env.PAWSERVATION_DB, 'kept@x.test')).toBe(false);
+    expect((await getAllowedSitter(env.PAWSERVATION_DB, 'kept@x.test'))?.ClaimedAt).toBeTruthy();
   });
 
   it('listAllowedSitters joins the claimed tenant slug; seed row is unclaimed', async () => {
     const { env } = createTestEnv();
-    await addAllowedSitter(env.PAWBOOK_DB, 'claimed@x.test');
-    await createTenantFromSignup(env.PAWBOOK_DB, {
+    await addAllowedSitter(env.PAWSERVATION_DB, 'claimed@x.test');
+    await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_new',
       slug: 'newbiz',
       displayName: 'New Biz',
@@ -72,7 +74,7 @@ describe('owner-scope repo: AllowedSitters', () => {
       email: 'claimed@x.test',
       passwordHash: 'h',
     });
-    const rows = await listAllowedSitters(env.PAWBOOK_DB);
+    const rows = await listAllowedSitters(env.PAWSERVATION_DB);
     const claimed = rows.find((r) => r.Email === 'claimed@x.test');
     expect(claimed?.ClaimedAt).toBeTruthy();
     expect(claimed?.TenantSlug).toBe('newbiz');
@@ -85,8 +87,8 @@ describe('owner-scope repo: AllowedSitters', () => {
 describe('createTenantFromSignup (atomic batch)', () => {
   it('creates Tenant + TenantUser and claims the allowlist row together', async () => {
     const { env } = createTestEnv();
-    await addAllowedSitter(env.PAWBOOK_DB, 'new@x.test');
-    await createTenantFromSignup(env.PAWBOOK_DB, {
+    await addAllowedSitter(env.PAWSERVATION_DB, 'new@x.test');
+    await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_x',
       slug: 'x-biz',
       displayName: 'X Biz',
@@ -95,7 +97,7 @@ describe('createTenantFromSignup (atomic batch)', () => {
       passwordHash: 'pbkdf2$1$aa$bb',
       claimedAtIso: '2026-07-19T00:00:00.000Z',
     });
-    const tenant = await getTenantBySlug(env.PAWBOOK_DB, 'x-biz');
+    const tenant = await getTenantBySlug(env.PAWSERVATION_DB, 'x-biz');
     expect(tenant?.DisplayName).toBe('X Biz');
     // New-tenant timezone defaults to NULL (unlimited / instance-default).
     expect(tenant?.Timezone).toBeNull();
@@ -110,17 +112,17 @@ describe('createTenantFromSignup (atomic batch)', () => {
     // before the sitter ever saw a prompt. The wizard prefills the field from `adminEmail`
     // instead, so publication needs the sitter to look at it and press Next.
     expect(tenant?.ContactEmail).toBeNull();
-    const user = await getTenantUserByEmail(env.PAWBOOK_DB, 'new@x.test');
+    const user = await getTenantUserByEmail(env.PAWSERVATION_DB, 'new@x.test');
     expect(user?.TenantId).toBe('tnt_x');
-    const claim = await getAllowedSitter(env.PAWBOOK_DB, 'new@x.test');
+    const claim = await getAllowedSitter(env.PAWSERVATION_DB, 'new@x.test');
     expect(claim?.ClaimedAt).toBe('2026-07-19T00:00:00.000Z');
     expect(claim?.TenantId).toBe('tnt_x');
   });
 
   it('a duplicate email aborts the WHOLE batch — no orphan tenant', async () => {
     const { env, raw } = createTestEnv();
-    await addAllowedSitter(env.PAWBOOK_DB, 'dup@x.test');
-    await createTenantFromSignup(env.PAWBOOK_DB, {
+    await addAllowedSitter(env.PAWSERVATION_DB, 'dup@x.test');
+    await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_dup',
       slug: 'dup-biz',
       displayName: 'Dup Biz',
@@ -130,7 +132,7 @@ describe('createTenantFromSignup (atomic batch)', () => {
     });
     const before = (raw.prepare('SELECT COUNT(*) AS n FROM Tenants').get() as { n: number }).n;
     await expect(
-      createTenantFromSignup(env.PAWBOOK_DB, {
+      createTenantFromSignup(env.PAWSERVATION_DB, {
         tenantId: 'tnt_dup2',
         slug: 'dup-biz-2',
         displayName: 'Dup Again',

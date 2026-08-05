@@ -309,12 +309,12 @@ export async function quoteBooking(
   if (excluded) return excluded;
 
   const [services, options, myPets, acceptedTypes] = await Promise.all([
-    listServices(env.PAWBOOK_DB, tenant.Id),
-    listServiceOptions(env.PAWBOOK_DB, tenant.Id),
+    listServices(env.PAWSERVATION_DB, tenant.Id),
+    listServiceOptions(env.PAWSERVATION_DB, tenant.Id),
     // PetOwners-backed: a CO-OWNER may quote a pet they co-own, and a pet outside this
     // customer's ownership graph is simply not in the list.
-    listEndUserPets(env.PAWBOOK_DB, tenant.Id, ctx.endUserId),
-    listPetTypes(env.PAWBOOK_DB, tenant.Id),
+    listEndUserPets(env.PAWSERVATION_DB, tenant.Id, ctx.endUserId),
+    listPetTypes(env.PAWSERVATION_DB, tenant.Id),
   ]);
 
   const chosen = requestedPetIds.map((id) => myPets.find((p) => p.Id === id));
@@ -444,7 +444,7 @@ async function verifyOwnExclusion(
 ): Promise<OpFailure | null> {
   if (!excludeBookingId) return null;
   const own = await getBookingForUser(
-    ctx.env.PAWBOOK_DB,
+    ctx.env.PAWSERVATION_DB,
     ctx.tenant.Id,
     ctx.endUserId,
     excludeBookingId,
@@ -477,9 +477,9 @@ export async function monthGrid(
   // Read concurrently: the ownership check must not add a serial round-trip to the widget's
   // hottest path (this GET refires on every month page AND every pet-selection change).
   const [services, myPets] = await Promise.all([
-    listServices(env.PAWBOOK_DB, tenant.Id),
+    listServices(env.PAWSERVATION_DB, tenant.Id),
     requestedPetIds.length > 0
-      ? listEndUserPets(env.PAWBOOK_DB, tenant.Id, ctx.endUserId)
+      ? listEndUserPets(env.PAWSERVATION_DB, tenant.Id, ctx.endUserId)
       : Promise.resolve(null),
   ]);
   const service = services.find((s) => s.ServiceType === type);
@@ -489,7 +489,7 @@ export async function monthGrid(
   // pets than were asked about is the same class of lie the count-based grid was.
   if (myPets && requestedPetIds.some((id) => !myPets.some((p) => p.Id === id)))
     return fail(400, 'Unknown pet.');
-  const options = await listServiceOptions(env.PAWBOOK_DB, tenant.Id);
+  const options = await listServiceOptions(env.PAWSERVATION_DB, tenant.Id);
   const serviceOptions = options.filter((o) => o.ServiceType === type);
   let option = serviceOptions[0] ?? null;
   if (optionKey) {
@@ -545,15 +545,15 @@ export type MePayload = {
 
 export async function getMe(ctx: BookingOpsContext): Promise<OpResult<MePayload>> {
   const { env, tenant, endUserId } = ctx;
-  const user = await getEndUserById(env.PAWBOOK_DB, tenant.Id, endUserId);
-  const pets = await listEndUserPets(env.PAWBOOK_DB, tenant.Id, endUserId);
+  const user = await getEndUserById(env.PAWSERVATION_DB, tenant.Id, endUserId);
+  const pets = await listEndUserPets(env.PAWSERVATION_DB, tenant.Id, endUserId);
   // Intake pre-fills, resolved against the questions AS THEY STAND NOW — a saved answer whose
   // question has been reworded, retyped, or narrowed past it never reaches the browser
   // (buildSavedAnswerMap). Read concurrently: neither read depends on the other, and /me is on
   // the widget's first paint.
   const [savedRows, services] = await Promise.all([
-    listSavedAnswers(env.PAWBOOK_DB, tenant.Id, endUserId),
-    listServices(env.PAWBOOK_DB, tenant.Id),
+    listSavedAnswers(env.PAWSERVATION_DB, tenant.Id, endUserId),
+    listServices(env.PAWSERVATION_DB, tenant.Id),
   ]);
   return ok({
     name: user?.Name ?? null,
@@ -612,7 +612,7 @@ export async function createBooking(
   // The reserved demo identity books like a real customer right up to persistence. One extra
   // indexed read; every other request pays it too, which keeps the two paths byte-identical
   // through validation and pricing.
-  const requester = await getEndUserById(env.PAWBOOK_DB, tenantId, endUserId);
+  const requester = await getEndUserById(env.PAWSERVATION_DB, tenantId, endUserId);
   const isDemo = requester?.Email === DEMO_EMAIL;
 
   const idemKey = input.idempotencyKey;
@@ -620,21 +620,26 @@ export async function createBooking(
     return fail(400, 'Idempotency-Key must be 128 characters or fewer.', 'invalid_idempotency_key');
   }
   if (idemKey) {
-    const prior = await findBookingByIdempotencyKey(env.PAWBOOK_DB, tenantId, endUserId, idemKey);
+    const prior = await findBookingByIdempotencyKey(
+      env.PAWSERVATION_DB,
+      tenantId,
+      endUserId,
+      idemKey,
+    );
     if (prior) return ok({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
   }
 
-  const services = await listServices(env.PAWBOOK_DB, tenant.Id);
+  const services = await listServices(env.PAWSERVATION_DB, tenant.Id);
   const service = services.find((s) => s.ServiceType === type);
   if (!service) return fail(400, 'Unknown service type.', 'unknown_service_type');
   if (petIds.length === 0) return fail(400, 'Choose at least one pet.', 'no_pets_selected');
 
-  const myPets = await listEndUserPets(env.PAWBOOK_DB, tenant.Id, endUserId);
+  const myPets = await listEndUserPets(env.PAWSERVATION_DB, tenant.Id, endUserId);
   const chosen = petIds.map((id) => myPets.find((p) => p.Id === id));
   if (chosen.some((p) => !p)) return fail(400, 'Unknown pet.', 'unknown_pet');
   const pets = chosen.length;
   if (!isValidPetCount(pets)) return fail(400, 'Too many pets.', 'too_many_pets');
-  const acceptedTypes = await listPetTypes(env.PAWBOOK_DB, tenant.Id);
+  const acceptedTypes = await listPetTypes(env.PAWSERVATION_DB, tenant.Id);
   // Registry membership: a pet whose slug isn't a TenantPetTypes row at all is corrupt data.
   // The BEHAVIORAL gate is the per-service acceptance check below (0015 — the tenant-level
   // enabled switch is retired).
@@ -656,7 +661,7 @@ export async function createBooking(
 
   if (!service.Enabled) return fail(400, 'Service not offered.', 'service_not_offered');
 
-  const options = await listServiceOptions(env.PAWBOOK_DB, tenant.Id);
+  const options = await listServiceOptions(env.PAWSERVATION_DB, tenant.Id);
 
   // Select by optionKey when provided; fall back to first option for the service type.
   let option: (typeof options)[number] | undefined;
@@ -780,7 +785,7 @@ export async function createBooking(
   // racers may both roll back — fail-safe, never an overbooking. This is the ONLY capacity read.
   let id: string;
   try {
-    id = await insertBookingRequest(env.PAWBOOK_DB, tenant.Id, {
+    id = await insertBookingRequest(env.PAWSERVATION_DB, tenant.Id, {
       endUserId,
       serviceType: service.ServiceType,
       startDate: start,
@@ -796,7 +801,12 @@ export async function createBooking(
     });
   } catch (e) {
     if (idemKey && isUniqueViolation(e)) {
-      const prior = await findBookingByIdempotencyKey(env.PAWBOOK_DB, tenantId, endUserId, idemKey);
+      const prior = await findBookingByIdempotencyKey(
+        env.PAWSERVATION_DB,
+        tenantId,
+        endUserId,
+        idemKey,
+      );
       if (prior) return ok({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
     }
     throw e;
@@ -815,17 +825,17 @@ export async function createBooking(
       id,
     );
     if (!check.available) {
-      await deleteBookingRequest(env.PAWBOOK_DB, tenant.Id, id);
+      await deleteBookingRequest(env.PAWSERVATION_DB, tenant.Id, id);
       return conflictFailure(check);
     }
-    await addBookingPets(env.PAWBOOK_DB, tenant.Id, id, petIds);
+    await addBookingPets(env.PAWSERVATION_DB, tenant.Id, id, petIds);
     // The extra-time surcharge the times attract (0009), from the SAME function the quote previewed
     // it with — so the fee the customer just read and the fee now owed are one number. Inside this
     // try, not after it: money owed must not be best-effort, and a throw here rolls the whole
     // booking back rather than committing an under-billed one. Nothing is written when no fee
     // applies (the common case) — `replaceExtraTimeCharges` with an empty list is one no-op DELETE.
     await replaceExtraTimeCharges(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       tenant.Id,
       id,
       extraTimeSurcharges(service, resolvedTimes),
@@ -834,7 +844,7 @@ export async function createBooking(
     // The optimistic row is already persisted; if the capacity check or pet insert fails,
     // don't leave it orphaned (a pending row counts against capacity and never expires).
     // Best-effort cleanup, then surface the original error.
-    await deleteBookingRequest(env.PAWBOOK_DB, tenant.Id, id).catch(() => {});
+    await deleteBookingRequest(env.PAWSERVATION_DB, tenant.Id, id).catch(() => {});
     throw err;
   }
 
@@ -844,7 +854,7 @@ export async function createBooking(
   // the booking is already committed and the customer is about to be told it worked — failing
   // the response over a convenience write would report a real booking as an error.
   await replaceSavedAnswers(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     endUserId,
     service.ServiceType,
@@ -905,7 +915,7 @@ export async function cancelBooking(
 
   // Ownership is in the SQL, not in a check around it: another customer's id, an unknown id, and
   // a 'blocked'/'external' sentinel are all one indistinguishable 404 — no existence oracle.
-  const booking = await getBookingForUser(env.PAWBOOK_DB, tenant.Id, endUserId, id);
+  const booking = await getBookingForUser(env.PAWSERVATION_DB, tenant.Id, endUserId, id);
   if (!booking) return fail(404, 'Not found.', 'unknown_booking');
 
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
@@ -918,7 +928,7 @@ export async function cancelBooking(
   if (!isCustomerCancellable(booking.Status, booking.StartDate, booking.EndDate, today))
     return notCancellable();
 
-  const services = await listServices(env.PAWBOOK_DB, tenant.Id);
+  const services = await listServices(env.PAWSERVATION_DB, tenant.Id);
   const service = services.find((s) => s.ServiceType === booking.ServiceType);
   const fee = feeToCancelToday(
     booking.Status,
@@ -933,7 +943,7 @@ export async function cancelBooking(
   // in the gap above cannot have a request-priced (free) cancellation land on her now-confirmed
   // booking. Either loser arrives here with `false` and is told what a stale tab is told.
   const cancelled = await cancelBookingForUser(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     endUserId,
     id,
@@ -950,9 +960,9 @@ export async function cancelBooking(
       ctx,
       (keepsCalendarEventOnCancel('cancelled', fee)
         ? (async () => {
-            const sync = await getBookingSyncData(env.PAWBOOK_DB, tenant.Id, id);
+            const sync = await getBookingSyncData(env.PAWSERVATION_DB, tenant.Id, id);
             if (!sync) return;
-            const petNames = await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, id);
+            const petNames = await listPetNamesForBooking(env.PAWSERVATION_DB, tenant.Id, id);
             await updateBookingCalendarEvent(env, tenant, eventId, {
               bookingId: id,
               endUserId: sync.EndUserId,
@@ -984,9 +994,9 @@ export async function cancelBooking(
     ctx,
     (async () => {
       if (!isEmailConfigured(env)) return;
-      const sitterEmail = await getSitterNotificationEmail(env.PAWBOOK_DB, tenant.Id);
+      const sitterEmail = await getSitterNotificationEmail(env.PAWSERVATION_DB, tenant.Id);
       if (!sitterEmail) return;
-      const customer = await getEndUserById(env.PAWBOOK_DB, tenant.Id, endUserId);
+      const customer = await getEndUserById(env.PAWSERVATION_DB, tenant.Id, endUserId);
       await sendCancellationNoticeToSitter(env, sitterEmail, {
         displayName: tenant.DisplayName,
         customerName: customer?.Name ?? null,
@@ -1077,7 +1087,7 @@ export async function editBooking(
 
   // Ownership is in the SQL (`EndUserId = ?`), exactly like the cancel path: another customer's
   // id, an unknown id and a 'blocked'/'external' sentinel are one indistinguishable 404.
-  const booking = await getBookingForUser(env.PAWBOOK_DB, tenant.Id, endUserId, id);
+  const booking = await getBookingForUser(env.PAWSERVATION_DB, tenant.Id, endUserId, id);
   if (!booking) return fail(404, 'Not found.', 'unknown_booking');
 
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
@@ -1092,23 +1102,23 @@ export async function editBooking(
   // The reserved demo identity persists nothing, ever — including an edit. It has no real rows to
   // edit in the first place (its booking POST never inserts), so the 404 above is what it actually
   // hits; this is the structural backstop for a demo customer that somehow names a real id.
-  const requester = await getEndUserById(env.PAWBOOK_DB, tenant.Id, endUserId);
+  const requester = await getEndUserById(env.PAWSERVATION_DB, tenant.Id, endUserId);
   if (requester?.Email === DEMO_EMAIL) return fail(404, 'Not found.', 'unknown_booking');
 
-  const services = await listServices(env.PAWBOOK_DB, tenant.Id);
+  const services = await listServices(env.PAWSERVATION_DB, tenant.Id);
   // The service comes from the STORED row. It is not an input, so it cannot be changed.
   const service = services.find((s) => s.ServiceType === booking.ServiceType);
   if (!service) return fail(400, 'Unknown service type.', 'unknown_service_type');
   if (!service.Enabled) return fail(400, 'Service not offered.', 'service_not_offered');
 
   if (petIds.length === 0) return fail(400, 'Choose at least one pet.', 'no_pets_selected');
-  const myPets = await listEndUserPets(env.PAWBOOK_DB, tenant.Id, endUserId);
+  const myPets = await listEndUserPets(env.PAWSERVATION_DB, tenant.Id, endUserId);
   const chosen = petIds.map((pid) => myPets.find((p) => p.Id === pid));
   if (chosen.some((p) => !p)) return fail(400, 'Unknown pet.', 'unknown_pet');
   const pets = chosen.length;
   if (!isValidPetCount(pets)) return fail(400, 'Too many pets.', 'too_many_pets');
 
-  const acceptedTypes = await listPetTypes(env.PAWBOOK_DB, tenant.Id);
+  const acceptedTypes = await listPetTypes(env.PAWSERVATION_DB, tenant.Id);
   for (const p of chosen) {
     if (!acceptedTypes.find((pt) => pt.PetType === p!.PetType))
       return fail(400, 'That pet type is not accepted.', 'pet_type_not_accepted');
@@ -1125,7 +1135,7 @@ export async function editBooking(
   // The option, like the service, comes from the stored row — an edit does not re-pick a walk
   // duration or a check-in slot. A row whose option the sitter has since deleted cannot be
   // re-priced at all, so it is refused rather than silently re-homed onto another option.
-  const options = await listServiceOptions(env.PAWBOOK_DB, tenant.Id);
+  const options = await listServiceOptions(env.PAWSERVATION_DB, tenant.Id);
   const option = options.find(
     (o) => o.ServiceType === booking.ServiceType && o.OptionKey === booking.OptionKey,
   );
@@ -1193,7 +1203,7 @@ export async function editBooking(
     answers: booking.Answers,
     status: booking.Status,
   };
-  const previousPetIds = (await listBookingPetsForUser(env.PAWBOOK_DB, tenant.Id, endUserId))
+  const previousPetIds = (await listBookingPetsForUser(env.PAWSERVATION_DB, tenant.Id, endUserId))
     .filter((r) => r.BookingRequestId === id)
     .map((r) => r.PetId);
 
@@ -1236,7 +1246,7 @@ export async function editBooking(
   // Customer-scoped AND status-guarded in SQL: the guard is the status we read and priced from,
   // so a sitter confirming (or declining) in the gap wins the race and the edit 409s rather than
   // landing on a row whose state it no longer describes.
-  const applied = await updateBookingForEdit(env.PAWBOOK_DB, tenant.Id, endUserId, id, {
+  const applied = await updateBookingForEdit(env.PAWSERVATION_DB, tenant.Id, endUserId, id, {
     startDate: start,
     endDate,
     startTime: bookingStartTime,
@@ -1249,7 +1259,7 @@ export async function editBooking(
   if (!applied) return notEditable();
 
   try {
-    await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, petIds);
+    await replaceBookingPets(env.PAWSERVATION_DB, tenant.Id, id, petIds);
     const check = await checkAvailability(
       env,
       tenant,
@@ -1262,8 +1272,8 @@ export async function editBooking(
       id,
     );
     if (!check.available) {
-      await restoreBookingAfterEdit(env.PAWBOOK_DB, tenant.Id, id, previous);
-      await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, previousPetIds);
+      await restoreBookingAfterEdit(env.PAWSERVATION_DB, tenant.Id, id, previous);
+      await replaceBookingPets(env.PAWSERVATION_DB, tenant.Id, id, previousPetIds);
       return conflictFailure(check);
     }
     // The extra-time surcharge follows the booking's TIMES (0009), so it is re-derived exactly when
@@ -1283,7 +1293,7 @@ export async function editBooking(
       bookingStartTime !== booking.StartTime || bookingDepartureTime !== booking.DepartureTime;
     if (timesMoved) {
       await replaceExtraTimeCharges(
-        env.PAWBOOK_DB,
+        env.PAWSERVATION_DB,
         tenant.Id,
         id,
         extraTimeSurcharges(service, resolvedTimes),
@@ -1292,15 +1302,15 @@ export async function editBooking(
   } catch (err) {
     // Best-effort rollback, then surface the original error — a half-applied edit would leave the
     // customer's booking describing dates nobody asked for.
-    await restoreBookingAfterEdit(env.PAWBOOK_DB, tenant.Id, id, previous).catch(() => {});
-    await replaceBookingPets(env.PAWBOOK_DB, tenant.Id, id, previousPetIds).catch(() => {});
+    await restoreBookingAfterEdit(env.PAWSERVATION_DB, tenant.Id, id, previous).catch(() => {});
+    await replaceBookingPets(env.PAWSERVATION_DB, tenant.Id, id, previousPetIds).catch(() => {});
     throw err;
   }
 
   // Same pre-fill write the create does (0007): an edited answer becomes the saved one, and a
   // blanked answer deletes its saved row. Best-effort — the edit is already committed.
   await replaceSavedAnswers(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     endUserId,
     service.ServiceType,
@@ -1383,8 +1393,8 @@ export async function listMyBookings(
   ctx: BookingOpsContext,
 ): Promise<OpResult<{ bookings: MyBooking[] }>> {
   const { env, tenant, endUserId } = ctx;
-  const rows = await listBookingsForUser(env.PAWBOOK_DB, tenant.Id, endUserId);
-  const petRows = await listBookingPetsForUser(env.PAWBOOK_DB, tenant.Id, endUserId);
+  const rows = await listBookingsForUser(env.PAWSERVATION_DB, tenant.Id, endUserId);
+  const petRows = await listBookingPetsForUser(env.PAWSERVATION_DB, tenant.Id, endUserId);
   const petsByBooking = new Map<string, { id: string; name: string }[]>();
   for (const pr of petRows) {
     const list = petsByBooking.get(pr.BookingRequestId) ?? [];
@@ -1393,7 +1403,7 @@ export async function listMyBookings(
   }
   // Charges for THIS caller's bookings only — scoped by the tenant read plus the row filter
   // below, so a charge can never appear under a booking the caller does not own.
-  const chargeRows = await listChargesForTenant(env.PAWBOOK_DB, tenant.Id);
+  const chargeRows = await listChargesForTenant(env.PAWSERVATION_DB, tenant.Id);
   const chargesByBooking = new Map<string, { label: string; amount: number }[]>();
   for (const ch of chargeRows) {
     const list = chargesByBooking.get(ch.BookingRequestId) ?? [];
@@ -1403,7 +1413,7 @@ export async function listMyBookings(
   // Cancellation policy per service, so each row can carry what cancelling it TODAY would cost.
   // Server-computed for the same reason the quote is: the widget renders money, never derives it.
   const tiersByType = new Map<string, CancellationTier[] | null>(
-    (await listServices(env.PAWBOOK_DB, tenant.Id)).map((s) => [
+    (await listServices(env.PAWSERVATION_DB, tenant.Id)).map((s) => [
       s.ServiceType,
       s.CancellationTiers,
     ]),
@@ -1522,7 +1532,7 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
 export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyAccountBalance>> {
   const { env, tenant, endUserId } = ctx;
   const { accountId, detail } = await getHouseholdDetailForOwner(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     endUserId,
   );

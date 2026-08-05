@@ -149,7 +149,7 @@ describe('login code pruning on creation', () => {
     // Create a new login code with a specific "now" that should prune the expired one.
     const nowForPrune = new Date(now.getTime() + 500); // halfway between expired and unexpired
     const newCodeId = await createLoginCode(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       tenantId,
       endUserId,
       'newcode789',

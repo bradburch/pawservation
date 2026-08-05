@@ -13,7 +13,7 @@ describe('GET /api/:slug/availability/month', () => {
   it('D1 boarding booking: blocks, partial, available, mine', async () => {
     const { env } = createTestEnv();
     // A blocked day (no calendar involved — a plain 'blocked' BookingRequests row).
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: '2026-10-10',
@@ -24,7 +24,7 @@ describe('GET /api/:slug/availability/month', () => {
       status: 'confirmed',
     });
     // Jess's own confirmed boarding booking, one night.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: JESS_END_USER_ID,
       serviceType: 'boarding',
       startDate: '2026-10-20',
@@ -65,7 +65,7 @@ describe('GET /api/:slug/availability/month', () => {
 
   it('walk: blocks propagate, boarding capacity ignored, max=null', async () => {
     const { env } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: '2026-10-10',
@@ -75,7 +75,7 @@ describe('GET /api/:slug/availability/month', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: JESS_END_USER_ID,
       serviceType: 'boarding',
       startDate: '2026-10-20',
@@ -124,7 +124,7 @@ describe('GET /api/:slug/availability/month', () => {
     const { env } = createTestEnv();
     // Sunny Paws boarding MaxConcurrentPets=2 — a 2-pet booking fills the day on its own. No ProviderConnections
     // row is seeded for this tenant/capability, so there is no calendar connection whatsoever.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2026-10-05',
@@ -171,7 +171,7 @@ describe('GET /api/:slug/availability/month', () => {
         '14:00',
         1,
       );
-    await insertBookingRequest(env.PAWBOOK_DB, 'tnt_sunnypaws', {
+    await insertBookingRequest(env.PAWSERVATION_DB, 'tnt_sunnypaws', {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2026-10-05',
@@ -232,7 +232,7 @@ describe('GET /api/:slug/availability/month', () => {
         '14:00',
         null,
       );
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: JESS_END_USER_ID,
       serviceType: 'walk',
       startDate: '2026-10-15',
@@ -268,7 +268,7 @@ describe('GET /api/:slug/availability/month', () => {
       .run();
     // Two 2-pet walks fill the 4-pet slot on Nov 12.
     for (const _ of [0, 1]) {
-      await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+      await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
         endUserId: null,
         serviceType: 'walk',
         startDate: '2026-11-12',
@@ -304,7 +304,7 @@ describe('GET /api/:slug/availability/month', () => {
       .run();
     // 1 of 2 pets used on Nov 12: the grid used to paint that `available` for everyone, so a
     // two-dog household saw a bookable day the quote then refused.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2026-11-12',
@@ -350,7 +350,7 @@ describe('GET /api/:slug/availability/month', () => {
       )
       .run();
     // A 2-pet house-sit fills the day.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'housesitting',
       startDate: '2026-11-05',
@@ -463,7 +463,7 @@ describe('MonthDay.reason', () => {
   it('names the blocked / full branches and stays null for bookable days', async () => {
     const { env } = createTestEnv();
     const m = futureMonth();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: `${m}-10`,
@@ -474,7 +474,7 @@ describe('MonthDay.reason', () => {
       status: 'confirmed',
     });
     // Sunny Paws boarding is capped at 2 pets/day — one 2-pet stay fills the 20th outright.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: `${m}-20`,
@@ -485,7 +485,7 @@ describe('MonthDay.reason', () => {
       status: 'confirmed',
     });
     // One pet on the 22nd: partial, still bookable, so no reason.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: `${m}-22`,
@@ -513,7 +513,7 @@ describe('MonthDay.reason', () => {
       `UPDATE TenantServiceOptions SET Capacity = 1
        WHERE TenantId = '${TENANT_A}' AND ServiceType = 'walk' AND OptionKey = 'd30';`,
     );
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: `${m}-10`,
@@ -523,7 +523,7 @@ describe('MonthDay.reason', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: `${m}-12`,
@@ -589,7 +589,7 @@ describe('GET /api/:slug/availability/month — ?petIds=', () => {
 
   /** One pet already boarding on the 12th; Sunny Paws' pool holds 2. */
   async function seedOneOfTwo(env: Env, month: string) {
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: `${month}-12`,
@@ -727,8 +727,8 @@ describe('the month grid and the cross-kind handover rule', () => {
   const futureMonth = () => addMonths(today(), 2).slice(0, 7);
 
   async function setAllowance(env: Env, days: number | null): Promise<void> {
-    const t = (await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!;
-    await updateTenantSettings(env.PAWBOOK_DB, TENANT_A, {
+    const t = (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!;
+    await updateTenantSettings(env.PAWSERVATION_DB, TENANT_A, {
       displayName: t.DisplayName,
       accentColor: t.AccentColor,
       timezone: t.Timezone,
@@ -742,7 +742,7 @@ describe('the month grid and the cross-kind handover rule', () => {
 
   /** An existing confirmed house sit, `[start, endExclusive)`. */
   async function seedHouseSit(env: Env, start: string, endExclusive: string): Promise<void> {
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'housesitting',
       startDate: start,
@@ -808,7 +808,7 @@ describe('the month grid and the cross-kind handover rule', () => {
   it('is symmetric: a boarding stay strikes out the same days for a HOUSE-SIT request', async () => {
     const { env } = createTestEnv();
     const m = futureMonth();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: `${m}-10`,

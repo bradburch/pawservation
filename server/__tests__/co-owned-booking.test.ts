@@ -28,8 +28,13 @@ const book = (env: Env, token: string, petIds: string[]) =>
 describe('co-owned pets in the widget', () => {
   it('a co-owner sees the co-owned pet on /me and can book it', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
     const token = await endUserToken(env, 'sunny-paws', 'co@example.com');
 
     expect((await me(env, token)).pets.map((p) => p.name)).toEqual(['Bella']);
@@ -39,7 +44,7 @@ describe('co-owned pets in the widget', () => {
 
   it("a non-owner still cannot book another customer's pet", async () => {
     const { env } = createTestEnv();
-    await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'stranger@example.com', 'Stranger');
+    await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_A, 'stranger@example.com', 'Stranger');
     const token = await endUserToken(env, 'sunny-paws', 'stranger@example.com');
 
     expect((await me(env, token)).pets).toEqual([]);
@@ -50,8 +55,13 @@ describe('co-owned pets in the widget', () => {
 
   it('a removed co-owner immediately loses access again', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
     const token = await endUserToken(env, 'sunny-paws', 'co@example.com');
     await app.request(
       `/api/sunny-paws/admin/pets/pet_sp_bella/owners/${co.Id}`,
@@ -64,7 +74,7 @@ describe('co-owned pets in the widget', () => {
   it('a deceased pet disappears from /me and cannot be booked', async () => {
     const { env } = createTestEnv();
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true);
+    await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', true);
 
     expect((await me(env, token)).pets.map((p) => p.name)).toEqual(['Mochi']);
     const res = await book(env, token, ['pet_sp_bella']);
@@ -78,7 +88,7 @@ describe('co-owned pets in the widget', () => {
     const created = await book(env, token, ['pet_sp_bella']);
     expect(created.status).toBe(201);
     const { id } = (await created.json()) as { id: string };
-    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true);
+    await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', true);
 
     const mine = (await (
       await app.request(

@@ -185,7 +185,7 @@ describe('POST /api/password-reset/complete — sitter', () => {
   it('rejects expired and tampered tokens (400)', async () => {
     const { env } = createTestEnv();
     const nonce = crypto.randomUUID();
-    await env.PAWBOOK_CACHE.put(RESET_NONCE_KEY(nonce), '1');
+    await env.PAWSERVATION_CACHE.put(RESET_NONCE_KEY(nonce), '1');
     const expired = await signResetLink(TEST_SECRET, {
       email: ADMIN_EMAIL_A,
       kind: 'sitter',
@@ -247,7 +247,7 @@ describe('POST /api/password-reset/complete — vanished account', () => {
   it('rejects with the expired-link copy if the account no longer exists (0 rows changed)', async () => {
     const { env } = createTestEnv();
     const nonce = crypto.randomUUID();
-    await env.PAWBOOK_CACHE.put(RESET_NONCE_KEY(nonce), '1');
+    await env.PAWSERVATION_CACHE.put(RESET_NONCE_KEY(nonce), '1');
     const token = await signResetLink(TEST_SECRET, {
       email: 'ghost@x.test',
       kind: 'sitter',

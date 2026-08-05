@@ -23,7 +23,7 @@ const getSettings = async (env: Env): Promise<{ services: SettingsService[] }> =
 describe('settings GET carries species-count rates per option', () => {
   it('returns each option’s petRates, empty arrays when none', async () => {
     const { env } = createTestEnv();
-    await replaceServicePetRates(env.PAWBOOK_DB, TENANT_A, 'walk', 'd30', [
+    await replaceServicePetRates(env.PAWSERVATION_DB, TENANT_A, 'walk', 'd30', [
       { mixKey: 'dog:2', rate: 35 },
       { mixKey: 'cat:1|dog:1', rate: 30 },
     ]);
@@ -45,13 +45,13 @@ describe('settings GET carries species-count rates per option', () => {
 
   it('multiPetGroupRateCount counts ONLY 2+-pet group rows, per service', async () => {
     const { env } = createTestEnv();
-    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+    await upsertPetGroupRate(env.PAWSERVATION_DB, TENANT_A, {
       serviceType: 'walk',
       optionKey: 'd30',
       groupKey: 'pet_sp_bella',
       rate: 20, // single pet — not multi
     });
-    await upsertPetGroupRate(env.PAWBOOK_DB, TENANT_A, {
+    await upsertPetGroupRate(env.PAWSERVATION_DB, TENANT_A, {
       serviceType: 'walk',
       optionKey: 'd30',
       groupKey: 'pet_sp_bella,pet_sp_mochi',
@@ -109,31 +109,31 @@ describe('settings PUT species-count rates', () => {
 
   it('PATCH semantics: an option sent WITHOUT petRates keeps its stored rows', async () => {
     const { env } = createTestEnv();
-    await replaceServicePetRates(env.PAWBOOK_DB, TENANT_A, 'walk', 'd30', [
+    await replaceServicePetRates(env.PAWSERVATION_DB, TENANT_A, 'walk', 'd30', [
       { mixKey: 'dog:2', rate: 35 },
     ]);
     const res = await putSettings(env, {
       services: [{ type: 'walk', enabled: true, options: walkOptions() }],
     });
     expect(res.status).toBe(204);
-    expect(await listServicePetRates(env.PAWBOOK_DB, TENANT_A)).toHaveLength(1);
+    expect(await listServicePetRates(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(1);
   });
 
   it('an explicit empty petRates clears the option’s set', async () => {
     const { env } = createTestEnv();
-    await replaceServicePetRates(env.PAWBOOK_DB, TENANT_A, 'walk', 'd30', [
+    await replaceServicePetRates(env.PAWSERVATION_DB, TENANT_A, 'walk', 'd30', [
       { mixKey: 'dog:2', rate: 35 },
     ]);
     const res = await putSettings(env, {
       services: [{ type: 'walk', enabled: true, options: walkOptions({ petRates: [] }) }],
     });
     expect(res.status).toBe(204);
-    expect(await listServicePetRates(env.PAWBOOK_DB, TENANT_A)).toHaveLength(0);
+    expect(await listServicePetRates(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(0);
   });
 
   it('a DROPPED option loses its rates via the replaceServiceOptions scrub', async () => {
     const { env } = createTestEnv();
-    await replaceServicePetRates(env.PAWBOOK_DB, TENANT_A, 'walk', 'd90', [
+    await replaceServicePetRates(env.PAWSERVATION_DB, TENANT_A, 'walk', 'd90', [
       { mixKey: 'dog:2', rate: 44 },
     ]);
     const res = await putSettings(env, {
@@ -146,7 +146,7 @@ describe('settings PUT species-count rates', () => {
       ],
     });
     expect(res.status).toBe(204);
-    expect(await listServicePetRates(env.PAWBOOK_DB, TENANT_A)).toHaveLength(0);
+    expect(await listServicePetRates(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(0);
   });
 
   it('rejects a species outside the EFFECTIVE accepted list — including one set in the same PUT', async () => {
@@ -162,7 +162,7 @@ describe('settings PUT species-count rates', () => {
       ],
     });
     expect(res.status).toBe(400);
-    expect(await listServicePetRates(env.PAWBOOK_DB, TENANT_A)).toHaveLength(0);
+    expect(await listServicePetRates(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(0);
   });
 
   it('rejects an unknown species slug', async () => {
@@ -204,6 +204,6 @@ describe('settings PUT species-count rates', () => {
       });
       expect(res.status, JSON.stringify(extra)).toBe(400);
     }
-    expect(await listServicePetRates(env.PAWBOOK_DB, TENANT_A)).toHaveLength(0);
+    expect(await listServicePetRates(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(0);
   });
 });

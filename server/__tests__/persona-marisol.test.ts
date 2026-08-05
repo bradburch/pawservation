@@ -13,14 +13,14 @@ import type { Tenant } from '../types';
  * expects every booking to show up there.
  *
  * These exercise the real HTTP routes (customer booking + admin status changes) end to end,
- * spying on globalThis.fetch to capture what Pawbook actually sends to the Google Calendar API,
+ * spying on globalThis.fetch to capture what Pawservation actually sends to the Google Calendar API,
  * following the patterns in calendar-sync.test.ts / calendar-delete-sync.test.ts.
  */
 
 const CALENDAR_ID = 'primary';
 
 async function connectCalendar(env: Env): Promise<void> {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-marisol'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-marisol'),
     expiresAt: '2031-01-01T00:00:00Z', // far future — no refresh round-trip to account for
@@ -144,7 +144,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
         'Requested via Pawservation — confirm or decline in your dashboard.',
     );
     expect(resource.extendedProperties?.private).toEqual({
-      pawbook: 'true',
+      pawservation: 'true',
       category: 'boarding',
       petCount: '2',
       customerEmail: 'jess@example.com',

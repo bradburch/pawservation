@@ -23,7 +23,7 @@ function bearerBody(init: RequestInit) {
 
 /** Mirrors calendar-sync.test.ts's connectCalendar helper, parametrized by tenant. */
 async function connectCalendar(env: Env, tenantId: string, expiresAt: string) {
-  await setProviderTokens(env.PAWBOOK_DB, tenantId, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, tenantId, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt,

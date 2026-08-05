@@ -49,9 +49,9 @@ const RATE_KEY = (email: string, ip: string) => `pwreset:rl:${email}:${ip}`;
  * them just because they once had one. Mirrors signup.ts's eligibleKind.
  */
 async function resettableKind(env: Env, email: string): Promise<'sitter' | 'owner' | null> {
-  if (isOwnerEmail(env, email) && (await getOwnerUserByEmail(env.PAWBOOK_DB, email)))
+  if (isOwnerEmail(env, email) && (await getOwnerUserByEmail(env.PAWSERVATION_DB, email)))
     return 'owner';
-  if (await getTenantUserByEmail(env.PAWBOOK_DB, email)) return 'sitter';
+  if (await getTenantUserByEmail(env.PAWSERVATION_DB, email)) return 'sitter';
   return null;
 }
 
@@ -66,7 +66,7 @@ async function mintResetLink(
   kind: 'sitter' | 'owner',
 ): Promise<string> {
   const nonce = crypto.randomUUID();
-  await env.PAWBOOK_CACHE.put(RESET_NONCE_KEY(nonce), '1', {
+  await env.PAWSERVATION_CACHE.put(RESET_NONCE_KEY(nonce), '1', {
     expirationTtl: RESET_LINK_TTL_SECONDS,
   });
   const token = await signResetLink(env.TOKEN_SECRET, {
@@ -88,7 +88,7 @@ export const passwordResetRoutes = new Hono<AppEnv>()
 
     const rateKey = RATE_KEY(email, c.req.header('CF-Connecting-IP') ?? 'unknown');
     const overCap = await checkAndBumpRateLimit(
-      c.env.PAWBOOK_CACHE,
+      c.env.PAWSERVATION_CACHE,
       rateKey,
       RATE_LIMIT_MAX,
       RATE_LIMIT_TTL_SECONDS,
@@ -132,25 +132,29 @@ export const passwordResetRoutes = new Hono<AppEnv>()
     const passwordError = validatePassword(password, { email: payload.email });
     if (passwordError) return c.json({ error: passwordError }, 400);
 
-    const seen = await c.env.PAWBOOK_CACHE.get(RESET_NONCE_KEY(payload.nonce));
+    const seen = await c.env.PAWSERVATION_CACHE.get(RESET_NONCE_KEY(payload.nonce));
     if (!seen) return c.json({ error: EXPIRED_ERROR }, 400);
-    await c.env.PAWBOOK_CACHE.delete(RESET_NONCE_KEY(payload.nonce));
+    await c.env.PAWSERVATION_CACHE.delete(RESET_NONCE_KEY(payload.nonce));
 
     const passwordHash = await hashPassword(password);
 
     if (payload.kind === 'owner') {
       // The secret may have changed since the link was issued — re-check membership.
       if (!isOwnerEmail(c.env, payload.email)) return c.json({ error: EXPIRED_ERROR }, 400);
-      const changed = await updateOwnerPasswordHash(c.env.PAWBOOK_DB, payload.email, passwordHash);
+      const changed = await updateOwnerPasswordHash(
+        c.env.PAWSERVATION_DB,
+        payload.email,
+        passwordHash,
+      );
       if (!changed) return c.json({ error: EXPIRED_ERROR }, 400);
       const ownerToken = await mintOwnerToken(payload.email, c.env.TOKEN_SECRET);
       return c.json({ token: ownerToken, role: 'owner', email: payload.email });
     }
 
-    const user = await getTenantUserByEmail(c.env.PAWBOOK_DB, payload.email);
+    const user = await getTenantUserByEmail(c.env.PAWSERVATION_DB, payload.email);
     if (!user) return c.json({ error: EXPIRED_ERROR }, 400);
     const changed = await updateTenantUserPasswordHash(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       payload.email,
       passwordHash,
     );

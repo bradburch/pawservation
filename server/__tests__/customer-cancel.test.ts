@@ -31,7 +31,7 @@ function seedBoardingTiers(raw: DatabaseSync): void {
 }
 
 async function connectCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z',
@@ -53,7 +53,7 @@ async function seedBooking(
   } = {},
 ): Promise<string> {
   const start = addDays(TODAY, over.startsInDays ?? 20);
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: over.endUserId === undefined ? JESS : over.endUserId,
     serviceType: over.serviceType ?? 'boarding',
     startDate: start,
@@ -64,7 +64,7 @@ async function seedBooking(
     status: over.status ?? 'confirmed',
   });
   if (over.gcalEventId) {
-    await env.PAWBOOK_DB.prepare('UPDATE BookingRequests SET GCalEventId = ? WHERE Id = ?')
+    await env.PAWSERVATION_DB.prepare('UPDATE BookingRequests SET GCalEventId = ? WHERE Id = ?')
       .bind(over.gcalEventId, id)
       .run();
   }
@@ -72,7 +72,7 @@ async function seedBooking(
 }
 
 async function row(env: Env, id: string) {
-  return (await env.PAWBOOK_DB.prepare(
+  return (await env.PAWSERVATION_DB.prepare(
     'SELECT Status, CancellationFee, GCalEventId, SyncPending FROM BookingRequests WHERE Id = ?',
   )
     .bind(id)
@@ -291,7 +291,7 @@ describe('the outbox must not undo a retitle (the 15-minute bug)', () => {
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
     await cancel(env, await jessToken(env), free);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, declined, 'declined');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, declined, 'declined');
 
     vi.restoreAllMocks();
     const spy = vi
@@ -477,7 +477,9 @@ describe('a [CANCELLED] event must not block capacity', () => {
     const start = addDays(TODAY, 5);
     const id = await seedBooking(env, { startsInDays: 5, gcalEventId: 'evt_cap' });
     expect(
-      (await listCapacityRows(env.PAWBOOK_DB, TENANT_A, start, addDays(start, 3))).map((r) => r.Id),
+      (await listCapacityRows(env.PAWSERVATION_DB, TENANT_A, start, addDays(start, 3))).map(
+        (r) => r.Id,
+      ),
     ).toContain(id);
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
@@ -485,7 +487,9 @@ describe('a [CANCELLED] event must not block capacity', () => {
 
     // listCapacityRows selects Status IN ('pending','confirmed') — a cancelled row is simply gone.
     expect(
-      (await listCapacityRows(env.PAWBOOK_DB, TENANT_A, start, addDays(start, 3))).map((r) => r.Id),
+      (await listCapacityRows(env.PAWSERVATION_DB, TENANT_A, start, addDays(start, 3))).map(
+        (r) => r.Id,
+      ),
     ).not.toContain(id);
   });
 
@@ -513,7 +517,7 @@ describe('a [CANCELLED] event must not block capacity', () => {
               updated: '2030-01-01T00:00:00Z',
               start: { date: start },
               end: { date: addDays(start, 3) },
-              extendedProperties: { private: { pawbook: 'true', bookingId: id } },
+              extendedProperties: { private: { pawservation: 'true', bookingId: id } },
             },
           ],
         }),
@@ -522,14 +526,14 @@ describe('a [CANCELLED] event must not block capacity', () => {
     );
     await reconcileBookingsWithCalendar(env, tenant);
 
-    const externals = await env.PAWBOOK_DB.prepare(
+    const externals = await env.PAWSERVATION_DB.prepare(
       "SELECT Id FROM BookingRequests WHERE TenantId = ? AND ServiceType = 'external'",
     )
       .bind(TENANT_A)
       .all<{ Id: string }>();
     expect(externals.results).toEqual([]);
     expect(
-      (await listCapacityRows(env.PAWBOOK_DB, TENANT_A, start, addDays(start, 3))).length,
+      (await listCapacityRows(env.PAWSERVATION_DB, TENANT_A, start, addDays(start, 3))).length,
     ).toBe(0);
   });
 });
@@ -541,7 +545,7 @@ describe('Earnings after a customer cancellation', () => {
     const id = await seedBooking(env, { startsInDays: 40 });
     await cancel(env, await jessToken(env), id);
 
-    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(analytics.outstanding.find((o) => o.BookingId === id)).toBeUndefined();
   });
 
@@ -551,7 +555,7 @@ describe('Earnings after a customer cancellation', () => {
     const id = await seedBooking(env, { startsInDays: 5 });
     await cancel(env, await jessToken(env), id);
 
-    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     const owed = analytics.outstanding.find((o) => o.BookingId === id);
     // EstCost on the outstanding row carries the BASE amount, which for a cancelled booking is
     // the assessed fee — $100 of the $200 stay, never the stay price.
@@ -562,14 +566,14 @@ describe('Earnings after a customer cancellation', () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
     const id = await seedBooking(env, { startsInDays: 40 });
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
       amount: 45,
     });
     await cancel(env, await jessToken(env), id);
 
-    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     const owed = analytics.outstanding.find((o) => o.BookingId === id);
     // The STAY nets to zero — the base amount is the $0 fee, not the $200 EstCost. The separately
     // logged charge is a receivable in its own right and survives the cancellation, which is the
@@ -598,7 +602,7 @@ describe('Earnings after a customer cancellation', () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
     const id = await seedBooking(env, { startsInDays: 40 });
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
       amount: 45,
@@ -606,7 +610,7 @@ describe('Earnings after a customer cancellation', () => {
     await cancel(env, await jessToken(env), id);
 
     // Same booking the Earnings page lists as owing $45…
-    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(analytics.outstanding.find((o) => o.BookingId === id)).toMatchObject({
       EstCost: 0,
       ChargesTotal: 45,
@@ -620,14 +624,14 @@ describe('Earnings after a customer cancellation', () => {
   it('a DECLINED booking is never payable, charges or not — declines are never billed', async () => {
     const { env } = createTestEnv();
     const id = await seedBooking(env, { status: 'pending', startsInDays: 20 });
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
       amount: 45,
     });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined');
     // Not outstanding either — the guard and the earnings predicate agree in both directions.
-    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(analytics.outstanding.some((o) => o.BookingId === id)).toBe(false);
     expect((await pay(env, id)).status).toBe(404);
   });
@@ -636,7 +640,7 @@ describe('Earnings after a customer cancellation', () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
     const free = await seedBooking(env, { startsInDays: 40 });
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: free,
       label: 'Vet visit',
       amount: 45,
@@ -729,8 +733,8 @@ describe('POST /:slug/bookings/:id/cancel — refusals', () => {
     // matches the status the fee came from, so the free cancellation cannot stick to a booking
     // that would now owe $200.
     const id = await seedBooking(env, { status: 'pending', startsInDays: 1 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed');
-    expect(await cancelBookingForUser(env.PAWBOOK_DB, TENANT_A, JESS, id, 0, 'pending')).toBe(
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed');
+    expect(await cancelBookingForUser(env.PAWSERVATION_DB, TENANT_A, JESS, id, 0, 'pending')).toBe(
       false,
     );
     expect(await row(env, id)).toMatchObject({ Status: 'confirmed', CancellationFee: null });

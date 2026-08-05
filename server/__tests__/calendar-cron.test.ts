@@ -8,7 +8,7 @@ import { createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
 
 async function connectCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z',
@@ -40,7 +40,7 @@ describe('runCalendarSweep — backfill for pre-existing rows', () => {
     // required) nor reconcile's re-assertion pass (GCalEventId IS NOT NULL required) can ever
     // reach it — only backfill's GCalEventId IS NULL predicate does, and until this fix backfill
     // never ran on a cron sweep for an already-connected tenant.
-    const blockedId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const blockedId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: addDays(TODAY, 5),

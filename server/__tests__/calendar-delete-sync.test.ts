@@ -6,7 +6,7 @@ import { adminHeaders, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 
 /** Connected Google Calendar with a far-future token expiry — no refresh round-trip. */
 async function connectCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z',
@@ -19,7 +19,7 @@ async function seedBooking(
   status: 'pending' | 'confirmed',
   gcalEventId: string | null,
 ): Promise<string> {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: null,
     serviceType: 'boarding',
     startDate: '2030-03-01',
@@ -29,7 +29,8 @@ async function seedBooking(
     estCost: 150,
     status,
   });
-  if (gcalEventId) await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, gcalEventId, null);
+  if (gcalEventId)
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, gcalEventId, null);
   return id;
 }
 
@@ -49,7 +50,7 @@ async function bookingRow(
   env: Env,
   id: string,
 ): Promise<{ Status: string; GCalEventId: string | null }> {
-  const row = await env.PAWBOOK_DB.prepare(
+  const row = await env.PAWSERVATION_DB.prepare(
     'SELECT Status, GCalEventId FROM BookingRequests WHERE Id = ?',
   )
     .bind(id)

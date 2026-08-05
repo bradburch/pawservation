@@ -4,7 +4,7 @@ import { insertBookingCharge, insertBookingRequest, insertInvitedCustomer } from
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed' = 'confirmed') =>
-  insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId: null,
     serviceType: 'boarding',
     startDate: '2030-01-01',
@@ -107,7 +107,7 @@ describe('admin booking-charge routes', () => {
 
   it('404s adding a charge against a blocked sentinel row', async () => {
     const { env } = createTestEnv();
-    const blockedId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const blockedId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: '2030-02-01',
@@ -170,7 +170,7 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
   it("shows a booking's charges to the customer who owns it, and never another customer's", async () => {
     const { env } = createTestEnv();
     // seed_sp_board1 is jess@example.com's seeded confirmed sunny-paws booking (sql/seed.sql).
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
       label: 'Vet visit',
       amount: 45,
@@ -194,12 +194,12 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
 
     // A second sunny-paws customer, with their own booking, must never see jess's charge.
     const other = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'other@example.com',
       'Other Customer',
     );
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: other.Id,
       serviceType: 'boarding',
       startDate: '2030-01-01',

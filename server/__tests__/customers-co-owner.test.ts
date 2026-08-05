@@ -79,7 +79,7 @@ describe('POST /:slug/admin/customers/co-owner', () => {
       name: 'Rob Alvarez',
       petIds: ['pet_sp_bella', 'pet_sp_mochi'],
     });
-    const links = await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A);
+    const links = await listOwnerPetLinks(env.PAWSERVATION_DB, TENANT_A);
     const accounts = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })));
     const account = accounts.find((a) => a.petIds.includes('pet_sp_bella'))!;
     expect(account.ownerIds).toHaveLength(2);
@@ -161,7 +161,7 @@ describe('POST /:slug/admin/customers/co-owner', () => {
     expect(row.Name).toBe('Sam Diaz'); // never overwritten by the co-owner form
     expect(row.Phone).toBe('(555) 555-0199');
 
-    const links = await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A);
+    const links = await listOwnerPetLinks(env.PAWSERVATION_DB, TENANT_A);
     const accounts = buildAccounts(links.map((l) => ({ ownerId: l.EndUserId, petId: l.PetId })));
     const merged = accounts.find((a) => a.petIds.includes('pet_sp_bella'))!;
     expect(merged.ownerIds).toHaveLength(2);
@@ -270,7 +270,7 @@ describe('POST /:slug/admin/customers/co-owner', () => {
     const { env, raw } = createTestEnv();
     await expect(
       insertInvitedCustomerAsCoOwner(
-        env.PAWBOOK_DB,
+        env.PAWSERVATION_DB,
         TENANT_A,
         'rob@example.com',
         'Rob Alvarez',
@@ -287,7 +287,14 @@ describe('POST /:slug/admin/customers/co-owner', () => {
   it('refuses a zero-pet call at the repo too', async () => {
     const { env } = createTestEnv();
     await expect(
-      insertInvitedCustomerAsCoOwner(env.PAWBOOK_DB, TENANT_A, 'rob@example.com', 'Rob', null, []),
+      insertInvitedCustomerAsCoOwner(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        'rob@example.com',
+        'Rob',
+        null,
+        [],
+      ),
     ).rejects.toThrow(/at least one pet/);
   });
 

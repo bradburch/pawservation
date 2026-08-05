@@ -77,7 +77,7 @@ async function charges(
   env: Env,
   bookingId: string,
 ): Promise<{ Label: string; Amount: number; Origin: string | null }[]> {
-  const { results } = await env.PAWBOOK_DB.prepare(
+  const { results } = await env.PAWSERVATION_DB.prepare(
     'SELECT Label, Amount, Origin FROM BookingCharges WHERE BookingRequestId = ? ORDER BY Origin, Label',
   )
     .bind(bookingId)
@@ -514,7 +514,7 @@ describe('the demo identity still persists nothing', () => {
     // A realistic success with nothing persisted — the demo path returns before any write.
     expect(res.status).toBe(201);
     expect((await res.json()) as { demo?: boolean }).toMatchObject({ demo: true });
-    const { results } = await env.PAWBOOK_DB.prepare(
+    const { results } = await env.PAWSERVATION_DB.prepare(
       'SELECT Id FROM BookingCharges WHERE TenantId = ?',
     )
       .bind(TENANT_A)

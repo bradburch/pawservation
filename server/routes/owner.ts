@@ -63,7 +63,7 @@ export const ownerRoutes = new Hono<AppEnv>()
   .use('/owner/*', ownerAuth)
 
   .get('/owner/allowlist', async (c) => {
-    const rows = await listAllowedSitters(c.env.PAWBOOK_DB);
+    const rows = await listAllowedSitters(c.env.PAWSERVATION_DB);
     return c.json({
       entries: rows.map((r) => ({
         email: r.Email,
@@ -88,7 +88,7 @@ export const ownerRoutes = new Hono<AppEnv>()
     if (isOwnerEmail(c.env, email))
       return c.json({ error: 'That email is a platform owner and cannot join as a sitter.' }, 400);
     // Idempotent — re-adding returns the existing row (the customer-invite precedent).
-    const row = await addAllowedSitter(c.env.PAWBOOK_DB, email);
+    const row = await addAllowedSitter(c.env.PAWSERVATION_DB, email);
     const entry = {
       email: row.Email,
       addedAt: row.AddedAt,
@@ -135,12 +135,12 @@ export const ownerRoutes = new Hono<AppEnv>()
 
   .delete('/owner/allowlist/:email', async (c) => {
     const email = c.req.param('email').trim().toLowerCase();
-    const row = await getAllowedSitter(c.env.PAWBOOK_DB, email);
+    const row = await getAllowedSitter(c.env.PAWSERVATION_DB, email);
     if (!row) return c.json({ error: 'Not found.' }, 404);
     if (row.ClaimedAt) return c.json({ error: ALREADY_JOINED_ERROR }, 409);
     // Guarded delete (WHERE ClaimedAt IS NULL) closes the claim race: 0 rows ⇒ someone
     // completed setup between the read above and here.
-    const deleted = await deleteUnclaimedAllowedSitter(c.env.PAWBOOK_DB, email);
+    const deleted = await deleteUnclaimedAllowedSitter(c.env.PAWSERVATION_DB, email);
     if (!deleted) return c.json({ error: ALREADY_JOINED_ERROR }, 409);
     return c.body(null, 204);
   })
@@ -151,7 +151,7 @@ export const ownerRoutes = new Hono<AppEnv>()
   .get('/owner/sitters', async (c) => {
     const today = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
     const { window, sinceDate } = sinceDateForWindow(c.req.query('window'), today);
-    const rows = await listSitterRoster(c.env.PAWBOOK_DB, sinceDate);
+    const rows = await listSitterRoster(c.env.PAWSERVATION_DB, sinceDate);
     const sitters = rows.map((r) => ({
       tenantId: r.TenantId,
       slug: r.Slug,
@@ -179,12 +179,12 @@ export const ownerRoutes = new Hono<AppEnv>()
   // shared serializeAnalytics), so the frontend can reuse the analytics view as-is.
   .get('/owner/sitters/:tenantId', async (c) => {
     const tenantId = c.req.param('tenantId');
-    const tenant = await getTenantById(c.env.PAWBOOK_DB, tenantId);
+    const tenant = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
     // Window is a roster control only — the detail always shows getAnalytics' own fixed
     // 12-month breakdown, anchored to the sitter's own timezone.
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
-    const data = await getAnalytics(c.env.PAWBOOK_DB, tenantId, today);
+    const data = await getAnalytics(c.env.PAWSERVATION_DB, tenantId, today);
     // `premiumUntil` rides along beside `disabled` for the same reason it does: the console's two
     // owner switches both need to render their CURRENT value. This is one of two reads that carry
     // it — the other is the roster list above — so both surfaces stay in sync with the tenant row.
@@ -239,17 +239,17 @@ export const ownerRoutes = new Hono<AppEnv>()
         return c.json({ error: 'premiumUntil must be a date, or null to clear it.' }, 400);
     }
 
-    const tenant = await getTenantById(c.env.PAWBOOK_DB, tenantId);
+    const tenant = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
-    if (disabled !== undefined) await setTenantDisabled(c.env.PAWBOOK_DB, tenantId, disabled);
+    if (disabled !== undefined) await setTenantDisabled(c.env.PAWSERVATION_DB, tenantId, disabled);
     if ('premiumUntil' in parsed.output)
-      await setTenantPremiumUntil(c.env.PAWBOOK_DB, tenantId, storedUntil);
+      await setTenantPremiumUntil(c.env.PAWSERVATION_DB, tenantId, storedUntil);
     await invalidateTenantCache(tenant.Slug, c.env); // widget/dashboard sees the change at once
 
     // Report the tenant's state as it now IS, read back rather than assembled from the request:
     // a PATCH that touched one field still answers for both, so the console never has to guess
     // what the field it did not send is currently set to.
-    const after = await getTenantById(c.env.PAWBOOK_DB, tenantId);
+    const after = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     return c.json({
       disabled: after?.DisabledAt != null,
       premiumUntil: after?.PremiumUntil ?? null,
@@ -258,9 +258,9 @@ export const ownerRoutes = new Hono<AppEnv>()
 
   .delete('/owner/sitters/:tenantId', async (c) => {
     const tenantId = c.req.param('tenantId');
-    const tenant = await getTenantById(c.env.PAWBOOK_DB, tenantId);
+    const tenant = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
-    await deleteTenantCompletely(c.env.PAWBOOK_DB, tenantId);
+    await deleteTenantCompletely(c.env.PAWSERVATION_DB, tenantId);
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.body(null, 204);
   });

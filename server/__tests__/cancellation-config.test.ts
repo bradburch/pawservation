@@ -17,7 +17,7 @@ const BOARDING_BODY_BASE = {
 describe('cancellation tiers config round-trip', () => {
   it('setServiceConfig persists tiers and listServices parses them', async () => {
     const { env } = createTestEnv();
-    const before = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const before = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(before.CancellationTiers).toBeNull();
@@ -26,7 +26,7 @@ describe('cancellation tiers config round-trip', () => {
       { withinDays: 2, percent: 100 },
       { withinDays: 7, percent: 50 },
     ];
-    const ok = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
+    const ok = await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'boarding', {
       enabled: true,
       description: before.Description,
       questions: before.Questions,
@@ -45,7 +45,7 @@ describe('cancellation tiers config round-trip', () => {
     });
     expect(ok).toBe(true);
 
-    const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const after = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(after.CancellationTiers).toEqual(tiers);
@@ -53,12 +53,12 @@ describe('cancellation tiers config round-trip', () => {
 
   it('null clears tiers', async () => {
     const { env } = createTestEnv();
-    const before = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const before = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
 
     const tiers = [{ withinDays: 3, percent: 25 }];
-    const setOk = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
+    const setOk = await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'boarding', {
       enabled: true,
       description: before.Description,
       questions: before.Questions,
@@ -77,12 +77,12 @@ describe('cancellation tiers config round-trip', () => {
     });
     expect(setOk).toBe(true);
 
-    const withTiers = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const withTiers = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(withTiers.CancellationTiers).toEqual(tiers);
 
-    const clearOk = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
+    const clearOk = await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'boarding', {
       enabled: true,
       description: before.Description,
       questions: before.Questions,
@@ -101,7 +101,7 @@ describe('cancellation tiers config round-trip', () => {
     });
     expect(clearOk).toBe(true);
 
-    const cleared = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const cleared = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(cleared.CancellationTiers).toBeNull();
@@ -126,7 +126,7 @@ describe('admin settings PUT — cancellation tiers', () => {
     );
     expect(put.status).toBe(204);
 
-    const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const after = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(after.CancellationTiers).toEqual(tiers);
@@ -196,7 +196,7 @@ describe('admin settings PUT — cancellation tiers', () => {
     );
     expect(put.status).toBe(204);
 
-    const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const after = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(after.CancellationTiers).toEqual(tiers);
@@ -229,7 +229,7 @@ describe('admin settings PUT — cancellation tiers', () => {
     );
     expect(put.status).toBe(204);
 
-    const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const after = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(after.CancellationTiers).toBeNull();

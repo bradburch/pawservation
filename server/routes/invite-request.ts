@@ -192,7 +192,7 @@ export const inviteRequestRoutes = new Hono<AppEnv>()
     if (ip) {
       try {
         overCap = await checkAndBumpRateLimit(
-          c.env.PAWBOOK_CACHE,
+          c.env.PAWSERVATION_CACHE,
           RATE_KEY(ip),
           RATE_LIMIT_MAX,
           RATE_LIMIT_TTL_SECONDS,

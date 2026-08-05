@@ -15,7 +15,7 @@ import {
 
 /** Connected Google Calendar with a far-future token expiry — no refresh round-trip needed. */
 async function connectCalendar(env: Env, tenantId: string): Promise<void> {
-  await setProviderTokens(env.PAWBOOK_DB, tenantId, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, tenantId, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z',
@@ -1855,7 +1855,7 @@ describe('settings PUT caps', () => {
       },
       env,
     );
-    const svc = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const svc = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(svc.HolidayRate).toBe(75);
@@ -1936,7 +1936,7 @@ describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005
 
   it("every seeded service starts 'exact' — the multiplier is never the ambient default", async () => {
     const { env } = createTestEnv();
-    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const services = await listServices(env.PAWSERVATION_DB, TENANT_A);
     expect(services.length).toBeGreaterThan(0);
     for (const svc of services) expect(svc.PetRateMode).toBe('exact');
   });
@@ -1955,7 +1955,7 @@ describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005
     };
     expect(await read()).toBe('linear');
     expect(
-      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+      (await listServices(env.PAWSERVATION_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
         .PetRateMode,
     ).toBe('linear');
     expect((await putMode(env, 'exact')).status).toBe(204);
@@ -1985,7 +1985,7 @@ describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005
     );
     expect(res.status).toBe(204);
     expect(
-      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+      (await listServices(env.PAWSERVATION_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
         .PetRateMode,
     ).toBe('linear');
   });
@@ -1998,7 +1998,7 @@ describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005
     }
     // Nothing was written by any of those attempts.
     expect(
-      (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
+      (await listServices(env.PAWSERVATION_DB, TENANT_A)).find((s) => s.ServiceType === 'boarding')!
         .PetRateMode,
     ).toBe('exact');
   });
@@ -2006,11 +2006,11 @@ describe('settings — PetRateMode, the sitter-opted-in per-pet multiplier (0005
   it('the mode is per SERVICE and per TENANT — one opt-in moves exactly one row', async () => {
     const { env } = createTestEnv();
     expect((await putMode(env, 'linear')).status).toBe(204);
-    const sunny = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const sunny = await listServices(env.PAWSERVATION_DB, TENANT_A);
     expect(sunny.find((s) => s.ServiceType === 'boarding')!.PetRateMode).toBe('linear');
     for (const svc of sunny.filter((s) => s.ServiceType !== 'boarding'))
       expect(svc.PetRateMode).toBe('exact');
-    for (const svc of await listServices(env.PAWBOOK_DB, TENANT_B))
+    for (const svc of await listServices(env.PAWSERVATION_DB, TENANT_B))
       expect(svc.PetRateMode).toBe('exact');
   });
 });

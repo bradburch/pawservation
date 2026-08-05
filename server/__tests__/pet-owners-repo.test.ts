@@ -34,38 +34,54 @@ const creatingOwnerOf = (raw: DatabaseSync, petId: string): string =>
 describe('PetOwners write-side repo', () => {
   it('addEndUserPet writes the pet AND its first ownership edge', async () => {
     const { env, raw } = createTestEnv();
-    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess', 'Rex', 'dog');
+    const pet = await addEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess', 'Rex', 'dog');
     expect(pet.DeceasedAt).toBeNull();
     expect(ownersOf(raw, pet.Id)).toEqual(['eu_sp_jess']);
   });
 
   it('addPetOwner adds a second owner and is idempotent', async () => {
     const { env, raw } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    expect(await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id)).toBe(true);
-    expect(await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id)).toBe(true);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    expect(await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id)).toBe(true);
+    expect(await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id)).toBe(true);
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual([co.Id, 'eu_sp_jess'].sort());
   });
 
   it('addPetOwner refuses cross-tenant ids in BOTH directions', async () => {
     const { env, raw } = createTestEnv();
     // Tenant B scope, tenant A's pet: refused.
-    expect(await addPetOwner(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella', 'eu_ht_jess')).toBe(false);
+    expect(await addPetOwner(env.PAWSERVATION_DB, TENANT_B, 'pet_sp_bella', 'eu_ht_jess')).toBe(
+      false,
+    );
     // Tenant A scope, tenant B's customer: refused.
-    expect(await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_ht_jess')).toBe(false);
+    expect(await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_ht_jess')).toBe(
+      false,
+    );
     // Tenant A scope, tenant B's pet: refused.
-    expect(await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_ht_otis', 'eu_sp_jess')).toBe(false);
+    expect(await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_ht_otis', 'eu_sp_jess')).toBe(
+      false,
+    );
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_sp_jess']);
     expect(ownersOf(raw, 'pet_ht_otis')).toEqual(['eu_ht_jess']);
   });
 
   it('removePetOwner drops a co-owner and hands over the creating-owner column', async () => {
     const { env, raw } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
     // Removing the CREATING owner must reassign EndUserPets.EndUserId to the survivor, or the
     // NOT NULL FK would dangle the moment that customer is deleted.
-    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_sp_jess')).toBe(
+    expect(await removePetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_sp_jess')).toBe(
       'removed',
     );
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual([co.Id]);
@@ -91,13 +107,13 @@ describe('PetOwners write-side repo', () => {
         `INSERT INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES (?, ?, ?, ?, 'invited')`,
       )
       .run('eu_co2', TENANT_A, 'co2@example.com', 'Co Two');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_co1');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_co2');
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_co1');
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_co2');
     // co1 is neither the creating owner nor the survivor being tested — removing it must be a
     // pure PetOwners delete: the EndUserPets.EndUserId reassignment UPDATE is scoped to rows where
     // EndUserId = the departing owner, so it must NOT fire when the departing owner isn't the one
     // in that column. Without that scoping this test fails.
-    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_co1')).toBe(
+    expect(await removePetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_co1')).toBe(
       'removed',
     );
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_co2', 'eu_sp_jess']);
@@ -106,7 +122,7 @@ describe('PetOwners write-side repo', () => {
 
   it('removePetOwner refuses to remove the LAST owner', async () => {
     const { env, raw } = createTestEnv();
-    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_sp_jess')).toBe(
+    expect(await removePetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_sp_jess')).toBe(
       'last-owner',
     );
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_sp_jess']);
@@ -114,11 +130,11 @@ describe('PetOwners write-side repo', () => {
 
   it('removePetOwner reports not-found for an unlinked pair and is tenant-scoped', async () => {
     const { env, raw } = createTestEnv();
-    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', 'eu_ht_jess')).toBe(
+    expect(await removePetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', 'eu_ht_jess')).toBe(
       'not-found',
     );
     // Right pair, WRONG tenant: refused, and nothing is deleted.
-    expect(await removePetOwner(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella', 'eu_sp_jess')).toBe(
+    expect(await removePetOwner(env.PAWSERVATION_DB, TENANT_B, 'pet_sp_bella', 'eu_sp_jess')).toBe(
       'not-found',
     );
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_sp_jess']);
@@ -126,13 +142,18 @@ describe('PetOwners write-side repo', () => {
 
   it('removeEndUserPet clears the ownership edges first (FK) and is tenant-scoped', async () => {
     const { env, raw } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', co.Id);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi', co.Id);
     // 'removed'/'not-found' rather than true/false — see removeEndUserPet's third outcome.
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi')).toBe('removed');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi')).toBe('removed');
     expect(ownersOf(raw, 'pet_sp_mochi')).toEqual([]);
     // Wrong tenant: no delete, edges intact.
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella')).toBe('not-found');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_B, 'pet_sp_bella')).toBe('not-found');
     expect(ownersOf(raw, 'pet_sp_bella')).toEqual(['eu_sp_jess']);
   });
 
@@ -144,7 +165,7 @@ describe('PetOwners write-side repo', () => {
           DeceasedAt: string | null;
         }
       ).DeceasedAt;
-    expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true)).toBe(true);
+    expect(await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', true)).toBe(true);
     expect(deceasedAt()).not.toBeNull();
     // Repeat marking must NOT move the recorded death date forward (COALESCE keeps the original).
     // datetime('now') is second-granular, so re-marking microseconds later and comparing against
@@ -156,12 +177,12 @@ describe('PetOwners write-side repo', () => {
         `UPDATE EndUserPets SET DeceasedAt = '2020-01-01 00:00:00' WHERE Id = 'pet_sp_bella'`,
       )
       .run();
-    expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true)).toBe(true);
+    expect(await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', true)).toBe(true);
     expect(deceasedAt()).toBe('2020-01-01 00:00:00');
-    expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', false)).toBe(true);
+    expect(await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', false)).toBe(true);
     expect(deceasedAt()).toBeNull();
     // Wrong tenant: refused (404 at the route, never a silent cross-tenant write).
-    expect(await setPetDeceased(env.PAWBOOK_DB, TENANT_B, 'pet_sp_bella', true)).toBe(false);
+    expect(await setPetDeceased(env.PAWSERVATION_DB, TENANT_B, 'pet_sp_bella', true)).toBe(false);
     expect(deceasedAt()).toBeNull();
   });
 });
@@ -169,67 +190,89 @@ describe('PetOwners write-side repo', () => {
 describe('PetOwners read-side repo', () => {
   it('listEndUserPets returns co-owned pets and hides deceased ones', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
-    expect((await listEndUserPets(env.PAWBOOK_DB, TENANT_A, co.Id)).map((p) => p.Name)).toEqual([
-      'Bella',
-    ]);
-    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true);
-    expect(await listEndUserPets(env.PAWBOOK_DB, TENANT_A, co.Id)).toEqual([]);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
     expect(
-      (await listEndUserPets(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess')).map((p) => p.Name),
+      (await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, co.Id)).map((p) => p.Name),
+    ).toEqual(['Bella']);
+    await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', true);
+    expect(await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, co.Id)).toEqual([]);
+    expect(
+      (await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess')).map((p) => p.Name),
     ).toEqual(['Mochi']);
   });
 
   it('listEndUserPets is tenant-scoped', async () => {
     const { env } = createTestEnv();
-    expect(await listEndUserPets(env.PAWBOOK_DB, TENANT_B, 'eu_sp_jess')).toEqual([]);
+    expect(await listEndUserPets(env.PAWSERVATION_DB, TENANT_B, 'eu_sp_jess')).toEqual([]);
   });
 
   it('listPetIdsForOwner reads PetOwners, excludes deceased, and is tenant-scoped', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', co.Id);
-    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_A, co.Id)).toEqual(['pet_sp_mochi']);
-    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess')).toEqual([
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi', co.Id);
+    expect(await listPetIdsForOwner(env.PAWSERVATION_DB, TENANT_A, co.Id)).toEqual([
+      'pet_sp_mochi',
+    ]);
+    expect(await listPetIdsForOwner(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess')).toEqual([
       'pet_sp_bella',
       'pet_sp_mochi',
     ]);
-    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', true);
-    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_A, co.Id)).toEqual([]);
+    await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi', true);
+    expect(await listPetIdsForOwner(env.PAWSERVATION_DB, TENANT_A, co.Id)).toEqual([]);
     // Tenant B scope with tenant A's customer: nothing.
-    expect(await listPetIdsForOwner(env.PAWBOOK_DB, TENANT_B, 'eu_sp_jess')).toEqual([]);
+    expect(await listPetIdsForOwner(env.PAWSERVATION_DB, TENANT_B, 'eu_sp_jess')).toEqual([]);
   });
 
   it('listOwnerPetLinks returns every edge for the tenant, deceased excluded', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
-    expect(await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A)).toEqual(
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    expect(await listOwnerPetLinks(env.PAWSERVATION_DB, TENANT_A)).toEqual(
       [
         { EndUserId: co.Id, PetId: 'pet_sp_bella' },
         { EndUserId: 'eu_sp_jess', PetId: 'pet_sp_bella' },
         { EndUserId: 'eu_sp_jess', PetId: 'pet_sp_mochi' },
       ].sort((a, b) => (a.PetId + a.EndUserId < b.PetId + b.EndUserId ? -1 : 1)),
     );
-    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', true);
-    expect(await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A)).toEqual([
+    await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', true);
+    expect(await listOwnerPetLinks(env.PAWSERVATION_DB, TENANT_A)).toEqual([
       { EndUserId: 'eu_sp_jess', PetId: 'pet_sp_mochi' },
     ]);
   });
 
   it('listOwnerPetLinks never leaks another tenant edge', async () => {
     const { env } = createTestEnv();
-    const links = await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_B);
+    const links = await listOwnerPetLinks(env.PAWSERVATION_DB, TENANT_B);
     expect(links).toEqual([{ EndUserId: 'eu_ht_jess', PetId: 'pet_ht_otis' }]);
   });
 
   it('listOwnerPetLinks feeds buildAccounts: two owners of one pet are ONE account', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
     const accounts = buildAccounts(
-      (await listOwnerPetLinks(env.PAWBOOK_DB, TENANT_A)).map((l) => ({
+      (await listOwnerPetLinks(env.PAWSERVATION_DB, TENANT_A)).map((l) => ({
         ownerId: l.EndUserId,
         petId: l.PetId,
       })),
@@ -242,10 +285,15 @@ describe('PetOwners read-side repo', () => {
 
   it('listAllEndUserPetsByTenant returns one row per LINK and keeps deceased pets visible', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella', co.Id);
-    await setPetDeceased(env.PAWBOOK_DB, TENANT_A, 'pet_sp_mochi', true);
-    const rows = await listAllEndUserPetsByTenant(env.PAWBOOK_DB, TENANT_A);
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
+    await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi', true);
+    const rows = await listAllEndUserPetsByTenant(env.PAWSERVATION_DB, TENANT_A);
     // Bella appears under BOTH owners; Mochi is still listed for the sitter, flagged deceased.
     expect(
       rows
@@ -254,6 +302,6 @@ describe('PetOwners read-side repo', () => {
         .sort(),
     ).toEqual([co.Id, 'eu_sp_jess'].sort());
     expect(rows.find((r) => r.Id === 'pet_sp_mochi')!.DeceasedAt).not.toBeNull();
-    expect(await listAllEndUserPetsByTenant(env.PAWBOOK_DB, TENANT_B)).toHaveLength(1);
+    expect(await listAllEndUserPetsByTenant(env.PAWSERVATION_DB, TENANT_B)).toHaveLength(1);
   });
 });

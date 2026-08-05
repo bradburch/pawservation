@@ -6,9 +6,9 @@ import type { AppEnv } from '../types';
 export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) => {
   const tenant = c.get('tenant');
   const [services, options, petTypes] = await Promise.all([
-    listServices(c.env.PAWBOOK_DB, tenant.Id),
-    listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
-    listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
+    listServices(c.env.PAWSERVATION_DB, tenant.Id),
+    listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
+    listPetTypes(c.env.PAWSERVATION_DB, tenant.Id),
   ]);
   // All three flags are the SAME derived boolean — `PremiumUntil > now`, computed server-side —
   // published under three names because a surface asks "should I mount?" about itself, not about

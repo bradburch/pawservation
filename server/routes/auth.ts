@@ -59,14 +59,19 @@ export const authRoutes = new Hono<AppEnv>()
     if (email === DEMO_EMAIL) {
       if (!demoHostAllowed(c.req.header('X-Pawservation-Host')))
         return c.json({ error: 'This provider books by invitation only.' }, 403);
-      const registry = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+      const registry = await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id);
       const petType =
         registry.find((t) => t.PetType === 'dog')?.PetType ?? registry[0]?.PetType ?? 'dog';
-      const demoUser = await ensureDemoCustomer(c.env.PAWBOOK_DB, tenant.Id, DEMO_EMAIL, petType);
+      const demoUser = await ensureDemoCustomer(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        DEMO_EMAIL,
+        petType,
+      );
       const code = generateCode();
       const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
       const codeId = await createLoginCode(
-        c.env.PAWBOOK_DB,
+        c.env.PAWSERVATION_DB,
         tenant.Id,
         demoUser.Id,
         code,
@@ -76,11 +81,17 @@ export const authRoutes = new Hono<AppEnv>()
     }
 
     // Invite-only: only customers the provider has added may receive a code. Do NOT auto-create.
-    const user = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+    const user = await getEndUserByEmail(c.env.PAWSERVATION_DB, tenant.Id, email);
     if (!user) return c.json({ error: 'This provider books by invitation only.' }, 403);
     const code = generateCode();
     const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-    const codeId = await createLoginCode(c.env.PAWBOOK_DB, tenant.Id, user.Id, code, expiresAt);
+    const codeId = await createLoginCode(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      user.Id,
+      code,
+      expiresAt,
+    );
 
     if (DEMO_TENANT_SLUGS.has(tenant.Slug)) {
       return c.json({ codeId, prototypeCode: code });
@@ -112,7 +123,7 @@ export const authRoutes = new Hono<AppEnv>()
     const { codeId, code } = parsed.output;
 
     const endUserId = await consumeLoginCode(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       codeId,
       code,
@@ -121,7 +132,7 @@ export const authRoutes = new Hono<AppEnv>()
     if (!endUserId) return c.json({ error: 'That code is wrong or expired — try again.' }, 401);
 
     // First successful sign-in promotes an invited customer to active.
-    await promoteCustomerActive(c.env.PAWBOOK_DB, tenant.Id, endUserId);
+    await promoteCustomerActive(c.env.PAWSERVATION_DB, tenant.Id, endUserId);
 
     const token = await mintToken(endUserId, tenant.Id, c.env.TOKEN_SECRET);
     return c.json({ token });

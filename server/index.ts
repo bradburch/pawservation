@@ -91,8 +91,8 @@ app.get('/embed/:slug/llms.txt', async (c) => {
   const tenant = await resolveTenant(c.req.param('slug'), c.env);
   if (!tenant || tenant.DisabledAt) return c.text('Not found', 404);
   const [services, options] = await Promise.all([
-    listServices(c.env.PAWBOOK_DB, tenant.Id),
-    listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
+    listServices(c.env.PAWSERVATION_DB, tenant.Id),
+    listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
   ]);
   return c.text(buildLlmsTxt(tenant, services, options, new URL(c.req.url).origin));
 });

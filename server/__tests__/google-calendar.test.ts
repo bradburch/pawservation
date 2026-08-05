@@ -319,7 +319,7 @@ describe('google-calendar', () => {
       timezone: 'America/Los_Angeles',
     });
     expect(r.extendedProperties?.private).toEqual({
-      pawbook: 'true',
+      pawservation: 'true',
       category: 'boarding',
       petCount: '2',
       customerEmail: 'jess@example.com',
@@ -346,7 +346,7 @@ describe('google-calendar', () => {
       timezone: 'America/Los_Angeles',
     });
     expect(r.extendedProperties?.private.customerEmail).toBe('');
-    expect(r.extendedProperties?.private.pawbook).toBe('true');
+    expect(r.extendedProperties?.private.pawservation).toBe('true');
     expect(r.extendedProperties?.private.status).toBe('confirmed');
   });
 
@@ -434,7 +434,7 @@ describe('google-calendar', () => {
         endDate: '2026-08-18',
       });
       expect(r.extendedProperties?.private).toEqual({
-        pawbook: 'true',
+        pawservation: 'true',
         category: 'blocked',
         bookingId: 'blk-42',
         status: 'confirmed',
@@ -471,7 +471,7 @@ describe('google-calendar', () => {
             start: { date: '2030-06-01' },
             end: { date: '2030-06-04' },
             extendedProperties: {
-              private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
+              private: { pawservation: 'true', category: 'boarding', bookingId: 'bk-a' },
             },
           },
           {
@@ -482,7 +482,7 @@ describe('google-calendar', () => {
             start: { dateTime: '2030-06-05T09:30:00-07:00' },
             end: { dateTime: '2030-06-05T10:30:00-07:00' },
             extendedProperties: {
-              private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
+              private: { pawservation: 'true', category: 'walks', bookingId: 'bk-b' },
             },
           },
         ],
@@ -508,7 +508,7 @@ describe('google-calendar', () => {
         allDay: true,
         status: 'confirmed',
         updated: '2030-05-01T00:00:00Z',
-        private: { pawbook: 'true', category: 'boarding', bookingId: 'bk-a' },
+        private: { pawservation: 'true', category: 'boarding', bookingId: 'bk-a' },
       });
       // timed event — dateTime sliced to date part
       expect(events[1]).toEqual({
@@ -519,7 +519,7 @@ describe('google-calendar', () => {
         allDay: false,
         status: 'confirmed',
         updated: '2030-05-01T00:00:00Z',
-        private: { pawbook: 'true', category: 'walks', bookingId: 'bk-b' },
+        private: { pawservation: 'true', category: 'walks', bookingId: 'bk-b' },
       });
     });
 

@@ -172,7 +172,7 @@ async function seedBooking(
   over: { status?: 'pending' | 'confirmed'; startsInDays?: number } = {},
 ): Promise<string> {
   const start = addDays(TODAY, over.startsInDays ?? 5);
-  return insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  return insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: 'eu_sp_jess',
     serviceType: 'boarding',
     startDate: start,
@@ -279,7 +279,7 @@ describe('the cancel route notifies the sitter', () => {
     const res = await cancel(env, id);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
-    const row = (await env.PAWBOOK_DB.prepare(
+    const row = (await env.PAWSERVATION_DB.prepare(
       'SELECT Status, CancellationFee FROM BookingRequests WHERE Id = ?',
     )
       .bind(id)

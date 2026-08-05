@@ -34,7 +34,12 @@ async function createToken(
 
 /** A widget JWT for a SECOND customer of the same tenant (the base seed has only Jess). */
 async function otherCustomerToken(env: Env): Promise<string> {
-  const other = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'marco@example.com', null);
+  const other = await insertInvitedCustomer(
+    env.PAWSERVATION_DB,
+    TENANT_A,
+    'marco@example.com',
+    null,
+  );
   return await mintToken(other.Id, TENANT_A, TEST_SECRET);
 }
 
@@ -328,8 +333,8 @@ describe('personal access tokens — last used', () => {
   /** Wraps the env's D1 so a test can see which statements a request actually issued. */
   function recordStatements(env: Env): string[] {
     const seen: string[] = [];
-    const real = env.PAWBOOK_DB;
-    (env as { PAWBOOK_DB: D1Database }).PAWBOOK_DB = {
+    const real = env.PAWSERVATION_DB;
+    (env as { PAWSERVATION_DB: D1Database }).PAWSERVATION_DB = {
       ...real,
       prepare: (sql: string) => {
         seen.push(sql);

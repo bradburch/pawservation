@@ -63,7 +63,7 @@ describe('listSitterRoster', () => {
     reset(raw);
     seed(raw);
 
-    const all = await listSitterRoster(env.PAWBOOK_DB, null);
+    const all = await listSitterRoster(env.PAWSERVATION_DB, null);
     const alpha = all.find((r) => r.TenantId === 't_a')!;
     const beta = all.find((r) => r.TenantId === 't_b')!;
     expect(alpha).toMatchObject({ Clients: 2, Bookings: 2, Earned: 150 }); // cancelled + blocked excluded; earned = payments only
@@ -75,7 +75,7 @@ describe('listSitterRoster', () => {
     reset(raw);
     seed(raw);
 
-    const recent = await listSitterRoster(env.PAWBOOK_DB, '2026-06-23');
+    const recent = await listSitterRoster(env.PAWSERVATION_DB, '2026-06-23');
     const alphaR = recent.find((r) => r.TenantId === 't_a')!;
     expect(alphaR).toMatchObject({ Clients: 2, Bookings: 1, Earned: 100 });
   });
@@ -85,7 +85,7 @@ describe('listSitterRoster', () => {
     reset(raw);
     seed(raw);
 
-    const all = await listSitterRoster(env.PAWBOOK_DB, null);
+    const all = await listSitterRoster(env.PAWSERVATION_DB, null);
     expect(sum(all)).toEqual({ clients: 2, bookings: 2, earned: 150 });
   });
 });

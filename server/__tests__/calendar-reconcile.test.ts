@@ -30,7 +30,7 @@ const IN_WINDOW_START = addDays(TODAY, 10);
 const IN_WINDOW_END = addDays(TODAY, 13);
 
 async function connectCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z', // far future — no refresh-token fetch needed
@@ -60,7 +60,7 @@ function calendarResponse(events: FakeEvent[]) {
         ...(e.bookingId
           ? {
               extendedProperties: {
-                private: { pawbook: 'true', category: 'boarding', bookingId: e.bookingId },
+                private: { pawservation: 'true', category: 'boarding', bookingId: e.bookingId },
               },
             }
           : {}),
@@ -79,7 +79,7 @@ async function seedSyncedBooking(
     endDate: IN_WINDOW_END,
   },
 ): Promise<string> {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: null,
     serviceType: 'boarding',
     startDate: dates.startDate,
@@ -89,12 +89,12 @@ async function seedSyncedBooking(
     estCost: 150,
     status: 'confirmed',
   });
-  await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_1', null);
+  await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_1', null);
   return id;
 }
 
 async function statusOf(env: Env, id: string): Promise<string> {
-  const row = await env.PAWBOOK_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
+  const row = await env.PAWSERVATION_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
     .bind(id)
     .first<{ Status: string }>();
   return row!.Status;
@@ -104,7 +104,7 @@ async function bookingRow(
   env: Env,
   id: string,
 ): Promise<{ Status: string; StartDate: string; EndDate: string | null }> {
-  const row = await env.PAWBOOK_DB.prepare(
+  const row = await env.PAWSERVATION_DB.prepare(
     'SELECT Status, StartDate, EndDate FROM BookingRequests WHERE Id = ?',
   )
     .bind(id)
@@ -186,7 +186,7 @@ describe('reconcileBookingsWithCalendar', () => {
               start: { date: shiftedStart },
               end: { date: shiftedEnd },
               extendedProperties: {
-                private: { pawbook: 'true', category: 'boarding', bookingId: id },
+                private: { pawservation: 'true', category: 'boarding', bookingId: id },
               },
             },
           ],
@@ -283,7 +283,7 @@ describe('GET /:slug/admin/bookings triggers reconciliation', () => {
 });
 
 async function externalRows(env: Env) {
-  const { results } = await env.PAWBOOK_DB.prepare(
+  const { results } = await env.PAWSERVATION_DB.prepare(
     `SELECT GCalEventId, StartDate, EndDate, ExternalSummary FROM BookingRequests
      WHERE TenantId = ? AND ServiceType = 'external' ORDER BY StartDate`,
   )
@@ -353,7 +353,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
     // A stale row far in the past (outside [today-1, today+180)) — absent from every response.
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, Status, SyncPending)
        VALUES ('ext_old', ?, 'external', '2020-01-01', '2020-01-03', 1, 'gev_old', 'confirmed', 0)`,
     )
@@ -361,7 +361,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
       .run();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([]));
     await reconcileBookingsWithCalendar(env, tenant);
-    const row = await env.PAWBOOK_DB.prepare('SELECT Id FROM BookingRequests WHERE Id = ?')
+    const row = await env.PAWSERVATION_DB.prepare('SELECT Id FROM BookingRequests WHERE Id = ?')
       .bind('ext_old')
       .first();
     expect(row).not.toBeNull();
@@ -387,7 +387,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
     // A blocked (time-off) row's UNAVAILABLE event also carries private.bookingId (see
     // buildUnavailableEventResource) — this is the SAME foreign-event filter (`!e.private.bookingId`)
     // that must skip it too, not a second implementation.
-    const blockedId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const blockedId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: IN_WINDOW_START,
@@ -397,7 +397,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, blockedId, 'evt_block_tagged', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, blockedId, 'evt_block_tagged', null);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([bookingId, blockedId]));
     await reconcileBookingsWithCalendar(env, tenant);
     expect(await externalRows(env)).toEqual([]);
@@ -408,7 +408,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
   it("tenant isolation: tenant B's identically-named Google event ids never collide with A's rows", async () => {
     const { env } = createTestEnv();
     await connectCalendar(env); // tenant A only
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, Status, SyncPending)
        VALUES ('ext_b', 'tnt_happytails', 'external', ?, ?, 1, 'gev_1', 'confirmed', 0)`,
     )
@@ -416,7 +416,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
       .run();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([])); // A's calendar now empty
     await reconcileBookingsWithCalendar(env, tenant); // deletes A's in-window externals only
-    const b = await env.PAWBOOK_DB.prepare('SELECT Id FROM BookingRequests WHERE Id = ?')
+    const b = await env.PAWSERVATION_DB.prepare('SELECT Id FROM BookingRequests WHERE Id = ?')
       .bind('ext_b')
       .first();
     expect(b).not.toBeNull();
@@ -431,7 +431,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
     await connectCalendar(env);
     // Pre-seed a row as if an EARLIER reconcile pass had already materialized this event.
     const deferredId = 'gev_deferred';
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       `INSERT INTO BookingRequests
          (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, GCalEventId, ExternalSummary, Status, SyncPending)
        VALUES ('ext_deferred', ?, 'external', ?, ?, 1, ?, 'Deferred stay', 'confirmed', 0)`,
@@ -452,7 +452,7 @@ describe('reconcile v2 — external materialization lifecycle', () => {
 
     await reconcileBookingsWithCalendar(env, tenant);
 
-    const row = await env.PAWBOOK_DB.prepare(
+    const row = await env.PAWSERVATION_DB.prepare(
       'SELECT Id FROM BookingRequests WHERE TenantId = ? AND GCalEventId = ?',
     )
       .bind(TENANT_A, deferredId)
@@ -506,7 +506,7 @@ describe('reconcile v2 — blocked-row re-assertion (a2)', () => {
     env: Env,
     opts?: { startDate?: string; endDate?: string; gcalEventId?: string },
   ): Promise<string> {
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: opts?.startDate ?? IN_WINDOW_START,
@@ -517,13 +517,13 @@ describe('reconcile v2 — blocked-row re-assertion (a2)', () => {
       status: 'confirmed',
     });
     await setBookingGCalEventId(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       id,
       opts?.gcalEventId ?? 'evt_block',
       null,
     );
-    await env.PAWBOOK_DB.prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE Id = ?')
+    await env.PAWSERVATION_DB.prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE Id = ?')
       .bind(id)
       .run();
     return id;
@@ -533,7 +533,7 @@ describe('reconcile v2 — blocked-row re-assertion (a2)', () => {
     env: Env,
     id: string,
   ): Promise<{ Status: string; GCalEventId: string | null; SyncPending: number }> {
-    const row = await env.PAWBOOK_DB.prepare(
+    const row = await env.PAWSERVATION_DB.prepare(
       'SELECT Status, GCalEventId, SyncPending FROM BookingRequests WHERE Id = ?',
     )
       .bind(id)
@@ -627,12 +627,12 @@ describe('reconcile v2 — delete-detection now notifies the customer', () => {
     await connectCalendar(env);
     // Seed DIRECTLY (not via the API): the API path would fire its own calendar push against the
     // fetch mock, and a configured RESEND key disables the prototype-code login endUserToken needs.
-    const jess = (await env.PAWBOOK_DB.prepare(
+    const jess = (await env.PAWSERVATION_DB.prepare(
       "SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = 'jess@example.com'",
     )
       .bind(TENANT_A)
       .first<{ Id: string }>())!;
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: jess.Id,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -642,7 +642,7 @@ describe('reconcile v2 — delete-detection now notifies the customer', () => {
       estCost: 150,
       status: 'confirmed',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_gone', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_gone', null);
     // Configure email ONLY now, for the reconcile under test.
     (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 're_test';
     (env as { RESEND_FROM_BOOKING?: string }).RESEND_FROM_BOOKING = 'book@pawservation.test';
@@ -768,10 +768,10 @@ describe('reconcileIfStale scopes', () => {
     const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
 
     // The cron/dashboard marker is set — a shared key would suppress the widget pull entirely.
-    await env.PAWBOOK_CACHE.put(calendarSyncKey(TENANT_A), '1');
+    await env.PAWSERVATION_CACHE.put(calendarSyncKey(TENANT_A), '1');
     await reconcileIfStale(env, tenant, 'widget');
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+    expect(await env.PAWSERVATION_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
 
     // …and the widget's own marker then throttles it.
     await reconcileIfStale(env, tenant, 'widget');
@@ -783,7 +783,7 @@ describe('reconcileIfStale scopes', () => {
     await connectCalendar(env);
     const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([]));
     await reconcileIfStale(env, tenant, 'widget');
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
     await reconcileIfStale(env, tenant); // dashboard scope still runs
     expect(spy).toHaveBeenCalledTimes(2);
   });
@@ -841,7 +841,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
   it('the deleted-by-hand booking is reconciled in the background and gone from the NEXT load', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -851,7 +851,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
       estCost: null,
       status: 'confirmed',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_hand_deleted', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_hand_deleted', null);
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => calendarListResponse([]));
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const { ctx, tail } = fakeCtx();
@@ -867,7 +867,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
 
     await Promise.all(tail); // the runtime drains it after the response
     expect(await statusOf(env, id)).toBe('cancelled');
-    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+    expect(await env.PAWSERVATION_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
 
     const second = await app.request(
       monthUrl(IN_WINDOW_START.slice(0, 7)),
@@ -886,7 +886,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
     const { env } = createTestEnv();
     await connectCalendar(env);
     // A 2-pet stay fills Sunny Paws' boarding pool (MaxConcurrentPets=2) for its night.
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -896,7 +896,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
       estCost: null,
       status: 'confirmed',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_hand_deleted', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_hand_deleted', null);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarListResponse([])); // sitter deleted it
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
@@ -909,7 +909,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
     const body = (await res.json()) as { days: { date: string; status: string }[] };
     expect(body.days.find((d) => d.date === IN_WINDOW_START)?.status).toBe('available');
     expect(await statusOf(env, id)).toBe('cancelled');
-    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+    expect(await env.PAWSERVATION_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
   });
 
   it('a Google outage does not break the grid', async () => {

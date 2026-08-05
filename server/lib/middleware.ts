@@ -58,7 +58,7 @@ export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
   // costs a hash and a database read (see looksLikePersonalAccessToken — not a security check).
   if (looksLikePersonalAccessToken(presented)) {
     const hash = await hashPersonalAccessToken(presented);
-    const row = await findLivePersonalAccessToken(c.env.PAWBOOK_DB, tenant.Id, hash);
+    const row = await findLivePersonalAccessToken(c.env.PAWSERVATION_DB, tenant.Id, hash);
     // One answer for unknown, revoked, and belonging-to-another-sitter: the caller holds the
     // secret, so nothing is hidden from its owner that they could not already determine, and
     // nothing is confirmed to anyone else.
@@ -70,9 +70,11 @@ export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
     // read into a write, nor pay for one in its own latency. In tests there is no ExecutionContext,
     // so the write is awaited and the stamp is deterministic (the routes/admin.ts pattern).
     if (shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
-      const task = touchPersonalAccessToken(c.env.PAWBOOK_DB, tenant.Id, row.Id).catch((err) => {
-        console.error('personal access token touch failed', err);
-      });
+      const task = touchPersonalAccessToken(c.env.PAWSERVATION_DB, tenant.Id, row.Id).catch(
+        (err) => {
+          console.error('personal access token touch failed', err);
+        },
+      );
       try {
         c.executionCtx.waitUntil(task);
       } catch {

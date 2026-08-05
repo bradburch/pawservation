@@ -96,7 +96,7 @@ describe('booking by petIds', () => {
     const { env } = createTestEnv();
     // Insert a cat for the dogs-only Happy Tails customer directly (repo does not gate species).
     const cat = await addEndUserPet(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       'tnt_happytails',
       'eu_ht_jess',
       'Whiskers',

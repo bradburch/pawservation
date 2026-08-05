@@ -83,7 +83,7 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   // while the redirect points at pawservation.com sets the cookie somewhere this request can never
   // read it. `/admin/providers/calendar/oauth/start` now refuses that combination up front, so a
   // hit here means the mismatch arose some other way — and the host is what says which.
-  const cookieNonce = getCookie(c, 'pawbook_gcal_nonce');
+  const cookieNonce = getCookie(c, 'pawservation_gcal_nonce');
   if (!cookieNonce)
     return fail('session', 'nonce_cookie_missing', {
       tenantId: payload.tenantId,
@@ -96,11 +96,11 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   // Absent means either a genuine replay or a KV read that didn't see the /start write (KV is
   // eventually consistent) — the log line is what distinguishes them, since a replay is preceded
   // by a 200 for the same tenant and a lost write is not.
-  const seen = await c.env.PAWBOOK_CACHE.get(NONCE_KEY(payload.nonce));
+  const seen = await c.env.PAWSERVATION_CACHE.get(NONCE_KEY(payload.nonce));
   if (!seen) return fail('session', 'nonce_not_found_or_replayed', { tenantId: payload.tenantId });
-  await c.env.PAWBOOK_CACHE.delete(NONCE_KEY(payload.nonce));
+  await c.env.PAWSERVATION_CACHE.delete(NONCE_KEY(payload.nonce));
 
-  const tenant = await getTenantById(c.env.PAWBOOK_DB, payload.tenantId);
+  const tenant = await getTenantById(c.env.PAWSERVATION_DB, payload.tenantId);
   if (!tenant) return fail('unavailable', 'tenant_not_found', { tenantId: payload.tenantId });
   // The callback bypasses tenantMiddleware (fixed /oauth path carries no slug), so re-apply the
   // disabled check here: a disabled tenant must not connect a calendar even if start slipped through.
@@ -108,7 +108,7 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
 
   try {
     const tokens = await exchangeCode(c.env, code);
-    await setProviderTokens(c.env.PAWBOOK_DB, tenant.Id, 'calendar', 'google-calendar', {
+    await setProviderTokens(c.env.PAWSERVATION_DB, tenant.Id, 'calendar', 'google-calendar', {
       access: await encryptToken(c.env.TOKEN_SECRET, tokens.accessToken),
       refresh: await encryptToken(c.env.TOKEN_SECRET, tokens.refreshToken),
       expiresAt: tokens.expiresAt,

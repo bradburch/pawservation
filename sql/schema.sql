@@ -1,4 +1,4 @@
--- pawbook schema (isolated D1: pawbook-db)
+-- pawservation schema (isolated D1: pawservation-db)
 -- Model A invariants: TenantId on every table, composite uniqueness, immutable Tenants.Id.
 
 CREATE TABLE IF NOT EXISTS Tenants (

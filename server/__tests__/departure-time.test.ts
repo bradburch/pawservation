@@ -39,7 +39,7 @@ async function times(
   env: Env,
   id: string,
 ): Promise<{ StartTime: string | null; DepartureTime: string | null }> {
-  return (await env.PAWBOOK_DB.prepare(
+  return (await env.PAWSERVATION_DB.prepare(
     'SELECT StartTime, DepartureTime FROM BookingRequests WHERE Id = ?',
   )
     .bind(id)

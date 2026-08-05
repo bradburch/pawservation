@@ -8,10 +8,10 @@ describe('DisabledAt rides in the tenant object', () => {
     raw.exec(
       "INSERT INTO Tenants (Id, Slug, DisplayName, DisabledAt) VALUES ('t_dis','disco','Disco Dogs','2026-07-23 00:00:00');",
     );
-    const disabled = await getTenantBySlug(env.PAWBOOK_DB, 'disco');
+    const disabled = await getTenantBySlug(env.PAWSERVATION_DB, 'disco');
     expect(disabled?.DisabledAt).toBe('2026-07-23 00:00:00');
 
-    const active = await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'); // seeded, not disabled
+    const active = await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'); // seeded, not disabled
     expect(active?.DisabledAt).toBeNull();
   });
 });
@@ -21,12 +21,12 @@ describe('setTenantDisabled', () => {
     const { env, raw } = createTestEnv();
     raw.exec("INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('t_x','xx','X');");
 
-    expect(await setTenantDisabled(env.PAWBOOK_DB, 't_x', true)).toBe(true);
-    expect((await getTenantById(env.PAWBOOK_DB, 't_x'))?.DisabledAt).not.toBeNull();
+    expect(await setTenantDisabled(env.PAWSERVATION_DB, 't_x', true)).toBe(true);
+    expect((await getTenantById(env.PAWSERVATION_DB, 't_x'))?.DisabledAt).not.toBeNull();
 
-    expect(await setTenantDisabled(env.PAWBOOK_DB, 't_x', false)).toBe(true);
-    expect((await getTenantById(env.PAWBOOK_DB, 't_x'))?.DisabledAt).toBeNull();
+    expect(await setTenantDisabled(env.PAWSERVATION_DB, 't_x', false)).toBe(true);
+    expect((await getTenantById(env.PAWSERVATION_DB, 't_x'))?.DisabledAt).toBeNull();
 
-    expect(await setTenantDisabled(env.PAWBOOK_DB, 'nope', true)).toBe(false); // no such tenant
+    expect(await setTenantDisabled(env.PAWSERVATION_DB, 'nope', true)).toBe(false); // no such tenant
   });
 });

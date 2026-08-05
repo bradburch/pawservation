@@ -2,13 +2,13 @@ import { signLink, verifyLink } from './signed-link';
 
 /**
  * Signed, single-use, expiring account-setup links. Single-use is enforced by the routes:
- * `signup:nonce:{nonce}` is written to PAWBOOK_CACHE at issue (matching expirationTtl) and
+ * `signup:nonce:{nonce}` is written to PAWSERVATION_CACHE at issue (matching expirationTtl) and
  * consumed at completion. See `signed-link.ts` for the signing/verification primitive and its
- * domain-separation guarantee — this module's label (`pawbook-signup-link`) is what keeps a
+ * domain-separation guarantee — this module's label (`pawservation-signup-link`) is what keeps a
  * signup link from ever verifying as an OAuth state (`oauth-state.ts`) or a password-reset link
  * (`reset-link.ts`), and vice versa.
  */
-const LABEL = 'pawbook-signup-link';
+const LABEL = 'pawservation-signup-link';
 
 export const SIGNUP_LINK_TTL_SECONDS = 30 * 60;
 
@@ -59,7 +59,7 @@ export async function mintLink(
   ttlSeconds: number,
 ): Promise<string> {
   const nonce = crypto.randomUUID();
-  await env.PAWBOOK_CACHE.put(SIGNUP_NONCE_KEY(nonce), '1', { expirationTtl: ttlSeconds });
+  await env.PAWSERVATION_CACHE.put(SIGNUP_NONCE_KEY(nonce), '1', { expirationTtl: ttlSeconds });
   const token = await signSignupLink(env.TOKEN_SECRET, {
     email,
     kind,

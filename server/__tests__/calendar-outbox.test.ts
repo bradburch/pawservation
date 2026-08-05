@@ -26,7 +26,7 @@ const tenant = { Id: TENANT_A, Slug: 'sunny-paws', Timezone: null } as Tenant;
 const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
 
 async function connectCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z',
@@ -35,7 +35,7 @@ async function connectCalendar(env: Env) {
 }
 
 async function syncState(env: Env, id: string) {
-  return (await env.PAWBOOK_DB.prepare(
+  return (await env.PAWSERVATION_DB.prepare(
     'SELECT SyncPending, GCalEventId, Status FROM BookingRequests WHERE Id = ?',
   )
     .bind(id)
@@ -43,7 +43,7 @@ async function syncState(env: Env, id: string) {
 }
 
 function seedBooking(env: Env, status: 'pending' | 'confirmed' = 'confirmed') {
-  return insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  return insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: null,
     serviceType: 'boarding',
     startDate: addDays(TODAY, 10),
@@ -110,7 +110,7 @@ describe('calendar outbox — write side', () => {
 
   it('a blocked-day row is born sync-pending, same as a real booking, and is returned by the outbox query', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: addDays(TODAY, 5),
@@ -123,13 +123,18 @@ describe('calendar outbox — write side', () => {
     expect((await syncState(env, id)).SyncPending).toBe(1);
     // Assert the query itself returns the row — that is the predicate that changed, not merely
     // the SyncPending flag on a row fetched some other way.
-    const rows = await listSyncPendingBookings(env.PAWBOOK_DB, TENANT_A, addDays(TODAY, -1), 200);
+    const rows = await listSyncPendingBookings(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      addDays(TODAY, -1),
+      200,
+    );
     expect(rows.map((r) => r.Id)).toContain(id);
   });
 
   it('listUnsyncedFutureBookings widened bound: an in-progress blocked row (StartDate past, EndDate future) is still a backfill candidate', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: addDays(TODAY, -3),
@@ -139,13 +144,13 @@ describe('calendar outbox — write side', () => {
       estCost: null,
       status: 'confirmed',
     });
-    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    const rows = await listUnsyncedFutureBookings(env.PAWSERVATION_DB, TENANT_A, TODAY, 200);
     expect(rows.map((r) => r.Id)).toContain(id);
   });
 
   it('listUnsyncedFutureBookings widened bound: an in-progress real booking (StartDate past, EndDate future) is still a backfill candidate', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: addDays(TODAY, -3),
@@ -155,7 +160,7 @@ describe('calendar outbox — write side', () => {
       estCost: 150,
       status: 'confirmed',
     });
-    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    const rows = await listUnsyncedFutureBookings(env.PAWSERVATION_DB, TENANT_A, TODAY, 200);
     expect(rows.map((r) => r.Id)).toContain(id);
   });
 
@@ -163,10 +168,10 @@ describe('calendar outbox — write side', () => {
     const { env } = createTestEnv();
     const id = await seedBooking(env, 'pending');
     await clearFlag(env, id);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed');
     expect((await syncState(env, id)).SyncPending).toBe(1);
     await clearFlag(env, id);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled');
     expect((await syncState(env, id)).SyncPending).toBe(1);
   });
 
@@ -174,7 +179,7 @@ describe('calendar outbox — write side', () => {
     const { env } = createTestEnv();
     const id = await seedBooking(env, 'pending');
     await clearFlag(env, id);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined');
     const s = await syncState(env, id);
     expect(s).toMatchObject({ Status: 'declined', SyncPending: 1 });
   });
@@ -186,7 +191,7 @@ describe('calendar outbox — write side', () => {
     const { env } = createTestEnv();
     const id = await seedBooking(env, 'confirmed');
     await clearFlag(env, id);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled', 25);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled', 25);
     const s = await syncState(env, id);
     expect(s).toMatchObject({ Status: 'cancelled', SyncPending: 1 });
   });
@@ -195,7 +200,7 @@ describe('calendar outbox — write side', () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
     const id = await seedBooking(env);
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       "UPDATE BookingRequests SET GCalEventId = 'evt_1', SyncPending = 1 WHERE Id = ?",
     )
       .bind(id)
@@ -215,7 +220,7 @@ describe('calendar outbox — write side', () => {
     expect((await syncState(env, id)).SyncPending).toBe(0);
 
     // delete-push success → cleared (cancel first to make it a real delete case)
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled');
     expect((await syncState(env, id)).SyncPending).toBe(1);
     await deleteBookingCalendarEvent(env, tenant, 'evt_1', id);
     expect((await syncState(env, id)).SyncPending).toBe(0);
@@ -223,7 +228,7 @@ describe('calendar outbox — write side', () => {
 });
 
 async function clearFlag(env: Env, id: string) {
-  await env.PAWBOOK_DB.prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE Id = ?')
+  await env.PAWSERVATION_DB.prepare('UPDATE BookingRequests SET SyncPending = 0 WHERE Id = ?')
     .bind(id)
     .run();
 }
@@ -250,12 +255,14 @@ describe('redriveCalendarOutbox', () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
     const withEvent = await seedBooking(env);
-    await env.PAWBOOK_DB.prepare("UPDATE BookingRequests SET GCalEventId = 'evt_x' WHERE Id = ?")
+    await env.PAWSERVATION_DB.prepare(
+      "UPDATE BookingRequests SET GCalEventId = 'evt_x' WHERE Id = ?",
+    )
       .bind(withEvent)
       .run();
     const withoutEvent = await seedBooking(env, 'pending');
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, withEvent, 'cancelled');
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, withoutEvent, 'declined');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, withEvent, 'cancelled');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, withoutEvent, 'declined');
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(null, { status: 204 }));
@@ -270,7 +277,7 @@ describe('redriveCalendarOutbox', () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
     const first = await seedBooking(env, 'pending');
-    const second = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const second = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: addDays(TODAY, 20),
@@ -308,7 +315,7 @@ describe('redriveCalendarOutbox', () => {
     // Simulate an admin cancelling the booking WHILE the create's Google round-trip is in flight:
     // the mock performs the status change itself before resolving the create response.
     vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => {
-      await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled');
+      await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled');
       return new Response(JSON.stringify({ id: 'evt_raced' }), { status: 200 });
     });
     await redriveCalendarOutbox(env, tenant);
@@ -338,7 +345,7 @@ async function seedBlocked(
   env: Env,
   opts?: { startDate?: string; endDate?: string; gcalEventId?: string | null; tenantId?: string },
 ) {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, opts?.tenantId ?? TENANT_A, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, opts?.tenantId ?? TENANT_A, {
     endUserId: null,
     serviceType: 'blocked',
     startDate: opts?.startDate ?? addDays(TODAY, 5),
@@ -349,7 +356,7 @@ async function seedBlocked(
     status: 'confirmed',
   });
   if (opts?.gcalEventId !== undefined) {
-    await env.PAWBOOK_DB.prepare('UPDATE BookingRequests SET GCalEventId = ? WHERE Id = ?')
+    await env.PAWSERVATION_DB.prepare('UPDATE BookingRequests SET GCalEventId = ? WHERE Id = ?')
       .bind(opts.gcalEventId, id)
       .run();
   }
@@ -364,7 +371,7 @@ describe('cancelBlockedRange — soft delete', () => {
     // not merely that it was never cleared.
     await clearFlag(env, id);
 
-    const result = await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id);
+    const result = await cancelBlockedRange(env.PAWSERVATION_DB, TENANT_A, id);
     expect(result).toBe('evt_block_1');
     expect(await syncState(env, id)).toMatchObject({
       Status: 'cancelled',
@@ -376,7 +383,7 @@ describe('cancelBlockedRange — soft delete', () => {
   it('a confirmed blocked row with no GCalEventId yet cancels and returns null, not undefined', async () => {
     const { env } = createTestEnv();
     const id = await seedBlocked(env); // simulates the outbox not having pushed it yet — GCalEventId stays NULL
-    const result = await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id);
+    const result = await cancelBlockedRange(env.PAWSERVATION_DB, TENANT_A, id);
     expect(result).toBeNull();
     expect((await syncState(env, id)).Status).toBe('cancelled');
   });
@@ -384,8 +391,8 @@ describe('cancelBlockedRange — soft delete', () => {
   it('a repeated call against an already-cancelled row returns undefined (no second UPDATE succeeds)', async () => {
     const { env } = createTestEnv();
     const id = await seedBlocked(env, { gcalEventId: 'evt_block_2' });
-    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id)).toBe('evt_block_2');
-    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id)).toBeUndefined();
+    expect(await cancelBlockedRange(env.PAWSERVATION_DB, TENANT_A, id)).toBe('evt_block_2');
+    expect(await cancelBlockedRange(env.PAWSERVATION_DB, TENANT_A, id)).toBeUndefined();
     // The row was not further mutated by the second, refused call.
     expect(await syncState(env, id)).toMatchObject({
       Status: 'cancelled',
@@ -396,9 +403,9 @@ describe('cancelBlockedRange — soft delete', () => {
   it("another tenant's row id is refused — tenant scoping", async () => {
     const { env } = createTestEnv();
     const id = await seedBlocked(env, { tenantId: TENANT_B, gcalEventId: 'evt_block_3' });
-    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, id)).toBeUndefined();
+    expect(await cancelBlockedRange(env.PAWSERVATION_DB, TENANT_A, id)).toBeUndefined();
     // Untouched — still confirmed under its own tenant.
-    const row = await env.PAWBOOK_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
+    const row = await env.PAWSERVATION_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
       .bind(id)
       .first<{ Status: string }>();
     expect(row?.Status).toBe('confirmed');
@@ -406,7 +413,7 @@ describe('cancelBlockedRange — soft delete', () => {
 
   it('an unknown id is refused', async () => {
     const { env } = createTestEnv();
-    expect(await cancelBlockedRange(env.PAWBOOK_DB, TENANT_A, 'no-such-id')).toBeUndefined();
+    expect(await cancelBlockedRange(env.PAWSERVATION_DB, TENANT_A, 'no-such-id')).toBeUndefined();
   });
 });
 
@@ -419,8 +426,10 @@ describe('updateBookingStatus — a blocked row can never take a CancellationFee
     // which in turn is what keeps keepsCalendarEventOnCancel false and the delete-not-retitle
     // branch the only one that ever fires for time off (see cancelBlockedRange above, which never
     // even offers a fee parameter).
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled', 25)).toBe(false);
-    const row = await env.PAWBOOK_DB.prepare(
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled', 25)).toBe(
+      false,
+    );
+    const row = await env.PAWSERVATION_DB.prepare(
       'SELECT Status, CancellationFee FROM BookingRequests WHERE Id = ?',
     )
       .bind(id)
@@ -434,7 +443,7 @@ describe("listSyncedBookingIds excludes 'blocked' rows", () => {
     const { env } = createTestEnv();
     await seedBlocked(env, { gcalEventId: 'evt_block_4' });
     const ids = await listSyncedBookingIds(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
@@ -463,7 +472,7 @@ describe('listBlockedRowsWithEventsInWindow', () => {
     });
 
     const ids = await listBlockedRowsWithEventsInWindow(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
@@ -477,7 +486,7 @@ describe('listBlockedRowsWithEventsInWindow', () => {
     const { env } = createTestEnv();
     const otherTenantId = await seedBlocked(env, { tenantId: TENANT_B, gcalEventId: 'evt_b' });
     const ids = await listBlockedRowsWithEventsInWindow(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
@@ -509,7 +518,7 @@ describe('markSyncPending', () => {
     await clearFlag(env, untouched);
     await clearFlag(env, otherTenantRow);
 
-    await markSyncPending(env.PAWBOOK_DB, TENANT_A, [a, b]);
+    await markSyncPending(env.PAWSERVATION_DB, TENANT_A, [a, b]);
 
     expect((await syncState(env, a)).SyncPending).toBe(1);
     expect((await syncState(env, b)).SyncPending).toBe(1);
@@ -532,7 +541,7 @@ describe('markSyncPending', () => {
     }
     for (const id of ids) await clearFlag(env, id);
 
-    await markSyncPending(env.PAWBOOK_DB, TENANT_A, ids);
+    await markSyncPending(env.PAWSERVATION_DB, TENANT_A, ids);
 
     for (const id of ids) {
       expect((await syncState(env, id)).SyncPending).toBe(1);
@@ -549,7 +558,7 @@ describe('markSyncPending', () => {
     const bookingId = await seedBooking(env, 'confirmed');
     await clearFlag(env, bookingId);
 
-    await markSyncPending(env.PAWBOOK_DB, TENANT_A, [bookingId]);
+    await markSyncPending(env.PAWSERVATION_DB, TENANT_A, [bookingId]);
 
     expect((await syncState(env, bookingId)).SyncPending).toBe(0);
   });

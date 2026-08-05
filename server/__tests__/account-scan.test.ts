@@ -65,7 +65,7 @@ function countingDb(db: D1Database): { db: D1Database; counts: Counts } {
 }
 
 async function book(env: Env, endUserId: string, petIds: string[], estCost: number) {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_C, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
     endUserId,
     serviceType: 'boarding',
     startDate: '2030-01-01',
@@ -75,7 +75,7 @@ async function book(env: Env, endUserId: string, petIds: string[], estCost: numb
     estCost,
     status: 'confirmed',
   });
-  await addBookingPets(env.PAWBOOK_DB, TENANT_C, id, petIds);
+  await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, petIds);
   return id;
 }
 
@@ -86,10 +86,10 @@ async function book(env: Env, endUserId: string, petIds: string[], estCost: numb
  */
 async function measureAccountRead(bookingsEach: number): Promise<Counts & { body: unknown }> {
   const { env, raw } = createTestEnv();
-  const me = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'me@example.com', 'Me');
+  const me = await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_C, 'me@example.com', 'Me');
   seedPets(raw, TENANT_C, me.Id, [{ id: 'p_mine', petType: 'dog' }]);
   await book(env, me.Id, ['p_mine'], 100);
-  await insertAccountPayment(env.PAWBOOK_DB, TENANT_C, {
+  await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
     accountId: 'p_mine',
     amount: 40,
     method: 'venmo',
@@ -100,7 +100,7 @@ async function measureAccountRead(bookingsEach: number): Promise<Counts & { body
 
   for (let i = 0; i < 12; i++) {
     const other = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_C,
       `other${i}@example.com`,
       `Other ${i}`,
@@ -111,11 +111,11 @@ async function measureAccountRead(bookingsEach: number): Promise<Counts & { body
 
   // Token minted BEFORE the counter is attached: the login flow is not what is being measured.
   const token = await endUserToken(env, SLUG_C, 'me@example.com');
-  const { db, counts } = countingDb(env.PAWBOOK_DB);
+  const { db, counts } = countingDb(env.PAWSERVATION_DB);
   const res = await app.request(
     `/api/${SLUG_C}/account`,
     { headers: { Authorization: `Bearer ${token}` } },
-    { ...env, PAWBOOK_DB: db } as Env,
+    { ...env, PAWSERVATION_DB: db } as Env,
   );
   expect(res.status).toBe(200);
   return { ...counts, body: await res.json() };

@@ -34,7 +34,7 @@ function withGoogleConfigured(env: Env): Env {
 }
 
 async function connectCalendar(env: Env, expiresAt = '2030-01-01T00:00:00Z') {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt,
@@ -73,7 +73,7 @@ function stubGoogle(calendarStatus = 200): { urls: string[]; bodies: string[] } 
 }
 
 async function calendarIdOf(env: Env): Promise<string | null> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
   return conn?.CalendarId ?? null;
 }
 
@@ -119,7 +119,7 @@ describe('POST create-calendar', () => {
     withGoogleConfigured(env);
     await connectCalendar(env);
     const today = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: addDays(today, 10),
@@ -129,12 +129,12 @@ describe('POST create-calendar', () => {
       estCost: 150,
       status: 'confirmed',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_in_old_calendar', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_in_old_calendar', null);
     const { urls } = stubGoogle();
 
     expect((await createCalendarRequest(env)).status).toBe(200);
 
-    const row = await env.PAWBOOK_DB.prepare(
+    const row = await env.PAWSERVATION_DB.prepare(
       'SELECT Status, GCalEventId FROM BookingRequests WHERE Id = ?',
     )
       .bind(id)
@@ -164,7 +164,7 @@ describe('POST create-calendar', () => {
     const { env } = createTestEnv();
     withGoogleConfigured(env);
     await connectCalendar(env);
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', NEW_CAL_ID);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', NEW_CAL_ID);
     const { urls } = stubGoogle();
 
     const res = await createCalendarRequest(env);
@@ -180,7 +180,7 @@ describe('POST create-calendar', () => {
     // 'dana@gmail.com' is the real id of a primary calendar — what a sitter pastes if she copies
     // the Calendar ID while standing on her MAIN calendar. She is precisely who this button is
     // for, so the anti-duplicate guard must not mistake it for a dedicated calendar.
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', 'dana@gmail.com');
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'dana@gmail.com');
     stubGoogle();
 
     const res = await createCalendarRequest(env);
@@ -193,7 +193,7 @@ describe('POST create-calendar', () => {
     withGoogleConfigured(env);
     await connectCalendar(env);
     await setProviderCalendarId(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'calendar',
       '  PAWSERVATION123@GROUP.CALENDAR.GOOGLE.COM  ',
@@ -252,11 +252,11 @@ describe('calendar id survives the connection lifecycle', () => {
   it('disconnect clears the tokens but preserves CalendarId', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', NEW_CAL_ID);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', NEW_CAL_ID);
 
-    await clearProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    await clearProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
 
-    const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(conn?.Status).toBe('disconnected');
     expect(conn?.AccessToken).toBeNull();
     expect(conn?.RefreshToken).toBeNull();
@@ -268,12 +268,12 @@ describe('calendar id survives the connection lifecycle', () => {
   it('reconnecting keeps the existing calendar id rather than resetting it to primary', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', NEW_CAL_ID);
-    await clearProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', NEW_CAL_ID);
+    await clearProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
 
     await connectCalendar(env); // the OAuth callback's write, which passes calendarId: 'primary'
 
-    const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(conn?.Status).toBe('connected');
     expect(conn?.CalendarId).toBe(NEW_CAL_ID);
   });
@@ -282,15 +282,15 @@ describe('calendar id survives the connection lifecycle', () => {
     const { env } = createTestEnv();
     await connectCalendar(env, '2020-01-01T00:00:00Z'); // expired → forces a refresh
     // NULL means "use the account's primary calendar"; a refresh used to collapse it to 'primary'.
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', null);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', null);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ access_token: 'access-2', expires_in: 3600 }), { status: 200 }),
     );
 
-    const before = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const before = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(await getCalendarAccessToken(env, tenant, before!)).toBe('access-2');
 
-    const after = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const after = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(after?.CalendarId).toBeNull();
     // The refreshed access token was persisted, and the refresh token was left untouched.
     expect(await decryptToken(TEST_SECRET, after!.AccessToken!)).toBe('access-2');
@@ -301,12 +301,12 @@ describe('calendar id survives the connection lifecycle', () => {
   it('a token refresh preserves a chosen calendar id', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env, '2020-01-01T00:00:00Z');
-    await setProviderCalendarId(env.PAWBOOK_DB, TENANT_A, 'calendar', NEW_CAL_ID);
+    await setProviderCalendarId(env.PAWSERVATION_DB, TENANT_A, 'calendar', NEW_CAL_ID);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ access_token: 'access-2', expires_in: 3600 }), { status: 200 }),
     );
 
-    const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     await getCalendarAccessToken(env, tenant, conn!);
 
     expect(await calendarIdOf(env)).toBe(NEW_CAL_ID);

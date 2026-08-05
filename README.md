@@ -19,9 +19,7 @@ the availability/conflict math.
 
 - **One-tag embed** — `public/embed.js` injects an auto-resizing iframe; every
   `postMessage` is validated by origin and source, and a `pawservation:booked` DOM event
-  fires on the host page (`pawbook:booked` still fires as a compatibility alias for
-  pre-rebrand integrations). A plain-iframe variant exists for script-stripping hosts.
-  Don't subscribe to both events on the same host page — one booking fires both, so pick one.
+  fires on the host page. A plain-iframe variant exists for script-stripping hosts.
 - **Multi-tenant** — every request is scoped to a tenant resolved from the URL slug, with
   isolated services, pricing, pets, customers, and bookings.
 - **Custom services** — each tenant defines its own service list (from templates or from
@@ -200,7 +198,7 @@ public/       embed.js loader, demo host script, landing images, CSV import exam
 
 Two invariants worth knowing before you touch code:
 
-- **Tenancy:** `server/db/repo.ts` is the only module allowed to touch the `PAWBOOK_DB`
+- **Tenancy:** `server/db/repo.ts` is the only module allowed to touch the `PAWSERVATION_DB`
   binding; every function takes `tenantId` first and scopes SQL with `WHERE TenantId = ?`.
   `tenantMiddleware` is registered exactly once in `server/index.ts`.
 - **The booking engine is pure:** `src/shared/` must stay dependency-free; nullable tenant
@@ -224,7 +222,7 @@ consistent):
   **and** mirror the change into `sql/schema.sql` in the same branch — the test suite
   only sees what `schema.sql` has. Apply new migration files to the remote DB **by
   hand** before (or with) the deploy that needs them, e.g. `npx wrangler d1 execute
-pawbook-db --remote --file ./migrations/NNNN_*.sql` — otherwise the new code 500s on
+pawservation-db --remote --file ./migrations/NNNN_*.sql` — otherwise the new code 500s on
   missing columns.
 
 Do **not** use `npm run migrate:local` / `migrate:remote` (`wrangler d1 migrations apply`)
@@ -235,8 +233,8 @@ against existing DBs — no real DB here has a `d1_migrations` tracking table.
 One-time provisioning:
 
 ```bash
-npx wrangler d1 create pawbook-db                  # put database_id into wrangler.jsonc
-npx wrangler kv namespace create PAWBOOK_CACHE     # put id into wrangler.jsonc
+npx wrangler d1 create pawservation-db                  # put database_id into wrangler.jsonc
+npx wrangler kv namespace create PAWSERVATION_CACHE     # put id into wrangler.jsonc
 npx wrangler secret put TOKEN_SECRET               # strong random value (openssl rand -base64 32)
 npx wrangler secret put OWNER_EMAILS               # comma-separated platform-owner email(s)
 npx wrangler secret put RESEND_API_KEY             # from https://resend.com — required for login codes & signup links
@@ -262,7 +260,7 @@ Then:
 
 ```bash
 npm run deploy       # build + wrangler deploy (worker code only)
-npx wrangler d1 execute pawbook-db --remote --file=./sql/schema.sql   # fresh DB only
+npx wrangler d1 execute pawservation-db --remote --file=./sql/schema.sql   # fresh DB only
 ```
 
 Production **fails closed** without email: customer login and sitter signup return 503
@@ -277,10 +275,9 @@ Merges to `main` auto-deploy via CI.
 ### Staging/preview URLs
 
 `wrangler.jsonc` sets `"preview_urls": true`, so every `npx wrangler versions upload` prints a
-shareable `https://<version>-pawbook.<subdomain>.workers.dev` URL for that exact worker version —
+shareable `https://<version>-pawservation.<subdomain>.workers.dev` URL for that exact worker version —
 useful for reviewing a change before promoting it to the `pawservation.com` route. `workers_dev`
-stays `true` too (existing embeds point at the `*.workers.dev` URL and must keep working) —
-don't touch it.
+stays `true` too — it's what makes that staging URL work — don't touch it.
 
 ## Provisioning the first sitter
 

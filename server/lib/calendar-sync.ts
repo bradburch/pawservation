@@ -86,7 +86,7 @@ async function resourceForBooking(env: Env, tenant: Tenant, b: SyncInput) {
   // blocked row has no reason to need.
   if (b.serviceType === 'blocked') return buildUnavailableEventResource(b);
   const customer = b.endUserId
-    ? await getEndUserById(env.PAWBOOK_DB, tenant.Id, b.endUserId)
+    ? await getEndUserById(env.PAWSERVATION_DB, tenant.Id, b.endUserId)
     : null;
   return buildEventResource({
     serviceLabel: b.serviceLabel,
@@ -121,7 +121,7 @@ export async function getCalendarAccessToken(
   if (!conn.TokenExpiresAt || conn.TokenExpiresAt <= new Date().toISOString()) {
     const refreshToken = await decryptToken(env.TOKEN_SECRET, conn.RefreshToken!);
     const refreshed = await refreshAccessToken(env, refreshToken);
-    await setProviderAccessToken(env.PAWBOOK_DB, tenant.Id, 'calendar', {
+    await setProviderAccessToken(env.PAWSERVATION_DB, tenant.Id, 'calendar', {
       access: await encryptToken(env.TOKEN_SECRET, refreshed.accessToken),
       expiresAt: refreshed.expiresAt,
     });
@@ -148,7 +148,7 @@ async function persistEventIdOrCleanup(
   expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
   const stuck = await setBookingGCalEventId(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     bookingId,
     eventId,
@@ -167,7 +167,7 @@ async function persistEventIdOrCleanup(
  * duplicate event orphaned (see persistEventIdOrCleanup).
  */
 export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInput): Promise<void> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
@@ -212,7 +212,7 @@ export async function updateBookingCalendarEvent(
   gcalEventId: string,
   b: SyncInput,
 ): Promise<void> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
@@ -233,7 +233,7 @@ export async function updateBookingCalendarEvent(
     );
   }
   // Same guard as the create path: don't clear a flag a concurrent status change re-set.
-  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, b.bookingId, b.status);
+  await clearSyncPending(env.PAWSERVATION_DB, tenant.Id, b.bookingId, b.status);
 }
 
 /**
@@ -253,9 +253,9 @@ export async function repointCalendarTarget(
   calendarId: string | null,
 ): Promise<void> {
   // External rows mirror the OLD calendar; the next reconcile re-materializes from the new one.
-  await deleteAllExternalEvents(env.PAWBOOK_DB, tenant.Id);
-  await clearBookingCalendarEventIds(env.PAWBOOK_DB, tenant.Id);
-  await setProviderCalendarId(env.PAWBOOK_DB, tenant.Id, 'calendar', calendarId);
+  await deleteAllExternalEvents(env.PAWSERVATION_DB, tenant.Id);
+  await clearBookingCalendarEventIds(env.PAWSERVATION_DB, tenant.Id);
+  await setProviderCalendarId(env.PAWSERVATION_DB, tenant.Id, 'calendar', calendarId);
 }
 
 /** Cap on how many bookings one backfill pass creates events for — a sane bound so a sitter with a
@@ -269,13 +269,18 @@ const BACKFILL_LIMIT = 200;
  * (or a token hiccup) skips that booking and moves on; the rest still sync. Run via waitUntil.
  */
 export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<void> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   const calendarId = conn.CalendarId ?? 'primary';
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
-  const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, tenant.Id, today, BACKFILL_LIMIT);
+  const rows = await listUnsyncedFutureBookings(
+    env.PAWSERVATION_DB,
+    tenant.Id,
+    today,
+    BACKFILL_LIMIT,
+  );
 
   for (const r of rows) {
     try {
@@ -286,7 +291,7 @@ export async function backfillCalendarEvents(env: Env, tenant: Tenant): Promise<
       const petNames =
         r.ServiceType === 'blocked'
           ? []
-          : await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+          : await listPetNamesForBooking(env.PAWSERVATION_DB, tenant.Id, r.Id);
       const resource = await resourceForBooking(env, tenant, {
         bookingId: r.Id,
         endUserId: r.EndUserId,
@@ -332,12 +337,12 @@ const OUTBOX_LIMIT = 100;
  * re-derives the correct op (e.g. a delete for an event this sweep just created) from fresh state.
  */
 export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<void> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
   const rows = await listSyncPendingBookings(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     addDays(today, -1),
     OUTBOX_LIMIT,
@@ -353,7 +358,7 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
         if (r.GCalEventId) {
           await deleteBookingCalendarEvent(env, tenant, r.GCalEventId, r.Id, r.Status);
         } else {
-          await clearSyncPending(env.PAWBOOK_DB, tenant.Id, r.Id, r.Status); // never had an event
+          await clearSyncPending(env.PAWSERVATION_DB, tenant.Id, r.Id, r.Status); // never had an event
         }
         continue;
       }
@@ -361,7 +366,7 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
         // Nothing to retitle and nothing to create: a cancelled booking that never synced must
         // not be pushed into Google now — a create here would put a [CANCELLED] event on the
         // sitter's calendar for a stay that was never on it.
-        await clearSyncPending(env.PAWBOOK_DB, tenant.Id, r.Id, r.Status);
+        await clearSyncPending(env.PAWSERVATION_DB, tenant.Id, r.Id, r.Status);
         continue;
       }
       // Unreachable — 'declined' always takes the delete branch above (keepsCalendarEventOnCancel
@@ -373,7 +378,7 @@ export async function redriveCalendarOutbox(env: Env, tenant: Tenant): Promise<v
       const petNames =
         r.ServiceType === 'blocked'
           ? []
-          : await listPetNamesForBooking(env.PAWBOOK_DB, tenant.Id, r.Id);
+          : await listPetNamesForBooking(env.PAWSERVATION_DB, tenant.Id, r.Id);
       const input: SyncInput = {
         bookingId: r.Id,
         endUserId: r.EndUserId,
@@ -417,11 +422,11 @@ export async function deleteBookingCalendarEvent(
   bookingId: string,
   expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
   await deleteEvent(accessToken, conn.CalendarId ?? 'primary', gcalEventId);
-  await clearSyncPending(env.PAWBOOK_DB, tenant.Id, bookingId, expectedStatus);
+  await clearSyncPending(env.PAWSERVATION_DB, tenant.Id, bookingId, expectedStatus);
 }
 
 export const CALENDAR_SYNC_TTL_SECONDS = 120;
@@ -533,7 +538,7 @@ export function reconcileWindow(
  * Still read-only against Google and best-effort: a Calendar failure leaves the DB as it was.
  */
 export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): Promise<void> {
-  const conn = await getProviderConnection(env.PAWBOOK_DB, tenant.Id, 'calendar');
+  const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
@@ -553,24 +558,24 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   // (a) Pawservation-originated events missing from Google → cancel + notify.
   const liveBookingIds = new Set(live.map((e) => e.private.bookingId).filter(Boolean));
   const candidates = await listSyncedBookingIds(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     windowStart,
     windowEndExclusive,
   );
   for (const id of candidates) {
     if (liveBookingIds.has(id)) continue;
-    const changed = await updateBookingStatus(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    const changed = await updateBookingStatus(env.PAWSERVATION_DB, tenant.Id, id, 'cancelled');
     if (!changed) continue;
     // Nothing left to push: the event that triggered this cancel is already gone from Google.
     // Clear SyncPending in the same flow (updateBookingStatus's cancel UPDATE sets it) — otherwise
     // the next outbox redrive derives a delete for an event Google already purged. deleteEvent
     // treats a 404/410 there as success today, but before that fix a 404 threw and retried
     // forever, wedging an OUTBOX_LIMIT slot every sweep for an event that was never coming back.
-    await clearSyncPending(env.PAWBOOK_DB, tenant.Id, id, 'cancelled');
+    await clearSyncPending(env.PAWSERVATION_DB, tenant.Id, id, 'cancelled');
     if (!isEmailConfigured(env)) continue;
     try {
-      const bk = await getBookingWithCustomer(env.PAWBOOK_DB, tenant.Id, id);
+      const bk = await getBookingWithCustomer(env.PAWSERVATION_DB, tenant.Id, id);
       if (bk?.Email) {
         const whenText = bk.EndDate ? `${bk.StartDate} – ${bk.EndDate}` : bk.StartDate;
         await sendBookingStatusEmail(env, bk.Email, tenant.DisplayName, 'cancelled', whenText);
@@ -586,14 +591,14 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   // drift reconcileWindow's docblock warns against. Do NOT null GCalEventId: the outbox's
   // PATCH→404→recreate→CAS path (updateBookingCalendarEvent) needs the stale id as `expectedOld`.
   const blockedIds = await listBlockedRowsWithEventsInWindow(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     windowStart,
     windowEndExclusive,
   );
   const missingBlocked = blockedIds.filter((id) => !liveBookingIds.has(id));
   if (missingBlocked.length) {
-    await markSyncPending(env.PAWBOOK_DB, tenant.Id, missingBlocked);
+    await markSyncPending(env.PAWSERVATION_DB, tenant.Id, missingBlocked);
   }
 
   // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
@@ -606,7 +611,7 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   // Hoisted once: the in-window external rows already on file. Feeds BOTH the materialize-priority
   // partition just below and deleteExternalEventsMissing, so this pass reads them exactly once.
   const existingRows = await listExternalEventRowsInWindow(
-    env.PAWBOOK_DB,
+    env.PAWSERVATION_DB,
     tenant.Id,
     windowStart,
     windowEndExclusive,
@@ -634,19 +639,19 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   for (const chunk of chunkArray(toMaterialize, MATERIALIZE_BATCH_SIZE)) {
     const statements = chunk.map((e) => {
       const span = externalSpan(e);
-      return upsertExternalEventStatement(env.PAWBOOK_DB, tenant.Id, {
+      return upsertExternalEventStatement(env.PAWSERVATION_DB, tenant.Id, {
         gcalEventId: e.id,
         summary: e.summary,
         startDate: span.startDate,
         endDateExclusive: span.endDateExclusive,
       });
     });
-    await env.PAWBOOK_DB.batch(statements);
+    await env.PAWSERVATION_DB.batch(statements);
   }
-  await deleteExternalEventsMissing(env.PAWBOOK_DB, tenant.Id, existingRows, liveIds);
+  await deleteExternalEventsMissing(env.PAWSERVATION_DB, tenant.Id, existingRows, liveIds);
 }
 
-/** Reconciles at most once per scope TTL per tenant, via PAWBOOK_CACHE. Both freshness paths do
+/** Reconciles at most once per scope TTL per tenant, via PAWSERVATION_CACHE. Both freshness paths do
  * the same two-step the cron sweep does — flush the outbox, then pull — throttled per tenant, each
  * against its OWN key: the sitter dashboard on `calendarSyncKey` (120s, shared with the cron) and
  * the customer widget on `calendarWidgetSyncKey` (600s, its own budget). Never throws: a Google
@@ -674,8 +679,8 @@ export async function reconcileIfStale(
   const widget = scope === 'widget';
   const key = widget ? calendarWidgetSyncKey(tenant.Id) : calendarSyncKey(tenant.Id);
   const ttl = widget ? CALENDAR_WIDGET_SYNC_TTL_SECONDS : CALENDAR_SYNC_TTL_SECONDS;
-  if (await env.PAWBOOK_CACHE.get(key).catch(() => null)) return;
-  await env.PAWBOOK_CACHE.put(key, '1', { expirationTtl: ttl }).catch(() => {});
+  if (await env.PAWSERVATION_CACHE.get(key).catch(() => null)) return;
+  await env.PAWSERVATION_CACHE.put(key, '1', { expirationTtl: ttl }).catch(() => {});
   try {
     await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);

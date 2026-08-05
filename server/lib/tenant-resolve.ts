@@ -31,11 +31,11 @@ const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v3`;
 
 export async function resolveTenant(slug: string, env: Env): Promise<Tenant | null> {
   const key = tenantCacheKey(slug);
-  const cached = await env.PAWBOOK_CACHE.get<Tenant>(key, 'json');
+  const cached = await env.PAWSERVATION_CACHE.get<Tenant>(key, 'json');
   if (cached) return cached;
-  const tenant = await getTenantBySlug(env.PAWBOOK_DB, slug);
+  const tenant = await getTenantBySlug(env.PAWSERVATION_DB, slug);
   if (tenant) {
-    await env.PAWBOOK_CACHE.put(key, JSON.stringify(tenant), {
+    await env.PAWSERVATION_CACHE.put(key, JSON.stringify(tenant), {
       expirationTtl: TENANT_CACHE_TTL_SECONDS,
     });
   }
@@ -44,5 +44,5 @@ export async function resolveTenant(slug: string, env: Env): Promise<Tenant | nu
 
 /** Settings writes call this so the widget sees changes on next load (PRD FR19). */
 export async function invalidateTenantCache(slug: string, env: Env): Promise<void> {
-  await env.PAWBOOK_CACHE.delete(tenantCacheKey(slug));
+  await env.PAWSERVATION_CACHE.delete(tenantCacheKey(slug));
 }

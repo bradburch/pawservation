@@ -338,7 +338,7 @@ describe('booking flow', () => {
 
   it('creates a calendar event when the tenant calendar is connected', async () => {
     const { env, raw } = createTestEnv();
-    await setProviderTokens(env.PAWBOOK_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
+    await setProviderTokens(env.PAWSERVATION_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
       access: await encryptToken(TEST_SECRET, 'at'),
       refresh: await encryptToken(TEST_SECRET, 'rt'),
       expiresAt: '2031-01-01T00:00:00Z',
@@ -440,7 +440,7 @@ describe('booking flow', () => {
         '19:00',
         null,
       );
-    await setProviderTokens(env.PAWBOOK_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
+    await setProviderTokens(env.PAWSERVATION_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
       access: await encryptToken(TEST_SECRET, 'at'),
       refresh: await encryptToken(TEST_SECRET, 'rt'),
       expiresAt: '2031-01-01T00:00:00Z',

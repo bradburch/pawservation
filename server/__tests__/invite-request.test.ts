@@ -269,7 +269,7 @@ describe('POST /request-invite', () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
-    env.PAWBOOK_CACHE.get = () => {
+    env.PAWSERVATION_CACHE.get = () => {
       throw new Error('KV unavailable');
     };
     const res = await postInvite(env, VALID_FIELDS);

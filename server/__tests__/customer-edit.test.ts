@@ -54,7 +54,7 @@ type Over = {
 };
 
 async function seedBooking(env: Env, over: Over = {}): Promise<string> {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: over.endUserId === undefined ? JESS : over.endUserId,
     serviceType: over.serviceType ?? 'boarding',
     startDate: over.startDate ?? START,
@@ -66,7 +66,7 @@ async function seedBooking(env: Env, over: Over = {}): Promise<string> {
     status: over.status ?? 'pending',
     answers: over.answers,
   });
-  await addBookingPets(env.PAWBOOK_DB, TENANT_A, id, over.petIds ?? [BELLA]);
+  await addBookingPets(env.PAWSERVATION_DB, TENANT_A, id, over.petIds ?? [BELLA]);
   return id;
 }
 
@@ -95,7 +95,7 @@ async function edit(env: Env, token: string, id: string, body: EditBody): Promis
 }
 
 async function row(env: Env, id: string) {
-  return (await env.PAWBOOK_DB.prepare(
+  return (await env.PAWSERVATION_DB.prepare(
     `SELECT StartDate, EndDate, StartTime, DepartureTime, PetCount, EstCost, Status, Answers,
             CancellationFee, GCalEventId, SyncPending
        FROM BookingRequests WHERE Id = ?`,
@@ -117,7 +117,7 @@ async function row(env: Env, id: string) {
 }
 
 async function bookingPetIds(env: Env, id: string): Promise<string[]> {
-  const { results } = await env.PAWBOOK_DB.prepare(
+  const { results } = await env.PAWSERVATION_DB.prepare(
     'SELECT PetId FROM BookingRequestPets WHERE BookingRequestId = ? ORDER BY PetId',
   )
     .bind(id)
@@ -136,7 +136,7 @@ const ONE_QUESTION = JSON.stringify([
 ]);
 
 async function connectCalendar(env: Env) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt: '2030-01-01T00:00:00Z',
@@ -384,7 +384,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const mine = await seedBooking(env);
     // The pool caps boarding at 2 pets/day; someone else already has both slots on these dates.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: addDays(TODAY, 60),
@@ -417,7 +417,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     raw.exec(`UPDATE Tenants SET HousesitBoardingOverlapDays = 0 WHERE Id = '${TENANT_A}'`);
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const mine = await seedBooking(env);
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'housesitting',
       startDate: addDays(TODAY, 70),
@@ -515,7 +515,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
     expect(good.status).toBe(200);
     expect(JSON.parse((await row(env, id)).Answers)).toEqual({ q1: 'One cup, 6pm' });
-    const saved = await env.PAWBOOK_DB.prepare(
+    const saved = await env.PAWSERVATION_DB.prepare(
       'SELECT Value FROM SavedAnswers WHERE TenantId = ? AND EndUserId = ? AND ServiceType = ? AND QuestionId = ?',
     )
       .bind(TENANT_A, JESS, 'boarding', 'q1')
@@ -538,7 +538,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    const stored = await env.PAWBOOK_DB.prepare(
+    const stored = await env.PAWSERVATION_DB.prepare(
       'SELECT ServiceType, OptionKey FROM BookingRequests WHERE Id = ?',
     )
       .bind(id)
@@ -573,7 +573,9 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     const { env } = createTestEnv();
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const cancelled = await seedBooking(env, { status: 'pending' });
-    await env.PAWBOOK_DB.prepare("UPDATE BookingRequests SET Status = 'cancelled' WHERE Id = ?")
+    await env.PAWSERVATION_DB.prepare(
+      "UPDATE BookingRequests SET Status = 'cancelled' WHERE Id = ?",
+    )
       .bind(cancelled)
       .run();
     const started = await seedBooking(env, {
@@ -598,7 +600,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     const { env } = createTestEnv();
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const id = await seedBooking(env);
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Medication',
       amount: 15,
@@ -612,7 +614,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    const charges = await env.PAWBOOK_DB.prepare(
+    const charges = await env.PAWSERVATION_DB.prepare(
       'SELECT Label, Amount FROM BookingCharges WHERE BookingRequestId = ?',
     )
       .bind(id)
@@ -640,7 +642,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       estCost: 250,
     });
     expect(
-      await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+      await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
         bookingRequestId: id,
         amount: 250,
         method: 'cash',
@@ -717,7 +719,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     await connectCalendar(env);
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const id = await seedBooking(env, { status: 'confirmed' });
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, id, 'evt_1', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_1', null);
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_1' }), { status: 200 }));

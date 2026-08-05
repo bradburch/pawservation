@@ -6,11 +6,11 @@ import { addEndUserPet, listEndUserPets, removeEndUserPet } from '../db/repo';
 describe('EndUserPets repo', () => {
   it('adds, lists, and scopes pets by tenant', async () => {
     const { env } = createTestEnv();
-    const pet = await addEndUserPet(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess', 'Rex', 'dog');
+    const pet = await addEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess', 'Rex', 'dog');
     expect(pet.Name).toBe('Rex');
-    const forA = await listEndUserPets(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess');
+    const forA = await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess');
     expect(forA.map((p) => p.Name).sort()).toEqual(['Bella', 'Mochi', 'Rex']);
-    const forB = await listEndUserPets(env.PAWBOOK_DB, TENANT_B, 'eu_sp_jess');
+    const forB = await listEndUserPets(env.PAWSERVATION_DB, TENANT_B, 'eu_sp_jess');
     expect(forB).toEqual([]);
   });
 
@@ -18,10 +18,10 @@ describe('EndUserPets repo', () => {
     const { env } = createTestEnv();
     // 'removed'/'not-found' rather than true/false: the function grew a THIRD outcome
     // ('has-bookings', see below). Same two behaviours this test always described.
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella')).toBe('removed');
-    const left = await listEndUserPets(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella')).toBe('removed');
+    const left = await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess');
     expect(left.map((p) => p.Name)).toEqual(['Mochi']);
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_B, 'pet_sp_mochi')).toBe('not-found');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_B, 'pet_sp_mochi')).toBe('not-found');
   });
 });
 
@@ -33,7 +33,7 @@ describe('seedPets test helper', () => {
       { id: 'pet_x2', petType: 'dog', name: 'Rex' },
     ]);
     expect(ids).toEqual(['pet_x1', 'pet_x2']);
-    const pets = await listEndUserPets(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess');
+    const pets = await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess');
     expect(pets.map((p) => p.Id)).toEqual(expect.arrayContaining(['pet_x1', 'pet_x2']));
     expect(pets.find((p) => p.Id === 'pet_x2')!.Name).toBe('Rex');
   });
@@ -69,14 +69,16 @@ describe('removeEndUserPet refuses a pet that is on a booking', () => {
   it('reports has-bookings instead of throwing an FK error', async () => {
     const { env } = createTestEnv();
     await bookBella(env);
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella')).toBe('has-bookings');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella')).toBe(
+      'has-bookings',
+    );
   });
 
   it('writes NOTHING on refusal — the pet and its ownership edges survive', async () => {
     const { env, raw } = createTestEnv();
     await bookBella(env);
-    await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella');
-    const pets = await listEndUserPets(env.PAWBOOK_DB, TENANT_A, 'eu_sp_jess');
+    await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella');
+    const pets = await listEndUserPets(env.PAWSERVATION_DB, TENANT_A, 'eu_sp_jess');
     expect(pets.map((p) => p.Id)).toContain('pet_sp_bella');
     const owners = raw
       .prepare(`SELECT EndUserId FROM PetOwners WHERE TenantId = ? AND PetId = ?`)
@@ -93,7 +95,9 @@ describe('removeEndUserPet refuses a pet that is on a booking', () => {
     const { env, raw } = createTestEnv();
     await bookBella(env);
     raw.exec(`UPDATE BookingRequests SET Status = 'cancelled' WHERE TenantId = '${TENANT_A}'`);
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella')).toBe('has-bookings');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella')).toBe(
+      'has-bookings',
+    );
   });
 
   it('the admin route reports the refusal, and points at the remedy that keeps history', async () => {
@@ -112,8 +116,8 @@ describe('removeEndUserPet refuses a pet that is on a booking', () => {
 
   it('an unbooked pet is still removed, and an unknown/foreign id is still not-found', async () => {
     const { env } = createTestEnv();
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella')).toBe('removed');
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_A, 'pet_sp_bella')).toBe('not-found');
-    expect(await removeEndUserPet(env.PAWBOOK_DB, TENANT_B, 'pet_sp_mochi')).toBe('not-found');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella')).toBe('removed');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella')).toBe('not-found');
+    expect(await removeEndUserPet(env.PAWSERVATION_DB, TENANT_B, 'pet_sp_mochi')).toBe('not-found');
   });
 });

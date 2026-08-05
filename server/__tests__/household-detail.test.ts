@@ -24,7 +24,7 @@ async function book(
   startDate = '2030-01-01',
   endDate = '2030-01-03',
 ) {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_C, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
     endUserId,
     serviceType: 'boarding',
     startDate,
@@ -34,7 +34,7 @@ async function book(
     estCost,
     status,
   });
-  await addBookingPets(env.PAWBOOK_DB, TENANT_C, id, petIds);
+  await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, petIds);
   return id;
 }
 
@@ -53,13 +53,18 @@ async function book(
 describe('getHouseholdDetail (repo)', () => {
   it('lists every booking with its cost, its charges and its own payments', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     // Distinct start dates: `getHouseholdBalances` orders bookings by (StartDate, Id), and Id is a
     // random UUID — two bookings sharing a date would make the received ORDER (not its content)
     // depend on UUID luck, which is not what this test is checking.
     const b1 = await book(env, jen.Id, [rex], 100, 'confirmed', '2030-01-01', '2030-01-03');
-    await insertPayment(env.PAWBOOK_DB, TENANT_C, {
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: b1,
       amount: 40,
       method: 'cash',
@@ -67,14 +72,14 @@ describe('getHouseholdDetail (repo)', () => {
       note: null,
       externalRef: null,
     });
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: b1,
       label: 'Vet visit',
       amount: 45,
     });
     const b2 = await book(env, jen.Id, [rex], 60, 'confirmed', '2030-02-01', '2030-02-03');
 
-    const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, rex);
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, rex);
     expect(detail).not.toBeNull();
     expect(detail!.bookings).toEqual([
       {
@@ -107,17 +112,22 @@ describe('getHouseholdDetail (repo)', () => {
 
   it('keeps a cancellation fee attributed to its own booking, never merged into the household total', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const cancelled = await book(env, ana.Id, [mia], 200);
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 30 WHERE TenantId = ? AND Id = ?",
     )
       .bind(TENANT_C, cancelled)
       .run();
     const live = await book(env, ana.Id, [mia], 90);
 
-    const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, mia);
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
     const cancelledRow = detail!.bookings.find((b) => b.bookingId === cancelled)!;
     const liveRow = detail!.bookings.find((b) => b.bookingId === live)!;
     // The $30 fee sits on the cancelled booking, at its own cost figure — never folded into `live`.
@@ -128,11 +138,16 @@ describe('getHouseholdDetail (repo)', () => {
 
   it('shows a household-level payment as household-level, never attributed to one booking', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const b1 = await book(env, jen.Id, [rex], 50);
     const b2 = await book(env, jen.Id, [rex], 50);
-    const paymentId = await insertAccountPayment(env.PAWBOOK_DB, TENANT_C, {
+    const paymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: rex,
       amount: 100,
       method: 'venmo',
@@ -141,7 +156,7 @@ describe('getHouseholdDetail (repo)', () => {
       externalRef: null,
     });
 
-    const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, rex);
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, rex);
     // Neither booking picked up any of the $100 — it lives ONLY in householdPayments.
     for (const b of detail!.bookings) expect(b.paidTotal).toBe(0);
     expect(detail!.householdPayments).toEqual([
@@ -159,9 +174,14 @@ describe('getHouseholdDetail (repo)', () => {
 
   it('carries no bookings for a household that has only prepaid', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    await insertAccountPayment(env.PAWBOOK_DB, TENANT_C, {
+    await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: mia,
       amount: 200,
       method: 'venmo',
@@ -169,38 +189,53 @@ describe('getHouseholdDetail (repo)', () => {
       note: null,
       externalRef: null,
     });
-    const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, mia);
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
     expect(detail).toMatchObject({ bookings: [], expectedTotal: 0, paidTotal: 200, balance: -200 });
   });
 
   it('identifies a booking with nothing recorded against it, distinct from one with a partial payment', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const unpaid = await book(env, ana.Id, [mia], 80);
-    const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, mia);
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
     expect(detail!.bookings.find((b) => b.bookingId === unpaid)).toMatchObject({ paidTotal: 0 });
   });
 
   it('returns null for an account id naming no household of this tenant', async () => {
     const { env } = createTestEnv();
-    expect(await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, 'p_nonexistent')).toBeNull();
+    expect(await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, 'p_nonexistent')).toBeNull();
   });
 
   it('is tenant-isolated: another tenant cannot read this household by its account id', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     await book(env, ana.Id, [mia], 80);
-    expect(await getHouseholdDetail(env.PAWBOOK_DB, TENANT_A, mia)).toBeNull();
+    expect(await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_A, mia)).toBeNull();
   });
 
   it('zeroes a declined request entirely, matching the household total it feeds', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const declined = await book(env, ana.Id, [mia], 500, 'pending');
-    await insertPayment(env.PAWBOOK_DB, TENANT_C, {
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: declined,
       amount: 25,
       method: 'cash',
@@ -208,8 +243,8 @@ describe('getHouseholdDetail (repo)', () => {
       note: null,
       externalRef: null,
     });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, declined, 'declined');
-    const detail = await getHouseholdDetail(env.PAWBOOK_DB, TENANT_C, mia);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined');
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
     const row = detail!.bookings.find((b) => b.bookingId === declined)!;
     expect(row).toMatchObject({ status: 'declined', expected: 0 });
     expect(detail!.expectedTotal).toBe(0);
@@ -220,10 +255,15 @@ describe('getHouseholdDetail (repo)', () => {
 describe('GET /:slug/admin/accounts/:accountId (route)', () => {
   it('serves the same figures getHouseholdDetail computes', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const bookingId = await book(env, jen.Id, [rex], 100);
-    await insertPayment(env.PAWBOOK_DB, TENANT_C, {
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
       amount: 25,
       method: 'cash',
@@ -255,7 +295,12 @@ describe('GET /:slug/admin/accounts/:accountId (route)', () => {
 
   it('401s without a token and 404s an account id this tenant does not own', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const anon = await app.request(`/api/${SLUG_C}/admin/accounts/${mia}`, {}, env);
     expect(anon.status).toBe(401);

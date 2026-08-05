@@ -6,7 +6,7 @@ import { constantTimeEqual } from './timing';
  * The `nonce` is additionally stored single-use in KV by the routes, so replay is blocked even
  * within `exp`.
  *
- * The HMAC key is HKDF-derived from TOKEN_SECRET with info label `pawbook-oauth-state`, providing
+ * The HMAC key is HKDF-derived from TOKEN_SECRET with info label `pawservation-oauth-state`, providing
  * domain separation from the raw secret used by hono/jwt for session tokens.
  */
 const enc = new TextEncoder();
@@ -37,7 +37,7 @@ function stateHmacKey(secret: string): Promise<CryptoKey> {
           name: 'HKDF',
           hash: 'SHA-256',
           salt: new Uint8Array(0),
-          info: enc.encode('pawbook-oauth-state'),
+          info: enc.encode('pawservation-oauth-state'),
         },
         ikm,
         { name: 'HMAC', hash: 'SHA-256' },

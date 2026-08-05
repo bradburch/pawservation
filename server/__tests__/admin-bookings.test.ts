@@ -164,7 +164,7 @@ describe('admin booking lifecycle', () => {
 
   it('cancelling a booking never calls out to Google Calendar (no event delete/update on cancel)', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2030-06-01',
@@ -322,7 +322,7 @@ describe('admin booking lifecycle', () => {
     const untouchedBooking = (await (
       await bookBoarding(env, '2029-02-01', '2029-02-03')
     ).json()) as { id: string };
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: charged.id,
       label: 'Vet visit',
       amount: 45,
@@ -349,7 +349,7 @@ describe('admin booking lifecycle', () => {
     // pet-set rate is correctly REFUSED under the base seed's default 'exact' PetRateMode (see
     // CLAUDE.md's no-inferred-pricing invariant), which is orthogonal to what this test checks —
     // that the admin list surfaces every linked pet's name, tenant-scoped.
-    const multiPetId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const multiPetId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: 'eu_sp_jess',
       serviceType: 'boarding',
       startDate: '2029-03-01',
@@ -359,7 +359,10 @@ describe('admin booking lifecycle', () => {
       estCost: 200,
       status: 'pending',
     });
-    await addBookingPets(env.PAWBOOK_DB, TENANT_A, multiPetId, ['pet_sp_bella', 'pet_sp_mochi']);
+    await addBookingPets(env.PAWSERVATION_DB, TENANT_A, multiPetId, [
+      'pet_sp_bella',
+      'pet_sp_mochi',
+    ]);
     const multiPet = { id: multiPetId };
 
     const res = await app.request(

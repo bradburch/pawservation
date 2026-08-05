@@ -4,16 +4,16 @@
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "pawbook",
+  "name": "pawservation",
   "compatibility_date": "2026-06-05",
   "main": "./server/index.ts",
   "workers_dev": true,
-  // Every `wrangler versions upload` prints a shareable https://<version>-pawbook.<subdomain>.workers.dev
+  // Every `wrangler versions upload` prints a shareable https://<version>-pawservation.<subdomain>.workers.dev
   // staging URL for that exact worker version, so a version can be reviewed before it's promoted
   // to the main pawservation.com route. See README.md's "Staging/preview URLs" section.
   "preview_urls": true,
-  // Custom domain for the rebrand. workers_dev stays on so existing embeds (pointed at the
-  // *.workers.dev URL) keep working; www can be added the same way later.
+  // Custom domain. workers_dev stays on for the preview_urls staging-URL feature above;
+  // www can be added the same way later.
   "routes": [{ "pattern": "pawservation.com", "custom_domain": true }],
   "observability": {
     "enabled": true,
@@ -37,14 +37,18 @@
   },
   "d1_databases": [
     {
-      "binding": "PAWBOOK_DB",
-      "database_name": "pawbook-db",
+      "binding": "PAWSERVATION_DB",
+      "database_name": "pawservation-db",
+      // database_name is a local label wrangler resolves config entries against — not the
+      // Cloudflare account's actual registered database name, which stays "pawbook-db"
+      // permanently (neither `wrangler d1` nor the Cloudflare API has a rename capability).
+      // database_id below is the real, unchanging identifier of the resource.
       "database_id": "db7d32b9-58a3-4d01-9da9-e840accaa3fc",
     },
   ],
   "kv_namespaces": [
     {
-      "binding": "PAWBOOK_CACHE",
+      "binding": "PAWSERVATION_CACHE",
       "id": "0ff429da7602416296d626f0a441f2fa",
     },
   ],

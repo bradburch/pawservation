@@ -5,10 +5,10 @@ import { signLink, verifyLink } from './signed-link';
  * `signup-link.ts`'s payload shape (email/kind/nonce/exp) but signed under its OWN HKDF label —
  * see `signed-link.ts` — so a leaked reset link can never be replayed to complete an account
  * signup, and a leaked signup link can never be replayed to reset a password. Single-use is
- * enforced by the routes: `RESET_NONCE_KEY(nonce)` is written to PAWBOOK_CACHE at issue and
+ * enforced by the routes: `RESET_NONCE_KEY(nonce)` is written to PAWSERVATION_CACHE at issue and
  * consumed at completion, mirroring signup-link.ts's nonce pattern.
  */
-const LABEL = 'pawbook-reset-link';
+const LABEL = 'pawservation-reset-link';
 
 export const RESET_LINK_TTL_SECONDS = 30 * 60;
 

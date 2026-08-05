@@ -110,7 +110,7 @@ describe('admin pet-group rates routes', () => {
     expect(
       (await putRate(env, 'sunny-paws', TENANT_A, { ...base, petIds: ['pet_nope'] })).status,
     ).toBe(400);
-    expect(await listAllPetGroupPricing(env.PAWBOOK_DB, TENANT_A)).toHaveLength(0);
+    expect(await listAllPetGroupPricing(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(0);
   });
 
   it('rejects a deceased pet — a dead pet is never bookable, so a new rate naming one is a mistake', async () => {
