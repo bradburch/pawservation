@@ -11,19 +11,32 @@ function todayStr(): string {
 }
 
 /**
- * One booking's payment ledger: existing payments (each deletable — deleting the record is the
- * only correction mechanism) plus the record-payment form. Shared by BookingsSection (rows) and
- * EarningsSection (outstanding table); `onChanged` lets each parent re-fetch its own payload.
+ * WHAT this ledger belongs to: one booking, or one HOUSEHOLD (0011). Exactly one — the same
+ * either/or the `Payments` row itself is under, expressed as a union so a caller cannot pass both
+ * and no code here has to decide which wins.
+ */
+export type PaymentTarget = { bookingId: string } | { accountId: string };
+
+/**
+ * A payment ledger: existing payments (each deletable — deleting the record is the only correction
+ * mechanism) plus the record-payment form. Shared by BookingsSection (booking rows), EarningsSection
+ * (outstanding bookings) and EarningsSection's household balances; `onChanged` lets each parent
+ * re-fetch its own payload.
+ *
+ * The two targets differ ONLY in which endpoints these three calls hit. Everything the sitter sees
+ * and types — the amount rule, the method list, the date default, the confirm before a delete — is
+ * deliberately identical, because "record what you were paid" is one habit and a form that changed
+ * shape depending on what she clicked would be two.
  */
 export function PaymentsPanel({
   session,
-  bookingId,
+  target,
   onChanged,
   handleError,
   allowRecord = true,
 }: {
   session: Session;
-  bookingId: string;
+  target: PaymentTarget;
   onChanged: () => void | Promise<void>;
   handleError: (e: unknown) => void;
   /** False for cancelled/declined bookings: the ledger is read-only (delete is the refund-
@@ -43,10 +56,15 @@ export function PaymentsPanel({
   // — this copy is UX only; the server still validates independently.
   const canSubmit = isValidRate(amountNum) && paidDate.trim() !== '';
 
+  // One key for the effect below and one branch for the three calls: 'bookingId' in target is the
+  // only place this component asks which kind of ledger it is showing.
+  const targetId = 'bookingId' in target ? target.bookingId : target.accountId;
+
   const load = () =>
-    adminApi.payments
-      .list(session.slug, session.token, bookingId)
-      .then(({ payments: list }) => list);
+    ('bookingId' in target
+      ? adminApi.payments.list(session.slug, session.token, target.bookingId)
+      : adminApi.payments.listForAccount(session.slug, session.token, target.accountId)
+    ).then(({ payments: list }) => list);
 
   useEffect(() => {
     let active = true;
@@ -57,18 +75,28 @@ export function PaymentsPanel({
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookingId, session]);
+  }, [targetId, session]);
 
   const record = async () => {
     if (busyId) return;
     setBusyId(RECORDING);
     try {
-      await adminApi.payments.record(session.slug, session.token, bookingId, {
+      const body = {
         amount: amountNum,
         method,
         paidDate,
         ...(note.trim() ? { note: note.trim() } : {}),
-      });
+      };
+      if ('bookingId' in target) {
+        await adminApi.payments.record(session.slug, session.token, target.bookingId, body);
+      } else {
+        await adminApi.payments.recordForAccount(
+          session.slug,
+          session.token,
+          target.accountId,
+          body,
+        );
+      }
       setAmount('');
       setNote('');
       setPaidDate(todayStr());
@@ -89,7 +117,16 @@ export function PaymentsPanel({
     if (!window.confirm(`Delete ${what}? This changes what the client owes.`)) return;
     setBusyId(paymentId);
     try {
-      await adminApi.payments.remove(session.slug, session.token, bookingId, paymentId);
+      if ('bookingId' in target) {
+        await adminApi.payments.remove(session.slug, session.token, target.bookingId, paymentId);
+      } else {
+        await adminApi.payments.removeForAccount(
+          session.slug,
+          session.token,
+          target.accountId,
+          paymentId,
+        );
+      }
       setPayments(await load());
       await onChanged();
     } catch (e) {

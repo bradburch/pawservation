@@ -29,6 +29,18 @@ interface Env {
    * console unreachable (safe default). Set with `wrangler secret put OWNER_EMAILS`.
    */
   OWNER_EMAILS?: string;
+  /**
+   * Absolute origin (scheme + host, no path) of the separately-deployed premium surface, published
+   * on `GET /api/:slug/config` as `premium.origin`. REQUIRED by any deployment that HAS such a
+   * surface; unset ⇒ `premium.origin` is `null` and none is advertised (`premiumOrigin`,
+   * `server/lib/premium.ts`). There is deliberately NO default: this repo is the free product, and
+   * a baked-in fallback would name a commercial deployment it does not contain while pointing every
+   * other deployment's widgets at somebody else's host. Not a secret. It must be ABSOLUTE — the
+   * widget and dashboard are also served from `*.workers.dev` hosts, which get no route matching,
+   * so a relative path there resolves against the wrong host and the surface never loads; a value
+   * that is not an absolute origin is refused exactly as unset is.
+   */
+  PREMIUM_ORIGIN?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /** Google OAuth2 client secret. `wrangler secret put GOOGLE_CLIENT_SECRET`. */

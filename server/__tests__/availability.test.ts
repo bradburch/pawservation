@@ -77,6 +77,7 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     MaxAdvanceMonths: null,
     HousesitBoardingOverlapDays: 1,
     DisabledAt: null,
+    PremiumUntil: null, // free; availability has never had an opinion about entitlement
     ...over,
   };
 }

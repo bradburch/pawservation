@@ -77,6 +77,13 @@ export {
   type OwnerPetSets,
 } from './invoicing/account-groups.js';
 export {
+  buildHouseholdBalances,
+  buildPaymentAnchors,
+  type HouseholdBalance,
+  type HouseholdBalances,
+  type HouseholdBooking,
+} from './invoicing/balances.js';
+export {
   cancellationFee,
   validateCancellationTiers,
   type CancellationTier,
