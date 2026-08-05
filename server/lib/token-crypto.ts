@@ -19,7 +19,7 @@ function deriveKey(secret: string): Promise<CryptoKey> {
           name: 'HKDF',
           hash: 'SHA-256',
           salt: new Uint8Array(0),
-          info: enc.encode('pawbook-gcal-token'),
+          info: enc.encode('pawservation-gcal-token'),
         },
         ikm,
         { name: 'AES-GCM', length: 256 },

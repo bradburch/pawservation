@@ -8,7 +8,7 @@ import { signLink, verifyLink } from './signed-link';
  * enforced by the routes: `RESET_NONCE_KEY(nonce)` is written to PAWSERVATION_CACHE at issue and
  * consumed at completion, mirroring signup-link.ts's nonce pattern.
  */
-const LABEL = 'pawbook-reset-link';
+const LABEL = 'pawservation-reset-link';
 
 export const RESET_LINK_TTL_SECONDS = 30 * 60;
 
