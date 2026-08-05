@@ -361,13 +361,9 @@ export function BookTab({
       // would show them an empty form the very next render and then refill it on the next /me —
       // and "these carry over to your next booking" is the whole feature.
       setCalReloadKey((k) => k + 1);
-      // Both families, for HTTP-cached pre-rebrand loaders (see the resize note in App.tsx):
-      // the current loader handles `pawservation:booked`, legacy loaders handle `pawbook:booked`.
       // Demo requests skip the notification — nothing was created for a host page to react to.
       if (!res.demo) {
-        for (const type of ['pawservation:booked', 'pawbook:booked']) {
-          window.parent.postMessage({ type, requestId: res.id }, parentOrigin);
-        }
+        window.parent.postMessage({ type: 'pawservation:booked', requestId: res.id }, parentOrigin);
       }
     } catch (e) {
       if (isAuthExpired(e)) {

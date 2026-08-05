@@ -59,18 +59,10 @@ import { OwnerConsole } from './OwnerConsole';
  */
 
 const TOKEN_KEY = 'pawservation-admin-token';
-const LEGACY_TOKEN_KEY = 'pawbook-admin-token'; // pre-rebrand; migrate-once
 
 function getStoredToken(): string | null {
   try {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (t) return t;
-    const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
-    if (legacy) {
-      localStorage.setItem(TOKEN_KEY, legacy); // migrate once
-      localStorage.removeItem(LEGACY_TOKEN_KEY);
-    }
-    return legacy;
+    return localStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
@@ -78,11 +70,7 @@ function getStoredToken(): string | null {
 function storeToken(token: string | null): void {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
-    else {
-      // Logout clears BOTH keys — an old tab may have re-written the legacy one.
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(LEGACY_TOKEN_KEY);
-    }
+    else localStorage.removeItem(TOKEN_KEY);
   } catch {
     /* storage denied — session lasts the page lifetime only */
   }

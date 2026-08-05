@@ -19,9 +19,7 @@ the availability/conflict math.
 
 - **One-tag embed** — `public/embed.js` injects an auto-resizing iframe; every
   `postMessage` is validated by origin and source, and a `pawservation:booked` DOM event
-  fires on the host page (`pawbook:booked` still fires as a compatibility alias for
-  pre-rebrand integrations). A plain-iframe variant exists for script-stripping hosts.
-  Don't subscribe to both events on the same host page — one booking fires both, so pick one.
+  fires on the host page. A plain-iframe variant exists for script-stripping hosts.
 - **Multi-tenant** — every request is scoped to a tenant resolved from the URL slug, with
   isolated services, pricing, pets, customers, and bookings.
 - **Custom services** — each tenant defines its own service list (from templates or from
