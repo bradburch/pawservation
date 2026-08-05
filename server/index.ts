@@ -1164,6 +1164,126 @@ const PRIVACY_HTML = `<!doctype html>
 </html>
 `;
 
+/**
+ * The Terms & Conditions at /terms — same LOCKED_CSP, script-free, PAGE_STYLE-only constraints as
+ * every other static page here. Not a substitute for legal review before it is a real business's
+ * live terms.
+ */
+const TERMS_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terms &amp; Conditions &mdash; Pawservation</title>
+    <meta name="description" content="The terms that govern using Pawservation." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+          Pawservation
+        </a>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">Legal</p>
+          <h1>Terms &amp; Conditions</h1>
+          <p class="sub">The terms that govern using Pawservation.</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap">
+          <div class="feature">
+            <h3>What Pawservation is</h3>
+            <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and her customer.</p>
+          </div>
+          <div class="feature">
+            <h3>Accounts</h3>
+            <p>Sitters and the platform owner sign in with an email and password; customers sign in with a one-time code sent to their email. Each person is responsible for keeping their own credentials secure.</p>
+          </div>
+          <div class="feature">
+            <h3>Payments</h3>
+            <p>Pawservation is not a payment processor. A sitter collects payment herself, outside Pawservation, and logs the amount here so her records stay accurate. We never process, store, or guarantee any payment, and any payment dispute is between the sitter and her customer.</p>
+          </div>
+          <div class="feature">
+            <h3>Acceptable use</h3>
+            <p>Don't attempt to abuse the booking or intake system, or to work around tenant isolation, rate limits, or any other technical safeguard.</p>
+          </div>
+          <div class="feature">
+            <h3>Your data</h3>
+            <p>A sitter owns her business's client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
+          </div>
+          <div class="feature">
+            <h3>Availability</h3>
+            <p>Pawservation is provided "as is," without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
+          </div>
+          <div class="feature">
+            <h3>Termination</h3>
+            <p>The platform owner may disable or remove an account that violates these terms.</p>
+          </div>
+          <div class="feature">
+            <h3>Governing law</h3>
+            <p>These terms are governed by the laws of the State of California, and any dispute will be brought in the state or federal courts located in San Francisco County, California.</p>
+          </div>
+          <div class="feature">
+            <h3>Changes</h3>
+            <p>We may update these terms from time to time; check back periodically.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <a class="logo" href="/">
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+              Pawservation
+            </a>
+            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <ul>
+              <li><a href="/demo">Try the demo</a></li>
+              <li><a href="/admin">Sitter sign in</a></li>
+              <li><a href="/">Overview</a></li>
+              <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <p>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
+          </p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
+`;
+
 app.get('/', (c) => c.html(LANDING_HTML));
 // Listed in wrangler.jsonc's run_worker_first as the BARE path "/how-it-works" — a glob does not
 // match it. Today nothing is emitted at that path, so it would reach the worker regardless (as
@@ -1171,6 +1291,7 @@ app.get('/', (c) => c.html(LANDING_HTML));
 // there it can never shadow this route.
 app.get('/how-it-works', (c) => c.html(HOW_IT_WORKS_HTML));
 app.get('/privacy', (c) => c.html(PRIVACY_HTML));
+app.get('/terms', (c) => c.html(TERMS_HTML));
 
 // Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
 // through to Hono's plain-text default and break the { error } contract every client parses.
