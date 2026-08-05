@@ -27,7 +27,12 @@ const customers = async (env: Env): Promise<CustomersPayload> =>
 describe('admin co-owner + deceased routes', () => {
   it('adds a co-owner, and the pet then shows under BOTH clients', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
     const res = await app.request(
       `/api/sunny-paws/admin/pets/pet_sp_bella/owners`,
       {
@@ -73,7 +78,12 @@ describe('admin co-owner + deceased routes', () => {
 
   it('removes a co-owner but refuses to remove the last one', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
     await app.request(
       `/api/sunny-paws/admin/pets/pet_sp_bella/owners`,
       {
@@ -103,7 +113,12 @@ describe('admin co-owner + deceased routes', () => {
 
   it('404s removing a customer who was never linked as an owner', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
     // co was invited but never linked as an owner of Bella — no such edge exists to delete.
     const notOwner = await app.request(
       `/api/sunny-paws/admin/pets/pet_sp_bella/owners/${co.Id}`,
@@ -124,12 +139,12 @@ describe('admin co-owner + deceased routes', () => {
     // ONLY thing left to block a TENANT_A-authenticated delete of this TENANT_B row is the
     // TenantId predicate in removePetOwner's DELETE.
     const coHt = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_B,
       'co-ht@example.com',
       'Co Owner HT',
     );
-    await addPetOwner(env.PAWBOOK_DB, TENANT_B, 'pet_ht_otis', coHt.Id);
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_B, 'pet_ht_otis', coHt.Id);
 
     const foreign = await app.request(
       `/api/sunny-paws/admin/pets/pet_ht_otis/owners/eu_ht_jess`,
@@ -139,7 +154,7 @@ describe('admin co-owner + deceased routes', () => {
     expect(foreign.status).toBe(404);
     expect(await foreign.json()).toEqual({ error: 'Not found.' });
 
-    const row = await env.PAWBOOK_DB.prepare(
+    const row = await env.PAWSERVATION_DB.prepare(
       'SELECT 1 AS Ok FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?',
     )
       .bind('tnt_happytails', 'pet_ht_otis', 'eu_ht_jess')
@@ -149,7 +164,12 @@ describe('admin co-owner + deceased routes', () => {
 
   it('is idempotent when the same owner is added twice', async () => {
     const { env } = createTestEnv();
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co Owner');
+    const co = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'co@example.com',
+      'Co Owner',
+    );
     const addOnce = async () =>
       app.request(
         `/api/sunny-paws/admin/pets/pet_sp_bella/owners`,
@@ -163,7 +183,7 @@ describe('admin co-owner + deceased routes', () => {
     expect((await addOnce()).status).toBe(204);
     expect((await addOnce()).status).toBe(204);
 
-    const row = await env.PAWBOOK_DB.prepare(
+    const row = await env.PAWSERVATION_DB.prepare(
       'SELECT COUNT(*) AS n FROM PetOwners WHERE TenantId = ? AND PetId = ? AND EndUserId = ?',
     )
       .bind(TENANT_A, 'pet_sp_bella', co.Id)

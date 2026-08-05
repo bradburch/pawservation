@@ -358,7 +358,7 @@ describe('saved intake answers', () => {
     // it, so a re-created 'boarding' cannot inherit these.
     raw.prepare('DELETE FROM BookingRequestPets').run();
     raw.prepare('DELETE FROM BookingRequests WHERE TenantId = ?').run(TENANT_A);
-    await deleteService(env.PAWBOOK_DB, TENANT_A, 'boarding');
+    await deleteService(env.PAWSERVATION_DB, TENANT_A, 'boarding');
     expect(savedRows(raw, TENANT_A)).toHaveLength(0);
 
     // And the whole-tenant delete list: rows for the OTHER tenant's customer must go with it.
@@ -368,7 +368,7 @@ describe('saved intake answers', () => {
               VALUES (?, 'eu_ht_jess', 'boarding', 'feeding', 'text|feeding routine', 'x')`,
       )
       .run(TENANT_B);
-    expect(await deleteTenantCompletely(env.PAWBOOK_DB, TENANT_B)).toBe(true);
+    expect(await deleteTenantCompletely(env.PAWSERVATION_DB, TENANT_B)).toBe(true);
     expect(savedRows(raw, TENANT_B)).toHaveLength(0);
   });
 });

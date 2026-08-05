@@ -16,10 +16,10 @@ import { adminHeaders, createTestEnv, endUserToken, seedPets, TENANT_A } from '.
 const today = () => getPacificDateStr();
 
 async function setLeadDays(env: Env, days: number | null): Promise<void> {
-  const current = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+  const current = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
     (s) => s.ServiceType === 'boarding',
   )!;
-  await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
+  await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'boarding', {
     enabled: true,
     description: current.Description,
     questions: current.Questions,
@@ -39,8 +39,8 @@ async function setLeadDays(env: Env, days: number | null): Promise<void> {
 }
 
 async function setHorizon(env: Env, months: number | null): Promise<void> {
-  const t = (await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!;
-  await updateTenantSettings(env.PAWBOOK_DB, TENANT_A, {
+  const t = (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!;
+  await updateTenantSettings(env.PAWSERVATION_DB, TENANT_A, {
     displayName: t.DisplayName,
     accentColor: t.AccentColor,
     timezone: t.Timezone,

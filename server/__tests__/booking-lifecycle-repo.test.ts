@@ -10,7 +10,7 @@ import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 describe('booking lifecycle repo', () => {
   it('lists non-blocked bookings for a tenant, excluding other tenants', async () => {
     const { env } = createTestEnv();
-    const a1 = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const a1 = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2030-01-01',
@@ -20,7 +20,7 @@ describe('booking lifecycle repo', () => {
       estCost: 100,
       status: 'pending',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_B, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_B, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2030-01-02',
@@ -30,7 +30,7 @@ describe('booking lifecycle repo', () => {
       estCost: 100,
       status: 'pending',
     });
-    const rows = await listBookingsForTenant(env.PAWBOOK_DB, TENANT_A);
+    const rows = await listBookingsForTenant(env.PAWSERVATION_DB, TENANT_A);
     // Verify tenant isolation: no TENANT_B rows
     expect(rows.every((r) => r.TenantId === TENANT_A)).toBe(true);
     // Verify non-blocked filtering: no 'blocked' service types
@@ -43,7 +43,7 @@ describe('booking lifecycle repo', () => {
 
   it('confirms a pending booking, then blocks re-declining it; cancel is terminal', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2030-02-01',
@@ -53,15 +53,15 @@ describe('booking lifecycle repo', () => {
       estCost: 100,
       status: 'pending',
     });
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed')).toBe(true);
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined')).toBe(false);
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled')).toBe(true);
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed')).toBe(true);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled')).toBe(true);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed')).toBe(false);
   });
 
   it("declining a pending booking sets Status='declined', which is terminal", async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2030-03-01',
@@ -71,16 +71,18 @@ describe('booking lifecycle repo', () => {
       estCost: 20,
       status: 'pending',
     });
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined')).toBe(true);
-    const row = (await listBookingsForTenant(env.PAWBOOK_DB, TENANT_A)).find((r) => r.Id === id)!;
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined')).toBe(true);
+    const row = (await listBookingsForTenant(env.PAWSERVATION_DB, TENANT_A)).find(
+      (r) => r.Id === id,
+    )!;
     expect(row.Status).toBe('declined');
     // Terminal: a declined request can't be quietly revived.
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed')).toBe(false);
   });
 
   it('will not update a booking that belongs to another tenant', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2030-04-01',
@@ -90,11 +92,11 @@ describe('booking lifecycle repo', () => {
       estCost: 100,
       status: 'pending',
     });
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_B, id, 'confirmed')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_B, id, 'confirmed')).toBe(false);
   });
 
   it('getBookingWithCustomer returns null for an unknown id', async () => {
     const { env } = createTestEnv();
-    expect(await getBookingWithCustomer(env.PAWBOOK_DB, TENANT_A, 'nope')).toBeNull();
+    expect(await getBookingWithCustomer(env.PAWSERVATION_DB, TENANT_A, 'nope')).toBeNull();
   });
 });

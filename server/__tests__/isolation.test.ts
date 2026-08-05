@@ -18,8 +18,18 @@ describe('tenant isolation', () => {
 
   it('allows the same email to exist independently under both tenants', async () => {
     const { env } = createTestEnv();
-    const userA = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jess@example.com', null);
-    const userB = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_B, 'jess@example.com', null);
+    const userA = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jess@example.com',
+      null,
+    );
+    const userB = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_B,
+      'jess@example.com',
+      null,
+    );
     expect(userA.Id).not.toBe(userB.Id);
     expect(userA.TenantId).toBe(TENANT_A);
     expect(userB.TenantId).toBe(TENANT_B);
@@ -30,12 +40,12 @@ describe('tenant isolation', () => {
     // A fresh email — 'jess@example.com' is the seeded demo customer and now comes with
     // seeded bookings under BOTH tenants.
     const userA = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'iso-read@example.com',
       null,
     );
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: userA.Id,
       serviceType: 'boarding',
       startDate: '2028-08-01',
@@ -46,13 +56,18 @@ describe('tenant isolation', () => {
       status: 'pending',
     });
     // Same user id queried under tenant B must come back empty.
-    expect(await listBookingsForUser(env.PAWBOOK_DB, TENANT_B, userA.Id)).toEqual([]);
-    expect(await listBookingsForUser(env.PAWBOOK_DB, TENANT_A, userA.Id)).toHaveLength(1);
+    expect(await listBookingsForUser(env.PAWSERVATION_DB, TENANT_B, userA.Id)).toEqual([]);
+    expect(await listBookingsForUser(env.PAWSERVATION_DB, TENANT_A, userA.Id)).toHaveLength(1);
   });
 
   it('WRITE: a tenant-A token cannot create a booking under tenant B', async () => {
     const { env } = createTestEnv();
-    const userA = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jess@example.com', null);
+    const userA = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jess@example.com',
+      null,
+    );
     const tokenForA = await mintToken(userA.Id, TENANT_A, TEST_SECRET);
     const res = await app.request(
       '/api/happy-tails/bookings',
@@ -69,7 +84,7 @@ describe('tenant isolation', () => {
       env,
     );
     expect(res.status).toBe(403);
-    expect(await listBookingsForUser(env.PAWBOOK_DB, TENANT_B, userA.Id)).toEqual([]);
+    expect(await listBookingsForUser(env.PAWSERVATION_DB, TENANT_B, userA.Id)).toEqual([]);
   });
 
   it('CREDENTIAL: a personal access token issued under tenant A is nothing under tenant B', async () => {
@@ -107,18 +122,18 @@ describe('tenant isolation', () => {
   it('LIST: my-bookings under the other tenant is empty for the same email', async () => {
     const { env } = createTestEnv();
     const userA = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'iso-list@example.com',
       null,
     );
     const userB = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_B,
       'iso-list@example.com',
       null,
     );
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: userA.Id,
       serviceType: 'walk',
       startDate: '2028-08-01',

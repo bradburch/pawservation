@@ -319,7 +319,7 @@ describe('POST /api/signup/complete — sitter', () => {
     const { env } = createTestEnv();
     // Expired: live nonce, past exp — ONLY expiry can be the reason for rejection.
     const nonce = crypto.randomUUID();
-    await env.PAWBOOK_CACHE.put(SIGNUP_NONCE_KEY(nonce), '1');
+    await env.PAWSERVATION_CACHE.put(SIGNUP_NONCE_KEY(nonce), '1');
     const expired = await signSignupLink(TEST_SECRET, {
       email: ALLOWED_EMAIL,
       kind: 'sitter',

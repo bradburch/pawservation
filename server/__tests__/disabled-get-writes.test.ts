@@ -23,7 +23,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     );
     expect(res.status).toBe(200); // read-only view still works
     // reconcileIfStale claims calendarSyncKey before it pulls; skipping means the key is never set.
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 
   it('runs reconcileIfStale (sets the sync key) for an ACTIVE tenant — control', async () => {
@@ -34,7 +34,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200);
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
   });
 
   it('skips reconcileIfStale on the analytics dashboard when disabled', async () => {
@@ -47,7 +47,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     );
     expect(res.status).toBe(200); // read-only view still works
     // reconcileIfStale claims calendarSyncKey before it pulls; skipping means the key is never set.
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 
   it('runs reconcileIfStale (sets the sync key) for an ACTIVE tenant on analytics — control', async () => {
@@ -58,7 +58,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200);
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_A))).toBe('1'); // reconcile ran
   });
 
   it('skips the widget-scoped reconcile on the month grid when disabled', async () => {
@@ -75,7 +75,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200); // read-only view still works
-    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBeNull();
   });
 
   it('runs the widget-scoped reconcile on the month grid for an ACTIVE tenant — control', async () => {
@@ -87,7 +87,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).toBe(200);
-    expect(await env.PAWBOOK_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
+    expect(await env.PAWSERVATION_CACHE.get(calendarWidgetSyncKey(TENANT_A))).toBe('1');
   });
 
   it('blocks GET oauth/start when disabled with account_disabled 403', async () => {
@@ -118,7 +118,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     const { env, raw } = createTestEnv();
     disable(raw);
     const NONCE = 'nonce-1';
-    await env.PAWBOOK_CACHE.put(`gcal:nonce:${NONCE}`, '1');
+    await env.PAWSERVATION_CACHE.put(`gcal:nonce:${NONCE}`, '1');
     const state = await signState(TEST_SECRET, {
       tenantId: TENANT_A,
       nonce: NONCE,
@@ -134,7 +134,7 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
     expect(spy).not.toHaveBeenCalled(); // never reaches the token exchange
     // Seed data already has a disconnected ProviderConnections row for TENANT_A (sql/seed.sql), so
     // assert no tokens were written rather than the row itself being absent.
-    const conn = await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar');
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
     expect(conn?.Status).not.toBe('connected');
     expect(conn?.AccessToken).toBeFalsy();
     expect(conn?.RefreshToken).toBeFalsy();

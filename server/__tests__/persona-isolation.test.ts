@@ -46,7 +46,7 @@ async function connect(
   tenantId: string,
   opts: { access: string; refresh: string; calendarId: string; expiresAt: string },
 ) {
-  await setProviderTokens(env.PAWBOOK_DB, tenantId, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, tenantId, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, opts.access),
     refresh: await encryptToken(TEST_SECRET, opts.refresh),
     expiresAt: opts.expiresAt,
@@ -91,7 +91,7 @@ const syncInput = (bookingId: string, endUserId: string) => ({
 });
 
 async function seedSynced(env: Env, tenantId: string, endUserId: string, eventId: string) {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId,
     serviceType: 'boarding',
     startDate: IN_WINDOW_START,
@@ -101,12 +101,12 @@ async function seedSynced(env: Env, tenantId: string, endUserId: string, eventId
     estCost: 150,
     status: 'confirmed',
   });
-  await setBookingGCalEventId(env.PAWBOOK_DB, tenantId, id, eventId, null);
+  await setBookingGCalEventId(env.PAWSERVATION_DB, tenantId, id, eventId, null);
   return id;
 }
 
 async function statusOf(env: Env, id: string): Promise<string> {
-  const row = await env.PAWBOOK_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
+  const row = await env.PAWSERVATION_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
     .bind(id)
     .first<{ Status: string }>();
   return row!.Status;
@@ -134,7 +134,7 @@ describe('Scenario 1: event creation uses each tenant’s own bearer token + cal
     });
 
     // Bookings for the SAME shared customer email, one per tenant.
-    const bookingA = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const bookingA = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: EU_A,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -144,7 +144,7 @@ describe('Scenario 1: event creation uses each tenant’s own bearer token + cal
       estCost: 150,
       status: 'pending',
     });
-    const bookingB = await insertBookingRequest(env.PAWBOOK_DB, TENANT_B, {
+    const bookingB = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_B, {
       endUserId: EU_B,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -262,7 +262,7 @@ describe('Scenario 3: an expired-token refresh persists to the right tenant only
       }),
     );
 
-    const connA = (await getProviderConnection(env.PAWBOOK_DB, TENANT_A, 'calendar'))!;
+    const connA = (await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar'))!;
     const token = await getCalendarAccessToken(env, tenantA, connA);
     expect(token).toBe('sunny-access-REFRESHED');
 
@@ -279,7 +279,7 @@ describe('Scenario 3: an expired-token refresh persists to the right tenant only
       .get(TENANT_B);
     expect(bRowAfter).toEqual(bRowBefore);
     // And B's token still decrypts to B's original secret.
-    const bConn = (await getProviderConnection(env.PAWBOOK_DB, TENANT_B, 'calendar'))!;
+    const bConn = (await getProviderConnection(env.PAWSERVATION_DB, TENANT_B, 'calendar'))!;
     expect(await decryptToken(TEST_SECRET, bConn.AccessToken!)).toBe(B_ACCESS);
   });
 });
@@ -291,7 +291,7 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
   afterEach(() => vi.restoreAllMocks());
 
   async function seedPendingSynced(env: Env, tenantId: string, endUserId: string, eventId: string) {
-    const id = await insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
       endUserId,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -301,7 +301,7 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
       estCost: 150,
       status: 'pending',
     });
-    await setBookingGCalEventId(env.PAWBOOK_DB, tenantId, id, eventId, null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, tenantId, id, eventId, null);
     return id;
   }
 

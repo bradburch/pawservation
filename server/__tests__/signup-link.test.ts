@@ -86,7 +86,7 @@ describe('mintLink', () => {
     expect(payload!.exp).toBeGreaterThanOrEqual(before + INVITE_LINK_TTL_SECONDS * 1000);
 
     // The single-use nonce was registered so /signup/complete can consume it.
-    const seen = await env.PAWBOOK_CACHE.get(SIGNUP_NONCE_KEY(payload!.nonce));
+    const seen = await env.PAWSERVATION_CACHE.get(SIGNUP_NONCE_KEY(payload!.nonce));
     expect(seen).toBe('1');
 
     // Valid right before exp, invalid just after.

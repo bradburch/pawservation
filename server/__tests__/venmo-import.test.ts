@@ -50,25 +50,30 @@ describe('getAccountIdsByOwner (repo)', () => {
   it('maps every owner to their household account id, with no activity filter', async () => {
     const { env, raw } = createTestEnv();
     const tenant = 'tnt_pawsandrelax';
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, tenant, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(env.PAWSERVATION_DB, tenant, 'jen@example.com', 'Jen');
     const [rex] = seedPets(raw, tenant, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     // Jen has a pet but NO bookings and NO payments yet — getHouseholdBalances would omit her
     // entirely, but her very first Venmo payment still needs somewhere to land.
-    const map = await getAccountIdsByOwner(env.PAWBOOK_DB, tenant);
+    const map = await getAccountIdsByOwner(env.PAWSERVATION_DB, tenant);
     expect(map.get(jen.Id)).toBe(rex);
   });
 
   it('omits an owner with no live pet — they belong to no household at all', async () => {
     const { env } = createTestEnv();
     const tenant = 'tnt_pawsandrelax';
-    const ghost = await insertInvitedCustomer(env.PAWBOOK_DB, tenant, 'ghost@example.com', 'Ghost');
-    const map = await getAccountIdsByOwner(env.PAWBOOK_DB, tenant);
+    const ghost = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      tenant,
+      'ghost@example.com',
+      'Ghost',
+    );
+    const map = await getAccountIdsByOwner(env.PAWSERVATION_DB, tenant);
     expect(map.has(ghost.Id)).toBe(false);
   });
 
   it('is tenant-isolated', async () => {
     const { env } = createTestEnv();
-    const map = await getAccountIdsByOwner(env.PAWBOOK_DB, TENANT_B);
+    const map = await getAccountIdsByOwner(env.PAWSERVATION_DB, TENANT_B);
     expect(map.get('eu_sp_jess')).toBeUndefined(); // Sunny Paws' Jess, not Happy Tails'
     expect(map.get('eu_ht_jess')).toBe('pet_ht_otis');
   });
@@ -78,9 +83,9 @@ describe('insertAccountPayment (externalRef dedupe)', () => {
   it('carries an externalRef and shares the (TenantId, ExternalRef) unique index with insertPayment', async () => {
     const { env, raw } = createTestEnv();
     const tenant = 'tnt_pawsandrelax';
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, tenant, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(env.PAWSERVATION_DB, tenant, 'ana@example.com', 'Ana');
     const [mia] = seedPets(raw, tenant, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    const id = await insertAccountPayment(env.PAWBOOK_DB, tenant, {
+    const id = await insertAccountPayment(env.PAWSERVATION_DB, tenant, {
       accountId: mia,
       amount: 200,
       method: 'venmo',
@@ -95,7 +100,7 @@ describe('insertAccountPayment (externalRef dedupe)', () => {
     // A replay of the same transaction id THROWS (the caller catches it with isUniqueViolation),
     // exactly like insertPayment — idempotency is the index's job either way.
     await expect(
-      insertAccountPayment(env.PAWBOOK_DB, tenant, {
+      insertAccountPayment(env.PAWSERVATION_DB, tenant, {
         accountId: mia,
         amount: 200,
         method: 'venmo',
@@ -109,9 +114,9 @@ describe('insertAccountPayment (externalRef dedupe)', () => {
   it('still accepts a hand-recorded payment with no externalRef at all', async () => {
     const { env, raw } = createTestEnv();
     const tenant = 'tnt_pawsandrelax';
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, tenant, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(env.PAWSERVATION_DB, tenant, 'ana@example.com', 'Ana');
     const [mia] = seedPets(raw, tenant, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    const id = await insertAccountPayment(env.PAWBOOK_DB, tenant, {
+    const id = await insertAccountPayment(env.PAWSERVATION_DB, tenant, {
       accountId: mia,
       amount: 50,
       method: 'cash',
@@ -177,7 +182,7 @@ describe('POST /:slug/admin/payments/venmo/preview', () => {
   it('surfaces a client with no pets on file rather than guessing a household', async () => {
     const { env } = createTestEnv();
     const nameless = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'nopets@example.com',
       'No Pets',
@@ -254,7 +259,7 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
 
   it('skips gracefully, not 500s, when the ExternalRef was already written outside the CSV round-trip', async () => {
     const { env, raw } = createTestEnv();
-    const preInserted = await insertAccountPayment(env.PAWBOOK_DB, TENANT_A, {
+    const preInserted = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: 'pet_sp_bella',
       amount: 250,
       method: 'venmo',
@@ -355,7 +360,7 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     // never silently resolve onto this nameless client's household.
     const { env, raw } = createTestEnv();
     const nameless = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'nameless@example.com',
       null,
@@ -389,7 +394,7 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     // and happily pay THEIR household instead of refusing outright.
     const { env, raw } = createTestEnv();
     const imposter = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'zzcollide@example.com',
       null,

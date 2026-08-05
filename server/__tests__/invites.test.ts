@@ -33,7 +33,7 @@ describe('invite-only identify', () => {
   it('accepts an invited customer and promotes them to active on verify', async () => {
     const { env, raw } = createTestEnv();
     const cust = await insertInvitedCustomer(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       'tnt_sunnypaws',
       'invited@example.com',
       'Inv',

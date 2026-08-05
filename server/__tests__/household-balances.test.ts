@@ -176,7 +176,7 @@ async function book(
     status?: 'pending' | 'confirmed';
   } = {},
 ): Promise<string> {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId: over.endUserId ?? null,
     serviceType: 'boarding',
     startDate: '2030-01-01',
@@ -186,12 +186,12 @@ async function book(
     estCost: over.estCost !== undefined ? over.estCost : 100,
     status: over.status ?? 'confirmed',
   });
-  if (over.petIds?.length) await addBookingPets(env.PAWBOOK_DB, tenantId, id, over.petIds);
+  if (over.petIds?.length) await addBookingPets(env.PAWSERVATION_DB, tenantId, id, over.petIds);
   return id;
 }
 
 const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: number) =>
-  insertPayment(env.PAWBOOK_DB, tenantId, {
+  insertPayment(env.PAWSERVATION_DB, tenantId, {
     bookingRequestId,
     amount,
     method: 'cash',
@@ -207,17 +207,27 @@ const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: numbe
 describe('getHouseholdBalances (repo)', () => {
   it('rolls two customers who share a pet into ONE balance', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
-    const sam = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'sam@example.com', 'Sam');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
+    const sam = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'sam@example.com',
+      'Sam',
+    );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
-    await addPetOwner(env.PAWBOOK_DB, TENANT_C, rex, sam.Id);
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_C, rex, sam.Id);
 
     // Jen books $100 and pays $40; Sam books $60 against the pet they share and pays nothing.
     const jensBooking = await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] });
     await pay(env, TENANT_C, jensBooking, 40);
     await book(env, TENANT_C, { endUserId: sam.Id, petIds: [rex], estCost: 60 });
 
-    const households = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(households).toHaveLength(1);
     expect(households[0]).toMatchObject({
       accountId: rex,
@@ -233,25 +243,35 @@ describe('getHouseholdBalances (repo)', () => {
 
   it('counts extra charges and leaves a prepaying household in credit', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
       amount: 45,
     });
     await pay(env, TENANT_C, bookingId, 200);
-    const [household] = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(household).toMatchObject({ expectedTotal: 145, paidTotal: 200, balance: -55 });
   });
 
   it('bills a cancelled booking for its assessed fee, and a declined one for nothing', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const cancelled = await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 30 WHERE TenantId = ? AND Id = ?",
     )
       .bind(TENANT_C, cancelled)
@@ -263,19 +283,24 @@ describe('getHouseholdBalances (repo)', () => {
       status: 'pending',
     });
     await pay(env, TENANT_C, declined, 25); // a deposit, taken before she said no
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, declined, 'declined');
-    const [household] = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined');
+    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     // 30 owed on the cancellation, nothing owed on the declined request, 25 of her money held.
     expect(household).toMatchObject({ expectedTotal: 30, paidTotal: 25, balance: 5 });
   });
 
   it('is tenant-isolated', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
-    expect(await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C)).toHaveLength(1);
-    const other = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_B);
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toHaveLength(1);
+    const other = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_B);
     expect(other.some((h) => h.accountId === mia)).toBe(false);
     expect(other.flatMap((h) => h.owners.map((o) => o.email))).not.toContain('ana@example.com');
   });
@@ -284,15 +309,27 @@ describe('getHouseholdBalances (repo)', () => {
 describe('household balances on the earnings payload', () => {
   it('publishes one server-computed balance per household, never netted across households', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] }); // owes 100
     const anas = await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
     await pay(env, TENANT_C, anas, 200); // 100 in credit
 
-    const payload = serializeAnalytics(await getAnalytics(env.PAWBOOK_DB, TENANT_C, '2026-07-15'));
+    const payload = serializeAnalytics(
+      await getAnalytics(env.PAWSERVATION_DB, TENANT_C, '2026-07-15'),
+    );
     expect(payload.households.map((h) => [h.accountId, h.balance])).toEqual([
       [mia, -100],
       [rex, 100],
@@ -304,7 +341,12 @@ describe('household balances on the earnings payload', () => {
 
   it('is on the admin analytics route, computed server-side', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] });
     await pay(env, TENANT_C, bookingId, 25);

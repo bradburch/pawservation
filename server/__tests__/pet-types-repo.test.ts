@@ -18,7 +18,7 @@ import { ALLOWED_EMAIL, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 describe('pet-type rows (repo)', () => {
   it('listPetTypes returns Label, ordered by PetType', async () => {
     const { env } = createTestEnv();
-    const rows = await listPetTypes(env.PAWBOOK_DB, TENANT_A);
+    const rows = await listPetTypes(env.PAWSERVATION_DB, TENANT_A);
     expect(rows.map((r) => ({ petType: r.PetType, label: r.Label }))).toEqual([
       { petType: 'cat', label: 'Cat' },
       { petType: 'dog', label: 'Dog' },
@@ -28,31 +28,31 @@ describe('pet-type rows (repo)', () => {
 
   it('createPetType inserts a registry row; duplicate slug throws UNIQUE', async () => {
     const { env } = createTestEnv();
-    await createPetType(env.PAWBOOK_DB, TENANT_A, 'bird', 'Birds');
-    const rows = await listPetTypes(env.PAWBOOK_DB, TENANT_A);
+    await createPetType(env.PAWSERVATION_DB, TENANT_A, 'bird', 'Birds');
+    const rows = await listPetTypes(env.PAWSERVATION_DB, TENANT_A);
     expect(rows.find((r) => r.PetType === 'bird')).toMatchObject({ Label: 'Birds' });
-    await expect(createPetType(env.PAWBOOK_DB, TENANT_A, 'bird', 'Birds!')).rejects.toThrow(
+    await expect(createPetType(env.PAWSERVATION_DB, TENANT_A, 'bird', 'Birds!')).rejects.toThrow(
       /UNIQUE constraint failed/,
     );
   });
 
   it('renamePetType changes Label only; unknown slug reports false', async () => {
     const { env } = createTestEnv();
-    expect(await renamePetType(env.PAWBOOK_DB, TENANT_A, 'rabbit', 'Bunnies')).toBe(true);
-    const rows = await listPetTypes(env.PAWBOOK_DB, TENANT_A);
+    expect(await renamePetType(env.PAWSERVATION_DB, TENANT_A, 'rabbit', 'Bunnies')).toBe(true);
+    const rows = await listPetTypes(env.PAWSERVATION_DB, TENANT_A);
     expect(rows.find((r) => r.PetType === 'rabbit')?.Label).toBe('Bunnies');
-    expect(await renamePetType(env.PAWBOOK_DB, TENANT_A, 'dragon', 'Dragons')).toBe(false);
+    expect(await renamePetType(env.PAWSERVATION_DB, TENANT_A, 'dragon', 'Dragons')).toBe(false);
   });
 
   it('countPetTypeReferences counts pets AND pet-linked bookings, tenant-scoped', async () => {
     const { env, raw } = createTestEnv();
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(0);
+    expect(await countPetTypeReferences(env.PAWSERVATION_DB, TENANT_A, 'rabbit')).toBe(0);
     raw.exec(
       `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
        VALUES ('pet_rab', '${TENANT_A}', 'eu_sp_jess', 'Thumper', 'rabbit')`,
     );
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(1);
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    expect(await countPetTypeReferences(env.PAWSERVATION_DB, TENANT_A, 'rabbit')).toBe(1);
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: 'eu_sp_jess',
       serviceType: 'boarding',
       startDate: '2029-05-01',
@@ -66,31 +66,33 @@ describe('pet-type rows (repo)', () => {
       `INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('${id}', 'pet_rab')`,
     );
     // Pet (1) + the booking that references it through BookingRequestPets (1).
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(2);
+    expect(await countPetTypeReferences(env.PAWSERVATION_DB, TENANT_A, 'rabbit')).toBe(2);
     // Tenant isolation: TENANT_B has no rabbits and must not see TENANT_A's.
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_B, 'rabbit')).toBe(0);
+    expect(await countPetTypeReferences(env.PAWSERVATION_DB, TENANT_B, 'rabbit')).toBe(0);
     // Seeded dog reference: Bella (a TENANT_A pet) alone keeps 'dog' undeletable.
-    expect(await countPetTypeReferences(env.PAWBOOK_DB, TENANT_A, 'dog')).toBeGreaterThanOrEqual(1);
+    expect(
+      await countPetTypeReferences(env.PAWSERVATION_DB, TENANT_A, 'dog'),
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it('deletePetType removes the row; unknown reports false', async () => {
     const { env } = createTestEnv();
-    expect(await deletePetType(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(true);
-    expect((await listPetTypes(env.PAWBOOK_DB, TENANT_A)).some((r) => r.PetType === 'rabbit')).toBe(
-      false,
-    );
-    expect(await deletePetType(env.PAWBOOK_DB, TENANT_A, 'rabbit')).toBe(false);
+    expect(await deletePetType(env.PAWSERVATION_DB, TENANT_A, 'rabbit')).toBe(true);
+    expect(
+      (await listPetTypes(env.PAWSERVATION_DB, TENANT_A)).some((r) => r.PetType === 'rabbit'),
+    ).toBe(false);
+    expect(await deletePetType(env.PAWSERVATION_DB, TENANT_A, 'rabbit')).toBe(false);
   });
 
   it('deletePetTypeAndScrub removes the row and scrubs EVERY referencing service in one atomic batch', async () => {
     const { env } = createTestEnv();
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'walk', ['dog', 'rabbit']);
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'checkin', ['rabbit']);
-    const result = await deletePetTypeAndScrub(env.PAWBOOK_DB, TENANT_A, 'rabbit');
-    expect((await listPetTypes(env.PAWBOOK_DB, TENANT_A)).some((r) => r.PetType === 'rabbit')).toBe(
-      false,
-    );
-    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'walk', ['dog', 'rabbit']);
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'checkin', ['rabbit']);
+    const result = await deletePetTypeAndScrub(env.PAWSERVATION_DB, TENANT_A, 'rabbit');
+    expect(
+      (await listPetTypes(env.PAWSERVATION_DB, TENANT_A)).some((r) => r.PetType === 'rabbit'),
+    ).toBe(false);
+    const services = await listServices(env.PAWSERVATION_DB, TENANT_A);
     // Partial scrub: 'walk' keeps its other accepted slug and stays enabled — no widening,
     // no disabling for a list that still has an accepted type.
     const walk = services.find((s) => s.ServiceType === 'walk');
@@ -116,7 +118,7 @@ describe('pet-type rows (repo)', () => {
     const { env } = createTestEnv();
     // Seeded 'checkin' on happytails is already Enabled=0 with AcceptedPetTypes ["dog"]; use a
     // fresh tenant scenario instead by disabling sunny-paws' checkin directly, then emptying it.
-    await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'checkin', {
+    await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'checkin', {
       enabled: false,
       description: null,
       questions: [],
@@ -133,8 +135,8 @@ describe('pet-type rows (repo)', () => {
       earlyArrivalFee: null,
       lateDepartureFee: null,
     });
-    const result = await deletePetTypeAndScrub(env.PAWBOOK_DB, TENANT_A, 'rabbit');
-    const checkin = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const result = await deletePetTypeAndScrub(env.PAWSERVATION_DB, TENANT_A, 'rabbit');
+    const checkin = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'checkin',
     );
     // Still stored as '[]', never NULL — no widening regardless of enabled state.
@@ -148,11 +150,11 @@ describe('pet-type rows (repo)', () => {
 describe('AcceptedPetTypes round-trip (repo)', () => {
   it('setServiceConfig stores the list as JSON; listServices parses it back; NULL round-trips', async () => {
     const { env } = createTestEnv();
-    const before = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const before = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(before.AcceptedPetTypes).toBeNull();
-    await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'boarding', {
+    await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'boarding', {
       enabled: true,
       description: before.Description,
       questions: before.Questions,
@@ -169,7 +171,7 @@ describe('AcceptedPetTypes round-trip (repo)', () => {
       earlyArrivalFee: null,
       lateDepartureFee: null,
     });
-    const after = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const after = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'boarding',
     )!;
     expect(after.AcceptedPetTypes).toEqual(['dog']);
@@ -177,13 +179,15 @@ describe('AcceptedPetTypes round-trip (repo)', () => {
 
   it('setServiceAcceptedPetTypes updates just the list', async () => {
     const { env } = createTestEnv();
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'walk', ['dog', 'cat']);
-    let walk = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'walk', ['dog', 'cat']);
+    let walk = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === 'walk',
     )!;
     expect(walk.AcceptedPetTypes).toEqual(['dog', 'cat']);
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'walk', null);
-    walk = (await listServices(env.PAWBOOK_DB, TENANT_A)).find((s) => s.ServiceType === 'walk')!;
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'walk', null);
+    walk = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
+      (s) => s.ServiceType === 'walk',
+    )!;
     expect(walk.AcceptedPetTypes).toBeNull();
   });
 });
@@ -191,7 +195,7 @@ describe('AcceptedPetTypes round-trip (repo)', () => {
 describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
   it('createTenantFromSignup yields enabled dog and cat rows', async () => {
     const { env } = createTestEnv();
-    const ok = await createTenantFromSignup(env.PAWBOOK_DB, {
+    const ok = await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_fresh',
       slug: 'fresh-paws',
       displayName: 'Fresh Paws',
@@ -200,7 +204,7 @@ describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
       passwordHash: 'x',
     });
     expect(ok).toBe(true);
-    const rows = await listPetTypes(env.PAWBOOK_DB, 'tnt_fresh');
+    const rows = await listPetTypes(env.PAWSERVATION_DB, 'tnt_fresh');
     expect(rows.map((r) => ({ petType: r.PetType, label: r.Label }))).toEqual([
       { petType: 'cat', label: 'Cat' },
       { petType: 'dog', label: 'Dog' },
@@ -209,7 +213,7 @@ describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
 
   it('rollbackUnclaimedTenant removes the pet-type rows too (no FK orphans)', async () => {
     const { env } = createTestEnv();
-    await createTenantFromSignup(env.PAWBOOK_DB, {
+    await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_gone',
       slug: 'gone-paws',
       displayName: 'Gone Paws',
@@ -217,7 +221,7 @@ describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
       email: 'not-on-the-allowlist@example.com', // claim matches 0 rows -> caller compensates
       passwordHash: 'x',
     });
-    await rollbackUnclaimedTenant(env.PAWBOOK_DB, 'tnt_gone', 'tu_gone');
-    expect(await listPetTypes(env.PAWBOOK_DB, 'tnt_gone')).toEqual([]);
+    await rollbackUnclaimedTenant(env.PAWSERVATION_DB, 'tnt_gone', 'tu_gone');
+    expect(await listPetTypes(env.PAWSERVATION_DB, 'tnt_gone')).toEqual([]);
   });
 });

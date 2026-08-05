@@ -30,7 +30,7 @@ const makeBooking = (
     status?: 'pending' | 'confirmed';
   } = {},
 ) =>
-  insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId: over.endUserId ?? null,
     serviceType: over.serviceType ?? 'boarding',
     startDate: '2030-01-01',
@@ -48,7 +48,7 @@ const pay = (
   amount: number,
   paidDate = '2026-07-01',
 ) =>
-  insertPayment(env.PAWBOOK_DB, tenantId, {
+  insertPayment(env.PAWSERVATION_DB, tenantId, {
     bookingRequestId,
     amount,
     method: 'cash',
@@ -65,7 +65,7 @@ describe('getAnalytics (repo)', () => {
     await pay(env, TENANT_A, b1, 60, '2026-07-20');
     await pay(env, TENANT_A, b1, 25, '2026-05-10');
     await pay(env, TENANT_A, b1, 999, '2025-07-31'); // month 2025-07: just outside the window
-    const { monthly } = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const { monthly } = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(monthly).toHaveLength(12);
     expect(monthly[0]).toEqual({ Month: '2025-08', Total: 0 });
     expect(monthly[11]).toEqual({ Month: '2026-07', Total: 100 });
@@ -82,7 +82,7 @@ describe('getAnalytics (repo)', () => {
     await pay(env, TENANT_A, boarding, 200);
     await pay(env, TENANT_A, walk, 35);
     await pay(env, TENANT_A, gone, 80);
-    const { byService } = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const { byService } = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(byService).toEqual([
       { ServiceType: 'boarding', Label: 'Boarding', Total: 200 },
       { ServiceType: 'retired-svc', Label: 'retired-svc', Total: 80 },
@@ -94,8 +94,8 @@ describe('getAnalytics (repo)', () => {
     const { env } = createTestEnv();
     const b1 = await makeBooking(env, TENANT_A);
     await pay(env, TENANT_A, b1, 150);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, b1, 'cancelled');
-    const { byService, monthly } = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, b1, 'cancelled');
+    const { byService, monthly } = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(byService).toEqual([{ ServiceType: 'boarding', Label: 'Boarding', Total: 150 }]);
     expect(monthly[11].Total).toBe(150);
   });
@@ -104,7 +104,7 @@ describe('getAnalytics (repo)', () => {
     const { env } = createTestEnv();
     for (let i = 0; i < 12; i++) {
       const user = await insertInvitedCustomer(
-        env.PAWBOOK_DB,
+        env.PAWSERVATION_DB,
         TENANT_C,
         `client${i}@example.com`,
         `Client ${i}`,
@@ -112,7 +112,7 @@ describe('getAnalytics (repo)', () => {
       const bookingId = await makeBooking(env, TENANT_C, { endUserId: user.Id });
       await pay(env, TENANT_C, bookingId, 10 + i);
     }
-    const { topClients } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const { topClients } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(topClients).toHaveLength(10); // clients 0 and 1 ($10, $11) fall off
     expect(topClients[0]).toMatchObject({ Email: 'client11@example.com', Total: 21, Bookings: 1 });
     expect(topClients.some((t) => t.Email === 'client0@example.com')).toBe(false);
@@ -122,13 +122,18 @@ describe('getAnalytics (repo)', () => {
   it('topClients: two payments on one booking count as ONE booking; two bookings as two', async () => {
     const { env } = createTestEnv();
     // jess@example.com is pre-seeded (eu_pr_jess, 'Jess Demo', active); insertInvitedCustomer is idempotent and keeps the seeded row.
-    const jess = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jess@example.com', 'Jess');
+    const jess = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jess@example.com',
+      'Jess',
+    );
     const b1 = await makeBooking(env, TENANT_C, { endUserId: jess.Id });
     const b2 = await makeBooking(env, TENANT_C, { endUserId: jess.Id });
     await pay(env, TENANT_C, b1, 30);
     await pay(env, TENANT_C, b1, 20);
     await pay(env, TENANT_C, b2, 50);
-    const { topClients } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const { topClients } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(topClients).toEqual([
       { EndUserId: jess.Id, Name: 'Jess Demo', Email: 'jess@example.com', Total: 100, Bookings: 2 },
     ]);
@@ -146,8 +151,8 @@ describe('getAnalytics (repo)', () => {
     await makeBooking(env, TENANT_C, { estCost: null }); // no estimate -> no computable balance
     await makeBooking(env, TENANT_C, { estCost: 500, status: 'pending' }); // not confirmed yet
     const cancelled = await makeBooking(env, TENANT_C, { estCost: 400 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, cancelled, 'cancelled');
-    const { outstanding } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelled, 'cancelled');
+    const { outstanding } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(outstanding.map((o) => o.BookingId)).toEqual([unpaid, partial]);
     expect(outstanding[1]).toMatchObject({ EstCost: 100, PaidTotal: 40 });
   });
@@ -155,10 +160,10 @@ describe('getAnalytics (repo)', () => {
   it('outstanding is tenant-isolated (another tenant sees nothing of TENANT_C)', async () => {
     const { env } = createTestEnv();
     await makeBooking(env, TENANT_C, { estCost: 300 });
-    const { outstanding } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const { outstanding } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(outstanding).toHaveLength(1);
     // TENANT_B's view contains only its own seeded unpaid booking (seed_ht_board1), never C's.
-    const other = await getAnalytics(env.PAWBOOK_DB, TENANT_B, TODAY);
+    const other = await getAnalytics(env.PAWSERVATION_DB, TENANT_B, TODAY);
     expect(other.outstanding.map((o) => o.BookingId)).toEqual(['seed_ht_board1']);
   });
 
@@ -168,15 +173,15 @@ describe('getAnalytics (repo)', () => {
     // it becomes outstanding again for exactly $45.
     const bookingId = await makeBooking(env, TENANT_C, { estCost: 100 });
     await pay(env, TENANT_C, bookingId, 100);
-    const before = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const before = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(before.outstanding.find((o) => o.BookingId === bookingId)).toBeUndefined();
 
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
       amount: 45,
     });
-    const after = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const after = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     const row = after.outstanding.find((o) => o.BookingId === bookingId)!;
     expect(row.ChargesTotal).toBe(45);
     expect(row.EstCost).toBe(100); // the stay price itself is untouched
@@ -192,13 +197,13 @@ describe('getAnalytics (repo)', () => {
     // confirmed-arm (wrong status) nor the old cancelled-arm (CancellationFee IS NULL) matched
     // this row, so it was invisible in Earnings despite genuinely owing $45.
     const bookingId = await makeBooking(env, TENANT_C, { estCost: 400 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, bookingId, 'cancelled');
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, bookingId, 'cancelled');
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
       amount: 45,
     });
-    const analytics = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     const row = analytics.outstanding.find((o) => o.BookingId === bookingId)!;
     expect(row).toBeDefined();
     expect(row).toMatchObject({ EstCost: 0, ChargesTotal: 45, PaidTotal: 0 });
@@ -224,18 +229,18 @@ describe('getAnalytics (repo)', () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_C, { estCost: 250 });
     await pay(env, TENANT_C, bookingId, 250);
-    const paidUp = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const paidUp = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(paidUp.credits).toEqual([]);
     expect(paidUp.outstanding).toEqual([]);
 
     // The edit path re-stamps EstCost and returns the row to 'pending'.
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       "UPDATE BookingRequests SET EstCost = 100, Status = 'pending' WHERE TenantId = ? AND Id = ?",
     )
       .bind(TENANT_C, bookingId)
       .run();
 
-    const after = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const after = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(after.credits).toMatchObject([{ BookingId: bookingId, Keepable: 100, PaidTotal: 250 }]);
     // Still not outstanding, and now not silent either.
     expect(after.outstanding).toEqual([]);
@@ -250,8 +255,8 @@ describe('getAnalytics (repo)', () => {
     // it), so every dollar taken against it is a credit — not just the part above its old quote.
     const bookingId = await makeBooking(env, TENANT_C, { estCost: 250, status: 'pending' });
     await pay(env, TENANT_C, bookingId, 100);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, bookingId, 'declined');
-    const { credits } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, bookingId, 'declined');
+    const { credits } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(credits).toMatchObject([{ BookingId: bookingId, Keepable: 0, PaidTotal: 100 }]);
   });
 
@@ -260,12 +265,12 @@ describe('getAnalytics (repo)', () => {
     const bookingId = await makeBooking(env, TENANT_C, { estCost: 200 });
     await pay(env, TENANT_C, bookingId, 200);
     // A customer self-cancel outside every tier stores a real 0 — nothing owed, so nothing keepable.
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 0 WHERE TenantId = ? AND Id = ?",
     )
       .bind(TENANT_C, bookingId)
       .run();
-    const { credits, outstanding } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const { credits, outstanding } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(credits).toMatchObject([{ BookingId: bookingId, Keepable: 0, PaidTotal: 200 }]);
     expect(outstanding).toEqual([]);
   });
@@ -275,7 +280,7 @@ describe('getAnalytics (repo)', () => {
     // Overpaid by 150, then the sitter logs a $45 vet visit: she may keep 145 of the 250.
     const overpaid = await makeBooking(env, TENANT_C, { estCost: 100 });
     await pay(env, TENANT_C, overpaid, 250);
-    await insertBookingCharge(env.PAWBOOK_DB, TENANT_C, {
+    await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: overpaid,
       label: 'Vet visit',
       amount: 45,
@@ -284,7 +289,7 @@ describe('getAnalytics (repo)', () => {
     const partial = await makeBooking(env, TENANT_C, { estCost: 300 });
     await pay(env, TENANT_C, partial, 40);
 
-    const data = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const data = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     expect(data.credits).toMatchObject([{ BookingId: overpaid, Keepable: 145, PaidTotal: 250 }]);
     expect(data.outstanding.map((o) => o.BookingId)).toEqual([partial]);
     expect(serializeAnalytics(data).credits[0].credit).toBe(105);
@@ -294,9 +299,9 @@ describe('getAnalytics (repo)', () => {
     const { env } = createTestEnv();
     const mine = await makeBooking(env, TENANT_C, { estCost: 10 });
     await pay(env, TENANT_C, mine, 50);
-    expect((await getAnalytics(env.PAWBOOK_DB, TENANT_B, TODAY)).credits).toEqual([]);
+    expect((await getAnalytics(env.PAWSERVATION_DB, TENANT_B, TODAY)).credits).toEqual([]);
     expect(
-      (await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY)).credits.map((c) => c.BookingId),
+      (await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY)).credits.map((c) => c.BookingId),
     ).toEqual([mine]);
   });
 
@@ -307,7 +312,7 @@ describe('getAnalytics (repo)', () => {
     await pay(env, TENANT_A, b, 50, '2026-05-10'); // Q2 2026
     await pay(env, TENANT_A, b, 70, '2026-07-01'); // Q3 2026
     await pay(env, TENANT_A, b, 999, '2025-12-20'); // prior year — inside the 12-month window
-    const { ytd, quarterly, monthly } = await getAnalytics(env.PAWBOOK_DB, TENANT_A, TODAY);
+    const { ytd, quarterly, monthly } = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(ytd).toBe(150); // 30+50+70; the 999 from 2025 is excluded
     expect(quarterly).toEqual([
       { q: 1, total: 30 },
@@ -372,7 +377,12 @@ describe('GET /:slug/admin/analytics (route)', () => {
   it('derives tiles in JS and maps every aggregate to camelCase', async () => {
     const { env } = createTestEnv();
     // jess@example.com is pre-seeded (eu_pr_jess, 'Jess Demo', active); insertInvitedCustomer is idempotent and keeps the seeded row.
-    const jess = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jess@example.com', 'Jess');
+    const jess = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jess@example.com',
+      'Jess',
+    );
     const bookingId = await makeBooking(env, TENANT_C, { endUserId: jess.Id, estCost: 300 });
     const today = getPacificDateStr();
     await pay(env, TENANT_C, bookingId, 100, today);

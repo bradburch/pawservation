@@ -23,7 +23,7 @@ const book = async (env: Env, token: string, petIds: string[], type = 'boarding'
 describe('per-service pet-type acceptance (booking POST)', () => {
   it('rejects a pet whose type is off the service list, with the plain-language message', async () => {
     const { env } = createTestEnv();
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'boarding', ['dog']);
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'boarding', ['dog']);
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await book(env, token, ['pet_sp_mochi']); // Mochi is a cat
     expect(res.status).toBe(400);
@@ -34,7 +34,7 @@ describe('per-service pet-type acceptance (booking POST)', () => {
 
   it('a mixed dog+cat selection is rejected too — any offending pet fails the booking', async () => {
     const { env } = createTestEnv();
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'boarding', ['dog']);
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'boarding', ['dog']);
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await book(env, token, ['pet_sp_bella', 'pet_sp_mochi']);
     expect(res.status).toBe(400);
@@ -61,7 +61,7 @@ describe('per-service pet-type acceptance (booking POST)', () => {
 
   it('a type excluded from the chosen service is rejected by acceptance; an unknown slug still 400s', async () => {
     const { env, raw } = createTestEnv();
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'boarding', ['dog']);
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'boarding', ['dog']);
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     // Excluded-but-registered type: the per-service acceptance gate fires with its rich copy.
     const excluded = await book(env, token, ['pet_sp_mochi']);

@@ -51,7 +51,7 @@ async function createSvc(
  * deleting the seeded custom service (morning-walk, no bookings) does that without touching the
  * built-in rows other assertions here depend on. */
 async function freeASlot(env: Env): Promise<void> {
-  await deleteService(env.PAWBOOK_DB, TENANT_A, 'morning-walk');
+  await deleteService(env.PAWSERVATION_DB, TENANT_A, 'morning-walk');
 }
 
 describe('custom services — creation', () => {
@@ -126,7 +126,7 @@ describe('custom services — creation', () => {
     await freeASlot(env);
     const { status, json } = await createSvc(env, { template: 'walk', label: 'Afternoon Walk' });
     expect(status).toBe(201);
-    const created = (await listServices(env.PAWBOOK_DB, TENANT_A)).find(
+    const created = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
       (s) => s.ServiceType === json.type,
     )!;
     expect(created.AcceptedPetTypes).toEqual(['dog']);
@@ -137,7 +137,7 @@ describe('custom services — creation', () => {
     await freeASlot(env);
     const chk = await createSvc(env, { template: 'checkin', label: 'Cat Sitting' });
     expect(chk.status).toBe(201);
-    const services = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const services = await listServices(env.PAWSERVATION_DB, TENANT_A);
     expect(services.find((s) => s.ServiceType === chk.json.type)!.AcceptedPetTypes).toEqual([
       'cat',
     ]);
@@ -161,7 +161,7 @@ describe('custom services — creation', () => {
       env,
     );
     expect(res.status).toBe(201);
-    const created = (await listServices(env.PAWBOOK_DB, TENANT_B)).find(
+    const created = (await listServices(env.PAWSERVATION_DB, TENANT_B)).find(
       (s) => s.ServiceType === 'quick-visit',
     )!;
     // NULL (= every registry type), never `[]`.
@@ -174,11 +174,11 @@ describe('custom services — creation', () => {
     // create-time default only — nothing backfills, so a live tenant's existing services keep
     // refusing unpriced sets until the sitter opts them in from the service editor.
     const { env } = createTestEnv();
-    const before = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const before = await listServices(env.PAWSERVATION_DB, TENANT_A);
     for (const svc of before) expect(svc.PetRateMode).toBe('exact');
     await freeASlot(env);
     const { json } = await createSvc(env, { template: 'walk', label: 'Evening Walk' });
-    const after = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const after = await listServices(env.PAWSERVATION_DB, TENANT_A);
     expect(after.find((s) => s.ServiceType === json.type)!.PetRateMode).toBe('linear');
     for (const svc of after.filter((s) => s.ServiceType !== json.type))
       expect(svc.PetRateMode).toBe('exact');
@@ -194,7 +194,7 @@ describe('custom services — creation', () => {
          VALUES (?, 'bare-insert', 'Bare', 'single', 'visit')`,
       )
       .run(TENANT_B);
-    const created = (await listServices(env.PAWBOOK_DB, TENANT_B)).find(
+    const created = (await listServices(env.PAWSERVATION_DB, TENANT_B)).find(
       (s) => s.ServiceType === 'bare-insert',
     )!;
     expect(created.PetRateMode).toBe('exact');
@@ -218,8 +218,8 @@ describe('custom services — creation', () => {
       earlyArrivalFee: null,
       lateDepartureFee: null,
     };
-    await createService(env.PAWBOOK_DB, TENANT_A, svc);
-    await expect(createService(env.PAWBOOK_DB, TENANT_A, svc)).rejects.toThrow(
+    await createService(env.PAWSERVATION_DB, TENANT_A, svc);
+    await expect(createService(env.PAWSERVATION_DB, TENANT_A, svc)).rejects.toThrow(
       /UNIQUE constraint failed/,
     );
   });
@@ -232,7 +232,7 @@ describe('custom services — creation', () => {
 describe('custom services — 6-service cap', () => {
   it('refuses a 7th create once the tenant is at the cap, with a plain-language 400 and no row added', async () => {
     const { env } = createTestEnv();
-    const before = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const before = await listServices(env.PAWSERVATION_DB, TENANT_A);
     expect(before).toHaveLength(6);
 
     const { status, json } = await createSvc(env, { template: 'walk', label: 'Evening Stroll' });
@@ -241,13 +241,13 @@ describe('custom services — 6-service cap', () => {
       "You've reached the limit of 6 services. Delete one you no longer offer to add another.",
     );
 
-    const after = await listServices(env.PAWBOOK_DB, TENANT_A);
+    const after = await listServices(env.PAWSERVATION_DB, TENANT_A);
     expect(after).toHaveLength(6);
   });
 
   it('allows the 6th create for a tenant one under the cap', async () => {
     const { env } = createTestEnv();
-    const before = await listServices(env.PAWBOOK_DB, TENANT_B);
+    const before = await listServices(env.PAWSERVATION_DB, TENANT_B);
     expect(before).toHaveLength(5);
 
     const res = await app.request(
@@ -261,7 +261,7 @@ describe('custom services — 6-service cap', () => {
     );
     expect(res.status).toBe(201);
 
-    const after = await listServices(env.PAWBOOK_DB, TENANT_B);
+    const after = await listServices(env.PAWSERVATION_DB, TENANT_B);
     expect(after).toHaveLength(6);
   });
 
@@ -273,11 +273,11 @@ describe('custom services — 6-service cap', () => {
       env,
     );
     expect(del.status).toBe(204);
-    expect(await listServices(env.PAWBOOK_DB, TENANT_A)).toHaveLength(5);
+    expect(await listServices(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(5);
 
     const { status } = await createSvc(env, { template: 'walk', label: 'Evening Stroll' });
     expect(status).toBe(201);
-    expect(await listServices(env.PAWBOOK_DB, TENANT_A)).toHaveLength(6);
+    expect(await listServices(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(6);
   });
 });
 
@@ -317,7 +317,7 @@ describe('custom services — booking', () => {
     expect(put.status).toBe(204);
 
     // Fill the CUSTOM service's occupancy with 2 pets — a different pool key than 'boarding'.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'luxury-boarding',
       startDate: '2029-01-10',
@@ -373,7 +373,7 @@ describe('custom services — deletion', () => {
     expect(unknown.status).toBe(404);
 
     // morning-walk gets a booking → 409, and it must still exist afterwards.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'morning-walk',
       startDate: '2029-02-01',
@@ -393,7 +393,7 @@ describe('custom services — deletion', () => {
 
   it('setServiceConfig reports no-op instead of silently succeeding when the row is gone', async () => {
     const { env } = createTestEnv();
-    const updated = await setServiceConfig(env.PAWBOOK_DB, TENANT_A, 'no-such-service', {
+    const updated = await setServiceConfig(env.PAWSERVATION_DB, TENANT_A, 'no-such-service', {
       enabled: true,
       description: null,
       questions: [],

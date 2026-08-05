@@ -29,13 +29,13 @@ describe('scheduled() — the 15-minute calendar sweep', () => {
   it('re-drives the outbox and reconciles for connected tenants only', async () => {
     const { env } = createTestEnv();
     // Tenant A connected; tenant B not — B must produce zero Google traffic.
-    await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+    await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
       access: await encryptToken(TEST_SECRET, 'access-1'),
       refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
       expiresAt: '2030-01-01T00:00:00Z',
       calendarId: 'primary',
     });
-    const pendingA = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const pendingA = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: addDays(TODAY, 10),
@@ -45,7 +45,7 @@ describe('scheduled() — the 15-minute calendar sweep', () => {
       estCost: 100,
       status: 'pending',
     });
-    const pendingB = await insertBookingRequest(env.PAWBOOK_DB, TENANT_B, {
+    const pendingB = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_B, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: addDays(TODAY, 10),
@@ -65,7 +65,7 @@ describe('scheduled() — the 15-minute calendar sweep', () => {
     });
     await runScheduled(env);
     const state = async (id: string) =>
-      (await env.PAWBOOK_DB.prepare(
+      (await env.PAWSERVATION_DB.prepare(
         'SELECT SyncPending, GCalEventId FROM BookingRequests WHERE Id = ?',
       )
         .bind(id)
@@ -85,13 +85,13 @@ describe('scheduled() — the 15-minute calendar sweep', () => {
     const { env } = createTestEnv();
     // Both tenants connected, with distinguishable access tokens so the fetch mock can single
     // out tenant A's calls and fail only those — tenant B must still be swept in the same pass.
-    await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+    await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
       access: await encryptToken(TEST_SECRET, 'access-A'),
       refresh: await encryptToken(TEST_SECRET, 'refresh-A'),
       expiresAt: '2030-01-01T00:00:00Z',
       calendarId: 'primary',
     });
-    await setProviderTokens(env.PAWBOOK_DB, TENANT_B, 'calendar', 'google-calendar', {
+    await setProviderTokens(env.PAWSERVATION_DB, TENANT_B, 'calendar', 'google-calendar', {
       access: await encryptToken(TEST_SECRET, 'access-B'),
       refresh: await encryptToken(TEST_SECRET, 'refresh-B'),
       expiresAt: '2030-01-01T00:00:00Z',
@@ -109,8 +109,8 @@ describe('scheduled() — the 15-minute calendar sweep', () => {
     // Tenant B's sweep ran despite tenant A's failure: its fetch was called, and its per-tenant
     // throttle marker (written only after a successful pass) landed in KV.
     expect(bCalls.length).toBeGreaterThan(0);
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_B))).toBe('1');
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_B))).toBe('1');
     // Tenant A's failed pass never reached the point of writing its own marker.
-    expect(await env.PAWBOOK_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get(calendarSyncKey(TENANT_A))).toBeNull();
   });
 });

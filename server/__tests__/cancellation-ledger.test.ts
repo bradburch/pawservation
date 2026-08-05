@@ -20,7 +20,7 @@ const makeBooking = (
     status?: 'pending' | 'confirmed';
   } = {},
 ) =>
-  insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId: null,
     serviceType: over.serviceType ?? 'boarding',
     startDate: over.startDate ?? '2030-01-01',
@@ -32,7 +32,7 @@ const makeBooking = (
   });
 
 const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: number) =>
-  insertPayment(env.PAWBOOK_DB, tenantId, {
+  insertPayment(env.PAWSERVATION_DB, tenantId, {
     bookingRequestId,
     amount,
     method: 'cash',
@@ -65,14 +65,14 @@ describe('payment guard on cancelled bookings', () => {
   it('404s recording against a cancelled booking WITHOUT a fee (unchanged behavior)', async () => {
     const { env } = createTestEnv();
     const id = await makeBooking(env, TENANT_A);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled');
     expect((await postPayment(env, id)).status).toBe(404);
   });
 
   it('records a payment against a cancelled booking WITH a fee, and lists it', async () => {
     const { env } = createTestEnv();
     const id = await makeBooking(env, TENANT_A);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled', 80);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled', 80);
     const res = await postPayment(env, id);
     expect(res.status).toBe(201);
     const list = await app.request(
@@ -91,16 +91,16 @@ describe('getAnalytics outstanding includes cancelled-with-fee', () => {
     const { env } = createTestEnv();
     // Cancelled WITH a $100 fee, $40 already paid -> owes $60.
     const cancelledWithFee = await makeBooking(env, TENANT_C, { estCost: 250 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, cancelledWithFee, 'cancelled', 100);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledWithFee, 'cancelled', 100);
     await pay(env, TENANT_C, cancelledWithFee, 40);
     // Cancelled WITHOUT a fee -> never outstanding.
     const cancelledNoFee = await makeBooking(env, TENANT_C, { estCost: 200 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, cancelledNoFee, 'cancelled');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledNoFee, 'cancelled');
     // Confirmed underpaid (regression) -> owes $250.
     const confirmedUnderpaid = await makeBooking(env, TENANT_C, { estCost: 300 });
     await pay(env, TENANT_C, confirmedUnderpaid, 50);
 
-    const { outstanding } = await getAnalytics(env.PAWBOOK_DB, TENANT_C, TODAY);
+    const { outstanding } = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, TODAY);
     // Ordered by balance desc: 250 then 60.
     expect(outstanding.map((o) => o.BookingId)).toEqual([confirmedUnderpaid, cancelledWithFee]);
     expect(outstanding.find((o) => o.BookingId === cancelledWithFee)).toMatchObject({
@@ -117,7 +117,7 @@ describe('getAnalytics outstanding includes cancelled-with-fee', () => {
   it('/admin/analytics marks cancelled-with-fee outstanding rows with isCancellationFee, confirmed rows without', async () => {
     const { env } = createTestEnv();
     const cancelledWithFee = await makeBooking(env, TENANT_C, { estCost: 250 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_C, cancelledWithFee, 'cancelled', 100);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledWithFee, 'cancelled', 100);
     await pay(env, TENANT_C, cancelledWithFee, 40);
     const confirmedUnderpaid = await makeBooking(env, TENANT_C, { estCost: 300 });
     await pay(env, TENANT_C, confirmedUnderpaid, 50);
@@ -158,7 +158,7 @@ describe('admin bookings payload carries cancellation fields', () => {
     });
     // Cancelled boarding with a stored $55 fee.
     const cancelled = await makeBooking(env, TENANT_A, { serviceType: 'boarding', estCost: 90 });
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, cancelled, 'cancelled', 55);
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, cancelled, 'cancelled', 55);
 
     const body = (await (await getBookings(env)).json()) as {
       bookings: {

@@ -4,7 +4,7 @@ import { insertBookingRequest, insertPayment, updateBookingStatus } from '../db/
 import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed' = 'confirmed') =>
-  insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId: null,
     serviceType: 'boarding',
     startDate: '2030-01-01',
@@ -32,7 +32,7 @@ describe('admin payment routes', () => {
   it('records a payment and returns it with the new paid total', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
-    await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
       amount: 10,
       method: 'cash',
@@ -96,13 +96,13 @@ describe('admin payment routes', () => {
   it('404s recording against a cancelled booking', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
-    await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, bookingId, 'cancelled');
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, bookingId, 'cancelled');
     expect((await postPayment(env, bookingId, goodBody)).status).toBe(404);
   });
 
   it('404s recording against a blocked sentinel row', async () => {
     const { env } = createTestEnv();
-    const blockedId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const blockedId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: '2030-02-01',

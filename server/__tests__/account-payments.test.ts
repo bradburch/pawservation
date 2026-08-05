@@ -23,13 +23,13 @@ const SLUG_C = 'paws-and-relax';
  * nobody agreed to.
  */
 async function household(env: Env, raw: Parameters<typeof seedPets>[0]) {
-  const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'jen@example.com', 'Jen');
+  const jen = await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_C, 'jen@example.com', 'Jen');
   const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
   return { jen, accountId: rex };
 }
 
 async function book(env: Env, endUserId: string, petIds: string[], estCost: number) {
-  const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_C, {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
     endUserId,
     serviceType: 'boarding',
     startDate: '2030-01-01',
@@ -39,12 +39,12 @@ async function book(env: Env, endUserId: string, petIds: string[], estCost: numb
     estCost,
     status: 'confirmed',
   });
-  await addBookingPets(env.PAWBOOK_DB, TENANT_C, id, petIds);
+  await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, petIds);
   return id;
 }
 
 const accountPayment = (env: Env, tenantId: string, accountId: string, amount: number) =>
-  insertAccountPayment(env.PAWBOOK_DB, tenantId, {
+  insertAccountPayment(env.PAWSERVATION_DB, tenantId, {
     accountId,
     amount,
     method: 'venmo',
@@ -64,15 +64,15 @@ describe('account payments (repo)', () => {
     expect(paymentId).not.toBeNull();
 
     // ONE row — no split across the eight bookings, and none of them acquired a payment of its own.
-    const rows = await listPaymentsForAccount(env.PAWBOOK_DB, TENANT_C, accountId);
+    const rows = await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, accountId);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 400, BookingRequestId: null });
     for (const bookingId of bookings) {
-      expect(await listPaymentsForBooking(env.PAWBOOK_DB, TENANT_C, bookingId)).toEqual([]);
+      expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, bookingId)).toEqual([]);
     }
 
     // The household balance reflects the $400 exactly once: 8 × $50 owed, $400 received.
-    const [balance] = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(balance).toMatchObject({ expectedTotal: 400, paidTotal: 400, balance: 0 });
   });
 
@@ -80,7 +80,7 @@ describe('account payments (repo)', () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
     const bookingId = await book(env, jen.Id, [accountId], 300);
-    await insertPayment(env.PAWBOOK_DB, TENANT_C, {
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
       amount: 100,
       method: 'cash',
@@ -89,18 +89,23 @@ describe('account payments (repo)', () => {
       externalRef: null,
     });
     await accountPayment(env, TENANT_C, accountId, 150);
-    const [balance] = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(balance).toMatchObject({ expectedTotal: 300, paidTotal: 250, balance: 50 });
   });
 
   it('lands on the household even when the account id names a co-owned pet', async () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
-    const sam = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'sam@example.com', 'Sam');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_C, accountId, sam.Id);
+    const sam = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'sam@example.com',
+      'Sam',
+    );
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_C, accountId, sam.Id);
     await book(env, jen.Id, [accountId], 100);
     await accountPayment(env, TENANT_C, accountId, 60);
-    const households = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(households).toHaveLength(1); // still one household, one balance
     expect(households[0]).toMatchObject({ paidTotal: 60, balance: 40 });
   });
@@ -109,7 +114,7 @@ describe('account payments (repo)', () => {
     const { env, raw } = createTestEnv();
     const { accountId } = await household(env, raw);
     await accountPayment(env, TENANT_C, accountId, 200);
-    const [balance] = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_C);
+    const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(balance).toMatchObject({ expectedTotal: 0, paidTotal: 200, balance: -200 });
   });
 
@@ -121,9 +126,9 @@ describe('account payments (repo)', () => {
     // …nor can an id that is no pet at all.
     expect(await accountPayment(env, TENANT_C, 'p_nonexistent', 100)).toBeNull();
     await accountPayment(env, TENANT_C, accountId, 100);
-    expect(await listPaymentsForAccount(env.PAWBOOK_DB, TENANT_A, accountId)).toEqual([]);
+    expect(await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_A, accountId)).toEqual([]);
     // TENANT_B has households of its own (seed.sql), and not a dollar of C's money is in them.
-    const otherTenant = await getHouseholdBalances(env.PAWBOOK_DB, TENANT_B);
+    const otherTenant = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_B);
     expect(otherTenant.some((h) => h.accountId === accountId)).toBe(false);
     expect(otherTenant.reduce((sum, h) => sum + h.paidTotal, 0)).toBe(0);
   });
@@ -131,14 +136,25 @@ describe('account payments (repo)', () => {
   it('deleting a household payment is tenant-scoped and needs the matching account id', async () => {
     const { env, raw } = createTestEnv();
     const { accountId } = await household(env, raw);
-    const other = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_C, 'ana@example.com', 'Ana');
+    const other = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_C, other.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const paymentId = (await accountPayment(env, TENANT_C, accountId, 100))!;
-    expect(await deleteAccountPayment(env.PAWBOOK_DB, TENANT_A, accountId, paymentId)).toBe(false);
-    expect(await deleteAccountPayment(env.PAWBOOK_DB, TENANT_C, mia, paymentId)).toBe(false);
-    expect(await deleteAccountPayment(env.PAWBOOK_DB, TENANT_C, accountId, paymentId)).toBe(true);
-    expect(await listPaymentsForAccount(env.PAWBOOK_DB, TENANT_C, accountId)).toEqual([]);
-    expect(await deleteAccountPayment(env.PAWBOOK_DB, TENANT_C, accountId, paymentId)).toBe(false);
+    expect(await deleteAccountPayment(env.PAWSERVATION_DB, TENANT_A, accountId, paymentId)).toBe(
+      false,
+    );
+    expect(await deleteAccountPayment(env.PAWSERVATION_DB, TENANT_C, mia, paymentId)).toBe(false);
+    expect(await deleteAccountPayment(env.PAWSERVATION_DB, TENANT_C, accountId, paymentId)).toBe(
+      true,
+    );
+    expect(await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, accountId)).toEqual([]);
+    expect(await deleteAccountPayment(env.PAWSERVATION_DB, TENANT_C, accountId, paymentId)).toBe(
+      false,
+    );
   });
 });
 
@@ -194,7 +210,7 @@ describe('account payments (admin routes)', () => {
       env,
     );
     expect(del.status).toBe(204);
-    expect(await listPaymentsForAccount(env.PAWBOOK_DB, TENANT_C, accountId)).toEqual([]);
+    expect(await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, accountId)).toEqual([]);
   });
 
   it('401s without a token and 404s an account this tenant does not own', async () => {

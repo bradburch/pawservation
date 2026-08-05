@@ -23,7 +23,7 @@ async function seedExternal(
   opts?: { start?: string; end?: string; status?: string; gcalEventId?: string | null },
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await env.PAWBOOK_DB.prepare(
+  await env.PAWSERVATION_DB.prepare(
     `INSERT INTO BookingRequests
        (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount,
         EstCost, GCalEventId, ExternalSummary, Status, SyncPending)
@@ -67,8 +67,8 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
   it('cannot be confirmed, cancelled, declined, or paid', async () => {
     const { env } = createTestEnv();
     const id = await seedExternal(env);
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'cancelled')).toBe(false);
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'confirmed')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed')).toBe(false);
     const res = await app.request(
       `/api/sunny-paws/admin/bookings/${id}/status`,
       {
@@ -80,7 +80,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     );
     expect(res.status).toBe(404);
     await expect(
-      insertPayment(env.PAWBOOK_DB, TENANT_A, {
+      insertPayment(env.PAWSERVATION_DB, TENANT_A, {
         bookingRequestId: id,
         amount: 10,
         method: 'cash',
@@ -95,7 +95,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     const { env } = createTestEnv();
     await seedExternal(env);
     const ids = await listSyncedBookingIds(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
@@ -112,7 +112,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
       env,
     );
     expect(res.status).toBe(200);
-    const { results } = await env.PAWBOOK_DB.prepare(
+    const { results } = await env.PAWSERVATION_DB.prepare(
       "SELECT Id FROM BookingRequests WHERE TenantId = ? AND ServiceType = 'external'",
     )
       .bind(TENANT_A)
@@ -125,7 +125,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     // 'declined' is only ever valid from Status='pending' — seed pending explicitly so a false
     // pass can't be explained by the Status guard instead of the ServiceType one under test.
     const id = await seedExternal(env, { status: 'pending' });
-    expect(await updateBookingStatus(env.PAWBOOK_DB, TENANT_A, id, 'declined')).toBe(false);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined')).toBe(false);
   });
 
   it('is excluded from calendar backfill candidates by ServiceType, not incidentally by GCalEventId', async () => {
@@ -135,7 +135,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     // prove the ServiceType != 'external' exclusion is what actually guards backfill — 'blocked'
     // rows are NOT excluded here; they are legitimate backfill candidates in their own right.
     const id = await seedExternal(env, { gcalEventId: null });
-    const rows = await listUnsyncedFutureBookings(env.PAWBOOK_DB, TENANT_A, TODAY, 200);
+    const rows = await listUnsyncedFutureBookings(env.PAWSERVATION_DB, TENANT_A, TODAY, 200);
     expect(rows.find((r) => r.Id === id)).toBeUndefined();
   });
 
@@ -160,8 +160,8 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
  * against would show up as a single bind count exceeding ~91 (90 ids + 1 tenantId). */
 function spyOnDeleteBindCounts(env: Env): number[] {
   const bindCounts: number[] = [];
-  const original = env.PAWBOOK_DB.prepare.bind(env.PAWBOOK_DB);
-  vi.spyOn(env.PAWBOOK_DB, 'prepare').mockImplementation((sql: string) => {
+  const original = env.PAWSERVATION_DB.prepare.bind(env.PAWSERVATION_DB);
+  vi.spyOn(env.PAWSERVATION_DB, 'prepare').mockImplementation((sql: string) => {
     const stmt = original(sql);
     if (!sql.includes('DELETE FROM BookingRequests WHERE TenantId = ? AND Id IN')) return stmt;
     const rawBind = stmt.bind.bind(stmt);
@@ -207,13 +207,13 @@ describe('deleteExternalEventsMissing — D1 100-bound-parameter cap', () => {
 
     const bindCounts = spyOnDeleteBindCounts(env);
     const existingRows = await listExternalEventRowsInWindow(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
     );
     const deleted = await deleteExternalEventsMissing(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       existingRows,
       liveIds,
@@ -225,7 +225,7 @@ describe('deleteExternalEventsMissing — D1 100-bound-parameter cap', () => {
     expect(bindCounts.length).toBeGreaterThan(0);
     for (const count of bindCounts) expect(count).toBeLessThanOrEqual(91);
 
-    const remaining = await env.PAWBOOK_DB.prepare(
+    const remaining = await env.PAWSERVATION_DB.prepare(
       "SELECT GCalEventId FROM BookingRequests WHERE TenantId = ? AND ServiceType = 'external' ORDER BY GCalEventId",
     )
       .bind(TENANT_A)
@@ -247,12 +247,17 @@ describe('deleteExternalEventsMissing — D1 100-bound-parameter cap', () => {
 
     const bindCounts = spyOnDeleteBindCounts(env);
     const existingRows = await listExternalEventRowsInWindow(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       addDays(TODAY, -1),
       addDays(TODAY, 180),
     );
-    const deleted = await deleteExternalEventsMissing(env.PAWBOOK_DB, TENANT_A, existingRows, []);
+    const deleted = await deleteExternalEventsMissing(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      existingRows,
+      [],
+    );
 
     expect(deleted).toBe(200);
     expect(bindCounts).toHaveLength(3);

@@ -310,7 +310,7 @@ describe('settings GET/PUT — rows drive pet types', () => {
 
   it('a fresh signup tenant lists dog + cat enabled from rows (F1)', async () => {
     const { env } = createTestEnv();
-    await createTenantFromSignup(env.PAWBOOK_DB, {
+    await createTenantFromSignup(env.PAWSERVATION_DB, {
       tenantId: 'tnt_fresh',
       slug: 'fresh-paws',
       displayName: 'Fresh Paws',

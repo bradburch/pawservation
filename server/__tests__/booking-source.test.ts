@@ -5,7 +5,7 @@ import { createTestEnv, TENANT_A } from './helpers';
 describe('BookingRequests.Source', () => {
   it('stores the source when given and NULL when omitted', async () => {
     const { env, raw } = createTestEnv();
-    const withSource = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const withSource = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2028-09-01',
@@ -16,7 +16,7 @@ describe('BookingRequests.Source', () => {
       status: 'pending',
       source: 'mcp',
     });
-    const withoutSource = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const withoutSource = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2028-09-05',

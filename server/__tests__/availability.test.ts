@@ -124,7 +124,7 @@ describe('availability API — regression guards', () => {
     // A 2-pet request Mar 11→12 occupies only the night of the 11th, which already holds one pet
     // (1+2>2). The refusal is the plain pool arithmetic on that night: the day is neither a
     // boundary of the existing stay nor freed by the booking that starts on the 12th.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-03-08',
@@ -134,7 +134,7 @@ describe('availability API — regression guards', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-03-12',
@@ -162,7 +162,7 @@ describe('availability API — regression guards', () => {
   it('does not accept a 2-pet stay starting on an existing stay’s last occupied night', async () => {
     const { env } = createTestEnv();
     // Sunny Paws boarding: max 2 pets/day. One pet Mar 1→5 (nights of the 1st–4th).
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-03-01',
@@ -173,7 +173,7 @@ describe('availability API — regression guards', () => {
       status: 'confirmed',
     });
     // Two dogs are priced as a set so the refusal can only ever be about capacity.
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
        VALUES (?, 'boarding', 'standard', 'cat:1|dog:1', 50)`,
     )
@@ -221,7 +221,7 @@ describe('availability API — regression guards', () => {
   it('does not accept a 2-pet stay departing on an existing stay’s first night', async () => {
     const { env } = createTestEnv();
     // Sunny Paws boarding: max 2 pets/day. Two pets Sep 6→9 (nights of the 6th, 7th and 8th).
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-09-06',
@@ -232,7 +232,7 @@ describe('availability API — regression guards', () => {
       status: 'confirmed',
     });
     // Priced as a set so the refusal can only ever be about capacity.
-    await env.PAWBOOK_DB.prepare(
+    await env.PAWSERVATION_DB.prepare(
       `INSERT INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, MixKey, Rate)
        VALUES (?, 'boarding', 'standard', 'cat:1|dog:1', 50)`,
     )
@@ -281,7 +281,7 @@ describe('availability API — regression guards', () => {
     const { env } = createTestEnv();
     // The sitter blocks Sep 6. A boarding also STARTS on Sep 6, which sets the day's boundary flag —
     // and an endpoint concession that only asks `isBoundary` would let a request end on the block.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: '2027-09-06',
@@ -291,7 +291,7 @@ describe('availability API — regression guards', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-09-06',
@@ -396,7 +396,7 @@ describe('availability API — regression guards', () => {
 
   it('the public quote runs pet-type acceptance before pricing — a cat against a dogs-only service gets the acceptance message, not unpriced-pet-set', async () => {
     const { env } = createTestEnv();
-    await setServiceAcceptedPetTypes(env.PAWBOOK_DB, TENANT_A, 'boarding', ['dog']);
+    await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'boarding', ['dog']);
     // Bella (dog) + Mochi (cat), no dog+cat mix rate seeded: absent the acceptance gate, this
     // 2-pet set would fall through to estimateCost and get refused as unpriced-pet-set instead.
     const res = await quote(env, 'sunny-paws', 'type=boarding&start=2027-06-01&end=2027-06-03', [
@@ -592,7 +592,7 @@ describe('checkAvailability', () => {
 
   it('unlimited tenant (paws-and-relax) accepts overlapping boardings', async () => {
     const { env, raw } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, 'tnt_pawsandrelax', {
+    await insertBookingRequest(env.PAWSERVATION_DB, 'tnt_pawsandrelax', {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2028-05-01',
@@ -623,7 +623,7 @@ describe('checkAvailability', () => {
     const t = tenant();
     const slotOption = opt({ OptionKey: 'morning-walk', Capacity: 2 });
 
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -634,7 +634,7 @@ describe('checkAvailability', () => {
       estCost: null,
       status: 'pending',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -645,7 +645,7 @@ describe('checkAvailability', () => {
       estCost: null,
       status: 'confirmed',
     });
-    const cancelledId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const cancelledId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -689,7 +689,7 @@ describe('checkAvailability', () => {
     const slotOption = opt({ OptionKey: 'morning-walk', Capacity: 4 });
 
     // One 2-pet booking: 2 of 4 pets used → still available.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -713,7 +713,7 @@ describe('checkAvailability', () => {
     expect(partial).toMatchObject({ available: true });
 
     // A second 2-pet booking fills the 4-pet slot → full.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -744,7 +744,7 @@ describe('checkAvailability', () => {
 
     // 1 of 2 pets used. The old check asked only `count >= Capacity` (1 >= 2 → false), so a
     // 3-pet request was ACCEPTED and put 4 pets in a 2-pet slot. The requested set has to fit.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -807,7 +807,7 @@ describe('checkAvailability', () => {
     });
     // House-sit service with a 2-pet cap and one existing 2-pet sit (Aug, no boarding overlap).
     const service = svc('housesitting', { MaxConcurrentPets: 2 });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'housesitting',
       startDate: '2028-08-10',
@@ -1638,7 +1638,7 @@ describe('quote/stamp parity for a day-unit range service', () => {
 describe('countSlotBookings / listSlotBookingCounts', () => {
   it('counts only pending/confirmed bookings for the given option and date', async () => {
     const { env, raw } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -1649,7 +1649,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
       estCost: null,
       status: 'pending',
     });
-    const cancelledId = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const cancelledId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -1662,7 +1662,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
     });
     raw.prepare('UPDATE BookingRequests SET Status = ? WHERE Id = ?').run('cancelled', cancelledId);
     // A different option, same date — must not count toward morning-walk.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-01',
@@ -1676,7 +1676,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
     // Same option, but on toDateExclusive itself — must NOT be included in the [from, to) range
     // below. This is what actually exercises the exclusive upper bound (a `StartDate <=
     // toDateExclusive` bug would wrongly pull this one in).
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-02',
@@ -1689,7 +1689,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
     });
 
     const count = await countSlotBookings(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'walk',
       'morning-walk',
@@ -1698,7 +1698,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
     expect(count).toBe(1);
 
     const counts = await listSlotBookingCounts(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'walk',
       'morning-walk',
@@ -1711,7 +1711,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
 
   it('countSlotBookings excludes the given booking id (self-exclusion for race checks)', async () => {
     const { env } = createTestEnv();
-    const id = await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-05',
@@ -1723,14 +1723,14 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
       status: 'pending',
     });
     const including = await countSlotBookings(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'walk',
       'morning-walk',
       '2028-09-05',
     );
     const excluding = await countSlotBookings(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'walk',
       'morning-walk',
@@ -1743,7 +1743,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
 
   it('sums PetCount across bookings for the slot', async () => {
     const { env } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-10',
@@ -1754,7 +1754,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
       estCost: null,
       status: 'confirmed',
     });
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
       startDate: '2028-09-10',
@@ -1766,7 +1766,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
       status: 'confirmed',
     });
     const count = await countSlotBookings(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'walk',
       'morning-walk',
@@ -1775,7 +1775,7 @@ describe('countSlotBookings / listSlotBookingCounts', () => {
     expect(count).toBe(5); // 2 + 3 pets, not 2 bookings
 
     const counts = await listSlotBookingCounts(
-      env.PAWBOOK_DB,
+      env.PAWSERVATION_DB,
       TENANT_A,
       'walk',
       'morning-walk',

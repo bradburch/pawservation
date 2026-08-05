@@ -67,7 +67,7 @@ describe('Tenants.PremiumUntil — the column', () => {
 
     // And it rides in the Tenant object, because the request path reads it off the cached row
     // rather than issuing a second query.
-    expect((await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))?.PremiumUntil).toBeNull();
+    expect((await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))?.PremiumUntil).toBeNull();
   });
 });
 
@@ -78,7 +78,7 @@ describe('the tenant KV cache key is versioned for exactly this', () => {
     // A v2 entry is what the PREVIOUS worker left behind: the same row, minus the column this
     // migration added. If the new code read it, `PremiumUntil` would come back `undefined` — a
     // paying sitter demoted to free for a whole TTL, with the type insisting it cannot happen.
-    await env.PAWBOOK_CACHE.put(
+    await env.PAWSERVATION_CACHE.put(
       'tenant:sunny-paws:config:v2',
       JSON.stringify({ Id: TENANT_A, Slug: 'sunny-paws', DisplayName: 'Stale', DisabledAt: null }),
     );
@@ -89,7 +89,7 @@ describe('the tenant KV cache key is versioned for exactly this', () => {
     expect('PremiumUntil' in tenant!).toBe(true);
 
     // The new entry lands under the new key.
-    expect(await env.PAWBOOK_CACHE.get('tenant:sunny-paws:config:v3')).not.toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v3')).not.toBeNull();
   });
 });
 
@@ -102,7 +102,7 @@ describe('the platform owner sets and clears premium', () => {
       premiumUntil: '2099-01-01 00:00:00',
     });
     // Stored in SQLite's own datetime shape, the one CreatedAt/DisabledAt already use.
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.PremiumUntil).toBe(
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.PremiumUntil).toBe(
       '2099-01-01 00:00:00',
     );
     expect((await configOf(env, 'sunny-paws')).premium.assistant).toBe(true);
@@ -115,7 +115,7 @@ describe('the platform owner sets and clears premium', () => {
 
     const res = await patchPremium(env, TENANT_A, null, await ownerHeaders());
     expect(res.status).toBe(200);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.PremiumUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.PremiumUntil).toBeNull();
     // Not merely stored: VISIBLE immediately. The PATCH invalidates the tenant cache, so a
     // revocation does not sit behind a 60-second TTL.
     expect((await configOf(env, 'sunny-paws')).premium.assistant).toBe(false);
@@ -125,14 +125,14 @@ describe('the platform owner sets and clears premium', () => {
     // The two owner controls share one PATCH; neither may be a hidden side effect of the other.
     const { env } = createTestEnv();
     await patchPremium(env, TENANT_A, FUTURE, await ownerHeaders());
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.DisabledAt).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.DisabledAt).toBeNull();
 
     await app.request(
       `/api/owner/sitters/${TENANT_A}`,
       { method: 'PATCH', headers: await ownerHeaders(), body: '{"disabled":true}' },
       env,
     );
-    const after = await getTenantById(env.PAWBOOK_DB, TENANT_A);
+    const after = await getTenantById(env.PAWSERVATION_DB, TENANT_A);
     expect(after?.PremiumUntil).toBe('2099-01-01 00:00:00');
     expect(after?.DisabledAt).not.toBeNull();
   });
@@ -147,7 +147,7 @@ describe('the platform owner sets and clears premium', () => {
     expect(empty.status).toBe(400);
     const nonsense = await patchPremium(env, TENANT_A, 'next tuesday', await ownerHeaders());
     expect(nonsense.status).toBe(400);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.PremiumUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.PremiumUntil).toBeNull();
   });
 
   it('404s an unknown tenant without writing anything', async () => {
@@ -161,7 +161,7 @@ describe('a sitter cannot grant herself premium', () => {
     const { env } = createTestEnv();
     const res = await patchPremium(env, TENANT_A, FUTURE, await adminHeadersFor(TENANT_A));
     expect(res.status).toBe(401);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.PremiumUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.PremiumUntil).toBeNull();
     expect((await configOf(env, 'sunny-paws')).premium.assistant).toBe(false);
   });
 
@@ -172,7 +172,7 @@ describe('a sitter cannot grant herself premium', () => {
     const { env } = createTestEnv();
     const res = await patchPremium(env, TENANT_B, FUTURE, await adminHeadersFor(TENANT_A));
     expect(res.status).toBe(401);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_B))?.PremiumUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))?.PremiumUntil).toBeNull();
   });
 });
 
@@ -199,7 +199,7 @@ describe('GET /api/:slug/config publishes the derived premium block', () => {
     const { env } = createTestEnv();
     const res = await patchPremium(env, TENANT_A, PAST, await ownerHeaders());
     expect(res.status).toBe(200);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.PremiumUntil).toBe(
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.PremiumUntil).toBe(
       '2000-01-01 00:00:00',
     );
     const { premium } = await configOf(env, 'sunny-paws');
@@ -275,6 +275,6 @@ describe('premium is per tenant, like everything else', () => {
     await patchPremium(env, TENANT_A, FUTURE, await ownerHeaders());
     expect((await configOf(env, 'sunny-paws')).premium.assistant).toBe(true);
     expect((await configOf(env, 'happy-tails')).premium.assistant).toBe(false);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_B))?.PremiumUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))?.PremiumUntil).toBeNull();
   });
 });

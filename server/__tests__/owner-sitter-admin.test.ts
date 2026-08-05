@@ -18,7 +18,7 @@ describe('owner disable/enable/remove routes', () => {
       env,
     );
     expect(off.status).toBe(200);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.DisabledAt).not.toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.DisabledAt).not.toBeNull();
 
     const on = await app.request(
       `/api/owner/sitters/${TENANT_A}`,
@@ -26,7 +26,7 @@ describe('owner disable/enable/remove routes', () => {
       env,
     );
     expect(on.status).toBe(200);
-    expect((await getTenantById(env.PAWBOOK_DB, TENANT_A))?.DisabledAt).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))?.DisabledAt).toBeNull();
 
     const missing = await app.request(
       '/api/owner/sitters/nope',
@@ -44,7 +44,7 @@ describe('owner disable/enable/remove routes', () => {
       env,
     );
     expect(res.status).toBe(204);
-    expect(await getTenantById(env.PAWBOOK_DB, TENANT_A)).toBeNull();
+    expect(await getTenantById(env.PAWSERVATION_DB, TENANT_A)).toBeNull();
 
     const missing = await app.request(
       '/api/owner/sitters/nope',

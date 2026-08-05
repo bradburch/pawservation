@@ -13,7 +13,7 @@ import type { Tenant } from '../types';
 const tenant = { Id: TENANT_A, Slug: 'sunny-paws', Timezone: null } as Tenant;
 
 async function connectCalendar(env: Env, expiresAt: string) {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-1'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-1'),
     expiresAt,
@@ -119,7 +119,7 @@ describe('syncBookingToCalendar', () => {
     seedBooking(raw, 'brace');
     // Simulate a concurrent writer that already claimed the slot: GCalEventId is non-NULL, so the
     // NULL-expected compare-and-swap in this call must NOT stick.
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'brace', 'evt_winner', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, 'brace', 'evt_winner', null);
 
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
       const method = (init as RequestInit).method;
@@ -205,7 +205,7 @@ describe('updateBookingCalendarEvent', () => {
     const { env, raw } = createTestEnv();
     await connectCalendar(env, '2030-01-01T00:00:00Z');
     seedBooking(raw, 'bu1');
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu1', 'evt_bu1', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, 'bu1', 'evt_bu1', null);
     const spy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_bu1' }), { status: 200 }));
@@ -239,7 +239,7 @@ describe('updateBookingCalendarEvent', () => {
     const { env, raw } = createTestEnv();
     await connectCalendar(env, '2030-01-01T00:00:00Z');
     seedBooking(raw, 'bu_gone');
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu_gone', 'evt_stale', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, 'bu_gone', 'evt_stale', null);
 
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
       const method = (init as RequestInit).method;
@@ -283,7 +283,7 @@ describe('updateBookingCalendarEvent', () => {
     seedBooking(raw, 'bu_race');
     // The stored id no longer equals the stale id the confirm path is recreating against (another
     // writer moved it), so the stale-expected compare-and-swap must NOT stick.
-    await setBookingGCalEventId(env.PAWBOOK_DB, TENANT_A, 'bu_race', 'evt_moved', null);
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, 'bu_race', 'evt_moved', null);
 
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
       const method = (init as RequestInit).method;

@@ -20,7 +20,7 @@ import type { Tenant } from '../types';
 const CALENDAR_ID = 'primary';
 
 async function connectCalendar(env: Env): Promise<void> {
-  await setProviderTokens(env.PAWBOOK_DB, TENANT_A, 'calendar', 'google-calendar', {
+  await setProviderTokens(env.PAWSERVATION_DB, TENANT_A, 'calendar', 'google-calendar', {
     access: await encryptToken(TEST_SECRET, 'access-marisol'),
     refresh: await encryptToken(TEST_SECRET, 'refresh-marisol'),
     expiresAt: '2031-01-01T00:00:00Z', // far future — no refresh round-trip to account for

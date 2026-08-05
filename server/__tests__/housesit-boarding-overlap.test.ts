@@ -24,7 +24,7 @@ const HOUSESIT_END = '2027-03-10'; // exclusive → occupies Mar 1–9
 
 /** An existing, confirmed Sunny Paws house sit over HOUSESIT_START..HOUSESIT_END. */
 async function seedHouseSit(env: Env, start = HOUSESIT_START, end = HOUSESIT_END): Promise<void> {
-  await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+  await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
     endUserId: null,
     serviceType: 'housesitting',
     startDate: start,
@@ -37,8 +37,8 @@ async function seedHouseSit(env: Env, start = HOUSESIT_START, end = HOUSESIT_END
 }
 
 async function setAllowance(env: Env, days: number | null): Promise<void> {
-  const t = (await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!;
-  await updateTenantSettings(env.PAWBOOK_DB, TENANT_A, {
+  const t = (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!;
+  await updateTenantSettings(env.PAWSERVATION_DB, TENANT_A, {
     displayName: t.DisplayName,
     accentColor: t.AccentColor,
     timezone: t.Timezone,
@@ -112,7 +112,7 @@ describe('overlap allowance — storage + defaults', () => {
     // every existing business without a backfill. If this ever reads null, the rule silently
     // stops running everywhere and the rest of this file is testing nothing.
     const { env } = createTestEnv();
-    const t = await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws');
+    const t = await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws');
     expect(t!.HousesitBoardingOverlapDays).toBe(1);
   });
 
@@ -130,13 +130,13 @@ describe('overlap allowance — storage + defaults', () => {
       );
 
     expect((await put(0)).status).toBe(204);
-    expect((await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!.HousesitBoardingOverlapDays).toBe(
-      0,
-    );
+    expect(
+      (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!.HousesitBoardingOverlapDays,
+    ).toBe(0);
     expect((await put(null)).status).toBe(204);
-    expect((await getTenantBySlug(env.PAWBOOK_DB, 'sunny-paws'))!.HousesitBoardingOverlapDays).toBe(
-      null,
-    );
+    expect(
+      (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!.HousesitBoardingOverlapDays,
+    ).toBe(null);
     // 3 is refused rather than stored: an overlapping day only counts at a range's two endpoints,
     // so a bigger number would promise something the engine can never grant.
     expect((await put(3)).status).toBe(400);
@@ -221,7 +221,7 @@ describe('overlap allowance — the availability quote', () => {
     // rule counted overlapping days and stopped at "more than one", so a single interior day
     // passed. It is not a handover — the boarding neither arrives nor departs on Mar 4.
     const { env } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-03-01',
@@ -331,7 +331,7 @@ describe('overlap allowance — the booking POST', () => {
     // Sunny Paws boarding is capped at 2 pets; two confirmed pets fill it with no house sit in
     // sight, and that refusal keeps its own long-standing wording and code.
     const { env } = createTestEnv();
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
       startDate: '2027-04-01',

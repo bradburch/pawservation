@@ -86,7 +86,7 @@ describe('demo booking POST', () => {
   it('still 409s capacity_conflict when the dates are genuinely full', async () => {
     const { env, raw } = createTestEnv();
     // sunny-paws boarding MaxConcurrentPets=2; seed already has 1 pet on 2028-06-20..25.
-    await insertBookingRequest(env.PAWBOOK_DB, TENANT_A, {
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: 'eu_sp_jess',
       serviceType: 'boarding',
       startDate: '2028-06-20',

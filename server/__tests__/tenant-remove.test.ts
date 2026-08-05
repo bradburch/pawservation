@@ -75,7 +75,7 @@ describe('deleteTenantCompletely', () => {
     seedFullTenant(raw, 't_gone', 'gone');
     seedFullTenant(raw, 't_keep', 'keep');
 
-    expect(await deleteTenantCompletely(env.PAWBOOK_DB, 't_gone')).toBe(true);
+    expect(await deleteTenantCompletely(env.PAWSERVATION_DB, 't_gone')).toBe(true);
 
     for (const table of TENANT_TABLES) expect(countFor(raw, table, 't_gone')).toBe(0);
     expect(
@@ -119,6 +119,6 @@ describe('deleteTenantCompletely', () => {
 
   it('returns false for a non-existent tenant', async () => {
     const { env } = createTestEnv();
-    expect(await deleteTenantCompletely(env.PAWBOOK_DB, 'nope')).toBe(false);
+    expect(await deleteTenantCompletely(env.PAWSERVATION_DB, 'nope')).toBe(false);
   });
 });

@@ -8,11 +8,11 @@ const TENANT_C = 'tnt_pawsandrelax';
 describe('ensureDemoCustomer', () => {
   it('provisions customer + pet + owner edge atomically, active, idempotently', async () => {
     const { env, raw } = createTestEnv();
-    const first = await ensureDemoCustomer(env.PAWBOOK_DB, TENANT_A, DEMO_EMAIL, 'dog');
+    const first = await ensureDemoCustomer(env.PAWSERVATION_DB, TENANT_A, DEMO_EMAIL, 'dog');
     expect(first.Email).toBe(DEMO_EMAIL);
     expect(first.Status).toBe('active');
 
-    const again = await ensureDemoCustomer(env.PAWBOOK_DB, TENANT_A, DEMO_EMAIL, 'dog');
+    const again = await ensureDemoCustomer(env.PAWSERVATION_DB, TENANT_A, DEMO_EMAIL, 'dog');
     expect(again.Id).toBe(first.Id);
 
     const users = raw
@@ -35,7 +35,7 @@ describe('ensureDemoCustomer', () => {
 
   it('is per-tenant: provisioning on one tenant creates nothing on another', async () => {
     const { env, raw } = createTestEnv();
-    await ensureDemoCustomer(env.PAWBOOK_DB, TENANT_C, DEMO_EMAIL, 'dog');
+    await ensureDemoCustomer(env.PAWSERVATION_DB, TENANT_C, DEMO_EMAIL, 'dog');
     const other = raw
       .prepare(`SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = ?`)
       .all(TENANT_A, DEMO_EMAIL);
@@ -46,18 +46,18 @@ describe('ensureDemoCustomer', () => {
 describe('demo exclusions', () => {
   it('listCustomers never returns the demo customer; real customers unaffected', async () => {
     const { env } = createTestEnv();
-    const before = await listCustomers(env.PAWBOOK_DB, TENANT_A);
-    await ensureDemoCustomer(env.PAWBOOK_DB, TENANT_A, DEMO_EMAIL, 'dog');
-    const after = await listCustomers(env.PAWBOOK_DB, TENANT_A);
+    const before = await listCustomers(env.PAWSERVATION_DB, TENANT_A);
+    await ensureDemoCustomer(env.PAWSERVATION_DB, TENANT_A, DEMO_EMAIL, 'dog');
+    const after = await listCustomers(env.PAWSERVATION_DB, TENANT_A);
     expect(after).toEqual(before); // jess@example.com still there, demo absent
     expect(after.some((u) => u.Email === DEMO_EMAIL)).toBe(false);
   });
 
   it('listSitterRoster client counts exclude the demo customer', async () => {
     const { env } = createTestEnv();
-    const before = await listSitterRoster(env.PAWBOOK_DB, null);
-    await ensureDemoCustomer(env.PAWBOOK_DB, TENANT_A, DEMO_EMAIL, 'dog');
-    const after = await listSitterRoster(env.PAWBOOK_DB, null);
+    const before = await listSitterRoster(env.PAWSERVATION_DB, null);
+    await ensureDemoCustomer(env.PAWSERVATION_DB, TENANT_A, DEMO_EMAIL, 'dog');
+    const after = await listSitterRoster(env.PAWSERVATION_DB, null);
     expect(after.map((r) => [r.TenantId, r.Clients])).toEqual(
       before.map((r) => [r.TenantId, r.Clients]),
     );

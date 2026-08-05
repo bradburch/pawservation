@@ -28,7 +28,7 @@ const book = (
   estCost: number,
   status: 'pending' | 'confirmed' = 'confirmed',
 ) =>
-  insertBookingRequest(env.PAWBOOK_DB, tenantId, {
+  insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId,
     serviceType: 'boarding',
     startDate: '2030-01-01',
@@ -38,7 +38,7 @@ const book = (
     estCost,
     status,
   }).then(async (id) => {
-    await addBookingPets(env.PAWBOOK_DB, tenantId, id, petIds);
+    await addBookingPets(env.PAWSERVATION_DB, tenantId, id, petIds);
     return id;
   });
 
@@ -51,10 +51,15 @@ const book = (
 describe('GET /:slug/account', () => {
   it('returns the caller own household balance, matching the bookings and payments behind it', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_acct', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_A, jen.Id, [rex], 100);
-    await insertPayment(env.PAWBOOK_DB, TENANT_A, {
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
       amount: 25,
       method: 'cash',
@@ -82,9 +87,14 @@ describe('GET /:slug/account', () => {
 
   it('gives a prepaying caller a NEGATIVE balance, not an error (mirrors Story 2.3)', async () => {
     const { env, raw } = createTestEnv();
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'ana@example.com',
+      'Ana',
+    );
     const [mia] = seedPets(raw, TENANT_A, ana.Id, [{ id: 'p_mia_acct', petType: 'dog' }]);
-    await insertAccountPayment(env.PAWBOOK_DB, TENANT_A, {
+    await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: mia,
       amount: 300,
       method: 'venmo',
@@ -108,7 +118,7 @@ describe('GET /:slug/account', () => {
 
   it('answers zero for a brand-new customer with no bookings, no payments and no pets', async () => {
     const { env } = createTestEnv();
-    await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'new@example.com', 'New');
+    await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_A, 'new@example.com', 'New');
     const token = await endUserToken(env, 'sunny-paws', 'new@example.com');
 
     const res = await app.request(
@@ -136,11 +146,21 @@ describe('GET /:slug/account', () => {
 
   it('SECURITY: never publishes another household under the same tenant', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_iso', petType: 'dog' }]);
     await book(env, TENANT_A, jen.Id, [rex], 999); // another household's money
 
-    const ana = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'ana@example.com', 'Ana');
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'ana@example.com',
+      'Ana',
+    );
     seedPets(raw, TENANT_A, ana.Id, [{ id: 'p_mia_iso', petType: 'cat' }]);
     const token = await endUserToken(env, 'sunny-paws', 'ana@example.com');
 
@@ -157,8 +177,18 @@ describe('GET /:slug/account', () => {
 
   it('SECURITY: the same email under two tenants resolves to two different people, and a tenant-A token cannot read tenant B', async () => {
     const { env, raw } = createTestEnv();
-    const userA = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'dual@example.com', null);
-    const userB = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_B, 'dual@example.com', null);
+    const userA = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'dual@example.com',
+      null,
+    );
+    const userB = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_B,
+      'dual@example.com',
+      null,
+    );
     expect(userA.Id).not.toBe(userB.Id);
 
     const [petB] = seedPets(raw, TENANT_B, userB.Id, [{ id: 'p_dual_b', petType: 'dog' }]);
@@ -176,10 +206,15 @@ describe('GET /:slug/account', () => {
 
   it('SHARED HOUSEHOLD: a caller who co-owns a pet with someone else sees the same combined balance as that person, not two separate ones', async () => {
     const { env, raw } = createTestEnv();
-    const jen = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'jen@example.com', 'Jen');
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jen@example.com',
+      'Jen',
+    );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_shared', petType: 'dog' }]);
-    const co = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'co@example.com', 'Co');
-    await addPetOwner(env.PAWBOOK_DB, TENANT_A, rex, co.Id);
+    const co = await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_A, 'co@example.com', 'Co');
+    await addPetOwner(env.PAWSERVATION_DB, TENANT_A, rex, co.Id);
     const bookingId = await book(env, TENANT_A, jen.Id, [rex], 200);
 
     const jenToken = await endUserToken(env, 'sunny-paws', 'jen@example.com');

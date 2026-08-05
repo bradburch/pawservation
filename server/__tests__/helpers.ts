@@ -109,8 +109,8 @@ export function createTestEnv(opts?: {
     raw.exec(asOf ? sql.replaceAll(`date('now'`, `date('${asOf}'`) : sql);
   }
   const env = {
-    PAWBOOK_DB: makeD1(raw),
-    PAWBOOK_CACHE: makeKV(),
+    PAWSERVATION_DB: makeD1(raw),
+    PAWSERVATION_CACHE: makeKV(),
     TOKEN_SECRET: TEST_SECRET,
     ENVIRONMENT: 'development', // lets /identify return prototypeCode when no email provider is set
     OWNER_EMAILS: OWNER_EMAIL,
