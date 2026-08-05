@@ -37,7 +37,7 @@ import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
 /**
- * The ONLY module allowed to touch PAWBOOK_DB. Every function below either resolves a
+ * The ONLY module allowed to touch PAWSERVATION_DB. Every function below either resolves a
  * tenant (getTenantBySlug) / a login (getTenantUserByEmail) or takes `tenantId` as its FIRST
  * parameter and scopes its SQL with `WHERE TenantId = ?`. Importing the D1 binding elsewhere
  * is a defect.

@@ -68,9 +68,9 @@ const RATE_KEY = (email: string, ip: string) => `signup:rl:${email}:${ip}`;
  */
 async function eligibleKind(env: Env, email: string): Promise<'sitter' | 'owner' | null> {
   if (isOwnerEmail(env, email)) {
-    return (await getOwnerUserByEmail(env.PAWBOOK_DB, email)) ? null : 'owner';
+    return (await getOwnerUserByEmail(env.PAWSERVATION_DB, email)) ? null : 'owner';
   }
-  const row = await getAllowedSitter(env.PAWBOOK_DB, email);
+  const row = await getAllowedSitter(env.PAWSERVATION_DB, email);
   return row && !row.ClaimedAt ? 'sitter' : null;
 }
 
@@ -86,7 +86,7 @@ export const signupRoutes = new Hono<AppEnv>()
     // Over the cap → the SAME neutral 200 with the send skipped, so the limiter isn't an oracle.
     const rateKey = RATE_KEY(email, c.req.header('CF-Connecting-IP') ?? 'unknown');
     const overCap = await checkAndBumpRateLimit(
-      c.env.PAWBOOK_CACHE,
+      c.env.PAWSERVATION_CACHE,
       rateKey,
       RATE_LIMIT_MAX,
       RATE_LIMIT_TTL_SECONDS,
@@ -158,9 +158,9 @@ export const signupRoutes = new Hono<AppEnv>()
 
     // Single-use: consume the nonce before provisioning (missing ⇒ expired/used ⇒ reject) —
     // the OAuth-callback consume-on-use pattern.
-    const seen = await c.env.PAWBOOK_CACHE.get(SIGNUP_NONCE_KEY(payload.nonce));
+    const seen = await c.env.PAWSERVATION_CACHE.get(SIGNUP_NONCE_KEY(payload.nonce));
     if (!seen) return c.json({ error: EXPIRED_ERROR }, 400);
-    await c.env.PAWBOOK_CACHE.delete(SIGNUP_NONCE_KEY(payload.nonce));
+    await c.env.PAWSERVATION_CACHE.delete(SIGNUP_NONCE_KEY(payload.nonce));
 
     if (payload.kind === 'owner') {
       // The secret may have changed since issue — re-check membership.
@@ -168,7 +168,7 @@ export const signupRoutes = new Hono<AppEnv>()
       try {
         // OwnerUsers.Email UNIQUE guards the replay that beat the nonce consume.
         await insertOwnerUser(
-          c.env.PAWBOOK_DB,
+          c.env.PAWSERVATION_DB,
           crypto.randomUUID(),
           payload.email,
           await hashPassword(password),
@@ -186,7 +186,7 @@ export const signupRoutes = new Hono<AppEnv>()
     let slug = slugBase;
     for (
       let n = 2;
-      RESERVED_SLUGS.has(slug) || (await getTenantBySlug(c.env.PAWBOOK_DB, slug));
+      RESERVED_SLUGS.has(slug) || (await getTenantBySlug(c.env.PAWSERVATION_DB, slug));
       n++
     )
       slug = `${slugBase}-${n}`;
@@ -197,7 +197,7 @@ export const signupRoutes = new Hono<AppEnv>()
     try {
       // One atomic batch — a replay dies on TenantUsers.Email UNIQUE, aborting the whole
       // batch: no orphan tenant (see createTenantFromSignup).
-      claimed = await createTenantFromSignup(c.env.PAWBOOK_DB, {
+      claimed = await createTenantFromSignup(c.env.PAWSERVATION_DB, {
         tenantId,
         slug,
         displayName,
@@ -215,7 +215,7 @@ export const signupRoutes = new Hono<AppEnv>()
       // between our checks and the batch, without tripping TenantUsers.Email UNIQUE — the
       // Tenants/TenantUsers rows landed anyway. A tenant must never stand without a valid
       // claim, so compensate before telling the caller the link is dead.
-      await rollbackUnclaimedTenant(c.env.PAWBOOK_DB, tenantId, userId).catch((err) =>
+      await rollbackUnclaimedTenant(c.env.PAWSERVATION_DB, tenantId, userId).catch((err) =>
         console.error('signup rollback failed', err),
       );
       return c.json({ error: EXPIRED_ERROR }, 400);

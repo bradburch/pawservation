@@ -32,20 +32,20 @@ export const adminAuthRoutes = new Hono<AppEnv>()
       // Owner path: verify against the row's hash — or DUMMY_PASSWORD_HASH when absent — so
       // this path costs exactly ONE PBKDF2 derive either way, preserving the constant-time
       // posture the sitter path already has.
-      const owner = await getOwnerUserByEmail(c.env.PAWBOOK_DB, email);
+      const owner = await getOwnerUserByEmail(c.env.PAWSERVATION_DB, email);
       const ok = await verifyPassword(password, owner?.PasswordHash ?? DUMMY_PASSWORD_HASH);
       if (!owner || !ok) return c.json({ error: 'Invalid email or password.' }, 401);
       const token = await mintOwnerToken(email, c.env.TOKEN_SECRET);
       return c.json({ token, role: 'owner', email });
     }
 
-    const user = await getTenantUserByEmail(c.env.PAWBOOK_DB, email);
+    const user = await getTenantUserByEmail(c.env.PAWSERVATION_DB, email);
     // Always run a PBKDF2 verify — against a dummy hash when the email is unknown — so the
     // response time does not reveal whether an account exists (user-enumeration timing oracle).
     const ok = await verifyPassword(password, user?.PasswordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !ok) return c.json({ error: 'Invalid email or password.' }, 401);
 
-    const tenant = await getTenantById(c.env.PAWBOOK_DB, user.TenantId);
+    const tenant = await getTenantById(c.env.PAWSERVATION_DB, user.TenantId);
     if (!tenant) return c.json({ error: NOT_LINKED_ERROR }, 500);
 
     const token = await mintAdminToken(user.Id, user.TenantId, c.env.TOKEN_SECRET);
@@ -63,7 +63,7 @@ export const adminAuthRoutes = new Hono<AppEnv>()
     const token = extractBearer(c.req.header('Authorization'));
     const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
     if (claims) {
-      const tenant = await getTenantById(c.env.PAWBOOK_DB, claims.tid);
+      const tenant = await getTenantById(c.env.PAWSERVATION_DB, claims.tid);
       if (!tenant) return c.json({ error: NOT_LINKED_ERROR }, 500);
       return c.json({ role: 'admin', slug: tenant.Slug, displayName: tenant.DisplayName });
     }

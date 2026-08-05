@@ -181,9 +181,9 @@ async function loadVenmoMatchInputs(
   alreadyImported: Set<string>;
 }> {
   const [customers, accountsByOwner, refs] = await Promise.all([
-    listCustomers(env.PAWBOOK_DB, tenantId),
-    getAccountIdsByOwner(env.PAWBOOK_DB, tenantId),
-    listPaymentExternalRefs(env.PAWBOOK_DB, tenantId),
+    listCustomers(env.PAWSERVATION_DB, tenantId),
+    getAccountIdsByOwner(env.PAWSERVATION_DB, tenantId),
+    listPaymentExternalRefs(env.PAWSERVATION_DB, tenantId),
   ]);
   return {
     clients: customers.map((u) => ({
@@ -581,14 +581,14 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const [services, options, petTypes, blocked, connections, adminEmail, mixRates, groupRates] =
       await Promise.all([
-        listServices(c.env.PAWBOOK_DB, tenant.Id),
-        listServiceOptions(c.env.PAWBOOK_DB, tenant.Id),
-        listPetTypes(c.env.PAWBOOK_DB, tenant.Id),
-        listBlockedRanges(c.env.PAWBOOK_DB, tenant.Id),
-        listProviderConnections(c.env.PAWBOOK_DB, tenant.Id),
-        getTenantUserEmailById(c.env.PAWBOOK_DB, tenant.Id, c.get('adminUserId')),
-        listServicePetRates(c.env.PAWBOOK_DB, tenant.Id),
-        listAllPetGroupPricing(c.env.PAWBOOK_DB, tenant.Id),
+        listServices(c.env.PAWSERVATION_DB, tenant.Id),
+        listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
+        listPetTypes(c.env.PAWSERVATION_DB, tenant.Id),
+        listBlockedRanges(c.env.PAWSERVATION_DB, tenant.Id),
+        listProviderConnections(c.env.PAWSERVATION_DB, tenant.Id),
+        getTenantUserEmailById(c.env.PAWSERVATION_DB, tenant.Id, c.get('adminUserId')),
+        listServicePetRates(c.env.PAWSERVATION_DB, tenant.Id),
+        listAllPetGroupPricing(c.env.PAWSERVATION_DB, tenant.Id),
       ]);
     return c.json({
       disabled: tenant.DisabledAt != null,
@@ -707,10 +707,10 @@ export const adminRoutes = new Hono<AppEnv>()
     // this, a caller that PUTs `{type, enabled}` alone (omitting questions/constraints) would
     // silently wipe them back to empty/unlimited.
     const currentServices =
-      services.length > 0 ? await listServices(c.env.PAWBOOK_DB, tenant.Id) : [];
+      services.length > 0 ? await listServices(c.env.PAWSERVATION_DB, tenant.Id) : [];
     const currentOptions =
-      services.length > 0 ? await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id) : [];
-    const tenantPetTypes = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+      services.length > 0 ? await listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id) : [];
+    const tenantPetTypes = await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id);
     const knownPetSlugs = new Set(tenantPetTypes.map((p) => p.PetType));
     const existingKeysByType = new Map<string, Set<string>>();
     for (const o of currentOptions) {
@@ -942,7 +942,7 @@ export const adminRoutes = new Hono<AppEnv>()
       if (byOption.size > 0) petRatesByType.set(svc.type as string, byOption);
     }
 
-    await updateTenantSettings(c.env.PAWBOOK_DB, tenant.Id, {
+    await updateTenantSettings(c.env.PAWSERVATION_DB, tenant.Id, {
       displayName,
       accentColor,
       timezone,
@@ -967,7 +967,7 @@ export const adminRoutes = new Hono<AppEnv>()
               ...(q.type === 'select' ? { options: q.options } : {}),
             }))
           : current.Questions;
-      const updated = await setServiceConfig(c.env.PAWBOOK_DB, tenant.Id, svcType, {
+      const updated = await setServiceConfig(c.env.PAWSERVATION_DB, tenant.Id, svcType, {
         enabled: svc.enabled ?? false,
         description: resolveServiceDescription(svc, current.Description),
         questions,
@@ -1002,7 +1002,7 @@ export const adminRoutes = new Hono<AppEnv>()
       if (!updated)
         return c.json({ error: `${current.Label} was deleted. Refresh and retry.` }, 409);
       await replaceServiceOptions(
-        c.env.PAWBOOK_DB,
+        c.env.PAWSERVATION_DB,
         tenant.Id,
         svcType,
         (resolvedOptionsByType.get(svcType) ?? []).map((o) => ({
@@ -1022,7 +1022,7 @@ export const adminRoutes = new Hono<AppEnv>()
       const optionRates = petRatesByType.get(svcType);
       if (optionRates)
         for (const [optionKey, rates] of optionRates)
-          await replaceServicePetRates(c.env.PAWBOOK_DB, tenant.Id, svcType, optionKey, rates);
+          await replaceServicePetRates(c.env.PAWSERVATION_DB, tenant.Id, svcType, optionKey, rates);
     }
 
     // The widget reads tenant config through the KV-cached resolution seam (PRD FR19).
@@ -1045,7 +1045,7 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!slug || RESERVED_SERVICE_SLUGS.includes(slug))
       return c.json({ error: 'Pick a different service name.' }, 400);
 
-    const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    const existing = await listServices(c.env.PAWSERVATION_DB, tenant.Id);
     // Owner directive: cap TOTAL service rows (enabled or disabled) per tenant — creation is the
     // only place a new row appears, so this is the sole gate. Seeded demo tenants may already sit
     // at the cap; that's fine, they can still edit/enable what they have.
@@ -1065,12 +1065,12 @@ export const adminRoutes = new Hono<AppEnv>()
     // enabled service accepting nothing, which the settings PUT rejects on every subsequent save.
     // An empty intersection falls back to NULL (= every registry type), never to `[]`.
     const registry = new Set(
-      (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).map((p) => p.PetType),
+      (await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id)).map((p) => p.PetType),
     );
     const wanted = tpl.defaultAcceptedPetTypes?.filter((t) => registry.has(t)) ?? null;
     const acceptedPetTypes = wanted && wanted.length > 0 ? [...wanted] : null;
     try {
-      await createService(c.env.PAWBOOK_DB, tenant.Id, {
+      await createService(c.env.PAWSERVATION_DB, tenant.Id, {
         serviceType: slug,
         label,
         icon: tpl.icon,
@@ -1106,14 +1106,14 @@ export const adminRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/services/:type', async (c) => {
     const tenant = c.get('tenant');
     const type = c.req.param('type');
-    const existing = await listServices(c.env.PAWBOOK_DB, tenant.Id);
+    const existing = await listServices(c.env.PAWSERVATION_DB, tenant.Id);
     const service = existing.find((s) => s.ServiceType === type);
     if (!service) return c.json({ error: 'Unknown service type.' }, 404);
     if (isTemplateId(type))
       return c.json({ error: 'Built-in services can be disabled, not deleted.' }, 400);
-    if ((await countBookingsForService(c.env.PAWBOOK_DB, tenant.Id, type)) > 0)
+    if ((await countBookingsForService(c.env.PAWSERVATION_DB, tenant.Id, type)) > 0)
       return c.json({ error: 'That service has bookings — disable it instead.' }, 409);
-    await deleteService(c.env.PAWBOOK_DB, tenant.Id, type);
+    await deleteService(c.env.PAWSERVATION_DB, tenant.Id, type);
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.body(null, 204);
   })
@@ -1126,7 +1126,7 @@ export const adminRoutes = new Hono<AppEnv>()
   // KV-cached public config carries no rates).
   .get('/:slug/admin/pet-group-rates', async (c) => {
     const tenant = c.get('tenant');
-    const rows = await listAllPetGroupPricing(c.env.PAWBOOK_DB, tenant.Id);
+    const rows = await listAllPetGroupPricing(c.env.PAWSERVATION_DB, tenant.Id);
     return c.json({
       rates: rows.map((r) => ({
         id: r.Id,
@@ -1147,11 +1147,11 @@ export const adminRoutes = new Hono<AppEnv>()
       .catch(() => ({}) as Record<string, never>);
     const serviceType = typeof body.serviceType === 'string' ? body.serviceType : '';
     const optionKey = typeof body.optionKey === 'string' ? body.optionKey : '';
-    const service = (await listServices(c.env.PAWBOOK_DB, tenant.Id)).find(
+    const service = (await listServices(c.env.PAWSERVATION_DB, tenant.Id)).find(
       (s) => s.ServiceType === serviceType,
     );
     if (!service) return c.json({ error: 'Unknown service type.' }, 400);
-    const options = await listServiceOptions(c.env.PAWBOOK_DB, tenant.Id);
+    const options = await listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id);
     if (!options.some((o) => o.ServiceType === serviceType && o.OptionKey === optionKey))
       return c.json({ error: `${service.Label}: unknown option.` }, 400);
     if (
@@ -1163,13 +1163,13 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Pick at least one pet.' }, 400);
     // A rate may only name this tenant's LIVE pets: a deceased pet is never bookable, so a new
     // rate naming one is a mistake, not a grandfathering case.
-    const pets = await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const pets = await listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id);
     const livePetIds = new Set(pets.filter((p) => p.DeceasedAt === null).map((p) => p.Id));
     for (const petId of body.petIds)
       if (!livePetIds.has(petId)) return c.json({ error: 'Unknown pet in the list.' }, 400);
     if (!isValidRate(body.rate))
       return c.json({ error: 'Rates are whole dollars, at least $1.' }, 400);
-    const { id } = await upsertPetGroupRate(c.env.PAWBOOK_DB, tenant.Id, {
+    const { id } = await upsertPetGroupRate(c.env.PAWSERVATION_DB, tenant.Id, {
       serviceType,
       optionKey,
       // buildGroupKey dedups + sorts, so selection order can never mint a second row.
@@ -1181,7 +1181,11 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .delete('/:slug/admin/pet-group-rates/:id', async (c) => {
     const tenant = c.get('tenant');
-    const deleted = await deletePetGroupRateById(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    const deleted = await deletePetGroupRateById(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+    );
     if (!deleted) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
   })
@@ -1197,7 +1201,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const petType = slugifyServiceLabel(label);
     if (!petType) return c.json({ error: 'Pick a different pet type name.' }, 400);
     try {
-      await createPetType(c.env.PAWBOOK_DB, tenant.Id, petType, label);
+      await createPetType(c.env.PAWSERVATION_DB, tenant.Id, petType, label);
     } catch (err) {
       // UNIQUE(TenantId, PetType) is the source of truth for duplicates (concurrent adds
       // included). isUniqueViolation, not a bare message check — D1 nests it under `err.cause`.
@@ -1215,7 +1219,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const label = typeof body.label === 'string' ? body.label.trim() : '';
     if (!label) return c.json({ error: 'Pet type name required.' }, 400);
     const petType = c.req.param('petType');
-    const renamed = await renamePetType(c.env.PAWBOOK_DB, tenant.Id, petType, label);
+    const renamed = await renamePetType(c.env.PAWSERVATION_DB, tenant.Id, petType, label);
     if (!renamed) return c.json({ error: 'Unknown pet type.' }, 404);
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.json({ petType, label });
@@ -1231,10 +1235,10 @@ export const adminRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/pet-types/:petType', async (c) => {
     const tenant = c.get('tenant');
     const petType = c.req.param('petType');
-    const rows = await listPetTypes(c.env.PAWBOOK_DB, tenant.Id);
+    const rows = await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id);
     if (!rows.some((p) => p.PetType === petType))
       return c.json({ error: 'Unknown pet type.' }, 404);
-    const refs = await countPetTypeReferences(c.env.PAWBOOK_DB, tenant.Id, petType);
+    const refs = await countPetTypeReferences(c.env.PAWSERVATION_DB, tenant.Id, petType);
     if (refs > 0)
       return c.json(
         {
@@ -1242,7 +1246,11 @@ export const adminRoutes = new Hono<AppEnv>()
         },
         409,
       );
-    const { disabledServices } = await deletePetTypeAndScrub(c.env.PAWBOOK_DB, tenant.Id, petType);
+    const { disabledServices } = await deletePetTypeAndScrub(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      petType,
+    );
     await invalidateTenantCache(tenant.Slug, c.env);
     return c.json({ disabledServices }, 200);
   })
@@ -1256,7 +1264,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const end = typeof body.endDate === 'string' ? body.endDate : '';
     if (!isRealDate(start) || !isRealDate(end) || end <= start)
       return c.json({ error: 'Provide a valid date range.' }, 400);
-    const id = await insertBookingRequest(c.env.PAWBOOK_DB, tenant.Id, {
+    const id = await insertBookingRequest(c.env.PAWSERVATION_DB, tenant.Id, {
       endUserId: null,
       serviceType: 'blocked',
       startDate: start,
@@ -1307,7 +1315,11 @@ export const adminRoutes = new Hono<AppEnv>()
     // Google (every blocked row is born SyncPending regardless of connection state, so an
     // unconnected sitter's block has GCalEventId = null too — that must NOT 404); a `string` when
     // the row was found, cancelled, and HAD a live Google event, which is deleted best-effort below.
-    const gcalEventId = await cancelBlockedRange(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    const gcalEventId = await cancelBlockedRange(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+    );
     if (gcalEventId === undefined) return c.json({ error: 'Not found.' }, 404);
     if (gcalEventId) {
       // Best-effort delete of the mirrored Google event, same dance as every other calendar hook.
@@ -1367,7 +1379,7 @@ export const adminRoutes = new Hono<AppEnv>()
     }
 
     const nonce = crypto.randomUUID();
-    await c.env.PAWBOOK_CACHE.put(NONCE_KEY(nonce), '1', { expirationTtl: 600 });
+    await c.env.PAWSERVATION_CACHE.put(NONCE_KEY(nonce), '1', { expirationTtl: 600 });
     const state = await signState(c.env.TOKEN_SECRET, {
       tenantId: tenant.Id,
       nonce,
@@ -1392,7 +1404,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .post('/:slug/admin/providers/calendar/disconnect', async (c) => {
     const tenant = c.get('tenant');
-    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
     if (conn?.RefreshToken) {
       try {
         await revokeToken(await decryptToken(c.env.TOKEN_SECRET, conn.RefreshToken));
@@ -1400,10 +1412,10 @@ export const adminRoutes = new Hono<AppEnv>()
         /* best-effort revoke; clear locally regardless */
       }
     }
-    await clearProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    await clearProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
     // Materialized Google rows have no living source once disconnected — and no UI to remove
     // read-only rows — so they must not survive to block capacity forever.
-    await deleteAllExternalEvents(c.env.PAWBOOK_DB, tenant.Id);
+    await deleteAllExternalEvents(c.env.PAWSERVATION_DB, tenant.Id);
     return c.json({ status: 'disconnected' });
   })
 
@@ -1422,7 +1434,7 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
 
-    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
     if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
       return c.json({ error: 'Connect Google Calendar first, then create the pet calendar.' }, 409);
     // Don't litter the account with duplicate calendars — but only refuse when the target is
@@ -1475,11 +1487,11 @@ export const adminRoutes = new Hono<AppEnv>()
       .catch(() => ({}) as { calendarId?: unknown });
     const raw = typeof body.calendarId === 'string' ? body.calendarId.trim() : '';
     const next = raw === '' ? null : raw;
-    const conn = await getProviderConnection(c.env.PAWBOOK_DB, tenant.Id, 'calendar');
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
     // NULL and the literal 'primary' name the same calendar, so compare through that default: a
     // save that doesn't actually move the target must not churn every booking's event.
     if ((conn?.CalendarId ?? 'primary') === (next ?? 'primary')) {
-      await setProviderCalendarId(c.env.PAWBOOK_DB, tenant.Id, 'calendar', next);
+      await setProviderCalendarId(c.env.PAWSERVATION_DB, tenant.Id, 'calendar', next);
       return c.body(null, 204);
     }
     // Real switch: clear the stored event ids with the new target (repointCalendarTarget — without
@@ -1493,8 +1505,8 @@ export const adminRoutes = new Hono<AppEnv>()
   .get('/:slug/admin/customers', async (c) => {
     const tenant = c.get('tenant');
     const [customers, allPets] = await Promise.all([
-      listCustomers(c.env.PAWBOOK_DB, tenant.Id),
-      listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id),
+      listCustomers(c.env.PAWSERVATION_DB, tenant.Id),
+      listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id),
     ]);
     const byUser = new Map<
       string,
@@ -1560,12 +1572,12 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ error: 'Enter a pet name — every client needs at least one pet.' }, 400);
     // Registry membership only (0015), same rule as the add-pet route: recordable even if no
     // service currently accepts the type.
-    const known = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
+    const known = (await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id)).find(
       (pt) => pt.PetType === petType,
     );
     if (!known) return c.json({ error: 'That pet type is not accepted.' }, 400);
 
-    const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+    const existing = await getEndUserByEmail(c.env.PAWSERVATION_DB, tenant.Id, email);
     let customer;
     if (existing) {
       // Idempotent re-POST: never downgrade an active customer to invited, never touch their
@@ -1574,13 +1586,13 @@ export const adminRoutes = new Hono<AppEnv>()
       // be used again — the CSV import applies that same live-only rule (it filters DeceasedAt out
       // of the map it dedups against), and the two must not drift.
       customer = existing;
-      const pets = await listEndUserPets(c.env.PAWBOOK_DB, tenant.Id, existing.Id);
+      const pets = await listEndUserPets(c.env.PAWSERVATION_DB, tenant.Id, existing.Id);
       if (!pets.some((p) => p.Name.toLowerCase() === petName.toLowerCase()))
-        await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, existing.Id, petName, petType);
+        await addEndUserPet(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, petName, petType);
     } else {
       // One atomic batch — if the pet insert fails, no customer row is left standing.
       customer = await insertInvitedCustomerWithPet(
-        c.env.PAWBOOK_DB,
+        c.env.PAWSERVATION_DB,
         tenant.Id,
         email,
         name,
@@ -1661,7 +1673,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     // One read, purely so the refusal can say WHICH problem it is. The write is guarded again in SQL
     // (coOwnerLinkStmt), so nothing here is load-bearing for correctness.
-    const found = await listPetsByIds(c.env.PAWBOOK_DB, tenant.Id, petIds);
+    const found = await listPetsByIds(c.env.PAWSERVATION_DB, tenant.Id, petIds);
     if (found.length !== petIds.length) return c.json({ error: 'Not found.' }, 404);
     if (found.some((p) => p.DeceasedAt !== null))
       return c.json(
@@ -1672,16 +1684,16 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
 
-    const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+    const existing = await getEndUserByEmail(c.env.PAWSERVATION_DB, tenant.Id, email);
     let customer;
     if (existing) {
       // The merge case. Never downgrade an active customer to invited, never rewrite the name or
       // phone already on file — exactly the manual-add route's append semantics.
-      await addCoOwnerToPets(c.env.PAWBOOK_DB, tenant.Id, existing.Id, petIds);
+      await addCoOwnerToPets(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, petIds);
       customer = existing;
     } else {
       customer = await insertInvitedCustomerAsCoOwner(
-        c.env.PAWBOOK_DB,
+        c.env.PAWSERVATION_DB,
         tenant.Id,
         email,
         name,
@@ -1708,7 +1720,7 @@ export const adminRoutes = new Hono<AppEnv>()
   // each call sends one fresh copy; there is no "already sent" state to corrupt.
   .post('/:slug/admin/customers/:id/welcome', async (c) => {
     const tenant = c.get('tenant');
-    const customer = await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    const customer = await getEndUserById(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('id'));
     if (!customer) return c.json({ error: 'Not found.' }, 404);
     if (!isEmailConfigured(c.env)) {
       return c.json(
@@ -1731,7 +1743,7 @@ export const adminRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/customers/:id', async (c) => {
     const tenant = c.get('tenant');
     const id = c.req.param('id');
-    if ((await countBookingsForUser(c.env.PAWBOOK_DB, tenant.Id, id)) > 0)
+    if ((await countBookingsForUser(c.env.PAWSERVATION_DB, tenant.Id, id)) > 0)
       return c.json({ error: 'Customer has bookings; cannot remove.' }, 409);
     // deleteCustomer reports WHICH precondition refused, so a refusal never masquerades as a 404
     // for a customer who plainly exists. 'has-bookings' is only reachable when a booking lands
@@ -1742,7 +1754,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // 'deleted' test. A fifth outcome added to deleteCustomer later would otherwise fall through to
     // "204 No Content" — a refusal reported as success, which is the exact failure this whole guard
     // exists to prevent. Here it fails to compile (`never`) and, if it somehow ships, fails closed.
-    const outcome = await deleteCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+    const outcome = await deleteCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
     switch (outcome) {
       case 'deleted':
         return c.body(null, 204);
@@ -1783,15 +1795,22 @@ export const adminRoutes = new Hono<AppEnv>()
     // The customer id comes from the URL; confirm it belongs to this tenant before writing a pet
     // under it — EndUserPets.EndUserId FKs to EndUsers(Id) without a TenantId, so D1's foreign-key
     // enforcement wouldn't catch a cross-tenant id on its own; this check is what prevents it.
-    if (!(await getEndUserById(c.env.PAWBOOK_DB, tenant.Id, endUserId)))
+    if (!(await getEndUserById(c.env.PAWSERVATION_DB, tenant.Id, endUserId)))
       return c.json({ error: 'Not found.' }, 404);
     // Registry membership only (0015): a sitter may record a pet of a type no service currently
     // accepts — it just can't be booked until some service's Accepted pets list includes it.
-    const known = (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).find(
+    const known = (await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id)).find(
       (pt) => pt.PetType === petType,
     );
     if (!known) return c.json({ error: 'That pet type is not accepted.' }, 400);
-    const pet = await addEndUserPet(c.env.PAWBOOK_DB, tenant.Id, endUserId, name, petType, notes);
+    const pet = await addEndUserPet(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      endUserId,
+      name,
+      petType,
+      notes,
+    );
     return c.json({ id: pet.Id, name: pet.Name, petType: pet.PetType, notes: pet.Notes }, 201);
   })
   .delete('/:slug/admin/customers/:id/pets/:petId', async (c) => {
@@ -1801,7 +1820,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // the race to a booking POST and surface a raw FK error as a 500. Exhaustive switch for
     // deleteCustomer's reason — success must be reached by a POSITIVE test, so a fourth outcome
     // added later fails to compile instead of falling through to "204 No Content".
-    const outcome = await removeEndUserPet(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'));
+    const outcome = await removeEndUserPet(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('petId'));
     switch (outcome) {
       case 'removed':
         return c.body(null, 204);
@@ -1830,7 +1849,12 @@ export const adminRoutes = new Hono<AppEnv>()
       .catch(() => ({}) as { endUserId?: unknown });
     const endUserId = typeof body.endUserId === 'string' ? body.endUserId : '';
     if (!endUserId) return c.json({ error: 'Choose a client.' }, 400);
-    const added = await addPetOwner(c.env.PAWBOOK_DB, tenant.Id, c.req.param('petId'), endUserId);
+    const added = await addPetOwner(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('petId'),
+      endUserId,
+    );
     // A pet or customer from another tenant is reported exactly like a nonexistent one.
     if (!added) return c.json({ error: 'Not found.' }, 404);
     return c.body(null, 204);
@@ -1838,7 +1862,7 @@ export const adminRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/pets/:petId/owners/:endUserId', async (c) => {
     const tenant = c.get('tenant');
     const outcome = await removePetOwner(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('petId'),
       c.req.param('endUserId'),
@@ -1856,7 +1880,7 @@ export const adminRoutes = new Hono<AppEnv>()
     if (typeof body.deceased !== 'boolean')
       return c.json({ error: 'deceased must be true or false.' }, 400);
     const updated = await setPetDeceased(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('petId'),
       body.deceased,
@@ -1891,7 +1915,7 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
     const updated = await setEndUserVenmoUsername(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('id'),
       handle === '' ? null : handle,
@@ -1917,7 +1941,7 @@ export const adminRoutes = new Hono<AppEnv>()
       );
     }
     const knownPetTypes = new Set(
-      (await listPetTypes(c.env.PAWBOOK_DB, tenant.Id)).map((pt) => pt.PetType),
+      (await listPetTypes(c.env.PAWSERVATION_DB, tenant.Id)).map((pt) => pt.PetType),
     );
     // LIVE pets only, keyed by owner id — deceased names are deliberately absent, so this map
     // answers both of the questions the loop asks of it the same way the manual-add route does
@@ -1930,7 +1954,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // order to link a second owner to it. `.size` / `.has` answer the two dedup questions exactly as
     // the old Set did.
     const livePetNames = new Map<string, Map<string, string>>();
-    for (const pet of await listAllEndUserPetsByTenant(c.env.PAWBOOK_DB, tenant.Id)) {
+    for (const pet of await listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id)) {
       if (pet.DeceasedAt) continue;
       const byName = livePetNames.get(pet.EndUserId) ?? new Map<string, string>();
       byName.set(pet.Name.toLowerCase(), pet.Id);
@@ -2035,7 +2059,7 @@ export const adminRoutes = new Hono<AppEnv>()
       try {
         // A customer created by an earlier row of THIS file is found here too, so one-row-per-pet
         // files work: the first row creates customer + pet atomically, later rows just add pets.
-        const existing = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+        const existing = await getEndUserByEmail(c.env.PAWSERVATION_DB, tenant.Id, email);
         if (existing) idByEmail.set(email, existing.Id);
         const petSet = existing
           ? (livePetNames.get(existing.Id) ?? new Map<string, string>())
@@ -2079,7 +2103,7 @@ export const adminRoutes = new Hono<AppEnv>()
         }
         if (existing) {
           const pet = await addEndUserPet(
-            c.env.PAWBOOK_DB,
+            c.env.PAWSERVATION_DB,
             tenant.Id,
             existing.Id,
             petName,
@@ -2091,7 +2115,7 @@ export const adminRoutes = new Hono<AppEnv>()
         } else {
           // Customer + first pet in one atomic batch — a failed pet insert leaves no customer.
           const customer = await insertInvitedCustomerWithPet(
-            c.env.PAWBOOK_DB,
+            c.env.PAWSERVATION_DB,
             tenant.Id,
             email,
             createName,
@@ -2130,7 +2154,7 @@ export const adminRoutes = new Hono<AppEnv>()
         if (!ownerId) {
           // Tenant-scoped, like every other lookup here: the same email in another tenant is a
           // different person and must never be linked.
-          const found = await getEndUserByEmail(c.env.PAWBOOK_DB, tenant.Id, email);
+          const found = await getEndUserByEmail(c.env.PAWSERVATION_DB, tenant.Id, email);
           if (found) {
             ownerId = found.Id;
             idByEmail.set(email, found.Id);
@@ -2139,7 +2163,7 @@ export const adminRoutes = new Hono<AppEnv>()
         if (ownerId) {
           // An existing client keeps their stored name and phone; they simply gain the pets, which
           // is what merges the two billing accounts into one.
-          await addCoOwnerToPets(c.env.PAWBOOK_DB, tenant.Id, ownerId, petIds);
+          await addCoOwnerToPets(c.env.PAWSERVATION_DB, tenant.Id, ownerId, petIds);
         } else {
           const createName = nameByEmail.get(email);
           if (!createName) {
@@ -2155,7 +2179,7 @@ export const adminRoutes = new Hono<AppEnv>()
           // Human + every ownership link in ONE batch (the same repo function the co-owner route
           // uses), so this path can never commit a pet-less client either.
           const customer = await insertInvitedCustomerAsCoOwner(
-            c.env.PAWBOOK_DB,
+            c.env.PAWSERVATION_DB,
             tenant.Id,
             email,
             createName,
@@ -2218,11 +2242,11 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET.
     if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant);
-    const rows = await listBookingsForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const rows = await listBookingsForTenant(c.env.PAWSERVATION_DB, tenant.Id);
     // Cancellation policy per service, so each confirmed row can preview the fee it would owe if
     // cancelled today (one query, keyed by ServiceType; NULL/missing = no policy).
     const tiersByType = new Map<string, CancellationTier[] | null>(
-      (await listServices(c.env.PAWBOOK_DB, tenant.Id)).map((s) => [
+      (await listServices(c.env.PAWSERVATION_DB, tenant.Id)).map((s) => [
         s.ServiceType,
         s.CancellationTiers,
       ]),
@@ -2230,7 +2254,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     // ONE read for the whole list, grouped in JS — a charge is an additive line item, so it can
     // never change EstCost; total due is EstCost + chargesTotal, derived by every reader.
-    const chargeRows = await listChargesForTenant(c.env.PAWBOOK_DB, tenant.Id);
+    const chargeRows = await listChargesForTenant(c.env.PAWSERVATION_DB, tenant.Id);
     const chargesByBooking = new Map<string, typeof chargeRows>();
     for (const ch of chargeRows) {
       const list = chargesByBooking.get(ch.BookingRequestId) ?? [];
@@ -2240,7 +2264,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // Same one-read-grouped-in-JS shape as chargesByBooking above — pet names are what the
     // sitter actually cares about identifying a row by (CLAUDE.md: "everything should be
     // categorized by the pets"), so the admin list must carry them, not just a bare count.
-    const petNameRows = await listPetNamesForTenantBookings(c.env.PAWBOOK_DB, tenant.Id);
+    const petNameRows = await listPetNamesForTenantBookings(c.env.PAWSERVATION_DB, tenant.Id);
     const petNamesByBooking = new Map<string, string[]>();
     for (const pr of petNameRows) {
       const list = petNamesByBooking.get(pr.BookingRequestId) ?? [];
@@ -2308,7 +2332,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // updateBookingStatus's SQL guard and its 404, which is why this reads the row first and only
     // acts on 'pending' — a warning must never displace an existence answer.
     if (status === 'confirmed' && body.overrideCapacity !== true) {
-      const bk = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+      const bk = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
       if (bk && bk.Status === 'pending' && bk.ServiceType !== 'external') {
         const warning = await confirmOverbookWarning(c.env, tenant, bk);
         // Advisory, so inherently racy — a confirm landing in the same second still can't be caught
@@ -2326,7 +2350,7 @@ export const adminRoutes = new Hono<AppEnv>()
     if (body.chargeFee === true) {
       if (status !== 'cancelled')
         return c.json({ error: 'A cancellation fee applies only when cancelling.' }, 400);
-      const bk = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+      const bk = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
       // Same existence guard as the payments route: the 'blocked'/'external' sentinels 404 rather
       // than falling through to the 400 below, which would otherwise let an external row's id be
       // distinguished from a genuinely unknown id (an existence oracle).
@@ -2334,7 +2358,7 @@ export const adminRoutes = new Hono<AppEnv>()
         return c.json({ error: 'Not found.' }, 404);
       if (bk.Status !== 'confirmed' || bk.EstCost == null)
         return c.json({ error: 'A fee needs a confirmed booking with an estimated cost.' }, 400);
-      const svc = (await listServices(c.env.PAWBOOK_DB, tenant.Id)).find(
+      const svc = (await listServices(c.env.PAWSERVATION_DB, tenant.Id)).find(
         (s) => s.ServiceType === bk.ServiceType,
       );
       if (!svc?.CancellationTiers)
@@ -2344,12 +2368,12 @@ export const adminRoutes = new Hono<AppEnv>()
       if (computed > 0) fee = computed; // $0 stores NULL per spec
     }
 
-    const updated = await updateBookingStatus(c.env.PAWBOOK_DB, tenant.Id, id, status, fee);
+    const updated = await updateBookingStatus(c.env.PAWSERVATION_DB, tenant.Id, id, status, fee);
     if (!updated) return c.json({ error: 'Not found.' }, 404);
 
     // One unconditional fetch serves both the calendar hooks and the customer
     // notification below (cancel/decline are soft — the row still exists).
-    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, id);
+    const booking = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
 
     // Calendar hooks are best-effort and never block the response (waitUntil in production; awaited
     // in tests, which have no ExecutionContext — see routes/bookings.ts).
@@ -2366,9 +2390,9 @@ export const adminRoutes = new Hono<AppEnv>()
       // next sweep. It differs from confirm in one respect — a fee-cancelled booking with no
       // event is NOT created now, since putting a [CANCELLED] event on a calendar that never had
       // the booking helps nobody.
-      const syncData = await getBookingSyncData(c.env.PAWBOOK_DB, tenant.Id, id);
+      const syncData = await getBookingSyncData(c.env.PAWSERVATION_DB, tenant.Id, id);
       if (syncData && !(retitle && !booking?.GCalEventId)) {
-        const petNames = await listPetNamesForBooking(c.env.PAWBOOK_DB, tenant.Id, id);
+        const petNames = await listPetNamesForBooking(c.env.PAWSERVATION_DB, tenant.Id, id);
         const input: SyncInput = {
           bookingId: id,
           endUserId: syncData.EndUserId,
@@ -2434,7 +2458,7 @@ export const adminRoutes = new Hono<AppEnv>()
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
-    const paymentId = await insertPayment(c.env.PAWBOOK_DB, tenant.Id, {
+    const paymentId = await insertPayment(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
       amount: body.amount,
       method: body.method,
@@ -2445,7 +2469,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // Guard refused: foreign, blocked/external, declined, or a cancelled booking that owes
     // nothing — no fee and no live charges (pending is deliberately allowed).
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
-    const payments = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const payments = await listPaymentsForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     const created = payments.find((p) => p.Id === paymentId);
     if (!created) return c.json({ error: 'Not found.' }, 404);
     return c.json(
@@ -2472,7 +2496,7 @@ export const adminRoutes = new Hono<AppEnv>()
    */
   .post('/:slug/admin/bookings/:id/credit/keep', async (c) => {
     const tenant = c.get('tenant');
-    const result = await keepBookingCredit(c.env.PAWBOOK_DB, tenant.Id, c.req.param('id'));
+    const result = await keepBookingCredit(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('id'));
     switch (result.outcome) {
       case 'kept':
         return c.json({ kept: result.amount });
@@ -2501,10 +2525,10 @@ export const adminRoutes = new Hono<AppEnv>()
     // Same existence guard as POST/DELETE: foreign booking or the 'blocked'/'external' sentinels
     // 404. Unlike POST, a cancelled booking is still viewable here — DELETE is the correction
     // mechanism for it.
-    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const booking = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     if (!booking || booking.ServiceType === 'blocked' || booking.ServiceType === 'external')
       return c.json({ error: 'Not found.' }, 404);
-    const rows = await listPaymentsForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const rows = await listPaymentsForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     return c.json({
       payments: rows.map((p) => ({
         id: p.Id,
@@ -2519,7 +2543,7 @@ export const adminRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/bookings/:id/payments/:paymentId', async (c) => {
     const tenant = c.get('tenant');
     const deleted = await deletePayment(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('id'),
       c.req.param('paymentId'),
@@ -2541,14 +2565,14 @@ export const adminRoutes = new Hono<AppEnv>()
     // Same predicate as a payment amount and a rate: whole dollars >= 1.
     if (!isValidRate(body.amount))
       return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
-    const chargeId = await insertBookingCharge(c.env.PAWBOOK_DB, tenant.Id, {
+    const chargeId = await insertBookingCharge(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
       label,
       amount: body.amount,
     });
     // Guard refused: foreign booking or the 'blocked' sentinel.
     if (!chargeId) return c.json({ error: 'Not found.' }, 404);
-    const charges = await listChargesForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const charges = await listChargesForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     const created = charges.find((ch) => ch.Id === chargeId);
     if (!created) return c.json({ error: 'Not found.' }, 404);
     return c.json(
@@ -2564,9 +2588,9 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const bookingId = c.req.param('id');
     // Same existence guard the payments GET uses: a foreign booking or the sentinel 404s.
-    const booking = await getBookingWithCustomer(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const booking = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
-    const rows = await listChargesForBooking(c.env.PAWBOOK_DB, tenant.Id, bookingId);
+    const rows = await listChargesForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     return c.json({
       charges: rows.map((ch) => ({ id: ch.Id, label: ch.Label, amount: ch.Amount })),
     });
@@ -2575,7 +2599,7 @@ export const adminRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/bookings/:id/charges/:chargeId', async (c) => {
     const tenant = c.get('tenant');
     const deleted = await deleteBookingCharge(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('id'),
       c.req.param('chargeId'),
@@ -2591,7 +2615,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET.
     if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant);
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
-    const data = await getAnalytics(c.env.PAWBOOK_DB, tenant.Id, today);
+    const data = await getAnalytics(c.env.PAWSERVATION_DB, tenant.Id, today);
     return c.json(serializeAnalytics(data));
   })
 
@@ -2669,7 +2693,7 @@ export const adminRoutes = new Hono<AppEnv>()
       }
       const note = `Venmo import — ${txn.from}${txn.note ? `: ${txn.note}` : ''} (txn ${txn.txnId})`;
       try {
-        const paymentId = await insertAccountPayment(c.env.PAWBOOK_DB, tenant.Id, {
+        const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
           accountId,
           amount: txn.amount,
           method: 'venmo',

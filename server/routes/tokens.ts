@@ -59,7 +59,7 @@ export const tokenRoutes = new Hono<AppEnv>()
     const { name } = parsed.output;
     const token = generatePersonalAccessToken();
     const id = await createPersonalAccessToken(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       c.get('tenant').Id,
       c.get('endUserId'),
       name,
@@ -71,7 +71,7 @@ export const tokenRoutes = new Hono<AppEnv>()
   /** The revoke list: what exists, what to call it, and whether it is still being used. */
   .get('/:slug/tokens', async (c) => {
     const rows = await listPersonalAccessTokens(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       c.get('tenant').Id,
       c.get('endUserId'),
     );
@@ -93,7 +93,7 @@ export const tokenRoutes = new Hono<AppEnv>()
    */
   .delete('/:slug/tokens/:id', async (c) => {
     const revoked = await revokePersonalAccessToken(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       c.get('tenant').Id,
       c.get('endUserId'),
       c.req.param('id'),

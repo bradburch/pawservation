@@ -28,13 +28,13 @@ import {
  * applied to the sibling row type.
  */
 export async function runCalendarSweep(env: Env): Promise<void> {
-  const tenants = await listConnectedCalendarTenants(env.PAWBOOK_DB);
+  const tenants = await listConnectedCalendarTenants(env.PAWSERVATION_DB);
   for (const tenant of tenants) {
     try {
       await redriveCalendarOutbox(env, tenant);
       await backfillCalendarEvents(env, tenant);
       await reconcileBookingsWithCalendar(env, tenant);
-      await env.PAWBOOK_CACHE.put(calendarSyncKey(tenant.Id), '1', {
+      await env.PAWSERVATION_CACHE.put(calendarSyncKey(tenant.Id), '1', {
         expirationTtl: CALENDAR_SYNC_TTL_SECONDS,
       }).catch(() => {});
     } catch (err) {

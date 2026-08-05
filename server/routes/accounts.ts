@@ -22,7 +22,11 @@ export const accountsRoutes = new Hono<AppEnv>()
    */
   .get('/:slug/admin/accounts/:accountId', async (c) => {
     const tenant = c.get('tenant');
-    const detail = await getHouseholdDetail(c.env.PAWBOOK_DB, tenant.Id, c.req.param('accountId'));
+    const detail = await getHouseholdDetail(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('accountId'),
+    );
     if (!detail) return c.json({ error: 'Not found.' }, 404);
     return c.json(detail);
   })
@@ -53,7 +57,7 @@ export const accountsRoutes = new Hono<AppEnv>()
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
-    const paymentId = await insertAccountPayment(c.env.PAWBOOK_DB, tenant.Id, {
+    const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
       accountId,
       amount: body.amount,
       method: body.method,
@@ -65,10 +69,10 @@ export const accountsRoutes = new Hono<AppEnv>()
     });
     // Guard refused: no household of THIS tenant is named by that id.
     if (!paymentId) return c.json({ error: 'Not found.' }, 404);
-    const payments = await listPaymentsForAccount(c.env.PAWBOOK_DB, tenant.Id, accountId);
+    const payments = await listPaymentsForAccount(c.env.PAWSERVATION_DB, tenant.Id, accountId);
     const created = payments.find((p) => p.Id === paymentId);
     if (!created) return c.json({ error: 'Not found.' }, 404);
-    const households = await getHouseholdBalances(c.env.PAWBOOK_DB, tenant.Id);
+    const households = await getHouseholdBalances(c.env.PAWSERVATION_DB, tenant.Id);
     return c.json(
       {
         payment: {
@@ -90,7 +94,7 @@ export const accountsRoutes = new Hono<AppEnv>()
   .get('/:slug/admin/accounts/:accountId/payments', async (c) => {
     const tenant = c.get('tenant');
     const rows = await listPaymentsForAccount(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('accountId'),
     );
@@ -113,7 +117,7 @@ export const accountsRoutes = new Hono<AppEnv>()
   .delete('/:slug/admin/accounts/:accountId/payments/:paymentId', async (c) => {
     const tenant = c.get('tenant');
     const deleted = await deleteAccountPayment(
-      c.env.PAWBOOK_DB,
+      c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('accountId'),
       c.req.param('paymentId'),
