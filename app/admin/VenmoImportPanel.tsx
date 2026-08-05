@@ -46,10 +46,10 @@ export function VenmoImportPanel({
     setFileKey((k) => k + 1);
   };
 
-  const chosen = [...choices.entries()].map(([txnId, accountId]) => ({ txnId, accountId }));
+  const chosen = [...choices.entries()].map(([txnId, bookingId]) => ({ txnId, bookingId }));
   const chosenTotal = preview
     ? chosen.reduce((sum, { txnId }) => {
-        const row = preview.matched.find((r) => r.txnId === txnId);
+        const row = [...preview.matched, ...preview.ambiguous].find((r) => r.txnId === txnId);
         return sum + (row?.amount ?? 0);
       }, 0)
     : 0;
@@ -63,9 +63,9 @@ export function VenmoImportPanel({
       const next = await adminApi.payments.venmoPreview(session.slug, session.token, text);
       setCsv(text);
       setPreview(next);
-      // A matched row already names ONE household unambiguously (Story 2.5) — there is nothing
-      // left for the sitter to choose, so every matched row starts ticked.
-      setChoices(new Map(next.matched.map((m) => [m.txnId, m.accountId])));
+      // Everything Pawservation is sure about starts ticked; ambiguous rows start unticked so the
+      // sitter has to make the choice rather than accept a guess.
+      setChoices(new Map(next.matched.map((m) => [m.txnId, m.bookingId])));
     } catch (e) {
       reset();
       handleError(e);
@@ -74,11 +74,11 @@ export function VenmoImportPanel({
     }
   };
 
-  const toggle = (txnId: string, accountId: string) =>
+  const toggle = (txnId: string, bookingId: string) =>
     setChoices((prev) => {
       const next = new Map(prev);
-      if (next.get(txnId) === accountId) next.delete(txnId);
-      else next.set(txnId, accountId);
+      if (next.get(txnId) === bookingId) next.delete(txnId);
+      else next.set(txnId, bookingId);
       return next;
     });
 
@@ -89,7 +89,7 @@ export function VenmoImportPanel({
     try {
       // Capture amount + sender for every chosen txn BEFORE reset() clears `preview` — this is
       // the only place left that still knows what a skipped txnId was.
-      const rows = preview ? preview.matched : [];
+      const rows = preview ? [...preview.matched, ...preview.ambiguous] : [];
       setChosenInfo(
         new Map(
           chosen.flatMap(({ txnId }) => {
@@ -163,7 +163,7 @@ export function VenmoImportPanel({
 
       {preview && (
         <>
-          {preview.matched.length === 0 && (
+          {preview.matched.length + preview.ambiguous.length === 0 && (
             <p className="pb-hint">
               Nothing in {fileName} needs recording &mdash; see below for why.
             </p>
@@ -178,12 +178,46 @@ export function VenmoImportPanel({
                     <label className="pb-inline">
                       <input
                         type="checkbox"
-                        checked={choices.get(m.txnId) === m.accountId}
-                        onChange={() => toggle(m.txnId, m.accountId)}
+                        checked={choices.get(m.txnId) === m.bookingId}
+                        onChange={() => toggle(m.txnId, m.bookingId)}
                       />{' '}
-                      ${m.amount} from {m.clientLabel} on {formatFriendlyDate(m.date)}
+                      ${m.amount} from {m.clientLabel} on {formatFriendlyDate(m.date)} &rarr;{' '}
+                      {m.bookingLabel}
                       {m.note ? ` — “${m.note}”` : ''}
                     </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {preview.ambiguous.length > 0 && (
+            <>
+              <h4>Which booking?</h4>
+              <ul>
+                {preview.ambiguous.map((a) => (
+                  <li key={a.txnId}>
+                    ${a.amount} from {a.clientLabel} on {formatFriendlyDate(a.date)}
+                    {a.note ? ` — “${a.note}”` : ''}
+                    <select
+                      value={choices.get(a.txnId) ?? ''}
+                      aria-label={`Booking for the $${a.amount} payment from ${a.clientLabel}`}
+                      onChange={(e) =>
+                        setChoices((prev) => {
+                          const next = new Map(prev);
+                          if (e.target.value === '') next.delete(a.txnId);
+                          else next.set(a.txnId, e.target.value);
+                          return next;
+                        })
+                      }
+                    >
+                      <option value="">Don&rsquo;t record this one</option>
+                      {a.candidates.map((candidate) => (
+                        <option key={candidate.bookingId} value={candidate.bookingId}>
+                          {candidate.label} (${candidate.balance} owing)
+                        </option>
+                      ))}
+                    </select>
                   </li>
                 ))}
               </ul>

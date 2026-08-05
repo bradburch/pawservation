@@ -262,7 +262,7 @@ function BookingList({
               />
               <PaymentsPanel
                 session={session}
-                target={{ bookingId: b.id }}
+                bookingId={b.id}
                 onChanged={async () => reloadBookings()}
                 handleError={handleError}
                 allowRecord={isActive(b)}

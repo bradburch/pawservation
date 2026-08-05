@@ -130,24 +130,6 @@ describe('customer repo', () => {
     expect(await countBookingsForUser(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe(1);
   });
 
-  it('deleteCustomer takes the customer’s personal access tokens with them', async () => {
-    const { env, raw } = createTestEnv();
-    const c = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'withpat@example.com', null);
-    // PersonalAccessTokens (0012) FKs to EndUsers, so a token left behind makes the delete fail on
-    // the foreign key — and a live credential outliving the account it authenticates as would be
-    // considerably worse than the error.
-    raw.exec(`INSERT INTO PersonalAccessTokens (Id, TenantId, EndUserId, Name, TokenHash)
-              VALUES ('pat_del','${TENANT_A}','${c.Id}','Laptop','deadbeef')`);
-    expect(await deleteCustomer(env.PAWBOOK_DB, TENANT_A, c.Id)).toBe('deleted');
-    expect(
-      (
-        raw
-          .prepare(`SELECT COUNT(*) AS n FROM PersonalAccessTokens WHERE EndUserId = ?`)
-          .get(c.Id) as { n: number }
-      ).n,
-    ).toBe(0);
-  });
-
   it("deleteCustomer succeeds with no bookings; reports 'not-found' for a missing id", async () => {
     const { env } = createTestEnv();
     const c = await insertInvitedCustomer(env.PAWBOOK_DB, TENANT_A, 'nobooking@example.com', null);

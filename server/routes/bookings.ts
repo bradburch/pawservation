@@ -15,7 +15,6 @@ import {
   createBooking,
   editBooking,
   getMe,
-  getMyAccount,
   listMyBookings,
   monthGrid,
   quoteBooking,
@@ -77,7 +76,6 @@ function petIdsFromQuery(raw: string | undefined): string[] {
 export const bookingRoutes = new Hono<AppEnv>()
   // Scoped tightly to the booking paths so the merged middleware never guards public routes.
   .use('/:slug/me', endUserAuth)
-  .use('/:slug/account', endUserAuth)
   .use('/:slug/availability', endUserAuth)
   .use('/:slug/availability/month', endUserAuth)
   .use('/:slug/bookings', endUserAuth)
@@ -116,14 +114,6 @@ export const bookingRoutes = new Hono<AppEnv>()
   )
 
   .get('/:slug/me', async (c) => respond(c, await getMe(opsContext(c))))
-
-  /**
-   * "What do I owe?" — the caller's own household balance. `getMyAccount` resolves it from the
-   * SAME `endUserId` the token already carries, so there is no id in the request for a caller to
-   * substitute someone else's — unlike `/:slug/admin/accounts/:accountId`, this route takes no
-   * account id at all.
-   */
-  .get('/:slug/account', async (c) => respond(c, await getMyAccount(opsContext(c))))
 
   .post('/:slug/bookings', async (c) => {
     const body = await c.req

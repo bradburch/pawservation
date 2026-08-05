@@ -1,6 +1,6 @@
 /**
  * Venmo CSV import: turning the file a sitter downloads from Venmo into whole-dollar payments that
- * can be proposed against the households they came from (Story 2.5, 0011).
+ * can be proposed against their outstanding bookings.
  *
  * PURE. No D1, no env, no fetch — every function here takes plain data and returns plain data, so
  * `server/db/repo.ts` remains the only module that touches the database.
@@ -234,19 +234,21 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
   return { ok: true, incoming: deduped, ignored, problems };
 }
 
-/**
- * A client, reduced to what matching needs. `label` is what the sitter sees (name or email).
- * `accountId` is the household this client belongs to (`buildAccounts`'s account id, the
- * lexicographically-first pet of the component) — or `null` for a client who owns no live pet and
- * therefore belongs to no household at all, the one case a Venmo payment cannot be recorded against
- * without inventing a household for them.
- */
+/** A client, reduced to what matching needs. `label` is what the sitter sees (name or email). */
 export type MatchClient = {
   endUserId: string;
   label: string;
   name: string | null;
   venmoUsername: string | null;
-  accountId: string | null;
+};
+
+/** An under-paid booking, reduced to what matching needs. `balance` is expected minus paid. */
+export type OutstandingBooking = {
+  bookingId: string;
+  endUserId: string;
+  label: string;
+  startDate: string; // 'YYYY-MM-DD'
+  balance: number; // whole dollars, > 0
 };
 
 export type PreviewRow = {
@@ -256,23 +258,53 @@ export type PreviewRow = {
   from: string;
   note: string;
 };
-/**
- * A transaction resolved to exactly one household. Story 2.5 records it there and nowhere more
- * specific: which booking(s) it covers is not this module's question — 0011 exists precisely so
- * that question never has to be answered by hand.
- */
 export type MatchedRow = PreviewRow & {
   endUserId: string;
   clientLabel: string;
-  accountId: string;
+  bookingId: string;
+  bookingLabel: string;
+};
+export type AmbiguousRow = PreviewRow & {
+  endUserId: string;
+  clientLabel: string;
+  candidates: { bookingId: string; label: string; balance: number }[];
 };
 export type UnmatchedRow = PreviewRow & { reason: string };
 
 export type VenmoPreview = {
   matched: MatchedRow[];
+  ambiguous: AmbiguousRow[];
   unmatched: UnmatchedRow[];
   alreadyImported: PreviewRow[];
 };
+
+const dayDiff = (a: string, b: string) =>
+  Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`));
+
+/**
+ * Order one transaction's possible bookings: exact balance first (the overwhelmingly common real
+ * case — a client pays what they owe), then the booking whose start date sits closest to the
+ * payment date, then the later start date, then the id. The last key makes the order TOTAL, so the
+ * same file previews identically every time it is uploaded.
+ *
+ * Only bookings with enough balance left are candidates: Pawservation proposes a partial payment
+ * against a bigger bill happily, but never proposes over-paying a booking.
+ */
+export function rankCandidates(
+  txn: VenmoTxn,
+  bookings: OutstandingBooking[],
+): OutstandingBooking[] {
+  return bookings
+    .filter((b) => b.balance >= txn.amount)
+    .sort((a, b) => {
+      const exact = Number(b.balance === txn.amount) - Number(a.balance === txn.amount);
+      if (exact !== 0) return exact;
+      const near = dayDiff(a.startDate, txn.date) - dayDiff(b.startDate, txn.date);
+      if (near !== 0) return near;
+      if (a.startDate !== b.startDate) return a.startDate < b.startDate ? 1 : -1;
+      return a.bookingId < b.bookingId ? -1 : 1;
+    });
+}
 
 /**
  * Resolve a Venmo `From` name to exactly one client. Returns `null` for an empty normalized key,
@@ -289,25 +321,23 @@ export function resolveMatchClient(clients: MatchClient[], from: string): MatchC
 }
 
 /**
- * Sort every parsed transaction into one of three buckets. Writes nothing and knows nothing about
- * D1 — the routes hand it a client list and a set, and the same function runs again on confirm so
+ * Sort every parsed transaction into one of four buckets. Writes nothing and knows nothing about
+ * D1 — the routes hand it three lists and a set, and the same function runs again on confirm so
  * the server never has to trust a client's idea of what was matched.
- *
- * STORY 2.5 — VENMO IMPORT RECORDS AGAINST HOUSEHOLDS (supports FR-7a). Earlier versions of this
- * function ranked a payer's OUTSTANDING BOOKINGS and asked the sitter to pick one — bookkeeping this
- * module was doing FOR her, the same shape of problem 0011 solved for hand-recorded payments. Once a
- * payer resolves to one client, `buildAccounts` names their household unambiguously (it partitions
- * every owner into exactly one component), so there is nothing left to rank or disambiguate: the
- * payment goes to the household, whatever it turns out to cover.
  */
 export function matchVenmoTxns(input: {
   txns: VenmoTxn[];
   clients: MatchClient[];
+  outstanding: OutstandingBooking[];
   alreadyImported: Set<string>;
 }): VenmoPreview {
-  const { txns, clients, alreadyImported } = input;
+  const { txns, clients, outstanding, alreadyImported } = input;
 
-  const preview: VenmoPreview = { matched: [], unmatched: [], alreadyImported: [] };
+  const bookingsByClient = new Map<string, OutstandingBooking[]>();
+  for (const b of outstanding)
+    bookingsByClient.set(b.endUserId, [...(bookingsByClient.get(b.endUserId) ?? []), b]);
+
+  const preview: VenmoPreview = { matched: [], ambiguous: [], unmatched: [], alreadyImported: [] };
 
   for (const txn of txns) {
     const row: PreviewRow = {
@@ -345,21 +375,33 @@ export function matchVenmoTxns(input: {
       });
       continue;
     }
-    // A client with no live pet holds no edge in the owner<->pet graph at all, so `buildAccounts`
-    // places them in no household. Surfaced for the sitter to sort out — never guessed at, which
-    // is exactly the money-inference this project forbids everywhere else.
-    if (client.accountId === null) {
+    const candidates = rankCandidates(txn, bookingsByClient.get(client.endUserId) ?? []);
+    if (candidates.length === 0) {
       preview.unmatched.push({
         ...row,
-        reason: `${client.label} has no pets on file, so there is no household to record this payment against.`,
+        reason: `${client.label} has no unpaid booking of $${txn.amount} or more.`,
       });
       continue;
     }
-    preview.matched.push({
+    if (candidates.length === 1) {
+      preview.matched.push({
+        ...row,
+        endUserId: client.endUserId,
+        clientLabel: client.label,
+        bookingId: candidates[0].bookingId,
+        bookingLabel: candidates[0].label,
+      });
+      continue;
+    }
+    preview.ambiguous.push({
       ...row,
       endUserId: client.endUserId,
       clientLabel: client.label,
-      accountId: client.accountId,
+      candidates: candidates.map((c) => ({
+        bookingId: c.bookingId,
+        label: c.label,
+        balance: c.balance,
+      })),
     });
   }
   return preview;

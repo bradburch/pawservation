@@ -1,10 +1,4 @@
 import { createMiddleware } from 'hono/factory';
-import { findLivePersonalAccessToken, touchPersonalAccessToken } from '../db/repo';
-import {
-  hashPersonalAccessToken,
-  looksLikePersonalAccessToken,
-  shouldRefreshLastUsed,
-} from './personal-access-token';
 import { resolveTenant } from './tenant-resolve';
 import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
@@ -36,78 +30,15 @@ export const tenantMiddleware = createMiddleware<AppEnv>(async (c, next) => {
 });
 
 /**
- * Requires a Bearer end-user credential for the resolved tenant, of which there are two — a widget
- * session token, or a personal access token (0012) — and they are interchangeable here on purpose.
- * Both resolve to the same `(TenantId, EndUserId)` pair and confer exactly the same authority, so
- * no route downstream has to know, or is allowed to care, which one arrived.
- *
- * That is the whole point of the personal access token: `lib/llms.ts` publishes a booking API
- * whose every endpoint sits behind this middleware, and a 24-hour widget JWT minted by the
- * widget's own email-code flow made that API unusable by anything but the widget.
- *
- * 401 = missing/invalid/expired/revoked (the widget re-identifies; an API client re-authorises);
- * 403 = a valid widget token for a DIFFERENT tenant. A personal access token cannot produce that
- * 403: its lookup binds TenantId, so under the wrong sitter it does not exist rather than existing
- * elsewhere, and saying so would mean reading across a tenant boundary to find out.
+ * Requires a Bearer widget token whose tenant claim matches the resolved tenant.
+ * 401 = missing/invalid/expired (widget re-identifies); 403 = valid token, wrong tenant.
  */
 export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const presented = extractBearer(c.req.header('Authorization'));
-  const tenant = c.get('tenant');
-
-  // Personal access token. Screened by its public prefix first so an ordinary widget JWT never
-  // costs a hash and a database read (see looksLikePersonalAccessToken — not a security check).
-  if (looksLikePersonalAccessToken(presented)) {
-    const hash = await hashPersonalAccessToken(presented);
-    const row = await findLivePersonalAccessToken(c.env.PAWBOOK_DB, tenant.Id, hash);
-    // One answer for unknown, revoked, and belonging-to-another-sitter: the caller holds the
-    // secret, so nothing is hidden from its owner that they could not already determine, and
-    // nothing is confirmed to anyone else.
-    if (!row) return c.json({ error: 'That token is not valid.' }, 401);
-    c.set('endUserId', row.EndUserId);
-    c.set('endUserCredential', 'token');
-    // "Last used" is for recognising a token in the revoke list, so it is refreshed at most once
-    // an hour AND handed to waitUntil — an automated client's steady traffic must not turn every
-    // read into a write, nor pay for one in its own latency. In tests there is no ExecutionContext,
-    // so the write is awaited and the stamp is deterministic (the routes/admin.ts pattern).
-    if (shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
-      const task = touchPersonalAccessToken(c.env.PAWBOOK_DB, tenant.Id, row.Id).catch((err) => {
-        console.error('personal access token touch failed', err);
-      });
-      try {
-        c.executionCtx.waitUntil(task);
-      } catch {
-        await task;
-      }
-    }
-    await next();
-    return;
-  }
-
-  const claims = presented ? await verifyToken(presented, c.env.TOKEN_SECRET) : null;
+  const token = extractBearer(c.req.header('Authorization'));
+  const claims = token ? await verifyToken(token, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in again.' }, 401);
-  if (claims.tid !== tenant.Id) return c.json({ error: 'Wrong tenant.' }, 403);
+  if (claims.tid !== c.get('tenant').Id) return c.json({ error: 'Wrong tenant.' }, 403);
   c.set('endUserId', claims.sub);
-  c.set('endUserCredential', 'widget');
-  await next();
-});
-
-/**
- * Additionally requires that the end user authenticated with the WIDGET session, not with a
- * personal access token. Runs after `endUserAuth` and reads what it recorded.
- *
- * This guards credential management itself. A token that could mint another token would make
- * revocation advisory: cut off a leaked credential and whoever holds it issues a replacement
- * before the owner has finished reading the confirmation. Requiring the email-code session means
- * every long-lived credential traces back to someone who could read the owner's inbox at the time
- * it was issued, and the revoke list is a complete list.
- *
- * Fails closed: an unset credential means `endUserAuth` did not run, which is a wiring mistake,
- * and the safe reading of "we do not know how you authenticated" is "not with the widget".
- */
-export const widgetSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
-  if (c.get('endUserCredential') !== 'widget') {
-    return c.json({ error: 'Sign in from the booking page to manage your tokens.' }, 403);
-  }
   await next();
 });
 

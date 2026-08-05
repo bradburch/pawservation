@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { matchVenmoTxns, type MatchClient, type VenmoTxn } from '../lib/venmo';
+import {
+  matchVenmoTxns,
+  type MatchClient,
+  type OutstandingBooking,
+  type VenmoTxn,
+} from '../lib/venmo';
 
 const txn = (over: Partial<VenmoTxn> = {}): VenmoTxn => ({
   txnId: 't1',
@@ -17,27 +22,28 @@ const jess: MatchClient = {
   label: 'Jess Demo',
   name: 'Jess Demo',
   venmoUsername: null,
-  accountId: 'p_rex',
 };
+
+const booking = (over: Partial<OutstandingBooking> = {}): OutstandingBooking => ({
+  bookingId: 'bk_1',
+  endUserId: 'eu_1',
+  label: 'Boarding starting 2026-07-01',
+  startDate: '2026-07-01',
+  balance: 250,
+  ...over,
+});
 
 const run = (over: Partial<Parameters<typeof matchVenmoTxns>[0]> = {}) =>
   matchVenmoTxns({
     txns: [txn()],
     clients: [jess],
+    outstanding: [booking()],
     alreadyImported: new Set<string>(),
     ...over,
   });
 
-/**
- * Story 2.5 — VENMO IMPORT RECORDS AGAINST HOUSEHOLDS (supports FR-7a). Once a payer resolves to
- * exactly one client, resolving further to a SPECIFIC BOOKING is no longer this module's job at
- * all: the payment goes to that client's household (0011), whatever it's for. There is deliberately
- * no "ambiguous — which booking?" bucket any more, because there is nothing left to be ambiguous
- * about once the household is known — `buildAccounts` partitions owners into exactly one household
- * each, never several.
- */
 describe('matchVenmoTxns', () => {
-  it('matches a client by name straight to their household', () => {
+  it('matches a client by name and a booking by an exact balance', () => {
     const preview = run();
     expect(preview.matched).toEqual([
       {
@@ -48,9 +54,11 @@ describe('matchVenmoTxns', () => {
         note: 'Boarding',
         endUserId: 'eu_1',
         clientLabel: 'Jess Demo',
-        accountId: 'p_rex',
+        bookingId: 'bk_1',
+        bookingLabel: 'Boarding starting 2026-07-01',
       },
     ]);
+    expect(preview.ambiguous).toEqual([]);
     expect(preview.unmatched).toEqual([]);
   });
 
@@ -71,13 +79,29 @@ describe('matchVenmoTxns', () => {
     expect(preview.unmatched[0].reason).toMatch(/No client/);
   });
 
-  it('surfaces a client who has no pets on file, rather than guessing which household', () => {
-    // A client with no pets belongs to no household at all — buildAccounts derives nothing to
-    // attach the payment to, and this module refuses to invent one.
-    const preview = run({ clients: [{ ...jess, accountId: null }] });
+  it('offers a ranked choice when several bookings could take the payment', () => {
+    const preview = run({
+      txns: [txn({ amount: 100, date: '2026-07-10' })],
+      outstanding: [
+        booking({ bookingId: 'bk_far', startDate: '2026-01-01', balance: 300 }),
+        booking({ bookingId: 'bk_near', startDate: '2026-07-09', balance: 300 }),
+        booking({ bookingId: 'bk_exact', startDate: '2026-03-01', balance: 100 }),
+      ],
+    });
     expect(preview.matched).toEqual([]);
-    expect(preview.unmatched).toHaveLength(1);
-    expect(preview.unmatched[0].reason).toMatch(/no pets on file/);
+    expect(preview.ambiguous).toHaveLength(1);
+    // Exact balance first, then nearest start date, then the rest.
+    expect(preview.ambiguous[0].candidates.map((c) => c.bookingId)).toEqual([
+      'bk_exact',
+      'bk_near',
+      'bk_far',
+    ]);
+  });
+
+  it('never proposes over-paying a booking', () => {
+    const preview = run({ txns: [txn({ amount: 400 })] });
+    expect(preview.matched).toEqual([]);
+    expect(preview.unmatched[0].reason).toMatch(/no unpaid booking of \$400 or more/);
   });
 
   it('refuses to guess between two clients sharing one Venmo name', () => {
@@ -85,6 +109,7 @@ describe('matchVenmoTxns', () => {
       clients: [jess, { ...jess, endUserId: 'eu_2', label: 'jess@other.example' }],
     });
     expect(preview.matched).toEqual([]);
+    expect(preview.ambiguous).toEqual([]);
     expect(preview.unmatched[0].reason).toMatch(/More than one client/);
   });
 
@@ -103,24 +128,9 @@ describe('matchVenmoTxns', () => {
   it('ignores a client with neither a name nor a handle to match on', () => {
     const preview = run({
       txns: [txn({ from: '' })],
-      clients: [
-        {
-          endUserId: 'eu_3',
-          label: 'x@y.example',
-          name: null,
-          venmoUsername: null,
-          accountId: null,
-        },
-      ],
+      clients: [{ endUserId: 'eu_3', label: 'x@y.example', name: null, venmoUsername: null }],
     });
     expect(preview.matched).toEqual([]);
     expect(preview.unmatched).toHaveLength(1);
-  });
-
-  it('never proposes over-paying anything — a household payment carries no balance to exceed', () => {
-    // A prepayment far larger than anything owed is still legitimate (Story 2.3): the amount is
-    // never checked against a balance here at all.
-    const preview = run({ txns: [txn({ amount: 100000 })] });
-    expect(preview.matched).toEqual([{ ...preview.matched[0], amount: 100000 }]);
   });
 });
