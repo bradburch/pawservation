@@ -1,9 +1,9 @@
 ---
-name: running-pawbook
-description: Launch and drive Pawbook locally (wrangler dev on :8787) without sending real email — seed D1, safe env overrides, demo logins for the embed widget and admin dashboard. Use when asked to run, demo, screenshot, or manually verify the app.
+name: running-pawservation
+description: Launch and drive Pawservation locally (wrangler dev on :8787) without sending real email — seed D1, safe env overrides, demo logins for the embed widget and admin dashboard. Use when asked to run, demo, screenshot, or manually verify the app.
 ---
 
-# Running Pawbook locally
+# Running Pawservation locally
 
 Cloudflare Worker (Hono) + D1 + three Vite bundles (embed widget, admin dashboard, demo host). Verified cold-start from a fresh worktree on 2026-07-07.
 
@@ -26,7 +26,7 @@ Server: **http://localhost:8787** (landing → /admin, /demo; widget at /embed/:
 
 **Embed widget** — `http://localhost:8787/embed/sunny-paws`:
 
-- Sign in as `jess@example.com` → the code appears on-screen in dev mode. (If email is live instead, read the code from D1: `npx wrangler d1 execute pawbook-db --local --command "SELECT Code FROM LoginCodes ORDER BY rowid DESC LIMIT 1"`.)
+- Sign in as `jess@example.com` → the code appears on-screen in dev mode. (If email is live instead, read the code from D1: `npx wrangler d1 execute pawservation-db --local --command "SELECT Code FROM LoginCodes ORDER BY rowid DESC LIMIT 1"`.)
 - Walks has a windowed option ("Morning Walk · 11:00–14:00") — good for exercising slot capacity; a full day renders struck-through in the month grid.
 - Book: pick service → duration/option → date → pet (Bella/Mochi) → Check availability → Send request (creates a `pending` booking).
 
