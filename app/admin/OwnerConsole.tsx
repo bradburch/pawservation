@@ -172,6 +172,9 @@ export function OwnerConsole({
   // The row currently mid type-to-confirm remove; its inline input replaces the row's actions.
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeInput, setRemoveInput] = useState('');
+  // The row currently mid premium-date edit; its inline date input replaces the row's actions.
+  const [premiumEditId, setPremiumEditId] = useState<string | null>(null);
+  const [premiumDateInput, setPremiumDateInput] = useState('');
 
   const toggleDisabled = async (s: SitterRow) => {
     if (busyId) return;
@@ -179,6 +182,48 @@ export function OwnerConsole({
     setBusyId(s.tenantId);
     try {
       await owner.setSitterDisabled(session.token, s.tenantId, !s.disabled);
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startPremiumEdit = (s: SitterRow) => {
+    setDashError('');
+    setPremiumEditId(s.tenantId);
+    // premiumUntil is stored as 'YYYY-MM-DD HH:MM:SS'; <input type="date"> needs just the date part.
+    setPremiumDateInput(s.premiumUntil ? s.premiumUntil.slice(0, 10) : '');
+  };
+
+  const cancelPremiumEdit = () => {
+    setPremiumEditId(null);
+    setPremiumDateInput('');
+  };
+
+  const savePremium = async (s: SitterRow) => {
+    if (busyId || !premiumDateInput) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterPremium(session.token, s.tenantId, premiumDateInput);
+      cancelPremiumEdit();
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const clearPremium = async (s: SitterRow) => {
+    if (busyId) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterPremium(session.token, s.tenantId, null);
+      cancelPremiumEdit();
       reloadRoster();
     } catch (e) {
       handleDash(e);
@@ -440,9 +485,45 @@ export function OwnerConsole({
                                 {s.disabled && (
                                   <span className="pb-chip pb-chip-warn">Disabled</span>
                                 )}
+                                {s.premiumUntil != null &&
+                                  s.premiumUntil >
+                                    new Date().toISOString().slice(0, 19).replace('T', ' ') && (
+                                    <span className="pb-chip" title={`Until ${s.premiumUntil}`}>
+                                      Premium
+                                    </span>
+                                  )}
                               </td>
                               <td>
-                                {removingId === s.tenantId ? (
+                                {premiumEditId === s.tenantId ? (
+                                  <span className="pb-row">
+                                    <input
+                                      type="date"
+                                      aria-label={`Premium until date for ${s.displayName}`}
+                                      value={premiumDateInput}
+                                      onChange={(e) => setPremiumDateInput(e.target.value)}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId || !premiumDateInput}
+                                      onClick={() => void savePremium(s)}
+                                    >
+                                      {busyId === s.tenantId ? '…' : 'Save'}
+                                    </button>
+                                    {s.premiumUntil != null && (
+                                      <button
+                                        type="button"
+                                        className="pb-danger"
+                                        disabled={busyId === s.tenantId}
+                                        onClick={() => void clearPremium(s)}
+                                      >
+                                        Clear
+                                      </button>
+                                    )}
+                                    <button type="button" onClick={cancelPremiumEdit}>
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : removingId === s.tenantId ? (
                                   <span className="pb-row">
                                     <input
                                       value={removeInput}
@@ -478,6 +559,13 @@ export function OwnerConsole({
                                         : s.disabled
                                           ? 'Enable'
                                           : 'Disable'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId}
+                                      onClick={() => startPremiumEdit(s)}
+                                    >
+                                      Premium…
                                     </button>
                                     <button
                                       type="button"
