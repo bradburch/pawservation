@@ -1099,18 +1099,19 @@ const PRIVACY_HTML = `<!doctype html>
           <p class="chip">Legal</p>
           <h1>Privacy Policy</h1>
           <p class="sub">What we collect, who we share it with, and how long we keep it &mdash; written to match what the product actually does.</p>
+          <p class="note">Last updated: August 4, 2026</p>
         </div>
       </section>
 
       <section class="section">
-        <div class="wrap">
+        <div class="wrap legal">
           <div class="feature">
             <h3>What we collect</h3>
-            <p>From customers: name, email, phone, your pets' names and any care notes you give your sitter, and the answers you give to your sitter's own booking questions. From sitters: your login email and a securely hashed password &mdash; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
+            <p>From customers: name, email, phone, your pets&rsquo; names and any care notes you give your sitter, and the answers you give to your sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password &mdash; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
           </div>
           <div class="feature">
             <h3>Who we share it with</h3>
-            <p><strong>Resend</strong> sends our transactional email &mdash; login codes, booking confirmations, password-reset links &mdash; and nothing else; we don't use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider &mdash; everything above lives on Cloudflare's infrastructure.</p>
+            <p><strong>Resend</strong> sends our transactional email &mdash; login codes, booking confirmations, password-reset links &mdash; and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider &mdash; everything above lives on Cloudflare&rsquo;s infrastructure.</p>
           </div>
           <div class="feature">
             <h3>Cookies</h3>
@@ -1118,11 +1119,11 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>How long we keep it</h3>
-            <p>Cancelled and declined bookings stay on the record as part of your sitter's booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can't be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account's data.</p>
+            <p>Cancelled and declined bookings stay on the record as part of your sitter&rsquo;s booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can&rsquo;t be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account&rsquo;s data.</p>
           </div>
           <div class="feature">
             <h3>Children</h3>
-            <p>Pawservation is not directed at children, and we don't knowingly collect data from them.</p>
+            <p>Pawservation is not directed at children, and we don&rsquo;t knowingly collect data from them.</p>
           </div>
           <div class="feature">
             <h3>No tracking</h3>
@@ -1130,7 +1131,7 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>Where your data lives</h3>
-            <p>Everything is stored on Cloudflare's global network. We don't currently commit to a specific country or region.</p>
+            <p>Everything is stored on Cloudflare&rsquo;s global network. We don&rsquo;t currently commit to a specific country or region.</p>
           </div>
           <div class="feature">
             <h3>Questions</h3>
@@ -1215,11 +1216,12 @@ const TERMS_HTML = `<!doctype html>
           <p class="chip">Legal</p>
           <h1>Terms &amp; Conditions</h1>
           <p class="sub">The terms that govern using Pawservation.</p>
+          <p class="note">Last updated: August 4, 2026</p>
         </div>
       </section>
 
       <section class="section">
-        <div class="wrap">
+        <div class="wrap legal">
           <div class="feature">
             <h3>What Pawservation is</h3>
             <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and her customer.</p>
@@ -1234,15 +1236,15 @@ const TERMS_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>Acceptable use</h3>
-            <p>Don't attempt to abuse the booking or intake system, or to work around tenant isolation, rate limits, or any other technical safeguard.</p>
+            <p>Don&rsquo;t attempt to abuse the booking or intake system, or to work around tenant isolation, rate limits, or any other technical safeguard.</p>
           </div>
           <div class="feature">
             <h3>Your data</h3>
-            <p>A sitter owns her business's client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
+            <p>A sitter owns her business&rsquo;s client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
           </div>
           <div class="feature">
             <h3>Availability</h3>
-            <p>Pawservation is provided "as is," without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
+            <p>Pawservation is provided &ldquo;as is,&rdquo; without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
           </div>
           <div class="feature">
             <h3>Termination</h3>

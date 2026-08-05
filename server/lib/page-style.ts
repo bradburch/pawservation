@@ -452,6 +452,10 @@ export const PAGE_STYLE = /* css */ `
       .feature p { margin: 0; font-size: 0.9rem; color: var(--body-c); }
       @media (min-width: 640px) { .features { grid-template-columns: 1fr 1fr; } }
       @media (min-width: 960px) { .features { grid-template-columns: 1fr 1fr 1fr; } }
+      /* Single-column legal prose (Privacy/Terms): .feature blocks sit directly in .wrap with
+         no .features grid wrapper (that grid goes multi-column at wider viewports, which is
+         wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
+      .legal .feature + .feature { margin-top: 28px; }
 
       /* ── Alongside your workflow ────────────────────────────────── */
       .wf-grid {
@@ -722,7 +726,7 @@ export const PAGE_STYLE = /* css */ `
       }
       .foot-bottom p { margin: 0; }
       @media (min-width: 700px) {
-        .foot-grid { grid-template-columns: 1.4fr 1fr; }
+        .foot-grid { grid-template-columns: 1.4fr 1fr 1fr; }
       }
 
       :focus-visible {
