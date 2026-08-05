@@ -1490,10 +1490,10 @@ const BASE_AMOUNT_SQL =
  * What a booking TOTALS to owing: the base amount above PLUS any extra charges logged against it
  * (BookingCharges) — a charge is owed on a stay that happened whether or not it was later
  * cancelled, and EstCost/CancellationFee are never mutated to absorb it. This is the single
- * "how much is this booking worth" figure shared by the earnings payload's outstanding predicate
- * AND the Venmo importer's candidate balances, so a charge logged in the admin panel is never
- * invisible to either. Expects a `chg` subquery (SUM(BookingCharges.Amount) per booking) aliased
- * in scope — see `CHARGES_JOIN_SQL`.
+ * "how much is this booking worth" figure the earnings payload's outstanding predicate is built
+ * on (see `OUTSTANDING_WHERE_SQL` below), and `CREDITABLE_AMOUNT_SQL` reuses it too, so a charge
+ * logged in the admin panel is never invisible to either. Expects a `chg` subquery
+ * (SUM(BookingCharges.Amount) per booking) aliased in scope — see `CHARGES_JOIN_SQL`.
  */
 const EXPECTED_AMOUNT_SQL = `(${BASE_AMOUNT_SQL} + COALESCE(chg.Total, 0))`;
 
@@ -1505,10 +1505,11 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
 
 /**
  * A booking is OUTSTANDING when it is live (confirmed or cancelled — declined rows are never
- * billed) and under-paid once charges are counted. Shared verbatim by the earnings payload and
- * the Venmo importer's candidate set so the sitter can never be offered a booking the Earnings
- * page does not consider owing, and a cancelled booking with no assessed fee but a live charge
- * still surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
+ * billed) and under-paid once charges are counted. Read only by the earnings payload as of the
+ * household-payments rework (0011) — the Venmo importer no longer ranks candidate bookings; it
+ * resolves a payer straight to a household via `resolveMatchClient`/`getAccountIdsByOwner` instead
+ * (see `server/lib/venmo.ts`). A cancelled booking with no assessed fee but a live charge still
+ * surfaces as outstanding. Expects `paid` and `chg` subqueries aliased in scope.
  *
  * `insertPayment`'s guard is the third reader of this rule (it cannot share the SQL — it has no
  * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
@@ -1650,9 +1651,11 @@ export async function keepBookingCredit(
  * of the owner<->pet graph that `buildAccounts` already derives for invoice numbering, which is why
  * two customers who share a single pet get one statement here as they do there.
  *
- * **NO SCHEMA CHANGE IS INVOLVED.** Payments are per-booking rows; a household is a set of bookings;
- * so this rollup is a sum over data that already exists. That is the whole point of shipping it
- * before anything account-shaped is written to the database.
+ * Payments are per-booking rows by default; a household is a set of bookings; so the bulk of this
+ * rollup is a sum over data that already existed before this feature shipped. Migration 0011 later
+ * added `Payments.AccountId` for payments that settle a household directly rather than one booking
+ * (see `computeHouseholdRollup`'s account-payments read below) — those rows are the one piece of
+ * schema this rollup now depends on that did not exist when it first shipped.
  *
  * ONE MONEY RULE, not a second one. `Expected` is `CREDITABLE_AMOUNT_SQL` verbatim — the quote, or
  * the assessed cancellation fee on a cancelled row, plus extra charges, and zero for a request that
@@ -1668,11 +1671,14 @@ export async function keepBookingCredit(
  * earnings tiles keep reporting `outstandingTotal` and `creditTotal` separately (see
  * `serializeAnalytics`) — one client owing $100 while another is owed $100 is not a settled book.
  *
- * Four tenant-scoped reads, composed by the pure `buildHouseholdBalances`: the per-booking money,
+ * Six tenant-scoped reads, composed by the pure `buildHouseholdBalances`: the per-booking money,
  * the booking<->pet edges (BookingRequestPets has no TenantId, so tenancy flows through its parent
  * booking, the idiom everywhere else in this file), the owner<->pet edges the graph is built from,
- * and the customers themselves so a balance can carry a name. Deceased pets are excluded by
- * `listOwnerPetLinks`, as the pure module requires.
+ * the customers themselves so a balance can carry a name, the household-level account payments
+ * (`Payments.AccountId`, see above), and the deceased-pet owner edges needed to anchor a payment to
+ * its household even after every pet on it has died. Deceased pets are excluded from the primary
+ * owner<->pet read by `listOwnerPetLinks`, as the pure module requires; the deceased edges are fed
+ * in separately as anchors, never as ordinary graph edges.
  */
 export async function getHouseholdBalances(
   db: D1Database,
