@@ -277,8 +277,7 @@ Merges to `main` auto-deploy via CI.
 `wrangler.jsonc` sets `"preview_urls": true`, so every `npx wrangler versions upload` prints a
 shareable `https://<version>-pawservation.<subdomain>.workers.dev` URL for that exact worker version —
 useful for reviewing a change before promoting it to the `pawservation.com` route. `workers_dev`
-stays `true` too (existing embeds point at the `*.workers.dev` URL and must keep working) —
-don't touch it.
+stays `true` too — it's what makes that staging URL work — don't touch it.
 
 ## Provisioning the first sitter
 

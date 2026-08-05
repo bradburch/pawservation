@@ -39,6 +39,10 @@
     {
       "binding": "PAWSERVATION_DB",
       "database_name": "pawservation-db",
+      // database_name is a local label wrangler resolves config entries against — not the
+      // Cloudflare account's actual registered database name, which stays "pawbook-db"
+      // permanently (neither `wrangler d1` nor the Cloudflare API has a rename capability).
+      // database_id below is the real, unchanging identifier of the resource.
       "database_id": "db7d32b9-58a3-4d01-9da9-e840accaa3fc",
     },
   ],
