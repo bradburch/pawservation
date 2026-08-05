@@ -451,7 +451,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Booking widget on your own site, unlimited bookings</li>
                 <li>Availability, capacity caps, and conflict rules</li>
                 <li>Minimum notice and a booking horizon</li>
-                <li>Rates, logged payments, and outstanding balances</li>
+                <li>Rates, logged payments, and outstanding balances &mdash; one bill for a whole household</li>
                 <li>Cancellation policies, applied for you</li>
                 <li>Clients reschedule and cancel their own bookings</li>
                 <li>Client accounts and pet profiles</li>
@@ -472,6 +472,7 @@ const LANDING_HTML = `<!doctype html>
               <ul class="price-list">
                 <li>Everything in Free</li>
                 <li>AI concierge &mdash; clients check availability and book by chat</li>
+                <li>Connect an AI assistant (like Claude) to check availability and book on your behalf &mdash; less back-and-forth, less time in your inbox</li>
                 <li>Card payments &mdash; deposits, saved cards, auto-charge</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
@@ -518,11 +519,11 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Do customers pay by card here?</h3>
-              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate.</p>
+              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate. Two clients sharing a pet are one household on your books, so you can send one bill for the whole household instead of chasing separate payments per booking.</p>
             </div>
             <div class="qa-item">
               <h3>Can it double-book me?</h3>
-              <p><strong>No.</strong> Your caps and your time off hold the day, and a request holds its space from the moment it arrives &mdash; not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways.</p>
+              <p><strong>No.</strong> Your caps and your time off hold the day, and a request holds its space from the moment it arrives &mdash; not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways, which also means deleting a booking&rsquo;s event in Google cancels that booking and emails your client.</p>
             </div>
             <div class="qa-item">
               <h3>Can a client change or cancel a booking themselves?</h3>
@@ -568,6 +569,13 @@ const LANDING_HTML = `<!doctype html>
               <li><a href="/admin">Sitter sign in</a></li>
               <li><a href="/how-it-works">Full tour</a></li>
               <li><a href="#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
             </ul>
           </div>
         </div>
@@ -891,7 +899,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>It reads your calendar, too</h3>
-              <p>Bookings flow out to the connected calendar &mdash; and busy events you keep there flow back. Add a stay by hand in Google and Pawservation blocks those dates automatically; move or delete it and the block follows. Every other calendar in your account is never read and never touched.</p>
+              <p>Bookings flow out to the connected calendar &mdash; and busy events you keep there flow back. Add a stay by hand in Google and Pawservation blocks those dates automatically; move or delete it and the block follows. That&rsquo;s time off you entered yourself &mdash; a real booking is different: deleting it in Google cancels the booking in Pawservation too, and your client gets an email. Every other calendar in your account is never read and never touched.</p>
             </div>
             <div class="feature">
               <h3>If Google is down</h3>
@@ -1034,6 +1042,252 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <li><a href="/#faq">FAQ</a></li>
             </ul>
           </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <p>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
+          </p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
+`;
+
+/**
+ * The Privacy Policy at /privacy — same LOCKED_CSP, script-free, PAGE_STYLE-only constraints as
+ * every other static page here. Content is grounded in what this codebase actually does (see the
+ * design doc's audit); this is not a substitute for legal review before it is a real business's
+ * live policy.
+ */
+const PRIVACY_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy Policy &mdash; Pawservation</title>
+    <meta name="description" content="What Pawservation collects, who it's shared with, and how long it's kept." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+          Pawservation
+        </a>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">Legal</p>
+          <h1>Privacy Policy</h1>
+          <p class="sub">What we collect, who we share it with, and how long we keep it &mdash; written to match what the product actually does.</p>
+          <p class="note">Last updated: August 4, 2026</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap legal">
+          <div class="feature">
+            <h3>What we collect</h3>
+            <p>From customers: name, email, phone, your pets&rsquo; names and any care notes you give your sitter, and the answers you give to your sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password &mdash; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
+          </div>
+          <div class="feature">
+            <h3>Who we share it with</h3>
+            <p><strong>Resend</strong> sends our transactional email &mdash; login codes, booking confirmations, password-reset links &mdash; and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider &mdash; everything above lives on Cloudflare&rsquo;s infrastructure.</p>
+          </div>
+          <div class="feature">
+            <h3>Cookies</h3>
+            <p>We set exactly one cookie, for ten minutes, only while a sitter is connecting Google Calendar &mdash; it exists purely to stop a cross-site request forgery attack during that one step. There are no cookies for signing in or for tracking you. Every login &mdash; customer, sitter, or platform owner &mdash; works without one.</p>
+          </div>
+          <div class="feature">
+            <h3>How long we keep it</h3>
+            <p>Cancelled and declined bookings stay on the record as part of your sitter&rsquo;s booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can&rsquo;t be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account&rsquo;s data.</p>
+          </div>
+          <div class="feature">
+            <h3>Children</h3>
+            <p>Pawservation is not directed at children, and we don&rsquo;t knowingly collect data from them.</p>
+          </div>
+          <div class="feature">
+            <h3>No tracking</h3>
+            <p>We run no analytics, no ad pixels, and no fingerprinting &mdash; on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
+          </div>
+          <div class="feature">
+            <h3>Where your data lives</h3>
+            <p>Everything is stored on Cloudflare&rsquo;s global network. We don&rsquo;t currently commit to a specific country or region.</p>
+          </div>
+          <div class="feature">
+            <h3>Questions</h3>
+            <p>Reach us at <a href="mailto:brad@pawservation.com">brad@pawservation.com</a>.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <a class="logo" href="/">
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+              Pawservation
+            </a>
+            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <ul>
+              <li><a href="/demo">Try the demo</a></li>
+              <li><a href="/admin">Sitter sign in</a></li>
+              <li><a href="/">Overview</a></li>
+              <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <p>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
+          </p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
+`;
+
+/**
+ * The Terms & Conditions at /terms — same LOCKED_CSP, script-free, PAGE_STYLE-only constraints as
+ * every other static page here. Not a substitute for legal review before it is a real business's
+ * live terms.
+ */
+const TERMS_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terms &amp; Conditions &mdash; Pawservation</title>
+    <meta name="description" content="The terms that govern using Pawservation." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+          Pawservation
+        </a>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">Legal</p>
+          <h1>Terms &amp; Conditions</h1>
+          <p class="sub">The terms that govern using Pawservation.</p>
+          <p class="note">Last updated: August 4, 2026</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap legal">
+          <div class="feature">
+            <h3>What Pawservation is</h3>
+            <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and her customer.</p>
+          </div>
+          <div class="feature">
+            <h3>Accounts</h3>
+            <p>Sitters and the platform owner sign in with an email and password; customers sign in with a one-time code sent to their email. Each person is responsible for keeping their own credentials secure.</p>
+          </div>
+          <div class="feature">
+            <h3>Payments</h3>
+            <p>Pawservation is not a payment processor. A sitter collects payment herself, outside Pawservation, and logs the amount here so her records stay accurate. We never process, store, or guarantee any payment, and any payment dispute is between the sitter and her customer.</p>
+          </div>
+          <div class="feature">
+            <h3>Acceptable use</h3>
+            <p>Don&rsquo;t attempt to abuse the booking or intake system, or to work around tenant isolation, rate limits, or any other technical safeguard.</p>
+          </div>
+          <div class="feature">
+            <h3>Your data</h3>
+            <p>A sitter owns her business&rsquo;s client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
+          </div>
+          <div class="feature">
+            <h3>Availability</h3>
+            <p>Pawservation is provided &ldquo;as is,&rdquo; without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
+          </div>
+          <div class="feature">
+            <h3>Termination</h3>
+            <p>The platform owner may disable or remove an account that violates these terms.</p>
+          </div>
+          <div class="feature">
+            <h3>Governing law</h3>
+            <p>These terms are governed by the laws of the State of California, and any dispute will be brought in the state or federal courts located in San Francisco County, California.</p>
+          </div>
+          <div class="feature">
+            <h3>Changes</h3>
+            <p>We may update these terms from time to time; check back periodically.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <a class="logo" href="/">
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+              Pawservation
+            </a>
+            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <ul>
+              <li><a href="/demo">Try the demo</a></li>
+              <li><a href="/admin">Sitter sign in</a></li>
+              <li><a href="/">Overview</a></li>
+              <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
         </div>
         <div class="foot-bottom">
           <p>
@@ -1052,6 +1306,8 @@ app.get('/', (c) => c.html(LANDING_HTML));
 // "/" does, which is not listed); the entry is defensive, so that if a build ever emits an asset
 // there it can never shadow this route.
 app.get('/how-it-works', (c) => c.html(HOW_IT_WORKS_HTML));
+app.get('/privacy', (c) => c.html(PRIVACY_HTML));
+app.get('/terms', (c) => c.html(TERMS_HTML));
 
 // Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
 // through to Hono's plain-text default and break the { error } contract every client parses.

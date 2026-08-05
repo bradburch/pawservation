@@ -223,6 +223,12 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('keeps retrying until the event lands');
   });
 
+  it("distinguishes deleting a time-off block from deleting a booking's own event", async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('blocks those dates automatically');
+    expect(body).toMatch(/deleting it in Google cancels the booking/i);
+  });
+
   it('is truthful that the connected calendar is read back and blocks dates', async () => {
     const body = await howItWorksBody();
     // WS-G: external events on the connected calendar are materialized and block capacity.
@@ -299,6 +305,24 @@ describe('the landing page points at /how-it-works', () => {
   });
 });
 
+describe('the footer links to the legal pages', () => {
+  it('landing page footer links /privacy and /terms', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/', {}, env);
+    const body = await res.text();
+    expect(body).toContain('href="/privacy"');
+    expect(body).toContain('href="/terms"');
+  });
+
+  it('how-it-works page footer links /privacy and /terms', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/how-it-works', {}, env);
+    const body = await res.text();
+    expect(body).toContain('href="/privacy"');
+    expect(body).toContain('href="/terms"');
+  });
+});
+
 /**
  * The landing page makes fewer claims than the tour, but the ones it does make are absolutes
  * ("No.", "Just your clients."), which is exactly why they want pinning: an absolute is either
@@ -345,6 +369,26 @@ describe('the landing page claims only what ships', () => {
     expect(body).toContain('In development');
     expect(body).toContain('Not available yet');
     expect(body.match(/Available now/g)!.length).toBe(1); // the Free card, and only the Free card
+    expect(body).not.toMatch(/start (your |a )?free trial/i);
+    expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
+  });
+
+  it('discloses that deleting a booking event in Google cancels the booking', async () => {
+    const body = await landingBody();
+    expect(body).toMatch(/deleting a booking&rsquo;s event in Google cancels/i);
+  });
+
+  it('mentions paying once for a whole household instead of per booking', async () => {
+    const body = await landingBody();
+    expect(body).toMatch(/one (bill|payment) for (the |a )?(whole |entire )?household/i);
+  });
+
+  it('adds an MCP/assistant-booking bullet to the Pro card without changing its unbuilt framing', async () => {
+    const body = await landingBody();
+    expect(body).toMatch(/connect an ai assistant.*check availability and book/i);
+    // Still exactly one live badge (Free card only) and the Pro card is still unpurchasable.
+    expect(body.match(/Available now/g)!.length).toBe(1);
+    expect(body).toContain('Not available yet');
     expect(body).not.toMatch(/start (your |a )?free trial/i);
     expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
   });
