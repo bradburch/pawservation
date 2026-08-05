@@ -6,6 +6,7 @@ import { renderInviteForm } from './lib/invite-form';
 import { tenantMiddleware } from './lib/middleware';
 import { PAGE_STYLE } from './lib/page-style';
 import { resolveTenant } from './lib/tenant-resolve';
+import { accountsRoutes } from './routes/accounts';
 import { adminRoutes } from './routes/admin';
 import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
@@ -72,6 +73,7 @@ app.route('/api', authRoutes);
 app.route('/api', bookingRoutes);
 app.route('/api', tokenRoutes); // /api/:slug/tokens — the customer's own API credentials
 app.route('/api', adminRoutes);
+app.route('/api', accountsRoutes);
 app.route('/api', signupRoutes); // /api/signup/* — no slug ('signup' is a reserved slug)
 app.route('/api', passwordResetRoutes); // /api/password-reset/* — no slug ('password-reset' is a reserved slug)
 app.route('/api', ownerRoutes); // /api/owner/* — owner-token-gated ('owner' is a reserved slug)
