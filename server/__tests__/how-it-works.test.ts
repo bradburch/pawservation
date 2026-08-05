@@ -223,6 +223,12 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('keeps retrying until the event lands');
   });
 
+  it("distinguishes deleting a time-off block from deleting a booking's own event", async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('blocks those dates automatically');
+    expect(body).toMatch(/delet(e|ing) (it|the event) in Google cancels/i);
+  });
+
   it('is truthful that the connected calendar is read back and blocks dates', async () => {
     const body = await howItWorksBody();
     // WS-G: external events on the connected calendar are materialized and block capacity.
@@ -347,5 +353,10 @@ describe('the landing page claims only what ships', () => {
     expect(body.match(/Available now/g)!.length).toBe(1); // the Free card, and only the Free card
     expect(body).not.toMatch(/start (your |a )?free trial/i);
     expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
+  });
+
+  it('discloses that deleting a booking event in Google cancels the booking', async () => {
+    const body = await landingBody();
+    expect(body).toMatch(/delet(e|ing) (it|the event) in Google cancels/i);
   });
 });
