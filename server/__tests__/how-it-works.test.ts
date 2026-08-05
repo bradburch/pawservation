@@ -364,4 +364,14 @@ describe('the landing page claims only what ships', () => {
     const body = await landingBody();
     expect(body).toMatch(/one (bill|payment) for (the |a )?(whole |entire )?household/i);
   });
+
+  it('adds an MCP/assistant-booking bullet to the Pro card without changing its unbuilt framing', async () => {
+    const body = await landingBody();
+    expect(body).toMatch(/connect an ai assistant.*check availability and book/i);
+    // Still exactly one live badge (Free card only) and the Pro card is still unpurchasable.
+    expect(body.match(/Available now/g)!.length).toBe(1);
+    expect(body).toContain('Not available yet');
+    expect(body).not.toMatch(/start (your |a )?free trial/i);
+    expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
+  });
 });

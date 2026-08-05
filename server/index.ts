@@ -472,6 +472,7 @@ const LANDING_HTML = `<!doctype html>
               <ul class="price-list">
                 <li>Everything in Free</li>
                 <li>AI concierge &mdash; clients check availability and book by chat</li>
+                <li>Connect an AI assistant (like Claude) to check availability and book on your behalf &mdash; less back-and-forth, less time in your inbox</li>
                 <li>Card payments &mdash; deposits, saved cards, auto-charge</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
