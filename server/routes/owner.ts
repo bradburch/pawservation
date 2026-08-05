@@ -158,6 +158,9 @@ export const ownerRoutes = new Hono<AppEnv>()
       displayName: r.DisplayName,
       createdAt: r.CreatedAt,
       disabled: r.DisabledAt != null,
+      // Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean, same
+      // rationale as the detail route below: the owner is setting the date, so the date is what
+      // they need to see.
       premiumUntil: r.PremiumUntil,
       clients: r.Clients,
       bookings: r.Bookings,
@@ -183,10 +186,11 @@ export const ownerRoutes = new Hono<AppEnv>()
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     const data = await getAnalytics(c.env.PAWBOOK_DB, tenantId, today);
     // `premiumUntil` rides along beside `disabled` for the same reason it does: the console's two
-    // owner switches both need to render their CURRENT value, and this is the only read that has
-    // the tenant row. Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean —
-    // the owner is setting the date, so the date is what they need to see, and whether it has
-    // passed is a comparison the console can make for itself.
+    // owner switches both need to render their CURRENT value. This is one of two reads that carry
+    // it — the other is the roster list above — so both surfaces stay in sync with the tenant row.
+    // Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean — the owner is
+    // setting the date, so the date is what they need to see, and whether it has passed is a
+    // comparison the console can make for itself.
     return c.json({
       ...serializeAnalytics(data),
       disabled: tenant.DisabledAt != null,

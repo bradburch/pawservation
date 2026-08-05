@@ -194,6 +194,10 @@ export function OwnerConsole({
     setDashError('');
     setPremiumEditId(s.tenantId);
     // premiumUntil is stored as 'YYYY-MM-DD HH:MM:SS'; <input type="date"> needs just the date part.
+    // Truncation risk: if PremiumUntil ever carries a non-midnight time (only reachable via a
+    // direct PATCH outside this UI), pressing Save with no changes re-submits midnight and
+    // silently shortens entitlement. Accepted limitation of using a plain date input for an
+    // instant-valued field.
     setPremiumDateInput(s.premiumUntil ? s.premiumUntil.slice(0, 10) : '');
   };
 
@@ -485,7 +489,12 @@ export function OwnerConsole({
                                 {s.disabled && (
                                   <span className="pb-chip pb-chip-warn">Disabled</span>
                                 )}
-                                {s.premiumUntil != null &&
+                                {/* isPremiumActive's second clause (server/lib/premium.ts) is
+                                    DisabledAt == null AND PremiumUntil > now — a disabled tenant
+                                    is never premium however much of its subscription remains, so
+                                    the chip must not claim otherwise. */}
+                                {!s.disabled &&
+                                  s.premiumUntil != null &&
                                   s.premiumUntil >
                                     new Date().toISOString().slice(0, 19).replace('T', ' ') && (
                                     <span className="pb-chip" title={`Until ${s.premiumUntil}`}>
@@ -499,6 +508,7 @@ export function OwnerConsole({
                                     <input
                                       type="date"
                                       aria-label={`Premium until date for ${s.displayName}`}
+                                      title="Expires at the start of this date, UTC"
                                       value={premiumDateInput}
                                       onChange={(e) => setPremiumDateInput(e.target.value)}
                                     />
