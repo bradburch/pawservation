@@ -5,7 +5,7 @@
   "type": "module",
   "_dangerSeedRemote": "scripts.seed:remote OVERWRITES the PRODUCTION Cloudflare D1 database (pawservation-db --remote) with sql/schema.sql + sql/seed.sql + sql/seed-demo.sql, replacing real tenant data with demo tenants/bookings and resetting demo sitter logins to a password documented in this public repo. It happened for real on 2026-07-28. The script is guarded behind CONFIRM_SEED_REMOTE=overwrite-production -- if you are reading this because you copy-pasted the underlying `wrangler d1 execute pawservation-db --remote --file=...` commands out of the script to run by hand, that guard does not protect you: think twice before running them against the remote DB.",
   "dependencies": {
-    "hono": "^4.12.31",
+    "hono": "^4.13.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "valibot": "^1.4.2"
