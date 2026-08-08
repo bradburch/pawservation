@@ -458,6 +458,31 @@ export function ServiceEditor({
   // Boarding is priced/booked per night, daycare-style pools per day — the capacity label
   // must use the same noun the price does (RateUnit is the single source of that noun).
   const capUnit = s.rateUnit === 'night' ? 'night' : 'day';
+
+  // Live consequence hints: quiet, single-line notes derived from the staged draft `s`, so they
+  // appear and disappear as the sitter edits — never a validation error, just what the current
+  // configuration actually does. Same shape as ServicesSection's multiPetUnpriced/pb-svc-note.
+
+  // 1. Holiday rate without effect: an option priced at exactly the holiday rate means holidays
+  // cost the same as any other day for that option, which is very likely not what was intended.
+  const matchingHolidayOptions = isValidRate(s.holidayRate)
+    ? s.options.filter((o) => isValidRate(o.rate) && o.rate === s.holidayRate)
+    : [];
+
+  // 2. Half-configured extra-time surcharge: each side only ever applies with BOTH its time and
+  // its fee set (see the Hint above — NULL anywhere = off). A side left fully blank is a
+  // legitimate "off" state and gets no note — only a half-set side silently never applies.
+  const arrivalTimeSet = s.standardArrivalTime !== null;
+  const arrivalFeeSet = s.earlyArrivalFee !== null && s.earlyArrivalFee !== '';
+  const arrivalHalfSet = arrivalTimeSet !== arrivalFeeSet;
+  const departureTimeSet = s.standardDepartureTime !== null;
+  const departureFeeSet = s.lateDepartureFee !== null && s.lateDepartureFee !== '';
+  const departureHalfSet = departureTimeSet !== departureFeeSet;
+
+  // 3. Weekdays-only everywhere: every option locked to Mondays through Fridays means the whole
+  // service can never be booked on a weekend, easy to do one option at a time without noticing.
+  const allOptionsWeekdaysOnly = s.options.length > 0 && s.options.every((o) => o.weekdaysOnly);
+
   return (
     <div
       className="pb-svc-editor"
@@ -661,6 +686,11 @@ export function ServiceEditor({
                 : `That's the limit of ${MAX_OPTIONS} options on one service. Remove one to add another.`}
             </p>
           )}
+          {allOptionsWeekdaysOnly && (
+            <p className="pb-svc-note">
+              Every option is weekdays-only, so this service is never offered on weekends.
+            </p>
+          )}
         </div>
       )}
       <div className="pb-inline">
@@ -698,6 +728,13 @@ export function ServiceEditor({
           /{s.rateUnit}
         </label>
       </div>
+      {matchingHolidayOptions.length > 0 && (
+        <p className="pb-svc-note">
+          {matchingHolidayOptions.length === 1 && s.options.length > 1
+            ? `The holiday rate matches the ${matchingHolidayOptions[0].label || 'Standard'} option's rate, so holidays cost the same as any other day for that option.`
+            : "The holiday rate matches this service's base rate, so holidays cost the same as any other day."}
+        </p>
+      )}
       {/* Extra-time surcharge. Rendered only where the OWNER sets the booking's times — a
           duration-priced service (walk, check-in) takes its clock from the option the client picked,
           so a "standard hour" there could never fire and the server rejects it outright rather than
@@ -749,6 +786,12 @@ export function ServiceEditor({
               />
             </label>
           </div>
+          {arrivalHalfSet && (
+            <p className="pb-svc-note">
+              An early-arrival fee needs both the time and the fee — with only one set, it never
+              applies.
+            </p>
+          )}
           <div className="pb-inline">
             <label className="pb-inline">
               Normally ends
@@ -785,6 +828,12 @@ export function ServiceEditor({
               />
             </label>
           </div>
+          {departureHalfSet && (
+            <p className="pb-svc-note">
+              A late-departure fee needs both the time and the fee — with only one set, it never
+              applies.
+            </p>
+          )}
         </div>
       )}
       {/* Covers both pricing shapes above. A price left blank blocks the save bar (App.tsx), so say
