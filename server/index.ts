@@ -473,6 +473,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Everything in Free</li>
                 <li>AI concierge &mdash; clients check availability and book by chat</li>
                 <li>Connect an AI assistant (like Claude) to check availability and book on your behalf &mdash; less back-and-forth, less time in your inbox</li>
+                <li>Back-office assistant &mdash; ask who owes you, what your week looks like, and which pet combinations your clients can&rsquo;t book yet because they have no price</li>
                 <li>Card payments &mdash; deposits, saved cards, auto-charge</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
