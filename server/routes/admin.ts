@@ -1121,9 +1121,9 @@ export const adminRoutes = new Hono<AppEnv>()
   // ── Pet-group rates: explicit prices for specific animals (PetGroupPricing) ──────────────
   // Upsert/delete-ONE, deliberately not whole-set replace: group rows scale with the client
   // base, so a replace-writer would round-trip every client's rows per save and let two tabs
-  // clobber each other. Nothing reads these rows for pricing yet (PR 3); these routes only let
-  // sitters stage rates ahead of enforcement, so no tenant-cache invalidation is needed (the
-  // KV-cached public config carries no rates).
+  // clobber each other. Pricing reads these rows on every quote (loadPetSetRates →
+  // resolvePetSetRate, where a group rate beats a mix rate), straight from D1 — so no
+  // tenant-cache invalidation is needed (the KV-cached public config carries none of these rows).
   .get('/:slug/admin/pet-group-rates', async (c) => {
     const tenant = c.get('tenant');
     const rows = await listAllPetGroupPricing(c.env.PAWSERVATION_DB, tenant.Id);
