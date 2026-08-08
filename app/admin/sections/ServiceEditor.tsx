@@ -730,9 +730,11 @@ export function ServiceEditor({
       </div>
       {matchingHolidayOptions.length > 0 && (
         <p className="pb-svc-note">
-          {matchingHolidayOptions.length === 1 && s.options.length > 1
-            ? `The holiday rate matches the ${matchingHolidayOptions[0].label || 'Standard'} option's rate, so holidays cost the same as any other day for that option.`
-            : "The holiday rate matches this service's base rate, so holidays cost the same as any other day."}
+          {matchingHolidayOptions.length === 1 && s.options.length === 1
+            ? 'The holiday rate matches your normal rate, so holidays cost the same as any other day.'
+            : matchingHolidayOptions.length === 1
+              ? `The holiday rate matches the ${matchingHolidayOptions[0].label || 'Standard'} option's rate, so holidays cost the same as any other day for that option.`
+              : 'The holiday rate matches your normal rate on more than one option, so holidays cost the same as any other day for those options.'}
         </p>
       )}
       {/* Extra-time surcharge. Rendered only where the OWNER sets the booking's times — a
