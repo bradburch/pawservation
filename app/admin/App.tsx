@@ -872,6 +872,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     ),
     services: (
       <ServicesSection
+        slug={slug}
         settings={settings}
         setSettings={setSettings}
         addService={addService}
