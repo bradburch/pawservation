@@ -336,6 +336,27 @@ describe('booking flow', () => {
     expect(api.headers.get('Content-Security-Policy') ?? '').toContain("frame-ancestors 'none'");
   });
 
+  it('allows framing the configured premium origin from the locked (non-embed) CSP only', async () => {
+    const { env } = createTestEnv();
+    const configured = { ...env, PREMIUM_ORIGIN: 'https://premium.example' } as Env;
+
+    const api = await app.request('/api/sunny-paws/config', {}, configured);
+    expect(api.headers.get('Content-Security-Policy') ?? '').toContain(
+      "frame-src 'self' https://premium.example",
+    );
+
+    // The embed page's own CSP is unaffected by PREMIUM_ORIGIN — it stays the same permissive
+    // policy either way, since it is already framable by design.
+    const embed = await app.request('/embed/sunny-paws', {}, configured);
+    expect(embed.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
+  });
+
+  it('omits frame-src entirely when no PREMIUM_ORIGIN is configured', async () => {
+    const { env } = createTestEnv();
+    const api = await app.request('/api/sunny-paws/config', {}, env);
+    expect(api.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
+  });
+
   it('creates a calendar event when the tenant calendar is connected', async () => {
     const { env, raw } = createTestEnv();
     await setProviderTokens(env.PAWSERVATION_DB, 'tnt_sunnypaws', 'calendar', 'google-calendar', {
