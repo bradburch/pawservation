@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { getTenantById, setProviderTokens } from '../db/repo';
 import { backfillCalendarEvents } from '../lib/calendar-sync';
-import { exchangeCode } from '../lib/google-calendar';
+import { callbackUriFor, exchangeCode } from '../lib/google-calendar';
 import { verifyState } from '../lib/oauth-state';
 import { encryptToken } from '../lib/token-crypto';
 import type { AppEnv } from '../types';
@@ -78,11 +78,11 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   if (!payload) return fail('session', 'bad_or_expired_state');
 
   // Login-CSRF defense: the cookie set at /start must carry the same nonce as the signed state.
-  // The host is logged with a MISSING cookie specifically because the cookie is host-scoped while
-  // GOOGLE_OAUTH_REDIRECT_URI names ONE host: a dashboard opened on workers.dev (or a preview URL)
-  // while the redirect points at pawservation.com sets the cookie somewhere this request can never
-  // read it. `/admin/providers/calendar/oauth/start` now refuses that combination up front, so a
-  // hit here means the mismatch arose some other way — and the host is what says which.
+  // The cookie is host-scoped, and /start now sends Google back to the very host it was opened on
+  // (`callbackUriFor`), so cookie-host == callback-host holds by construction and this branch no
+  // longer fires for the multi-host reason it used to. The host is still logged with a MISSING
+  // cookie because the remaining causes are host-shaped too — a stale attempt begun before a
+  // deployment moved hosts, a browser dropping the cookie — and the host is what says which.
   const cookieNonce = getCookie(c, 'pawservation_gcal_nonce');
   if (!cookieNonce)
     return fail('session', 'nonce_cookie_missing', {
@@ -107,7 +107,9 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   if (tenant.DisabledAt) return fail('unavailable', 'tenant_disabled', { tenant: tenant.Slug });
 
   try {
-    const tokens = await exchangeCode(c.env, code);
+    // Same derivation as /start's authorize URL, from this request's own origin — Google compares
+    // the two byte for byte, and deriving both from the request is what keeps them identical.
+    const tokens = await exchangeCode(c.env, code, callbackUriFor(c.req.url));
     await setProviderTokens(c.env.PAWSERVATION_DB, tenant.Id, 'calendar', 'google-calendar', {
       access: await encryptToken(c.env.TOKEN_SECRET, tokens.accessToken),
       refresh: await encryptToken(c.env.TOKEN_SECRET, tokens.refreshToken),
@@ -116,8 +118,8 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
     });
   } catch (err) {
     // `exchangeCode` folds Google's own `error`/`error_description` into its message, which is the
-    // whole diagnostic: `redirect_uri_mismatch` (the Console entry doesn't match
-    // GOOGLE_OAUTH_REDIRECT_URI byte for byte), `invalid_client` (wrong id/secret pair),
+    // whole diagnostic: `redirect_uri_mismatch` (this host is not registered as an Authorized
+    // redirect URI in the Cloud Console), `invalid_client` (wrong id/secret pair),
     // `invalid_grant` (code already spent or expired). Swallowing it — as this catch used to —
     // left a genuinely broken deployment indistinguishable from a stale cookie.
     return fail('unavailable', 'token_exchange_failed', {

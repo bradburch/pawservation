@@ -37,10 +37,48 @@ export class CalendarAuthError extends Error {
 
 export type TokenSet = { accessToken: string; refreshToken: string; expiresAt: string };
 
-export function buildAuthUrl(env: Env, state: string): string {
+/**
+ * The OAuth callback URI for the host currently being served — derived from the REQUEST's own
+ * origin rather than read from configuration, because the login-CSRF nonce is a cookie and a cookie
+ * belongs to ONE host. Pinning the callback to a single configured host while this worker answers on
+ * several (the pawservation.com custom domain, workers.dev under `workers_dev: true`, a fresh
+ * preview URL per `wrangler versions upload`) meant a dashboard opened anywhere else set the cookie
+ * where the callback could never read it. Deriving it here makes cookie-host == callback-host true
+ * BY CONSTRUCTION, so that mismatch is unrepresentable rather than something to refuse.
+ *
+ * Safe against redirect injection on two independent grounds: this worker only ever answers on hosts
+ * Cloudflare routes to it, and Google only ever redirects to a URI already registered on the OAuth
+ * client — so a caller cannot make either side name a host of their choosing.
+ *
+ * The path literal lives here ONCE. `buildAuthUrl` and `exchangeCode` both take the result, because
+ * Google requires the exchange's `redirect_uri` to match the authorize request's byte for byte.
+ *
+ * ponytail: the ceiling is Google Cloud Console registration — every sitter-facing host must be
+ * listed as an Authorized redirect URI there. A rotating `wrangler versions upload` preview host
+ * cannot be pre-registered, so connecting from one fails at Google's own authorize screen with
+ * `redirect_uri_mismatch`. Accepted: preview URLs are not sitter-facing. Upgrade path if that ever
+ * changes: register the host in the Console.
+ *
+ * The scheme is canonicalized to `https:` off loopback rather than carried verbatim from `.origin`:
+ * Cloudflare's "Always Use HTTPS" is a per-zone toggle that defaults off, and nothing here sends
+ * HSTS, so a dashboard reached over plain `http://pawservation.com` would otherwise mint an `http:`
+ * redirect URI — which Google refuses outright for any non-loopback host on a Web OAuth client,
+ * dying at an opaque Google error screen instead of completing. Loopback keeps `http:` so
+ * `npm run dev` keeps working. This is safe for the nonce cookie above: cookies are not
+ * scheme-isolated, so the non-`Secure` cookie set over that same `http://pawservation.com` request
+ * is still sent back on the `https:` callback, and the round trip completes instead of dying at
+ * Google.
+ */
+export function callbackUriFor(requestUrl: string): string {
+  const u = new URL(requestUrl);
+  const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  return `${loopback ? u.protocol : 'https:'}//${u.host}/oauth/google/callback`;
+}
+
+export function buildAuthUrl(env: Env, state: string, redirectUri: string): string {
   const p = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
-    redirect_uri: env.GOOGLE_OAUTH_REDIRECT_URI,
+    redirect_uri: redirectUri,
     response_type: 'code',
     scope: CALENDAR_SCOPES,
     access_type: 'offline',
@@ -57,9 +95,10 @@ function expiresAtFrom(expiresInSeconds: number): string {
 
 /**
  * Google's token endpoint puts the ACTUAL cause in the response BODY, not the status: a 400 is
- * `redirect_uri_mismatch` (the Cloud Console entry doesn't match GOOGLE_OAUTH_REDIRECT_URI byte
- * for byte), `invalid_client` (wrong id/secret), or `invalid_grant` (code spent or expired) — all
- * of which need completely different remedies and are indistinguishable from "(400)" alone. Only
+ * `redirect_uri_mismatch` (this host is not registered in the Cloud Console, or the exchange's
+ * `redirect_uri` doesn't match the authorize request's byte for byte), `invalid_client` (wrong
+ * id/secret), or `invalid_grant` (code spent or expired) — all of which need completely different
+ * remedies and are indistinguishable from "(400)" alone. Only
  * `error`/`error_description` are lifted out, and the length is bounded, so this can be logged
  * without a raw upstream body ending up in a log line.
  */
@@ -78,7 +117,12 @@ async function describeTokenError(res: Response): Promise<string> {
   return text.slice(0, 200);
 }
 
-export async function exchangeCode(env: Env, code: string): Promise<TokenSet> {
+/**
+ * `redirectUri` is passed in rather than read from `env` for the reason `callbackUriFor` documents:
+ * Google compares it byte for byte against the one the authorize request carried, so both sides must
+ * derive it from the same request origin.
+ */
+export async function exchangeCode(env: Env, code: string, redirectUri: string): Promise<TokenSet> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -86,7 +130,7 @@ export async function exchangeCode(env: Env, code: string): Promise<TokenSet> {
       code,
       client_id: env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: env.GOOGLE_OAUTH_REDIRECT_URI,
+      redirect_uri: redirectUri,
       grant_type: 'authorization_code',
     }),
   });

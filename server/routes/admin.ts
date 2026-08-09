@@ -83,6 +83,7 @@ import {
 import type { SyncInput } from '../lib/calendar-sync';
 import {
   buildAuthUrl,
+  callbackUriFor,
   CalendarAuthError,
   createCalendar,
   PET_CALENDAR_SUMMARY,
@@ -1346,37 +1347,8 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     // Disabled tenants are read-only — connecting a calendar is a settings write via the callback.
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
-    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
-
-    // The nonce below is a COOKIE, and a cookie belongs to one host. GOOGLE_OAUTH_REDIRECT_URI
-    // names one host too — but this worker answers on several (the pawservation.com custom domain,
-    // workers.dev with `workers_dev: true`, and a fresh preview URL per `wrangler versions
-    // upload`). A dashboard opened on any host but the redirect's therefore sets the cookie
-    // somewhere the callback can never read it, and the connect dies at the login-CSRF check
-    // looking, to the sitter, exactly like Google refusing her. Refuse here with the host she must
-    // use, rather than handing back an authorize URL that is guaranteed to fail.
-    let callbackOrigin: string;
-    try {
-      callbackOrigin = new URL(c.env.GOOGLE_OAUTH_REDIRECT_URI).origin;
-    } catch {
-      console.error('calendar oauth start: GOOGLE_OAUTH_REDIRECT_URI is not a valid absolute URL');
-      return c.json({ error: 'Google Calendar is not configured correctly on this server.' }, 503);
-    }
-    const dashboardOrigin = new URL(c.req.url).origin;
-    if (dashboardOrigin !== callbackOrigin) {
-      console.error('calendar oauth start refused: dashboard host is not the redirect host', {
-        tenant: tenant.Slug,
-        dashboardOrigin,
-        callbackOrigin,
-      });
-      return c.json(
-        {
-          error: `Google Calendar can only be connected from ${callbackOrigin}. Open your dashboard at ${callbackOrigin}/admin and connect from there.`,
-        },
-        409,
-      );
-    }
 
     const nonce = crypto.randomUUID();
     await c.env.PAWSERVATION_CACHE.put(NONCE_KEY(nonce), '1', { expirationTtl: 600 });
@@ -1387,7 +1359,9 @@ export const adminRoutes = new Hono<AppEnv>()
     });
     // Bind the callback to THIS admin's browser: the nonce travels back as a cookie that an
     // attacker cannot plant in a victim's browser, defeating OAuth login-CSRF. Path-scoped to the
-    // callback only. `secure` is read off the REQUEST's own scheme rather than ENVIRONMENT: that
+    // callback only, and set on whichever host she opened her dashboard on — the same host
+    // `callbackUriFor` sends Google back to, which is what makes the cookie readable there.
+    // `secure` is read off the REQUEST's own scheme rather than ENVIRONMENT: that
     // var is unset in `.dev.vars`, so plain `npm run dev` was marking the cookie Secure over
     // http://localhost — which Chrome tolerates on localhost and Safari does not, breaking the
     // local connect in one browser only. The scheme is right in every environment with nothing to
@@ -1399,7 +1373,7 @@ export const adminRoutes = new Hono<AppEnv>()
       path: '/oauth/google/callback',
       maxAge: 600,
     });
-    return c.json({ url: buildAuthUrl(c.env, state) });
+    return c.json({ url: buildAuthUrl(c.env, state, callbackUriFor(c.req.url)) });
   })
 
   .post('/:slug/admin/providers/calendar/disconnect', async (c) => {
@@ -1431,7 +1405,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
     // A token refresh mid-call needs the client credentials, so the same 503 as oauth/start applies.
-    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
 
     const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
