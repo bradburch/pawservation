@@ -1,5 +1,6 @@
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { parseMixKey, petCountOf } from '../../../src/shared/index.js';
+import { api, type TenantConfig } from '../../shared-ui/api.js';
 import { IconTag } from '../../shared-ui/icons';
 import { Hint } from '../Hint';
 import { AddServiceTile } from './AddServiceTile.js';
@@ -10,7 +11,64 @@ import type { ServiceForm, SettingsSectionProps } from '../shared.js';
 /** Grid expansion key for the add tile ('__' cannot collide with service type slugs). */
 const ADD_KEY = '__add';
 
+/**
+ * Premium-served "settings review" card. Entirely data-driven off `/config`'s published `premium`
+ * block (server/routes/public.ts): renders only when `premium.assistant === true` and
+ * `premium.origin` is a non-empty string, otherwise nothing — no gating logic beyond that, and no
+ * knowledge of what the iframe's content is or does. On any fetch failure this renders nothing
+ * (absence, not an error) rather than degrade the dashboard.
+ *
+ * The one shared address is the path template itself, a deployment-level constant like the origin.
+ * Height auto-resize mirrors the booking widget's own protocol (app/embed/App.tsx /
+ * public/embed.js): the embedded page posts `{ type: 'pawservation:resize', height: number }` and
+ * this listener applies it after checking `event.origin` against the published premium origin —
+ * there is at most one such iframe on the page, so `event.source` isn't needed to disambiguate.
+ */
+function SettingsReviewEmbed({ slug }: { slug: string }) {
+  const [config, setConfig] = useState<TenantConfig | null>(null);
+  const [height, setHeight] = useState(240);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .config(slug)
+      .then((c) => active && setConfig(c))
+      .catch(() => {
+        /* absence, not an error — the section just renders without this card */
+      });
+    return () => {
+      active = false;
+    };
+  }, [slug]);
+
+  const origin = config?.premium?.assistant === true ? config.premium.origin : null;
+
+  useEffect(() => {
+    if (!origin) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== origin) return;
+      const data = event.data as { type?: string; height?: number };
+      if (data?.type === 'pawservation:resize' && typeof data.height === 'number') {
+        setHeight(Math.max(120, Math.ceil(data.height)));
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [origin]);
+
+  if (!origin) return null;
+
+  return (
+    <iframe
+      title="Settings review"
+      src={`${origin}/premium/audit/${slug}`}
+      style={{ width: '100%', border: '0', height: `${height}px` }}
+    />
+  );
+}
+
 export function ServicesSection({
+  slug,
   settings,
   setSettings,
   addService,
@@ -21,6 +79,7 @@ export function ServicesSection({
   onSave,
   onFlashSavebar,
 }: SettingsSectionProps & {
+  slug: string;
   /** Resolves to the created service's type slug, or undefined if the POST failed. */
   addService: (template: string, label: string) => Promise<string | undefined>;
   removeService: (type: string) => Promise<void>;
@@ -158,6 +217,7 @@ export function ServicesSection({
           atCap={settings.services.length >= 6}
         />
       </div>
+      <SettingsReviewEmbed slug={slug} />
     </>
   );
 }

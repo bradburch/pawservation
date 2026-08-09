@@ -33,6 +33,9 @@ export type TenantConfig = {
   petTypes: { slug: string; label: string }[]; // the FULL pet-type registry — serves as the label map; offered types derive per service
   services: ServiceConfig[];
   disabled: boolean;
+  // Published verbatim from `/config` (server/routes/public.ts) — presence/absence only. This
+  // repo interprets none of it beyond reading these fields; see ServicesSection's premium embed.
+  premium?: { assistant?: boolean; chat?: boolean; mcp?: boolean; origin?: string | null };
 };
 
 export type Pet = {

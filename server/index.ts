@@ -5,6 +5,7 @@ import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
 import { renderInviteForm } from './lib/invite-form';
 import { tenantMiddleware } from './lib/middleware';
 import { PAGE_STYLE } from './lib/page-style';
+import { premiumOrigin } from './lib/premium';
 import { resolveTenant } from './lib/tenant-resolve';
 import { accountsRoutes } from './routes/accounts';
 import { adminRoutes } from './routes/admin';
@@ -58,7 +59,13 @@ app.use('*', async (c, next) => {
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', EMBEDDABLE_CSP);
   } else {
-    c.header('Content-Security-Policy', LOCKED_CSP);
+    // The dashboard frames exactly one thing — whatever premium surface this deployment
+    // configures, if any — and nothing else, so the allowance is the configured origin itself,
+    // never '*'. Unset (a fork, a self-hoster, no PREMIUM_ORIGIN) leaves LOCKED_CSP with no
+    // frame-src at all, i.e. this page frames nothing, exactly as before this existed.
+    const origin = premiumOrigin(c.env);
+    const csp = origin ? `${LOCKED_CSP}; frame-src 'self' ${origin}` : LOCKED_CSP;
+    c.header('Content-Security-Policy', csp);
     c.header('X-Frame-Options', 'DENY');
   }
 });
