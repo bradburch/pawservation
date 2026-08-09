@@ -37,7 +37,7 @@ const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeComp
 /** The row's primary label — pet names, not the owner (CLAUDE.md: "everything should be
  * categorized by the pets"). Falls back to the pet count for a pre-existing/edge-case row the
  * server couldn't resolve any names for, so the row never renders blank. */
-function petNamesText(b: AdminBooking): string {
+export function petNamesText(b: AdminBooking): string {
   if (b.petNames.length > 0) return b.petNames.join(', ');
   return `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`;
 }
