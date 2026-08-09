@@ -28,7 +28,6 @@ function withGoogleConfigured(env: Env): Env {
   Object.assign(env, {
     GOOGLE_CLIENT_ID: 'cid',
     GOOGLE_CLIENT_SECRET: 'csecret',
-    GOOGLE_OAUTH_REDIRECT_URI: 'https://w/oauth/google/callback',
   });
   return env;
 }

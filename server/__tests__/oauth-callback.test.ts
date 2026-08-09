@@ -14,11 +14,17 @@ async function primedState(env: Env, over: Partial<{ tenantId: string; exp: numb
     exp: over.exp ?? Date.now() + 600_000,
   });
 }
-function call(env: Env, state: string, code = 'auth-code', cookieNonce: string | null = NONCE) {
+function call(
+  env: Env,
+  state: string,
+  code = 'auth-code',
+  cookieNonce: string | null = NONCE,
+  origin = '',
+) {
   const headers: Record<string, string> = {};
   if (cookieNonce !== null) headers.Cookie = `pawservation_gcal_nonce=${cookieNonce}`;
   return app.request(
-    `/oauth/google/callback?code=${code}&state=${encodeURIComponent(state)}`,
+    `${origin}/oauth/google/callback?code=${code}&state=${encodeURIComponent(state)}`,
     { headers },
     env,
   );
@@ -123,8 +129,8 @@ describe('GET /oauth/google/callback', () => {
   });
 
   // Google's token-endpoint failures name their cause in the BODY, not the status. The callback's
-  // catch used to swallow the whole error, so a deployment whose Console redirect URI didn't match
-  // GOOGLE_OAUTH_REDIRECT_URI was undiagnosable from the logs.
+  // catch used to swallow the whole error, so a deployment serving a host nobody registered in the
+  // Cloud Console was undiagnosable from the logs.
   it('logs Google’s own token-exchange error cause', async () => {
     const { env } = createTestEnv();
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -157,46 +163,73 @@ describe('GET /oauth/google/callback', () => {
     expect(conn?.Status).not.toBe('connected');
     expect(conn?.RefreshToken).toBeFalsy();
   });
+
+  // The other half of the pairing pinned in the /oauth/start block below: Google compares the
+  // exchange's redirect_uri against the authorize request's byte for byte, so both must be derived
+  // from the request's own origin. If start and callback ever drift apart, EVERY connect dies at
+  // Google with `redirect_uri_mismatch` — a failure no unit test of either half alone would catch.
+  // it.each over the same three origins the /start block below exercises, rather than one fixed
+  // string: asserting a single hardcoded origin here would still pass against a callback route that
+  // hardcoded that same literal instead of actually deriving it from the request.
+  it.each([
+    'https://pawservation.com',
+    'https://pawservation.example.workers.dev',
+    'https://another.host.example',
+  ])('exchanges with ITS OWN origin (%s) as the redirect_uri', async (origin) => {
+    const { env } = createTestEnv();
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ access_token: 'at', refresh_token: 'rt', expires_in: 3600 }),
+          { status: 200 },
+        ),
+      );
+    const res = await call(env, await primedState(env), 'auth-code', NONCE, origin);
+    expect(res.status).toBe(200);
+    const tokenCall = spy.mock.calls.find(
+      ([url]) => String(url) === 'https://oauth2.googleapis.com/token',
+    );
+    const body = new URLSearchParams(String(tokenCall![1]!.body));
+    expect(body.get('redirect_uri')).toBe(`${origin}/oauth/google/callback`);
+  });
 });
 
 describe('GET /:slug/admin/providers/calendar/oauth/start', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  // The nonce cookie is host-scoped; GOOGLE_OAUTH_REDIRECT_URI is ONE host. Connecting from any
-  // other host this worker answers on (workers.dev, a `wrangler versions upload` preview URL) sets
-  // the cookie where the callback can never read it — a guaranteed failure, previously indistinguishable
-  // from Google refusing. Refuse at the start with the host she must use instead.
-  it('refuses to start when the dashboard host is not the redirect host', async () => {
-    const { env } = createTestEnv();
-    Object.assign(env, {
-      GOOGLE_CLIENT_ID: 'cid',
-      GOOGLE_CLIENT_SECRET: 'secret',
-      GOOGLE_OAUTH_REDIRECT_URI: 'https://pawservation.com/oauth/google/callback',
-    });
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const res = await app.request(
-      'https://pawservation.example.workers.dev/api/sunny-paws/admin/providers/calendar/oauth/start',
+  function googleConfigured(env: Env): Env {
+    Object.assign(env, { GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'secret' });
+    return env;
+  }
+  const start = async (env: Env, origin: string) =>
+    app.request(
+      `${origin}/api/sunny-paws/admin/providers/calendar/oauth/start`,
       { headers: await adminHeaders(TENANT_A) },
       env,
     );
-    expect(res.status).toBe(409);
-    expect((await res.json<{ error: string }>()).error).toContain('https://pawservation.com');
+
+  // The redirect URI is derived from the dashboard's OWN origin, so the host-scoped nonce cookie
+  // and the callback share a host by construction. This used to 409 whenever the dashboard host
+  // differed from a configured GOOGLE_OAUTH_REDIRECT_URI, which permanently broke the button on
+  // every host but that one — including the production custom domain.
+  it.each([
+    'https://pawservation.com',
+    'https://pawservation.example.workers.dev',
+    'https://another.host.example',
+  ])('starts from %s and sends Google back to that same host', async (origin) => {
+    const { env } = createTestEnv();
+    const res = await start(googleConfigured(env), origin);
+    expect(res.status).toBe(200);
+    const url = new URL((await res.json<{ url: string }>()).url);
+    expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(url.searchParams.get('redirect_uri')).toBe(`${origin}/oauth/google/callback`);
   });
 
-  it('starts normally when the dashboard host IS the redirect host', async () => {
+  it('sets the nonce cookie Secure over https', async () => {
     const { env } = createTestEnv();
-    Object.assign(env, {
-      GOOGLE_CLIENT_ID: 'cid',
-      GOOGLE_CLIENT_SECRET: 'secret',
-      GOOGLE_OAUTH_REDIRECT_URI: 'https://pawservation.com/oauth/google/callback',
-    });
-    const res = await app.request(
-      'https://pawservation.com/api/sunny-paws/admin/providers/calendar/oauth/start',
-      { headers: await adminHeaders(TENANT_A) },
-      env,
-    );
+    const res = await start(googleConfigured(env), 'https://pawservation.com');
     expect(res.status).toBe(200);
-    expect((await res.json<{ url: string }>()).url).toContain('accounts.google.com');
     // Over https the nonce cookie must be Secure — derived from the request scheme, not from an
     // ENVIRONMENT var that is unset in .dev.vars.
     expect(res.headers.get('set-cookie')).toContain('Secure');
@@ -204,17 +237,20 @@ describe('GET /:slug/admin/providers/calendar/oauth/start', () => {
 
   it('omits Secure on a plain-http dashboard so local dev works in every browser', async () => {
     const { env } = createTestEnv();
-    Object.assign(env, {
-      GOOGLE_CLIENT_ID: 'cid',
-      GOOGLE_CLIENT_SECRET: 'secret',
-      GOOGLE_OAUTH_REDIRECT_URI: 'http://localhost:8787/oauth/google/callback',
-    });
-    const res = await app.request(
-      'http://localhost:8787/api/sunny-paws/admin/providers/calendar/oauth/start',
-      { headers: await adminHeaders(TENANT_A) },
-      env,
-    );
+    const res = await start(googleConfigured(env), 'http://localhost:8787');
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).not.toContain('Secure');
+    // http in, http out — the two halves agree on scheme as well as host.
+    const url = new URL((await res.json<{ url: string }>()).url);
+    expect(url.searchParams.get('redirect_uri')).toBe(
+      'http://localhost:8787/oauth/google/callback',
+    );
+  });
+
+  // The client credentials are the whole of "is Google configured" now; the redirect URI is
+  // derived, not configuration, so it can no longer be the thing that is missing.
+  it('503s when the Google client credentials are unset', async () => {
+    const { env } = createTestEnv();
+    expect((await start(env, 'https://pawservation.com')).status).toBe(503);
   });
 });
