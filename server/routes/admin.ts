@@ -2411,6 +2411,10 @@ export const adminRoutes = new Hono<AppEnv>()
         petNames: petNamesByBooking.get(r.Id) ?? [],
         external: r.ServiceType === 'external',
         externalSummary: r.ExternalSummary,
+        // What the design doc names as the flag the UI reads to label a cost as an estimate
+        // rather than a client-agreed price (docs/superpowers/specs/2026-08-09-calendar-backfill-
+        // design.md) — the same restriction the PATCH .../cost route enforces server-side.
+        isBackfilled: r.Source === 'calendar-backfill',
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,

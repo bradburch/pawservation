@@ -896,6 +896,7 @@ export async function listBookingsForTenant(
     .prepare(
       `SELECT ${BOOKING_COLS_QUALIFIED}, BookingRequests.Answers AS Answers,
               BookingRequests.ExternalSummary AS ExternalSummary,
+              BookingRequests.Source AS Source,
               EndUsers.Email AS Email, EndUsers.Name AS Name,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests

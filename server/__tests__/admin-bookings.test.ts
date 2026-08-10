@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { addBookingPets, insertBookingCharge, insertBookingRequest } from '../db/repo';
+import {
+  addBookingPets,
+  insertBackfilledBooking,
+  insertBookingCharge,
+  insertBookingRequest,
+} from '../db/repo';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
 
 /** Books one dog (Bella, sunny-paws) for a 2-night boarding stay via the real customer flow. */
@@ -387,5 +392,39 @@ describe('admin booking lifecycle', () => {
     ).json()) as { bookings: { id: string; petNames: string[] }[] };
     expect(listB.bookings.some((b) => b.id === multiPet.id)).toBe(false);
     expect(listB.bookings.every((b) => !b.petNames.includes('Bella'))).toBe(true);
+  });
+
+  // The calendar-backfill design doc names `Source = 'calendar-backfill'` as "what the UI reads
+  // to label its cost as an estimate" — the admin list is the one place that label can be drawn
+  // from, so it must carry the distinction, not just the server-internal routes that already
+  // scope by Source in their own SQL.
+  it('marks a calendar-backfill booking isBackfilled; an ordinary booking is not', async () => {
+    const { env } = createTestEnv();
+    const backfilledId = await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess',
+      serviceType: 'walk',
+      startDate: '2023-05-01',
+      endDate: null,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 25,
+      status: 'confirmed',
+      gcalEventId: 'evt_isbackfilled_test',
+    });
+    const ordinary = (await (await bookBoarding(env, '2028-11-01', '2028-11-03')).json()) as {
+      id: string;
+    };
+
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { bookings } = (await res.json()) as {
+      bookings: { id: string; isBackfilled: boolean }[];
+    };
+
+    expect(bookings.find((b) => b.id === backfilledId)?.isBackfilled).toBe(true);
+    expect(bookings.find((b) => b.id === ordinary.id)?.isBackfilled).toBe(false);
   });
 });
