@@ -129,6 +129,17 @@ describe('resolvePetsByName', () => {
     });
   });
 
+  it('counts a pet named twice in one title once', () => {
+    // 'Bella and Bella Walk' — one animal, named twice. Two entries would write PetCount=2 and
+    // then violate BookingRequestPets' primary key, leaving a booking with no pets at all.
+    expect(
+      resolvePetsByName(['Bella', 'Bella'], [{ id: 'p1', name: 'Bella', petType: 'dog' }]),
+    ).toEqual({
+      ok: true,
+      pets: [{ id: 'p1', name: 'Bella', petType: 'dog' }],
+    });
+  });
+
   it('still refuses two DIFFERENT pets that share a name', () => {
     const twins = [
       { id: 'p1', name: 'Bella', petType: 'cat' },

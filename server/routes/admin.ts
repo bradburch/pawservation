@@ -223,6 +223,11 @@ async function loadVenmoMatchInputs(
  *  submitting a range that would be refused. */
 export const MAX_BACKFILL_EVENTS = 200;
 
+/** Same sanity ceiling as every other explicit-bounds field in this file (advance months, lead
+ *  days, overlap days, pet count) — a sitter-typed historical price is real money, but a figure
+ *  with 15 digits behind it is a typo, not a stay anyone actually charged. */
+export const MAX_BACKFILL_EST_COST = 1_000_000;
+
 /**
  * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
  * loaded once per pass. Lives here, not in `server/lib/`, because it touches D1 — the same split
@@ -2913,12 +2918,21 @@ export const adminRoutes = new Hono<AppEnv>()
     // silently dropping just its own row.
     const wanted = new Map<string, number | null>();
     for (const raw of body.events) {
+      if (typeof raw !== 'object' || raw === null)
+        return c.json({ error: 'That list of events is malformed.' }, 400);
       const entry = raw as { eventId?: unknown; estCost?: unknown };
       if (typeof entry.eventId !== 'string' || entry.eventId === '')
         return c.json({ error: 'That list of events is malformed.' }, 400);
       if (entry.estCost !== undefined) {
-        if (!Number.isInteger(entry.estCost) || (entry.estCost as number) < 1)
-          return c.json({ error: 'Enter a whole-dollar amount of at least $1.' }, 400);
+        if (
+          !Number.isInteger(entry.estCost) ||
+          (entry.estCost as number) < 1 ||
+          (entry.estCost as number) > MAX_BACKFILL_EST_COST
+        )
+          return c.json(
+            { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+            400,
+          );
       }
       wanted.set(entry.eventId, entry.estCost === undefined ? null : (entry.estCost as number));
     }
@@ -2940,6 +2954,9 @@ export const adminRoutes = new Hono<AppEnv>()
     // RE-DERIVED from scratch — same classifier the preview used, so the two can never disagree.
     // The browser named event ids and, optionally, prices; nothing else survives this call.
     const classified = await classifyAll(c, tenant, events);
+    // Every classified row, by id — used only to tell an already-imported id apart from every
+    // other reason it might not be adoptable, below.
+    const classifiedById = new Map(classified.map((r) => [r.eventId, r] as const));
     // Both kinds are adoptable: 'adopt' carries a rate-card price, 'needs-price' carries
     // everything BUT the price and is adoptable only when the sitter supplies one.
     const resolvable = new Map(
@@ -2955,7 +2972,16 @@ export const adminRoutes = new Hono<AppEnv>()
     for (const [eventId, suppliedCost] of wanted) {
       const row = resolvable.get(eventId);
       if (!row) {
-        skipped.push({ eventId, reason: 'That event is no longer adoptable' });
+        // 'already-adopted' gets its own message — a sitter re-running an import over an
+        // overlapping range must read that as "already imported", not as data loss. Every other
+        // reason a fresh classification might refuse the id (absent from the calendar entirely,
+        // or classified as a flag) keeps the generic message.
+        const already = classifiedById.get(eventId);
+        const reason =
+          already?.kind === 'skip' && already.why === 'already-adopted'
+            ? 'Already imported'
+            : 'That event is no longer adoptable';
+        skipped.push({ eventId, reason });
         continue;
       }
       // The sitter's figure wins when given; otherwise the rate card's, which only an 'adopt' row
@@ -2966,19 +2992,27 @@ export const adminRoutes = new Hono<AppEnv>()
         skipped.push({ eventId, reason: 'That event still needs a price' });
         continue;
       }
-      const bookingId = await insertBackfilledBooking(c.env.PAWSERVATION_DB, tenant.Id, {
-        endUserId: row.endUserId,
-        serviceType: row.serviceType,
-        startDate: row.startDate,
-        endDate: row.endDate,
-        optionKey: row.optionKey,
-        petCount: row.petIds.length,
-        estCost,
-        status: row.cancelled ? 'cancelled' : 'confirmed',
-        gcalEventId: row.eventId,
-      });
-      await addBookingPets(c.env.PAWSERVATION_DB, tenant.Id, bookingId, row.petIds);
-      imported++;
+      // Each row's write is isolated: one event's failure must never take down the response for
+      // every other event in the same request, turn a partial success into a bare 500, or — worse
+      // — go unreported and then be silently un-retryable because GCalEventId now looks adopted.
+      try {
+        const bookingId = await insertBackfilledBooking(c.env.PAWSERVATION_DB, tenant.Id, {
+          endUserId: row.endUserId,
+          serviceType: row.serviceType,
+          startDate: row.startDate,
+          endDate: row.endDate,
+          optionKey: row.optionKey,
+          petCount: row.petIds.length,
+          estCost,
+          status: row.cancelled ? 'cancelled' : 'confirmed',
+          gcalEventId: row.eventId,
+        });
+        await addBookingPets(c.env.PAWSERVATION_DB, tenant.Id, bookingId, row.petIds);
+        imported++;
+      } catch (err) {
+        console.error('calendar backfill import failed for event', eventId, err);
+        skipped.push({ eventId, reason: 'Could not import that event' });
+      }
     }
     return c.json({ imported, skipped });
   });

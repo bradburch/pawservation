@@ -118,6 +118,14 @@ export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetReso
   }
 
   const resolved: BackfillPet[] = [];
+  // Same animal named twice in one title ("Bella and Bella Walk") must resolve to ONE pet, not
+  // two — a caller (the import route) turns `pets.length` directly into `PetCount` and a
+  // `BookingRequestPets` row per entry, and that table's primary key is (BookingRequestId,
+  // PetId): two entries for the same id would violate it mid-write, after the booking row
+  // itself is already committed, leaving a permanent orphan booking with no pets at all. This is
+  // strictly about the same id recurring; two DIFFERENT pets that happen to share a name are
+  // still refused above as ambiguous, per name occurrence, before dedup ever sees them.
+  const seenIds = new Set<string>();
   for (const name of names) {
     const hits = [...(byKey.get(nameKey(name))?.values() ?? [])];
     if (hits.length === 0) {
@@ -131,7 +139,11 @@ export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetReso
         detail: `${name.trim()} matches ${hits.length} pets`,
       };
     }
-    resolved.push(hits[0]);
+    const pet = hits[0];
+    if (!seenIds.has(pet.id)) {
+      seenIds.add(pet.id);
+      resolved.push(pet);
+    }
   }
   return { ok: true, pets: resolved };
 }

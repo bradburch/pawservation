@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { insertBackfilledBooking, replaceServicePetRates, setProviderTokens } from '../db/repo';
+// Namespace import alongside the named one above, used only to spy on a single repo function
+// (forcing a mid-loop write failure) without touching every other test's real DB behavior.
+import * as repoModule from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { buildMixKey, mixFromPetTypes } from '../../src/shared/index.js';
 import { adminHeaders, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
@@ -261,7 +264,7 @@ type ImportBody = { imported: number; skipped: { eventId: string; reason: string
 
 async function runImport(
   env: Env,
-  events: { eventId: string; estCost?: number }[],
+  events: unknown[],
   from = '2026-06-01',
   to = '2026-06-30',
 ): Promise<Response> {
@@ -290,6 +293,7 @@ async function getBooking(env: Env, gcalEventId: string) {
       Source: string;
       SyncPending: number;
       ServiceType: string;
+      PetCount: number;
     }>();
 }
 
@@ -328,6 +332,24 @@ const BELLA_WALK_EVENT = {
 const NEEDS_PRICE_EVENT = {
   id: 'ev_needs_price',
   summary: 'Bella and Mochi Walk',
+  start: { date: '2026-06-10' },
+  end: { date: '2026-06-10' },
+};
+
+// "Rex" is not a seeded pet name — classifies as a FLAG ('no-pets'), not adopt/needs-price. This
+// is present in the calendar, unlike a plain unknown id, so it exercises the real "the browser
+// asked for something the fresh classification refuses" case.
+const FLAGGED_EVENT = {
+  id: 'ev_flagged',
+  summary: 'Rex Walk',
+  start: { date: '2026-06-10' },
+  end: { date: '2026-06-10' },
+};
+
+// The same animal named twice in one title — must resolve, and price, as ONE pet.
+const DUPLICATE_NAME_EVENT = {
+  id: 'ev_duplicate_name',
+  summary: 'Bella and Bella Walk',
   start: { date: '2026-06-10' },
   end: { date: '2026-06-10' },
 };
@@ -383,26 +405,102 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     const secondRes = await runImport(env, [{ eventId: 'ev_bella_walk' }]);
     const second = (await secondRes.json()) as ImportBody;
     expect(second.imported).toBe(0);
-    expect(second.skipped).toEqual([
-      { eventId: 'ev_bella_walk', reason: 'That event is no longer adoptable' },
-    ]);
+    expect(second.skipped).toEqual([{ eventId: 'ev_bella_walk', reason: 'Already imported' }]);
 
     expect(await countBackfilledBookings(env)).toBe(1);
   });
 
-  it('skips an id the fresh classification does not adopt, without writing it', async () => {
+  it('skips an id the fresh classification refuses as a flag, without writing it', async () => {
     const { env } = await createTestEnv();
     await connectCalendar(env);
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+    // FLAGGED_EVENT IS on the calendar — unlike an id absent altogether, this is the real case:
+    // the browser asked for an id that a fresh classification actively refuses.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([BELLA_WALK_EVENT, FLAGGED_EVENT]),
+    );
 
-    // 'ev-unknown' is not in the calendar at all — the browser cannot invent an adoption.
-    const res = await runImport(env, [{ eventId: 'ev_bella_walk' }, { eventId: 'ev-unknown' }]);
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk' }, { eventId: 'ev_flagged' }]);
     const body = (await res.json()) as ImportBody;
     expect(body.imported).toBe(1);
     expect(body.skipped).toEqual([
-      { eventId: 'ev-unknown', reason: 'That event is no longer adoptable' },
+      { eventId: 'ev_flagged', reason: 'That event is no longer adoptable' },
     ]);
-    expect(await getBooking(env, 'ev-unknown')).toBeNull();
+    expect(await getBooking(env, 'ev_flagged')).toBeNull();
+  });
+
+  it('reports an already-adopted id distinctly, so a re-run never reads as data loss', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess',
+      serviceType: 'walk',
+      startDate: '2026-06-10',
+      endDate: null,
+      optionKey: 'd30',
+      petCount: 1,
+      estCost: 20,
+      status: 'confirmed',
+      gcalEventId: 'ev_bella_walk',
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk' }]);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(0);
+    expect(body.skipped).toEqual([{ eventId: 'ev_bella_walk', reason: 'Already imported' }]);
+  });
+
+  it('counts a pet named twice in one title once: PetCount 1, one BookingRequestPets row', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([DUPLICATE_NAME_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_duplicate_name' }]);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toEqual([]);
+
+    const row = await getBooking(env, 'ev_duplicate_name');
+    expect(row?.PetCount).toBe(1);
+    const petIds = await getBookingPetIds(env, row!.Id);
+    expect(petIds).toEqual(['pet_sp_bella']);
+  });
+
+  it('reports earlier/other successes when one row fails mid-import, instead of a bare 500', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([BELLA_WALK_EVENT, NEEDS_PRICE_EVENT]),
+    );
+    // Force the FIRST row's own write to throw, as if D1 hiccuped mid-import — while the second
+    // row's write is untouched. Proves one event's failure can't crash the whole response or
+    // hide the events that DID succeed (and, per Task 7's own idempotency test, can never turn
+    // into a booking that's silently un-retryable — nothing was written for it at all).
+    vi.spyOn(repoModule, 'insertBackfilledBooking').mockRejectedValueOnce(
+      new Error('simulated D1 failure'),
+    );
+
+    const res = await runImport(env, [
+      { eventId: 'ev_bella_walk' },
+      { eventId: 'ev_needs_price', estCost: 50 },
+    ]);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toEqual([
+      { eventId: 'ev_bella_walk', reason: 'Could not import that event' },
+    ]);
+    expect(await getBooking(env, 'ev_bella_walk')).toBeNull();
+    expect(await getBooking(env, 'ev_needs_price')).toBeTruthy();
+  });
+
+  it('an event entry that is not an object is a 400, not a crash', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    // No fetch stub needed — this is refused by body validation before any Google call.
+    const res = await runImport(env, [null]);
+    expect(res.status).toBe(400);
+    expect(await countBackfilledBookings(env)).toBe(0);
   });
 
   it('adopts a needs-price event only when a price is supplied, at that figure', async () => {
@@ -449,7 +547,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(row?.EstCost).toBe(99); // sitter's figure, not the rate card's 20
   });
 
-  it.each([0.5, 0, -5])(
+  it.each([0.5, 0, -5, 1_000_001])(
     'a bad estCost (%s) fails the whole request with 400 and writes nothing at all',
     async (badCost) => {
       const { env } = await createTestEnv();
@@ -462,6 +560,24 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
         { eventId: 'ev_bella_walk' },
         { eventId: 'ev_other', estCost: badCost },
       ]);
+      expect(res.status).toBe(400);
+      expect(await countBackfilledBookings(env)).toBe(0);
+    },
+  );
+
+  // Pins today's behavior for every non-integer shape estCost can arrive as, not just the
+  // out-of-range numbers above. NaN and Infinity round-trip through JSON.stringify as `null` (JSON
+  // has no literal for either), so those two cases exercise the same "no estCost" path as an
+  // explicit null over the wire — still worth pinning, since a coercion bug could turn any of
+  // these into a truthy, accepted amount.
+  it.each(['50', null, true, NaN, Infinity])(
+    'a non-integer estCost (%s) is rejected, not coerced',
+    async (badCost) => {
+      const { env } = await createTestEnv();
+      await connectCalendar(env);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+      const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCost: badCost }]);
       expect(res.status).toBe(400);
       expect(await countBackfilledBookings(env)).toBe(0);
     },
