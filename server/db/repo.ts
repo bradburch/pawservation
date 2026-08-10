@@ -746,6 +746,34 @@ export async function insertBackfilledBooking(
   return id;
 }
 
+/**
+ * Was this booking ADOPTED from the sitter's own calendar (`Source = 'calendar-backfill'`)?
+ *
+ * The read behind the write-side half of the backfill's read-only guarantee. `GCalEventId` on an
+ * adopted row names an event the SITTER created and pawservation only ever read, so no push may
+ * ever touch it — but the row is an otherwise ordinary booking, so every lifecycle path
+ * (dashboard cancel, customer cancel, customer edit) reaches the same inline calendar push an
+ * ordinary booking does. `listSyncPendingBookings` keeps such a row out of the OUTBOX; this is
+ * what keeps it out of those INLINE pushes, which never consult the outbox query at all.
+ *
+ * Unknown id → false: a push for a booking that no longer exists is already a no-op against
+ * Google's own 404/410 handling, and this must never be the thing that decides existence.
+ */
+export async function isAdoptedBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS Hit FROM BookingRequests
+       WHERE TenantId = ? AND Id = ? AND Source = 'calendar-backfill'`,
+    )
+    .bind(tenantId, bookingId)
+    .first<{ Hit: number }>();
+  return row != null;
+}
+
 /** Event ids this tenant has EVER adopted — the import's idempotency key, so re-running the
  *  backfill over an overlapping range adopts nothing twice.
  *
@@ -4324,8 +4352,9 @@ export async function listUnsyncedFutureBookings(
 }
 
 /** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings AND
- * 'blocked' time off ('external' is Google-owned and is the only exclusion — it is materialized
- * by reconcile, never pushed by the outbox). Bounded so ancient never-synced history doesn't churn
+ * 'blocked' time off ('external' is Google-owned, materialized by reconcile and never pushed by
+ * the outbox; `Source = 'calendar-backfill'` is the sitter's OWN pre-existing event, adopted
+ * read-only — see below). Bounded so ancient never-synced history doesn't churn
  * every sweep, soonest first. Status here can be any of the four, and
  * CancellationFee rides along because the delete-vs-retitle decision for a cancelled row turns on
  * it (keepsCalendarEventOnCancel) — the caller derives create/update/delete from Status +
@@ -4336,7 +4365,22 @@ export async function listUnsyncedFutureBookings(
  * fromDate` excluded it, and a customer may cancel an in-progress stay (isCustomerCancellable),
  * so that row's SyncPending could never be drained: the ghost event stayed on the sitter's
  * calendar forever, and a fee-bearing cancel never got its [CANCELLED] retitle. It also stranded
- * the connect-later backfill for any stay spanning today. */
+ * the connect-later backfill for any stay spanning today.
+ *
+ * Excludes `Source = 'calendar-backfill'` for the same reason `listSyncedBookingIds` does, but
+ * against the WRITE side: an adopted row's `GCalEventId` points at an event the SITTER created,
+ * which pawservation only ever read. Adoption leaves `SyncPending = 0`, but that is only the
+ * row's first moment — every ordinary lifecycle write re-arms the flag unconditionally
+ * (`updateBookingStatus`, `updateBookingRequest`), including the dashboard cancel that
+ * `listSyncedBookingIds`' own comment tells the sitter to use. Once armed, the caller's
+ * Status + CancellationFee + GCalEventId derivation would DELETE that event (a fee-free cancel)
+ * or PATCH the sitter's title and description into pawservation's rendering (a fee-bearing one).
+ * The exclusion belongs here, in the candidate query, rather than in any one branch of that
+ * derivation, so an operation added later is read-only by default rather than by its author
+ * remembering.
+ *
+ * `IS NOT`, not `!=`: `Source` is NULL for every ordinary booking, and `NULL != 'x'` is NULL, not
+ * true — a plain `!=` would silently empty the outbox for the entire product. */
 export type SyncPendingRow = Omit<BookingSyncRow, 'Status'> & {
   Status: BookingRow['Status'];
   CancellationFee: number | null;
@@ -4355,6 +4399,7 @@ export async function listSyncPendingBookings(
               b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
          AND b.ServiceType != 'external'
+         AND b.Source IS NOT 'calendar-backfill'
          AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,

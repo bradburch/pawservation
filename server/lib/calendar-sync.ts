@@ -8,6 +8,7 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
+  isAdoptedBooking,
   listActiveAdoptedEventIds,
   listBlockedRowsWithEventsInWindow,
   listExternalEventRowsInWindow,
@@ -168,6 +169,8 @@ async function persistEventIdOrCleanup(
  * duplicate event orphaned (see persistEventIdOrCleanup).
  */
 export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInput): Promise<void> {
+  // Adoption is read-only against Google — never create, rewrite or delete. See isAdoptedBooking.
+  if (await isAdoptedBooking(env.PAWSERVATION_DB, tenant.Id, b.bookingId)) return;
   const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
@@ -213,6 +216,8 @@ export async function updateBookingCalendarEvent(
   gcalEventId: string,
   b: SyncInput,
 ): Promise<void> {
+  // Adoption is read-only against Google — never create, rewrite or delete. See isAdoptedBooking.
+  if (await isAdoptedBooking(env.PAWSERVATION_DB, tenant.Id, b.bookingId)) return;
   const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
@@ -423,6 +428,9 @@ export async function deleteBookingCalendarEvent(
   bookingId: string,
   expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
+  // Adoption is read-only against Google — never create, rewrite or delete. See isAdoptedBooking.
+  // The most dangerous of the three: this event is the sitter's own, and a delete is not undoable.
+  if (await isAdoptedBooking(env.PAWSERVATION_DB, tenant.Id, bookingId)) return;
   const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
