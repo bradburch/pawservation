@@ -160,17 +160,32 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ estCost: 60 });
 
-    // CancellationFee is the column BASE_AMOUNT_SQL reads for a cancelled row — that's the one
-    // that must move. EstCost is deliberately left alone: it's not what the balance reads once
-    // cancelled, and overwriting it would erase the stay's own original figure for no reason.
+    // CancellationFee is the column BASE_AMOUNT_SQL reads for a cancelled row, so that is the one
+    // the balance follows. EstCost must move WITH it: insertBackfilledBooking stamps both to the
+    // same figure for a cancelled adoption, so leaving EstCost behind here would make insert and
+    // update disagree about the same invariant — and EstCost is what the sitter actually SEES
+    // (the admin list renders it raw, and the Edit form prefills from it), so a corrected stay
+    // would report $60 owed while still reading "$25 (estimate)".
     const { estCost, cancellationFee } = readCosts(raw, bookingId);
     expect(cancellationFee).toBe(60);
-    expect(estCost).toBe(25);
+    expect(estCost).toBe(60);
 
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
     expect(household?.expectedTotal).toBe(60);
     expect(household?.balance).toBe(60);
+
+    // The figure the sitter reads back, through the route that actually renders it — not just the
+    // column. This is the half the original test was missing.
+    const listed = await app.request(
+      '/api/sunny-paws/admin/bookings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { bookings } = (await listed.json()) as {
+      bookings: { id: string; estCost: number | null }[];
+    };
+    expect(bookings.find((b) => b.id === bookingId)?.estCost).toBe(60);
   });
 
   it('refuses a booking that came through pawservation, with 404', async () => {

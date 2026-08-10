@@ -823,11 +823,20 @@ export async function listActiveAdoptedEventIds(
  * actually agreed to is out of reach here by construction — the WHERE clause, not the caller, is
  * what makes that true.
  *
- * Writes into whichever column `BASE_AMOUNT_SQL` actually reads for this row's status —
- * `CancellationFee` when cancelled, `EstCost` otherwise — using the SAME `CASE WHEN Status =
- * 'cancelled'` test `BASE_AMOUNT_SQL` uses, so a correction can never land in the column the
- * balance ignores. One statement, not a read-then-write: Status is read and acted on atomically,
- * with no race between checking it and writing the price.
+ * Writes BOTH columns for a cancelled row, exactly as `insertBackfilledBooking` does — the two
+ * must agree about the same invariant or a correction half-lands:
+ *
+ *  - `CancellationFee` is what `BASE_AMOUNT_SQL` reads once cancelled, so the balance only follows
+ *    a correction that reaches it. Guarded by the SAME `CASE WHEN Status = 'cancelled'` test
+ *    `BASE_AMOUNT_SQL` uses, so a confirmed row's fee column is never invented.
+ *  - `EstCost` is set UNCONDITIONALLY, because it is the figure the sitter actually SEES:
+ *    `listBookingsForTenant` renders it raw in the admin list and the inline Edit affordance
+ *    prefills from it. Leaving it behind on a cancelled row meant a stay corrected from $25 to
+ *    $60 moved the balance while still reading "$25 (estimate)", and re-opening Edit offered the
+ *    stale number back.
+ *
+ * One statement, not a read-then-write: Status is read and acted on atomically, with no race
+ * between checking it and writing the price.
  */
 export async function updateBackfilledBookingCost(
   db: D1Database,
@@ -838,7 +847,7 @@ export async function updateBackfilledBookingCost(
   const result = await db
     .prepare(
       `UPDATE BookingRequests
-       SET EstCost = CASE WHEN Status = 'cancelled' THEN EstCost ELSE ? END,
+       SET EstCost = ?,
            CancellationFee = CASE WHEN Status = 'cancelled' THEN ? ELSE CancellationFee END
        WHERE TenantId = ? AND Id = ? AND Source = 'calendar-backfill'`,
     )
