@@ -256,3 +256,214 @@ describe('POST /:slug/admin/calendar/backfill/preview', () => {
     expect(body.skipped).toBe(1);
   });
 });
+
+type ImportBody = { imported: number; skipped: { eventId: string; reason: string }[] };
+
+async function runImport(
+  env: Env,
+  events: { eventId: string; estCost?: number }[],
+  from = '2026-06-01',
+  to = '2026-06-30',
+): Promise<Response> {
+  return app.request(
+    '/api/sunny-paws/admin/calendar/backfill/import',
+    {
+      method: 'POST',
+      headers: await adminHeaders(TENANT_A),
+      body: JSON.stringify({ from, to, events }),
+    },
+    env,
+  );
+}
+
+async function getBooking(env: Env, gcalEventId: string) {
+  return env.PAWSERVATION_DB.prepare(
+    'SELECT * FROM BookingRequests WHERE TenantId = ? AND GCalEventId = ?',
+  )
+    .bind(TENANT_A, gcalEventId)
+    .first<{
+      Id: string;
+      EstCost: number;
+      EndUserId: string;
+      Status: string;
+      GCalEventId: string;
+      Source: string;
+      SyncPending: number;
+      ServiceType: string;
+    }>();
+}
+
+async function getBookingPetIds(env: Env, bookingId: string): Promise<string[]> {
+  const { results } = await env.PAWSERVATION_DB.prepare(
+    'SELECT PetId FROM BookingRequestPets WHERE BookingRequestId = ?',
+  )
+    .bind(bookingId)
+    .all<{ PetId: string }>();
+  return results.map((r) => r.PetId);
+}
+
+// Scoped to Source = 'calendar-backfill' rather than the whole table: the seed fixture already
+// carries a handful of ordinary BookingRequests rows for TENANT_A, so a bare table count would
+// never be zero even on a request that wrote nothing.
+async function countBackfilledBookings(env: Env): Promise<number> {
+  const row = await env.PAWSERVATION_DB.prepare(
+    "SELECT COUNT(*) AS n FROM BookingRequests WHERE TenantId = ? AND Source = 'calendar-backfill'",
+  )
+    .bind(TENANT_A)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// A single-pet, flat-rate event: same fixture as the preview test 'classifies a real single-pet
+// event into adopt' (ev_bella_walk, $20 via walk/d30).
+const BELLA_WALK_EVENT = {
+  id: 'ev_bella_walk',
+  summary: 'Bella Walk',
+  start: { date: '2026-06-10' },
+  end: { date: '2026-06-10' },
+};
+
+// Two pets with no group/mix rate seeded — resolves everything but the price, same as the preview
+// test 'a needs-price row has no estCost key at all after JSON serialization'.
+const NEEDS_PRICE_EVENT = {
+  id: 'ev_needs_price',
+  summary: 'Bella and Mochi Walk',
+  start: { date: '2026-06-10' },
+  end: { date: '2026-06-10' },
+};
+
+describe('POST /:slug/admin/calendar/backfill/import', () => {
+  it('writes an adoptable event with the correct row', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk' }]);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toEqual([]);
+
+    const row = await getBooking(env, 'ev_bella_walk');
+    expect(row).toMatchObject({
+      EstCost: 20, // 'd30' option's flat rate — same as the preview test
+      EndUserId: 'eu_sp_jess',
+      Status: 'confirmed',
+      GCalEventId: 'ev_bella_walk',
+      Source: 'calendar-backfill',
+      SyncPending: 0, // never 1 — insertBackfilledBooking, not insertBookingRequest
+    });
+  });
+
+  it('writes BookingRequestPets rows for the adopted booking', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    await runImport(env, [{ eventId: 'ev_bella_walk' }]);
+
+    const row = await getBooking(env, 'ev_bella_walk');
+    expect(row).toBeTruthy();
+    const petIds = await getBookingPetIds(env, row!.Id);
+    expect(petIds).toEqual(['pet_sp_bella']);
+  });
+
+  it('adopts nothing on a second run over the same range', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    // A fresh Response per call: a Response body can only be read once, and this test (unlike
+    // every other one here) drives the route through fetch twice.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      calendarResponse([BELLA_WALK_EVENT]),
+    );
+
+    const first = (await (await runImport(env, [{ eventId: 'ev_bella_walk' }])).json()) as ImportBody;
+    expect(first.imported).toBe(1);
+
+    const secondRes = await runImport(env, [{ eventId: 'ev_bella_walk' }]);
+    const second = (await secondRes.json()) as ImportBody;
+    expect(second.imported).toBe(0);
+    expect(second.skipped).toEqual([
+      { eventId: 'ev_bella_walk', reason: 'That event is no longer adoptable' },
+    ]);
+
+    expect(await countBackfilledBookings(env)).toBe(1);
+  });
+
+  it('skips an id the fresh classification does not adopt, without writing it', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    // 'ev-unknown' is not in the calendar at all — the browser cannot invent an adoption.
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk' }, { eventId: 'ev-unknown' }]);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toEqual([
+      { eventId: 'ev-unknown', reason: 'That event is no longer adoptable' },
+    ]);
+    expect(await getBooking(env, 'ev-unknown')).toBeNull();
+  });
+
+  it('adopts a needs-price event only when a price is supplied, at that figure', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([NEEDS_PRICE_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_needs_price', estCost: 75 }]);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+    expect(body.skipped).toEqual([]);
+
+    const row = await getBooking(env, 'ev_needs_price');
+    expect(row?.EstCost).toBe(75); // the sitter's figure — never invented by the server
+    expect(row?.ServiceType).toBe('walk');
+    const petIds = await getBookingPetIds(env, row!.Id);
+    expect([...petIds].sort()).toEqual(['pet_sp_bella', 'pet_sp_mochi']);
+  });
+
+  it('skips a needs-price event with no supplied price, writing nothing for it', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([NEEDS_PRICE_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_needs_price' }]);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(0);
+    expect(body.skipped).toEqual([
+      { eventId: 'ev_needs_price', reason: 'That event still needs a price' },
+    ]);
+    expect(await getBooking(env, 'ev_needs_price')).toBeNull();
+  });
+
+  it('overrides the rate card price on an ordinary adopt event when a price is supplied', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCost: 99 }]);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+
+    const row = await getBooking(env, 'ev_bella_walk');
+    expect(row?.EstCost).toBe(99); // sitter's figure, not the rate card's 20
+  });
+
+  it.each([0.5, 0, -5])(
+    'a bad estCost (%s) fails the whole request with 400 and writes nothing at all',
+    async (badCost) => {
+      const { env } = await createTestEnv();
+      await connectCalendar(env);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+      // One perfectly good event alongside the bad one — proves the bad estCost fails the WHOLE
+      // request rather than just its own row.
+      const res = await runImport(env, [
+        { eventId: 'ev_bella_walk' },
+        { eventId: 'ev_other', estCost: badCost },
+      ]);
+      expect(res.status).toBe(400);
+      expect(await countBackfilledBookings(env)).toBe(0);
+    },
+  );
+});
