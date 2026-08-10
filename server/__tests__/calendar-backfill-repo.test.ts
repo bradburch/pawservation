@@ -1,9 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import {
+  clearBookingCalendarEventIds,
   insertBackfilledBooking,
+  insertBookingRequest,
   listActiveAdoptedEventIds,
   listAdoptedEventIds,
+  setBookingGCalEventId,
 } from '../db/repo';
 import { createTestEnv, TENANT_A } from './helpers';
 
@@ -74,5 +77,86 @@ describe('insertBackfilledBooking', () => {
       new Set(['ev_cancelled']),
     );
     expect(await listActiveAdoptedEventIds(env.PAWSERVATION_DB, TENANT_A)).toEqual(new Set());
+  });
+});
+
+// Regression suite for the calendar-switch hazard on adopted rows: an adopted booking's
+// GCalEventId points at an event the SITTER created, not one pawservation wrote, so it must
+// survive a target-calendar switch — both to stay out of listUnsyncedFutureBookings' backfill
+// candidate set (which would otherwise create a pawservation-owned DUPLICATE of an event that
+// already exists) and to preserve listAdoptedEventIds' idempotency key (which would otherwise
+// let a later backfill over the same range re-adopt it as a second, duplicate booking).
+describe('clearBookingCalendarEventIds', () => {
+  it("leaves an adopted booking's GCalEventId intact", async () => {
+    const { env, raw } = await createTestEnv();
+    seedEndUser(raw, TENANT_A, 'u1');
+    const id = await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, ROW);
+
+    await clearBookingCalendarEventIds(env.PAWSERVATION_DB, TENANT_A);
+
+    const row = await env.PAWSERVATION_DB.prepare(
+      'SELECT GCalEventId FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ GCalEventId: string | null }>();
+    expect(row?.GCalEventId).toBe('ev1');
+  });
+
+  it("still clears an ordinary booking's GCalEventId — guards against IS NOT becoming !=", async () => {
+    const { env } = await createTestEnv();
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: '2026-07-01',
+      endDate: null,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 100,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_ordinary', null);
+
+    await clearBookingCalendarEventIds(env.PAWSERVATION_DB, TENANT_A);
+
+    const row = await env.PAWSERVATION_DB.prepare(
+      'SELECT GCalEventId FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ GCalEventId: string | null }>();
+    expect(row?.GCalEventId).toBeNull();
+  });
+
+  it("still leaves 'external' rows alone", async () => {
+    const { env } = await createTestEnv();
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'external',
+      startDate: '2026-07-01',
+      endDate: null,
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_external', null);
+
+    await clearBookingCalendarEventIds(env.PAWSERVATION_DB, TENANT_A);
+
+    const row = await env.PAWSERVATION_DB.prepare(
+      'SELECT GCalEventId FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ GCalEventId: string | null }>();
+    expect(row?.GCalEventId).toBe('evt_external');
+  });
+
+  it('import idempotency survives a calendar switch: listAdoptedEventIds still returns the adopted id', async () => {
+    const { env, raw } = await createTestEnv();
+    seedEndUser(raw, TENANT_A, 'u1');
+    await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, ROW);
+
+    await clearBookingCalendarEventIds(env.PAWSERVATION_DB, TENANT_A);
+
+    expect(await listAdoptedEventIds(env.PAWSERVATION_DB, TENANT_A)).toEqual(new Set(['ev1']));
   });
 });

@@ -2979,6 +2979,20 @@ export async function setBookingGCalEventId(
  * called first by repointCalendarTarget. The exclusion here removes the hidden order-dependency —
  * without it, NULLing an external row's GCalEventId (its upsert conflict target, see
  * upsertExternalEvent) ahead of the purge would corrupt the row instead of just deleting it.
+ *
+ * Also excludes Source='calendar-backfill' rows (adopted bookings): their GCalEventId points at
+ * an event the SITTER created on the old calendar, not one pawservation wrote there, so it must
+ * survive a target switch. NULLing it would be a double fault — it would (1) make the row a
+ * candidate for listUnsyncedFutureBookings, whose backfill is not behind the isAdoptedBooking
+ * guard, so the next cron pass would create a pawservation-owned DUPLICATE event for a stay that
+ * already exists on the sitter's calendar, permanently (Source stays 'calendar-backfill', so
+ * every other push function's isAdoptedBooking guard then refuses to ever touch what it just
+ * created); and (2) drop the id out of listAdoptedEventIds, the import's idempotency key, so a
+ * later backfill over the same range would re-adopt the same Google event as a second, duplicate
+ * booking. `IS NOT`, not `!=`: Source is NULL for every ordinary booking, and `NULL != 'x'` is
+ * NULL, not true — a plain `!=` would silently stop clearing ids for every ordinary booking and
+ * break calendar switching outright. Same null-safe form as `listSyncedBookingIds` and
+ * `listSyncPendingBookings`.
  */
 export async function clearBookingCalendarEventIds(
   db: D1Database,
@@ -2987,7 +3001,8 @@ export async function clearBookingCalendarEventIds(
   const result = await db
     .prepare(
       `UPDATE BookingRequests SET GCalEventId = NULL
-       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND ServiceType != 'external'`,
+       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND ServiceType != 'external'
+         AND Source IS NOT 'calendar-backfill'`,
     )
     .bind(tenantId)
     .run();
