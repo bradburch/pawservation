@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseEventSummary, resolveHousehold, resolvePetsByName, resolveService } from '../lib/calendar-backfill';
+import {
+  classifyEvent,
+  parseEventSummary,
+  resolveHousehold,
+  resolvePetsByName,
+  resolveService,
+} from '../lib/calendar-backfill';
 
 describe('parseEventSummary', () => {
   it('splits one pet and a service word', () => {
@@ -225,5 +231,83 @@ describe('resolveService', () => {
 
   it('refuses a hint the tenant does not offer', () => {
     expect(resolveService('grooming', SERVICES).ok).toBe(false);
+  });
+});
+
+const CTX = {
+  pets: [
+    { id: 'p1', name: 'Sadie', petType: 'dog' },
+    { id: 'p3', name: 'Bella', petType: 'cat' },
+    { id: 'p4', name: 'Bella', petType: 'dog' },
+  ],
+  links: [
+    { EndUserId: 'u1', PetId: 'p1' },
+    { EndUserId: 'u2', PetId: 'p3' },
+    { EndUserId: 'u3', PetId: 'p4' },
+  ],
+  services: [{ serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard' }],
+  adoptedEventIds: new Set<string>(),
+  priceFor: () => ({ priced: true as const, cost: 25 }),
+};
+
+const event = (over: Partial<{ id: string; summary: string; start: string; end: string; private: Record<string, string> }> = {}) => ({
+  id: over.id ?? 'ev1',
+  summary: over.summary ?? 'Sadie Walk',
+  start: over.start ?? '2026-07-01',
+  end: over.end ?? '2026-07-02',
+  allDay: true,
+  status: 'confirmed',
+  updated: '2026-07-01T00:00:00Z',
+  private: over.private ?? {},
+});
+
+describe('classifyEvent', () => {
+  it('adopts a fully resolved event', () => {
+    expect(classifyEvent(event(), CTX)).toEqual({
+      kind: 'adopt',
+      eventId: 'ev1',
+      summary: 'Sadie Walk',
+      startDate: '2026-07-01',
+      endDate: null,
+      endUserId: 'u1',
+      serviceType: 'walk',
+      optionKey: 'standard',
+      petIds: ['p1'],
+      estCost: 25,
+      cancelled: false,
+    });
+  });
+
+  it("skips pawservation's own event", () => {
+    const out = classifyEvent(event({ private: { bookingId: 'bk1' } }), CTX);
+    expect(out).toEqual({ kind: 'skip', eventId: 'ev1', why: 'pawservation-own' });
+  });
+
+  it('skips an event already adopted', () => {
+    const out = classifyEvent(event(), { ...CTX, adoptedEventIds: new Set(['ev1']) });
+    expect(out).toEqual({ kind: 'skip', eventId: 'ev1', why: 'already-adopted' });
+  });
+
+  it('flags an ambiguous pet name', () => {
+    const out = classifyEvent(event({ summary: 'Bella Walk' }), CTX);
+    expect(out).toMatchObject({ kind: 'flag', reason: 'ambiguous-pet' });
+  });
+
+  it('flags an unknown service', () => {
+    // 'boarding' IS a recognised service word (it ends the pet-name run), but this tenant's CTX
+    // only offers 'walk' — so this exercises resolveService's refusal, not parseEventSummary's
+    // vocabulary. ('Sadie Grooming' doesn't isolate a service hint at all, since 'grooming' isn't
+    // in parseEventSummary's SERVICE_WORDS, so it fails one stage earlier with 'no-pets'.)
+    const out = classifyEvent(event({ summary: 'Sadie Boarding' }), CTX);
+    expect(out).toMatchObject({ kind: 'flag', reason: 'unknown-service' });
+  });
+
+  it('flags an unpriced pet set and carries NO cost', () => {
+    const out = classifyEvent(event(), {
+      ...CTX,
+      priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: 'p1', mixKey: 'dog:1' }),
+    });
+    expect(out).toMatchObject({ kind: 'flag', reason: 'unpriced-set' });
+    expect(out).not.toHaveProperty('estCost');
   });
 });

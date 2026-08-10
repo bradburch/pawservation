@@ -8,6 +8,8 @@
  */
 
 import { buildAccounts } from '../../src/shared/index.js';
+import type { CalendarEvent } from './google-calendar';
+import type { PriceResult } from './availability';
 
 export type ParsedSummary = {
   petNames: string[];
@@ -197,4 +199,86 @@ export function resolveService(
     return { ok: false, reason: 'unknown-service', detail: `You do not offer "${hint.trim()}"` };
   }
   return { ok: true, service: hit };
+}
+
+export type BackfillContext = {
+  pets: BackfillPet[];
+  links: PetOwnerLink[];
+  services: BackfillService[];
+  /** Event ids already adopted for this tenant — the idempotency key. */
+  adoptedEventIds: Set<string>;
+  priceFor: (
+    service: BackfillService,
+    pets: BackfillPet[],
+    startDate: string,
+    endDateExclusive: string,
+  ) => PriceResult;
+};
+
+export type Classified =
+  | {
+      kind: 'adopt';
+      eventId: string;
+      summary: string;
+      startDate: string;
+      endDate: string | null;
+      endUserId: string;
+      serviceType: string;
+      optionKey: string;
+      petIds: string[];
+      estCost: number;
+      cancelled: boolean;
+    }
+  | { kind: 'flag'; eventId: string; summary: string; startDate: string; reason: FlagReason; detail: string }
+  | { kind: 'skip'; eventId: string; why: 'pawservation-own' | 'already-adopted' };
+
+/** Range-shaped services keep Google's EXCLUSIVE end; single-day ones store NULL, matching
+ *  BookingRequests.EndDate's documented convention. */
+const RANGE_SHAPED = new Set(['boarding', 'house-sit', 'housesit']);
+
+export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Classified {
+  // Pawservation wrote this one — reconcile already owns it.
+  if (event.private?.bookingId) return { kind: 'skip', eventId: event.id, why: 'pawservation-own' };
+  if (ctx.adoptedEventIds.has(event.id))
+    return { kind: 'skip', eventId: event.id, why: 'already-adopted' };
+
+  const flag = (reason: FlagReason, detail: string): Classified => ({
+    kind: 'flag',
+    eventId: event.id,
+    summary: event.summary,
+    startDate: event.start,
+    reason,
+    detail,
+  });
+
+  const parsed = parseEventSummary(event.summary);
+
+  const pets = resolvePetsByName(parsed.petNames, ctx.pets);
+  if (!pets.ok) return flag(pets.reason, pets.detail);
+
+  const household = resolveHousehold(pets.pets, ctx.links);
+  if (!household.ok) return flag(household.reason, household.detail);
+
+  const service = resolveService(parsed.serviceHint, ctx.services);
+  if (!service.ok) return flag(service.reason, service.detail);
+
+  const price = ctx.priceFor(service.service, pets.pets, event.start, event.end);
+  if (!price.priced) {
+    // The free product's own "available but not priced" outcome. No number is invented here.
+    return flag('unpriced-set', 'No rate covers this combination of pets');
+  }
+
+  return {
+    kind: 'adopt',
+    eventId: event.id,
+    summary: event.summary,
+    startDate: event.start,
+    endDate: RANGE_SHAPED.has(service.service.serviceType) ? event.end : null,
+    endUserId: household.endUserId,
+    serviceType: service.service.serviceType,
+    optionKey: service.service.optionKey,
+    petIds: pets.pets.map((p) => p.id),
+    estCost: price.cost,
+    cancelled: parsed.cancelled,
+  };
 }
