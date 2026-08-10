@@ -71,6 +71,47 @@ function readEstCost(raw: DatabaseSync, bookingId: string): number | null {
   return row?.EstCost ?? null;
 }
 
+function readCosts(
+  raw: DatabaseSync,
+  bookingId: string,
+): { estCost: number | null; cancellationFee: number | null } {
+  const row = raw
+    .prepare('SELECT EstCost, CancellationFee FROM BookingRequests WHERE Id = ?')
+    .get(bookingId) as { EstCost: number | null; CancellationFee: number | null } | undefined;
+  return { estCost: row?.EstCost ?? null, cancellationFee: row?.CancellationFee ?? null };
+}
+
+// Fix round 1: BASE_AMOUNT_SQL (server/db/repo.ts) reads CancellationFee, not EstCost, for a
+// cancelled row. These prove insertBackfilledBooking and updateBackfilledBookingCost both write
+// into that column for a cancelled adoption, not just EstCost — the gap that let a re-priced
+// cancelled stay report success while the household balance silently didn't move.
+describe('a cancelled backfilled booking and the household balance', () => {
+  it('is adopted with a non-zero contribution, not zero', async () => {
+    const { env, raw } = createTestEnv();
+    const endUserId = seedOwner(raw, TENANT_A, 'bf_cancel_balance');
+    const bookingId = await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId,
+      serviceType: 'walk',
+      startDate: '2023-05-01',
+      endDate: null,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 25,
+      status: 'cancelled',
+      gcalEventId: 'evt_bf_cancel_balance',
+    });
+
+    const { estCost, cancellationFee } = readCosts(raw, bookingId);
+    expect(estCost).toBe(25); // the stay's own figure, kept regardless of status
+    expect(cancellationFee).toBe(25); // the column BASE_AMOUNT_SQL actually reads once cancelled
+
+    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
+    expect(household?.expectedTotal).toBe(25);
+    expect(household?.balance).toBe(25);
+  });
+});
+
 describe('PATCH /:slug/admin/bookings/:id/cost', () => {
   it('updates a backfilled booking and moves the household balance with it', async () => {
     const { env, raw } = createTestEnv();
@@ -98,6 +139,38 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
     expect(household?.expectedTotal).toBe(40);
     expect(household?.balance).toBe(40);
+  });
+
+  it('re-prices a cancelled backfilled booking and moves the household balance, not just a column', async () => {
+    const { env, raw } = createTestEnv();
+    const endUserId = seedOwner(raw, TENANT_A, 'bf_cancel_patch');
+    const bookingId = await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId,
+      serviceType: 'walk',
+      startDate: '2023-05-01',
+      endDate: null,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 25,
+      status: 'cancelled',
+      gcalEventId: 'evt_bf_cancel_patch',
+    });
+
+    const res = await patchCost(env, bookingId, { estCost: 60 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ estCost: 60 });
+
+    // CancellationFee is the column BASE_AMOUNT_SQL reads for a cancelled row — that's the one
+    // that must move. EstCost is deliberately left alone: it's not what the balance reads once
+    // cancelled, and overwriting it would erase the stay's own original figure for no reason.
+    const { estCost, cancellationFee } = readCosts(raw, bookingId);
+    expect(cancellationFee).toBe(60);
+    expect(estCost).toBe(25);
+
+    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
+    expect(household?.expectedTotal).toBe(60);
+    expect(household?.balance).toBe(60);
   });
 
   it('refuses a booking that came through pawservation, with 404', async () => {

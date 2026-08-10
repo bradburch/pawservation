@@ -714,12 +714,19 @@ export async function insertBackfilledBooking(
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
+  // A cancelled adoption's price is also stamped into CancellationFee, not EstCost alone:
+  // BASE_AMOUNT_SQL reads CancellationFee (not EstCost) for a cancelled row, and the convention
+  // this feature adopts from (`keepsCalendarEventOnCancel`) keeps a cancelled event on the
+  // calendar only when a fee is owed — every adopted [CANCELLED] event is a receivable by that
+  // convention, so it must land in the column the balance actually sums. EstCost keeps the same
+  // number too, as the stay's own figure independent of what happened to it afterward.
+  const cancellationFee = row.status === 'cancelled' ? row.estCost : null;
   await db
     .prepare(
       `INSERT INTO BookingRequests
          (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount,
-          EstCost, Answers, Status, Source, GCalEventId, SyncPending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, 'calendar-backfill', ?, 0)`,
+          EstCost, CancellationFee, Answers, Status, Source, GCalEventId, SyncPending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, 'calendar-backfill', ?, 0)`,
     )
     .bind(
       id,
@@ -731,6 +738,7 @@ export async function insertBackfilledBooking(
       row.optionKey,
       row.petCount,
       row.estCost,
+      cancellationFee,
       row.status,
       row.gcalEventId,
     )
@@ -786,6 +794,12 @@ export async function listActiveAdoptedEventIds(
  * stay that may predate it, so correcting it takes nothing from anyone. A booking a client
  * actually agreed to is out of reach here by construction — the WHERE clause, not the caller, is
  * what makes that true.
+ *
+ * Writes into whichever column `BASE_AMOUNT_SQL` actually reads for this row's status —
+ * `CancellationFee` when cancelled, `EstCost` otherwise — using the SAME `CASE WHEN Status =
+ * 'cancelled'` test `BASE_AMOUNT_SQL` uses, so a correction can never land in the column the
+ * balance ignores. One statement, not a read-then-write: Status is read and acted on atomically,
+ * with no race between checking it and writing the price.
  */
 export async function updateBackfilledBookingCost(
   db: D1Database,
@@ -795,10 +809,12 @@ export async function updateBackfilledBookingCost(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      `UPDATE BookingRequests SET EstCost = ?
+      `UPDATE BookingRequests
+       SET EstCost = CASE WHEN Status = 'cancelled' THEN EstCost ELSE ? END,
+           CancellationFee = CASE WHEN Status = 'cancelled' THEN ? ELSE CancellationFee END
        WHERE TenantId = ? AND Id = ? AND Source = 'calendar-backfill'`,
     )
-    .bind(estCost, tenantId, bookingId)
+    .bind(estCost, estCost, tenantId, bookingId)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
 }

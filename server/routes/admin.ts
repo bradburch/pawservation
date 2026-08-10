@@ -3035,6 +3035,10 @@ export const adminRoutes = new Hono<AppEnv>()
    * figure a client DID see; it is out of reach here by construction, and refuses with the same
    * 404 as the 'blocked'/'external' sentinels and a foreign tenant's id, so the response never
    * tells the caller which of those four reasons applied.
+   *
+   * The route itself never decides EstCost vs. CancellationFee — `updateBackfilledBookingCost`
+   * writes into whichever column the row's own Status says the balance reads, so a cancelled
+   * adoption's correction lands where `BASE_AMOUNT_SQL` actually looks for it.
    */
   .patch('/:slug/admin/bookings/:id/cost', async (c) => {
     const tenant = c.get('tenant');

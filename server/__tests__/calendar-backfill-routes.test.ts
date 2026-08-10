@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { insertBackfilledBooking, replaceServicePetRates, setProviderTokens } from '../db/repo';
+import {
+  getHouseholdBalances,
+  insertBackfilledBooking,
+  replaceServicePetRates,
+  setProviderTokens,
+} from '../db/repo';
 // Namespace import alongside the named one above, used only to spy on a single repo function
 // (forcing a mid-loop write failure) without touching every other test's real DB behavior.
 import * as repoModule from '../db/repo';
@@ -287,6 +292,7 @@ async function getBooking(env: Env, gcalEventId: string) {
     .first<{
       Id: string;
       EstCost: number;
+      CancellationFee: number | null;
       EndUserId: string;
       Status: string;
       GCalEventId: string;
@@ -388,6 +394,36 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(row).toBeTruthy();
     const petIds = await getBookingPetIds(env, row!.Id);
     expect(petIds).toEqual(['pet_sp_bella']);
+  });
+
+  // Regression for the fix round 1 finding: BASE_AMOUNT_SQL reads CancellationFee (not EstCost)
+  // for a cancelled row, so a [CANCELLED]-marked event must land its price there too, or the
+  // household balance silently doesn't move even though the row imported "successfully".
+  it('an imported [CANCELLED] event contributes its price to the household balance', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([
+        { ...BELLA_WALK_EVENT, id: 'ev_bella_cancelled', summary: '[CANCELLED] Bella Walk' },
+      ]),
+    );
+
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const beforeTotal = before.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotal ?? 0;
+
+    const res = await runImport(env, [{ eventId: 'ev_bella_cancelled' }]);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ImportBody;
+    expect(body.imported).toBe(1);
+
+    const row = await getBooking(env, 'ev_bella_cancelled');
+    expect(row).toMatchObject({ Status: 'cancelled', EstCost: 20, CancellationFee: 20 });
+
+    const after = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const afterTotal = after.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotal ?? 0;
+    // Before the fix this delta was 0: insertBackfilledBooking never set CancellationFee, so a
+    // cancelled row's price was invisible to BASE_AMOUNT_SQL no matter what EstCost held.
+    expect(afterTotal - beforeTotal).toBe(20);
   });
 
   it('adopts nothing on a second run over the same range', async () => {
