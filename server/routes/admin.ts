@@ -71,7 +71,7 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import { serializeAnalytics } from '../lib/analytics';
-import { confirmOverbookWarning, estimateCost, loadPetSetRates } from '../lib/availability';
+import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
@@ -146,7 +146,12 @@ import {
   minutesBetweenTimes,
 } from '../lib/validation';
 import type { AppEnv, Tenant, TenantService, TenantServiceOption } from '../types';
-import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
+import type {
+  CancellationTier,
+  GroupRate,
+  MixRate,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 import {
   buildGroupKey,
   buildMixKey,
@@ -211,8 +216,10 @@ async function loadVenmoMatchInputs(
 }
 
 /** One pass reads its whole range before classifying, so the cap is on events READ, not events
- *  adopted. Chosen to sit inside the Workers Free plan's 50-subrequest budget. */
-const MAX_BACKFILL_EVENTS = 200;
+ *  adopted. Chosen to sit inside the Workers Free plan's 50-subrequest budget. Exported: the
+ *  import route (Task 7) enforces the same cap, and the range-picker UI uses it to warn before
+ *  submitting a range that would be refused. */
+export const MAX_BACKFILL_EVENTS = 200;
 
 /**
  * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
@@ -228,20 +235,37 @@ async function loadBackfillContext(
   backfillServices: BackfillService[];
   serviceByType: Map<string, TenantService>;
   optionByType: Map<string, TenantServiceOption>;
-  ratesByType: Map<string, Awaited<ReturnType<typeof loadPetSetRates>>>;
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] };
 }> {
-  const [petRows, links, services, options] = await Promise.all([
+  const [petRows, links, services, options, groupRows, mixRows] = await Promise.all([
     listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id),
     listOwnerPetLinks(c.env.PAWSERVATION_DB, tenant.Id),
     listServices(c.env.PAWSERVATION_DB, tenant.Id),
     listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
+    // Both pet-set rate tables, ONE read each, tenant-wide — not routed through `loadPetSetRates`
+    // (which is per-service by design, for the booking flow's single-service callers) and not
+    // called once per enabled service here. `resolvePetSetRate` (inside `estimateCost`) filters
+    // every candidate row by `serviceType`+`optionKey` on each lookup regardless of what superset
+    // of rows it's handed, so passing the full tenant-wide set to every service below is exactly
+    // equivalent to a per-service-scoped read — with none of the redundant D1 cost. This route
+    // classifies every event against every enabled service (up to MAX_SERVICES) in one pass, which
+    // makes it the one caller that actually wants the whole tenant's rate tables at once; a
+    // per-service loop here would reread `TenantServicePetRates` in full, byte-identically, up to
+    // MAX_SERVICES times, which is what blew the Workers Free plan's subrequest budget this cap
+    // exists to protect. `listAllPetGroupPricing` is the same tenant-wide read already used by the
+    // pet-pricing GET route below (:703) and the settings-warning route.
+    listAllPetGroupPricing(c.env.PAWSERVATION_DB, tenant.Id),
+    listServicePetRates(c.env.PAWSERVATION_DB, tenant.Id),
   ]);
 
   const pets: BackfillPet[] = petRows.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType }));
 
   // classifyEvent wants one option per service; take each enabled service's first option, which
   // is what a title like "Sadie Walk" can name. A service with no option cannot price and is
-  // simply absent, so such an event flags `unknown-service` rather than failing.
+  // simply absent, so such an event flags `unknown-service` rather than failing. "First" is
+  // `listServiceOptions`'s own `ORDER BY ServiceType, DurationMinutes` (repo.ts) — i.e. the
+  // SHORTEST-duration option on a multi-option service — not an arbitrary array-order tiebreak;
+  // reordering that query would silently reprice every multi-option service's adopted stays.
   const serviceByType = new Map<string, TenantService>();
   const optionByType = new Map<string, TenantServiceOption>();
   const backfillServices: BackfillService[] = [];
@@ -264,16 +288,24 @@ async function loadBackfillContext(
     });
   }
 
-  const ratesByType = new Map(
-    await Promise.all(
-      backfillServices.map(
-        async (s) =>
-          [s.serviceType, await loadPetSetRates(c.env, tenant.Id, s.serviceType)] as const,
-      ),
-    ),
-  );
+  // Same field mapping `loadPetSetRates` (availability.ts) applies to these two row shapes; kept
+  // in sync by hand since that mapping is a stable 1:1 column rename, not logic.
+  const rates = {
+    groupRates: groupRows.map((r) => ({
+      groupKey: r.GroupKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+    mixRates: mixRows.map((r) => ({
+      mixKey: r.MixKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+  };
 
-  return { pets, links, backfillServices, serviceByType, optionByType, ratesByType };
+  return { pets, links, backfillServices, serviceByType, optionByType, rates };
 }
 
 /**
@@ -286,7 +318,7 @@ async function classifyAll(
   tenant: Tenant,
   events: CalendarEvent[],
 ): Promise<Classified[]> {
-  const [{ pets, links, backfillServices, serviceByType, optionByType, ratesByType }, adoptedEventIds] =
+  const [{ pets, links, backfillServices, serviceByType, optionByType, rates }, adoptedEventIds] =
     await Promise.all([
       loadBackfillContext(c, tenant),
       listAdoptedEventIds(c.env.PAWSERVATION_DB, tenant.Id),
@@ -295,7 +327,6 @@ async function classifyAll(
   const priceFor: BackfillContext['priceFor'] = (service, pricedPets, startDate, endDateExclusive) => {
     const tenantService = serviceByType.get(service.serviceType)!;
     const option = optionByType.get(service.serviceType)!;
-    const rates = ratesByType.get(service.serviceType)!;
     return estimateCost(tenantService, option, startDate, endDateExclusive, pricedPets, rates);
   };
 
