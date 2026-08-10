@@ -9,7 +9,12 @@ import {
   reconcileWindow,
   redriveCalendarOutbox,
 } from '../lib/calendar-sync';
-import { insertBookingRequest, setBookingGCalEventId, setProviderTokens } from '../db/repo';
+import {
+  insertBackfilledBooking,
+  insertBookingRequest,
+  setBookingGCalEventId,
+  setProviderTokens,
+} from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, addMonths, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import { adminToken, createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
@@ -503,6 +508,61 @@ describe('reconcile v2 — external materialization lifecycle', () => {
 
     const movedRow = rowsAfterPass2.find((r) => r.GCalEventId === 'gev_ov_0');
     expect(movedRow).toMatchObject({ StartDate: moved, EndDate: movedEnd }); // update applied, budget permitting
+  });
+});
+
+/**
+ * An ADOPTED booking (Source='calendar-backfill') is deliberately never pushed to Google — the
+ * backfill is read-only there — so it never gains private.bookingId. Reconcile's foreign-event
+ * filter (`!e.private.bookingId`) can't tell that apart from a genuinely foreign event and, left
+ * unguarded, re-materializes an 'external' shadow row for it on every pass: two BookingRequests
+ * rows for one stay, and availability.ts counts BOTH as capacity blockers.
+ */
+describe('reconcile v2 — does not shadow an adopted booking', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  async function jessId(env: Env): Promise<string> {
+    const row = (await env.PAWSERVATION_DB.prepare(
+      "SELECT Id FROM EndUsers WHERE TenantId = ? AND Email = 'jess@example.com'",
+    )
+      .bind(TENANT_A)
+      .first<{ Id: string }>())!;
+    return row.Id;
+  }
+
+  it('an adopted booking is not shadowed by an external row when Google reports its event as foreign', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const endUserId = await jessId(env);
+    await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId,
+      serviceType: 'boarding',
+      startDate: IN_WINDOW_START,
+      endDate: IN_WINDOW_END,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 150,
+      status: 'confirmed',
+      gcalEventId: 'evt_adopted',
+    });
+    // Google reports the adopted event with no private.bookingId — adoption never wrote one there.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([{ id: 'evt_adopted', summary: 'Adopted stay' }]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    const rows = await externalRows(env);
+    expect(rows.find((r) => r.GCalEventId === 'evt_adopted')).toBeUndefined();
+  });
+
+  it('an ordinary (unadopted) foreign event is still materialized as an external row', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([{ id: 'evt_neighbor', summary: 'Neighbor stay' }]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    const rows = await externalRows(env);
+    expect(rows.find((r) => r.GCalEventId === 'evt_neighbor')).toBeDefined();
   });
 });
 

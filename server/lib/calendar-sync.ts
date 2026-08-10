@@ -8,6 +8,7 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
+  listAdoptedEventIds,
   listBlockedRowsWithEventsInWindow,
   listExternalEventRowsInWindow,
   listPetNamesForBooking,
@@ -602,7 +603,15 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   }
 
   // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
-  const foreign = live.filter((e) => !e.private.bookingId && e.id && e.start && e.end);
+  // An event this tenant has ADOPTED is already a real booking (Source='calendar-backfill'). It
+  // carries no private.bookingId because adoption never writes to Google — deliberately, the
+  // backfill is read-only there — so the filter above would keep re-materializing an 'external'
+  // shadow for it on every pass. Two rows for one stay double-block the day (availability.ts
+  // counts 'external' as a blocker, and the adopted booking is one too).
+  const adoptedEventIds = await listAdoptedEventIds(env.PAWSERVATION_DB, tenant.Id);
+  const foreign = live.filter(
+    (e) => !e.private.bookingId && !adoptedEventIds.has(e.id) && e.id && e.start && e.end,
+  );
   // `liveIds` covers EVERY foreign event Google reports, not just the ones materialized this pass
   // — deleteExternalEventsMissing must never be told an event is gone just because MATERIALIZE_LIMIT
   // deferred writing its row.
