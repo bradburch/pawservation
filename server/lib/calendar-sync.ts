@@ -479,7 +479,12 @@ const MATERIALIZE_BATCH_SIZE = 50;
 /** External-event span → [StartDate, EndDate-exclusive) row dates. All-day events carry Google's
  * exclusive end already; timed events occupy every calendar day they touch (a 14:00–15:00 visit
  * blocks that one day; a Fri 18:00 – Sun 09:00 sit blocks Fri/Sat/Sun). A timed event ending at
- * exactly midnight overcounts its final day by one — accepted: over-blocking is the safe error. */
+ * exactly midnight overcounts its final day by one — accepted: over-blocking is the safe error.
+ *
+ * THE source of truth for this rule. `spanEndExclusive` in server/lib/calendar-backfill.ts
+ * replicates it (that module is pure and cannot import from here) so that adopting an event
+ * covers exactly the days its `external` row covered — the adopted booking REPLACES that row.
+ * Change one and change the other. */
 function externalSpan(e: CalendarEvent): { startDate: string; endDateExclusive: string } {
   if (e.allDay) return { startDate: e.start, endDateExclusive: e.end };
   const lastDay = e.end >= e.start ? e.end : e.start;

@@ -7,7 +7,7 @@
  * pure and dependency-free, so importing `buildAccounts` from it does not violate that rule.
  */
 
-import { buildAccounts } from '../../src/shared/index.js';
+import { addDays, buildAccounts } from '../../src/shared/index.js';
 import type { CalendarEvent } from './google-calendar';
 import type { PriceResult } from './availability';
 
@@ -272,6 +272,28 @@ export type Classified =
       cancelled: boolean;
     };
 
+/**
+ * The event's end as an EXCLUSIVE date — the form both `BookingRequests.EndDate` and the pricing
+ * helpers take.
+ *
+ * Google's `end` is exclusive for an all-day event and INCLUSIVE for a timed one, so a timed
+ * event occupies every calendar day it touches: a Fri 18:00 – Sun 09:00 boarding occupies
+ * Fri/Sat/Sun, and a 14:00–15:00 visit occupies that one day.
+ *
+ * `externalSpan` in server/lib/calendar-sync.ts is the SOURCE OF TRUTH for this rule — it is what
+ * decides how many days that same event blocks while it is still a foreign `'external'` row, and
+ * an adopted booking REPLACES that row. This is a deliberate replication, not an independent
+ * derivation: importing it would drag D1 into this module, which is pure by contract (see the
+ * file header). Change one and change the other, or an adopted stay stops covering the days its
+ * external row did — silently freeing a day the sitter is genuinely occupied and billing a night
+ * fewer than the calendar says she worked.
+ */
+function spanEndExclusive(event: CalendarEvent): string {
+  if (event.allDay) return event.end;
+  const lastDay = event.end >= event.start ? event.end : event.start;
+  return addDays(lastDay, 1);
+}
+
 export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Classified {
   // Pawservation wrote this one — reconcile already owns it.
   if (event.private?.bookingId) return { kind: 'skip', eventId: event.id, why: 'pawservation-own' };
@@ -299,10 +321,10 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   if (!service.ok) return flag(service.reason, service.detail);
 
   // The schema's own answer, never inferred from the (renameable, per-tenant) slug.
-  const endDate = service.service.shape === 'range' ? event.end : null;
+  const endDate = service.service.shape === 'range' ? spanEndExclusive(event) : null;
   const petIds = pets.pets.map((p) => p.id);
 
-  const price = ctx.priceFor(service.service, pets.pets, event.start, event.end);
+  const price = ctx.priceFor(service.service, pets.pets, event.start, spanEndExclusive(event));
   if (!price.priced) {
     // The free product's own "available but not priced" outcome — but everything else DID
     // resolve, so this is a question for the sitter, not a failure. No number is invented here:

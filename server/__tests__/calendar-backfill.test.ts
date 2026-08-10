@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { nightsBetween } from '../../src/shared/index.js';
 import {
   classifyEvent,
   parseEventSummary,
@@ -261,12 +262,12 @@ const CTX = {
   priceFor: () => ({ priced: true as const, cost: 25 }),
 };
 
-const event = (over: Partial<{ id: string; summary: string; start: string; end: string; private: Record<string, string> }> = {}) => ({
+const event = (over: Partial<{ id: string; summary: string; start: string; end: string; allDay: boolean; private: Record<string, string> }> = {}) => ({
   id: over.id ?? 'ev1',
   summary: over.summary ?? 'Sadie Walk',
   start: over.start ?? '2026-07-01',
   end: over.end ?? '2026-07-02',
-  allDay: true,
+  allDay: over.allDay ?? true,
   status: 'confirmed',
   updated: '2026-07-01T00:00:00Z',
   private: over.private ?? {},
@@ -374,5 +375,73 @@ describe('classifyEvent', () => {
   it('drops the end date for a single-shaped service', () => {
     const out = classifyEvent(event({ start: '2026-07-01', end: '2026-07-02' }), CTX);
     expect(out).toMatchObject({ kind: 'adopt', endDate: null });
+  });
+});
+
+/**
+ * Google's `end` is EXCLUSIVE for an all-day event and INCLUSIVE for a timed one. `externalSpan`
+ * (server/lib/calendar-sync.ts) is where that rule already lives, and it is the source of truth:
+ * it is what decides how many days the SAME event blocks while it is still a foreign 'external'
+ * row. An adopted booking REPLACES that external row, so a classifier that took a timed `end` raw
+ * shortened the stay by a day on adoption — freeing a day the sitter is genuinely occupied, and
+ * billing one night fewer than the calendar said she worked.
+ */
+describe('classifyEvent — Google’s end date is inclusive on a TIMED event', () => {
+  const boarding = {
+    ...CTX,
+    services: [
+      { serviceType: 'boarding', label: 'Boarding', optionKey: 'standard', shape: 'range' as const },
+    ],
+  };
+
+  // $50/night, so the cost reports the billed night count directly.
+  function classifyBoarding(over: Parameters<typeof event>[0]) {
+    const priced: { startDate: string; endDateExclusive: string }[] = [];
+    const out = classifyEvent(event({ summary: 'Sadie Boarding', ...over }), {
+      ...boarding,
+      priceFor: (_s, _p, startDate, endDateExclusive) => {
+        priced.push({ startDate, endDateExclusive });
+        return { priced: true as const, cost: 50 * nightsBetween(startDate, endDateExclusive) };
+      },
+    });
+    return { out, priced };
+  }
+
+  it('a Fri 18:00 – Sun 09:00 stay keeps every day it occupies', () => {
+    // Timed: Google reports end = Sunday, the day the stay is still running. externalSpan blocks
+    // Fri/Sat/Sun for it, so the adopted booking must too — EndDate is exclusive, hence Monday.
+    const { out, priced } = classifyBoarding({
+      start: '2026-07-03',
+      end: '2026-07-05',
+      allDay: false,
+    });
+
+    expect(out).toMatchObject({ kind: 'adopt', startDate: '2026-07-03', endDate: '2026-07-06' });
+    // Pricing must see the SAME normalized span, not the raw end — three nights, not two.
+    expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-06' }]);
+    expect(out).toMatchObject({ estCost: 150 });
+  });
+
+  it('a single-day timed visit still occupies its one day', () => {
+    // A 14:00–15:00 event starts and ends on the same date; externalSpan blocks that one day.
+    const { out, priced } = classifyBoarding({
+      start: '2026-07-03',
+      end: '2026-07-03',
+      allDay: false,
+    });
+
+    expect(out).toMatchObject({ endDate: '2026-07-04', estCost: 50 });
+    expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-04' }]);
+  });
+
+  it('an ALL-DAY event is unchanged — its end is already exclusive', () => {
+    const { out, priced } = classifyBoarding({
+      start: '2026-07-03',
+      end: '2026-07-05',
+      allDay: true,
+    });
+
+    expect(out).toMatchObject({ endDate: '2026-07-05', estCost: 100 });
+    expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-05' }]);
   });
 });
