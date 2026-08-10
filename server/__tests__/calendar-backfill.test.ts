@@ -173,6 +173,32 @@ describe('resolveHousehold', () => {
   it('still resolves when every pet has a link to the same owner', () => {
     expect(resolveHousehold([pet('p1'), pet('p2')], LINKS)).toEqual({ ok: true, endUserId: 'u1' });
   });
+
+  it('treats a pet co-owned by two people as ONE household', () => {
+    // src/shared/invoicing/accounts.ts: "Two customers who share a single pet are one household
+    // and get one statement." Two owner rows for one pet is co-ownership, not two clients.
+    const coOwned = [
+      { EndUserId: 'u1', PetId: 'p1' },
+      { EndUserId: 'u2', PetId: 'p1' },
+    ];
+    expect(resolveHousehold([pet('p1')], coOwned)).toEqual({ ok: true, endUserId: 'u1' });
+  });
+
+  it('treats two people joined through a shared pet as one household', () => {
+    // u1 owns p1 and p2; u2 also owns p2. All three ids are one connected component.
+    const joined = [
+      { EndUserId: 'u1', PetId: 'p1' },
+      { EndUserId: 'u1', PetId: 'p2' },
+      { EndUserId: 'u2', PetId: 'p2' },
+    ];
+    expect(resolveHousehold([pet('p1'), pet('p2')], joined)).toEqual({ ok: true, endUserId: 'u1' });
+  });
+
+  it('still refuses pets in two genuinely separate households', () => {
+    const out = resolveHousehold([pet('p1'), pet('p3')], LINKS);
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.detail).toBe('These pets belong to 2 different clients');
+  });
 });
 
 const SERVICES = [

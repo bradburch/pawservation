@@ -3,8 +3,11 @@
  * docs/superpowers/specs/2026-08-09-calendar-backfill-design.md).
  *
  * PURE. No D1, no env, no fetch — every function takes plain data and returns plain data, so
- * `server/db/repo.ts` stays the only module that touches the database.
+ * `server/db/repo.ts` stays the only module that touches the database. `src/shared/` is itself
+ * pure and dependency-free, so importing `buildAccounts` from it does not violate that rule.
  */
+
+import { buildAccounts } from '../../src/shared/index.js';
 
 export type ParsedSummary = {
   petNames: string[];
@@ -130,9 +133,12 @@ export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetReso
 export type PetOwnerLink = { EndUserId: string; PetId: string };
 
 /**
- * One household or nothing. A payment needs an owner, and pets from two different clients on one
- * event is a real situation (a shared walk) that this import cannot represent as one booking —
- * so it is reported, not split by guesswork.
+ * One household or nothing. A household here is the same thing `src/shared/invoicing/accounts.ts`
+ * defines it as: a connected component over the owner<->pet graph, i.e. a billing account — NOT a
+ * single owner id. Two owners who co-own one pet are one household with one statement, so that
+ * must resolve, not refuse; pets that fall into two genuinely separate accounts is the real
+ * "shared walk across two clients" case this import cannot represent as one booking, so THAT is
+ * reported, not split by guesswork.
  */
 export function resolveHousehold(
   pets: BackfillPet[],
@@ -140,30 +146,37 @@ export function resolveHousehold(
 ):
   | { ok: true; endUserId: string }
   | { ok: false; reason: 'multiple-households'; detail: string } {
-  const owners = new Set<string>();
+  const accounts = buildAccounts(links.map((link) => ({ ownerId: link.EndUserId, petId: link.PetId })));
+
+  const matchedAccountIds = new Set<string>();
   for (const pet of pets) {
     // listAllEndUserPetsByTenant does not filter deceased pets, but listOwnerPetLinks does — so a
-    // pet that has since died can arrive here with zero links. That is a missing fact, not "no
-    // household disagreement", and must refuse on its own rather than being silently dropped from
-    // the owner tally (which would let a surviving pet's owner absorb the whole booking).
-    const petOwners = links.filter((link) => link.PetId === pet.id).map((link) => link.EndUserId);
-    if (petOwners.length === 0) {
+    // pet that has since died can arrive here in no account at all. That is a missing fact, not
+    // "no household disagreement", and must refuse on its own rather than being silently dropped
+    // (which would let a surviving pet's account absorb the whole booking).
+    const account = accounts.find((a) => a.petIds.includes(pet.id));
+    if (!account) {
       return {
         ok: false,
         reason: 'multiple-households',
         detail: `${pet.name} has no client on record`,
       };
     }
-    for (const ownerId of petOwners) owners.add(ownerId);
+    matchedAccountIds.add(account.id);
   }
-  if (owners.size === 1) return { ok: true, endUserId: [...owners][0] };
+
+  if (matchedAccountIds.size === 1) {
+    const account = accounts.find((a) => matchedAccountIds.has(a.id))!;
+    // ownerIds is sorted by buildAccounts, so this pick is deterministic. BookingRequests.EndUserId
+    // is a single column, but household balances roll up by ACCOUNT rather than by that column, so
+    // any owner of the right account attributes the money correctly — there is no "more correct"
+    // owner to prefer among co-owners.
+    return { ok: true, endUserId: account.ownerIds[0]! };
+  }
   return {
     ok: false,
     reason: 'multiple-households',
-    detail:
-      owners.size === 0
-        ? 'These pets have no client on record'
-        : `These pets belong to ${owners.size} different clients`,
+    detail: `These pets belong to ${matchedAccountIds.size} different clients`,
   };
 }
 
