@@ -93,6 +93,18 @@ async function seedSyncedBooking(
   return id;
 }
 
+/** The base seed carries ABSOLUTE-dated bookings (sql/seed.sql) while this file's fixtures are
+ *  relative to the real clock — so for three days a year TODAY+10 lands inside seed_sp_pend2's
+ *  2026-08-20→23 pending boarding hold and Sunny Paws' 2-pet pool is not empty. Clear the seeded
+ *  rows so a status assertion means what it says. */
+async function clearSeededBookings(env: Env) {
+  await env.PAWSERVATION_DB.prepare(
+    "DELETE FROM BookingRequests WHERE TenantId = ? AND Id LIKE 'seed_%'",
+  )
+    .bind(TENANT_A)
+    .run();
+}
+
 async function statusOf(env: Env, id: string): Promise<string> {
   const row = await env.PAWSERVATION_DB.prepare('SELECT Status FROM BookingRequests WHERE Id = ?')
     .bind(id)
@@ -841,6 +853,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
   it('the deleted-by-hand booking is reconciled in the background and gone from the NEXT load', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
+    await clearSeededBookings(env);
     const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
@@ -885,6 +898,7 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
   it('with no ExecutionContext the pull is awaited, so one request both reconciles and paints', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
+    await clearSeededBookings(env);
     // A 2-pet stay fills Sunny Paws' boarding pool (MaxConcurrentPets=2) for its night.
     const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
