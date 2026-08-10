@@ -72,3 +72,51 @@ export function parseEventSummary(summary: string): ParsedSummary {
 
   return { petNames, serviceHint, cancelled };
 }
+
+export type BackfillPet = { id: string; name: string; petType: string };
+
+export type FlagReason =
+  | 'no-pets'
+  | 'ambiguous-pet'
+  | 'multiple-households'
+  | 'unknown-service'
+  | 'unpriced-set';
+
+export type PetResolution =
+  | { ok: true; pets: BackfillPet[] }
+  | { ok: false; reason: 'no-pets' | 'ambiguous-pet'; detail: string };
+
+/** Lowercased and stripped of non-alphanumerics, so "Sadie" meets "sadie" and "Mr. Bo" meets
+ *  "mr bo". Deliberately lossy — which is exactly why a key matching two pets is REFUSED below
+ *  rather than resolved. */
+const nameKey = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetResolution {
+  if (names.length === 0) {
+    return { ok: false, reason: 'no-pets', detail: 'No pet names in the title' };
+  }
+  const byKey = new Map<string, BackfillPet[]>();
+  for (const pet of pets) {
+    const key = nameKey(pet.name);
+    if (key === '') continue;
+    byKey.set(key, [...(byKey.get(key) ?? []), pet]);
+  }
+
+  const resolved: BackfillPet[] = [];
+  for (const name of names) {
+    const hits = byKey.get(nameKey(name)) ?? [];
+    if (hits.length === 0) {
+      return { ok: false, reason: 'no-pets', detail: `No pet named ${name.trim()}` };
+    }
+    if (hits.length > 1) {
+      // Never guess between two animals with the same name — the sitter sorts it out.
+      return {
+        ok: false,
+        reason: 'ambiguous-pet',
+        detail: `${name.trim()} matches ${hits.length} pets`,
+      };
+    }
+    resolved.push(hits[0]);
+  }
+  return { ok: true, pets: resolved };
+}

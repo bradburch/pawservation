@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEventSummary } from '../lib/calendar-backfill';
+import { parseEventSummary, resolvePetsByName } from '../lib/calendar-backfill';
 
 describe('parseEventSummary', () => {
   it('splits one pet and a service word', () => {
@@ -58,5 +58,55 @@ describe('parseEventSummary', () => {
       serviceHint: null,
       cancelled: false,
     });
+  });
+});
+
+const PETS = [
+  { id: 'p1', name: 'Sadie', petType: 'dog' },
+  { id: 'p2', name: 'Remy', petType: 'dog' },
+  { id: 'p3', name: 'Bella', petType: 'cat' },
+  { id: 'p4', name: 'Bella', petType: 'dog' }, // a SECOND Bella — the ambiguity case
+];
+
+describe('resolvePetsByName', () => {
+  it('resolves a single unambiguous name, case-insensitively', () => {
+    expect(resolvePetsByName(['sadie'], PETS)).toEqual({
+      ok: true,
+      pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+    });
+  });
+
+  it('resolves several names', () => {
+    const out = resolvePetsByName(['Sadie', 'Remy'], PETS);
+    expect(out.ok).toBe(true);
+    expect(out.ok && out.pets.map((p) => p.id)).toEqual(['p1', 'p2']);
+  });
+
+  it('REFUSES a name matching two pets rather than picking one', () => {
+    expect(resolvePetsByName(['Bella'], PETS)).toEqual({
+      ok: false,
+      reason: 'ambiguous-pet',
+      detail: 'Bella matches 2 pets',
+    });
+  });
+
+  it('reports no-pets when nothing matches', () => {
+    expect(resolvePetsByName(['Nobody'], PETS)).toEqual({
+      ok: false,
+      reason: 'no-pets',
+      detail: 'No pet named Nobody',
+    });
+  });
+
+  it('reports no-pets for an empty name list', () => {
+    expect(resolvePetsByName([], PETS)).toEqual({
+      ok: false,
+      reason: 'no-pets',
+      detail: 'No pet names in the title',
+    });
+  });
+
+  it('reports the ambiguity even when another name resolved fine', () => {
+    expect(resolvePetsByName(['Sadie', 'Bella'], PETS).ok).toBe(false);
   });
 });
