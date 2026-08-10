@@ -142,7 +142,19 @@ export function resolveHousehold(
   | { ok: false; reason: 'multiple-households'; detail: string } {
   const owners = new Set<string>();
   for (const pet of pets) {
-    for (const link of links) if (link.PetId === pet.id) owners.add(link.EndUserId);
+    // listAllEndUserPetsByTenant does not filter deceased pets, but listOwnerPetLinks does — so a
+    // pet that has since died can arrive here with zero links. That is a missing fact, not "no
+    // household disagreement", and must refuse on its own rather than being silently dropped from
+    // the owner tally (which would let a surviving pet's owner absorb the whole booking).
+    const petOwners = links.filter((link) => link.PetId === pet.id).map((link) => link.EndUserId);
+    if (petOwners.length === 0) {
+      return {
+        ok: false,
+        reason: 'multiple-households',
+        detail: `${pet.name} has no client on record`,
+      };
+    }
+    for (const ownerId of petOwners) owners.add(ownerId);
   }
   if (owners.size === 1) return { ok: true, endUserId: [...owners][0] };
   return {

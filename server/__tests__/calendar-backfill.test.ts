@@ -159,6 +159,20 @@ describe('resolveHousehold', () => {
   it('refuses a pet with no owner link at all', () => {
     expect(resolveHousehold([pet('p9')], LINKS).ok).toBe(false);
   });
+
+  it('refuses when ONE pet of several has no owner link', () => {
+    // Reachable in real data: listAllEndUserPetsByTenant does not filter deceased pets, but
+    // listOwnerPetLinks does — so a pet that has died arrives with no links. Attributing the stay
+    // to the surviving pet's owner would be a silent guess about whose booking this was.
+    const out = resolveHousehold([pet('p1'), pet('p9')], LINKS);
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.reason).toBe('multiple-households');
+    expect(out.ok === false && out.detail).toContain('p9');
+  });
+
+  it('still resolves when every pet has a link to the same owner', () => {
+    expect(resolveHousehold([pet('p1'), pet('p2')], LINKS)).toEqual({ ok: true, endUserId: 'u1' });
+  });
 });
 
 const SERVICES = [
