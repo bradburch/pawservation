@@ -126,3 +126,50 @@ export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetReso
   }
   return { ok: true, pets: resolved };
 }
+
+export type PetOwnerLink = { EndUserId: string; PetId: string };
+
+/**
+ * One household or nothing. A payment needs an owner, and pets from two different clients on one
+ * event is a real situation (a shared walk) that this import cannot represent as one booking —
+ * so it is reported, not split by guesswork.
+ */
+export function resolveHousehold(
+  pets: BackfillPet[],
+  links: PetOwnerLink[],
+):
+  | { ok: true; endUserId: string }
+  | { ok: false; reason: 'multiple-households'; detail: string } {
+  const owners = new Set<string>();
+  for (const pet of pets) {
+    for (const link of links) if (link.PetId === pet.id) owners.add(link.EndUserId);
+  }
+  if (owners.size === 1) return { ok: true, endUserId: [...owners][0] };
+  return {
+    ok: false,
+    reason: 'multiple-households',
+    detail:
+      owners.size === 0
+        ? 'These pets have no client on record'
+        : `These pets belong to ${owners.size} different clients`,
+  };
+}
+
+export type BackfillService = { serviceType: string; label: string; optionKey: string };
+
+/** Matched against the tenant's OWN services — a hint the sitter does not offer is refused, never
+ *  mapped onto a near neighbour. */
+export function resolveService(
+  hint: string | null,
+  services: BackfillService[],
+): { ok: true; service: BackfillService } | { ok: false; reason: 'unknown-service'; detail: string } {
+  if (hint === null || hint.trim() === '') {
+    return { ok: false, reason: 'unknown-service', detail: 'No service named in the title' };
+  }
+  const key = nameKey(hint);
+  const hit = services.find((s) => nameKey(s.serviceType) === key || nameKey(s.label) === key);
+  if (!hit) {
+    return { ok: false, reason: 'unknown-service', detail: `You do not offer "${hint.trim()}"` };
+  }
+  return { ok: true, service: hit };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEventSummary, resolvePetsByName } from '../lib/calendar-backfill';
+import { parseEventSummary, resolveHousehold, resolvePetsByName, resolveService } from '../lib/calendar-backfill';
 
 describe('parseEventSummary', () => {
   it('splits one pet and a service word', () => {
@@ -133,5 +133,57 @@ describe('resolvePetsByName', () => {
       reason: 'ambiguous-pet',
       detail: 'Bella matches 2 pets',
     });
+  });
+});
+
+const LINKS = [
+  { EndUserId: 'u1', PetId: 'p1' },
+  { EndUserId: 'u1', PetId: 'p2' },
+  { EndUserId: 'u2', PetId: 'p3' },
+];
+const pet = (id: string) => ({ id, name: id, petType: 'dog' });
+
+describe('resolveHousehold', () => {
+  it('resolves pets that share one owner', () => {
+    expect(resolveHousehold([pet('p1'), pet('p2')], LINKS)).toEqual({ ok: true, endUserId: 'u1' });
+  });
+
+  it('REFUSES pets spanning two households', () => {
+    expect(resolveHousehold([pet('p1'), pet('p3')], LINKS)).toEqual({
+      ok: false,
+      reason: 'multiple-households',
+      detail: 'These pets belong to 2 different clients',
+    });
+  });
+
+  it('refuses a pet with no owner link at all', () => {
+    expect(resolveHousehold([pet('p9')], LINKS).ok).toBe(false);
+  });
+});
+
+const SERVICES = [
+  { serviceType: 'boarding', label: 'Boarding', optionKey: 'overnight' },
+  { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard' },
+];
+
+describe('resolveService', () => {
+  it('matches a hint against the service type', () => {
+    expect(resolveService('walk', SERVICES)).toEqual({ ok: true, service: SERVICES[1] });
+  });
+
+  it('matches a hint against the tenant label', () => {
+    expect(resolveService('boarding', SERVICES)).toEqual({ ok: true, service: SERVICES[0] });
+  });
+
+  it('refuses a null hint', () => {
+    expect(resolveService(null, SERVICES)).toEqual({
+      ok: false,
+      reason: 'unknown-service',
+      detail: 'No service named in the title',
+    });
+  });
+
+  it('refuses a hint the tenant does not offer', () => {
+    expect(resolveService('grooming', SERVICES).ok).toBe(false);
   });
 });
