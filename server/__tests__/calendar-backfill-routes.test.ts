@@ -462,6 +462,9 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
 
     const row = await getBooking(env, 'ev_duplicate_name');
     expect(row?.PetCount).toBe(1);
+    // Pricing changed as a result of the dedupe too — one dog, not a 2-dog mix — so pin it, or a
+    // future change to how a deduped pet set is priced could regress silently.
+    expect(row?.EstCost).toBe(20); // 'd30' option's flat single-pet rate, same as BELLA_WALK_EVENT
     const petIds = await getBookingPetIds(env, row!.Id);
     expect(petIds).toEqual(['pet_sp_bella']);
   });
@@ -492,6 +495,46 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     ]);
     expect(await getBooking(env, 'ev_bella_walk')).toBeNull();
     expect(await getBooking(env, 'ev_needs_price')).toBeTruthy();
+  });
+
+  it('removes the orphaned booking when the pet-link write fails, restoring retryability', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    // A fresh Response per call — this test, like the idempotency test above, drives the route
+    // through fetch twice.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      calendarResponse([BELLA_WALK_EVENT]),
+    );
+    // insertBackfilledBooking succeeds (the booking row commits) and THEN addBookingPets throws
+    // — e.g. a transient D1 error, unrelated to the duplicate-name PK case fixed in round 1. The
+    // booking row must not be left behind bearing GCalEventId, or it becomes permanently
+    // un-retryable (every later run would report "Already imported" for a pet-less booking).
+    vi.spyOn(repoModule, 'addBookingPets').mockRejectedValueOnce(
+      new Error('simulated pet-link failure'),
+    );
+
+    const firstRes = await runImport(env, [{ eventId: 'ev_bella_walk' }]);
+    expect(firstRes.status).toBe(200);
+    const first = (await firstRes.json()) as ImportBody;
+    expect(first.imported).toBe(0);
+    expect(first.skipped).toEqual([
+      { eventId: 'ev_bella_walk', reason: 'Could not import that event' },
+    ]);
+    // The orphan is gone, not left behind with GCalEventId stamped.
+    expect(await getBooking(env, 'ev_bella_walk')).toBeNull();
+
+    // A second import over the same range — addBookingPets is no longer mocked to fail — must
+    // adopt it cleanly. This is the whole point of removing the orphan: were it left behind,
+    // listAdoptedEventIds would report it as already-adopted forever, with no pets and no way
+    // for the sitter to fix it by importing again.
+    const secondRes = await runImport(env, [{ eventId: 'ev_bella_walk' }]);
+    const second = (await secondRes.json()) as ImportBody;
+    expect(second.imported).toBe(1);
+    expect(second.skipped).toEqual([]);
+    const row = await getBooking(env, 'ev_bella_walk');
+    expect(row).toBeTruthy();
+    const petIds = await getBookingPetIds(env, row!.Id);
+    expect(petIds).toEqual(['pet_sp_bella']);
   });
 
   it('an event entry that is not an object is a 400, not a crash', async () => {

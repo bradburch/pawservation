@@ -13,6 +13,7 @@ import {
   createPetType,
   createService,
   deleteAllExternalEvents,
+  deleteBookingRequest,
   deletePetTypeAndScrub,
   getAnalytics,
   getBookingSyncData,
@@ -2995,8 +2996,9 @@ export const adminRoutes = new Hono<AppEnv>()
       // Each row's write is isolated: one event's failure must never take down the response for
       // every other event in the same request, turn a partial success into a bare 500, or — worse
       // — go unreported and then be silently un-retryable because GCalEventId now looks adopted.
+      let bookingId: string | null = null; // hoisted above the try so the catch can clean it up
       try {
-        const bookingId = await insertBackfilledBooking(c.env.PAWSERVATION_DB, tenant.Id, {
+        bookingId = await insertBackfilledBooking(c.env.PAWSERVATION_DB, tenant.Id, {
           endUserId: row.endUserId,
           serviceType: row.serviceType,
           startDate: row.startDate,
@@ -3011,6 +3013,13 @@ export const adminRoutes = new Hono<AppEnv>()
         imported++;
       } catch (err) {
         console.error('calendar backfill import failed for event', eventId, err);
+        // Remove the orphan, or the GCalEventId stamp makes this event permanently
+        // un-retryable: every later run would report "Already imported" for a booking that has
+        // no pets. Same pattern as booking-ops.ts's own optimistic-row cleanup — best-effort,
+        // and never lets a failed cleanup mask the real failure being reported below.
+        if (bookingId) {
+          await deleteBookingRequest(c.env.PAWSERVATION_DB, tenant.Id, bookingId).catch(() => {});
+        }
         skipped.push({ eventId, reason: 'Could not import that event' });
       }
     }
