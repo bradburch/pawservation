@@ -34,6 +34,7 @@ import {
   insertAccountPayment,
   insertPayment,
   getAccountIdsByOwner,
+  listAdoptedEventIds,
   listAllEndUserPetsByTenant,
   listAllPetGroupPricing,
   listBlockedRanges,
@@ -42,6 +43,7 @@ import {
   listChargesForTenant,
   listCustomers,
   listEndUserPets,
+  listOwnerPetLinks,
   listPaymentExternalRefs,
   listPaymentsForBooking,
   listPetNamesForBooking,
@@ -69,7 +71,7 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import { serializeAnalytics } from '../lib/analytics';
-import { confirmOverbookWarning } from '../lib/availability';
+import { confirmOverbookWarning, estimateCost, loadPetSetRates } from '../lib/availability';
 import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
@@ -86,9 +88,19 @@ import {
   callbackUriFor,
   CalendarAuthError,
   createCalendar,
+  listCalendarEvents,
   PET_CALENDAR_SUMMARY,
   revokeToken,
 } from '../lib/google-calendar';
+import type { CalendarEvent } from '../lib/google-calendar';
+import {
+  classifyEvent,
+  type BackfillContext,
+  type BackfillPet,
+  type BackfillService,
+  type Classified,
+  type PetOwnerLink,
+} from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
@@ -133,7 +145,7 @@ import {
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
-import type { AppEnv, Tenant } from '../types';
+import type { AppEnv, Tenant, TenantService, TenantServiceOption } from '../types';
 import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
 import {
   buildGroupKey,
@@ -196,6 +208,105 @@ async function loadVenmoMatchInputs(
     })),
     alreadyImported: new Set(refs),
   };
+}
+
+/** One pass reads its whole range before classifying, so the cap is on events READ, not events
+ *  adopted. Chosen to sit inside the Workers Free plan's 50-subrequest budget. */
+const MAX_BACKFILL_EVENTS = 200;
+
+/**
+ * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
+ * loaded once per pass. Lives here, not in `server/lib/`, because it touches D1 — the same split
+ * `loadVenmoMatchInputs` above uses.
+ */
+async function loadBackfillContext(
+  c: Context<AppEnv>,
+  tenant: Tenant,
+): Promise<{
+  pets: BackfillPet[];
+  links: PetOwnerLink[];
+  backfillServices: BackfillService[];
+  serviceByType: Map<string, TenantService>;
+  optionByType: Map<string, TenantServiceOption>;
+  ratesByType: Map<string, Awaited<ReturnType<typeof loadPetSetRates>>>;
+}> {
+  const [petRows, links, services, options] = await Promise.all([
+    listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id),
+    listOwnerPetLinks(c.env.PAWSERVATION_DB, tenant.Id),
+    listServices(c.env.PAWSERVATION_DB, tenant.Id),
+    listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
+  ]);
+
+  const pets: BackfillPet[] = petRows.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType }));
+
+  // classifyEvent wants one option per service; take each enabled service's first option, which
+  // is what a title like "Sadie Walk" can name. A service with no option cannot price and is
+  // simply absent, so such an event flags `unknown-service` rather than failing.
+  const serviceByType = new Map<string, TenantService>();
+  const optionByType = new Map<string, TenantServiceOption>();
+  const backfillServices: BackfillService[] = [];
+  for (const s of services) {
+    if (!s.Enabled) continue;
+    const option = options.find((o) => o.ServiceType === s.ServiceType);
+    if (!option) continue;
+    serviceByType.set(s.ServiceType, s);
+    optionByType.set(s.ServiceType, option);
+    backfillServices.push({
+      serviceType: s.ServiceType,
+      label: s.Label,
+      optionKey: option.OptionKey,
+      // TenantServices.Shape, carried through verbatim. classifyEvent uses it to decide whether a
+      // booking keeps its exclusive end date. NEVER inferred from the slug: slugs are per-tenant
+      // text derived from a renameable label, so the built-in "House sitting" template becomes
+      // 'house-sitting' and any hardcoded slug list silently drops the end date off every
+      // multi-night stay.
+      shape: s.Shape,
+    });
+  }
+
+  const ratesByType = new Map(
+    await Promise.all(
+      backfillServices.map(
+        async (s) =>
+          [s.serviceType, await loadPetSetRates(c.env, tenant.Id, s.serviceType)] as const,
+      ),
+    ),
+  );
+
+  return { pets, links, backfillServices, serviceByType, optionByType, ratesByType };
+}
+
+/**
+ * Classify every Google Calendar event against this tenant's live pets/households/services/rates.
+ * Reused verbatim by the import route (Task 7) so the preview and the actual import classify by
+ * exactly the same code path.
+ */
+async function classifyAll(
+  c: Context<AppEnv>,
+  tenant: Tenant,
+  events: CalendarEvent[],
+): Promise<Classified[]> {
+  const [{ pets, links, backfillServices, serviceByType, optionByType, ratesByType }, adoptedEventIds] =
+    await Promise.all([
+      loadBackfillContext(c, tenant),
+      listAdoptedEventIds(c.env.PAWSERVATION_DB, tenant.Id),
+    ]);
+
+  const priceFor: BackfillContext['priceFor'] = (service, pricedPets, startDate, endDateExclusive) => {
+    const tenantService = serviceByType.get(service.serviceType)!;
+    const option = optionByType.get(service.serviceType)!;
+    const rates = ratesByType.get(service.serviceType)!;
+    return estimateCost(tenantService, option, startDate, endDateExclusive, pricedPets, rates);
+  };
+
+  const ctx: BackfillContext = {
+    pets,
+    links,
+    services: backfillServices,
+    adoptedEventIds,
+    priceFor,
+  };
+  return events.map((event) => classifyEvent(event, ctx));
 }
 
 /**
@@ -2689,4 +2800,51 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * Preview which calendar events would be adopted as bookings. Writes nothing — every event is
+   * read from Google and classified fresh (`classifyAll`), same as the Venmo preview above.
+   */
+  .post('/:slug/admin/calendar/backfill/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ from?: unknown; to?: unknown }>()
+      .catch(() => ({}) as { from?: unknown; to?: unknown });
+    const from = typeof body.from === 'string' ? body.from : '';
+    const to = typeof body.to === 'string' ? body.to : '';
+    if (!isRealDate(from) || !isRealDate(to) || to <= from)
+      return c.json({ error: 'Choose a start date and a later end date.' }, 400);
+
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
+    if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
+      return c.json({ error: 'Connect your Google Calendar first.' }, 400);
+    const accessToken = await getCalendarAccessToken(c.env, tenant, conn);
+
+    const events = (
+      await listCalendarEvents(
+        accessToken,
+        conn.CalendarId ?? 'primary',
+        `${from}T00:00:00Z`,
+        `${to}T00:00:00Z`,
+      )
+    ).filter((e) => e.status !== 'cancelled');
+
+    if (events.length > MAX_BACKFILL_EVENTS)
+      return c.json(
+        {
+          error:
+            `This range has ${events.length} events. Choose a shorter one and ` +
+            `import ${MAX_BACKFILL_EVENTS} or fewer at a time.`,
+        },
+        400,
+      );
+
+    const classified = await classifyAll(c, tenant, events);
+    return c.json({
+      adopt: classified.filter((r) => r.kind === 'adopt'),
+      needsPrice: classified.filter((r) => r.kind === 'needs-price'),
+      flags: classified.filter((r) => r.kind === 'flag'),
+      skipped: classified.filter((r) => r.kind === 'skip').length,
+    });
   });
