@@ -513,12 +513,13 @@ describe('reconcile v2 — external materialization lifecycle', () => {
 
 /**
  * An ADOPTED booking (Source='calendar-backfill') is deliberately never pushed to Google — the
- * backfill is read-only there — so it never gains private.bookingId. Reconcile's foreign-event
- * filter (`!e.private.bookingId`) can't tell that apart from a genuinely foreign event and, left
- * unguarded, re-materializes an 'external' shadow row for it on every pass: two BookingRequests
- * rows for one stay, and availability.ts counts BOTH as capacity blockers.
+ * backfill is read-only there — so it never gains private.bookingId. Left unguarded, that absence
+ * makes it look identical to a foreign event to BOTH of reconcile's passes over the same response:
+ * (a) the cancel path reads its silence in Google as "hand-deleted" and cancels + emails the
+ * customer; (b) the materialize path re-creates it as a duplicate 'external' shadow row. Both
+ * halves need their own exclusion — one bug each, not one bug shared.
  */
-describe('reconcile v2 — does not shadow an adopted booking', () => {
+describe('reconcile v2 — does not cancel or shadow an adopted booking', () => {
   afterEach(() => vi.restoreAllMocks());
 
   async function jessId(env: Env): Promise<string> {
@@ -530,11 +531,12 @@ describe('reconcile v2 — does not shadow an adopted booking', () => {
     return row.Id;
   }
 
-  it('an adopted booking is not shadowed by an external row when Google reports its event as foreign', async () => {
-    const { env } = createTestEnv();
-    await connectCalendar(env);
+  async function adoptBooking(
+    env: Env,
+    opts: { gcalEventId: string; status?: 'confirmed' | 'cancelled' },
+  ): Promise<string> {
     const endUserId = await jessId(env);
-    await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+    return insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
       endUserId,
       serviceType: 'boarding',
       startDate: IN_WINDOW_START,
@@ -542,9 +544,15 @@ describe('reconcile v2 — does not shadow an adopted booking', () => {
       optionKey: 'standard',
       petCount: 1,
       estCost: 150,
-      status: 'confirmed',
-      gcalEventId: 'evt_adopted',
+      status: opts.status ?? 'confirmed',
+      gcalEventId: opts.gcalEventId,
     });
+  }
+
+  it('an adopted booking is not shadowed by an external row when Google reports its event as foreign', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    await adoptBooking(env, { gcalEventId: 'evt_adopted' });
     // Google reports the adopted event with no private.bookingId — adoption never wrote one there.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       calendarResponse([{ id: 'evt_adopted', summary: 'Adopted stay' }]),
@@ -554,15 +562,52 @@ describe('reconcile v2 — does not shadow an adopted booking', () => {
     expect(rows.find((r) => r.GCalEventId === 'evt_adopted')).toBeUndefined();
   });
 
-  it('an ordinary (unadopted) foreign event is still materialized as an external row', async () => {
+  // Puts an adopted event and an unadopted one through the SAME reconcile pass, so the exclusion
+  // is actually exercised (an empty adoptedEventIds set would pass a test that only mocked an
+  // unadopted event, without proving the predicate does anything at all).
+  it('an unadopted foreign event is still materialized when an adopted one is present in the same pass', async () => {
     const { env } = createTestEnv();
     await connectCalendar(env);
+    await adoptBooking(env, { gcalEventId: 'evt_adopted' });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      calendarResponse([{ id: 'evt_neighbor', summary: 'Neighbor stay' }]),
+      calendarResponse([
+        { id: 'evt_adopted', summary: 'Adopted stay' },
+        { id: 'evt_neighbor', summary: 'Neighbor stay' },
+      ]),
     );
     await reconcileBookingsWithCalendar(env, tenant);
     const rows = await externalRows(env);
-    expect(rows.find((r) => r.GCalEventId === 'evt_neighbor')).toBeDefined();
+    expect(rows.map((r) => r.GCalEventId)).toEqual(['evt_neighbor']);
+  });
+
+  it('does not cancel a booking adopted from the calendar', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await adoptBooking(env, { gcalEventId: 'evt_adopted' });
+    // Adoption never writes private.bookingId to Google (the backfill is read-only there), so the
+    // cancel path's liveBookingIds can never contain an adopted id. Without an explicit exclusion,
+    // reconcile cancels every backfilled stay and emails the customer, on the first cron pass.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([{ id: 'evt_adopted', summary: 'Adopted stay' }]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    expect(await statusOf(env, id)).toBe('confirmed');
+  });
+
+  it('re-materialises an external row once an adopted booking is cancelled', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    // Cancelled directly (not via reconcile) — simulates a sitter cancelling the adopted booking
+    // through the ordinary UI while its Google event is still live.
+    await adoptBooking(env, { gcalEventId: 'evt_adopted', status: 'cancelled' });
+    // A cancelled adopted row must stop suppressing materialisation, or a live Google event
+    // blocks nothing at all and the day is offered as available.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([{ id: 'evt_adopted', summary: 'Adopted stay' }]),
+    );
+    await reconcileBookingsWithCalendar(env, tenant);
+    const rows = await externalRows(env);
+    expect(rows.find((r) => r.GCalEventId === 'evt_adopted')).toBeDefined();
   });
 });
 

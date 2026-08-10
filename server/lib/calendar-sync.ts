@@ -557,6 +557,10 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   const live = events.filter((e) => e.status !== 'cancelled');
 
   // (a) Pawservation-originated events missing from Google → cancel + notify.
+  // Candidates come from listSyncedBookingIds, which excludes Source='calendar-backfill' rows —
+  // an adopted booking's GCalEventId was stamped by the backfill, not pushed to Google, so it can
+  // never appear in liveBookingIds (built from private.bookingId below) and would otherwise look
+  // "missing" and get cancelled + the customer emailed on the very next pass.
   const liveBookingIds = new Set(live.map((e) => e.private.bookingId).filter(Boolean));
   const candidates = await listSyncedBookingIds(
     env.PAWSERVATION_DB,
@@ -610,7 +614,7 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   // counts 'external' as a blocker, and the adopted booking is one too).
   const adoptedEventIds = await listAdoptedEventIds(env.PAWSERVATION_DB, tenant.Id);
   const foreign = live.filter(
-    (e) => !e.private.bookingId && !adoptedEventIds.has(e.id) && e.id && e.start && e.end,
+    (e) => !e.private.bookingId && e.id && !adoptedEventIds.has(e.id) && e.start && e.end,
   );
   // `liveIds` covers EVERY foreign event Google reports, not just the ones materialized this pass
   // — deleteExternalEventsMissing must never be told an event is gone just because MATERIALIZE_LIMIT

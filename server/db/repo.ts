@@ -739,7 +739,13 @@ export async function insertBackfilledBooking(
 }
 
 /** Event ids this tenant has already adopted — the backfill's idempotency key, so re-running over
- *  an overlapping range adopts nothing twice. */
+ *  an overlapping range adopts nothing twice, AND reconcile's live candidate set for whether an
+ *  event should be excluded from external materialization.
+ *
+ *  Excludes cancelled/declined rows: a sitter who cancels an adopted booking while its Google
+ *  event still exists must get that event back as an ordinary `external` blocker on the next
+ *  reconcile, not have it silently suppressed forever — the row being cancelled is not the event
+ *  disappearing from Google. */
 export async function listAdoptedEventIds(
   db: D1Database,
   tenantId: string,
@@ -747,7 +753,8 @@ export async function listAdoptedEventIds(
   const { results } = await db
     .prepare(
       `SELECT GCalEventId FROM BookingRequests
-       WHERE TenantId = ? AND Source = 'calendar-backfill' AND GCalEventId IS NOT NULL`,
+       WHERE TenantId = ? AND Source = 'calendar-backfill' AND GCalEventId IS NOT NULL
+         AND Status NOT IN ('cancelled', 'declined')`,
     )
     .bind(tenantId)
     .all<{ GCalEventId: string }>();
@@ -2631,6 +2638,11 @@ export async function cancelBlockedRange(
  * — reconciliation's candidate set, restricted to the same window it queried Calendar for (a
  * booking outside that window couldn't possibly have appeared in the Calendar response, so it must
  * never be treated as "missing").
+ *
+ * Excludes `Source = 'calendar-backfill'`: an adopted booking's `GCalEventId` was stamped by the
+ * backfill, not pushed to Google (adoption is deliberately read-only there), so it never gains
+ * `private.bookingId` and would otherwise look "missing" from every Calendar response and get
+ * cancelled (and the customer emailed) on the very next reconcile pass.
  */
 export async function listSyncedBookingIds(
   db: D1Database,
@@ -2643,6 +2655,7 @@ export async function listSyncedBookingIds(
       `SELECT Id FROM BookingRequests
        WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
          AND ServiceType NOT IN ('external', 'blocked')
+         AND Source IS NOT 'calendar-backfill'
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
