@@ -182,7 +182,15 @@ export function resolveHousehold(
   };
 }
 
-export type BackfillService = { serviceType: string; label: string; optionKey: string };
+export type BackfillService = {
+  serviceType: string;
+  label: string;
+  optionKey: string;
+  /** From TenantServices.Shape — the schema's own answer. Never inferred from the slug: slugs
+   *  are per-tenant text derived from a renameable label, so 'House sitting' becomes
+   *  'house-sitting' and any hardcoded list of slugs silently misses it. */
+  shape: 'range' | 'single';
+};
 
 /** Matched against the tenant's OWN services — a hint the sitter does not offer is refused, never
  *  mapped onto a near neighbour. */
@@ -232,10 +240,6 @@ export type Classified =
   | { kind: 'flag'; eventId: string; summary: string; startDate: string; reason: FlagReason; detail: string }
   | { kind: 'skip'; eventId: string; why: 'pawservation-own' | 'already-adopted' };
 
-/** Range-shaped services keep Google's EXCLUSIVE end; single-day ones store NULL, matching
- *  BookingRequests.EndDate's documented convention. */
-const RANGE_SHAPED = new Set(['boarding', 'house-sit', 'housesit']);
-
 export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Classified {
   // Pawservation wrote this one — reconcile already owns it.
   if (event.private?.bookingId) return { kind: 'skip', eventId: event.id, why: 'pawservation-own' };
@@ -273,7 +277,8 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
     eventId: event.id,
     summary: event.summary,
     startDate: event.start,
-    endDate: RANGE_SHAPED.has(service.service.serviceType) ? event.end : null,
+    // The schema's own answer, never inferred from the (renameable, per-tenant) slug.
+    endDate: service.service.shape === 'range' ? event.end : null,
     endUserId: household.endUserId,
     serviceType: service.service.serviceType,
     optionKey: service.service.optionKey,

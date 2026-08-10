@@ -208,8 +208,8 @@ describe('resolveHousehold', () => {
 });
 
 const SERVICES = [
-  { serviceType: 'boarding', label: 'Boarding', optionKey: 'overnight' },
-  { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard' },
+  { serviceType: 'boarding', label: 'Boarding', optionKey: 'overnight', shape: 'range' as const },
+  { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
 ];
 
 describe('resolveService', () => {
@@ -245,7 +245,7 @@ const CTX = {
     { EndUserId: 'u2', PetId: 'p3' },
     { EndUserId: 'u3', PetId: 'p4' },
   ],
-  services: [{ serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard' }],
+  services: [{ serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const }],
   adoptedEventIds: new Set<string>(),
   priceFor: () => ({ priced: true as const, cost: 25 }),
 };
@@ -309,5 +309,32 @@ describe('classifyEvent', () => {
     });
     expect(out).toMatchObject({ kind: 'flag', reason: 'unpriced-set' });
     expect(out).not.toHaveProperty('estCost');
+  });
+
+  it("keeps the exclusive end date for a range-shaped service, whatever its slug", () => {
+    // Slugs are frozen at creation time from a label that can be renamed later (see
+    // BackfillService's doc comment) — 'overnight-stay' here stands in for that: it is NOT one of
+    // the old hardcoded RANGE_SHAPED strings ('boarding' | 'house-sit' | 'housesit'), and it does
+    // not equal the built-in "House sitting" template's real generated slug ('house-sitting')
+    // either, precisely to show the shape decision no longer depends on recognizing any particular
+    // slug string at all. The service's LABEL is 'House sit' so parseEventSummary's recognized
+    // word ('house sit' -> hint 'house-sit') still resolves it via resolveService's label match —
+    // that lookup is unrelated to, and unaffected by, this fix.
+    const ctx = {
+      ...CTX,
+      services: [
+        { serviceType: 'overnight-stay', label: 'House sit', optionKey: 'standard', shape: 'range' as const },
+      ],
+    };
+    const out = classifyEvent(
+      event({ summary: 'Sadie House sit', start: '2026-07-01', end: '2026-07-05' }),
+      ctx,
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-05' });
+  });
+
+  it('drops the end date for a single-shaped service', () => {
+    const out = classifyEvent(event({ start: '2026-07-01', end: '2026-07-02' }), CTX);
+    expect(out).toMatchObject({ kind: 'adopt', endDate: null });
   });
 });
