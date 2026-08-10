@@ -738,15 +738,34 @@ export async function insertBackfilledBooking(
   return id;
 }
 
-/** Event ids this tenant has already adopted — the backfill's idempotency key, so re-running over
- *  an overlapping range adopts nothing twice, AND reconcile's live candidate set for whether an
- *  event should be excluded from external materialization.
+/** Event ids this tenant has EVER adopted — the import's idempotency key, so re-running the
+ *  backfill over an overlapping range adopts nothing twice.
+ *
+ *  Deliberately ignores `Status`: a cancelled adoption is still an adoption. Without this, a
+ *  sitter who adopts an event, cancels the resulting booking, then re-runs a backfill over that
+ *  range would get the same Google event adopted a SECOND time, creating a duplicate booking. */
+export async function listAdoptedEventIds(db: D1Database, tenantId: string): Promise<Set<string>> {
+  const { results } = await db
+    .prepare(
+      `SELECT GCalEventId FROM BookingRequests
+       WHERE TenantId = ? AND Source = 'calendar-backfill' AND GCalEventId IS NOT NULL`,
+    )
+    .bind(tenantId)
+    .all<{ GCalEventId: string }>();
+  return new Set(results.map((r) => r.GCalEventId));
+}
+
+/** Event ids this tenant has adopted and NOT since cancelled — reconcile's live candidate set for
+ *  deciding an event is already represented by a real booking and must not be re-materialized as
+ *  an ordinary `external` blocker.
  *
  *  Excludes cancelled/declined rows: a sitter who cancels an adopted booking while its Google
  *  event still exists must get that event back as an ordinary `external` blocker on the next
  *  reconcile, not have it silently suppressed forever — the row being cancelled is not the event
- *  disappearing from Google. */
-export async function listAdoptedEventIds(
+ *  disappearing from Google. Do NOT use this for the import route's idempotency check; use
+ *  `listAdoptedEventIds` there instead, which must ignore status to avoid re-adopting an event
+ *  whose booking was cancelled. */
+export async function listActiveAdoptedEventIds(
   db: D1Database,
   tenantId: string,
 ): Promise<Set<string>> {
@@ -2643,6 +2662,13 @@ export async function cancelBlockedRange(
  * backfill, not pushed to Google (adoption is deliberately read-only there), so it never gains
  * `private.bookingId` and would otherwise look "missing" from every Calendar response and get
  * cancelled (and the customer emailed) on the very next reconcile pass.
+ *
+ * Accepted trade: this makes adopted bookings permanently exempt from delete-detection. If a
+ * sitter deletes the Google event behind an adopted stay, its booking stays `confirmed` and keeps
+ * blocking that day forever — nothing here reconciles it back, because it can never appear in
+ * `liveBookingIds` (built from `private.bookingId`) to be told apart from "never existed." The
+ * sitter cancels it from the dashboard instead; the alternative was cancelling and emailing the
+ * customer for every backfilled stay on the first cron pass, which is worse.
  */
 export async function listSyncedBookingIds(
   db: D1Database,

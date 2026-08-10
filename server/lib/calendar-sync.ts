@@ -8,7 +8,7 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
-  listAdoptedEventIds,
+  listActiveAdoptedEventIds,
   listBlockedRowsWithEventsInWindow,
   listExternalEventRowsInWindow,
   listPetNamesForBooking,
@@ -607,12 +607,15 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   }
 
   // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
-  // An event this tenant has ADOPTED is already a real booking (Source='calendar-backfill'). It
-  // carries no private.bookingId because adoption never writes to Google — deliberately, the
-  // backfill is read-only there — so the filter above would keep re-materializing an 'external'
-  // shadow for it on every pass. Two rows for one stay double-block the day (availability.ts
-  // counts 'external' as a blocker, and the adopted booking is one too).
-  const adoptedEventIds = await listAdoptedEventIds(env.PAWSERVATION_DB, tenant.Id);
+  // An event this tenant has ADOPTED and not since cancelled is already a real booking
+  // (Source='calendar-backfill'). It carries no private.bookingId because adoption never writes to
+  // Google — deliberately, the backfill is read-only there — so the filter above would keep
+  // re-materializing an 'external' shadow for it on every pass. Two rows for one stay double-block
+  // the day (availability.ts counts 'external' as a blocker, and the adopted booking is one too).
+  // Uses the ACTIVE variant, not listAdoptedEventIds: a cancelled adoption must fall back to being
+  // an ordinary external blocker (see that function's docblock), or the day silently reads as
+  // available while the event still sits on the sitter's calendar.
+  const adoptedEventIds = await listActiveAdoptedEventIds(env.PAWSERVATION_DB, tenant.Id);
   const foreign = live.filter(
     (e) => !e.private.bookingId && e.id && !adoptedEventIds.has(e.id) && e.start && e.end,
   );

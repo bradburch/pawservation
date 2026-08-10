@@ -1,6 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { insertBackfilledBooking, listAdoptedEventIds } from '../db/repo';
+import {
+  insertBackfilledBooking,
+  listActiveAdoptedEventIds,
+  listAdoptedEventIds,
+} from '../db/repo';
 import { createTestEnv, TENANT_A } from './helpers';
 
 const ROW = {
@@ -50,5 +54,25 @@ describe('insertBackfilledBooking', () => {
 
     expect(await listAdoptedEventIds(env.PAWSERVATION_DB, TENANT_A)).toEqual(new Set(['ev1']));
     expect(await listAdoptedEventIds(env.PAWSERVATION_DB, 'tnt_happytails')).toEqual(new Set());
+  });
+
+  // The two functions serve opposite roles and must disagree on a cancelled adoption:
+  // listAdoptedEventIds is the IMPORT's idempotency key (a re-run must not re-adopt an event whose
+  // booking was since cancelled — that would create a duplicate), while listActiveAdoptedEventIds
+  // is RECONCILE's live-booking check (a cancelled adoption must fall back to being an ordinary
+  // external blocker, or a live Google event blocks nothing).
+  it('a cancelled adoption still counts for import idempotency, but not for reconcile’s live check', async () => {
+    const { env, raw } = await createTestEnv();
+    seedEndUser(raw, TENANT_A, 'u1');
+    await insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      ...ROW,
+      status: 'cancelled',
+      gcalEventId: 'ev_cancelled',
+    });
+
+    expect(await listAdoptedEventIds(env.PAWSERVATION_DB, TENANT_A)).toEqual(
+      new Set(['ev_cancelled']),
+    );
+    expect(await listActiveAdoptedEventIds(env.PAWSERVATION_DB, TENANT_A)).toEqual(new Set());
   });
 });
