@@ -16,6 +16,10 @@ export type ParsedSummary = {
  *  in `resolveService` — this list only decides where the pet names stop. */
 const SERVICE_WORDS = ['boarding', 'house-sit', 'housesit', 'house sit', 'walk', 'check-in', 'check in'];
 
+function escapeRegExp(word: string): string {
+  return word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Pawservation writes `[CANCELLED] ` / `[REQUEST] ` markers (google-calendar.ts:384). A sitter's
  * own calendar tends to carry a trailing ` - CANCELLED` instead. Both are read; only CANCELLED
@@ -38,14 +42,22 @@ export function parseEventSummary(summary: string): ParsedSummary {
   }
 
   // The service word, if present, ends the pet-name run — everything before it is names.
+  // Matched at a token boundary (start/end of string or a non-alphanumeric neighbour), never as a
+  // bare substring, so a pet named "Walker" is not read as the service "walk".
   const lower = text.toLowerCase();
   let serviceHint: string | null = null;
   let namesPart = text;
   for (const word of SERVICE_WORDS) {
-    const at = lower.lastIndexOf(word);
+    const re = new RegExp(`(?<![a-z0-9])${escapeRegExp(word)}(?![a-z0-9])`, 'gi');
+    let match: RegExpExecArray | null;
+    let at = -1;
+    while ((match = re.exec(lower)) !== null) {
+      // LAST occurrence wins, in case the word also appears earlier (e.g. inside a pet name that
+      // happens to contain it as its own token).
+      at = match.index;
+    }
     if (at === -1) continue;
-    // Longest match wins ('check-in' over 'check'), and the LAST occurrence, so a pet called
-    // "Walker" before the service word is not mistaken for it.
+    // Longest match wins ('check-in' over 'check').
     if (serviceHint === null || word.length > serviceHint.length) {
       serviceHint = word;
       namesPart = text.slice(0, at);

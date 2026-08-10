@@ -41,4 +41,22 @@ describe('parseEventSummary', () => {
   it('returns no names for an empty summary', () => {
     expect(parseEventSummary('')).toEqual({ petNames: [], serviceHint: null, cancelled: false });
   });
+
+  it('does not read a service word out of the middle of a pet name', () => {
+    expect(parseEventSummary('Walker')).toEqual({
+      petNames: ['Walker'],
+      serviceHint: null,
+      cancelled: false,
+    });
+  });
+
+  it('leaves a non-service title as a single unmatched name', () => {
+    // "Brad Unavailable" is a real title from the sitter's calendar. It names no service and no
+    // known pet; it must survive parsing intact so the pet resolver can flag it, not vanish here.
+    expect(parseEventSummary('Brad Unavailable')).toEqual({
+      petNames: ['Brad Unavailable'],
+      serviceHint: null,
+      cancelled: false,
+    });
+  });
 });
