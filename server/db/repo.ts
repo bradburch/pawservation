@@ -780,6 +780,29 @@ export async function listActiveAdoptedEventIds(
   return new Set(results.map((r) => r.GCalEventId));
 }
 
+/**
+ * Re-price a booking ADOPTED from the calendar. Scoped to `Source = 'calendar-backfill'` in the
+ * SQL itself, not in the route: an adopted row's cost was computed from today's rate card for a
+ * stay that may predate it, so correcting it takes nothing from anyone. A booking a client
+ * actually agreed to is out of reach here by construction — the WHERE clause, not the caller, is
+ * what makes that true.
+ */
+export async function updateBackfilledBookingCost(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+  estCost: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE BookingRequests SET EstCost = ?
+       WHERE TenantId = ? AND Id = ? AND Source = 'calendar-backfill'`,
+    )
+    .bind(estCost, tenantId, bookingId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
 /** Booking previously created with this Idempotency-Key by this customer, or null. */
 export async function findBookingByIdempotencyKey(
   db: D1Database,

@@ -66,6 +66,7 @@ import {
   setServiceConfig,
   setPetDeceased,
   setEndUserVenmoUsername,
+  updateBackfilledBookingCost,
   updateBookingStatus,
   updateTenantSettings,
   upsertPetGroupRate,
@@ -3024,4 +3025,44 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, skipped });
+  })
+
+  /**
+   * Correct the price on a booking ADOPTED from the calendar. Restricted to
+   * `Source = 'calendar-backfill'` rows by `updateBackfilledBookingCost`'s own SQL, not by this
+   * route — their cost was invented from today's rate card for a stay that may predate it, and no
+   * client ever saw or agreed to that figure. A booking that came through pawservation carries a
+   * figure a client DID see; it is out of reach here by construction, and refuses with the same
+   * 404 as the 'blocked'/'external' sentinels and a foreign tenant's id, so the response never
+   * tells the caller which of those four reasons applied.
+   */
+  .patch('/:slug/admin/bookings/:id/cost', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ estCost?: unknown }>()
+      .catch(() => ({}) as { estCost?: unknown });
+    const estCost = body.estCost;
+    // Whole dollars only — cents are unrepresentable codebase-wide. Same ceiling as the sitter's
+    // price on the same field at import time (Task 7); two bounds on one field would drift.
+    if (
+      typeof estCost !== 'number' ||
+      !Number.isInteger(estCost) ||
+      estCost < 1 ||
+      estCost > MAX_BACKFILL_EST_COST
+    )
+      return c.json(
+        { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+        400,
+      );
+
+    const ok = await updateBackfilledBookingCost(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+      estCost,
+    );
+    // One 404 for: another tenant's booking, an unknown id, a sentinel, and a booking a client
+    // agreed to. Same non-oracle posture as the other booking routes.
+    if (!ok) return c.json({ error: 'Not found.' }, 404);
+    return c.json({ estCost });
   });
