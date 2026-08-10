@@ -85,6 +85,10 @@ export type FlagReason =
   | 'ambiguous-pet'
   | 'multiple-households'
   | 'unknown-service'
+  // Kept in this closed union so other code that switches over FlagReason still compiles, but
+  // classifyEvent no longer produces it: an event that resolves in every other respect and is
+  // only missing a rate now returns `kind: 'needs-price'` instead — that is a question for the
+  // sitter, not a failure.
   | 'unpriced-set';
 
 export type PetResolution =
@@ -238,7 +242,23 @@ export type Classified =
       cancelled: boolean;
     }
   | { kind: 'flag'; eventId: string; summary: string; startDate: string; reason: FlagReason; detail: string }
-  | { kind: 'skip'; eventId: string; why: 'pawservation-own' | 'already-adopted' };
+  | { kind: 'skip'; eventId: string; why: 'pawservation-own' | 'already-adopted' }
+  // Everything resolved — pets, household, service, dates — except a rate. This is a question
+  // only the sitter can answer, not a failure: it carries the same fields as 'adopt' minus
+  // estCost, so the import route can adopt it the moment a price is supplied. NO cost field is
+  // ever present here — never estCost: null or estCost: 0.
+  | {
+      kind: 'needs-price';
+      eventId: string;
+      summary: string;
+      startDate: string;
+      endDate: string | null;
+      endUserId: string;
+      serviceType: string;
+      optionKey: string;
+      petIds: string[];
+      cancelled: boolean;
+    };
 
 export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Classified {
   // Pawservation wrote this one — reconcile already owns it.
@@ -266,10 +286,27 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   const service = resolveService(parsed.serviceHint, ctx.services);
   if (!service.ok) return flag(service.reason, service.detail);
 
+  // The schema's own answer, never inferred from the (renameable, per-tenant) slug.
+  const endDate = service.service.shape === 'range' ? event.end : null;
+  const petIds = pets.pets.map((p) => p.id);
+
   const price = ctx.priceFor(service.service, pets.pets, event.start, event.end);
   if (!price.priced) {
-    // The free product's own "available but not priced" outcome. No number is invented here.
-    return flag('unpriced-set', 'No rate covers this combination of pets');
+    // The free product's own "available but not priced" outcome — but everything else DID
+    // resolve, so this is a question for the sitter, not a failure. No number is invented here:
+    // there is no estCost field at all, not null and not zero.
+    return {
+      kind: 'needs-price',
+      eventId: event.id,
+      summary: event.summary,
+      startDate: event.start,
+      endDate,
+      endUserId: household.endUserId,
+      serviceType: service.service.serviceType,
+      optionKey: service.service.optionKey,
+      petIds,
+      cancelled: parsed.cancelled,
+    };
   }
 
   return {
@@ -277,12 +314,11 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
     eventId: event.id,
     summary: event.summary,
     startDate: event.start,
-    // The schema's own answer, never inferred from the (renameable, per-tenant) slug.
-    endDate: service.service.shape === 'range' ? event.end : null,
+    endDate,
     endUserId: household.endUserId,
     serviceType: service.service.serviceType,
     optionKey: service.service.optionKey,
-    petIds: pets.pets.map((p) => p.id),
+    petIds,
     estCost: price.cost,
     cancelled: parsed.cancelled,
   };

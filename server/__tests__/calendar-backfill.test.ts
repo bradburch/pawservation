@@ -307,8 +307,35 @@ describe('classifyEvent', () => {
       ...CTX,
       priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: 'p1', mixKey: 'dog:1' }),
     });
-    expect(out).toMatchObject({ kind: 'flag', reason: 'unpriced-set' });
+    expect(out).toMatchObject({ kind: 'needs-price' });
     expect(out).not.toHaveProperty('estCost');
+  });
+
+  it('returns needs-price with everything resolved when only the rate is missing', () => {
+    const out = classifyEvent(event(), {
+      ...CTX,
+      priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: 'p1', mixKey: 'dog:1' }),
+    });
+    expect(out).toMatchObject({
+      kind: 'needs-price',
+      eventId: 'ev1',
+      endUserId: 'u1',
+      serviceType: 'walk',
+      optionKey: 'standard',
+      petIds: ['p1'],
+      cancelled: false,
+    });
+    // The server still invents nothing: the key is absent, not null and not zero.
+    expect(out).not.toHaveProperty('estCost');
+  });
+
+  it('does not reach needs-price when an earlier step failed', () => {
+    // An unresolvable pet is still a flag — needs-price means "only the money is missing".
+    const out = classifyEvent(event({ summary: 'Bella Walk' }), {
+      ...CTX,
+      priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: '', mixKey: '' }),
+    });
+    expect(out).toMatchObject({ kind: 'flag', reason: 'ambiguous-pet' });
   });
 
   it("keeps the exclusive end date for a range-shaped service, whatever its slug", () => {
