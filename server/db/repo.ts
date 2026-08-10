@@ -689,6 +689,71 @@ export async function insertBookingRequest(
   return id;
 }
 
+/**
+ * Insert a booking ADOPTED from an existing Google Calendar event.
+ *
+ * Deliberately NOT `insertBookingRequest`, which hard-codes `SyncPending = 1`. An adopted row is a
+ * record of an event Google already has: arming the outbox would push a SECOND event for the same
+ * stay and break the read-only guarantee the backfill is built on. `GCalEventId` is stamped here
+ * instead, so reconcile stops materializing the event as an `'external'` row and treats it as a
+ * known booking.
+ */
+export async function insertBackfilledBooking(
+  db: D1Database,
+  tenantId: string,
+  row: {
+    endUserId: string;
+    serviceType: string;
+    startDate: string;
+    endDate: string | null;
+    optionKey: string;
+    petCount: number;
+    estCost: number;
+    status: 'confirmed' | 'cancelled';
+    gcalEventId: string;
+  },
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO BookingRequests
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount,
+          EstCost, Answers, Status, Source, GCalEventId, SyncPending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, 'calendar-backfill', ?, 0)`,
+    )
+    .bind(
+      id,
+      tenantId,
+      row.endUserId,
+      row.serviceType,
+      row.startDate,
+      row.endDate,
+      row.optionKey,
+      row.petCount,
+      row.estCost,
+      row.status,
+      row.gcalEventId,
+    )
+    .run();
+  return id;
+}
+
+/** Event ids this tenant has already adopted — the backfill's idempotency key, so re-running over
+ *  an overlapping range adopts nothing twice. */
+export async function listAdoptedEventIds(
+  db: D1Database,
+  tenantId: string,
+): Promise<Set<string>> {
+  const { results } = await db
+    .prepare(
+      `SELECT GCalEventId FROM BookingRequests
+       WHERE TenantId = ? AND Source = 'calendar-backfill' AND GCalEventId IS NOT NULL`,
+    )
+    .bind(tenantId)
+    .all<{ GCalEventId: string }>();
+  return new Set(results.map((r) => r.GCalEventId));
+}
+
 /** Booking previously created with this Idempotency-Key by this customer, or null. */
 export async function findBookingByIdempotencyKey(
   db: D1Database,
