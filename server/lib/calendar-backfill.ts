@@ -95,16 +95,22 @@ export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetReso
   if (names.length === 0) {
     return { ok: false, reason: 'no-pets', detail: 'No pet names in the title' };
   }
-  const byKey = new Map<string, BackfillPet[]>();
+  // Callers may feed rows from a query that JOINs an owner table (e.g.
+  // listAllEndUserPetsByTenant in server/db/repo.ts), which emits one row per owner link — so a
+  // co-owned pet arrives more than once with the SAME id. Dedupe by id per name key so ambiguity
+  // is judged on distinct animals, not owner links.
+  const byKey = new Map<string, Map<string, BackfillPet>>();
   for (const pet of pets) {
     const key = nameKey(pet.name);
     if (key === '') continue;
-    byKey.set(key, [...(byKey.get(key) ?? []), pet]);
+    const byId = byKey.get(key) ?? new Map<string, BackfillPet>();
+    byId.set(pet.id, pet);
+    byKey.set(key, byId);
   }
 
   const resolved: BackfillPet[] = [];
   for (const name of names) {
-    const hits = byKey.get(nameKey(name)) ?? [];
+    const hits = [...(byKey.get(nameKey(name))?.values() ?? [])];
     if (hits.length === 0) {
       return { ok: false, reason: 'no-pets', detail: `No pet named ${name.trim()}` };
     }

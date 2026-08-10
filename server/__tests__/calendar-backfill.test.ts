@@ -109,4 +109,29 @@ describe('resolvePetsByName', () => {
   it('reports the ambiguity even when another name resolved fine', () => {
     expect(resolvePetsByName(['Sadie', 'Bella'], PETS).ok).toBe(false);
   });
+
+  it('counts a co-owned pet once, not as an ambiguity', () => {
+    // listAllEndUserPetsByTenant JOINs PetOwners, so a pet with two owners arrives TWICE with the
+    // same id. That is one animal, not two — it must resolve, not flag.
+    const coOwned = [
+      { id: 'p1', name: 'Sadie', petType: 'dog' },
+      { id: 'p1', name: 'Sadie', petType: 'dog' },
+    ];
+    expect(resolvePetsByName(['Sadie'], coOwned)).toEqual({
+      ok: true,
+      pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+    });
+  });
+
+  it('still refuses two DIFFERENT pets that share a name', () => {
+    const twins = [
+      { id: 'p1', name: 'Bella', petType: 'cat' },
+      { id: 'p2', name: 'Bella', petType: 'dog' },
+    ];
+    expect(resolvePetsByName(['Bella'], twins)).toEqual({
+      ok: false,
+      reason: 'ambiguous-pet',
+      detail: 'Bella matches 2 pets',
+    });
+  });
 });
