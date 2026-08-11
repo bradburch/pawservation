@@ -141,7 +141,15 @@ describe('applyAttribution (repo)', () => {
       home.accountId,
     );
     expect(accountPayments).toHaveLength(1);
-    expect(accountPayments[0].Amount).toBe(40);
+    // The remainder inherits every field the splits do — it is the same money, still household-level.
+    expect(accountPayments[0]).toMatchObject({
+      Amount: 40,
+      Method: 'venmo',
+      PaidDate: '2026-07-01',
+      Note: 'July cheque',
+      AccountId: home.accountId,
+      BookingRequestId: null,
+    });
     expect(accountPayments.map((p) => p.Id)).not.toContain(paymentId);
   });
 
@@ -270,13 +278,17 @@ describe('applyAttribution (repo)', () => {
     });
     expect(wrongTenant.ok).toBe(false);
 
-    // Right tenant, but the id names a payment that already settles a booking.
-    await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
-      paymentId,
-      accountId: jen.accountId,
-      splits: [{ bookingId: only, amount: 100 }],
-      remainder: 0,
-    });
+    // Right tenant, but the id names a payment that already settles a booking. Asserted rather
+    // than discarded: if this setup call ever started refusing, the premise below would rot into a
+    // test that passes for the wrong reason.
+    expect(
+      await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+        paymentId,
+        accountId: jen.accountId,
+        splits: [{ bookingId: only, amount: 100 }],
+        remainder: 0,
+      }),
+    ).toEqual({ ok: true });
     const bookingPaymentId = (await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only))[0]
       .Id;
     const notAccountLevel = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
@@ -439,5 +451,152 @@ describe('applyAttribution (repo)', () => {
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, first)).toEqual([]);
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, second)).toEqual([]);
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+
+  it('applies ONCE when two overlapping calls attribute the same payment — no money from nowhere', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const first = await book(env, home, 100, '2026-06-28');
+    const second = await book(env, home, 60, '2026-07-04');
+    // NO ExternalRef: the partial unique index covers only non-NULL refs, so a hand-recorded
+    // household payment — the common case — is protected by nothing but the in-batch guard.
+    const paymentId = (await credit(env, home.accountId, 200, null))!;
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+
+    // The harness runs every batch on ONE SQLite connection, so two batches overlapping in real
+    // time nest their BEGINs and the second dies with "cannot start a transaction within a
+    // transaction" — an artifact of the shim, not of D1, which gives each batch its own
+    // transaction and commits them one at a time. This db queues batches to model that guarantee.
+    // The RACE ITSELF is untouched: both calls still re-read the source before either writes,
+    // which is the whole of the bug.
+    const db = env.PAWSERVATION_DB;
+    let queue: Promise<unknown> = Promise.resolve();
+    const serialised = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: (statements: D1PreparedStatement[]) => {
+        const next = queue.then(() => db.batch(statements));
+        queue = next.catch(() => undefined);
+        return next;
+      },
+    } as unknown as D1Database;
+
+    const apply = () =>
+      applyAttribution(serialised, TENANT_C, {
+        paymentId,
+        accountId: home.accountId,
+        splits: [
+          { bookingId: first, amount: 100 },
+          { bookingId: second, amount: 60 },
+        ],
+        remainder: 40,
+      });
+    // Both started before either is awaited — exactly the double-clicked Apply button.
+    const outcomes = await Promise.allSettled([apply(), apply()]);
+
+    const applied = outcomes.filter((o) => o.status === 'fulfilled' && o.value.ok);
+    expect(applied).toHaveLength(1);
+    const refused = outcomes.find((o) => !(o.status === 'fulfilled' && o.value.ok))!;
+    expect(refused.status).toBe('fulfilled');
+    if (refused.status !== 'fulfilled' || refused.value.ok) throw new Error('unreachable');
+    expect(refused.value.reason).toContain('another request');
+
+    // ONE set of booking rows, one remainder — and the household's money is exactly what it was.
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, first)).toHaveLength(1);
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, second)).toHaveLength(1);
+    expect(
+      await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, home.accountId),
+    ).toHaveLength(1);
+    expect(paymentRows(raw)).toHaveLength(3);
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+
+  it('aborts rather than duplicating when the source payment vanishes between the re-read and the batch', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const only = await book(env, home, 100);
+    const paymentId = (await credit(env, home.accountId, 100, null))!;
+
+    // The same race as above, pinned to the exact instant it matters: a db whose batch() drops the
+    // source row immediately before running. A zero-row DELETE does not raise, so without the
+    // in-batch guard this would insert a full set of booking rows against money already spent.
+    const db = env.PAWSERVATION_DB;
+    const raced = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: async (statements: D1PreparedStatement[]) => {
+        raw.prepare('DELETE FROM Payments WHERE Id = ?').run(paymentId);
+        return db.batch(statements);
+      },
+    } as unknown as D1Database;
+
+    const result = await applyAttribution(raced, TENANT_C, {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId: only, amount: 100 }],
+      remainder: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toContain('another request');
+
+    // Nothing written: the money the vanished row carried is not re-created here.
+    expect(paymentRows(raw)).toEqual([]);
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toEqual([]);
+  });
+
+  it('refuses when a derived ExternalRef collides with one the tenant already holds', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const first = await book(env, home, 100, '2026-06-28');
+    const second = await book(env, home, 60, '2026-07-04');
+    // A payment already carrying the ref this attribution's FIRST split would derive.
+    await credit(env, home.accountId, 25, 'venmo-7788:1');
+    const paymentId = (await credit(env, home.accountId, 160, 'venmo-7788'))!;
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+
+    const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+      paymentId,
+      accountId: home.accountId,
+      splits: [
+        { bookingId: first, amount: 100 },
+        { bookingId: second, amount: 60 },
+      ],
+      remainder: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toContain('external reference');
+
+    // The source survives whole — the collision is caught, never half-applied.
+    const rows = paymentRows(raw);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.ExternalRef).sort()).toEqual(['venmo-7788', 'venmo-7788:1']);
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, first)).toEqual([]);
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+
+  it('attributes a payment filed under an account id a later pet has since RENAMED', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen'); // accountId 'p_jen'
+    const only = await book(env, home, 100);
+    const paymentId = (await credit(env, home.accountId, 100))!;
+
+    // A new pet sorting FIRST renames the household: 'p_aaa' is now the account id, while the
+    // payment stays filed under 'p_jen'. Membership, not equality, is what keeps it reachable —
+    // the sitter can already SEE and DELETE it under the new id.
+    seedPets(raw, TENANT_C, home.ownerId, [{ id: 'p_aaa', petType: 'dog' }]);
+    const renamed = (await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].accountId;
+    expect(renamed).toBe('p_aaa');
+    expect(await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, renamed)).toHaveLength(1);
+
+    expect(
+      await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+        paymentId,
+        accountId: renamed,
+        splits: [{ bookingId: only, amount: 100 }],
+        remainder: 0,
+      }),
+    ).toEqual({ ok: true });
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toHaveLength(1);
+    expect(paymentRows(raw)).toHaveLength(1);
   });
 });

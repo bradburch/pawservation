@@ -1521,6 +1521,14 @@ export async function deleteAccountPayment(
  * So every guard runs BEFORE the batch, and every statement inside it writes exactly one row or
  * throws.
  *
+ * AND THE SOURCE ROW MUST STILL BE THERE WHEN THE BATCH RUNS. A zero-row DELETE does not raise, so
+ * two overlapping applies of the same payment would both pass every guard and the second would
+ * delete nothing and insert a second complete set of booking rows — money from nowhere. One
+ * in-batch statement therefore DEPENDS on the source row (see `guardedFirstSplit` below), so its
+ * absence aborts the transaction instead of quietly duplicating. This is enforced here rather than
+ * by serialising at the route: the ledger's integrity cannot rest on every future caller
+ * remembering to.
+ *
  * THE SOURCE PAYMENT IS RE-READ HERE and its `Amount` is the only authority on how much money is
  * in play; a caller-supplied figure is never trusted. `sum(splits) + remainder` must equal it
  * EXACTLY — whole dollars, integer arithmetic, no rounding anywhere. That equation is
@@ -1565,16 +1573,30 @@ export async function applyAttribution(
     };
   }
 
+  // MEMBERSHIP, NOT EQUALITY — `AccountId IN (householdPetIds)`, exactly as
+  // `listPaymentsForAccount` and `deleteAccountPayment` do it. The account id is the household's
+  // lexicographically-first pet and a pet added later RENAMES it, so a payment filed under the old
+  // name is still this household's money. Matching on equality here would leave a payment the
+  // sitter can see and can delete under the current account id impossible to ATTRIBUTE under it —
+  // fail-closed, but it strands precisely the households the anchor machinery exists for. The
+  // orphan fallback is `deleteAccountPayment`'s too: with no household, the id answers only for
+  // payments filed under itself (any split is then refused below, since an orphan has no bookings).
+  const petIds = (await householdPetIds(db, tenantId, accountId)) ?? [accountId];
+  const petPlaceholders = petIds.map(() => '?').join(', ');
+
   // The row in the database is the authority — on the amount, and on this being a household-level
-  // payment of this tenant at all.
+  // payment of this tenant at all. `AccountId` comes back too: the remainder is re-filed under the
+  // id the source was filed under, not under the caller's, so leftover money never moves.
   const source = await db
     .prepare(
-      `SELECT Amount, Method, PaidDate, Note, ExternalRef FROM Payments
-       WHERE TenantId = ? AND Id = ? AND AccountId = ? AND BookingRequestId IS NULL`,
+      `SELECT Amount, AccountId, Method, PaidDate, Note, ExternalRef FROM Payments
+       WHERE TenantId = ? AND Id = ? AND AccountId IN (${petPlaceholders})
+         AND BookingRequestId IS NULL`,
     )
-    .bind(tenantId, paymentId, accountId)
+    .bind(tenantId, paymentId, ...petIds)
     .first<{
       Amount: number;
+      AccountId: string;
       Method: PaymentMethod;
       PaidDate: string;
       Note: string | null;
@@ -1612,25 +1634,40 @@ export async function applyAttribution(
   const derivedRef = (suffix: string) =>
     source.ExternalRef === null ? null : `${source.ExternalRef}:${suffix}`;
 
+  // THE FIRST SPLIT'S AMOUNT IS MULTIPLIED BY A LOOKUP OF THE SOURCE ROW, and that is load-bearing
+  // rather than decorative. Between the re-read above and this batch, another request applying the
+  // SAME payment can commit: its DELETE takes the source, and ours would then match zero rows —
+  // WITHOUT raising, because a zero-row DELETE is a perfectly ordinary result — leaving this batch
+  // to insert a second, complete set of booking rows. The household would gain `source.Amount` out
+  // of nothing. The unique index on `ExternalRef` catches that for IMPORTED payments only: it is
+  // PARTIAL (`WHERE ExternalRef IS NOT NULL`, sql/schema.sql), so every hand-recorded household
+  // payment — the common case — has no protection from it at all, and a double-clicked Apply
+  // button is the whole trigger.
+  //
+  // A vanished source makes the scalar subquery NULL, `amount * NULL` NULL, and the NOT NULL /
+  // `CHECK (Amount > 0)` on `Payments.Amount` aborts the entire batch. Absence RAISES instead of
+  // quietly writing, which is the same property the plain `INSERT ... VALUES` above protects.
+  // `splits` is non-empty here, so exactly one statement carries the guard and one is enough: it
+  // takes the whole transaction down with it.
+  //
+  // ORDER MATTERS: the DELETE goes LAST. Ahead of the guard it would remove the very row the
+  // subquery looks for, and every attribution would abort.
+  const guardedFirstSplit = `? * (SELECT 1 FROM Payments
+      WHERE TenantId = ? AND Id = ? AND BookingRequestId IS NULL)`;
+
   const statements = [
-    db
-      .prepare(
-        `DELETE FROM Payments
-         WHERE TenantId = ? AND Id = ? AND AccountId = ? AND BookingRequestId IS NULL`,
-      )
-      .bind(tenantId, paymentId, accountId),
     // Column list identical to insertPayment's.
     ...splits.map((s, i) =>
       db
         .prepare(
           `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ${i === 0 ? guardedFirstSplit : '?'}, ?, ?, ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
           tenantId,
           s.bookingId,
-          s.amount,
+          ...(i === 0 ? [s.amount, tenantId, paymentId] : [s.amount]),
           source.Method,
           source.PaidDate,
           source.Note,
@@ -1639,7 +1676,8 @@ export async function applyAttribution(
     ),
   ];
   // Whatever the splits did not claim stays where it was: household-level money, still visible as
-  // a credit. Zero writes no row at all rather than a $0 payment (`CHECK (Amount > 0)`).
+  // a credit, and still filed under the source's own account id. Zero writes no row at all rather
+  // than a $0 payment (`CHECK (Amount > 0)`).
   if (remainder > 0) {
     // Column list identical to insertAccountPayment's.
     statements.push(
@@ -1651,7 +1689,7 @@ export async function applyAttribution(
         .bind(
           crypto.randomUUID(),
           tenantId,
-          accountId,
+          source.AccountId,
           remainder,
           source.Method,
           source.PaidDate,
@@ -1660,17 +1698,39 @@ export async function applyAttribution(
         ),
     );
   }
+  statements.push(
+    db
+      .prepare(
+        `DELETE FROM Payments
+         WHERE TenantId = ? AND Id = ? AND AccountId IN (${petPlaceholders})
+           AND BookingRequestId IS NULL`,
+      )
+      .bind(tenantId, paymentId, ...petIds),
+  );
 
   try {
     await db.batch(statements);
   } catch (err) {
-    // A derived ref collides with one this tenant already holds — the single failure here that is
-    // the data's fault rather than a broken database, and the batch rolled back, so the source
-    // payment is untouched. Anything else is not something to report as a refusal.
+    // A derived ref collides with one this tenant already holds. The batch rolled back, so the
+    // source payment is untouched and this is a refusal rather than a fault.
     if (isUniqueViolation(err)) {
       return {
         ok: false,
         reason: `Attribution of payment ${paymentId} would reuse an external reference this tenant already holds; nothing was written.`,
+      };
+    }
+    // The guard above fired, or something else did. Reported as a refusal ONLY when the source row
+    // is positively confirmed gone — the precondition this function checked and lost. Re-reading to
+    // decide is the difference between naming a race the sitter can retry past and swallowing a
+    // genuine database fault as though it were ordinary; anything still holding its source rethrows.
+    const stillThere = await db
+      .prepare('SELECT 1 FROM Payments WHERE TenantId = ? AND Id = ? AND BookingRequestId IS NULL')
+      .bind(tenantId, paymentId)
+      .first<{ 1: number }>();
+    if (!stillThere) {
+      return {
+        ok: false,
+        reason: `Payment ${paymentId} was attributed or deleted by another request while this attribution was being applied; nothing was written.`,
       };
     }
     throw err;
