@@ -26,6 +26,7 @@ export {
 export {
   isDedicatedCalendarId,
   isPersonalCalendarTarget,
+  MAX_BACKFILL_EVENTS,
   SECONDARY_CALENDAR_SUFFIX,
 } from './util/calendar-target.js';
 export {
