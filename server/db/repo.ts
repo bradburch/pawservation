@@ -1540,6 +1540,19 @@ export async function deleteAccountPayment(
  * they cannot inherit it unchanged; dropping it instead would lose the trail back to the source
  * and let a re-import of the original CSV recreate money this attribution has already placed. A
  * source with no `ExternalRef` yields rows with none.
+ *
+ * EVERY TARGET BOOKING'S OWN LIVE OUTSTANDING IS RE-READ TOO, from the same `getHouseholdDetail`
+ * that computes the balance this attribution must leave unchanged — a caller-supplied split is
+ * conservation-checked against the SOURCE payment above, but conservation alone cannot catch a
+ * split that is internally consistent yet lands more money on a booking than it still owes. That
+ * happens two ways: a stale client (a preview rendered before the booking was paid some other way,
+ * or before an earlier attribution in the SAME request already settled it — this function is
+ * called once per attribution, sequentially, by its one caller in `admin.ts`, so a second call in
+ * one batch sees the first one's write already committed) or a hand-crafted request. `expected` is
+ * `CREDITABLE_AMOUNT_SQL`, already 0 for a `declined` booking and `CancellationFee` (default 0) for
+ * a fee-free `cancelled` one, so a split against either is refused here as ordinary overpayment —
+ * no separate status check is needed, matching the preview's own `outstanding > 0` candidate
+ * filter rather than inventing a second rule for the same fact.
  */
 export async function applyAttribution(
   db: D1Database,
@@ -1617,17 +1630,45 @@ export async function applyAttribution(
     };
   }
 
-  // "Is this booking in this household" is asked of `getHouseholdDetail` — the same tenant-scoped
-  // rollup that computes the balance this attribution must leave unchanged — rather than a fresh
-  // predicate written here, so the two can never come to mean different things. A `null` detail
-  // (the account id names no household) leaves the set empty and every split is refused.
+  // "Is this booking in this household, and what does it still owe RIGHT NOW" is asked of
+  // `getHouseholdDetail` — the same tenant-scoped rollup that computes the balance this attribution
+  // must leave unchanged — rather than a fresh predicate written here, so the two can never come to
+  // mean different things. A `null` detail (the account id names no household) leaves the map empty
+  // and every split is refused.
   const detail = await getHouseholdDetail(db, tenantId, accountId);
-  const householdBookings = new Set((detail?.bookings ?? []).map((b) => b.bookingId));
-  const foreign = splits.find((s) => !householdBookings.has(s.bookingId));
+  const outstandingByBooking = new Map(
+    (detail?.bookings ?? []).map((b) => [b.bookingId, b.expected - b.paidTotal]),
+  );
+  const foreign = splits.find((s) => !outstandingByBooking.has(s.bookingId));
   if (foreign) {
     return {
       ok: false,
       reason: `Booking ${foreign.bookingId} is not a booking of account ${accountId} in this tenant.`,
+    };
+  }
+
+  // LIVE OUTSTANDING, RE-READ HERE, NOT TRUSTED FROM THE CALLER — the fix for the defect a review
+  // caught at the REQUEST level, the same shape as the sequential-allocation bug `proposeAttribution`
+  // was already fixed against: nothing before this point ever compares a split to what its booking
+  // actually still owes, so two attributions in one batch (or a stale preview reused after the
+  // booking was settled some other way) could each land their full split on the SAME booking and
+  // overpay it. `getHouseholdDetail` is re-read fresh on every call, so the second of two
+  // applications in a batch — this function is called once per attribution, sequentially, awaited —
+  // sees the first one's write already committed and refuses rather than doubling it.
+  //
+  // `expected` is `CREDITABLE_AMOUNT_SQL`, which is already 0 for a `declined` booking and
+  // `CancellationFee` (defaulting to 0) for a `cancelled` one — so a split against a declined, or a
+  // fee-free-cancelled, booking is refused here with no separate status check: its outstanding is
+  // already <= 0, and every split is a positive whole dollar amount (checked above), so it can never
+  // clear this bar. A cancelled booking that DOES carry an assessed fee or a live charge is a genuine
+  // receivable and is allowed exactly as far as that fee/charge still goes, matching the preview's
+  // own `outstanding > 0` candidate filter.
+  const overpaid = splits.find((s) => s.amount > outstandingByBooking.get(s.bookingId)!);
+  if (overpaid) {
+    const owed = Math.max(0, outstandingByBooking.get(overpaid.bookingId)!);
+    return {
+      ok: false,
+      reason: `Booking ${overpaid.bookingId} owes $${owed} but this split names $${overpaid.amount}; refusing rather than overpay it.`,
     };
   }
 

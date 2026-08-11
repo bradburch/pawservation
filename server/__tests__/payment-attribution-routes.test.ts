@@ -533,7 +533,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(secondBody.applied).toBe(0);
     expect(secondBody.skipped).toHaveLength(1);
     expect(secondBody.skipped[0].paymentId).toBe(paymentId);
-    expect(secondBody.skipped[0].reason).toBeTruthy();
+    // The first call already deleted the source row, so the second's re-read of it finds nothing.
+    expect(secondBody.skipped[0].reason).toContain('not a household-level payment');
 
     // Exactly one booking-level payment of $100 — the second call never duplicated the money.
     const rows = paymentRows(raw);
@@ -561,7 +562,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(body.applied).toBe(0);
     expect(body.skipped).toHaveLength(1);
     expect(body.skipped[0].paymentId).toBe(paymentId);
-    expect(body.skipped[0].reason).toBeTruthy();
+    expect(body.skipped[0].reason).toContain('refusing rather than create or destroy money');
 
     expect(paymentRows(raw)).toEqual(before);
   });
@@ -592,24 +593,166 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(body.applied).toBe(0);
     expect(body.skipped).toHaveLength(1);
     expect(body.skipped[0].paymentId).toBe(foreignPaymentId);
+    // Not just "some refusal" — specifically that TENANT_C's tenant-scoped re-read never found
+    // TENANT_A's payment at all. Dropping tenant scoping from the source lookup would instead take
+    // the foreign-booking path (also a refusal) and leave this assertion unable to tell the
+    // difference; this pins the actual reason.
+    expect(body.skipped[0].reason).toContain('not a household-level payment');
 
     expect(paymentRows(raw, TENANT_A)).toEqual(beforeForeign);
   });
 
-  it('a malformed body is a 400 with nothing written', async () => {
+  it('a malformed body is a 400 with nothing written, including a VALID attribution earlier in the same array', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    await book(env, home, 100, '2026-07-01');
-    await credit(env, home.accountId, 100);
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+    const other = await household(env, raw, 'sam');
+    await book(env, other, 50, '2026-07-01');
+    await credit(env, other.accountId, 50);
 
     const before = paymentRows(raw);
-    // `splits` is not an array — malformed shape, not a semantically-refusable attribution.
+    const good: ApplyAttributionInput = {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId, amount: 100 }],
+      remainder: 0,
+    };
+    // `splits` is not an array on the second item — malformed shape, not a semantically-refusable
+    // attribution. A route that validated and applied each item in turn (rather than validating the
+    // WHOLE body before applying ANY of it) would still apply `good` here and pass a test that only
+    // checked for a malformed item alone; putting a valid item first is what makes this test able to
+    // tell the difference.
     const res = await apply(env, TENANT_C, {
       attributions: [
+        good,
         { paymentId: 'whatever', accountId: home.accountId, splits: 'nope', remainder: 0 },
       ],
     });
     expect(res.status).toBe(400);
     expect(paymentRows(raw)).toEqual(before);
+  });
+
+  it('a null element in attributions (or in a splits array) is a 400, not a 500', async () => {
+    const { env } = createTestEnv();
+    // `typeof null === 'object'`, so an unguarded property read on a null element throws instead
+    // of failing the type check — this pins the fix rather than the crash.
+    const res = await apply(env, TENANT_C, { attributions: [null] });
+    expect(res.status).toBe(400);
+
+    const res2 = await apply(env, TENANT_C, {
+      attributions: [{ paymentId: 'p1', accountId: 'a1', splits: [null], remainder: 0 }],
+    });
+    expect(res2.status).toBe(400);
+  });
+
+  it('a batch that lands two credits on the same booking applies the first and refuses the second — the money is never doubled', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const first = (await credit(env, home.accountId, 100, '2026-06-01'))!;
+    const second = (await credit(env, home.accountId, 100, '2026-06-02'))!;
+
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId: first,
+          accountId: home.accountId,
+          splits: [{ bookingId, amount: 100 }],
+          remainder: 0,
+        },
+        {
+          paymentId: second,
+          accountId: home.accountId,
+          splits: [{ bookingId, amount: 100 }],
+          remainder: 0,
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body.applied).toBe(1);
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].paymentId).toBe(second);
+    // The booking's own live outstanding, re-read after the first attribution committed — not a
+    // generic conservation refusal, and not a membership refusal either (the booking IS this
+    // household's; it just no longer owes $100 by the time the second attribution is checked).
+    expect(body.skipped[0].reason).toContain(`Booking ${bookingId} owes $0`);
+
+    // Exactly ONE $100 booking-level payment on the booking — the second attribution never landed
+    // a second $100 on top of it. The second credit is still sitting, untouched, as a household-
+    // level payment: applyAttribution refused before its own batch ever ran.
+    const rows = paymentRows(raw);
+    const bookingRows = rows.filter((r) => r.BookingRequestId === bookingId);
+    expect(bookingRows).toHaveLength(1);
+    expect(bookingRows[0].Amount).toBe(100);
+    const householdRows = rows.filter((r) => r.AccountId === home.accountId);
+    expect(householdRows).toHaveLength(1);
+    expect(householdRows[0].Amount).toBe(100);
+
+    // $100 expected, $200 paid ($100 on the booking + the second credit still sitting unclaimed at
+    // the household level) — genuinely $100 in the household's favor, not zeroed out. The point is
+    // this reads as an honest credit, not as an invisible $100 the booking silently absorbed twice.
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(detail?.balance).toBe(-100);
+  });
+
+  it('a mixed-validity batch — good, bad, good — applies both good ones and skips only the bad one', async () => {
+    const { env, raw } = createTestEnv();
+    const first = await household(env, raw, 'jen');
+    const firstBooking = await book(env, first, 100, '2026-07-01');
+    const firstPaymentId = (await credit(env, first.accountId, 100))!;
+
+    const second = await household(env, raw, 'sam');
+    const secondBooking = await book(env, second, 100, '2026-07-01');
+    const secondPaymentId = (await credit(env, second.accountId, 100))!;
+
+    const third = await household(env, raw, 'ana');
+    const thirdBooking = await book(env, third, 75, '2026-07-01');
+    const thirdPaymentId = (await credit(env, third.accountId, 75))!;
+
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId: firstPaymentId,
+          accountId: first.accountId,
+          splits: [{ bookingId: firstBooking, amount: 100 }],
+          remainder: 0,
+        },
+        {
+          // Splits don't sum to the $100 payment — refused on the merits, not malformed.
+          paymentId: secondPaymentId,
+          accountId: second.accountId,
+          splits: [{ bookingId: secondBooking, amount: 40 }],
+          remainder: 0,
+        },
+        {
+          paymentId: thirdPaymentId,
+          accountId: third.accountId,
+          splits: [{ bookingId: thirdBooking, amount: 75 }],
+          remainder: 0,
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body.applied).toBe(2);
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].paymentId).toBe(secondPaymentId);
+
+    // The THIRD attribution's rows genuinely exist — a regression that returned early on the
+    // second (bad) item, or a throw escaping the loop, would leave this booking still unpaid.
+    const rows = paymentRows(raw);
+    const thirdRows = rows.filter((r) => r.BookingRequestId === thirdBooking);
+    expect(thirdRows).toHaveLength(1);
+    expect(thirdRows[0].Amount).toBe(75);
+    // The first attribution's rows exist too.
+    const firstRows = rows.filter((r) => r.BookingRequestId === firstBooking);
+    expect(firstRows).toHaveLength(1);
+    expect(firstRows[0].Amount).toBe(100);
+    // The second (refused) household-level credit is still sitting, unattributed.
+    const secondRows = rows.filter((r) => r.Id === secondPaymentId);
+    expect(secondRows).toHaveLength(1);
+    expect(secondRows[0].AccountId).toBe(second.accountId);
   });
 });
