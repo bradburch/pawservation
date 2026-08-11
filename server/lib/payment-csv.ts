@@ -27,6 +27,24 @@ const SAMPLE_ROWS = 3;
 /** A note is free text a client typed; cap what we store and echo. Mirrors MAX_VENMO_NOTE. */
 const MAX_NOTE_LENGTH = 200;
 
+/**
+ * How long a mapped reference may be. It becomes `csv:<reference>` in `ExternalRef` and in that
+ * column's unique index, so an unbounded one bloats every row of the index and every comparison
+ * against it — and a mapped column holding hundreds of characters is a column that does not hold a
+ * reference at all. Generous next to Venmo's own 64-character transaction id, because a real bank
+ * reference can be long; an over-long one is REPORTED rather than truncated, since a truncated
+ * reference is a different reference and would key a different payment.
+ */
+export const MAX_CSV_REFERENCE = 128;
+
+/**
+ * A row whose amount is exactly nothing. `parseAmount` demands at least $1, so it refuses `$0` and
+ * `not a number` alike — but they are not the same thing to a sitter, and "Pawservation records
+ * whole dollars" is simply untrue of a well-formed `$0.00`. Recognised here purely to say something
+ * true about it. Matches what `parseAmount` accepts, narrowed to zero.
+ */
+const ZERO_AMOUNT = /^\s*[+-]?\s*\$?\s*0+(?:\.0{1,2})?\s*$/;
+
 export type CsvShape =
   | { ok: true; headers: string[]; sample: string[][]; dataRowCount: number }
   | { ok: false; error: string };
@@ -132,7 +150,9 @@ function contentHash(parts: unknown[]): string {
  * reference repeated within the same file is NOT re-used as a second key (see the in-file
  * duplicate-reference check below): that would silently drop every repeat past the first, and a
  * repeated reference more likely means the mapping points at the wrong column than that the same
- * payment truly happened twice, so it's reported instead of guessed at.
+ * payment truly happened twice, so it's reported instead of guessed at. A reference over
+ * `MAX_CSV_REFERENCE` is reported for the same reason and never truncated: a shortened reference is
+ * a different reference, and would key a different payment.
  *
  * Otherwise the key is `csv:<hash>:<rank>`, where `<hash>` fingerprints
  * `tenantId | date | amount | payer` and `<rank>` is how many identical rows preceded this one in
@@ -209,7 +229,9 @@ export function applyMapping(
     if (!amount) {
       problems.push({
         row,
-        reason: `Couldn’t read the amount "${rawAmount.trim()}" — Pawservation records whole dollars`,
+        reason: ZERO_AMOUNT.test(rawAmount)
+          ? `"${rawAmount.trim()}" is a zero-dollar row — there is no payment to record`
+          : `Couldn’t read the amount "${rawAmount.trim()}" — Pawservation records whole dollars`,
       });
       continue;
     }
@@ -225,7 +247,14 @@ export function applyMapping(
 
     const rawDate = cell(mapping.date).trim();
     if (!isRealDate(rawDate)) {
-      problems.push({ row, reason: `Couldn’t read the date "${rawDate}"` });
+      // Names the format instead of only refusing the value: a US bank or PayPal export writes
+      // 07/03/2026, which makes EVERY row a problem row, and a sitter told only "couldn't read it"
+      // has nothing to act on. Deliberately NOT auto-detected: 03/07/2026 is ambiguous between US
+      // and European order, and guessing would silently misdate money.
+      problems.push({
+        row,
+        reason: `Couldn’t read the date "${rawDate}" — dates must be written YYYY-MM-DD, like 2026-07-03`,
+      });
       continue;
     }
 
@@ -238,6 +267,13 @@ export function applyMapping(
     let reference: string | null = null;
     if (mapping.reference !== undefined) {
       const rawReference = sanitizeCell(cell(mapping.reference));
+      if (rawReference.length > MAX_CSV_REFERENCE) {
+        problems.push({
+          row,
+          reason: `That reference is ${rawReference.length} characters — a reference must be ${MAX_CSV_REFERENCE} or fewer. Map a column holding a short unique id, or leave Reference unmapped.`,
+        });
+        continue;
+      }
       if (rawReference !== '') reference = rawReference;
     }
     // A reference repeated within this file is refused rather than silently re-used as the same

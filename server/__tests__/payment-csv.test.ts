@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyMapping, detectCsvShape } from '../lib/payment-csv';
+import { applyMapping, detectCsvShape, MAX_CSV_REFERENCE } from '../lib/payment-csv';
 
 const SHAPE_FILE = [
   'Transaction Date,Gross Amount (USD),Sender Name,Confirmation #',
@@ -76,6 +76,56 @@ describe('applyMapping', () => {
     // The refund row (row 4) and the bad-date row (row 5) are told apart, not lumped in with the
     // cents problem.
     expect(out.problems[1].reason).toMatch(/refund/i);
+  });
+
+  it("names the format a date must be in, rather than only saying it couldn't be read", () => {
+    // A US bank or PayPal export writes 07/03/2026, which turns EVERY row into a problem row.
+    // The reason has to say what is expected — guessing the order is not an option, since
+    // 03/07/2026 is ambiguous between US and European order and a wrong guess misdates money.
+    const f = ['Date,Amount,Payer', '07/03/2026,40,Finch'].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(0);
+    expect(out.problems).toHaveLength(1);
+    expect(out.problems[0].reason).toContain('07/03/2026');
+    expect(out.problems[0].reason).toContain('YYYY-MM-DD');
+    expect(out.problems[0].reason).toContain('2026-07-03');
+  });
+
+  it('reports a reference longer than the cap as a problem row instead of storing it', () => {
+    // The reference becomes `csv:<reference>` in ExternalRef and in its unique index; Venmo caps
+    // its own transaction id at 64.
+    const long = 'R'.repeat(MAX_CSV_REFERENCE + 1);
+    const f = ['Date,Amount,Payer,Ref', `2026-07-03,40,Finch,${long}`].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2, reference: 3 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(0);
+    expect(out.problems).toHaveLength(1);
+    expect(out.problems[0].row).toBe(2);
+    expect(out.problems[0].reason).toContain(String(MAX_CSV_REFERENCE));
+    // A reference exactly at the cap is fine — the bound is a limit, not a margin.
+    const ok = [
+      'Date,Amount,Payer,Ref',
+      `2026-07-03,40,Finch,${'R'.repeat(MAX_CSV_REFERENCE)}`,
+    ].join('\n');
+    const out2 = applyMapping(ok, { date: 0, amount: 1, payer: 2, reference: 3 }, 'cash', 'tnt_x');
+    expect(out2.ok && out2.payments).toHaveLength(1);
+    expect(out2.ok && out2.problems).toEqual([]);
+  });
+
+  it('gives a $0 row its own reason rather than saying it records whole dollars', () => {
+    const f = ['Date,Amount,Payer', '2026-07-03,$0.00,Finch', '2026-07-04,0,Cole'].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(0);
+    expect(out.problems.map((p) => p.row)).toEqual([2, 3]);
+    for (const problem of out.problems) {
+      expect(problem.reason).toMatch(/zero/i);
+      expect(problem.reason).not.toMatch(/whole dollar/i);
+    }
   });
 
   it('parses a raw "+ $45.00"-style amount before sanitizing it, per the ordering constraint', () => {

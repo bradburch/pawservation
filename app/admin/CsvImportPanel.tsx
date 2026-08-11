@@ -309,6 +309,16 @@ export function CsvImportPanel({
                     </option>
                   ))}
                 </select>
+                {/* Said here, before the upload is checked, because a file of 07/03/2026 dates
+                    fails on EVERY row — and Pawservation deliberately won't guess the order
+                    (03/07/2026 is ambiguous between US and European order, and a wrong guess
+                    misdates money). */}
+                {field === 'date' && (
+                  <span className="pb-hint">
+                    Dates must read 2026-07-03 (YYYY-MM-DD). If yours read 07/03/2026, reformat that
+                    column in your spreadsheet first &mdash; it&rsquo;s one step.
+                  </span>
+                )}
               </label>
             ))}
           </div>
