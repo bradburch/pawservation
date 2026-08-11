@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nightsBetween } from '../../src/shared/index.js';
 import {
   classifyEvent,
+  parseEventDescription,
   parseEventSummary,
   resolveHousehold,
   resolvePetsByName,
@@ -64,6 +65,94 @@ describe('parseEventSummary', () => {
       petNames: ['Brad Unavailable'],
       serviceHint: null,
       cancelled: false,
+    });
+  });
+});
+
+describe('parseEventDescription', () => {
+  // Verbatim from a real production event (see the calendar-backfill design doc): 54 of 55
+  // events on that calendar carry this shape.
+  const REAL_DESCRIPTION =
+    'Owner: Lauren Kotin, Ian Fisher\n' +
+    'Owner ID: aaefb00f-c993-4de1-8d44-b335ecc3adb4, 47da31e8-8cd4-4198-bebc-cddaf7cd01de\n' +
+    'Cost: 40\n' +
+    'Booking: walk\n' +
+    'v: 1';
+
+  it('reads cost, booking and owner ids from the real description shape', () => {
+    expect(parseEventDescription(REAL_DESCRIPTION)).toEqual({
+      cost: 40,
+      booking: 'walk',
+      ownerIds: ['aaefb00f-c993-4de1-8d44-b335ecc3adb4', '47da31e8-8cd4-4198-bebc-cddaf7cd01de'],
+    });
+  });
+
+  it('matches keys case-insensitively', () => {
+    expect(parseEventDescription('cost: 40\nBOOKING: walk\nowner id: abc')).toEqual({
+      cost: 40,
+      booking: 'walk',
+      ownerIds: ['abc'],
+    });
+  });
+
+  it('ignores unknown keys', () => {
+    expect(parseEventDescription('Notes: fed twice\nCost: 40')).toEqual({
+      cost: 40,
+      booking: null,
+      ownerIds: [],
+    });
+  });
+
+  it('returns all-empty for a description with only Owner: (no Cost/Booking)', () => {
+    // Pedro and Remy — a real event that carries only the owner names, no cost/service.
+    expect(parseEventDescription('Owner: Pedro Alvarez')).toEqual({
+      cost: null,
+      booking: null,
+      ownerIds: [],
+    });
+  });
+
+  it('returns all-empty for an empty description', () => {
+    expect(parseEventDescription('')).toEqual({ cost: null, booking: null, ownerIds: [] });
+  });
+
+  it('tolerates a blank (whitespace-only) description', () => {
+    expect(parseEventDescription('   \n  ')).toEqual({ cost: null, booking: null, ownerIds: [] });
+  });
+
+  it('rejects a fractional cost rather than rounding it', () => {
+    expect(parseEventDescription('Cost: 40.50').cost).toBeNull();
+  });
+
+  it('rejects a non-numeric cost', () => {
+    expect(parseEventDescription('Cost: abc').cost).toBeNull();
+  });
+
+  it('rejects a zero cost', () => {
+    expect(parseEventDescription('Cost: 0').cost).toBeNull();
+  });
+
+  it('rejects a negative cost', () => {
+    expect(parseEventDescription('Cost: -5').cost).toBeNull();
+  });
+
+  it('splits multiple owner ids and trims whitespace, dropping empties', () => {
+    expect(parseEventDescription('Owner ID: id-1,  id-2 ,, id-3').ownerIds).toEqual([
+      'id-1',
+      'id-2',
+      'id-3',
+    ]);
+  });
+
+  it('trims the raw Booking value', () => {
+    expect(parseEventDescription('Booking:   walk  ').booking).toBe('walk');
+  });
+
+  it('parses CRLF line endings — Google can return \\r\\n', () => {
+    expect(parseEventDescription('Owner: Lauren Kotin\r\nCost: 40\r\nBooking: walk\r\n')).toEqual({
+      cost: 40,
+      booking: 'walk',
+      ownerIds: [],
     });
   });
 });
@@ -375,6 +464,7 @@ const event = (
   over: Partial<{
     id: string;
     summary: string;
+    description: string;
     start: string;
     end: string;
     allDay: boolean;
@@ -383,6 +473,7 @@ const event = (
 ) => ({
   id: over.id ?? 'ev1',
   summary: over.summary ?? 'Sadie Walk',
+  description: over.description ?? '',
   start: over.start ?? '2026-07-01',
   end: over.end ?? '2026-07-02',
   allDay: over.allDay ?? true,
@@ -513,6 +604,261 @@ describe('classifyEvent', () => {
   it('drops the end date for a single-shaped service', () => {
     const out = classifyEvent(event({ start: '2026-07-01', end: '2026-07-02' }), CTX);
     expect(out).toMatchObject({ kind: 'adopt', endDate: null });
+  });
+});
+
+/**
+ * The sitter's own structured description — real cost, service, and client — is preferred over
+ * our reading of the title, per docs/superpowers/sdd/2026-08-10-calendar-backfill. See the design
+ * doc's motivating example: an event titled "Summer and Chia Walk - CANCELLED" carries `Cost: 40`
+ * in its description, but the rate card prices two dogs at $80 — the description is what was
+ * actually charged.
+ */
+describe('classifyEvent — the description is preferred over the title', () => {
+  // Verbatim from a real production event.
+  const REAL_DESCRIPTION =
+    'Owner: Lauren Kotin, Ian Fisher\n' +
+    'Owner ID: aaefb00f-c993-4de1-8d44-b335ecc3adb4, 47da31e8-8cd4-4198-bebc-cddaf7cd01de\n' +
+    'Cost: 40\n' +
+    'Booking: walk\n' +
+    'v: 1';
+
+  it('adopts the real Sadie Walk event at cost 40, service resolved from Booking: walk', () => {
+    const out = classifyEvent(event({ summary: 'Sadie Walk', description: REAL_DESCRIPTION }), {
+      ...CTX,
+      // If the rate card were consulted it would answer 25 (CTX.priceFor) — the description's
+      // Cost: 40 must win regardless.
+      priceFor: () => ({ priced: true as const, cost: 25 }),
+    });
+    expect(out).toMatchObject({
+      kind: 'adopt',
+      serviceType: 'walk',
+      optionKey: 'standard',
+      estCost: 40,
+    });
+  });
+
+  it('adopts "Summer and Chia Walk - CANCELLED" at 40, not the rate card\'s 80 — the bug that motivated this change', () => {
+    const summerChiaCtx = {
+      pets: [
+        { id: 'p10', name: 'Summer', petType: 'dog' },
+        { id: 'p11', name: 'Chia', petType: 'dog' },
+      ],
+      links: [
+        { EndUserId: 'u9', PetId: 'p10' },
+        { EndUserId: 'u9', PetId: 'p11' },
+      ],
+      services: [
+        { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
+      ],
+      adoptedEventIds: new Set<string>(),
+      // The rate card's linear two-pet answer — $40/pet — which is the wrong number this change
+      // exists to stop using.
+      priceFor: () => ({ priced: true as const, cost: 80 }),
+    };
+    const out = classifyEvent(
+      event({
+        summary: 'Summer and Chia Walk - CANCELLED',
+        description: 'Owner ID: u9\nCost: 40\nBooking: walk',
+      }),
+      summerChiaCtx,
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 40, cancelled: true });
+  });
+
+  it('still prices from the rate card when the description gives no Cost', () => {
+    const out = classifyEvent(
+      event({ summary: 'Sadie Walk', description: 'Owner: Lauren Kotin' }),
+      { ...CTX, priceFor: () => ({ priced: true as const, cost: 25 }) },
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 25 });
+  });
+
+  it('behaves exactly as before for an event with no description at all', () => {
+    expect(classifyEvent(event(), CTX)).toEqual({
+      kind: 'adopt',
+      eventId: 'ev1',
+      summary: 'Sadie Walk',
+      startDate: '2026-07-01',
+      endDate: null,
+      endUserId: 'u1',
+      serviceType: 'walk',
+      optionKey: 'standard',
+      petIds: ['p1'],
+      estCost: 25,
+      cancelled: false,
+    });
+  });
+
+  it("refuses when the description's owner id resolves a DIFFERENT household than the title's pets", () => {
+    const ctx = {
+      pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+      links: [
+        { EndUserId: 'u1', PetId: 'p1' },
+        // A second client on the roster whose id happens to end with the legacy owner id below —
+        // not an owner of Sadie at all.
+        { EndUserId: 'eu_legacy_zzz999', PetId: 'p2' },
+      ],
+      services: [
+        { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
+      ],
+      adoptedEventIds: new Set<string>(),
+      priceFor: () => ({ priced: true as const, cost: 20 }),
+    };
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Walk',
+        description: 'Owner ID: zzz999\nCost: 40\nBooking: walk',
+      }),
+      ctx,
+    );
+    expect(out).toMatchObject({ kind: 'flag', reason: 'multiple-households' });
+  });
+
+  it('a description Cost: lets an otherwise needs-price event adopt', () => {
+    const out = classifyEvent(event({ description: 'Owner: Lauren Kotin\nCost: 40' }), {
+      ...CTX,
+      priceFor: () => ({
+        priced: false as const,
+        reason: 'unpriced-pet-set' as const,
+        groupKey: 'p1',
+        mixKey: 'dog:1',
+      }),
+    });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 40 });
+  });
+
+  it('flags unknown-service when the description names a service the tenant does not offer, instead of silently falling back to the title', () => {
+    // CTX only offers 'walk'. The title alone would resolve fine ('Sadie Walk' -> walk), but the
+    // sitter's own record naming a service she does not offer is a fact worth surfacing, not
+    // something the title should override.
+    const out = classifyEvent(
+      event({ summary: 'Sadie Walk', description: 'Booking: grooming' }),
+      CTX,
+    );
+    expect(out).toMatchObject({ kind: 'flag', reason: 'unknown-service' });
+  });
+
+  // The two owner ids on the CANONICAL production description belong to ONE household (two
+  // co-owners), not two — the headline "adopts the real Sadie Walk event" test above never
+  // exercises the owner-id match path at all (CTX's u1/u2/u3 share no suffix with either UUID), so
+  // these exercise it directly against a roster where the ids actually do.
+  describe("resolving the description's owner ids to a billing ACCOUNT, not owner count", () => {
+    const OWNER_A = 'aaefb00f-c993-4de1-8d44-b335ecc3adb4'; // Lauren Kotin
+    const OWNER_B = '47da31e8-8cd4-4198-bebc-cddaf7cd01de'; // Ian Fisher
+    const REAL_DESC_OWNER_IDS = `Owner ID: ${OWNER_A}, ${OWNER_B}\nCost: 40\nBooking: walk`;
+
+    it('two co-owned clients (ids ending with both UUIDs, sharing a pet) fuse into ONE account and adopt', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [
+          // Both clients own the SAME pet — buildAccounts fuses them into one account.
+          { EndUserId: `eu_lauren_${OWNER_A}`, PetId: 'p1' },
+          { EndUserId: `eu_ian_${OWNER_B}`, PetId: 'p1' },
+        ],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 999 }),
+      };
+      const out = classifyEvent(
+        event({ summary: 'Sadie Walk', description: REAL_DESC_OWNER_IDS }),
+        ctx,
+      );
+      // The canonical representative is the lexicographically-first owner id in the fused
+      // account — 'eu_ian_…' sorts before 'eu_lauren_…' — so the SAME household always writes
+      // under the SAME EndUserId regardless of which co-owner an event happens to name.
+      expect(out).toMatchObject({
+        kind: 'adopt',
+        endUserId: `eu_ian_${OWNER_B}`,
+        estCost: 40,
+      });
+    });
+
+    it('two clients in genuinely SEPARATE accounts (no shared pet) refuse multiple-households', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [
+          { EndUserId: `eu_lauren_${OWNER_A}`, PetId: 'p1' }, // owns Sadie
+          { EndUserId: `eu_ian_${OWNER_B}`, PetId: 'p2' }, // a wholly separate account
+        ],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 999 }),
+      };
+      const out = classifyEvent(
+        event({ summary: 'Sadie Walk', description: REAL_DESC_OWNER_IDS }),
+        ctx,
+      );
+      expect(out).toMatchObject({ kind: 'flag', reason: 'multiple-households' });
+    });
+
+    it('matches an owner id case-insensitively', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [{ EndUserId: `eu_lauren_${OWNER_A}`, PetId: 'p1' }],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 999 }),
+      };
+      const out = classifyEvent(
+        event({
+          summary: 'Sadie Walk',
+          description: `Owner ID: ${OWNER_A.toUpperCase()}\nCost: 40\nBooking: walk`,
+        }),
+        ctx,
+      );
+      expect(out).toMatchObject({ kind: 'adopt', endUserId: `eu_lauren_${OWNER_A}` });
+    });
+
+    it('does not tail-match an owner id across a non-boundary character', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [
+          { EndUserId: 'u1', PetId: 'p1' }, // the pet-derived household
+          // Ends with '1', but NOT at a boundary — the preceding char '0' is alphanumeric, so
+          // owner id '1' must not tail-match this id.
+          { EndUserId: 'eu_201', PetId: 'p2' },
+        ],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 20 }),
+      };
+      const out = classifyEvent(
+        event({ summary: 'Sadie Walk', description: 'Owner ID: 1\nCost: 40\nBooking: walk' }),
+        ctx,
+      );
+      // No genuine match, so this falls back to the pet-derived household (u1) rather than a
+      // false "different client" conflict against 'eu_201'.
+      expect(out).toMatchObject({ kind: 'adopt', endUserId: 'u1' });
+    });
   });
 });
 

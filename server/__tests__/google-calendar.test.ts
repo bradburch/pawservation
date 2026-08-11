@@ -541,6 +541,7 @@ describe('google-calendar', () => {
       expect(events[0]).toEqual({
         id: 'evt_a',
         summary: 'Dog boarding',
+        description: '',
         start: '2030-06-01',
         end: '2030-06-04',
         allDay: true,
@@ -552,6 +553,7 @@ describe('google-calendar', () => {
       expect(events[1]).toEqual({
         id: 'evt_b',
         summary: 'Walk',
+        description: '',
         start: '2030-06-05',
         end: '2030-06-05',
         allDay: false,
@@ -571,7 +573,38 @@ describe('google-calendar', () => {
 
       const events = await listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z');
       expect(events[0].summary).toBe('');
+      expect(events[0].description).toBe('');
       expect(events[0].private).toEqual({});
+    });
+
+    it('carries a structured description through verbatim', async () => {
+      // The real shape a production sitter's events carry — see calendar-backfill.ts, which reads
+      // structured `Key: value` lines out of this field.
+      const description =
+        'Owner: Lauren Kotin, Ian Fisher\n' +
+        'Owner ID: aaefb00f-c993-4de1-8d44-b335ecc3adb4, 47da31e8-8cd4-4198-bebc-cddaf7cd01de\n' +
+        'Cost: 40\n' +
+        'Booking: walk\n' +
+        'v: 1';
+      const fakeBody = {
+        items: [
+          {
+            id: 'evt_desc',
+            summary: 'Sadie Walk',
+            description,
+            status: 'confirmed',
+            updated: '2030-05-01T00:00:00Z',
+            start: { date: '2030-06-01' },
+            end: { date: '2030-06-02' },
+          },
+        ],
+      };
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify(fakeBody), { status: 200 }),
+      );
+
+      const events = await listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z');
+      expect(events[0].description).toBe(description);
     });
 
     it('sends the correct query parameters and Authorization header', async () => {
