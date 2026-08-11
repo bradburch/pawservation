@@ -33,6 +33,7 @@ import {
   parseMixKey,
   quarterlyBreakdown,
 } from '../../src/shared/index.js';
+import { isUniqueViolation } from '../lib/db-errors';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
@@ -1489,6 +1490,192 @@ export async function deleteAccountPayment(
     .bind(tenantId, paymentId, ...petIds)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * APPLY ONE ATTRIBUTION — turn a household-level credit into the booking-level payments it
+ * actually settled, in ONE transaction. The riskiest write in this file: it is the only one that
+ * destroys money and re-creates it.
+ *
+ * A sitter who imported payment history has money recorded against a HOUSEHOLD and against no
+ * particular stay, so every booking still reads unpaid while the client reads "in credit".
+ * `proposeAttribution` (server/lib/payment-attribution.ts) DECIDES the split, purely; this applies
+ * it. The two are kept apart so the decision can be reviewed before any money moves.
+ *
+ * NOT AN UPDATE — A DELETE PLUS INSERTS. `Payments` carries
+ * `CHECK ((BookingRequestId IS NULL) <> (AccountId IS NULL))`: a row settles a booking OR a
+ * household, never both. The account-level row therefore cannot be re-pointed at a booking; it
+ * must be deleted and the booking-level rows created. Which is why EVERY statement goes in ONE
+ * `db.batch` — D1 runs a batch as a single transaction (the test shim wraps it in a real
+ * BEGIN/COMMIT too, see helpers.ts). A partially-applied attribution either duplicates the money
+ * or loses it, and best-effort cleanup afterwards is not good enough for a ledger.
+ *
+ * THE STATEMENTS ARE BUILT HERE rather than by calling `insertPayment`, `insertAccountPayment` and
+ * `deleteAccountPayment`: those three each `.run()` their own statement, so composing them would
+ * be three separate transactions, which is precisely the failure mode above. The column lists
+ * below are IDENTICAL to theirs, deliberately, so the two spellings cannot drift.
+ *
+ * They are plain `INSERT ... VALUES`, NOT `insertPayment`'s guarded `INSERT ... SELECT ... WHERE`.
+ * A guard that refuses inside a batch writes zero rows WITHOUT raising, and by the time
+ * `meta.changes` could be inspected the batch has committed — source row deleted, its money gone.
+ * So every guard runs BEFORE the batch, and every statement inside it writes exactly one row or
+ * throws.
+ *
+ * THE SOURCE PAYMENT IS RE-READ HERE and its `Amount` is the only authority on how much money is
+ * in play; a caller-supplied figure is never trusted. `sum(splits) + remainder` must equal it
+ * EXACTLY — whole dollars, integer arithmetic, no rounding anywhere. That equation is
+ * CONSERVATION, and it is the reason attribution can never create or destroy money. Both figures
+ * are named in the refusal, because "the split doesn't add up" is unactionable without them.
+ *
+ * `ExternalRef` is SUFFIXED, not dropped: `<ref>:1`, `<ref>:2`, … and `<ref>:r` for the remainder.
+ * The derived rows share `idx_Payments_Tenant_ExternalRef` (partial unique) with the source, so
+ * they cannot inherit it unchanged; dropping it instead would lose the trail back to the source
+ * and let a re-import of the original CSV recreate money this attribution has already placed. A
+ * source with no `ExternalRef` yields rows with none.
+ */
+export async function applyAttribution(
+  db: D1Database,
+  tenantId: string,
+  input: {
+    paymentId: string;
+    accountId: string;
+    splits: { bookingId: string; amount: number }[];
+    remainder: number;
+  },
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const { paymentId, accountId, splits, remainder } = input;
+
+  if (splits.length === 0) {
+    return {
+      ok: false,
+      reason: `Attribution of payment ${paymentId} names no bookings; there is nothing to attribute it to.`,
+    };
+  }
+  const badSplit = splits.find((s) => !Number.isInteger(s.amount) || s.amount <= 0);
+  if (badSplit) {
+    return {
+      ok: false,
+      reason: `Split for booking ${badSplit.bookingId} is ${badSplit.amount}; every split must be a whole number of dollars greater than zero.`,
+    };
+  }
+  if (!Number.isInteger(remainder) || remainder < 0) {
+    return {
+      ok: false,
+      reason: `Remainder ${remainder} is not a whole, non-negative number of dollars.`,
+    };
+  }
+
+  // The row in the database is the authority — on the amount, and on this being a household-level
+  // payment of this tenant at all.
+  const source = await db
+    .prepare(
+      `SELECT Amount, Method, PaidDate, Note, ExternalRef FROM Payments
+       WHERE TenantId = ? AND Id = ? AND AccountId = ? AND BookingRequestId IS NULL`,
+    )
+    .bind(tenantId, paymentId, accountId)
+    .first<{
+      Amount: number;
+      Method: PaymentMethod;
+      PaidDate: string;
+      Note: string | null;
+      ExternalRef: string | null;
+    }>();
+  if (!source) {
+    return {
+      ok: false,
+      reason: `Payment ${paymentId} is not a household-level payment of account ${accountId} in this tenant.`,
+    };
+  }
+
+  const attributed = splits.reduce((sum, s) => sum + s.amount, 0) + remainder;
+  if (attributed !== source.Amount) {
+    return {
+      ok: false,
+      reason: `Attribution of payment ${paymentId} accounts for $${attributed} (splits plus remainder) but the payment is $${source.Amount}; refusing rather than create or destroy money.`,
+    };
+  }
+
+  // "Is this booking in this household" is asked of `getHouseholdDetail` — the same tenant-scoped
+  // rollup that computes the balance this attribution must leave unchanged — rather than a fresh
+  // predicate written here, so the two can never come to mean different things. A `null` detail
+  // (the account id names no household) leaves the set empty and every split is refused.
+  const detail = await getHouseholdDetail(db, tenantId, accountId);
+  const householdBookings = new Set((detail?.bookings ?? []).map((b) => b.bookingId));
+  const foreign = splits.find((s) => !householdBookings.has(s.bookingId));
+  if (foreign) {
+    return {
+      ok: false,
+      reason: `Booking ${foreign.bookingId} is not a booking of account ${accountId} in this tenant.`,
+    };
+  }
+
+  const derivedRef = (suffix: string) =>
+    source.ExternalRef === null ? null : `${source.ExternalRef}:${suffix}`;
+
+  const statements = [
+    db
+      .prepare(
+        `DELETE FROM Payments
+         WHERE TenantId = ? AND Id = ? AND AccountId = ? AND BookingRequestId IS NULL`,
+      )
+      .bind(tenantId, paymentId, accountId),
+    // Column list identical to insertPayment's.
+    ...splits.map((s, i) =>
+      db
+        .prepare(
+          `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          tenantId,
+          s.bookingId,
+          s.amount,
+          source.Method,
+          source.PaidDate,
+          source.Note,
+          derivedRef(String(i + 1)),
+        ),
+    ),
+  ];
+  // Whatever the splits did not claim stays where it was: household-level money, still visible as
+  // a credit. Zero writes no row at all rather than a $0 payment (`CHECK (Amount > 0)`).
+  if (remainder > 0) {
+    // Column list identical to insertAccountPayment's.
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, ExternalRef)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          tenantId,
+          accountId,
+          remainder,
+          source.Method,
+          source.PaidDate,
+          source.Note,
+          derivedRef('r'),
+        ),
+    );
+  }
+
+  try {
+    await db.batch(statements);
+  } catch (err) {
+    // A derived ref collides with one this tenant already holds — the single failure here that is
+    // the data's fault rather than a broken database, and the batch rolled back, so the source
+    // payment is untouched. Anything else is not something to report as a refusal.
+    if (isUniqueViolation(err)) {
+      return {
+        ok: false,
+        reason: `Attribution of payment ${paymentId} would reuse an external reference this tenant already holds; nothing was written.`,
+      };
+    }
+    throw err;
+  }
+  return { ok: true };
 }
 
 /**
