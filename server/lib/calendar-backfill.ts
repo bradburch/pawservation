@@ -220,8 +220,31 @@ export type BackfillService = {
   shape: 'range' | 'single';
 };
 
-/** Matched against the tenant's OWN services — a hint the sitter does not offer is refused, never
- *  mapped onto a near neighbour. */
+/**
+ * Matched against the tenant's OWN services — a hint the sitter does not offer is refused, never
+ * mapped onto a near neighbour. Tenants name services freely ("Pack Walks", "House sitting"), so
+ * a title-derived hint like 'walk' or 'house-sit' rarely equals a slug or label exactly. Three
+ * tiers, widest confidence first, STOPPING at the first tier that produces exactly one match:
+ *
+ *   1. exact      — nameKey(serviceType) === hint or nameKey(label) === hint.
+ *   2. label-prefix — nameKey(label).startsWith(hint). Catches 'housesit' -> 'housesitting'.
+ *      Deliberately crosses word boundaries, unlike tier 3 below: 'housesit' lands mid-token in
+ *      "House sitting" ('house' + part of 'sitting'), so a rule confined to whole tokens would
+ *      miss the exact case this tier exists for. The cost is that a label like "Check Inventory"
+ *      (nameKey 'checkinventory') would also absorb the hint 'check-in'. That risk is bounded,
+ *      not eliminated: the hint vocabulary is the closed four-value set in SERVICE_WORDS, not
+ *      arbitrary text, and a wrong resolution here is still shown to the sitter in the write
+ *      preview before anything is written, never applied silently. This asymmetry with tier 3 is
+ *      intentional — do not "fix" one to match the other, or 'house-sit' stops resolving.
+ *   3. label-token-prefix — split the label on whitespace; any token whose nameKey starts with
+ *      the hint. Catches 'walk' -> the 'walks' token of "Pack Walks".
+ *
+ * Never the other direction (hint starts with label) and never substring-anywhere — 'walk' must
+ * not match a label "Boardwalk Special". Prefix-of-token only.
+ *
+ * A tier matching two or more services is refused, not resolved by picking one — same posture as
+ * every other ambiguity in this module (see resolvePetsByName, resolveHousehold).
+ */
 export function resolveService(
   hint: string | null,
   services: BackfillService[],
@@ -232,11 +255,35 @@ export function resolveService(
     return { ok: false, reason: 'unknown-service', detail: 'No service named in the title' };
   }
   const key = nameKey(hint);
-  const hit = services.find((s) => nameKey(s.serviceType) === key || nameKey(s.label) === key);
-  if (!hit) {
-    return { ok: false, reason: 'unknown-service', detail: `You do not offer "${hint.trim()}"` };
-  }
-  return { ok: true, service: hit };
+
+  const refuse = (
+    matches: BackfillService[],
+  ): { ok: false; reason: 'unknown-service'; detail: string } => ({
+    ok: false,
+    reason: 'unknown-service',
+    detail: `"${hint.trim()}" matches more than one service you offer: ${matches
+      .map((s) => s.label)
+      .join(', ')}`,
+  });
+
+  const exact = services.filter((s) => nameKey(s.serviceType) === key || nameKey(s.label) === key);
+  if (exact.length === 1) return { ok: true, service: exact[0] };
+  if (exact.length > 1) return refuse(exact);
+
+  const labelPrefix = services.filter((s) => nameKey(s.label).startsWith(key));
+  if (labelPrefix.length === 1) return { ok: true, service: labelPrefix[0] };
+  if (labelPrefix.length > 1) return refuse(labelPrefix);
+
+  const tokenPrefix = services.filter((s) =>
+    s.label
+      .split(/\s+/)
+      .map((token) => nameKey(token))
+      .some((token) => token !== '' && token.startsWith(key)),
+  );
+  if (tokenPrefix.length === 1) return { ok: true, service: tokenPrefix[0] };
+  if (tokenPrefix.length > 1) return refuse(tokenPrefix);
+
+  return { ok: false, reason: 'unknown-service', detail: `You do not offer "${hint.trim()}"` };
 }
 
 export type BackfillContext = {
