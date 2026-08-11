@@ -421,19 +421,77 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   });
 
   const parsed = parseEventSummary(event.summary);
+  // The sitter's own record, when the event carries one — preferred over our reading of the
+  // title everywhere below, because it is what actually happened rather than our guess at it.
+  const meta = parseEventDescription(event.description);
 
   const pets = resolvePetsByName(parsed.petNames, ctx.pets);
   if (!pets.ok) return flag(pets.reason, pets.detail);
 
-  const household = resolveHousehold(pets.pets, ctx.links);
-  if (!household.ok) return flag(household.reason, household.detail);
-
-  const service = resolveService(parsed.serviceHint, ctx.services);
+  // 1. Service — the description's `Booking:` value first, the title's parsed hint as fallback.
+  // Either way, a service this tenant does not offer still flags unknown-service.
+  let service = resolveService(meta.booking, ctx.services);
+  if (!service.ok) service = resolveService(parsed.serviceHint, ctx.services);
   if (!service.ok) return flag(service.reason, service.detail);
+
+  // 2. Household — the description's owner id(s), when present, take precedence over the
+  // pet-derived household below. Matched by SUFFIX rather than any hardcoded id prefix or scheme:
+  // the owner id from the sitter's previous system commonly survives inside the pawservation
+  // client id verbatim, but as a suffix of it (e.g. a `eu_<slug>_<legacy id>` shape) — matching by
+  // suffix reads that fact without this repo learning or hardcoding another product's id scheme.
+  const petHousehold = resolveHousehold(pets.pets, ctx.links);
+  let household: typeof petHousehold;
+  if (meta.ownerIds.length > 0) {
+    const distinctEndUserIds = [...new Set(ctx.links.map((link) => link.EndUserId))];
+    const matches = distinctEndUserIds.filter((endUserId) =>
+      meta.ownerIds.some((ownerId) => endUserId.toLowerCase().endsWith(ownerId.toLowerCase())),
+    );
+    if (matches.length === 1) {
+      // The pet-derived household is still computed above; if it resolved to a DIFFERENT client
+      // than the description names, that is a genuine conflict — never silently pick one.
+      if (petHousehold.ok && petHousehold.endUserId !== matches[0]) {
+        return flag(
+          'multiple-households',
+          `The description names a different client than the pets in the title do`,
+        );
+      }
+      household = { ok: true, endUserId: matches[0] };
+    } else if (matches.length > 1) {
+      return flag(
+        'multiple-households',
+        `The description's owner id matches ${matches.length} clients`,
+      );
+    } else {
+      // No client's id carries this owner id as a suffix — fall back to the pet-derived answer.
+      household = petHousehold;
+    }
+  } else {
+    household = petHousehold;
+  }
+  if (!household.ok) return flag(household.reason, household.detail);
 
   // The schema's own answer, never inferred from the (renameable, per-tenant) slug.
   const endDate = service.service.shape === 'range' ? spanEndExclusive(event) : null;
   const petIds = pets.pets.map((p) => p.id);
+
+  // 3. Cost — a description Cost: is what was actually charged, so it wins over the rate card
+  // outright: the row adopts on that number even when the rate card itself couldn't price this
+  // pet set (an unpriced combination that would otherwise flag needs-price).
+  if (meta.cost !== null) {
+    return {
+      kind: 'adopt',
+      eventId: event.id,
+      summary: event.summary,
+      startDate: event.start,
+      endDate,
+      endUserId: household.endUserId,
+      serviceType: service.service.serviceType,
+      optionKey: service.service.optionKey,
+      petIds,
+      estCost: meta.cost,
+      cancelled: parsed.cancelled,
+    };
+  }
 
   const price = ctx.priceFor(service.service, pets.pets, event.start, spanEndExclusive(event));
   if (!price.priced) {

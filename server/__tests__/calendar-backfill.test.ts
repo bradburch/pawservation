@@ -600,6 +600,128 @@ describe('classifyEvent', () => {
 });
 
 /**
+ * The sitter's own structured description — real cost, service, and client — is preferred over
+ * our reading of the title, per docs/superpowers/sdd/2026-08-10-calendar-backfill. See the design
+ * doc's motivating example: an event titled "Summer and Chia Walk - CANCELLED" carries `Cost: 40`
+ * in its description, but the rate card prices two dogs at $80 — the description is what was
+ * actually charged.
+ */
+describe('classifyEvent — the description is preferred over the title', () => {
+  // Verbatim from a real production event.
+  const REAL_DESCRIPTION =
+    'Owner: Lauren Kotin, Ian Fisher\n' +
+    'Owner ID: aaefb00f-c993-4de1-8d44-b335ecc3adb4, 47da31e8-8cd4-4198-bebc-cddaf7cd01de\n' +
+    'Cost: 40\n' +
+    'Booking: walk\n' +
+    'v: 1';
+
+  it('adopts the real Sadie Walk event at cost 40, service resolved from Booking: walk', () => {
+    const out = classifyEvent(event({ summary: 'Sadie Walk', description: REAL_DESCRIPTION }), {
+      ...CTX,
+      // If the rate card were consulted it would answer 25 (CTX.priceFor) — the description's
+      // Cost: 40 must win regardless.
+      priceFor: () => ({ priced: true as const, cost: 25 }),
+    });
+    expect(out).toMatchObject({
+      kind: 'adopt',
+      serviceType: 'walk',
+      optionKey: 'standard',
+      estCost: 40,
+    });
+  });
+
+  it('adopts "Summer and Chia Walk - CANCELLED" at 40, not the rate card\'s 80 — the bug that motivated this change', () => {
+    const summerChiaCtx = {
+      pets: [
+        { id: 'p10', name: 'Summer', petType: 'dog' },
+        { id: 'p11', name: 'Chia', petType: 'dog' },
+      ],
+      links: [
+        { EndUserId: 'u9', PetId: 'p10' },
+        { EndUserId: 'u9', PetId: 'p11' },
+      ],
+      services: [
+        { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
+      ],
+      adoptedEventIds: new Set<string>(),
+      // The rate card's linear two-pet answer — $40/pet — which is the wrong number this change
+      // exists to stop using.
+      priceFor: () => ({ priced: true as const, cost: 80 }),
+    };
+    const out = classifyEvent(
+      event({
+        summary: 'Summer and Chia Walk - CANCELLED',
+        description: 'Owner ID: u9\nCost: 40\nBooking: walk',
+      }),
+      summerChiaCtx,
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 40, cancelled: true });
+  });
+
+  it('still prices from the rate card when the description gives no Cost', () => {
+    const out = classifyEvent(
+      event({ summary: 'Sadie Walk', description: 'Owner: Lauren Kotin' }),
+      { ...CTX, priceFor: () => ({ priced: true as const, cost: 25 }) },
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 25 });
+  });
+
+  it('behaves exactly as before for an event with no description at all', () => {
+    expect(classifyEvent(event(), CTX)).toEqual({
+      kind: 'adopt',
+      eventId: 'ev1',
+      summary: 'Sadie Walk',
+      startDate: '2026-07-01',
+      endDate: null,
+      endUserId: 'u1',
+      serviceType: 'walk',
+      optionKey: 'standard',
+      petIds: ['p1'],
+      estCost: 25,
+      cancelled: false,
+    });
+  });
+
+  it("refuses when the description's owner id resolves a DIFFERENT household than the title's pets", () => {
+    const ctx = {
+      pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+      links: [
+        { EndUserId: 'u1', PetId: 'p1' },
+        // A second client on the roster whose id happens to end with the legacy owner id below —
+        // not an owner of Sadie at all.
+        { EndUserId: 'eu_legacy_zzz999', PetId: 'p2' },
+      ],
+      services: [
+        { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
+      ],
+      adoptedEventIds: new Set<string>(),
+      priceFor: () => ({ priced: true as const, cost: 20 }),
+    };
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Walk',
+        description: 'Owner ID: zzz999\nCost: 40\nBooking: walk',
+      }),
+      ctx,
+    );
+    expect(out).toMatchObject({ kind: 'flag', reason: 'multiple-households' });
+  });
+
+  it('a description Cost: lets an otherwise needs-price event adopt', () => {
+    const out = classifyEvent(event({ description: 'Owner: Lauren Kotin\nCost: 40' }), {
+      ...CTX,
+      priceFor: () => ({
+        priced: false as const,
+        reason: 'unpriced-pet-set' as const,
+        groupKey: 'p1',
+        mixKey: 'dog:1',
+      }),
+    });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 40 });
+  });
+});
+
+/**
  * Google's `end` is EXCLUSIVE for an all-day event and INCLUSIVE for a timed one. `externalSpan`
  * (server/lib/calendar-sync.ts) is where that rule already lives, and it is the source of truth:
  * it is what decides how many days the SAME event blocks while it is still a foreign 'external'
