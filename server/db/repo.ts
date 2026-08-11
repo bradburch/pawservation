@@ -1536,11 +1536,22 @@ export async function deleteAccountPayment(
  * CONSERVATION, and it is the reason attribution can never create or destroy money. Both figures
  * are named in the refusal, because "the split doesn't add up" is unactionable without them.
  *
- * `ExternalRef` is SUFFIXED, not dropped: `<ref>:1`, `<ref>:2`, … and `<ref>:r` for the remainder.
- * The derived rows share `idx_Payments_Tenant_ExternalRef` (partial unique) with the source, so
- * they cannot inherit it unchanged; dropping it instead would lose the trail back to the source
- * and let a re-import of the original CSV recreate money this attribution has already placed. A
- * source with no `ExternalRef` yields rows with none.
+ * `ExternalRef` is MARKED, not dropped: `attr:1:<ref>`, `attr:2:<ref>`, … and `attr:r:<ref>` for
+ * the remainder (`deriveAttributedRef`, server/lib/payment-attribution.ts). The derived rows share
+ * `idx_Payments_Tenant_ExternalRef` (partial unique) with the source, so they cannot inherit it
+ * unchanged. The marker LEADS and the original is carried verbatim as the tail precisely so that
+ * recovery is unambiguous — a suffix cannot be undone against a key like `csv:<hash>:<rank>` that
+ * already ends in `:` plus digits. A source with no `ExternalRef` yields rows with none.
+ *
+ * THAT REWRITE IS ONLY HALF THE SCHEME, AND THE OTHER HALF IS NOT HERE. Deleting the source row
+ * removes the key both payment importers dedupe against, so on its own this would let the next
+ * upload of the same file record the payment a SECOND time — creating money, on the CSV
+ * importer's own documented expected case of overlapping monthly exports. What prevents that is
+ * `expandImportedRefs`, applied where the importers build their dedupe set (server/routes/admin.ts,
+ * `loadPaymentMatchInputs`): it adds the recovered original behind every derived ref, so an
+ * attributed key still reads as already-imported. Do not remove that call as redundant defence —
+ * it is the protection, not a belt on top of one. Pinned by
+ * server/__tests__/payment-attribution-reimport.test.ts, which drives both importers end to end.
  *
  * EVERY TARGET BOOKING'S OWN LIVE OUTSTANDING IS RE-READ TOO, from the same `getHouseholdDetail`
  * that computes the balance this attribution must leave unchanged — a caller-supplied split is

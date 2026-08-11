@@ -62,11 +62,13 @@ import { MS_PER_DAY, parseDateUtc } from '../../src/shared/index.js';
  * recovery would have to guess. With the original carried verbatim as the tail, recovery is
  * "strip the marker and the segment; everything after is the original", whatever it contains.
  *
- * NO NATURAL REF CAN BE MISTAKEN FOR A DERIVED ONE. The only three writers of a non-NULL
- * `ExternalRef` are the Venmo importer (a transaction id, `TXN_ID_RE` = `[A-Za-z0-9_-]{1,64}`,
- * which cannot contain a colon at all), the CSV importer (always namespaced `csv:`, including
- * when it keys on a sitter's own reference cell), and this scheme itself; hand-recorded payments
- * carry NULL. So nothing natural begins `attr:`. That is an argument, not a guarantee, so
+ * NO NATURAL REF CAN BE MISTAKEN FOR A DERIVED ONE. The writers of a non-NULL `ExternalRef` in
+ * this repo are the Venmo importer (a transaction id, `TXN_ID_RE` = `[A-Za-z0-9_-]{1,64}`, which
+ * cannot contain a colon at all), the CSV importer (always namespaced `csv:`, including when it
+ * keys on a sitter's own reference cell), and this scheme itself; hand-recorded payments carry
+ * NULL. Rows loaded out of tree are not covered by that survey — the live `brad-paws` import
+ * wrote `bp_pay_*` refs directly — which is exactly why the check below is a parse rather than a
+ * survey. Nothing natural is known to begin `attr:`, but that is an argument, not a guarantee, so
  * `recoverSourceRef` is written to REQUIRE a well-formed segment (digits, or `r`) rather than
  * trusting the marker alone: `attr:x:whatever` is read as an ordinary ref, not unwrapped.
  *
@@ -86,7 +88,13 @@ export function deriveAttributedRef(sourceRef: string | null, segment: string): 
 export function recoverSourceRef(ref: string): string | null {
   let current = ref;
   while (DERIVED_REF_RE.test(current)) {
-    current = current.slice(current.indexOf(':', DERIVED_REF_MARKER.length) + 1);
+    const separator = current.indexOf(':', DERIVED_REF_MARKER.length);
+    // Structural termination, not regex-dependent: today `DERIVED_REF_RE` guarantees this second
+    // colon, so the break is unreachable — but a future widening of the marker grammar would
+    // otherwise turn `slice(0)` into no progress, and this runs on a request path, so the failure
+    // would be a hang rather than a test failure.
+    if (separator === -1) break;
+    current = current.slice(separator + 1);
   }
   return current === ref ? null : current;
 }
@@ -97,10 +105,12 @@ export function recoverSourceRef(ref: string): string | null {
  * would hand its key back to the next upload of the same file.
  *
  * A pre-read set, not a database constraint — so it is the whole protection for an attributed
- * key, where an unattributed one is also backstopped by the partial unique index. Two imports of
- * the same already-attributed file running concurrently could still both pass this check; that
- * window is the reason the routes go on catching a unique violation from the insert itself rather
- * than treating this set as the last word.
+ * key, where an unattributed one is also backstopped by the partial unique index. Note the gap is
+ * between two concurrent IMPORTS, not between an import and an attribution: attribution commits
+ * the delete and the derived inserts in one `db.batch`, so a set read either side of it sees the
+ * key literally or recovers it, never neither. Two imports of the same already-attributed file
+ * running concurrently could still both pass this check, which is why the routes go on catching a
+ * unique violation from the insert itself rather than treating this set as the last word.
  */
 export function expandImportedRefs(refs: string[]): Set<string> {
   const set = new Set(refs);
