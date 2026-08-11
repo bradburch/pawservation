@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   adminApi,
+  ApiError,
   type BackfillFlagReason,
   type BackfillImportResult,
   type BackfillPreview,
@@ -75,11 +76,23 @@ export function CalendarBackfillPanel({
   const [prices, setPrices] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BackfillImportResult | null>(null);
+  // eventIds of an in-flight PER-ROW adopt — separate from `busy`, which covers preview/bulk
+  // import, so working one row doesn't grey out every other row's own button.
+  const [rowBusy, setRowBusy] = useState<Set<string>>(new Set());
+  // A per-row adopt's own failure (the server's `skipped` reason for that one event, or a thrown
+  // ApiError's message) — shown on that row only, cleared the moment the row is retried.
+  const [rowErrors, setRowErrors] = useState<Map<string, string>>(new Map());
+  // null = "All pets". Narrows the adopt/needsPrice/flagged lists to rows involving one pet, so a
+  // sitter with 53 rows in one month can work through them one animal at a time.
+  const [petFilter, setPetFilter] = useState<string | null>(null);
 
   const reset = () => {
     setPreview(null);
     setChecked(new Set());
     setPrices(new Map());
+    setRowBusy(new Set());
+    setRowErrors(new Map());
+    setPetFilter(null);
   };
 
   const runPreview = async () => {
@@ -116,20 +129,51 @@ export function CalendarBackfillPanel({
   const setPrice = (eventId: string, value: string) =>
     setPrices((prev) => new Map(prev).set(eventId, value));
 
+  // Every pet named on an adopt or needs-price row, sorted — the filter's own option list.
+  // "All pets" is represented by petFilter === null, not a row in this array.
+  const petOptions = preview
+    ? [
+        ...new Set([
+          ...preview.adopt.flatMap((r) => r.petNames),
+          ...preview.needsPrice.flatMap((r) => r.petNames),
+        ]),
+      ].sort((a, b) => a.localeCompare(b))
+    : [];
+
+  // Loose, case/punctuation-insensitive containment — same normalisation idiom as the server's
+  // own `nameKey` (calendar-backfill.ts), but UI-only and best-effort: a flagged row carries no
+  // resolved petIds/petNames (pet resolution is often exactly what failed), so its summary text
+  // is the only signal available to narrow it by pet. Never used to decide money or eligibility,
+  // only which rows the filter shows.
+  const summaryNames = (summary: string) => summary.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const matchesFilter = (petNames: string[]) => petFilter === null || petNames.includes(petFilter);
+
+  const visibleAdopt = preview ? preview.adopt.filter((r) => matchesFilter(r.petNames)) : [];
+  const visibleNeedsPrice = preview
+    ? preview.needsPrice.filter((r) => matchesFilter(r.petNames))
+    : [];
+  const visibleFlags = preview
+    ? petFilter === null
+      ? preview.flags
+      : preview.flags.filter((f) => summaryNames(f.summary).includes(summaryNames(petFilter)))
+    : [];
+
   // Ticked adopt rows (their price is always sent — harmlessly matching the rate card's own
   // figure when the sitter never touched it) plus every needs-price row that has a VALID
   // whole-dollar price typed in. A needs-price row with no price, or an unparseable one, is never
   // included — the same "never adopted at a number this server invented" rule the design doc
   // states for the server side, enforced here too so the sitter never gets as far as a 400 for it.
+  //
+  // Scoped to the VISIBLE (post-filter) rows only — filtering to one pet and then hitting bulk
+  // Adopt must never sweep in rows the sitter can't currently see.
   const toImport = (): { eventId: string; estCost?: number }[] => {
-    if (!preview) return [];
     const rows: { eventId: string; estCost?: number }[] = [];
-    for (const r of preview.adopt) {
+    for (const r of visibleAdopt) {
       if (!checked.has(r.eventId)) continue;
       const raw = prices.get(r.eventId) ?? '';
       rows.push({ eventId: r.eventId, ...(isWholeDollar(raw) ? { estCost: Number(raw) } : {}) });
     }
-    for (const r of preview.needsPrice) {
+    for (const r of visibleNeedsPrice) {
       const raw = prices.get(r.eventId) ?? '';
       if (!isWholeDollar(raw)) continue;
       rows.push({ eventId: r.eventId, estCost: Number(raw) });
@@ -140,12 +184,10 @@ export function CalendarBackfillPanel({
   const pending = toImport();
   // A ticked adopt row whose price field the sitter cleared or broke blocks Adopt entirely,
   // rather than silently falling back to the rate card's figure behind their back or silently
-  // dropping just that one row.
-  const hasInvalidPrice = preview
-    ? preview.adopt.some(
-        (r) => checked.has(r.eventId) && !isWholeDollar(prices.get(r.eventId) ?? ''),
-      )
-    : false;
+  // dropping just that one row. Scoped to visible rows, same as `toImport`.
+  const hasInvalidPrice = visibleAdopt.some(
+    (r) => checked.has(r.eventId) && !isWholeDollar(prices.get(r.eventId) ?? ''),
+  );
 
   const runImport = async () => {
     if (!preview || pending.length === 0 || busy || hasInvalidPrice) return;
@@ -169,13 +211,67 @@ export function CalendarBackfillPanel({
     }
   };
 
-  const flagGroups = new Map<BackfillFlagReason, BackfillPreview['flags']>();
-  if (preview) {
-    for (const f of preview.flags) {
-      const list = flagGroups.get(f.reason) ?? [];
-      list.push(f);
-      flagGroups.set(f.reason, list);
+  // Adopt exactly one event — the same import call the bulk path makes, with a single-entry list.
+  // On success the row is dropped from `preview` in place (never a full re-preview, so every OTHER
+  // row keeps its typed price and the sitter keeps their place in a long list). A price is sent
+  // only when the row's own field currently holds a valid whole dollar amount; the caller (the
+  // button's `disabled`) guarantees that's true whenever this runs.
+  const adoptOne = async (eventId: string, estCost: number) => {
+    if (rowBusy.has(eventId) || busy) return;
+    clearError();
+    setRowBusy((prev) => new Set(prev).add(eventId));
+    setRowErrors((prev) => {
+      if (!prev.has(eventId)) return prev;
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
+    try {
+      const outcome = await adminApi.calendarBackfill.import(
+        session.slug,
+        session.token,
+        from,
+        to,
+        [{ eventId, estCost }],
+      );
+      if (outcome.imported > 0) {
+        setPreview((prev) =>
+          prev
+            ? {
+                ...prev,
+                adopt: prev.adopt.filter((r) => r.eventId !== eventId),
+                needsPrice: prev.needsPrice.filter((r) => r.eventId !== eventId),
+              }
+            : prev,
+        );
+        setChecked((prev) => {
+          if (!prev.has(eventId)) return prev;
+          const next = new Set(prev);
+          next.delete(eventId);
+          return next;
+        });
+        await onImported();
+      } else {
+        const reason = outcome.skipped[0]?.reason ?? 'Could not adopt that event.';
+        setRowErrors((prev) => new Map(prev).set(eventId, reason));
+      }
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : 'Could not adopt that event.';
+      setRowErrors((prev) => new Map(prev).set(eventId, message));
+    } finally {
+      setRowBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
     }
+  };
+
+  const flagGroups = new Map<BackfillFlagReason, BackfillPreview['flags']>();
+  for (const f of visibleFlags) {
+    const list = flagGroups.get(f.reason) ?? [];
+    list.push(f);
+    flagGroups.set(f.reason, list);
   }
 
   const nothingFound =
@@ -183,6 +279,16 @@ export function CalendarBackfillPanel({
     preview.adopt.length === 0 &&
     preview.needsPrice.length === 0 &&
     preview.flags.length === 0;
+
+  // Distinct from `nothingFound`: the preview itself found rows, but the current pet filter hides
+  // all of them. Told apart so the sitter isn't led to believe the range was empty.
+  const nothingVisible =
+    preview !== null &&
+    !nothingFound &&
+    petFilter !== null &&
+    visibleAdopt.length === 0 &&
+    visibleNeedsPrice.length === 0 &&
+    visibleFlags.length === 0;
 
   return (
     <div className="pb-venmo-import">
@@ -235,19 +341,42 @@ export function CalendarBackfillPanel({
         </p>
       )}
 
+      {preview && petOptions.length > 0 && (
+        <div className="pb-row">
+          <label className="pb-inline">
+            Pet
+            <select
+              value={petFilter ?? ''}
+              disabled={busy}
+              onChange={(e) => setPetFilter(e.target.value || null)}
+            >
+              <option value="">All pets</option>
+              {petOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
       {preview && (
         <>
           {nothingFound && (
             <p className="pb-hint">Nothing to adopt in that range — see below for why.</p>
           )}
+          {nothingVisible && <p className="pb-hint">No events for {petFilter} in that range.</p>}
 
-          {preview.adopt.length > 0 && (
+          {visibleAdopt.length > 0 && (
             <>
-              <h4>Ready to adopt</h4>
+              <h4>Ready to adopt ({visibleAdopt.length})</h4>
               <ul>
-                {preview.adopt.map((r) => {
+                {visibleAdopt.map((r) => {
                   const raw = prices.get(r.eventId) ?? '';
-                  const invalid = checked.has(r.eventId) && !isWholeDollar(raw);
+                  const priceInvalid = !isWholeDollar(raw);
+                  const invalid = checked.has(r.eventId) && priceInvalid;
+                  const busyRow = rowBusy.has(r.eventId);
                   return (
                     <li key={r.eventId}>
                       <label className="pb-inline">
@@ -265,12 +394,21 @@ export function CalendarBackfillPanel({
                           min={1}
                           step={1}
                           value={raw}
-                          disabled={busy || !checked.has(r.eventId)}
+                          disabled={busy || busyRow}
                           onChange={(e) => setPrice(r.eventId, e.target.value)}
                           aria-label={`Price for ${r.summary}`}
                         />
-                      </label>
+                      </label>{' '}
+                      <button
+                        onClick={() => void adoptOne(r.eventId, Number(raw))}
+                        disabled={busy || busyRow || priceInvalid}
+                      >
+                        {busyRow ? 'Adopting…' : 'Adopt'}
+                      </button>
                       {invalid && <span className="pb-hint"> — enter a whole-dollar amount</span>}
+                      {rowErrors.has(r.eventId) && (
+                        <p className="pb-error">{rowErrors.get(r.eventId)}</p>
+                      )}
                     </li>
                   );
                 })}
@@ -278,40 +416,54 @@ export function CalendarBackfillPanel({
             </>
           )}
 
-          {preview.needsPrice.length > 0 && (
+          {visibleNeedsPrice.length > 0 && (
             <>
-              <h4>Adoptable once priced</h4>
+              <h4>Adoptable once priced ({visibleNeedsPrice.length})</h4>
               <p className="pb-hint">
                 Your rate card doesn&rsquo;t cover this combination of pets yet — nothing is guessed
                 on your behalf. Type a price to adopt it now (this doesn&rsquo;t add the rate to
                 your card, it just prices this one stay).
               </p>
               <ul>
-                {preview.needsPrice.map((r) => (
-                  <li key={r.eventId}>
-                    {r.summary} — {eventWhen(r.startDate, r.endDate)}{' '}
-                    <label className="pb-inline">
-                      $
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        placeholder="price"
-                        value={prices.get(r.eventId) ?? ''}
-                        disabled={busy}
-                        onChange={(e) => setPrice(r.eventId, e.target.value)}
-                        aria-label={`Price for ${r.summary}`}
-                      />
-                    </label>
-                  </li>
-                ))}
+                {visibleNeedsPrice.map((r) => {
+                  const raw = prices.get(r.eventId) ?? '';
+                  const priceInvalid = !isWholeDollar(raw);
+                  const busyRow = rowBusy.has(r.eventId);
+                  return (
+                    <li key={r.eventId}>
+                      {r.summary} — {eventWhen(r.startDate, r.endDate)}{' '}
+                      <label className="pb-inline">
+                        $
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          placeholder="price"
+                          value={raw}
+                          disabled={busy || busyRow}
+                          onChange={(e) => setPrice(r.eventId, e.target.value)}
+                          aria-label={`Price for ${r.summary}`}
+                        />
+                      </label>{' '}
+                      <button
+                        onClick={() => void adoptOne(r.eventId, Number(raw))}
+                        disabled={busy || busyRow || priceInvalid}
+                      >
+                        {busyRow ? 'Adopting…' : 'Adopt'}
+                      </button>
+                      {rowErrors.has(r.eventId) && (
+                        <p className="pb-error">{rowErrors.get(r.eventId)}</p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}
 
-          {preview.flags.length > 0 && (
+          {visibleFlags.length > 0 && (
             <>
-              <h4>Needs a fix first</h4>
+              <h4>Needs a fix first ({visibleFlags.length})</h4>
               {[...flagGroups.entries()].map(([reason, flags]) => (
                 <div key={reason}>
                   <p>
@@ -338,7 +490,7 @@ export function CalendarBackfillPanel({
             </p>
           )}
 
-          {(preview.adopt.length > 0 || preview.needsPrice.length > 0) && (
+          {(visibleAdopt.length > 0 || visibleNeedsPrice.length > 0) && (
             <div className="pb-row">
               <button
                 onClick={() => void runImport()}

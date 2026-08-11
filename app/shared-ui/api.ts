@@ -284,6 +284,8 @@ export type BackfillAdoptRow = {
   serviceType: string;
   optionKey: string;
   petIds: string[];
+  /** Aligned with `petIds` — resolved server-side, never guessed from `summary`. */
+  petNames: string[];
   estCost: number;
   cancelled: boolean;
 };
@@ -302,6 +304,8 @@ export type BackfillNeedsPriceRow = {
   serviceType: string;
   optionKey: string;
   petIds: string[];
+  /** Aligned with `petIds` — resolved server-side, never guessed from `summary`. */
+  petNames: string[];
   cancelled: boolean;
 };
 
