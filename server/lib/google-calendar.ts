@@ -338,6 +338,10 @@ type EventResource = {
 export type CalendarEvent = {
   id: string; // Google event id — the external-row upsert key
   summary: string;
+  // The event's free-text Google Calendar description. calendar-backfill.ts reads structured
+  // `Key: value` lines out of this — a sitter's own record of cost/service/owner, when present —
+  // in preference to guessing those from the title. Verbatim from Google; '' when absent.
+  description: string;
   start: string; // 'YYYY-MM-DD' (all-day) or the date part of a dateTime
   end: string; // all-day: Google's EXCLUSIVE end date; timed: the date part of the end dateTime
   allDay: boolean; // start.date present (vs dateTime) — drives end-exclusivity normalization
@@ -504,6 +508,7 @@ export async function listCalendarEvents(
       items: Array<{
         id?: string;
         summary?: string;
+        description?: string;
         status?: string;
         updated?: string;
         start: { date?: string; dateTime?: string };
@@ -516,6 +521,7 @@ export async function listCalendarEvents(
       events.push({
         id: item.id ?? '',
         summary: item.summary ?? '',
+        description: item.description ?? '',
         // All-day events carry `date` directly — no timezone ambiguity, unaffected by the note
         // below. A TIMED event's date here is sliced from Google's own `dateTime` string, which
         // Google renders in the CALENDAR's configured timezone (or the event's explicit

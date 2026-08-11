@@ -375,6 +375,7 @@ const event = (
   over: Partial<{
     id: string;
     summary: string;
+    description: string;
     start: string;
     end: string;
     allDay: boolean;
@@ -383,6 +384,7 @@ const event = (
 ) => ({
   id: over.id ?? 'ev1',
   summary: over.summary ?? 'Sadie Walk',
+  description: over.description ?? '',
   start: over.start ?? '2026-07-01',
   end: over.end ?? '2026-07-02',
   allDay: over.allDay ?? true,
