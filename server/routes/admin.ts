@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
+  addBookingPets,
   addCoOwnerToPets,
   addEndUserPet,
   addPetOwner,
@@ -12,6 +13,7 @@ import {
   createPetType,
   createService,
   deleteAllExternalEvents,
+  deleteBookingRequest,
   deletePetTypeAndScrub,
   getAnalytics,
   getBookingSyncData,
@@ -26,6 +28,7 @@ import {
   deleteService,
   getProviderConnection,
   getTenantUserEmailById,
+  insertBackfilledBooking,
   insertBookingCharge,
   keepBookingCredit,
   insertBookingRequest,
@@ -34,6 +37,7 @@ import {
   insertAccountPayment,
   insertPayment,
   getAccountIdsByOwner,
+  listAdoptedEventIds,
   listAllEndUserPetsByTenant,
   listAllPetGroupPricing,
   listBlockedRanges,
@@ -42,6 +46,7 @@ import {
   listChargesForTenant,
   listCustomers,
   listEndUserPets,
+  listOwnerPetLinks,
   listPaymentExternalRefs,
   listPaymentsForBooking,
   listPetNamesForBooking,
@@ -61,6 +66,7 @@ import {
   setServiceConfig,
   setPetDeceased,
   setEndUserVenmoUsername,
+  updateBackfilledBookingCost,
   updateBookingStatus,
   updateTenantSettings,
   upsertPetGroupRate,
@@ -69,7 +75,7 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import { serializeAnalytics } from '../lib/analytics';
-import { confirmOverbookWarning } from '../lib/availability';
+import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
@@ -86,9 +92,19 @@ import {
   callbackUriFor,
   CalendarAuthError,
   createCalendar,
+  listCalendarEvents,
   PET_CALENDAR_SUMMARY,
   revokeToken,
 } from '../lib/google-calendar';
+import type { CalendarEvent } from '../lib/google-calendar';
+import {
+  classifyEvent,
+  type BackfillContext,
+  type BackfillPet,
+  type BackfillService,
+  type Classified,
+  type PetOwnerLink,
+} from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
@@ -133,8 +149,13 @@ import {
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
-import type { AppEnv, Tenant } from '../types';
-import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
+import type { AppEnv, Tenant, TenantService, TenantServiceOption } from '../types';
+import type {
+  CancellationTier,
+  GroupRate,
+  MixRate,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 import {
   buildGroupKey,
   buildMixKey,
@@ -196,6 +217,141 @@ async function loadVenmoMatchInputs(
     })),
     alreadyImported: new Set(refs),
   };
+}
+
+/** One pass reads its whole range before classifying, so the cap is on events READ, not events
+ *  adopted. Chosen to sit inside the Workers Free plan's 50-subrequest budget. Exported: the
+ *  import route (Task 7) enforces the same cap, and the range-picker UI uses it to warn before
+ *  submitting a range that would be refused. */
+export const MAX_BACKFILL_EVENTS = 200;
+
+/** Same sanity ceiling as every other explicit-bounds field in this file (advance months, lead
+ *  days, overlap days, pet count) — a sitter-typed historical price is real money, but a figure
+ *  with 15 digits behind it is a typo, not a stay anyone actually charged. */
+export const MAX_BACKFILL_EST_COST = 1_000_000;
+
+/**
+ * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
+ * loaded once per pass. Lives here, not in `server/lib/`, because it touches D1 — the same split
+ * `loadVenmoMatchInputs` above uses.
+ */
+async function loadBackfillContext(
+  c: Context<AppEnv>,
+  tenant: Tenant,
+): Promise<{
+  pets: BackfillPet[];
+  links: PetOwnerLink[];
+  backfillServices: BackfillService[];
+  serviceByType: Map<string, TenantService>;
+  optionByType: Map<string, TenantServiceOption>;
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] };
+}> {
+  const [petRows, links, services, options, groupRows, mixRows] = await Promise.all([
+    listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id),
+    listOwnerPetLinks(c.env.PAWSERVATION_DB, tenant.Id),
+    listServices(c.env.PAWSERVATION_DB, tenant.Id),
+    listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
+    // Both pet-set rate tables, ONE read each, tenant-wide — not routed through `loadPetSetRates`
+    // (which is per-service by design, for the booking flow's single-service callers) and not
+    // called once per enabled service here. `resolvePetSetRate` (inside `estimateCost`) filters
+    // every candidate row by `serviceType`+`optionKey` on each lookup regardless of what superset
+    // of rows it's handed, so passing the full tenant-wide set to every service below is exactly
+    // equivalent to a per-service-scoped read — with none of the redundant D1 cost. This route
+    // classifies every event against every enabled service (up to MAX_SERVICES) in one pass, which
+    // makes it the one caller that actually wants the whole tenant's rate tables at once; a
+    // per-service loop here would reread `TenantServicePetRates` in full, byte-identically, up to
+    // MAX_SERVICES times, which is what blew the Workers Free plan's subrequest budget this cap
+    // exists to protect. `listAllPetGroupPricing` is the same tenant-wide read already used by the
+    // pet-pricing GET route below (:703) and the settings-warning route.
+    listAllPetGroupPricing(c.env.PAWSERVATION_DB, tenant.Id),
+    listServicePetRates(c.env.PAWSERVATION_DB, tenant.Id),
+  ]);
+
+  const pets: BackfillPet[] = petRows.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType }));
+
+  // classifyEvent wants one option per service; take each enabled service's first option, which
+  // is what a title like "Sadie Walk" can name. A service with no option cannot price and is
+  // simply absent, so such an event flags `unknown-service` rather than failing. "First" is
+  // `listServiceOptions`'s own `ORDER BY ServiceType, DurationMinutes` (repo.ts) — i.e. the
+  // SHORTEST-duration option on a multi-option service — not an arbitrary array-order tiebreak;
+  // reordering that query would silently reprice every multi-option service's adopted stays.
+  const serviceByType = new Map<string, TenantService>();
+  const optionByType = new Map<string, TenantServiceOption>();
+  const backfillServices: BackfillService[] = [];
+  for (const s of services) {
+    if (!s.Enabled) continue;
+    const option = options.find((o) => o.ServiceType === s.ServiceType);
+    if (!option) continue;
+    serviceByType.set(s.ServiceType, s);
+    optionByType.set(s.ServiceType, option);
+    backfillServices.push({
+      serviceType: s.ServiceType,
+      label: s.Label,
+      optionKey: option.OptionKey,
+      // TenantServices.Shape, carried through verbatim. classifyEvent uses it to decide whether a
+      // booking keeps its exclusive end date. NEVER inferred from the slug: slugs are per-tenant
+      // text derived from a renameable label, so the built-in "House sitting" template becomes
+      // 'house-sitting' and any hardcoded slug list silently drops the end date off every
+      // multi-night stay.
+      shape: s.Shape,
+    });
+  }
+
+  // Same field mapping `loadPetSetRates` (availability.ts) applies to these two row shapes; kept
+  // in sync by hand since that mapping is a stable 1:1 column rename, not logic.
+  const rates = {
+    groupRates: groupRows.map((r) => ({
+      groupKey: r.GroupKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+    mixRates: mixRows.map((r) => ({
+      mixKey: r.MixKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+  };
+
+  return { pets, links, backfillServices, serviceByType, optionByType, rates };
+}
+
+/**
+ * Classify every Google Calendar event against this tenant's live pets/households/services/rates.
+ * Reused verbatim by the import route (Task 7) so the preview and the actual import classify by
+ * exactly the same code path.
+ */
+async function classifyAll(
+  c: Context<AppEnv>,
+  tenant: Tenant,
+  events: CalendarEvent[],
+): Promise<Classified[]> {
+  const [{ pets, links, backfillServices, serviceByType, optionByType, rates }, adoptedEventIds] =
+    await Promise.all([
+      loadBackfillContext(c, tenant),
+      listAdoptedEventIds(c.env.PAWSERVATION_DB, tenant.Id),
+    ]);
+
+  const priceFor: BackfillContext['priceFor'] = (
+    service,
+    pricedPets,
+    startDate,
+    endDateExclusive,
+  ) => {
+    const tenantService = serviceByType.get(service.serviceType)!;
+    const option = optionByType.get(service.serviceType)!;
+    return estimateCost(tenantService, option, startDate, endDateExclusive, pricedPets, rates);
+  };
+
+  const ctx: BackfillContext = {
+    pets,
+    links,
+    services: backfillServices,
+    adoptedEventIds,
+    priceFor,
+  };
+  return events.map((event) => classifyEvent(event, ctx));
 }
 
 /**
@@ -2260,6 +2416,10 @@ export const adminRoutes = new Hono<AppEnv>()
         petNames: petNamesByBooking.get(r.Id) ?? [],
         external: r.ServiceType === 'external',
         externalSummary: r.ExternalSummary,
+        // What the design doc names as the flag the UI reads to label a cost as an estimate
+        // rather than a client-agreed price (docs/superpowers/specs/2026-08-09-calendar-backfill-
+        // design.md) — the same restriction the PATCH .../cost route enforces server-side.
+        isBackfilled: r.Source === 'calendar-backfill',
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
@@ -2689,4 +2849,234 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * Preview which calendar events would be adopted as bookings. Writes nothing — every event is
+   * read from Google and classified fresh (`classifyAll`), same as the Venmo preview above.
+   */
+  .post('/:slug/admin/calendar/backfill/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ from?: unknown; to?: unknown }>()
+      .catch(() => ({}) as { from?: unknown; to?: unknown });
+    const from = typeof body.from === 'string' ? body.from : '';
+    const to = typeof body.to === 'string' ? body.to : '';
+    if (!isRealDate(from) || !isRealDate(to) || to <= from)
+      return c.json({ error: 'Choose a start date and a later end date.' }, 400);
+
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
+    if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
+      return c.json({ error: 'Connect your Google Calendar first.' }, 400);
+    const accessToken = await getCalendarAccessToken(c.env, tenant, conn);
+
+    const events = (
+      await listCalendarEvents(
+        accessToken,
+        conn.CalendarId ?? 'primary',
+        `${from}T00:00:00Z`,
+        `${to}T00:00:00Z`,
+      )
+    ).filter((e) => e.status !== 'cancelled');
+
+    if (events.length > MAX_BACKFILL_EVENTS)
+      return c.json(
+        {
+          error:
+            `This range has ${events.length} events. Choose a shorter one and ` +
+            `import ${MAX_BACKFILL_EVENTS} or fewer at a time.`,
+        },
+        400,
+      );
+
+    const classified = await classifyAll(c, tenant, events);
+    return c.json({
+      adopt: classified.filter((r) => r.kind === 'adopt'),
+      needsPrice: classified.filter((r) => r.kind === 'needs-price'),
+      flags: classified.filter((r) => r.kind === 'flag'),
+      skipped: classified.filter((r) => r.kind === 'skip').length,
+    });
+  })
+
+  /**
+   * Adopt chosen calendar events as bookings. The security shape is copied from the Venmo
+   * importer, with one deliberate exception: every date, pet, household and service is
+   * RE-DERIVED server-side by `classifyAll` — the browser names event ids and, optionally,
+   * prices, and nothing else. An event the fresh classification no longer adopts is skipped
+   * with a reason, never adopted on the browser's say-so.
+   *
+   * The amount is the exception, because pricing a historical stay is the sitter's own decision,
+   * not a claim about their calendar (see the module doc on `insertBackfilledBooking` and the
+   * design doc). `estCost`, when supplied, must be a whole-dollar integer >= 1 or the WHOLE
+   * request is refused with 400 — never a silent coercion, and never a partial import.
+   */
+  .post('/:slug/admin/calendar/backfill/import', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ from?: unknown; to?: unknown; events?: unknown }>()
+      .catch(() => ({}) as { from?: unknown; to?: unknown; events?: unknown });
+    const from = typeof body.from === 'string' ? body.from : '';
+    const to = typeof body.to === 'string' ? body.to : '';
+    if (!isRealDate(from) || !isRealDate(to) || to <= from)
+      return c.json({ error: 'Choose a start date and a later end date.' }, 400);
+    if (!Array.isArray(body.events) || body.events.length === 0)
+      return c.json({ error: 'Choose at least one event to import.' }, 400);
+    if (body.events.length > MAX_BACKFILL_EVENTS)
+      return c.json({ error: `Import ${MAX_BACKFILL_EVENTS} events or fewer at a time.` }, 400);
+
+    // eventId -> the sitter's own price for it, when given. Whole dollars only, like every other
+    // amount in this codebase; a bad one fails the WHOLE request rather than being coerced or
+    // silently dropping just its own row.
+    const wanted = new Map<string, number | null>();
+    for (const raw of body.events) {
+      if (typeof raw !== 'object' || raw === null)
+        return c.json({ error: 'That list of events is malformed.' }, 400);
+      const entry = raw as { eventId?: unknown; estCost?: unknown };
+      if (typeof entry.eventId !== 'string' || entry.eventId === '')
+        return c.json({ error: 'That list of events is malformed.' }, 400);
+      if (entry.estCost !== undefined) {
+        if (
+          !Number.isInteger(entry.estCost) ||
+          (entry.estCost as number) < 1 ||
+          (entry.estCost as number) > MAX_BACKFILL_EST_COST
+        )
+          return c.json(
+            { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+            400,
+          );
+      }
+      wanted.set(entry.eventId, entry.estCost === undefined ? null : (entry.estCost as number));
+    }
+
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
+    if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
+      return c.json({ error: 'Connect your Google Calendar first.' }, 400);
+    const accessToken = await getCalendarAccessToken(c.env, tenant, conn);
+
+    const events = (
+      await listCalendarEvents(
+        accessToken,
+        conn.CalendarId ?? 'primary',
+        `${from}T00:00:00Z`,
+        `${to}T00:00:00Z`,
+      )
+    ).filter((e) => e.status !== 'cancelled');
+
+    // RE-DERIVED from scratch — same classifier the preview used, so the two can never disagree.
+    // The browser named event ids and, optionally, prices; nothing else survives this call.
+    const classified = await classifyAll(c, tenant, events);
+    // Every classified row, by id — used only to tell an already-imported id apart from every
+    // other reason it might not be adoptable, below.
+    const classifiedById = new Map(classified.map((r) => [r.eventId, r] as const));
+    // Both kinds are adoptable: 'adopt' carries a rate-card price, 'needs-price' carries
+    // everything BUT the price and is adoptable only when the sitter supplies one.
+    const resolvable = new Map(
+      classified
+        .filter(
+          (r): r is Extract<Classified, { kind: 'adopt' | 'needs-price' }> =>
+            r.kind === 'adopt' || r.kind === 'needs-price',
+        )
+        .map((r) => [r.eventId, r] as const),
+    );
+
+    const skipped: { eventId: string; reason: string }[] = [];
+    let imported = 0;
+    for (const [eventId, suppliedCost] of wanted) {
+      const row = resolvable.get(eventId);
+      if (!row) {
+        // 'already-adopted' gets its own message — a sitter re-running an import over an
+        // overlapping range must read that as "already imported", not as data loss. Every other
+        // reason a fresh classification might refuse the id (absent from the calendar entirely,
+        // or classified as a flag) keeps the generic message.
+        const already = classifiedById.get(eventId);
+        const reason =
+          already?.kind === 'skip' && already.why === 'already-adopted'
+            ? 'Already imported'
+            : 'That event is no longer adoptable';
+        skipped.push({ eventId, reason });
+        continue;
+      }
+      // The sitter's figure wins when given; otherwise the rate card's, which only an 'adopt' row
+      // has. A 'needs-price' row with no supplied amount is never adopted at zero and never at a
+      // number this server invented.
+      const estCost = suppliedCost ?? (row.kind === 'adopt' ? row.estCost : null);
+      if (estCost === null) {
+        skipped.push({ eventId, reason: 'That event still needs a price' });
+        continue;
+      }
+      // Each row's write is isolated: one event's failure must never take down the response for
+      // every other event in the same request, turn a partial success into a bare 500, or — worse
+      // — go unreported and then be silently un-retryable because GCalEventId now looks adopted.
+      let bookingId: string | null = null; // hoisted above the try so the catch can clean it up
+      try {
+        bookingId = await insertBackfilledBooking(c.env.PAWSERVATION_DB, tenant.Id, {
+          endUserId: row.endUserId,
+          serviceType: row.serviceType,
+          startDate: row.startDate,
+          endDate: row.endDate,
+          optionKey: row.optionKey,
+          petCount: row.petIds.length,
+          estCost,
+          status: row.cancelled ? 'cancelled' : 'confirmed',
+          gcalEventId: row.eventId,
+        });
+        await addBookingPets(c.env.PAWSERVATION_DB, tenant.Id, bookingId, row.petIds);
+        imported++;
+      } catch (err) {
+        console.error('calendar backfill import failed for event', eventId, err);
+        // Remove the orphan, or the GCalEventId stamp makes this event permanently
+        // un-retryable: every later run would report "Already imported" for a booking that has
+        // no pets. Same pattern as booking-ops.ts's own optimistic-row cleanup — best-effort,
+        // and never lets a failed cleanup mask the real failure being reported below.
+        if (bookingId) {
+          await deleteBookingRequest(c.env.PAWSERVATION_DB, tenant.Id, bookingId).catch(() => {});
+        }
+        skipped.push({ eventId, reason: 'Could not import that event' });
+      }
+    }
+    return c.json({ imported, skipped });
+  })
+
+  /**
+   * Correct the price on a booking ADOPTED from the calendar. Restricted to
+   * `Source = 'calendar-backfill'` rows by `updateBackfilledBookingCost`'s own SQL, not by this
+   * route — their cost was invented from today's rate card for a stay that may predate it, and no
+   * client ever saw or agreed to that figure. A booking that came through pawservation carries a
+   * figure a client DID see; it is out of reach here by construction, and refuses with the same
+   * 404 as the 'blocked'/'external' sentinels and a foreign tenant's id, so the response never
+   * tells the caller which of those four reasons applied.
+   *
+   * The route itself never decides EstCost vs. CancellationFee — `updateBackfilledBookingCost`
+   * writes into whichever column the row's own Status says the balance reads, so a cancelled
+   * adoption's correction lands where `BASE_AMOUNT_SQL` actually looks for it.
+   */
+  .patch('/:slug/admin/bookings/:id/cost', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ estCost?: unknown }>()
+      .catch(() => ({}) as { estCost?: unknown });
+    const estCost = body.estCost;
+    // Whole dollars only — cents are unrepresentable codebase-wide. Same ceiling as the sitter's
+    // price on the same field at import time (Task 7); two bounds on one field would drift.
+    if (
+      typeof estCost !== 'number' ||
+      !Number.isInteger(estCost) ||
+      estCost < 1 ||
+      estCost > MAX_BACKFILL_EST_COST
+    )
+      return c.json(
+        { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+        400,
+      );
+
+    const ok = await updateBackfilledBookingCost(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+      estCost,
+    );
+    // One 404 for: another tenant's booking, an unknown id, a sentinel, and a booking a client
+    // agreed to. Same non-oracle posture as the other booking routes.
+    if (!ok) return c.json({ error: 'Not found.' }, 404);
+    return c.json({ estCost });
   });

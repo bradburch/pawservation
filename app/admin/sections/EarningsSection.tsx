@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminApi, type AnalyticsPayload, type HouseholdDetail } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
+import { CalendarBackfillPanel } from '../CalendarBackfillPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
@@ -327,6 +328,18 @@ export function EarningsView({
 
       {session && onChanged && handleError && clearError && (
         <VenmoImportPanel
+          session={session}
+          onImported={onChanged}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+
+      {/* Adopting a sitter's calendar history is the same "bring outside records into Earnings"
+          job the Venmo importer does for payments — same preview/tick/import shape, same reason
+          to live here rather than under Calendar (which shows the LIVE calendar, not history). */}
+      {session && onChanged && handleError && clearError && (
+        <CalendarBackfillPanel
           session={session}
           onImported={onChanged}
           handleError={handleError}

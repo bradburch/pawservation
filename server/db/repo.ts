@@ -689,6 +689,173 @@ export async function insertBookingRequest(
   return id;
 }
 
+/**
+ * Insert a booking ADOPTED from an existing Google Calendar event.
+ *
+ * Deliberately NOT `insertBookingRequest`, which hard-codes `SyncPending = 1`. An adopted row is a
+ * record of an event Google already has: arming the outbox would push a SECOND event for the same
+ * stay and break the read-only guarantee the backfill is built on. `GCalEventId` is stamped here
+ * instead, so reconcile stops materializing the event as an `'external'` row and treats it as a
+ * known booking.
+ */
+export async function insertBackfilledBooking(
+  db: D1Database,
+  tenantId: string,
+  row: {
+    endUserId: string;
+    serviceType: string;
+    startDate: string;
+    endDate: string | null;
+    optionKey: string;
+    petCount: number;
+    estCost: number;
+    status: 'confirmed' | 'cancelled';
+    gcalEventId: string;
+  },
+): Promise<string> {
+  const id = crypto.randomUUID();
+  // A cancelled adoption's price is also stamped into CancellationFee, not EstCost alone:
+  // BASE_AMOUNT_SQL reads CancellationFee (not EstCost) for a cancelled row, and the convention
+  // this feature adopts from (`keepsCalendarEventOnCancel`) keeps a cancelled event on the
+  // calendar only when a fee is owed — every adopted [CANCELLED] event is a receivable by that
+  // convention, so it must land in the column the balance actually sums. EstCost keeps the same
+  // number too, as the stay's own figure independent of what happened to it afterward.
+  const cancellationFee = row.status === 'cancelled' ? row.estCost : null;
+  await db
+    .prepare(
+      `INSERT INTO BookingRequests
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount,
+          EstCost, CancellationFee, Answers, Status, Source, GCalEventId, SyncPending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, 'calendar-backfill', ?, 0)`,
+    )
+    .bind(
+      id,
+      tenantId,
+      row.endUserId,
+      row.serviceType,
+      row.startDate,
+      row.endDate,
+      row.optionKey,
+      row.petCount,
+      row.estCost,
+      cancellationFee,
+      row.status,
+      row.gcalEventId,
+    )
+    .run();
+  return id;
+}
+
+/**
+ * Was this booking ADOPTED from the sitter's own calendar (`Source = 'calendar-backfill'`)?
+ *
+ * The read behind the write-side half of the backfill's read-only guarantee. `GCalEventId` on an
+ * adopted row names an event the SITTER created and pawservation only ever read, so no push may
+ * ever touch it — but the row is an otherwise ordinary booking, so every lifecycle path
+ * (dashboard cancel, customer cancel, customer edit) reaches the same inline calendar push an
+ * ordinary booking does. `listSyncPendingBookings` keeps such a row out of the OUTBOX; this is
+ * what keeps it out of those INLINE pushes, which never consult the outbox query at all.
+ *
+ * Unknown id → false: a push for a booking that no longer exists is already a no-op against
+ * Google's own 404/410 handling, and this must never be the thing that decides existence.
+ */
+export async function isAdoptedBooking(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS Hit FROM BookingRequests
+       WHERE TenantId = ? AND Id = ? AND Source = 'calendar-backfill'`,
+    )
+    .bind(tenantId, bookingId)
+    .first<{ Hit: number }>();
+  return row != null;
+}
+
+/** Event ids this tenant has EVER adopted — the import's idempotency key, so re-running the
+ *  backfill over an overlapping range adopts nothing twice.
+ *
+ *  Deliberately ignores `Status`: a cancelled adoption is still an adoption. Without this, a
+ *  sitter who adopts an event, cancels the resulting booking, then re-runs a backfill over that
+ *  range would get the same Google event adopted a SECOND time, creating a duplicate booking. */
+export async function listAdoptedEventIds(db: D1Database, tenantId: string): Promise<Set<string>> {
+  const { results } = await db
+    .prepare(
+      `SELECT GCalEventId FROM BookingRequests
+       WHERE TenantId = ? AND Source = 'calendar-backfill' AND GCalEventId IS NOT NULL`,
+    )
+    .bind(tenantId)
+    .all<{ GCalEventId: string }>();
+  return new Set(results.map((r) => r.GCalEventId));
+}
+
+/** Event ids this tenant has adopted and NOT since cancelled — reconcile's live candidate set for
+ *  deciding an event is already represented by a real booking and must not be re-materialized as
+ *  an ordinary `external` blocker.
+ *
+ *  Excludes cancelled/declined rows: a sitter who cancels an adopted booking while its Google
+ *  event still exists must get that event back as an ordinary `external` blocker on the next
+ *  reconcile, not have it silently suppressed forever — the row being cancelled is not the event
+ *  disappearing from Google. Do NOT use this for the import route's idempotency check; use
+ *  `listAdoptedEventIds` there instead, which must ignore status to avoid re-adopting an event
+ *  whose booking was cancelled. */
+export async function listActiveAdoptedEventIds(
+  db: D1Database,
+  tenantId: string,
+): Promise<Set<string>> {
+  const { results } = await db
+    .prepare(
+      `SELECT GCalEventId FROM BookingRequests
+       WHERE TenantId = ? AND Source = 'calendar-backfill' AND GCalEventId IS NOT NULL
+         AND Status NOT IN ('cancelled', 'declined')`,
+    )
+    .bind(tenantId)
+    .all<{ GCalEventId: string }>();
+  return new Set(results.map((r) => r.GCalEventId));
+}
+
+/**
+ * Re-price a booking ADOPTED from the calendar. Scoped to `Source = 'calendar-backfill'` in the
+ * SQL itself, not in the route: an adopted row's cost was computed from today's rate card for a
+ * stay that may predate it, so correcting it takes nothing from anyone. A booking a client
+ * actually agreed to is out of reach here by construction — the WHERE clause, not the caller, is
+ * what makes that true.
+ *
+ * Writes BOTH columns for a cancelled row, exactly as `insertBackfilledBooking` does — the two
+ * must agree about the same invariant or a correction half-lands:
+ *
+ *  - `CancellationFee` is what `BASE_AMOUNT_SQL` reads once cancelled, so the balance only follows
+ *    a correction that reaches it. Guarded by the SAME `CASE WHEN Status = 'cancelled'` test
+ *    `BASE_AMOUNT_SQL` uses, so a confirmed row's fee column is never invented.
+ *  - `EstCost` is set UNCONDITIONALLY, because it is the figure the sitter actually SEES:
+ *    `listBookingsForTenant` renders it raw in the admin list and the inline Edit affordance
+ *    prefills from it. Leaving it behind on a cancelled row meant a stay corrected from $25 to
+ *    $60 moved the balance while still reading "$25 (estimate)", and re-opening Edit offered the
+ *    stale number back.
+ *
+ * One statement, not a read-then-write: Status is read and acted on atomically, with no race
+ * between checking it and writing the price.
+ */
+export async function updateBackfilledBookingCost(
+  db: D1Database,
+  tenantId: string,
+  bookingId: string,
+  estCost: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE BookingRequests
+       SET EstCost = ?,
+           CancellationFee = CASE WHEN Status = 'cancelled' THEN ? ELSE CancellationFee END
+       WHERE TenantId = ? AND Id = ? AND Source = 'calendar-backfill'`,
+    )
+    .bind(estCost, estCost, tenantId, bookingId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
 /** Booking previously created with this Idempotency-Key by this customer, or null. */
 export async function findBookingByIdempotencyKey(
   db: D1Database,
@@ -766,6 +933,7 @@ export async function listBookingsForTenant(
     .prepare(
       `SELECT ${BOOKING_COLS_QUALIFIED}, BookingRequests.Answers AS Answers,
               BookingRequests.ExternalSummary AS ExternalSummary,
+              BookingRequests.Source AS Source,
               EndUsers.Email AS Email, EndUsers.Name AS Name,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests
@@ -2566,6 +2734,18 @@ export async function cancelBlockedRange(
  * — reconciliation's candidate set, restricted to the same window it queried Calendar for (a
  * booking outside that window couldn't possibly have appeared in the Calendar response, so it must
  * never be treated as "missing").
+ *
+ * Excludes `Source = 'calendar-backfill'`: an adopted booking's `GCalEventId` was stamped by the
+ * backfill, not pushed to Google (adoption is deliberately read-only there), so it never gains
+ * `private.bookingId` and would otherwise look "missing" from every Calendar response and get
+ * cancelled (and the customer emailed) on the very next reconcile pass.
+ *
+ * Accepted trade: this makes adopted bookings permanently exempt from delete-detection. If a
+ * sitter deletes the Google event behind an adopted stay, its booking stays `confirmed` and keeps
+ * blocking that day forever — nothing here reconciles it back, because it can never appear in
+ * `liveBookingIds` (built from `private.bookingId`) to be told apart from "never existed." The
+ * sitter cancels it from the dashboard instead; the alternative was cancelling and emailing the
+ * customer for every backfilled stay on the first cron pass, which is worse.
  */
 export async function listSyncedBookingIds(
   db: D1Database,
@@ -2578,6 +2758,7 @@ export async function listSyncedBookingIds(
       `SELECT Id FROM BookingRequests
        WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
          AND ServiceType NOT IN ('external', 'blocked')
+         AND Source IS NOT 'calendar-backfill'
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
@@ -2798,6 +2979,20 @@ export async function setBookingGCalEventId(
  * called first by repointCalendarTarget. The exclusion here removes the hidden order-dependency —
  * without it, NULLing an external row's GCalEventId (its upsert conflict target, see
  * upsertExternalEvent) ahead of the purge would corrupt the row instead of just deleting it.
+ *
+ * Also excludes Source='calendar-backfill' rows (adopted bookings): their GCalEventId points at
+ * an event the SITTER created on the old calendar, not one pawservation wrote there, so it must
+ * survive a target switch. NULLing it would be a double fault — it would (1) make the row a
+ * candidate for listUnsyncedFutureBookings, whose backfill is not behind the isAdoptedBooking
+ * guard, so the next cron pass would create a pawservation-owned DUPLICATE event for a stay that
+ * already exists on the sitter's calendar, permanently (Source stays 'calendar-backfill', so
+ * every other push function's isAdoptedBooking guard then refuses to ever touch what it just
+ * created); and (2) drop the id out of listAdoptedEventIds, the import's idempotency key, so a
+ * later backfill over the same range would re-adopt the same Google event as a second, duplicate
+ * booking. `IS NOT`, not `!=`: Source is NULL for every ordinary booking, and `NULL != 'x'` is
+ * NULL, not true — a plain `!=` would silently stop clearing ids for every ordinary booking and
+ * break calendar switching outright. Same null-safe form as `listSyncedBookingIds` and
+ * `listSyncPendingBookings`.
  */
 export async function clearBookingCalendarEventIds(
   db: D1Database,
@@ -2806,7 +3001,8 @@ export async function clearBookingCalendarEventIds(
   const result = await db
     .prepare(
       `UPDATE BookingRequests SET GCalEventId = NULL
-       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND ServiceType != 'external'`,
+       WHERE TenantId = ? AND GCalEventId IS NOT NULL AND ServiceType != 'external'
+         AND Source IS NOT 'calendar-backfill'`,
     )
     .bind(tenantId)
     .run();
@@ -4180,8 +4376,9 @@ export async function listUnsyncedFutureBookings(
 }
 
 /** Outbox candidates: rows whose latest state change Google has not confirmed. Real bookings AND
- * 'blocked' time off ('external' is Google-owned and is the only exclusion — it is materialized
- * by reconcile, never pushed by the outbox). Bounded so ancient never-synced history doesn't churn
+ * 'blocked' time off ('external' is Google-owned, materialized by reconcile and never pushed by
+ * the outbox; `Source = 'calendar-backfill'` is the sitter's OWN pre-existing event, adopted
+ * read-only — see below). Bounded so ancient never-synced history doesn't churn
  * every sweep, soonest first. Status here can be any of the four, and
  * CancellationFee rides along because the delete-vs-retitle decision for a cancelled row turns on
  * it (keepsCalendarEventOnCancel) — the caller derives create/update/delete from Status +
@@ -4192,7 +4389,22 @@ export async function listUnsyncedFutureBookings(
  * fromDate` excluded it, and a customer may cancel an in-progress stay (isCustomerCancellable),
  * so that row's SyncPending could never be drained: the ghost event stayed on the sitter's
  * calendar forever, and a fee-bearing cancel never got its [CANCELLED] retitle. It also stranded
- * the connect-later backfill for any stay spanning today. */
+ * the connect-later backfill for any stay spanning today.
+ *
+ * Excludes `Source = 'calendar-backfill'` for the same reason `listSyncedBookingIds` does, but
+ * against the WRITE side: an adopted row's `GCalEventId` points at an event the SITTER created,
+ * which pawservation only ever read. Adoption leaves `SyncPending = 0`, but that is only the
+ * row's first moment — every ordinary lifecycle write re-arms the flag unconditionally
+ * (`updateBookingStatus`, `updateBookingRequest`), including the dashboard cancel that
+ * `listSyncedBookingIds`' own comment tells the sitter to use. Once armed, the caller's
+ * Status + CancellationFee + GCalEventId derivation would DELETE that event (a fee-free cancel)
+ * or PATCH the sitter's title and description into pawservation's rendering (a fee-bearing one).
+ * The exclusion belongs here, in the candidate query, rather than in any one branch of that
+ * derivation, so an operation added later is read-only by default rather than by its author
+ * remembering.
+ *
+ * `IS NOT`, not `!=`: `Source` is NULL for every ordinary booking, and `NULL != 'x'` is NULL, not
+ * true — a plain `!=` would silently empty the outbox for the entire product. */
 export type SyncPendingRow = Omit<BookingSyncRow, 'Status'> & {
   Status: BookingRow['Status'];
   CancellationFee: number | null;
@@ -4211,6 +4423,7 @@ export async function listSyncPendingBookings(
               b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
          AND b.ServiceType != 'external'
+         AND b.Source IS NOT 'calendar-backfill'
          AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,

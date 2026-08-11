@@ -8,6 +8,7 @@ import {
 } from '../lib/calendar-sync';
 import {
   cancelBlockedRange,
+  insertBackfilledBooking,
   insertBookingRequest,
   listBlockedRowsWithEventsInWindow,
   listSyncedBookingIds,
@@ -19,7 +20,14 @@ import {
 } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { createTestEnv, endUserToken, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
+import {
+  adminHeaders,
+  createTestEnv,
+  endUserToken,
+  TENANT_A,
+  TENANT_B,
+  TEST_SECRET,
+} from './helpers';
 import type { Tenant } from '../types';
 
 const tenant = { Id: TENANT_A, Slug: 'sunny-paws', Timezone: null } as Tenant;
@@ -561,5 +569,115 @@ describe('markSyncPending', () => {
     await markSyncPending(env.PAWSERVATION_DB, TENANT_A, [bookingId]);
 
     expect((await syncState(env, bookingId)).SyncPending).toBe(0);
+  });
+});
+
+/**
+ * The backfill's central guarantee: adoption is READ-ONLY against Google. An adopted row is born
+ * `SyncPending = 0`, but every ordinary lifecycle write re-arms that flag unconditionally
+ * (updateBookingStatus, updateBookingRequest) — so "born dormant" is not the guarantee, it is only
+ * its first moment. The outbox is where the guarantee has to actually live, because the very
+ * action the backfill's own docblock tells the sitter to take (listSyncedBookingIds' comment:
+ * "The sitter cancels it from the dashboard instead") is exactly what arms the row.
+ *
+ * Driven through the real admin route rather than by inserting an already-cancelled row: the
+ * arming is the whole point, and a direct insert skips it.
+ */
+describe('a booking adopted from the calendar is never written back to Google', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const adopt = (env: Env, status: 'confirmed' | 'cancelled' = 'confirmed') =>
+    insertBackfilledBooking(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess', // seeded owner (sql/seed.sql) — BookingRequests.EndUserId is FK-enforced
+      serviceType: 'boarding',
+      startDate: addDays(TODAY, 10),
+      endDate: addDays(TODAY, 13),
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 150,
+      status,
+      gcalEventId: 'evt_the_sitters_own',
+    });
+
+  const cancelViaAdmin = async (env: Env, id: string) =>
+    app.request(
+      `/api/sunny-paws/admin/bookings/${id}/status`,
+      {
+        method: 'POST',
+        headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      },
+      env,
+    );
+
+  const eventCalls = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.filter(([u]) => String(u).includes('/events'));
+
+  it('cancelling an adopted booking from the dashboard deletes nothing in Google', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await adopt(env);
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    expect((await cancelViaAdmin(env, id)).status).toBe(200);
+    await redriveCalendarOutbox(env, tenant);
+
+    // A fee-free cancel takes the outbox's DELETE branch (Status terminal + GCalEventId present),
+    // which would destroy the sitter's own pre-existing event.
+    expect(eventCalls(spy)).toEqual([]);
+    // The row must never even be a candidate — the exclusion belongs in the query, not in a
+    // per-branch check a future op could miss.
+    expect(
+      (await listSyncPendingBookings(env.PAWSERVATION_DB, TENANT_A, addDays(TODAY, -1), 100)).map(
+        (r) => r.Id,
+      ),
+    ).not.toContain(id);
+  });
+
+  it('cancelling an adopted booking WITH a fee does not overwrite the sitter’s event either', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const id = await adopt(env);
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: 'evt_the_sitters_own' }), { status: 200 }),
+      );
+
+    // A fee-bearing cancel takes the outbox's UPDATE branch instead, which would rewrite the
+    // sitter's own title and description with pawservation's rendering. Armed through
+    // updateBookingStatus's assessed-cancellation branch directly (repo.ts) rather than the admin
+    // route, only because no seeded service carries CancellationTiers for the route to compute a
+    // fee from — the arming SQL under test is the same statement the route calls.
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled', 25)).toBe(
+      true,
+    );
+    await redriveCalendarOutbox(env, tenant);
+
+    expect(eventCalls(spy)).toEqual([]);
+  });
+
+  it('an ORDINARY booking still syncs — the exclusion must not disable the outbox', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    const ordinary = await seedBooking(env, 'pending'); // Source NULL, born SyncPending = 1
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_ordinary' }), { status: 200 }));
+
+    expect(
+      (await listSyncPendingBookings(env.PAWSERVATION_DB, TENANT_A, addDays(TODAY, -1), 100)).map(
+        (r) => r.Id,
+      ),
+    ).toContain(ordinary);
+
+    await redriveCalendarOutbox(env, tenant);
+    expect(eventCalls(spy).length).toBeGreaterThan(0);
+    expect(await syncState(env, ordinary)).toMatchObject({
+      SyncPending: 0,
+      GCalEventId: 'evt_ordinary',
+    });
   });
 });

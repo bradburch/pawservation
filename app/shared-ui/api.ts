@@ -206,6 +206,11 @@ export type AdminBooking = {
   external: boolean;
   /** The Google event's title, for calendar display. Null unless external. */
   externalSummary: string | null;
+  /** True for a booking adopted from the sitter's own calendar (`Source = 'calendar-backfill'`).
+   *  Its `estCost` was priced from TODAY's rate card for a stay that may predate it — an estimate,
+   *  not a figure any client saw or agreed to — so the UI must label it as one and offer the
+   *  correction PATCH (`adminApi.bookings.updateCost`), which only these rows accept. */
+  isBackfilled: boolean;
   /** Intake answers keyed by question id; {} when the customer answered nothing. */
   answers: Record<string, string>;
   estCost: number | null;
@@ -257,6 +262,68 @@ export type VenmoImportResult = {
   imported: number;
   totalAmount: number;
   skipped: { txnId: string; reason: string }[];
+};
+
+/** Why one calendar event couldn't be adopted outright — hand-mirrors server/lib/calendar-
+ *  backfill.ts's `FlagReason`. `unpriced-set` is kept for type parity with the server's closed
+ *  union, but the classifier no longer produces it as a flag (an unpriced-but-otherwise-resolved
+ *  event is `needs-price` below instead); the panel still gives it a heading rather than assume. */
+export type BackfillFlagReason =
+  'no-pets' | 'ambiguous-pet' | 'multiple-households' | 'unknown-service' | 'unpriced-set';
+
+/** Fully resolved AND priced — everything `insertBackfilledBooking` needs, off today's rate card.
+ *  `estCost` is an ESTIMATE (see `AdminBooking.isBackfilled`), which is why the import route lets
+ *  the sitter override it with their own figure before adopting. */
+export type BackfillAdoptRow = {
+  kind: 'adopt';
+  eventId: string;
+  summary: string;
+  startDate: string;
+  endDate: string | null;
+  endUserId: string;
+  serviceType: string;
+  optionKey: string;
+  petIds: string[];
+  estCost: number;
+  cancelled: boolean;
+};
+
+/** Same as `BackfillAdoptRow` but for a rate the sitter's card has never priced — `priced: false`,
+ *  the free product's own "available but not priced" outcome (CLAUDE.md's unpriced-pet-set trap).
+ *  Deliberately carries NO cost field at all: never `estCost: null`, never a guessed `0`. Adoptable
+ *  the moment the sitter types a price on it. */
+export type BackfillNeedsPriceRow = {
+  kind: 'needs-price';
+  eventId: string;
+  summary: string;
+  startDate: string;
+  endDate: string | null;
+  endUserId: string;
+  serviceType: string;
+  optionKey: string;
+  petIds: string[];
+  cancelled: boolean;
+};
+
+export type BackfillFlagRow = {
+  kind: 'flag';
+  eventId: string;
+  summary: string;
+  startDate: string;
+  reason: BackfillFlagReason;
+  detail: string;
+};
+
+export type BackfillPreview = {
+  adopt: BackfillAdoptRow[];
+  needsPrice: BackfillNeedsPriceRow[];
+  flags: BackfillFlagRow[];
+  skipped: number;
+};
+
+export type BackfillImportResult = {
+  imported: number;
+  skipped: { eventId: string; reason: string }[];
 };
 
 export type AnalyticsPayload = {
@@ -813,6 +880,44 @@ export const adminApi = {
           }),
         },
       ),
+    /**
+     * Correct the price on a booking ADOPTED from the calendar (`isBackfilled`) — its `estCost`
+     * was invented from today's rate card, never a figure any client agreed to. Whole dollars
+     * only; the server 404s for anything that isn't `Source = 'calendar-backfill'`.
+     */
+    updateCost: (slug: string, token: string, id: string, estCost: number) =>
+      request<{ estCost: number }>(`/api/${slug}/admin/bookings/${id}/cost`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ estCost }),
+      }),
+  },
+  /**
+   * Read-only adoption of a sitter's existing Google Calendar events as bookings
+   * (docs/superpowers/specs/2026-08-09-calendar-backfill-design.md). `preview` writes nothing —
+   * every event is re-read and classified fresh; `import` re-derives the same classification
+   * server-side and only ever trusts the browser for WHICH event ids to adopt and, optionally,
+   * the sitter's own price for each.
+   */
+  calendarBackfill: {
+    preview: (slug: string, token: string, from: string, to: string) =>
+      request<BackfillPreview>(`/api/${slug}/admin/calendar/backfill/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ from, to }),
+      }),
+    import: (
+      slug: string,
+      token: string,
+      from: string,
+      to: string,
+      events: { eventId: string; estCost?: number }[],
+    ) =>
+      request<BackfillImportResult>(`/api/${slug}/admin/calendar/backfill/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ from, to, events }),
+      }),
   },
   calendar: {
     start: (slug: string, token: string) =>
