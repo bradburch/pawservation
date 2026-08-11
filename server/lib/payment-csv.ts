@@ -108,8 +108,8 @@ function fnv1aLane(input: string, seed: number): number {
  * worth hand-waving away in a comment the next reader trusts. Two lanes push that to 64 bits.
  *
  * `JSON.stringify`, not a bare `|`-joined string: joining with a plain delimiter lets two different
- * rows build the identical input (payer="a|b", note="c" vs. payer="a", note="b|c"); JSON escaping
- * keeps every part's boundary unambiguous.
+ * inputs build the identical string (tenant="t|a", payer="b" vs. tenant="t", payer="a|b"); JSON
+ * escaping keeps every part's boundary unambiguous.
  */
 function contentHash(parts: unknown[]): string {
   const input = JSON.stringify(parts);
@@ -135,13 +135,23 @@ function contentHash(parts: unknown[]): string {
  * payment truly happened twice, so it's reported instead of guessed at.
  *
  * Otherwise the key is `csv:<hash>:<rank>`, where `<hash>` fingerprints
- * `tenantId | date | amount | payer | note` and `<rank>` is how many identical rows preceded this
- * one in THIS file (0, 1, 2, ...):
+ * `tenantId | date | amount | payer` and `<rank>` is how many identical rows preceded this one in
+ * THIS file (0, 1, 2, ...).
+ *
  *  - re-uploading the same file produces the same ranks in the same order, so every key repeats
  *    and the unique index on the way in refuses all of them — nothing is recorded twice;
  *  - a client who genuinely paid the same amount twice in one day produces rank 0 and rank 1, two
  *    different keys, so BOTH import. Collapsing them onto one key would silently drop a real
  *    second payment — the worst failure this feature could have.
+ *
+ * THE NOTE IS DELIBERATELY NOT IN THE HASH, though it is stored on the payment. It is descriptive,
+ * not identifying — and unlike the other four parts, whether it is read AT ALL is a property of the
+ * sitter's MAPPING rather than of the file. A key that moved with the mapping would let the same
+ * export, re-uploaded with Note mapped differently or left unmapped, derive entirely new keys and
+ * record every row a second time with nothing said. That is not exotic: the panel resets the
+ * mapping on every upload, and overlapping monthly exports are this feature's expected case. Two
+ * rows differing only in their note are still kept apart by the rank above, so a genuine second
+ * payment is not lost by leaving it out.
  */
 export function applyMapping(
   text: string,
@@ -260,7 +270,7 @@ export function applyMapping(
     if (reference !== null) {
       dedupeKey = `csv:${reference}`;
     } else {
-      const hash = contentHash([tenantId, rawDate, amount.dollars, payer, note]);
+      const hash = contentHash([tenantId, rawDate, amount.dollars, payer]);
       const rank = rankByHash.get(hash) ?? 0;
       rankByHash.set(hash, rank + 1);
       dedupeKey = `csv:${hash}:${rank}`;

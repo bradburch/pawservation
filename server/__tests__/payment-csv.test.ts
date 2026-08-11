@@ -136,6 +136,35 @@ describe('applyMapping', () => {
     expect(a.ok && b.ok && a.payments[0].dedupeKey).toBe(b.ok ? b.payments[0].dedupeKey : '');
   });
 
+  it('keys the same file identically whether or not Note is mapped, so a remapped re-upload records nothing twice', () => {
+    // The panel resets the mapping on every upload, so the second import of an overlapping export
+    // is genuinely likely to map Note differently — or not at all. A key that moved with the
+    // mapping would record every row a second time, silently.
+    const f = ['Date,Amount,Payer,Note', '2026-07-03,40,Finch,rent'].join('\n');
+    const withNote = applyMapping(f, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
+    const without = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(withNote.ok && without.ok).toBe(true);
+    if (!withNote.ok || !without.ok) return;
+    expect(withNote.payments[0].dedupeKey).toBe(without.payments[0].dedupeKey);
+    // The note is still carried on the payment itself — it is descriptive, not identifying.
+    expect(withNote.payments[0].note).toBe('rent');
+  });
+
+  it('still gives two rows differing only in note distinct keys, via the rank — a genuine second payment is never lost', () => {
+    const f = [
+      'Date,Amount,Payer,Note',
+      '2026-07-03,40,Finch,first walk',
+      '2026-07-03,40,Finch,second walk',
+    ].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(2);
+    expect(out.payments[0].dedupeKey).toMatch(/^csv:[0-9a-f]{16}:0$/);
+    expect(out.payments[1].dedupeKey).toMatch(/^csv:[0-9a-f]{16}:1$/);
+    expect(out.payments[0].dedupeKey).not.toBe(out.payments[1].dedupeKey);
+  });
+
   it('scopes the key to the tenant', () => {
     const f = ['Date,Amount,Payer', '2026-07-03,40,Finch'].join('\n');
     const a = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_a');
@@ -143,13 +172,13 @@ describe('applyMapping', () => {
     expect(a.ok && b.ok && a.payments[0].dedupeKey).not.toBe(b.ok ? b.payments[0].dedupeKey : '');
   });
 
-  it('does not let a delimiter-bearing payer/note split collide with a different split of the same characters', () => {
-    // Without escaping, a bare `|` join makes payer="a|b", note="c" and payer="a", note="b|c"
-    // build the identical hash input.
-    const f1 = ['Date,Amount,Payer,Note', '2026-07-03,40,a|b,c'].join('\n');
-    const f2 = ['Date,Amount,Payer,Note', '2026-07-03,40,a,b|c'].join('\n');
-    const out1 = applyMapping(f1, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
-    const out2 = applyMapping(f2, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
+  it('does not let a delimiter-bearing tenant/payer split collide with a different split of the same characters', () => {
+    // Without escaping, a bare `|` join makes tenant="tnt|a", payer="b" and tenant="tnt",
+    // payer="a|b" build the identical hash input — two tenants sharing one key.
+    const f1 = ['Date,Amount,Payer', '2026-07-03,40,b'].join('\n');
+    const f2 = ['Date,Amount,Payer', '2026-07-03,40,a|b'].join('\n');
+    const out1 = applyMapping(f1, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt|a');
+    const out2 = applyMapping(f2, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt');
     expect(out1.ok && out2.ok && out1.payments[0].dedupeKey).not.toBe(
       out2.ok ? out2.payments[0].dedupeKey : '',
     );
