@@ -2978,8 +2978,11 @@ export const adminRoutes = new Hono<AppEnv>()
       }
       const note = `CSV import — ${payment.payer}${payment.note ? `: ${payment.note}` : ''}`;
       try {
+        // client.accountId, not the destructured `accountId` above: they are provably equal by
+        // the `!==` guard just above, but writing the server's own resolved value keeps that true
+        // even if that guard is ever refactored.
         const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
-          accountId,
+          accountId: client.accountId,
           amount: payment.amount,
           method: payment.method,
           paidDate: payment.date,

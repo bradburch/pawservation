@@ -339,6 +339,41 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 2 });
   });
 
+  it('records only once when the same dedupeKey is chosen twice in one request — the isUniqueViolation branch, reachable without concurrency', async () => {
+    const { env, raw } = createTestEnv();
+    // Both entries clear the pre-read (`inputs.alreadyImported` is computed once, before the
+    // loop): the first insert succeeds, the second hits the partial unique index on ExternalRef
+    // and must be reported as already-imported, not as a failure.
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [
+        { dedupeKey: 'csv:REF1', accountId: 'pet_sp_bella' },
+        { dedupeKey: 'csv:REF1', accountId: 'pet_sp_bella' },
+      ],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 1,
+      totalAmount: 45,
+      skipped: [{ dedupeKey: 'csv:REF1', reason: 'Already imported' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
+  });
+
+  it('ignores extra fields on a choice, recording the amount the SERVER read from the file rather than a client-supplied one', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:REF1', accountId: 'pet_sp_bella', amount: 9999 }],
+    });
+    expect(await res.json()).toMatchObject({ imported: 1, totalAmount: 45, skipped: [] });
+    const row = raw.prepare('SELECT Amount FROM Payments').get();
+    expect(row).toMatchObject({ Amount: 45 });
+  });
+
   it('400s a malformed choices array, writing nothing', async () => {
     const { env, raw } = createTestEnv();
     const base = { csv: CSV, mapping: MAPPING, defaultMethod: 'cash' };
