@@ -150,7 +150,7 @@ describe('POST /:slug/admin/calendar/backfill/preview', () => {
     expect(row.endDate).toBeNull(); // shape: 'single' — never carries an end date
   });
 
-  it('prices from the resolved service\'s own option and rate card, not another service\'s', async () => {
+  it("prices from the resolved service's own option and rate card, not another service's", async () => {
     const { env } = await createTestEnv();
     await connectCalendar(env);
     // Same pet-set mix (Bella + Mochi = one dog, one cat) priced differently under two services —
@@ -435,7 +435,9 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
       calendarResponse([BELLA_WALK_EVENT]),
     );
 
-    const first = (await (await runImport(env, [{ eventId: 'ev_bella_walk' }])).json()) as ImportBody;
+    const first = (await (
+      await runImport(env, [{ eventId: 'ev_bella_walk' }])
+    ).json()) as ImportBody;
     expect(first.imported).toBe(1);
 
     const secondRes = await runImport(env, [{ eventId: 'ev_bella_walk' }]);

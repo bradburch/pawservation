@@ -333,7 +333,12 @@ async function classifyAll(
       listAdoptedEventIds(c.env.PAWSERVATION_DB, tenant.Id),
     ]);
 
-  const priceFor: BackfillContext['priceFor'] = (service, pricedPets, startDate, endDateExclusive) => {
+  const priceFor: BackfillContext['priceFor'] = (
+    service,
+    pricedPets,
+    startDate,
+    endDateExclusive,
+  ) => {
     const tenantService = serviceByType.get(service.serviceType)!;
     const option = optionByType.get(service.serviceType)!;
     return estimateCost(tenantService, option, startDate, endDateExclusive, pricedPets, rates);
@@ -2967,8 +2972,9 @@ export const adminRoutes = new Hono<AppEnv>()
     // everything BUT the price and is adoptable only when the sitter supplies one.
     const resolvable = new Map(
       classified
-        .filter((r): r is Extract<Classified, { kind: 'adopt' | 'needs-price' }> =>
-          r.kind === 'adopt' || r.kind === 'needs-price',
+        .filter(
+          (r): r is Extract<Classified, { kind: 'adopt' | 'needs-price' }> =>
+            r.kind === 'adopt' || r.kind === 'needs-price',
         )
         .map((r) => [r.eventId, r] as const),
     );

@@ -257,12 +257,23 @@ const CTX = {
     { EndUserId: 'u2', PetId: 'p3' },
     { EndUserId: 'u3', PetId: 'p4' },
   ],
-  services: [{ serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const }],
+  services: [
+    { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
+  ],
   adoptedEventIds: new Set<string>(),
   priceFor: () => ({ priced: true as const, cost: 25 }),
 };
 
-const event = (over: Partial<{ id: string; summary: string; start: string; end: string; allDay: boolean; private: Record<string, string> }> = {}) => ({
+const event = (
+  over: Partial<{
+    id: string;
+    summary: string;
+    start: string;
+    end: string;
+    allDay: boolean;
+    private: Record<string, string>;
+  }> = {},
+) => ({
   id: over.id ?? 'ev1',
   summary: over.summary ?? 'Sadie Walk',
   start: over.start ?? '2026-07-01',
@@ -317,7 +328,12 @@ describe('classifyEvent', () => {
   it('flags an unpriced pet set and carries NO cost', () => {
     const out = classifyEvent(event(), {
       ...CTX,
-      priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: 'p1', mixKey: 'dog:1' }),
+      priceFor: () => ({
+        priced: false as const,
+        reason: 'unpriced-pet-set' as const,
+        groupKey: 'p1',
+        mixKey: 'dog:1',
+      }),
     });
     expect(out).toMatchObject({ kind: 'needs-price' });
     expect(out).not.toHaveProperty('estCost');
@@ -326,7 +342,12 @@ describe('classifyEvent', () => {
   it('returns needs-price with everything resolved when only the rate is missing', () => {
     const out = classifyEvent(event(), {
       ...CTX,
-      priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: 'p1', mixKey: 'dog:1' }),
+      priceFor: () => ({
+        priced: false as const,
+        reason: 'unpriced-pet-set' as const,
+        groupKey: 'p1',
+        mixKey: 'dog:1',
+      }),
     });
     expect(out).toMatchObject({
       kind: 'needs-price',
@@ -345,12 +366,17 @@ describe('classifyEvent', () => {
     // An unresolvable pet is still a flag — needs-price means "only the money is missing".
     const out = classifyEvent(event({ summary: 'Bella Walk' }), {
       ...CTX,
-      priceFor: () => ({ priced: false as const, reason: 'unpriced-pet-set' as const, groupKey: '', mixKey: '' }),
+      priceFor: () => ({
+        priced: false as const,
+        reason: 'unpriced-pet-set' as const,
+        groupKey: '',
+        mixKey: '',
+      }),
     });
     expect(out).toMatchObject({ kind: 'flag', reason: 'ambiguous-pet' });
   });
 
-  it("keeps the exclusive end date for a range-shaped service, whatever its slug", () => {
+  it('keeps the exclusive end date for a range-shaped service, whatever its slug', () => {
     // Slugs are frozen at creation time from a label that can be renamed later (see
     // BackfillService's doc comment) — 'overnight-stay' here stands in for that: it is NOT one of
     // the old hardcoded RANGE_SHAPED strings ('boarding' | 'house-sit' | 'housesit'), and it does
@@ -362,7 +388,12 @@ describe('classifyEvent', () => {
     const ctx = {
       ...CTX,
       services: [
-        { serviceType: 'overnight-stay', label: 'House sit', optionKey: 'standard', shape: 'range' as const },
+        {
+          serviceType: 'overnight-stay',
+          label: 'House sit',
+          optionKey: 'standard',
+          shape: 'range' as const,
+        },
       ],
     };
     const out = classifyEvent(
@@ -390,7 +421,12 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
   const boarding = {
     ...CTX,
     services: [
-      { serviceType: 'boarding', label: 'Boarding', optionKey: 'standard', shape: 'range' as const },
+      {
+        serviceType: 'boarding',
+        label: 'Boarding',
+        optionKey: 'standard',
+        shape: 'range' as const,
+      },
     ],
   };
 

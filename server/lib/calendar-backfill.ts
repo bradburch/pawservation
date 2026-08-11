@@ -19,7 +19,15 @@ export type ParsedSummary = {
 
 /** Service words we recognise in a title, lowercased. Matched against the tenant's own labels
  *  in `resolveService` — this list only decides where the pet names stop. */
-const SERVICE_WORDS = ['boarding', 'house-sit', 'housesit', 'house sit', 'walk', 'check-in', 'check in'];
+const SERVICE_WORDS = [
+  'boarding',
+  'house-sit',
+  'housesit',
+  'house sit',
+  'walk',
+  'check-in',
+  'check in',
+];
 
 function escapeRegExp(word: string): string {
   return word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -98,7 +106,11 @@ export type PetResolution =
 /** Lowercased and stripped of non-alphanumerics, so "Sadie" meets "sadie" and "Mr. Bo" meets
  *  "mr bo". Deliberately lossy — which is exactly why a key matching two pets is REFUSED below
  *  rather than resolved. */
-const nameKey = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+const nameKey = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 
 export function resolvePetsByName(names: string[], pets: BackfillPet[]): PetResolution {
   if (names.length === 0) {
@@ -161,10 +173,10 @@ export type PetOwnerLink = { EndUserId: string; PetId: string };
 export function resolveHousehold(
   pets: BackfillPet[],
   links: PetOwnerLink[],
-):
-  | { ok: true; endUserId: string }
-  | { ok: false; reason: 'multiple-households'; detail: string } {
-  const accounts = buildAccounts(links.map((link) => ({ ownerId: link.EndUserId, petId: link.PetId })));
+): { ok: true; endUserId: string } | { ok: false; reason: 'multiple-households'; detail: string } {
+  const accounts = buildAccounts(
+    links.map((link) => ({ ownerId: link.EndUserId, petId: link.PetId })),
+  );
 
   const matchedAccountIds = new Set<string>();
   for (const pet of pets) {
@@ -213,7 +225,9 @@ export type BackfillService = {
 export function resolveService(
   hint: string | null,
   services: BackfillService[],
-): { ok: true; service: BackfillService } | { ok: false; reason: 'unknown-service'; detail: string } {
+):
+  | { ok: true; service: BackfillService }
+  | { ok: false; reason: 'unknown-service'; detail: string } {
   if (hint === null || hint.trim() === '') {
     return { ok: false, reason: 'unknown-service', detail: 'No service named in the title' };
   }
@@ -253,7 +267,14 @@ export type Classified =
       estCost: number;
       cancelled: boolean;
     }
-  | { kind: 'flag'; eventId: string; summary: string; startDate: string; reason: FlagReason; detail: string }
+  | {
+      kind: 'flag';
+      eventId: string;
+      summary: string;
+      startDate: string;
+      reason: FlagReason;
+      detail: string;
+    }
   | { kind: 'skip'; eventId: string; why: 'pawservation-own' | 'already-adopted' }
   // Everything resolved — pets, household, service, dates — except a rate. This is a question
   // only the sitter can answer, not a failure: it carries the same fields as 'adopt' minus

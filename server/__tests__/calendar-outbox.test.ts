@@ -642,14 +642,18 @@ describe('a booking adopted from the calendar is never written back to Google', 
     const id = await adopt(env);
     const spy = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ id: 'evt_the_sitters_own' }), { status: 200 }));
+      .mockResolvedValue(
+        new Response(JSON.stringify({ id: 'evt_the_sitters_own' }), { status: 200 }),
+      );
 
     // A fee-bearing cancel takes the outbox's UPDATE branch instead, which would rewrite the
     // sitter's own title and description with pawservation's rendering. Armed through
     // updateBookingStatus's assessed-cancellation branch directly (repo.ts) rather than the admin
     // route, only because no seeded service carries CancellationTiers for the route to compute a
     // fee from — the arming SQL under test is the same statement the route calls.
-    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled', 25)).toBe(true);
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'cancelled', 25)).toBe(
+      true,
+    );
     await redriveCalendarOutbox(env, tenant);
 
     expect(eventCalls(spy)).toEqual([]);
