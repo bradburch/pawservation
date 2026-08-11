@@ -34,6 +34,7 @@ import {
   quarterlyBreakdown,
 } from '../../src/shared/index.js';
 import { isUniqueViolation } from '../lib/db-errors';
+import { deriveAttributedRef } from '../lib/payment-attribution';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
@@ -1706,8 +1707,12 @@ export async function applyAttribution(
     };
   }
 
-  const derivedRef = (suffix: string) =>
-    source.ExternalRef === null ? null : `${source.ExternalRef}:${suffix}`;
+  // `attr:<segment>:<the source's own ref>` — see `deriveAttributedRef`
+  // (server/lib/payment-attribution.ts) for why the original is carried VERBATIM as the tail
+  // rather than suffixed. In short: this DELETE removes the last row holding the importers'
+  // idempotency key, so unless that key can be read back out of what attribution leaves behind,
+  // a re-upload of the same export records every attributed payment all over again.
+  const derivedRef = (segment: string) => deriveAttributedRef(source.ExternalRef, segment);
 
   // THE FIRST SPLIT'S AMOUNT IS MULTIPLIED BY A LOOKUP OF THE SOURCE ROW, and that is load-bearing
   // rather than decorative. Between the re-read above and this batch, another request applying the

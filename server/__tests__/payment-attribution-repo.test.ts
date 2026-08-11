@@ -11,6 +11,7 @@ import {
   listPaymentsForAccount,
   listPaymentsForBooking,
 } from '../db/repo';
+import { recoverSourceRef } from '../lib/payment-attribution';
 import { createTestEnv, seedPets, TENANT_A } from './helpers';
 
 /**
@@ -83,7 +84,7 @@ function credit(
 }
 
 /** Every payment row of a tenant, straight from SQL — `PaymentRow` deliberately omits
- *  `ExternalRef`, and the suffixing is exactly what needs asserting. */
+ *  `ExternalRef`, and how attribution derives it is exactly what needs asserting. */
 function paymentRows(raw: DatabaseSync, tenantId = TENANT_C) {
   return raw
     .prepare(
@@ -426,7 +427,7 @@ describe('applyAttribution (repo)', () => {
     expect(result.reason).toContain('is $50 over-paid');
   });
 
-  it('suffixes ExternalRef per derived row — unique, and traceable back to the source', async () => {
+  it('marks ExternalRef per derived row — unique, and traceable back to the source', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
     const first = await book(env, home, 100, '2026-06-28');
@@ -446,11 +447,14 @@ describe('applyAttribution (repo)', () => {
     ).toEqual({ ok: true });
 
     const refs = paymentRows(raw).map((r) => r.ExternalRef);
-    expect(refs.sort()).toEqual(['venmo-7788:1', 'venmo-7788:2', 'venmo-7788:r']);
+    expect(refs.sort()).toEqual(['attr:1:venmo-7788', 'attr:2:venmo-7788', 'attr:r:venmo-7788']);
     expect(new Set(refs).size).toBe(refs.length);
-    // Every derived row traces back to the source ref, which is what stops a re-import of the
-    // original CSV recreating money this attribution has already placed.
-    for (const ref of refs) expect(ref!.startsWith('venmo-7788:')).toBe(true);
+    // Each derived row carries the source ref VERBATIM as its tail, so the original importer key
+    // is recoverable from it by inspection alone — whatever characters that key contains.
+    for (const ref of refs) expect(recoverSourceRef(ref!)).toBe('venmo-7788');
+    // Traceability is not the same claim as re-import protection, and this test asserts only the
+    // first. That the importers actually REFUSE the source file again after this write is proved
+    // end to end, through both import routes, in payment-attribution-reimport.test.ts.
   });
 
   it('derives no ExternalRef when the source payment has none', async () => {
@@ -653,7 +657,7 @@ describe('applyAttribution (repo)', () => {
     const first = await book(env, home, 100, '2026-06-28');
     const second = await book(env, home, 60, '2026-07-04');
     // A payment already carrying the ref this attribution's FIRST split would derive.
-    await credit(env, home.accountId, 25, 'venmo-7788:1');
+    await credit(env, home.accountId, 25, 'attr:1:venmo-7788');
     const paymentId = (await credit(env, home.accountId, 160, 'venmo-7788'))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
@@ -673,7 +677,7 @@ describe('applyAttribution (repo)', () => {
     // The source survives whole — the collision is caught, never half-applied.
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.ExternalRef).sort()).toEqual(['venmo-7788', 'venmo-7788:1']);
+    expect(rows.map((r) => r.ExternalRef).sort()).toEqual(['attr:1:venmo-7788', 'venmo-7788']);
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, first)).toEqual([]);
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
   });

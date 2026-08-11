@@ -78,7 +78,7 @@ import {
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
-import { proposeAttribution } from '../lib/payment-attribution';
+import { expandImportedRefs, proposeAttribution } from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
 import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
@@ -245,7 +245,12 @@ async function loadPaymentMatchInputs(
   }
   return {
     clients,
-    alreadyImported: new Set(refs),
+    // NOT `new Set(refs)`: attribution rewrites an imported payment's `ExternalRef` and deletes
+    // the row that carried the original, so the live column alone no longer answers "has this
+    // tenant already recorded this transaction". `expandImportedRefs` adds back the original
+    // behind every derived ref, which is what stops a re-upload of an already-attributed export
+    // recording the whole file a second time. Both importers read this one set.
+    alreadyImported: expandImportedRefs(refs),
     households: [...labelsByAccount]
       .map(([accountId, labels]) => ({ accountId, label: labels.join(' & ') }))
       .sort((a, b) => a.label.localeCompare(b.label)),

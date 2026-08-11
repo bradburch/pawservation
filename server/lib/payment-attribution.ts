@@ -41,6 +41,76 @@
 import { isRealDate } from './validation.js';
 import { MS_PER_DAY, parseDateUtc } from '../../src/shared/index.js';
 
+/**
+ * THE DERIVED `ExternalRef` SCHEME — `attr:<segment>:<the original ref, verbatim>`, where
+ * `<segment>` is a split's 1-based index or `r` for the remainder. `applyAttribution`
+ * (server/db/repo.ts) writes them; the importers read them back through `expandImportedRefs`.
+ * Both halves live here, together, because the ONLY property that matters is that they are exact
+ * inverses: `recoverSourceRef(deriveAttributedRef(x, s)) === x` for every x. Split across two
+ * modules, that could drift, and drifting silently frees an idempotency key.
+ *
+ * WHY THE ORIGINAL IS THE TAIL RATHER THAN A SUFFIX. Attribution deletes the imported
+ * account-level row, so after it runs the original ref exists NOWHERE in `Payments` — and both
+ * importers dedupe by exact set membership against exactly that column. A ref the importers
+ * cannot recover is a key that is free again, and a re-upload of the same export (overlapping
+ * monthly exports are the CSV importer's documented expected case) records every attributed
+ * payment a second time as a brand-new credit. The partial unique index cannot save it either:
+ * with the original gone, there is nothing left for it to collide with.
+ *
+ * A SUFFIX CANNOT BE UNDONE, which is why the marker leads. `csv:<hash>:<rank>` already ends in
+ * `:` plus digits, so `csv:abc:3` is indistinguishable from a `csv:abc` that was suffixed `:3` —
+ * recovery would have to guess. With the original carried verbatim as the tail, recovery is
+ * "strip the marker and the segment; everything after is the original", whatever it contains.
+ *
+ * NO NATURAL REF CAN BE MISTAKEN FOR A DERIVED ONE. The only three writers of a non-NULL
+ * `ExternalRef` are the Venmo importer (a transaction id, `TXN_ID_RE` = `[A-Za-z0-9_-]{1,64}`,
+ * which cannot contain a colon at all), the CSV importer (always namespaced `csv:`, including
+ * when it keys on a sitter's own reference cell), and this scheme itself; hand-recorded payments
+ * carry NULL. So nothing natural begins `attr:`. That is an argument, not a guarantee, so
+ * `recoverSourceRef` is written to REQUIRE a well-formed segment (digits, or `r`) rather than
+ * trusting the marker alone: `attr:x:whatever` is read as an ordinary ref, not unwrapped.
+ *
+ * NESTING IS ORDINARY. A remainder is still an account-level credit and can be attributed again,
+ * giving `attr:1:attr:r:<original>`; recovery unwraps repeatedly, and terminates because every
+ * unwrap strictly shortens the string.
+ */
+const DERIVED_REF_MARKER = 'attr:';
+const DERIVED_REF_RE = /^attr:(?:\d+|r):/;
+
+/** The ref one derived row carries. NULL in (a hand-recorded payment) means NULL out. */
+export function deriveAttributedRef(sourceRef: string | null, segment: string): string | null {
+  return sourceRef === null ? null : `${DERIVED_REF_MARKER}${segment}:${sourceRef}`;
+}
+
+/** The importer key a derived ref was made from, or `null` if `ref` is not a derived ref. */
+export function recoverSourceRef(ref: string): string | null {
+  let current = ref;
+  while (DERIVED_REF_RE.test(current)) {
+    current = current.slice(current.indexOf(':', DERIVED_REF_MARKER.length) + 1);
+  }
+  return current === ref ? null : current;
+}
+
+/**
+ * The set both importers dedupe against: every ref this tenant literally holds, PLUS the original
+ * importer key behind each derived one. Without that second half, attributing an imported payment
+ * would hand its key back to the next upload of the same file.
+ *
+ * A pre-read set, not a database constraint — so it is the whole protection for an attributed
+ * key, where an unattributed one is also backstopped by the partial unique index. Two imports of
+ * the same already-attributed file running concurrently could still both pass this check; that
+ * window is the reason the routes go on catching a unique violation from the insert itself rather
+ * than treating this set as the last word.
+ */
+export function expandImportedRefs(refs: string[]): Set<string> {
+  const set = new Set(refs);
+  for (const ref of refs) {
+    const source = recoverSourceRef(ref);
+    if (source !== null) set.add(source);
+  }
+  return set;
+}
+
 export type UnpaidBooking = { bookingId: string; startDate: string; outstanding: number };
 export type Credit = { paymentId: string; amount: number; paidDate: string };
 export type Split = { bookingId: string; amount: number };
