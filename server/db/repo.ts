@@ -2478,6 +2478,91 @@ export async function getHouseholdDetail(
 }
 
 /**
+ * EVERY HOUSEHOLD OF A TENANT THAT HOLDS AT LEAST ONE UNAPPLIED CREDIT, together with its detail
+ * (the bookings a credit might attribute against) and the credits themselves — everything the
+ * payment-attribution preview (Task 3) needs, in a number of reads that does NOT grow with how
+ * many households the tenant has.
+ *
+ * NAIVELY, "preview every household" means looping `getHouseholdDetail` AND
+ * `listPaymentsForAccount` once per household. Both independently call `loadAccountGraph` under
+ * the hood (`householdDetailFor`'s caller, and `listPaymentsForAccount`'s `householdPetIds`),
+ * reloading the FULL tenant-wide owner<->pet graph from scratch every time — for a tenant with
+ * hundreds of households, hundreds of redundant copies of the same two queries, sequentially, for
+ * one preview request. That is exactly the budget the calendar backfill's 200-event cap and the
+ * CSV importer's hoist to a constant 7 subrequests both exist to protect (Workers' per-request
+ * subrequest ceiling).
+ *
+ * So this loads the graph ONCE, reads every household-level payment of the tenant in ONE query
+ * (`Payments WHERE AccountId IS NOT NULL` — the same predicate `listPaymentsForAccount` applies
+ * per household) and buckets those rows into households by MEMBERSHIP using that one graph — live
+ * pets AND anchors, exactly as `householdPetIds` resolves them for a single household — rather
+ * than resolving membership once per household. Only a household that buckets at least one credit
+ * pays for the (unavoidably per-household) detail read at all; a household that has never
+ * prepaid costs nothing here, and never reaches `proposeAttribution` with an empty credit list.
+ *
+ * Deliberately NOT a change to `getHouseholdDetail`/`listPaymentsForAccount` themselves — a single
+ * account id is one household and already cheap, and every other caller of either wants exactly
+ * one household, not the whole tenant.
+ */
+export type HouseholdAttributionCandidate = {
+  accountId: string;
+  detail: HouseholdDetailRow;
+  credits: PaymentRow[];
+};
+
+export async function getHouseholdsWithUnappliedCredits(
+  db: D1Database,
+  tenantId: string,
+): Promise<HouseholdAttributionCandidate[]> {
+  const [graph, paymentsRes] = await Promise.all([
+    loadAccountGraph(db, tenantId),
+    // Column list identical to listPaymentsForAccount's — every household-level payment of the
+    // tenant, in one query instead of one per household.
+    db
+      .prepare(
+        `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
+         FROM Payments WHERE TenantId = ? AND AccountId IS NOT NULL
+         ORDER BY PaidDate DESC, CreatedAt DESC`,
+      )
+      .bind(tenantId)
+      .all<PaymentRow>(),
+  ]);
+
+  // Every pet id a payment may be filed under, mapped to the household it resolves to — live pets
+  // of each account, PLUS anchors for pets that have since died (buildPaymentAnchors) — the exact
+  // membership `householdPetIds` computes per call, built once here for the whole tenant instead.
+  const householdIdForPet = new Map<string, string>();
+  for (const account of graph.accounts) {
+    for (const petId of account.petIds) householdIdForPet.set(petId, account.id);
+  }
+  for (const [petId, accountId] of graph.anchors) householdIdForPet.set(petId, accountId);
+
+  const creditsByHousehold = new Map<string, PaymentRow[]>();
+  for (const row of paymentsRes.results) {
+    const accountId = row.AccountId === null ? undefined : householdIdForPet.get(row.AccountId);
+    // No household resolves this pet id (a `deleteCustomer` cascade orphaned it) — that payment is
+    // `getOrphanedAccountPayments`'s territory, not attributable to any household here.
+    if (!accountId) continue;
+    const list = creditsByHousehold.get(accountId) ?? [];
+    list.push(row);
+    creditsByHousehold.set(accountId, list);
+  }
+
+  const candidates = await Promise.all(
+    graph.accounts
+      .filter((account) => creditsByHousehold.has(account.id))
+      .map(async (account): Promise<HouseholdAttributionCandidate | null> => {
+        const resolved = resolveHousehold(graph, { accountId: account.id });
+        if (!resolved) return null;
+        const detail = await householdDetailFor(db, tenantId, graph, resolved);
+        if (!detail) return null;
+        return { accountId: account.id, detail, credits: creditsByHousehold.get(account.id)! };
+      }),
+  );
+  return candidates.filter((c): c is HouseholdAttributionCandidate => c !== null);
+}
+
+/**
  * The SAME statement, asked by the CUSTOMER whose household it is (`GET /:slug/account`).
  *
  * Exists so the customer-facing route resolves its household and reads it from ONE loaded graph

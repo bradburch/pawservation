@@ -276,4 +276,39 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
       splits: [{ bookingId: samsBooking, amount: 50 }],
     });
   });
+
+  it('previewing every household loads the account graph ONCE, not once per household', async () => {
+    const { env, raw } = createTestEnv();
+    // Three households, each with real work to do, so a per-household reload would show up as a
+    // per-household count rather than a constant.
+    for (const key of ['jen', 'sam', 'ana']) {
+      const home = await household(env, raw, key);
+      await book(env, home, 100, '2026-07-01');
+      await credit(env, home.accountId, 100);
+    }
+
+    // `loadAccountGraph` (server/db/repo.ts) reads `PetOwners` exactly twice per load — live
+    // links and deceased links (`listOwnerPetLinks`/`listDeceasedOwnerPetLinks`). Counting
+    // statements against that table is a direct proxy for "how many times was the graph loaded",
+    // independent of how many other queries the per-household detail reads happen to issue.
+    let graphQueries = 0;
+    const counted = {
+      prepare: (sql: string) => {
+        if (sql.includes('FROM PetOwners po')) graphQueries++;
+        return env.PAWSERVATION_DB.prepare(sql);
+      },
+      batch: (statements: D1PreparedStatement[]) => env.PAWSERVATION_DB.batch(statements),
+    } as unknown as D1Database;
+    const countedEnv = { ...env, PAWSERVATION_DB: counted };
+
+    const res = await preview(countedEnv, TENANT_C);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+    expect(body.proposals).toHaveLength(3); // sanity: all three households were genuinely read
+
+    // Exactly ONE graph load (2 statements) for three households — not 3, not 6. A regression to
+    // looping getHouseholdDetail/listPaymentsForAccount per household would make this scale with
+    // household count instead of staying constant.
+    expect(graphQueries).toBe(2);
+  });
 });

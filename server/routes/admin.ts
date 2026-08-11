@@ -20,8 +20,8 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
-  getHouseholdBalances,
   getHouseholdDetail,
+  getHouseholdsWithUnappliedCredits,
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
@@ -3067,11 +3067,20 @@ export const adminRoutes = new Hono<AppEnv>()
    * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
    *
    * `accountId` is resolved the way every other household read resolves it — by asking
-   * `getHouseholdDetail`/`getHouseholdBalances` for the CURRENT id, never by equality on whatever
-   * the caller happened to send — because a household's account id is its lexicographically-first
-   * pet and a newly added pet renames it (see `householdPetIds`). An id `getHouseholdDetail`
-   * cannot resolve for this tenant — another tenant's, or no household at all — is the same 404
-   * every sibling household route gives.
+   * `getHouseholdDetail` for the CURRENT id, never by equality on whatever the caller happened to
+   * send — because a household's account id is its lexicographically-first pet and a newly added
+   * pet renames it (see `householdPetIds`). An id `getHouseholdDetail` cannot resolve for this
+   * tenant — another tenant's, or no household at all — is the same 404 every sibling household
+   * route gives.
+   *
+   * THE OMITTED-`accountId` PATH USES `getHouseholdsWithUnappliedCredits`, NOT A LOOP OF
+   * `getHouseholdDetail` PLUS `listPaymentsForAccount` — one household is cheap, but both of those
+   * independently reload the FULL tenant-wide account graph on every call
+   * (`loadAccountGraph`/`householdPetIds`), so looping either once per household would pay for
+   * that reload N times, sequentially, for a single preview. The tenant-wide reader loads the
+   * graph once, reads every household-level payment of the tenant in one query, and only pays for
+   * a household's detail read at all when that household actually has a credit to place (see its
+   * own doc comment in `server/db/repo.ts`).
    */
   .post('/:slug/admin/payments/attribute/preview', async (c) => {
     const tenant = c.get('tenant');
@@ -3084,17 +3093,21 @@ export const adminRoutes = new Hono<AppEnv>()
     const targets: {
       accountId: string;
       detail: NonNullable<Awaited<ReturnType<typeof getHouseholdDetail>>>;
+      credits: Awaited<ReturnType<typeof listPaymentsForAccount>>;
     }[] = [];
     if (requestedAccountId !== undefined) {
       const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, requestedAccountId);
       if (!detail) return c.json({ error: 'Not found.' }, 404);
-      targets.push({ accountId: detail.accountId, detail });
+      const credits = await listPaymentsForAccount(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        detail.accountId,
+      );
+      if (credits.length > 0) targets.push({ accountId: detail.accountId, detail, credits });
     } else {
-      const households = await getHouseholdBalances(c.env.PAWSERVATION_DB, tenant.Id);
-      for (const h of households) {
-        const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, h.accountId);
-        if (detail) targets.push({ accountId: h.accountId, detail });
-      }
+      const candidates = await getHouseholdsWithUnappliedCredits(c.env.PAWSERVATION_DB, tenant.Id);
+      for (const { accountId, detail, credits } of candidates)
+        targets.push({ accountId, detail, credits });
     }
 
     const proposals: {
@@ -3127,10 +3140,7 @@ export const adminRoutes = new Hono<AppEnv>()
       }[];
     }[] = [];
 
-    for (const { accountId, detail } of targets) {
-      const credits = await listPaymentsForAccount(c.env.PAWSERVATION_DB, tenant.Id, accountId);
-      if (credits.length === 0) continue;
-
+    for (const { accountId, detail, credits } of targets) {
       // outstanding > 0 only — see the doc comment above for why this must happen before
       // proposeAttribution ever sees the list.
       const candidates = detail.bookings.filter((b) => b.expected - b.paidTotal > 0);
