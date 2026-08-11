@@ -320,13 +320,14 @@ async function loadBackfillContext(
 /**
  * Classify every Google Calendar event against this tenant's live pets/households/services/rates.
  * Reused verbatim by the import route (Task 7) so the preview and the actual import classify by
- * exactly the same code path.
+ * exactly the same code path. Also returns the pet list `loadBackfillContext` resolved, so a
+ * caller that wants display-only pet names (the preview route) doesn't re-read it.
  */
 async function classifyAll(
   c: Context<AppEnv>,
   tenant: Tenant,
   events: CalendarEvent[],
-): Promise<Classified[]> {
+): Promise<{ classified: Classified[]; pets: BackfillPet[] }> {
   const [{ pets, links, backfillServices, serviceByType, optionByType, rates }, adoptedEventIds] =
     await Promise.all([
       loadBackfillContext(c, tenant),
@@ -351,7 +352,7 @@ async function classifyAll(
     adoptedEventIds,
     priceFor,
   };
-  return events.map((event) => classifyEvent(event, ctx));
+  return { classified: events.map((event) => classifyEvent(event, ctx)), pets };
 }
 
 /**
@@ -2889,10 +2890,23 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
 
-    const classified = await classifyAll(c, tenant, events);
+    const { classified, pets } = await classifyAll(c, tenant, events);
+    // Display-only: the classifier's Classified type stays pure (petIds only). Names are resolved
+    // here, against the same pet list classifyAll already fetched, so the panel can offer a pet
+    // filter without guessing from the event title. Ordered as `petIds` is ordered so the two
+    // stay aligned.
+    const nameById = new Map(pets.map((p) => [p.id, p.name] as const));
+    const withPetNames = <T extends { petIds: string[] }>(r: T): T & { petNames: string[] } => ({
+      ...r,
+      petNames: r.petIds.map((id) => nameById.get(id) ?? ''),
+    });
     return c.json({
-      adopt: classified.filter((r) => r.kind === 'adopt'),
-      needsPrice: classified.filter((r) => r.kind === 'needs-price'),
+      adopt: classified
+        .filter((r): r is Extract<Classified, { kind: 'adopt' }> => r.kind === 'adopt')
+        .map(withPetNames),
+      needsPrice: classified
+        .filter((r): r is Extract<Classified, { kind: 'needs-price' }> => r.kind === 'needs-price')
+        .map(withPetNames),
       flags: classified.filter((r) => r.kind === 'flag'),
       skipped: classified.filter((r) => r.kind === 'skip').length,
     });
@@ -2964,7 +2978,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     // RE-DERIVED from scratch — same classifier the preview used, so the two can never disagree.
     // The browser named event ids and, optionally, prices; nothing else survives this call.
-    const classified = await classifyAll(c, tenant, events);
+    const { classified } = await classifyAll(c, tenant, events);
     // Every classified row, by id — used only to tell an already-imported id apart from every
     // other reason it might not be adoptable, below.
     const classifiedById = new Map(classified.map((r) => [r.eventId, r] as const));

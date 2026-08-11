@@ -150,6 +150,54 @@ describe('POST /:slug/admin/calendar/backfill/preview', () => {
     expect(row.endDate).toBeNull(); // shape: 'single' — never carries an end date
   });
 
+  it('carries the resolved pet name on an adopt row', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([
+        {
+          id: 'ev_bella_walk',
+          summary: 'Bella Walk',
+          start: { date: '2026-06-10' },
+          end: { date: '2026-06-10' },
+        },
+      ]),
+    );
+
+    const body = await preview(env);
+    expect(body.adopt).toHaveLength(1);
+    const row = body.adopt[0] as Extract<Classified, { kind: 'adopt' }> & { petNames: string[] };
+    expect(row.petIds).toEqual(['pet_sp_bella']);
+    expect(row.petNames).toEqual(['Bella']);
+  });
+
+  it('carries both resolved pet names, aligned with petIds, for a two-pet event', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    // Dog+cat has no seeded mix rate; without one this event lands as needs-price rather than
+    // adopt, so seed one — same setup the mixed-service pricing test above uses.
+    const mixKey = buildMixKey(mixFromPetTypes(['dog', 'cat']));
+    await replaceServicePetRates(env.PAWSERVATION_DB, TENANT_A, 'boarding', 'standard', [
+      { mixKey, rate: 999 },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      calendarResponse([
+        {
+          id: 'ev_board',
+          summary: 'Bella and Mochi Boarding',
+          start: { date: '2026-06-10' },
+          end: { date: '2026-06-13' },
+        },
+      ]),
+    );
+
+    const body = await preview(env);
+    expect(body.adopt).toHaveLength(1);
+    const row = body.adopt[0] as Extract<Classified, { kind: 'adopt' }> & { petNames: string[] };
+    expect(row.petIds).toEqual(['pet_sp_bella', 'pet_sp_mochi']);
+    expect(row.petNames).toEqual(['Bella', 'Mochi']);
+  });
+
   it("prices from the resolved service's own option and rate card, not another service's", async () => {
     const { env } = await createTestEnv();
     await connectCalendar(env);
@@ -228,6 +276,7 @@ describe('POST /:slug/admin/calendar/backfill/preview', () => {
     expect(row.petIds).toEqual(['pet_sp_bella', 'pet_sp_mochi']);
     // Not `estCost: undefined` — the KEY itself must be absent from the parsed JSON.
     expect(Object.prototype.hasOwnProperty.call(row, 'estCost')).toBe(false);
+    expect(row.petNames).toEqual(['Bella', 'Mochi']);
   });
 
   it('an adopted-then-cancelled event is still skipped, not offered for re-adoption', async () => {
