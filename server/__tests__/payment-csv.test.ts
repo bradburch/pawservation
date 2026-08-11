@@ -66,10 +66,58 @@ describe('applyMapping', () => {
       payer: 'Thomas Finch',
       method: 'zelle',
       reference: 'ZL-1',
+      // namespaced so it can never collide with a raw Venmo transaction id in the same
+      // ExternalRef column / unique index.
+      dedupeKey: 'csv:ZL-1',
     });
     // 1-indexed against the sitter's own file, so "row 3" means row 3 in their spreadsheet.
     expect(out.problems.map((p) => p.row)).toEqual([3, 4, 5]);
     expect(out.problems[0].reason).toMatch(/whole dollar/i);
+    // The refund row (row 4) and the bad-date row (row 5) are told apart, not lumped in with the
+    // cents problem.
+    expect(out.problems[1].reason).toMatch(/refund/i);
+  });
+
+  it('parses a raw "+ $45.00"-style amount before sanitizing it, per the ordering constraint', () => {
+    // sanitizeCell would prefix a leading '+' with an apostrophe ("'+ $45.00"), which parseAmount
+    // would then fail to match — so amount MUST be parsed from the raw cell, never the sanitized
+    // one. A sanitize-first implementation would turn this into a problem row instead of $45.
+    const f = ['Date,Amount,Payer', '2026-07-03,+ $45.00,Finch'].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.problems).toEqual([]);
+    expect(out.payments).toHaveLength(1);
+    expect(out.payments[0].amount).toBe(45);
+  });
+
+  it('reports each repeat of a mapped reference within the file instead of silently dropping it', () => {
+    // A batch/settlement id repeated on every row of a bank export would otherwise become one key
+    // for all of them: the unique index inserts the first and silently refuses the rest.
+    const f = [
+      'Date,Amount,Payer,Ref',
+      '2026-07-03,40,Finch,BATCH-1',
+      '2026-07-04,55,Cole,BATCH-1',
+      '2026-07-05,60,Reyes,BATCH-1',
+    ].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2, reference: 3 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(1);
+    expect(out.payments[0].row).toBe(2);
+    expect(out.problems.map((p) => p.row)).toEqual([3, 4]);
+    expect(out.problems[0].reason).toContain('BATCH-1');
+    expect(out.problems[0].reason).toMatch(/more than once/i);
+  });
+
+  it('falls back to the derived hash when reference is mapped but the cell is empty', () => {
+    const f = ['Date,Amount,Payer,Ref', '2026-07-03,40,Finch,'].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2, reference: 3 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(1);
+    expect(out.payments[0].reference).toBeNull();
+    expect(out.payments[0].dedupeKey).toMatch(/^csv:[0-9a-f]{16}:0$/);
   });
 
   it('gives two identical unreferenced rows different keys, so both import', () => {
@@ -77,6 +125,8 @@ describe('applyMapping', () => {
     const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
     expect(out.ok && out.payments).toHaveLength(2);
     expect(out.ok && out.payments[0].dedupeKey).not.toBe(out.ok && out.payments[1].dedupeKey);
+    expect(out.ok && out.payments[0].dedupeKey).toMatch(/^csv:[0-9a-f]{16}:0$/);
+    expect(out.ok && out.payments[1].dedupeKey).toMatch(/^csv:[0-9a-f]{16}:1$/);
   });
 
   it('gives the same file the same keys twice, so a re-upload records nothing new', () => {
@@ -91,6 +141,36 @@ describe('applyMapping', () => {
     const a = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_a');
     const b = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_b');
     expect(a.ok && b.ok && a.payments[0].dedupeKey).not.toBe(b.ok ? b.payments[0].dedupeKey : '');
+  });
+
+  it('does not let a delimiter-bearing payer/note split collide with a different split of the same characters', () => {
+    // Without escaping, a bare `|` join makes payer="a|b", note="c" and payer="a", note="b|c"
+    // build the identical hash input.
+    const f1 = ['Date,Amount,Payer,Note', '2026-07-03,40,a|b,c'].join('\n');
+    const f2 = ['Date,Amount,Payer,Note', '2026-07-03,40,a,b|c'].join('\n');
+    const out1 = applyMapping(f1, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
+    const out2 = applyMapping(f2, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
+    expect(out1.ok && out2.ok && out1.payments[0].dedupeKey).not.toBe(
+      out2.ok ? out2.payments[0].dedupeKey : '',
+    );
+  });
+
+  it('reports a row with no payer name as a problem', () => {
+    const f = ['Date,Amount,Payer', '2026-07-03,40,'].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(0);
+    expect(out.problems).toEqual([{ row: 2, reason: 'This row has no payer name' }]);
+  });
+
+  it('caps a mapped note at 200 characters', () => {
+    const longNote = 'x'.repeat(250);
+    const f = ['Date,Amount,Payer,Note', `2026-07-03,40,Finch,${longNote}`].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2, note: 3 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments[0].note).toBe('x'.repeat(200));
   });
 
   it('falls back to the chosen default for an unrecognised method, never to other', () => {
@@ -117,5 +197,19 @@ describe('applyMapping', () => {
     if (!out.ok) return;
     expect(out.payments[0].payer).toBe("'=CMD()");
     expect(out.payments[0].note).toBe("'+1 234");
+  });
+
+  it('agrees with detectCsvShape about which row is the header when the file opens with a blank line', () => {
+    const f = ['', 'Date,Amount,Payer', '2026-07-03,40,Finch'].join('\n');
+    const shape = detectCsvShape(f);
+    expect(shape.ok && shape.headers).toEqual(['Date', 'Amount', 'Payer']);
+
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.payments).toHaveLength(1);
+    // 1-indexed against the sitter's actual file: the data row is line 3, not line 2, because
+    // the blank line above is line 1.
+    expect(out.payments[0].row).toBe(3);
   });
 });
