@@ -85,6 +85,7 @@ export {
   type HouseholdBalances,
   type HouseholdBooking,
 } from './invoicing/balances.js';
+export { balancedRemainder } from './invoicing/attribution-splits.js';
 export {
   cancellationFee,
   validateCancellationTiers,

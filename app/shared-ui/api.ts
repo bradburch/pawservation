@@ -379,6 +379,71 @@ export type BackfillImportResult = {
   skipped: { eventId: string; reason: string }[];
 };
 
+/** One booking a credit could land on — hand-mirrors the `splits`/`bookings` row shape both
+ *  `server/routes/admin.ts` attribution routes emit: static booking facts plus its OWN live
+ *  outstanding, computed at preview time (`server/lib/payment-attribution.ts`'s `UnpaidBooking`
+ *  under a different name). `outstanding` is a snapshot for display only — `apply` re-reads it
+ *  live and refuses a split that no longer fits. */
+export type AttributionCandidateBooking = {
+  bookingId: string;
+  serviceType: string;
+  startDate: string;
+  status: string;
+  outstanding: number;
+};
+
+/** A resolved split, as `preview` proposed it — `proposeAttribution`'s own `Split` plus the
+ *  static booking facts the route joins in for display. */
+export type AttributionProposalSplit = AttributionCandidateBooking & { amount: number };
+
+/** One credit `proposeAttribution` could place unambiguously against this household's unpaid
+ *  bookings. `remainder` is what's left of `amount` after every split — never negative, never
+ *  computed here (see `payment-attribution.ts`'s conservation invariant). */
+export type AttributionProposal = {
+  accountId: string;
+  paymentId: string;
+  amount: number;
+  paidDate: string;
+  splits: AttributionProposalSplit[];
+  remainder: number;
+};
+
+/** A credit `proposeAttribution` refused to place — `reason` is the closed union the pure
+ *  proposer returns (see `payment-attribution.ts`'s `Proposal`); `detail` is the sitter-facing
+ *  sentence, written to be shown verbatim. `bookings` is only ever non-empty for `'ambiguous'`
+ *  (the tied candidates the sitter must choose between) — every other reason means there was
+ *  nothing left to attach to, or the credit/booking data itself couldn't be read. */
+export type AttributionUnresolved = {
+  accountId: string;
+  paymentId: string;
+  amount: number;
+  paidDate: string;
+  reason:
+    'no-unpaid-bookings' | 'ambiguous' | 'invalid-date' | 'invalid-amount' | 'duplicate-booking-id';
+  detail: string;
+  bookings: AttributionCandidateBooking[];
+};
+
+export type AttributionPreview = {
+  proposals: AttributionProposal[];
+  unresolved: AttributionUnresolved[];
+};
+
+/** One attribution the sitter approved, as `apply` wants it — see the route's doc comment: every
+ *  figure here is re-derived and re-checked against LIVE state server-side, this is only what to
+ *  attempt. */
+export type AttributionInput = {
+  paymentId: string;
+  accountId: string;
+  splits: { bookingId: string; amount: number }[];
+  remainder: number;
+};
+
+export type AttributionApplyResult = {
+  applied: number;
+  skipped: { paymentId: string; reason: string }[];
+};
+
 export type AnalyticsPayload = {
   tiles: {
     thisMonth: number;
@@ -894,6 +959,31 @@ export const adminApi = {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, mapping, defaultMethod, choices }),
+      }),
+    /**
+     * Read-only: how every unapplied account-level credit of the tenant WOULD settle against its
+     * household's unpaid bookings, per `proposeAttribution`. Writes nothing — `accountId` is
+     * accepted for completeness (a single-household preview) but the panel always previews every
+     * household, matching the CSV/calendar importers' "show everything, let the sitter choose"
+     * shape.
+     */
+    attributePreview: (slug: string, token: string, accountId?: string) =>
+      request<AttributionPreview>(`/api/${slug}/admin/payments/attribute/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify(accountId === undefined ? {} : { accountId }),
+      }),
+    /**
+     * The write. The browser names only WHICH payment goes on which booking(s) and in what
+     * amounts — every figure is re-derived and re-checked against live state server-side (see the
+     * route's own doc comment in `server/routes/admin.ts`), and a per-item refusal comes back in
+     * `skipped`, never as a thrown error for the whole batch.
+     */
+    attributeApply: (slug: string, token: string, attributions: AttributionInput[]) =>
+      request<AttributionApplyResult>(`/api/${slug}/admin/payments/attribute/apply`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ attributions }),
       }),
   },
   households: {

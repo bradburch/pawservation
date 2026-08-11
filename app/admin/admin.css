@@ -1962,6 +1962,16 @@ body {
   margin-top: 8px;
 }
 
+/* The collapsed-by-default inert buckets in AttributionPanel (e.g. "no unpaid bookings to attach
+   to") — a native disclosure, so 700+ rows cost nothing until the sitter actually opens one. */
+.pb-attribution-inert {
+  margin: 12px 0;
+}
+.pb-attribution-inert summary {
+  cursor: pointer;
+  color: var(--soft);
+}
+
 /* Multi-pet rates: each option's label sits on its own line and the add button gets breathing
    room — inline flow here made 36px buttons butt straight against the option names. */
 .pb-mix-option {
