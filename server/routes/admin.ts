@@ -2898,7 +2898,14 @@ export const adminRoutes = new Hono<AppEnv>()
     const nameById = new Map(pets.map((p) => [p.id, p.name] as const));
     const withPetNames = <T extends { petIds: string[] }>(r: T): T & { petNames: string[] } => ({
       ...r,
-      petNames: r.petIds.map((id) => nameById.get(id) ?? ''),
+      // Every petId here was resolved by classifyAll's own classifyEvent against this SAME `pets`
+      // array (resolvePetsByName only ever returns ids it found in it), so a miss is a real bug,
+      // not a data gap — throw rather than emit '', which the panel's filter reads as "All pets".
+      petNames: r.petIds.map((id) => {
+        const name = nameById.get(id);
+        if (name === undefined) throw new Error(`Backfill preview: unresolved pet id ${id}`);
+        return name;
+      }),
     });
     return c.json({
       adopt: classified

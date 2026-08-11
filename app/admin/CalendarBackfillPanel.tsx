@@ -130,12 +130,15 @@ export function CalendarBackfillPanel({
     setPrices((prev) => new Map(prev).set(eventId, value));
 
   // Every pet named on an adopt or needs-price row, sorted — the filter's own option list.
-  // "All pets" is represented by petFilter === null, not a row in this array.
+  // "All pets" is represented by petFilter === null, not a row in this array. The currently
+  // selected filter is always included even if adopting has emptied out its last row, so the
+  // <select> keeps showing what it's filtered to instead of rendering blank.
   const petOptions = preview
     ? [
         ...new Set([
           ...preview.adopt.flatMap((r) => r.petNames),
           ...preview.needsPrice.flatMap((r) => r.petNames),
+          ...(petFilter !== null ? [petFilter] : []),
         ]),
       ].sort((a, b) => a.localeCompare(b))
     : [];
@@ -194,15 +197,40 @@ export function CalendarBackfillPanel({
     clearError();
     setBusy(true);
     try {
-      const imported = await adminApi.calendarBackfill.import(
+      const outcome = await adminApi.calendarBackfill.import(
         session.slug,
         session.token,
         from,
         to,
         pending,
       );
-      setResult(imported);
-      reset();
+      setResult(outcome);
+      // Drop exactly the ids the server actually adopted — never the whole `pending` set. A row
+      // the server skipped (its own `skipped` reason) must stay on screen, not vanish as though
+      // it landed.
+      const skippedIds = new Set(outcome.skipped.map((s) => s.eventId));
+      const importedIds = new Set(
+        pending.map((p) => p.eventId).filter((id) => !skippedIds.has(id)),
+      );
+      const nextAdopt = preview.adopt.filter((r) => !importedIds.has(r.eventId));
+      const nextNeedsPrice = preview.needsPrice.filter((r) => !importedIds.has(r.eventId));
+      if (nextAdopt.length === 0 && nextNeedsPrice.length === 0) {
+        // Nothing left in the WHOLE preview (every pet, not just the visible filter) — a full
+        // reset is the same outcome a splice would produce, and clears the filter along with it.
+        reset();
+      } else {
+        // Partial adoption is the normal case once a pet filter is in play: filter to one pet,
+        // adopt 3 of 53, and the other 50 rows — plus everything the sitter typed on them — must
+        // survive. Splice the imported rows out in place; `prices` and `petFilter` are untouched.
+        setPreview((prev) =>
+          prev ? { ...prev, adopt: nextAdopt, needsPrice: nextNeedsPrice } : prev,
+        );
+        setChecked((prev) => {
+          const next = new Set(prev);
+          for (const id of importedIds) next.delete(id);
+          return next;
+        });
+      }
       await onImported();
     } catch (e) {
       handleError(e);
@@ -347,7 +375,7 @@ export function CalendarBackfillPanel({
             Pet
             <select
               value={petFilter ?? ''}
-              disabled={busy}
+              disabled={busy || rowBusy.size > 0}
               onChange={(e) => setPetFilter(e.target.value || null)}
             >
               <option value="">All pets</option>
