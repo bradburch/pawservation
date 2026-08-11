@@ -7,7 +7,13 @@
  */
 import { isPaymentMethod, type PaymentMethod } from '../../src/shared/index.js';
 import { parseCsvRows } from './csv';
-import { parseAmount, sanitizeCell } from './payment-import';
+import {
+  normalizePayerName,
+  parseAmount,
+  resolveMatchClient,
+  sanitizeCell,
+  type MatchClient,
+} from './payment-import';
 import { isRealDate } from './validation';
 
 /** Each confirmed row costs a D1 write and the preview holds the file in memory. Mirrors
@@ -273,4 +279,94 @@ export function applyMapping(
   }
 
   return { ok: true, payments, problems };
+}
+
+/**
+ * Validate a sitter-submitted column mapping into `ColumnMapping`, or refuse it outright. `date`,
+ * `amount` and `payer` are required; `method`, `reference` and `note` are optional — but if present
+ * must be a real column index too. Never coerces a bad value into a guessed one: a missing or
+ * malformed field is a 400 from the route, not a silently-dropped mapping.
+ */
+export function parseCsvColumnMapping(raw: unknown): ColumnMapping | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const isIndex = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  const isOptionalIndex = (v: unknown): boolean => v === undefined || isIndex(v);
+  if (!isIndex(m.date) || !isIndex(m.amount) || !isIndex(m.payer)) return null;
+  if (!isOptionalIndex(m.method) || !isOptionalIndex(m.reference) || !isOptionalIndex(m.note))
+    return null;
+  return {
+    date: m.date,
+    amount: m.amount,
+    payer: m.payer,
+    ...(isIndex(m.method) ? { method: m.method } : {}),
+    ...(isIndex(m.reference) ? { reference: m.reference } : {}),
+    ...(isIndex(m.note) ? { note: m.note } : {}),
+  };
+}
+
+export type CsvMatchedRow = CsvPayment & {
+  endUserId: string;
+  clientLabel: string;
+  accountId: string;
+};
+export type CsvUnmatchedRow = CsvPayment & { reason: string };
+
+/**
+ * Sort every mapped payment into the SAME three buckets `matchVenmoTxns` uses, with
+ * `resolveMatchClient` — the ONE shared resolver — deciding every match. `payer` is never empty
+ * here: `applyMapping` already reports a blank-payer row as a `problem` rather than handing it back
+ * as a payment, so there is no "no sender name" case left to special-case the way the Venmo
+ * matcher does.
+ */
+export function matchCsvPayments(input: {
+  payments: CsvPayment[];
+  clients: MatchClient[];
+  alreadyImported: Set<string>;
+}): { matched: CsvMatchedRow[]; unmatched: CsvUnmatchedRow[]; alreadyImported: CsvPayment[] } {
+  const { payments, clients, alreadyImported } = input;
+  const matched: CsvMatchedRow[] = [];
+  const unmatched: CsvUnmatchedRow[] = [];
+  const already: CsvPayment[] = [];
+
+  for (const payment of payments) {
+    if (alreadyImported.has(payment.dedupeKey)) {
+      already.push(payment);
+      continue;
+    }
+    const client = resolveMatchClient(clients, payment.payer);
+    if (!client) {
+      // resolveMatchClient collapses "no hit" and "collision" into one null — recover which one
+      // this was purely to phrase the sitter-facing reason, exactly as matchVenmoTxns does.
+      const key = normalizePayerName(payment.payer);
+      const hits = clients.filter(
+        (c) => normalizePayerName(c.venmoUsername ?? c.name ?? '') === key,
+      );
+      unmatched.push({
+        ...payment,
+        reason:
+          hits.length === 0
+            ? `No client matches the name “${payment.payer}”. Add it to their row in Clients and check the file again.`
+            : `More than one client is set up under the name “${payment.payer}” (${hits
+                .map((h) => h.label)
+                .join(', ')}). Give them different Venmo usernames in Clients.`,
+      });
+      continue;
+    }
+    if (client.accountId === null) {
+      unmatched.push({
+        ...payment,
+        reason: `${client.label} has no pets on file, so there is no household to record this payment against.`,
+      });
+      continue;
+    }
+    matched.push({
+      ...payment,
+      endUserId: client.endUserId,
+      clientLabel: client.label,
+      accountId: client.accountId,
+    });
+  }
+  return { matched, unmatched, alreadyImported: already };
 }
