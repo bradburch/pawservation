@@ -228,6 +228,14 @@ export type BackfillService = {
  *
  *   1. exact      — nameKey(serviceType) === hint or nameKey(label) === hint.
  *   2. label-prefix — nameKey(label).startsWith(hint). Catches 'housesit' -> 'housesitting'.
+ *      Deliberately crosses word boundaries, unlike tier 3 below: 'housesit' lands mid-token in
+ *      "House sitting" ('house' + part of 'sitting'), so a rule confined to whole tokens would
+ *      miss the exact case this tier exists for. The cost is that a label like "Check Inventory"
+ *      (nameKey 'checkinventory') would also absorb the hint 'check-in'. That risk is bounded,
+ *      not eliminated: the hint vocabulary is the closed four-value set in SERVICE_WORDS, not
+ *      arbitrary text, and a wrong resolution here is still shown to the sitter in the write
+ *      preview before anything is written, never applied silently. This asymmetry with tier 3 is
+ *      intentional — do not "fix" one to match the other, or 'house-sit' stops resolving.
  *   3. label-token-prefix — split the label on whitespace; any token whose nameKey starts with
  *      the hint. Catches 'walk' -> the 'walks' token of "Pack Walks".
  *
