@@ -45,21 +45,19 @@ describe('proposeAttribution', () => {
   });
 
   it('conserves the amount in every case', () => {
-    let resolvedAtLeastOnce = false;
     for (const amount of [1, 39, 40, 41, 1000]) {
       const out = proposeAttribution(credit(amount), [
         bk('b1', '2026-07-09', 40),
         bk('b2', '2026-07-12', 25),
       ]);
+      // This pair of bookings is never tied (distances 1 and 2 from '2026-07-10'), so every one
+      // of these amounts must resolve — asserting `ok` per iteration is stronger than "at least
+      // one resolved" and would catch an implementation that always refused.
+      expect(out.ok).toBe(true);
       if (!out.ok) continue;
-      resolvedAtLeastOnce = true;
       const total = out.splits.reduce((sum, s) => sum + s.amount, 0) + out.remainder;
       expect(total).toBe(amount);
     }
-    // This pair of bookings is never tied (distances 1 and 2 from '2026-07-10'), so every one of
-    // these amounts must resolve — an implementation that always refused would pass the loop
-    // above vacuously without this assertion.
-    expect(resolvedAtLeastOnce).toBe(true);
   });
 
   it('REFUSES a tie it cannot cover rather than picking by id order', () => {
@@ -240,29 +238,33 @@ describe('proposeAttribution', () => {
     });
 
     it('names every member of a 3-way tie the credit cannot fully cover', () => {
+      // Single-letter ids ('a', 'b', 'c') would pass this assertion against the refusal prose
+      // itself ("...bookings...", "...cover...") even if nobody were actually named — distinctive
+      // ids make the assertion discriminate.
       const out = proposeAttribution(credit(50), [
-        bk('a', '2026-07-09', 40),
-        bk('b', '2026-07-11', 40),
-        bk('c', '2026-07-11', 40),
+        bk('bk_alpha', '2026-07-09', 40),
+        bk('bk_bravo', '2026-07-11', 40),
+        bk('bk_charlie', '2026-07-11', 40),
       ]);
-      // a and b and c: a is 1 day away (07-09), b and c are also 1 day away (07-11) — all three tie.
+      // bk_alpha is 1 day away (07-09), bk_bravo and bk_charlie are also 1 day away (07-11) —
+      // all three tie.
       expect(out.ok).toBe(false);
       expect(out.ok === false && out.reason).toBe('ambiguous');
-      expect(out.ok === false && out.detail).toContain('a');
-      expect(out.ok === false && out.detail).toContain('b');
-      expect(out.ok === false && out.detail).toContain('c');
+      expect(out.ok === false && out.detail).toContain('bk_alpha');
+      expect(out.ok === false && out.detail).toContain('bk_bravo');
+      expect(out.ok === false && out.detail).toContain('bk_charlie');
     });
 
     it('names every member of a 4-way tie the credit cannot fully cover', () => {
       const out = proposeAttribution(credit(100), [
-        bk('w', '2026-07-11', 40),
-        bk('x', '2026-07-09', 40),
-        bk('y', '2026-07-11', 40),
-        bk('z', '2026-07-09', 40),
+        bk('bk_whiskey', '2026-07-11', 40),
+        bk('bk_xray', '2026-07-09', 40),
+        bk('bk_yankee', '2026-07-11', 40),
+        bk('bk_zulu', '2026-07-09', 40),
       ]);
       expect(out.ok).toBe(false);
       expect(out.ok === false && out.reason).toBe('ambiguous');
-      for (const id of ['w', 'x', 'y', 'z']) {
+      for (const id of ['bk_whiskey', 'bk_xray', 'bk_yankee', 'bk_zulu']) {
         expect(out.ok === false && out.detail).toContain(id);
       }
     });
@@ -282,6 +284,53 @@ describe('proposeAttribution', () => {
         splits: [{ bookingId: 'N', amount: 30 }],
         remainder: 1,
       });
+    });
+  });
+
+  describe('fix round 2: an unreadable outstanding is refused, never silently dropped', () => {
+    it('refuses a NaN outstanding rather than silently excluding it and paying a farther booking instead', () => {
+      // Before the fix, `outstanding > 0` filtered this out before the integer guard ever ran
+      // (NaN > 0 is false), so the credit went in full to the farther booking with ok: true.
+      const out = proposeAttribution(credit(40), [
+        bk('near', '2026-07-09', NaN),
+        bk('far', '2026-08-01', 40),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('invalid-amount');
+      expect(out.ok === false && out.detail).toContain('near');
+    });
+
+    it('refuses a negative outstanding rather than treating it the same as fully paid', () => {
+      const out = proposeAttribution(credit(40), [
+        bk('b1', '2026-07-09', -50),
+        bk('b2', '2026-08-01', 40),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('invalid-amount');
+      expect(out.ok === false && out.detail).toContain('b1');
+    });
+
+    it('refuses an all-unreadable booking list rather than reporting the household as settled', () => {
+      // Before the fix this reported `no-unpaid-bookings` — telling the sitter their household
+      // is settled when in fact none of the outstanding amounts could be read at all.
+      const out = proposeAttribution(credit(40), [
+        bk('b1', '2026-07-09', NaN),
+        bk('b2', '2026-08-01', NaN),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('invalid-amount');
+    });
+
+    it('a distant unaffordable tie leaves a farther, unambiguous, fully-fundable booking unpaid (deliberate)', () => {
+      // A and B tie at 1 day out and together cost more than the credit; C is farther (10 days)
+      // but alone costs exactly what's left over. This function does not reach past the nearer,
+      // stuck tie to fund C — that would be a guess about which stay the sitter meant to settle.
+      const out = proposeAttribution(credit(30), [
+        bk('A', '2026-07-09', 40),
+        bk('B', '2026-07-11', 40),
+        bk('C', '2026-07-20', 30),
+      ]);
+      expect(out).toEqual({ ok: true, paymentId: 'p1', splits: [], remainder: 30 });
     });
   });
 });

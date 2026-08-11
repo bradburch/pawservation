@@ -11,9 +11,13 @@
  * `splits.reduce((sum, s) => sum + s.amount, 0) + remainder === credit.amount`, exactly, in every
  * branch. Whole dollars throughout, exact integer arithmetic — no `Math.round`, no floating point.
  * A rounded split would silently create or destroy money. That guarantee only holds for inputs
- * that are actually whole dollars, so `credit.amount` and every candidate `outstanding` are
- * checked with `Number.isInteger` before any arithmetic runs; a fractional or negative amount is
- * refused rather than quietly producing a fractional or negative split.
+ * that are actually whole dollars, so `credit.amount` and every booking's `outstanding` are
+ * checked with `Number.isInteger` (and non-negativity) before any arithmetic runs — a fractional
+ * or negative amount is refused rather than quietly producing a fractional or negative split.
+ * `outstanding` is validated against the FULL, unfiltered `bookings` list, before the
+ * `outstanding > 0` filter that picks out candidates: `NaN > 0` and `-50 > 0` are both false, so
+ * checking only the filtered set would silently drop an unreadable booking from consideration
+ * — indistinguishable from one that is genuinely settled — instead of refusing outright.
  *
  * The other rule is refusal over guessing: when the nearest-by-date choice is a genuine tie
  * among two or more different bookings and the credit cannot cover all of them, this returns
@@ -83,6 +87,22 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     };
   }
 
+  // Validated against ALL bookings, before the `outstanding > 0` filter below: both `NaN > 0`
+  // and `-50 > 0` are false, so an unreadable outstanding would otherwise be silently dropped
+  // from consideration rather than refused — indistinguishable from a booking that is genuinely
+  // settled. Unreadable is not the same as zero.
+  const badOutstanding = bookings.find(
+    (b) => !Number.isInteger(b.outstanding) || b.outstanding < 0,
+  );
+  if (badOutstanding) {
+    return {
+      ok: false,
+      paymentId: credit.paymentId,
+      reason: 'invalid-amount',
+      detail: `Booking ${badOutstanding.bookingId} has an unreadable outstanding amount (${badOutstanding.outstanding}); refusing rather than silently drop it from consideration.`,
+    };
+  }
+
   const unpaid = bookings.filter((b) => b.outstanding > 0);
   if (unpaid.length === 0) {
     return {
@@ -105,16 +125,6 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
       paymentId: credit.paymentId,
       reason: 'duplicate-booking-id',
       detail: `Booking id(s) ${[...duplicateIds].join(', ')} appear more than once among this household's unpaid bookings; refusing rather than risk applying the credit to the same booking twice.`,
-    };
-  }
-
-  const badOutstanding = unpaid.find((b) => !Number.isInteger(b.outstanding));
-  if (badOutstanding) {
-    return {
-      ok: false,
-      paymentId: credit.paymentId,
-      reason: 'invalid-amount',
-      detail: `Booking ${badOutstanding.bookingId} has a non-whole-dollar outstanding amount (${badOutstanding.outstanding}); refusing rather than risk a fractional split.`,
     };
   }
 
@@ -167,6 +177,11 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     // array order.
     const smallestOutstanding = Math.min(...group.map((b) => b.outstanding));
     if (remaining < smallestOutstanding) {
+      // Deliberate: stop here rather than reaching past this unaffordable tied group to fund a
+      // farther, cheaper, unambiguous booking later in `ordered`. Skipping ahead would be a
+      // judgment call about which stay the sitter meant to settle — nearest-first order is a
+      // promise this function keeps, not a suggestion it route around when the front of the line
+      // gets stuck. The unspent amount is reported as `remainder`, not lost.
       break;
     }
 
