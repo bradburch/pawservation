@@ -246,6 +246,113 @@ describe('resolveService', () => {
   });
 });
 
+// A real production tenant's four services — the reason this widened match exists. Their titles
+// are dominated by "Sadie Walk" / "Teddy Walk" / "Daisy Walk" and house-sits, and under the old
+// EXACT-only match every one of those flagged unknown-service: 'house-sit' != 'housesitting' and
+// 'walk' != 'packwalks'. This fixture is that tenant's real four rows, not a synthetic example.
+const REAL_SERVICES = [
+  { serviceType: 'boarding', label: 'Boarding', optionKey: 'standard', shape: 'range' as const },
+  { serviceType: 'check-in', label: 'Check-in', optionKey: 'standard', shape: 'single' as const },
+  {
+    serviceType: 'house-sitting',
+    label: 'House sitting',
+    optionKey: 'standard',
+    shape: 'range' as const,
+  },
+  {
+    serviceType: 'pack-walks',
+    label: 'Pack Walks',
+    optionKey: 'standard',
+    shape: 'single' as const,
+  },
+];
+
+describe('resolveService — widened matching against a real tenant', () => {
+  it('resolves "walk" to Pack Walks via the label TOKEN-prefix tier', () => {
+    expect(resolveService('walk', REAL_SERVICES)).toEqual({
+      ok: true,
+      service: REAL_SERVICES[3],
+    });
+  });
+
+  it('resolves "house-sit" to House sitting via the label-prefix tier', () => {
+    expect(resolveService('house-sit', REAL_SERVICES)).toEqual({
+      ok: true,
+      service: REAL_SERVICES[2],
+    });
+  });
+
+  it('still resolves "boarding" and "check-in" exactly — no regression', () => {
+    expect(resolveService('boarding', REAL_SERVICES)).toEqual({
+      ok: true,
+      service: REAL_SERVICES[0],
+    });
+    expect(resolveService('check-in', REAL_SERVICES)).toEqual({
+      ok: true,
+      service: REAL_SERVICES[1],
+    });
+  });
+
+  it('an EXACT match wins over a looser one, never refused as ambiguous', () => {
+    const services = [
+      { serviceType: 'walk', label: 'Walk', optionKey: 'standard', shape: 'single' as const },
+      {
+        serviceType: 'pack-walks',
+        label: 'Pack Walks',
+        optionKey: 'standard',
+        shape: 'single' as const,
+      },
+    ];
+    expect(resolveService('walk', services)).toEqual({ ok: true, service: services[0] });
+  });
+
+  it('REFUSES when a loose tier matches two services, naming both candidates', () => {
+    const services = [
+      {
+        serviceType: 'pack-walks',
+        label: 'Pack Walks',
+        optionKey: 'standard',
+        shape: 'single' as const,
+      },
+      {
+        serviceType: 'solo-walk',
+        label: 'Solo Walk',
+        optionKey: 'standard',
+        shape: 'single' as const,
+      },
+    ];
+    const out = resolveService('walk', services);
+    expect(out.ok).toBe(false);
+    expect(out.ok === false && out.reason).toBe('unknown-service');
+    expect(out.ok === false && out.detail).toContain('Pack Walks');
+    expect(out.ok === false && out.detail).toContain('Solo Walk');
+  });
+
+  it('still refuses a service the tenant does not offer at all', () => {
+    expect(resolveService('grooming', REAL_SERVICES).ok).toBe(false);
+  });
+
+  it('does NOT match "walk" against a label via substring-anywhere, only prefix-of-token', () => {
+    const services = [
+      {
+        serviceType: 'boardwalk-special',
+        label: 'Boardwalk Special',
+        optionKey: 'standard',
+        shape: 'single' as const,
+      },
+    ];
+    expect(resolveService('walk', services).ok).toBe(false);
+  });
+
+  it('a null hint still refuses with the existing message', () => {
+    expect(resolveService(null, REAL_SERVICES)).toEqual({
+      ok: false,
+      reason: 'unknown-service',
+      detail: 'No service named in the title',
+    });
+  });
+});
+
 const CTX = {
   pets: [
     { id: 'p1', name: 'Sadie', petType: 'dog' },
