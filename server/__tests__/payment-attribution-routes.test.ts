@@ -101,14 +101,14 @@ type PreviewBody = {
     accountId: string;
     paymentId: string;
     amount: number;
-    splits: { bookingId: string; amount: number }[];
+    splits: { bookingId: string; amount: number; outstanding: number }[];
     remainder: number;
   }[];
   unresolved: {
     accountId: string;
     paymentId: string;
     reason: string;
-    bookings: { bookingId: string }[];
+    bookings: { bookingId: string; outstanding: number }[];
   }[];
 };
 
@@ -470,6 +470,43 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     // Sanity: every split lands on one of this household's two bookings.
     for (const p of body.proposals)
       for (const split of p.splits) expect([a, b]).toContain(split.bookingId);
+  });
+
+  it("a split's `outstanding` is the booking's genuinely live figure, not the batch-sequenced one earlier credits in this same preview left behind", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // One $600 booking, fully unpaid. Two unattached credits: an older $40 one and a younger
+    // $600 one — the exact shape from the false-block this test pins: A proposes first, claims
+    // $40, and decrements the household's own working copy of the booking's outstanding to $560
+    // before B is ever considered. That $560 is an artifact of this preview proposing both
+    // credits against each other in sequence — it is true only if the sitter applies this exact
+    // batch, unedited. The booking's ACTUAL live outstanding, from the database, is $600 the
+    // whole time; both splits must report that, not the sequenced figure.
+    const bookingId = await book(env, home, 600, '2026-07-01');
+    const older = (await credit(env, home.accountId, 40, '2026-06-01'))!;
+    const younger = (await credit(env, home.accountId, 600, '2026-06-02'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(2);
+    const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+
+    // The older credit's own proposed amount is still $40 (it can't propose more than it's
+    // worth) — only the `outstanding` figure reported alongside it changes.
+    expect(byPaymentId.get(older)).toMatchObject({
+      remainder: 0,
+      splits: [{ bookingId, amount: 40, outstanding: 600 }],
+    });
+    // The younger credit still proposes only $560 (the sequenced amount actually available to
+    // IT, in this batch, is what drives the proposed split) — but the `outstanding` alongside
+    // that split reads the booking's real, undecremented $600, not $560.
+    expect(byPaymentId.get(younger)).toMatchObject({
+      remainder: 40,
+      splits: [{ bookingId, amount: 560, outstanding: 600 }],
+    });
   });
 });
 

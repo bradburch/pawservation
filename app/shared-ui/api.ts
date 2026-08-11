@@ -383,7 +383,17 @@ export type BackfillImportResult = {
  *  `server/routes/admin.ts` attribution routes emit: static booking facts plus its OWN live
  *  outstanding, computed at preview time (`server/lib/payment-attribution.ts`'s `UnpaidBooking`
  *  under a different name). `outstanding` is a snapshot for display only — `apply` re-reads it
- *  live and refuses a split that no longer fits. */
+ *  live and refuses a split that no longer fits.
+ *
+ *  Deliberately NOT decremented by any other credit proposed in the same preview response: a
+ *  household can have several unattached credits, and the preview route simulates applying them
+ *  in sequence to decide what to propose for each — but that sequenced figure is only true if the
+ *  sitter applies the whole batch exactly as proposed. This field is always the booking's true
+ *  current outstanding, so a sitter who edits or excludes a credit (e.g. raises a later split to
+ *  settle the booking outright) isn't capped against a number that was never really live. Two
+ *  splits on the same booking, from two different credits in the same preview, can therefore both
+ *  legitimately show the same `outstanding` — over-attributing across them is caught server-side
+ *  by `applyAttribution` re-reading live state per attribution, not prevented here. */
 export type AttributionCandidateBooking = {
   bookingId: string;
   serviceType: string;

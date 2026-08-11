@@ -3166,6 +3166,29 @@ export const adminRoutes = new Hono<AppEnv>()
       const outstandingById = new Map(
         candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
       );
+      // The booking's genuinely LIVE outstanding — never decremented as this loop works through
+      // the household's credits, unlike `outstandingById` above. `outstandingById` still has to
+      // drive `proposeAttribution` itself (it genuinely needs to know what an earlier credit in
+      // THIS batch already claimed, or it would double-propose the same dollar to two credits).
+      // But the figure sent to the CLIENT for display/capping must not be that sequenced number:
+      // it is true only if the sitter applies this exact batch, unedited, in this exact order,
+      // and presenting it as "outstanding" false-blocks a sitter who edits or reorders — e.g.
+      // excludes an earlier credit and raises a later one to settle the booking outright, which
+      // the server would accept (see task-5-report.md, round 2). So every `outstanding` field
+      // returned below — on a resolved split AND on an ambiguous credit's candidate bookings —
+      // reads this map instead.
+      //
+      // Accepted consequence: two credits proposed within the SAME household preview can each
+      // report the booking's full live outstanding, so a sitter could compose a batch that
+      // over-attributes across them (e.g. approve both credits above at full value). That's
+      // already caught server-side — `applyAttribution`'s loop is sequential and each call
+      // re-reads live state, so the second attribution in such a batch is refused with a reason
+      // this panel already surfaces (`AttributionPanel.tsx`'s skipped-reason rendering). Blocking
+      // it here too would be a nice-to-have; blocking a legal single settlement, which is what
+      // this fixes, is not acceptable.
+      const liveOutstandingById = new Map(
+        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      );
 
       // Oldest PAID date first, tied-broken by payment id for a stable order across runs: the
       // money that arrived first is the money that settled the earliest stay, so it gets first
@@ -3194,7 +3217,7 @@ export const adminRoutes = new Hono<AppEnv>()
             splits: proposal.splits.map((s) => ({
               amount: s.amount,
               ...staticById.get(s.bookingId)!,
-              outstanding: outstandingById.get(s.bookingId)!,
+              outstanding: liveOutstandingById.get(s.bookingId)!,
             })),
             remainder: proposal.remainder,
           });
@@ -3211,7 +3234,10 @@ export const adminRoutes = new Hono<AppEnv>()
             detail: proposal.detail,
             bookings: unpaidBookings
               .filter((b) => b.outstanding > 0)
-              .map((b) => ({ ...staticById.get(b.bookingId)!, outstanding: b.outstanding })),
+              .map((b) => ({
+                ...staticById.get(b.bookingId)!,
+                outstanding: liveOutstandingById.get(b.bookingId)!,
+              })),
           });
         }
       }

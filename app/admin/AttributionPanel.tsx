@@ -132,7 +132,7 @@ function remainderFor(credit: EditableCredit): number | null {
 function creditIssue(credit: EditableCredit): string {
   const checked = credit.rows.filter((r) => r.checked);
   const blank = checked.find((r) => !isWholeDollar(r.amountText));
-  if (blank) return `Type a whole-dollar amount for ${blank.serviceType}.`;
+  if (blank) return `Type a whole-dollar amount of $1 or more for ${blank.serviceType}.`;
   const overOutstanding = checked.find((r) => Number(r.amountText) > r.outstanding);
   if (overOutstanding)
     return `$${overOutstanding.amountText} is more than the $${overOutstanding.outstanding} outstanding on ${overOutstanding.serviceType}.`;
@@ -227,8 +227,8 @@ function CreditEditor({
           </ul>
           {credit.included && !anyChecked && (
             <p className="pb-error">
-              Nothing is checked below &mdash; check a booking above, or untick this credit to
-              exclude it from Apply.
+              Nothing is checked above &mdash; tick a booking, or untick this credit to exclude it
+              from Apply.
             </p>
           )}
           {anyChecked &&
