@@ -130,6 +130,13 @@ import {
   resolveMatchClient,
   type MatchClient,
 } from '../lib/venmo';
+import {
+  applyMapping,
+  detectCsvShape,
+  type ColumnMapping,
+  type CsvPayment,
+} from '../lib/payment-csv';
+import { normalizePayerName } from '../lib/payment-import';
 import { NONCE_KEY } from './oauth';
 import {
   DEFENSIVE_MAX_NIGHTS,
@@ -187,15 +194,15 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
 }
 
 /**
- * The tenant-scoped reads the Venmo importer matches against. Loaded identically by the preview and
- * the confirm step: the confirm re-derives the whole match set rather than trusting what the preview
- * told the browser.
+ * The tenant-scoped reads BOTH payment importers (Venmo, and the generic mapped-CSV importer)
+ * match against. Loaded identically by every preview and every confirm step: a confirm re-derives
+ * the whole match set rather than trusting what the preview told the browser.
  *
  * `accountId` (Story 2.5) is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
  * latter only returns households with existing bookings or payments, and a client's first-ever
- * Venmo payment must still resolve to their household with none of either on record yet.
+ * payment must still resolve to their household with none of either on record yet.
  */
-async function loadVenmoMatchInputs(
+async function loadPaymentMatchInputs(
   env: AppEnv['Bindings'],
   tenantId: string,
 ): Promise<{
@@ -219,6 +226,92 @@ async function loadVenmoMatchInputs(
   };
 }
 
+/**
+ * Validate a sitter-submitted column mapping into `ColumnMapping`, or refuse it outright. `date`,
+ * `amount` and `payer` are required; `method`, `reference` and `note` are optional — but if present
+ * must be a real column index too. Never coerces a bad value into a guessed one: a missing or
+ * malformed field is a 400 from the route, not a silently-dropped mapping.
+ */
+function parseCsvColumnMapping(raw: unknown): ColumnMapping | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const isIndex = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  const isOptionalIndex = (v: unknown): boolean => v === undefined || isIndex(v);
+  if (!isIndex(m.date) || !isIndex(m.amount) || !isIndex(m.payer)) return null;
+  if (!isOptionalIndex(m.method) || !isOptionalIndex(m.reference) || !isOptionalIndex(m.note))
+    return null;
+  return {
+    date: m.date,
+    amount: m.amount,
+    payer: m.payer,
+    ...(isIndex(m.method) ? { method: m.method } : {}),
+    ...(isIndex(m.reference) ? { reference: m.reference } : {}),
+    ...(isIndex(m.note) ? { note: m.note } : {}),
+  };
+}
+
+type CsvMatchedRow = CsvPayment & { endUserId: string; clientLabel: string; accountId: string };
+type CsvUnmatchedRow = CsvPayment & { reason: string };
+
+/**
+ * Sort every mapped payment into the SAME three buckets `matchVenmoTxns` uses, with
+ * `resolveMatchClient` — the ONE shared resolver — deciding every match. `payer` is never empty
+ * here: `applyMapping` already reports a blank-payer row as a `problem` rather than handing it back
+ * as a payment, so there is no "no sender name" case left to special-case the way the Venmo
+ * matcher does.
+ */
+function matchCsvPayments(input: {
+  payments: CsvPayment[];
+  clients: MatchClient[];
+  alreadyImported: Set<string>;
+}): { matched: CsvMatchedRow[]; unmatched: CsvUnmatchedRow[]; alreadyImported: CsvPayment[] } {
+  const { payments, clients, alreadyImported } = input;
+  const matched: CsvMatchedRow[] = [];
+  const unmatched: CsvUnmatchedRow[] = [];
+  const already: CsvPayment[] = [];
+
+  for (const payment of payments) {
+    if (alreadyImported.has(payment.dedupeKey)) {
+      already.push(payment);
+      continue;
+    }
+    const client = resolveMatchClient(clients, payment.payer);
+    if (!client) {
+      // resolveMatchClient collapses "no hit" and "collision" into one null — recover which one
+      // this was purely to phrase the sitter-facing reason, exactly as matchVenmoTxns does.
+      const key = normalizePayerName(payment.payer);
+      const hits = clients.filter(
+        (c) => normalizePayerName(c.venmoUsername ?? c.name ?? '') === key,
+      );
+      unmatched.push({
+        ...payment,
+        reason:
+          hits.length === 0
+            ? `No client matches the name “${payment.payer}”. Add it to their row in Clients and check the file again.`
+            : `More than one client is set up under the name “${payment.payer}” (${hits
+                .map((h) => h.label)
+                .join(', ')}). Give them different Venmo usernames in Clients.`,
+      });
+      continue;
+    }
+    if (client.accountId === null) {
+      unmatched.push({
+        ...payment,
+        reason: `${client.label} has no pets on file, so there is no household to record this payment against.`,
+      });
+      continue;
+    }
+    matched.push({
+      ...payment,
+      endUserId: client.endUserId,
+      clientLabel: client.label,
+      accountId: client.accountId,
+    });
+  }
+  return { matched, unmatched, alreadyImported: already };
+}
+
 /** One pass reads its whole range before classifying, so the cap is on events READ, not events
  *  adopted. Chosen to sit inside the Workers Free plan's 50-subrequest budget. Exported: the
  *  import route (Task 7) enforces the same cap, and the range-picker UI uses it to warn before
@@ -233,7 +326,7 @@ export const MAX_BACKFILL_EST_COST = 1_000_000;
 /**
  * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
  * loaded once per pass. Lives here, not in `server/lib/`, because it touches D1 — the same split
- * `loadVenmoMatchInputs` above uses.
+ * `loadPaymentMatchInputs` above uses.
  */
 async function loadBackfillContext(
   c: Context<AppEnv>,
@@ -2764,7 +2857,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req.json<{ csv?: unknown }>().catch(() => ({}) as { csv?: unknown });
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
     const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
     return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
   })
@@ -2801,7 +2894,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
     const txnById = new Map(parsed.incoming.map((t) => [t.txnId, t]));
 
     const skipped: { txnId: string; reason: string }[] = [];
@@ -2850,6 +2943,50 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * Read the shape of a sitter-uploaded, arbitrarily-columned payment CSV — its headers and a
+   * sample of real rows — so the mapping panel can ask "which column is the date" against actual
+   * values, never header names alone (the free-form counterpart to the Venmo importer, which knows
+   * its own fixed headers). Writes nothing.
+   */
+  .post('/:slug/admin/payments/csv/columns', async (c) => {
+    const body = await c.req.json<{ csv?: unknown }>().catch(() => ({}) as { csv?: unknown });
+    const shape = detectCsvShape(typeof body.csv === 'string' ? body.csv : '');
+    if (!shape.ok) return c.json({ error: shape.error }, 400);
+    return c.json({
+      headers: shape.headers,
+      sample: shape.sample,
+      dataRowCount: shape.dataRowCount,
+    });
+  })
+
+  /**
+   * Read the sitter's mapped CSV and say what Pawservation THINKS it found — the mapped-CSV sibling
+   * of the Venmo preview above. Writes nothing: the file is re-parsed in memory against the
+   * sitter's own column mapping, matched against this tenant's clients and receivables, and thrown
+   * away with the request.
+   */
+  .post('/:slug/admin/payments/csv/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ csv?: unknown; mapping?: unknown; defaultMethod?: unknown }>()
+      .catch(() => ({}) as { csv?: unknown; mapping?: unknown; defaultMethod?: unknown });
+    if (!isPaymentMethod(body.defaultMethod))
+      return c.json({ error: 'Choose a valid default payment method.' }, 400);
+    const mapping = parseCsvColumnMapping(body.mapping);
+    if (!mapping) return c.json({ error: 'That column mapping is malformed.' }, 400);
+    const parsed = applyMapping(
+      typeof body.csv === 'string' ? body.csv : '',
+      mapping,
+      body.defaultMethod,
+      tenant.Id,
+    );
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
+    const preview = matchCsvPayments({ payments: parsed.payments, ...inputs });
+    return c.json({ ...preview, problems: parsed.problems });
   })
 
   /**
