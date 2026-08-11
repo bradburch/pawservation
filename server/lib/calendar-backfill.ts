@@ -86,6 +86,49 @@ export function parseEventSummary(summary: string): ParsedSummary {
   return { petNames, serviceHint, cancelled };
 }
 
+export type EventMeta = { cost: number | null; booking: string | null; ownerIds: string[] };
+
+/**
+ * A sitter's own calendar events (from the previous system this backfill is adopting from) carry
+ * a structured description alongside the free-text title — real cost, service, and client, rather
+ * than our reading of a label. See `classifyEvent`, which prefers these values over the ones
+ * `parseEventSummary` guesses from the title.
+ *
+ * Never guess: an absent or malformed line yields null/empty for that field rather than a
+ * best-effort value, so a bad description degrades to the existing title-and-rate-card behavior
+ * instead of inventing a wrong one.
+ */
+export function parseEventDescription(description: string): EventMeta {
+  let cost: number | null = null;
+  let booking: string | null = null;
+  let ownerIds: string[] = [];
+
+  for (const rawLine of String(description ?? '').split('\n')) {
+    const line = rawLine.trim();
+    if (line === '') continue;
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    const key = line.slice(0, colon).trim().toLowerCase();
+    const value = line.slice(colon + 1).trim();
+
+    if (key === 'cost') {
+      // A whole positive integer only — cents are unrepresentable codebase-wide, and a bad value
+      // must never become money, so anything fractional, zero, negative, or non-numeric falls
+      // back to null (the rate card then applies).
+      cost = /^[0-9]+$/.test(value) && Number(value) > 0 ? Number(value) : null;
+    } else if (key === 'booking') {
+      booking = value;
+    } else if (key === 'owner id') {
+      ownerIds = value
+        .split(',')
+        .map((part) => part.trim())
+        .filter((part) => part !== '');
+    }
+  }
+
+  return { cost, booking, ownerIds };
+}
+
 export type BackfillPet = { id: string; name: string; petType: string };
 
 export type FlagReason =

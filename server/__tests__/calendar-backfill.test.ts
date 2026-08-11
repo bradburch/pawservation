@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nightsBetween } from '../../src/shared/index.js';
 import {
   classifyEvent,
+  parseEventDescription,
   parseEventSummary,
   resolveHousehold,
   resolvePetsByName,
@@ -65,6 +66,86 @@ describe('parseEventSummary', () => {
       serviceHint: null,
       cancelled: false,
     });
+  });
+});
+
+describe('parseEventDescription', () => {
+  // Verbatim from a real production event (see the calendar-backfill design doc): 54 of 55
+  // events on that calendar carry this shape.
+  const REAL_DESCRIPTION =
+    'Owner: Lauren Kotin, Ian Fisher\n' +
+    'Owner ID: aaefb00f-c993-4de1-8d44-b335ecc3adb4, 47da31e8-8cd4-4198-bebc-cddaf7cd01de\n' +
+    'Cost: 40\n' +
+    'Booking: walk\n' +
+    'v: 1';
+
+  it('reads cost, booking and owner ids from the real description shape', () => {
+    expect(parseEventDescription(REAL_DESCRIPTION)).toEqual({
+      cost: 40,
+      booking: 'walk',
+      ownerIds: ['aaefb00f-c993-4de1-8d44-b335ecc3adb4', '47da31e8-8cd4-4198-bebc-cddaf7cd01de'],
+    });
+  });
+
+  it('matches keys case-insensitively', () => {
+    expect(parseEventDescription('cost: 40\nBOOKING: walk\nowner id: abc')).toEqual({
+      cost: 40,
+      booking: 'walk',
+      ownerIds: ['abc'],
+    });
+  });
+
+  it('ignores unknown keys', () => {
+    expect(parseEventDescription('Notes: fed twice\nCost: 40')).toEqual({
+      cost: 40,
+      booking: null,
+      ownerIds: [],
+    });
+  });
+
+  it('returns all-empty for a description with only Owner: (no Cost/Booking)', () => {
+    // Pedro and Remy — a real event that carries only the owner names, no cost/service.
+    expect(parseEventDescription('Owner: Pedro Alvarez')).toEqual({
+      cost: null,
+      booking: null,
+      ownerIds: [],
+    });
+  });
+
+  it('returns all-empty for an empty description', () => {
+    expect(parseEventDescription('')).toEqual({ cost: null, booking: null, ownerIds: [] });
+  });
+
+  it('tolerates a blank (whitespace-only) description', () => {
+    expect(parseEventDescription('   \n  ')).toEqual({ cost: null, booking: null, ownerIds: [] });
+  });
+
+  it('rejects a fractional cost rather than rounding it', () => {
+    expect(parseEventDescription('Cost: 40.50').cost).toBeNull();
+  });
+
+  it('rejects a non-numeric cost', () => {
+    expect(parseEventDescription('Cost: abc').cost).toBeNull();
+  });
+
+  it('rejects a zero cost', () => {
+    expect(parseEventDescription('Cost: 0').cost).toBeNull();
+  });
+
+  it('rejects a negative cost', () => {
+    expect(parseEventDescription('Cost: -5').cost).toBeNull();
+  });
+
+  it('splits multiple owner ids and trims whitespace, dropping empties', () => {
+    expect(parseEventDescription('Owner ID: id-1,  id-2 ,, id-3').ownerIds).toEqual([
+      'id-1',
+      'id-2',
+      'id-3',
+    ]);
+  });
+
+  it('trims the raw Booking value', () => {
+    expect(parseEventDescription('Booking:   walk  ').booking).toBe('walk');
   });
 });
 
