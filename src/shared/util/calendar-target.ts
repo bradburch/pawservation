@@ -32,6 +32,13 @@
 /** Suffix every Google *secondary* calendar id ends with. */
 export const SECONDARY_CALENDAR_SUFFIX = '@group.calendar.google.com';
 
+/** One pass of the calendar backfill preview/import routes reads or writes at most this many
+ *  events — the Workers Free plan's subrequest/CPU budget is real, same reasoning as the CSV
+ *  importer's own hoisted constants. Lives here, not just in server/routes/admin.ts, so
+ *  CalendarBackfillPanel.tsx can chunk its bulk Adopt calls at the SAME number the server enforces,
+ *  rather than carrying a second literal that could silently drift from it. */
+export const MAX_BACKFILL_EVENTS = 200;
+
 /** True when `calendarId` provably names a calendar separate from the account's primary one. */
 export function isDedicatedCalendarId(calendarId: string | null | undefined): boolean {
   return (

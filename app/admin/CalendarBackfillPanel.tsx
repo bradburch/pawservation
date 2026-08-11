@@ -8,8 +8,9 @@ import {
   type BackfillImportResult,
   type BackfillNeedsPriceRow,
   type BackfillPreview,
+  type BackfillSkipRow,
 } from '../shared-ui/api.js';
-import { formatFriendlyDate } from '../../src/shared/index.js';
+import { formatFriendlyDate, MAX_BACKFILL_EVENTS } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
@@ -40,17 +41,17 @@ function eventWhen(startDate: string, endDate: string | null): string {
     : formatFriendlyDate(startDate);
 }
 
-/** Mirrors the server's own MAX_BACKFILL_EVENTS (server/routes/admin.ts) — the import route
- *  refuses more than this many events in one request, so a bulk Adopt over that many rows must
- *  send them in chunks of at most this size and sum the results. Not imported from the server:
- *  this is UI-only chunking, the server still enforces its own copy of the cap independently. */
-const IMPORT_CHUNK_SIZE = 200;
+/** The import route refuses more than MAX_BACKFILL_EVENTS in one request, so a bulk Adopt over
+ *  that many rows must send them in chunks of at most this size and sum the results. Shared with
+ *  the server (src/shared/util/calendar-target.ts) so this can never silently drift from the
+ *  cap the server actually enforces. */
+const IMPORT_CHUNK_SIZE = MAX_BACKFILL_EVENTS;
 
 /** Sane ceiling on how many preview passes one Preview click will make before giving up and
  *  showing what it found so far — guards against looping forever if `nextFrom` ever stops
  *  advancing (e.g. more events share one calendar date than the server's per-pass cap; see the
- *  preview route's own comment on that failure mode). 50 passes covers 50 * 200 = 10,000 events,
- *  which is far more than a sane calendar backfill range should ever hold. */
+ *  preview route's own comment on that failure mode). 50 passes covers 50 * MAX_BACKFILL_EVENTS
+ *  events, which is far more than a sane calendar backfill range should ever hold. */
 const MAX_PREVIEW_PASSES = 50;
 
 /**
@@ -133,8 +134,17 @@ export function CalendarBackfillPanel({
     const adoptById = new Map<string, BackfillAdoptRow>();
     const needsPriceById = new Map<string, BackfillNeedsPriceRow>();
     const flagById = new Map<string, BackfillFlagRow>();
-    let skipped = 0;
-    let seen = 0;
+    // Keyed by eventId, like the other three — a skip row carries one, so the shared boundary
+    // date's already-adopted/pawservation-own events de-duplicate across passes instead of a
+    // naive per-pass count double-counting whatever landed on it.
+    const skipById = new Map<string, BackfillSkipRow>();
+    const seenCount = () => adoptById.size + needsPriceById.size + flagById.size + skipById.size;
+    // Captured once, from the FIRST pass only: that pass's own classified count plus its own
+    // `remaining` is the true total for the whole originally-requested [from, to] range. Every
+    // later pass's `remaining` is relative to a narrower [cursor, to] that overlaps the previous
+    // pass on the shared boundary date, so summing `remaining` across passes would not reproduce
+    // this number — this is the only point where the real denominator is available.
+    let total: number | null = null;
     let cursor = from;
 
     const commit = () => {
@@ -142,7 +152,7 @@ export function CalendarBackfillPanel({
         adopt: [...adoptById.values()],
         needsPrice: [...needsPriceById.values()],
         flags: [...flagById.values()],
-        skipped,
+        skipped: [...skipById.values()],
         nextFrom: null,
         remaining: 0,
       };
@@ -167,21 +177,28 @@ export function CalendarBackfillPanel({
         for (const r of chunk.adopt) adoptById.set(r.eventId, r);
         for (const r of chunk.needsPrice) needsPriceById.set(r.eventId, r);
         for (const r of chunk.flags) flagById.set(r.eventId, r);
-        skipped += chunk.skipped;
-        seen += chunk.adopt.length + chunk.needsPrice.length + chunk.flags.length + chunk.skipped;
-        setPreviewStatus(`Reading your calendar — ${seen} event${seen === 1 ? '' : 's'} so far…`);
+        for (const r of chunk.skipped) skipById.set(r.eventId, r);
+        if (total === null) {
+          total =
+            chunk.adopt.length +
+            chunk.needsPrice.length +
+            chunk.flags.length +
+            chunk.skipped.length +
+            chunk.remaining;
+        }
+        setPreviewStatus(`Reading your calendar — ${seenCount()} of ${total} events…`);
 
         if (chunk.nextFrom === null) break;
-        if (chunk.nextFrom === cursor || pass >= MAX_PREVIEW_PASSES) {
-          // Either nextFrom failed to advance (more events share one calendar date than the
-          // server's own per-pass cap — pathological, but not impossible) or this range is simply
-          // enormous. Either way: stop, show what was found, and say so, rather than looping
-          // forever or silently truncating without a word.
+        // `<=`, not `===`: Google's `timeMin` bounds an event's END, not its START, so a pass
+        // resumed at `cursor` can also return a multi-night stay that STARTED before `cursor` —
+        // which can pull the next `nextFrom` BACKWARDS, not just leave it stalled in place. Either
+        // way the cursor has failed to advance, and continuing would risk looping forever.
+        if (chunk.nextFrom <= cursor || pass >= MAX_PREVIEW_PASSES) {
           commit();
           handleError(
             new Error(
-              chunk.nextFrom === cursor
-                ? 'Stopped — too many calendar events fall on one date to page through automatically. What was found through that date is shown below.'
+              chunk.nextFrom <= cursor
+                ? 'Stopped — the calendar resume point stopped moving forward, so continuing could loop forever. What was found through that point is shown below.'
                 : `Stopped after ${MAX_PREVIEW_PASSES} passes over an unusually large range. What was found so far is shown below — narrow the range to see the rest.`,
             ),
           );
@@ -194,7 +211,7 @@ export function CalendarBackfillPanel({
       // Keep whatever earlier passes already found rather than discarding it — a sitter who's
       // waited through 800 events has real, already-fetched progress that a bare reset would
       // throw away for nothing.
-      if (adoptById.size + needsPriceById.size + flagById.size > 0 || skipped > 0) commit();
+      if (seenCount() > 0) commit();
       else reset();
       handleError(e);
     } finally {
@@ -632,12 +649,12 @@ export function CalendarBackfillPanel({
             </>
           )}
 
-          {preview.skipped > 0 && (
+          {preview.skipped.length > 0 && (
             <p className="pb-hint">
-              {preview.skipped} event{preview.skipped === 1 ? '' : 's'} in this range{' '}
-              {preview.skipped === 1 ? 'is' : 'are'} already on Pawservation or{' '}
-              {preview.skipped === 1 ? 'was' : 'were'} adopted before, and{' '}
-              {preview.skipped === 1 ? 'is' : 'are'} left alone.
+              {preview.skipped.length} event{preview.skipped.length === 1 ? '' : 's'} in this range{' '}
+              {preview.skipped.length === 1 ? 'is' : 'are'} already on Pawservation or{' '}
+              {preview.skipped.length === 1 ? 'was' : 'were'} adopted before, and{' '}
+              {preview.skipped.length === 1 ? 'is' : 'are'} left alone.
             </p>
           )}
 

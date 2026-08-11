@@ -367,11 +367,21 @@ export type BackfillFlagRow = {
   detail: string;
 };
 
+/** Already on Pawservation (`pawservation-own`) or adopted in an earlier import
+ *  (`already-adopted`) — carries its own eventId, like every other row kind, so a caller resuming
+ *  a preview across passes can de-duplicate the shared boundary date instead of a naive per-pass
+ *  count double-counting whatever landed on it. */
+export type BackfillSkipRow = {
+  kind: 'skip';
+  eventId: string;
+  why: 'pawservation-own' | 'already-adopted';
+};
+
 export type BackfillPreview = {
   adopt: BackfillAdoptRow[];
   needsPrice: BackfillNeedsPriceRow[];
   flags: BackfillFlagRow[];
-  skipped: number;
+  skipped: BackfillSkipRow[];
   /** Date to resume from when this pass didn't cover the whole requested range (more events than
    *  the server's per-pass cap) — null once the range is fully covered. Deliberately the LAST
    *  classified event's own start date, not the day after it: see the route's own comment for why

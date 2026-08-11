@@ -169,6 +169,7 @@ import {
   cancellationFee,
   getPacificDateStr,
   isDedicatedCalendarId,
+  MAX_BACKFILL_EVENTS,
   parseMixKey,
   petCountOf,
   validateCancellationTiers,
@@ -246,11 +247,11 @@ async function loadPaymentMatchInputs(
   };
 }
 
-/** One pass reads its whole range before classifying, so the cap is on events READ, not events
- *  adopted. Chosen to sit inside the Workers Free plan's 50-subrequest budget. Exported: the
- *  import route (Task 7) enforces the same cap, and the range-picker UI uses it to warn before
- *  submitting a range that would be refused. */
-export const MAX_BACKFILL_EVENTS = 200;
+// MAX_BACKFILL_EVENTS itself now lives in src/shared/util/calendar-target.ts (imported above),
+// so CalendarBackfillPanel.tsx can chunk its bulk Adopt calls at the exact same number this route
+// enforces, instead of carrying a second literal that could drift from it. Re-exported here so
+// this route's own tests keep importing it from this module.
+export { MAX_BACKFILL_EVENTS };
 
 /** Same sanity ceiling as every other explicit-bounds field in this file (advance months, lead
  *  days, overlap days, pet count) — a sitter-typed historical price is real money, but a figure
@@ -3111,7 +3112,13 @@ export const adminRoutes = new Hono<AppEnv>()
         .filter((r): r is Extract<Classified, { kind: 'needs-price' }> => r.kind === 'needs-price')
         .map(withPetNames),
       flags: classified.filter((r) => r.kind === 'flag'),
-      skipped: classified.filter((r) => r.kind === 'skip').length,
+      // An array, not a count — unlike a count, a skip row carries its own eventId, so a caller
+      // resuming across passes can de-duplicate the boundary date's events by id exactly like
+      // adopt/needsPrice/flags, instead of a naive per-pass sum double-counting whatever landed
+      // on the shared resume date.
+      skipped: classified.filter(
+        (r): r is Extract<Classified, { kind: 'skip' }> => r.kind === 'skip',
+      ),
       nextFrom,
       remaining,
     });

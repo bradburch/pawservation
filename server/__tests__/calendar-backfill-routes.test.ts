@@ -69,7 +69,9 @@ type PreviewBody = {
   adopt: Classified[];
   needsPrice: Classified[];
   flags: Classified[];
-  skipped: number;
+  // An array, not a count — a skip row carries its own eventId so a caller resuming across
+  // preview passes can de-duplicate the shared boundary date instead of double-counting it.
+  skipped: Extract<Classified, { kind: 'skip' }>[];
   nextFrom: string | null;
   remaining: number;
 };
@@ -393,7 +395,9 @@ describe('POST /:slug/admin/calendar/backfill/preview', () => {
     expect(body.adopt).toHaveLength(0);
     expect(body.needsPrice).toHaveLength(0);
     expect(body.flags).toHaveLength(0);
-    expect(body.skipped).toBe(1);
+    expect(body.skipped).toEqual([
+      { kind: 'skip', eventId: 'ev_already_adopted', why: 'already-adopted' },
+    ]);
   });
 });
 
