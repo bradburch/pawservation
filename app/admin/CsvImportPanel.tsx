@@ -90,12 +90,18 @@ export function CsvImportPanel({
     dedupeKey,
     accountId,
   }));
-  const chosenTotal = preview
-    ? chosen.reduce((sum, { dedupeKey }) => {
-        const row = preview.matched.find((r) => r.dedupeKey === dedupeKey);
-        return sum + (row?.amount ?? 0);
-      }, 0)
-    : 0;
+  // What a chosen row is, whether the matcher placed it or the sitter did — the two lists are one
+  // set of payments once a household is attached to each.
+  const chosenRow = (dedupeKey: string): { amount: number; payer: string } | undefined => {
+    const matched = preview?.matched.find((r) => r.dedupeKey === dedupeKey);
+    if (matched) return { amount: matched.amount, payer: matched.clientLabel };
+    const unmatched = preview?.unmatched.find((r) => r.dedupeKey === dedupeKey);
+    return unmatched ? { amount: unmatched.amount, payer: unmatched.payer } : undefined;
+  };
+  const chosenTotal = chosen.reduce(
+    (sum, { dedupeKey }) => sum + (chosenRow(dedupeKey)?.amount ?? 0),
+    0,
+  );
 
   // Date, Amount and Paid-by must all be chosen before there's anything to preview; the optional
   // three ride along only when the sitter picked a column for them.
@@ -160,6 +166,19 @@ export function CsvImportPanel({
       return next;
     });
 
+  /**
+   * Place a row the matcher couldn't, on the household the sitter picked. An unassigned row leaves
+   * `choices` entirely rather than riding along under some fallback household — nothing is guessed
+   * at here, and a row with no client chosen is simply not submitted.
+   */
+  const assign = (dedupeKey: string, accountId: string) =>
+    setChoices((prev) => {
+      const next = new Map(prev);
+      if (accountId === '') next.delete(dedupeKey);
+      else next.set(dedupeKey, accountId);
+      return next;
+    });
+
   const record = async () => {
     if (!csv || !mapping || chosen.length === 0 || busy) return;
     clearError();
@@ -167,14 +186,11 @@ export function CsvImportPanel({
     try {
       // Capture amount + payer for every chosen row BEFORE reset() clears `preview` — this is the
       // only place left that still knows what a skipped dedupeKey was.
-      const rows = preview ? preview.matched : [];
       setChosenInfo(
         new Map(
           chosen.flatMap(({ dedupeKey }) => {
-            const row = rows.find((r) => r.dedupeKey === dedupeKey);
-            return row
-              ? [[dedupeKey, { amount: row.amount, payer: row.clientLabel }] as const]
-              : [];
+            const row = chosenRow(dedupeKey);
+            return row ? [[dedupeKey, row] as const] : [];
           }),
         ),
       );
@@ -351,10 +367,31 @@ export function CsvImportPanel({
           {preview.unmatched.length > 0 && (
             <>
               <h4>Couldn&rsquo;t place these</h4>
+              <p className="pb-applies">
+                Pawservation won&rsquo;t guess who these are from. Pick the client each one belongs
+                to and it will be recorded with the rest; leave it unset and the payment is skipped.
+              </p>
               <ul>
                 {preview.unmatched.map((u) => (
-                  <li key={u.dedupeKey} className="pb-hint">
-                    ${u.amount} from {u.payer} on {formatFriendlyDate(u.date)} &mdash; {u.reason}
+                  <li key={u.dedupeKey}>
+                    <label className="pb-inline">
+                      ${u.amount} from {u.payer} on {formatFriendlyDate(u.date)}
+                      <select
+                        aria-label={`Client for $${u.amount} from ${u.payer} on ${u.date}`}
+                        value={choices.get(u.dedupeKey) ?? ''}
+                        onChange={(e) => assign(u.dedupeKey, e.target.value)}
+                        disabled={busy}
+                      >
+                        <option value="">&mdash; choose a client &mdash;</option>
+                        {preview.households.map((h) => (
+                          <option key={h.accountId} value={h.accountId}>
+                            {h.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <br />
+                    <span className="pb-hint">{u.reason}</span>
                   </li>
                 ))}
               </ul>

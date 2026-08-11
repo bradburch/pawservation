@@ -201,6 +201,12 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
  * `accountId` (Story 2.5) is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
  * latter only returns households with existing bookings or payments, and a client's first-ever
  * payment must still resolve to their household with none of either on record yet.
+ *
+ * `households` is every household of this tenant a payment may be filed against — the list the CSV
+ * panel offers for a row the matcher couldn't place, and the SAME list the CSV import route
+ * validates the sitter's choice against, so what the panel offers and what the server accepts can
+ * never be two different sets. Built from `clients`, so a client the sitter cannot see (the
+ * reserved demo identity, which `listCustomers` filters out) is not somewhere money can be filed.
  */
 async function loadPaymentMatchInputs(
   env: AppEnv['Bindings'],
@@ -208,21 +214,35 @@ async function loadPaymentMatchInputs(
 ): Promise<{
   clients: MatchClient[];
   alreadyImported: Set<string>;
+  households: { accountId: string; label: string }[];
 }> {
   const [customers, accountsByOwner, refs] = await Promise.all([
     listCustomers(env.PAWSERVATION_DB, tenantId),
     getAccountIdsByOwner(env.PAWSERVATION_DB, tenantId),
     listPaymentExternalRefs(env.PAWSERVATION_DB, tenantId),
   ]);
+  const clients: MatchClient[] = customers.map((u) => ({
+    endUserId: u.Id,
+    label: u.Name || u.Email,
+    name: u.Name,
+    venmoUsername: u.VenmoUsername,
+    accountId: accountsByOwner.get(u.Id) ?? null,
+  }));
+  // Two clients who share a pet share one household, and it is listed ONCE, under both their
+  // names — exactly as they share one balance and one invoice number.
+  const labelsByAccount = new Map<string, string[]>();
+  for (const client of clients) {
+    if (client.accountId === null) continue;
+    const labels = labelsByAccount.get(client.accountId);
+    if (labels) labels.push(client.label);
+    else labelsByAccount.set(client.accountId, [client.label]);
+  }
   return {
-    clients: customers.map((u) => ({
-      endUserId: u.Id,
-      label: u.Name || u.Email,
-      name: u.Name,
-      venmoUsername: u.VenmoUsername,
-      accountId: accountsByOwner.get(u.Id) ?? null,
-    })),
+    clients,
     alreadyImported: new Set(refs),
+    households: [...labelsByAccount]
+      .map(([accountId, labels]) => ({ accountId, label: labels.join(' & ') }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
   };
 }
 
@@ -2899,18 +2919,35 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
-    const preview = matchCsvPayments({ payments: parsed.payments, ...inputs });
-    return c.json({ ...preview, problems: parsed.problems });
+    const preview = matchCsvPayments({
+      payments: parsed.payments,
+      clients: inputs.clients,
+      alreadyImported: inputs.alreadyImported,
+    });
+    // `households` rides along so the panel can offer a client for a row the matcher couldn't
+    // place — the sitter assigning it is the design's own answer to an unmatched row.
+    return c.json({ ...preview, households: inputs.households, problems: parsed.problems });
   })
 
   /**
    * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS — the mapped-CSV sibling of
-   * `payments/venmo/import`, same security shape. The body supplies the file, the mapping, and only
-   * WHICH row goes on which household (`choices`): `applyMapping` and `matchCsvPayments` both run
-   * again from scratch, so every amount, date, method and note is the server's own re-reading of the
-   * file, never the browser's. An `accountId` is honoured only when the fresh matching independently
-   * resolves that row's payer to EXACTLY that household — anything else is skipped with a reason,
-   * never guessed at. The file itself is still never stored.
+   * `payments/venmo/import`, near-identical security shape. The body supplies the file, the
+   * mapping, and only WHICH row goes on which household (`choices`): `applyMapping` runs again from
+   * scratch, so every amount, date, method and note is the server's own re-reading of the file,
+   * never the browser's. The file itself is still never stored.
+   *
+   * WHERE THIS DELIBERATELY DIFFERS FROM THE VENMO ROUTE. There, an `accountId` is honoured only
+   * when the server independently resolves the sender to exactly that household. Here it need only
+   * name a real household OF THIS TENANT, because matching is by payer name and a bank export's
+   * payer strings often equal no client's stored name at all — so the design's answer to an
+   * unmatched row is that THE SITTER ASSIGNS IT. That is safe because of what each side states: a
+   * mapping is instructions ("column 3 is the amount"), never a claim about a value, so every
+   * figure that becomes money is still read out of the file by the server. Which household a
+   * payment belongs to is a judgement the authenticated sitter is the rightful authority on for
+   * their own business. Their choice is still checked against this tenant's own households, and
+   * `insertAccountPayment` scopes its insert by TenantId underneath — a cross-tenant write is
+   * refused twice. Nothing here guesses: a payer matching two clients is still not resolved for
+   * them, it is simply theirs to place.
    */
   .post('/:slug/admin/payments/csv/import', async (c) => {
     const tenant = c.get('tenant');
@@ -2950,6 +2987,7 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
     const paymentByKey = new Map(parsed.payments.map((p) => [p.dedupeKey, p]));
+    const householdIds = new Set(inputs.households.map((h) => h.accountId));
 
     const skipped: { dedupeKey: string; reason: string }[] = [];
     let imported = 0;
@@ -2965,24 +3003,17 @@ export const adminRoutes = new Hono<AppEnv>()
         skipped.push({ dedupeKey, reason: 'Already imported' });
         continue;
       }
-      // Re-resolve from THIS request's data; the browser's idea of the match is never trusted.
-      // resolveMatchClient is the SAME function the preview uses — a name that's ambiguous there
-      // is refused here too, never silently resolved by whichever client happened to sort last.
-      const client = resolveMatchClient(inputs.clients, payment.payer);
-      if (!client || client.accountId === null || client.accountId !== accountId) {
-        skipped.push({
-          dedupeKey,
-          reason: 'That household is no longer a match for this payment',
-        });
+      // The sitter may file this payment against any household of their OWN business — and only
+      // theirs. Checked against the freshly-loaded household set, never against anything the
+      // preview told the browser.
+      if (!householdIds.has(accountId)) {
+        skipped.push({ dedupeKey, reason: 'That household is not one of your clients' });
         continue;
       }
       const note = `CSV import — ${payment.payer}${payment.note ? `: ${payment.note}` : ''}`;
       try {
-        // client.accountId, not the destructured `accountId` above: they are provably equal by
-        // the `!==` guard just above, but writing the server's own resolved value keeps that true
-        // even if that guard is ever refactored.
         const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
-          accountId: client.accountId,
+          accountId,
           amount: payment.amount,
           method: payment.method,
           paidDate: payment.date,

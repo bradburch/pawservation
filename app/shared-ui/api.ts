@@ -303,6 +303,9 @@ export type CsvPreview = {
   unmatched: (CsvPreviewRow & { reason: string })[];
   alreadyImported: CsvPreviewRow[];
   problems: { row: number; reason: string }[];
+  /** Every household of this tenant a payment may be filed against, so the sitter can place a row
+   *  the matcher couldn't. The same list the import route validates their choice against. */
+  households: { accountId: string; label: string }[];
 };
 export type CsvImportResult = {
   imported: number;

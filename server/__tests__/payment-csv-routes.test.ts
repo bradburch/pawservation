@@ -172,6 +172,19 @@ describe('POST /:slug/admin/payments/csv/preview', () => {
     expect(((await res.json()) as { error: string }).error).toMatch(/501/);
   });
 
+  it("returns this tenant's own households, so the sitter can assign a row the matcher couldn't place", async () => {
+    const { env } = createTestEnv();
+    const res = await post(env, 'payments/csv/preview', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+    });
+    const body = (await res.json()) as { households: { accountId: string; label: string }[] };
+    expect(body.households).toContainEqual({ accountId: 'pet_sp_bella', label: 'Jess Demo' });
+    // Another tenant's household is never offered as somewhere this sitter may file money.
+    expect(body.households.some((h) => h.accountId === 'pet_ht_otis')).toBe(false);
+  });
+
   it('scopes candidates to the tenant asking', async () => {
     const { env } = createTestEnv();
     // Happy Tails has its own 'Jess Demo' with a different pet, so the same file resolves to a
@@ -253,7 +266,30 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
   });
 
-  it('skips a row whose payer no longer resolves to the given accountId, and writes nothing for it', async () => {
+  it('records a row the matcher could not place against the household the SITTER assigned', async () => {
+    const { env, raw } = createTestEnv();
+    // REF2's payer ("Nobody Here") matches no client at all — the preview buckets it as unmatched.
+    // Which household it belongs to is the sitter's judgement to make, so their choice is honoured.
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:REF2', accountId: 'pet_sp_bella' }],
+    });
+    expect(await res.json()).toEqual({ imported: 1, totalAmount: 20, skipped: [] });
+    // Every figure is still the SERVER's own reading of the file — only the household came from
+    // the browser.
+    expect(
+      raw.prepare('SELECT AccountId, Amount, PaidDate, ExternalRef FROM Payments').get(),
+    ).toMatchObject({
+      AccountId: 'pet_sp_bella',
+      Amount: 20,
+      PaidDate: '2026-07-02',
+      ExternalRef: 'csv:REF2',
+    });
+  });
+
+  it('honours a household of this tenant that the matcher did not pick, and writes the row against it', async () => {
     const { env, raw } = createTestEnv();
     const other = await insertInvitedCustomer(
       env.PAWSERVATION_DB,
@@ -266,16 +302,14 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       csv: CSV,
       mapping: MAPPING,
       defaultMethod: 'cash',
-      // Jess Demo's row (REF1) resolves to pet_sp_bella, NOT this other client's household.
+      // Jess Demo's row (REF1) auto-matched to pet_sp_bella; the sitter overrode it.
       choices: [{ dedupeKey: 'csv:REF1', accountId: otherPet }],
     });
-    expect(await res.json()).toMatchObject({
-      imported: 0,
-      skipped: [
-        { dedupeKey: 'csv:REF1', reason: 'That household is no longer a match for this payment' },
-      ],
+    expect(await res.json()).toMatchObject({ imported: 1, totalAmount: 45, skipped: [] });
+    expect(raw.prepare('SELECT AccountId, Amount FROM Payments').get()).toMatchObject({
+      AccountId: otherPet,
+      Amount: 45,
     });
-    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
   });
 
   it('refuses an accountId belonging to another tenant', async () => {
@@ -284,15 +318,26 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       csv: CSV,
       mapping: MAPPING,
       defaultMethod: 'cash',
-      // 'pet_ht_otis' is Happy Tails' household, not Sunny Paws' Jess Demo.
+      // 'pet_ht_otis' is Happy Tails' household, not one of Sunny Paws' — a sitter may assign a
+      // payment anywhere in THEIR OWN business and nowhere else.
       choices: [{ dedupeKey: 'csv:REF1', accountId: 'pet_ht_otis' }],
     });
     expect(await res.json()).toMatchObject({
       imported: 0,
-      skipped: [
-        { dedupeKey: 'csv:REF1', reason: 'That household is no longer a match for this payment' },
-      ],
+      skipped: [{ dedupeKey: 'csv:REF1', reason: 'That household is not one of your clients' }],
     });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('400s a choice with no household chosen, writing nothing — an unassigned row is never guessed at', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:REF2', accountId: '' }],
+    });
+    expect(res.status).toBe(400);
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
   });
 
