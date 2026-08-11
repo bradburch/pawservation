@@ -372,6 +372,13 @@ export type BackfillPreview = {
   needsPrice: BackfillNeedsPriceRow[];
   flags: BackfillFlagRow[];
   skipped: number;
+  /** Date to resume from when this pass didn't cover the whole requested range (more events than
+   *  the server's per-pass cap) — null once the range is fully covered. Deliberately the LAST
+   *  classified event's own start date, not the day after it: see the route's own comment for why
+   *  that's the only boundary that can't skip an event. */
+  nextFrom: string | null;
+  /** How many events in the requested range this pass did not classify — 0 once nextFrom is null. */
+  remaining: number;
 };
 
 export type BackfillImportResult = {

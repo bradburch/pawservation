@@ -2,8 +2,11 @@ import { useState } from 'react';
 import {
   adminApi,
   ApiError,
+  type BackfillAdoptRow,
   type BackfillFlagReason,
+  type BackfillFlagRow,
   type BackfillImportResult,
+  type BackfillNeedsPriceRow,
   type BackfillPreview,
 } from '../shared-ui/api.js';
 import { formatFriendlyDate } from '../../src/shared/index.js';
@@ -36,6 +39,19 @@ function eventWhen(startDate: string, endDate: string | null): string {
     ? `${formatFriendlyDate(startDate)} – ${formatFriendlyDate(endDate)}`
     : formatFriendlyDate(startDate);
 }
+
+/** Mirrors the server's own MAX_BACKFILL_EVENTS (server/routes/admin.ts) — the import route
+ *  refuses more than this many events in one request, so a bulk Adopt over that many rows must
+ *  send them in chunks of at most this size and sum the results. Not imported from the server:
+ *  this is UI-only chunking, the server still enforces its own copy of the cap independently. */
+const IMPORT_CHUNK_SIZE = 200;
+
+/** Sane ceiling on how many preview passes one Preview click will make before giving up and
+ *  showing what it found so far — guards against looping forever if `nextFrom` ever stops
+ *  advancing (e.g. more events share one calendar date than the server's per-pass cap; see the
+ *  preview route's own comment on that failure mode). 50 passes covers 50 * 200 = 10,000 events,
+ *  which is far more than a sane calendar backfill range should ever hold. */
+const MAX_PREVIEW_PASSES = 50;
 
 /**
  * Read-only adoption of a sitter's existing Google Calendar events as bookings
@@ -75,6 +91,12 @@ export function CalendarBackfillPanel({
   // empty: the server has no number to offer, and none is ever guessed on its behalf.
   const [prices, setPrices] = useState<Map<string, string>>(new Map());
   const [busy, setBusy] = useState(false);
+  // Progress text for a multi-pass Preview ("reading your calendar — 400 events so far…") or a
+  // chunked bulk Adopt ("adopting — 400 of 823…"). Each is set only while its own operation is
+  // in flight and cleared in that operation's `finally`, so they never show stale text left over
+  // from the other one.
+  const [previewStatus, setPreviewStatus] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [result, setResult] = useState<BackfillImportResult | null>(null);
   // eventIds of an in-flight PER-ROW adopt — separate from `busy`, which covers preview/bulk
   // import, so working one row doesn't grey out every other row's own button.
@@ -95,13 +117,35 @@ export function CalendarBackfillPanel({
     setPetFilter(null);
   };
 
+  // Works through the WHOLE requested range itself: the preview route classifies at most its own
+  // per-pass cap and hands back `nextFrom` when more remains, so a sitter with three years of
+  // calendar never has to bisect a date range by hand. Accumulates across passes keyed by eventId
+  // — not just concatenated — because the resume boundary is deliberately "the last classified
+  // event's own date, not the day after it" (see the route's comment), so consecutive passes can
+  // legitimately reclassify the same handful of events on that shared date.
   const runPreview = async () => {
     if (!from || !to || busy) return;
     clearError();
     setResult(null);
     setBusy(true);
-    try {
-      const next = await adminApi.calendarBackfill.preview(session.slug, session.token, from, to);
+    setPreviewStatus('Reading your calendar…');
+
+    const adoptById = new Map<string, BackfillAdoptRow>();
+    const needsPriceById = new Map<string, BackfillNeedsPriceRow>();
+    const flagById = new Map<string, BackfillFlagRow>();
+    let skipped = 0;
+    let seen = 0;
+    let cursor = from;
+
+    const commit = () => {
+      const next: BackfillPreview = {
+        adopt: [...adoptById.values()],
+        needsPrice: [...needsPriceById.values()],
+        flags: [...flagById.values()],
+        skipped,
+        nextFrom: null,
+        remaining: 0,
+      };
       setPreview(next);
       setChecked(new Set(next.adopt.map((r) => r.eventId)));
       setPrices(
@@ -110,11 +154,52 @@ export function CalendarBackfillPanel({
           ...next.needsPrice.map((r) => [r.eventId, ''] as const),
         ]),
       );
+    };
+
+    try {
+      for (let pass = 1; ; pass++) {
+        const chunk = await adminApi.calendarBackfill.preview(
+          session.slug,
+          session.token,
+          cursor,
+          to,
+        );
+        for (const r of chunk.adopt) adoptById.set(r.eventId, r);
+        for (const r of chunk.needsPrice) needsPriceById.set(r.eventId, r);
+        for (const r of chunk.flags) flagById.set(r.eventId, r);
+        skipped += chunk.skipped;
+        seen += chunk.adopt.length + chunk.needsPrice.length + chunk.flags.length + chunk.skipped;
+        setPreviewStatus(`Reading your calendar — ${seen} event${seen === 1 ? '' : 's'} so far…`);
+
+        if (chunk.nextFrom === null) break;
+        if (chunk.nextFrom === cursor || pass >= MAX_PREVIEW_PASSES) {
+          // Either nextFrom failed to advance (more events share one calendar date than the
+          // server's own per-pass cap — pathological, but not impossible) or this range is simply
+          // enormous. Either way: stop, show what was found, and say so, rather than looping
+          // forever or silently truncating without a word.
+          commit();
+          handleError(
+            new Error(
+              chunk.nextFrom === cursor
+                ? 'Stopped — too many calendar events fall on one date to page through automatically. What was found through that date is shown below.'
+                : `Stopped after ${MAX_PREVIEW_PASSES} passes over an unusually large range. What was found so far is shown below — narrow the range to see the rest.`,
+            ),
+          );
+          return;
+        }
+        cursor = chunk.nextFrom;
+      }
+      commit();
     } catch (e) {
-      reset();
+      // Keep whatever earlier passes already found rather than discarding it — a sitter who's
+      // waited through 800 events has real, already-fetched progress that a bare reset would
+      // throw away for nothing.
+      if (adoptById.size + needsPriceById.size + flagById.size > 0 || skipped > 0) commit();
+      else reset();
       handleError(e);
     } finally {
       setBusy(false);
+      setPreviewStatus(null);
     }
   };
 
@@ -192,28 +277,57 @@ export function CalendarBackfillPanel({
     (r) => checked.has(r.eventId) && !isWholeDollar(prices.get(r.eventId) ?? ''),
   );
 
+  // Bulk Adopt, chunked: the import route caps `events` at IMPORT_CHUNK_SIZE (mirroring the
+  // server's own MAX_BACKFILL_EVENTS) per request, so a sitter adopting 800 rows at once would
+  // otherwise see a flat 400. Sends the pending rows in chunks of at most that size and sums the
+  // results as it goes, so a failure partway through a long run keeps whatever already landed
+  // (real writes on the server — not something a client-side rollback could or should undo)
+  // instead of reporting the whole run as a failure.
   const runImport = async () => {
     if (!preview || pending.length === 0 || busy || hasInvalidPrice) return;
     clearError();
     setBusy(true);
+    const startAdopt = preview.adopt;
+    const startNeedsPrice = preview.needsPrice;
+    const chunked = pending.length > IMPORT_CHUNK_SIZE;
+    if (chunked) setImportStatus(`Adopting — 0 of ${pending.length}…`);
+
+    let totalImported = 0;
+    const totalSkipped: { eventId: string; reason: string }[] = [];
+    const importedIds = new Set<string>();
+    let failure: unknown = null;
     try {
-      const outcome = await adminApi.calendarBackfill.import(
-        session.slug,
-        session.token,
-        from,
-        to,
-        pending,
-      );
-      setResult(outcome);
-      // Drop exactly the ids the server actually adopted — never the whole `pending` set. A row
-      // the server skipped (its own `skipped` reason) must stay on screen, not vanish as though
-      // it landed.
-      const skippedIds = new Set(outcome.skipped.map((s) => s.eventId));
-      const importedIds = new Set(
-        pending.map((p) => p.eventId).filter((id) => !skippedIds.has(id)),
-      );
-      const nextAdopt = preview.adopt.filter((r) => !importedIds.has(r.eventId));
-      const nextNeedsPrice = preview.needsPrice.filter((r) => !importedIds.has(r.eventId));
+      for (let i = 0; i < pending.length; i += IMPORT_CHUNK_SIZE) {
+        const chunk = pending.slice(i, i + IMPORT_CHUNK_SIZE);
+        const outcome = await adminApi.calendarBackfill.import(
+          session.slug,
+          session.token,
+          from,
+          to,
+          chunk,
+        );
+        totalImported += outcome.imported;
+        totalSkipped.push(...outcome.skipped);
+        const skippedIds = new Set(outcome.skipped.map((s) => s.eventId));
+        for (const p of chunk) if (!skippedIds.has(p.eventId)) importedIds.add(p.eventId);
+        setResult({ imported: totalImported, skipped: totalSkipped });
+        if (chunked)
+          setImportStatus(
+            `Adopting — ${Math.min(i + chunk.length, pending.length)} of ${pending.length}…`,
+          );
+      }
+    } catch (e) {
+      failure = e;
+    }
+    setImportStatus(null);
+    setBusy(false);
+
+    // Drop exactly the ids the server actually adopted — never the whole `pending` set, and
+    // scoped to only the chunks that completed before any failure. A row the server skipped (its
+    // own `skipped` reason) must stay on screen, not vanish as though it landed.
+    if (importedIds.size > 0) {
+      const nextAdopt = startAdopt.filter((r) => !importedIds.has(r.eventId));
+      const nextNeedsPrice = startNeedsPrice.filter((r) => !importedIds.has(r.eventId));
       if (nextAdopt.length === 0 && nextNeedsPrice.length === 0) {
         // Nothing left in the WHOLE preview (every pet, not just the visible filter) — a full
         // reset is the same outcome a splice would produce, and clears the filter along with it.
@@ -231,11 +345,20 @@ export function CalendarBackfillPanel({
           return next;
         });
       }
-      await onImported();
-    } catch (e) {
-      handleError(e);
-    } finally {
-      setBusy(false);
+    }
+    // Refresh whenever a real write happened (even one chunk of a run that later failed), or the
+    // run completed cleanly with nothing to write for (e.g. every row already imported).
+    if (importedIds.size > 0 || !failure) await onImported();
+
+    if (failure) {
+      handleError(
+        totalImported > 0
+          ? new Error(
+              `Adopted ${totalImported} booking${totalImported === 1 ? '' : 's'} before this failed. ` +
+                'What succeeded is already reflected above — try again to pick up the rest.',
+            )
+          : failure,
+      );
     }
   };
 
@@ -349,7 +472,7 @@ export function CalendarBackfillPanel({
           <input type="date" value={to} disabled={busy} onChange={(e) => setTo(e.target.value)} />
         </label>
         <button onClick={() => void runPreview()} disabled={busy || !from || !to}>
-          {busy && !preview ? 'Checking…' : 'Preview'}
+          {previewStatus ?? 'Preview'}
         </button>
         {preview && (
           <button onClick={reset} disabled={busy}>
@@ -525,7 +648,7 @@ export function CalendarBackfillPanel({
                 disabled={busy || pending.length === 0 || hasInvalidPrice}
               >
                 {busy
-                  ? 'Adopting…'
+                  ? (importStatus ?? 'Adopting…')
                   : `Adopt ${pending.length} booking${pending.length === 1 ? '' : 's'}`}
               </button>
             </div>
