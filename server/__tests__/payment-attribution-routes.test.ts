@@ -312,3 +312,138 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     expect(graphQueries).toBe(2);
   });
 });
+
+/**
+ * SEQUENTIAL ATTRIBUTION WITHIN A HOUSEHOLD — a defect found against production data: the route
+ * used to build `unpaidBookings` once per household and propose every one of that household's
+ * credits against the SAME, never-decremented list. A household with three $40 credits and one
+ * $40 unpaid booking got three proposals each allocating the full $40 to that one booking —
+ * approving all three would pay $120 against a $40 stay. These tests pin the fix: credits within
+ * a household are proposed in oldest-`PaidDate`-first order, each one's splits are subtracted from
+ * the bookings it touched before the next credit is considered, and a booking that reaches 0
+ * outstanding drops out of the candidate list for later credits.
+ */
+describe('POST /:slug/admin/payments/attribute/preview — sequential attribution within a household', () => {
+  it('the core case: three $40 credits against one $40 booking — only the first is proposed', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 40, '2026-07-01');
+    const first = (await credit(env, home.accountId, 40, '2026-06-01'))!;
+    const second = (await credit(env, home.accountId, 40, '2026-06-02'))!;
+    const third = (await credit(env, home.accountId, 40, '2026-06-03'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    // Exactly one proposal, against the oldest-paid credit, taking the booking's entire (single)
+    // $40 outstanding.
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({
+      paymentId: first,
+      remainder: 0,
+      splits: [{ bookingId, amount: 40 }],
+    });
+
+    // The other two credits find nothing left to attach to — the truth, not a failure.
+    expect(body.unresolved).toHaveLength(2);
+    const unresolvedIds = body.unresolved.map((u) => u.paymentId).sort();
+    expect(unresolvedIds).toEqual([second, third].sort());
+    for (const u of body.unresolved) expect(u.reason).toBe('no-unpaid-bookings');
+
+    // The invariant, restated concretely: proposed money never exceeds actual outstanding.
+    const totalProposed = body.proposals.reduce(
+      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amount, 0),
+      0,
+    );
+    expect(totalProposed).toBeLessThanOrEqual(40);
+  });
+
+  it('partial consumption: a $100 booking against two $60 credits', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const first = (await credit(env, home.accountId, 60, '2026-06-01'))!;
+    const second = (await credit(env, home.accountId, 60, '2026-06-02'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(2);
+    const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+
+    // The older credit takes the first $60 of the booking's $100 outstanding, in full.
+    expect(byPaymentId.get(first)).toMatchObject({
+      remainder: 0,
+      splits: [{ bookingId, amount: 60 }],
+    });
+    // The younger credit sees only $40 of outstanding left, takes it all, and reports the $20 it
+    // couldn't place as remainder.
+    expect(byPaymentId.get(second)).toMatchObject({
+      remainder: 20,
+      splits: [{ bookingId, amount: 40 }],
+    });
+  });
+
+  it('ordering is deterministic regardless of insertion order', async () => {
+    const dates = ['2026-06-01', '2026-06-02', '2026-06-03'];
+
+    async function run(insertOrder: number[]) {
+      const { env, raw } = createTestEnv();
+      const home = await household(env, raw, 'jen');
+      const bookingId = await book(env, home, 40, '2026-07-01');
+      const idByDateIndex = new Map<number, string>();
+      for (const i of insertOrder) {
+        idByDateIndex.set(i, (await credit(env, home.accountId, 40, dates[i]))!);
+      }
+      const res = await preview(env, TENANT_C, home.accountId);
+      const body = (await res.json()) as PreviewBody;
+      return { bookingId, idByDateIndex, body };
+    }
+
+    // Same three credits (same paid dates, same amounts), inserted in two different orders.
+    const forward = await run([0, 1, 2]);
+    const reversed = await run([2, 0, 1]);
+
+    for (const { bookingId, idByDateIndex, body } of [forward, reversed]) {
+      // Regardless of insertion order, the credit with the OLDEST paid date is the one that
+      // settles the booking; the other two find nothing left.
+      expect(body.proposals).toHaveLength(1);
+      expect(body.proposals[0]).toMatchObject({
+        paymentId: idByDateIndex.get(0),
+        remainder: 0,
+        splits: [{ bookingId, amount: 40 }],
+      });
+      expect(body.unresolved).toHaveLength(2);
+      const unresolvedIds = body.unresolved.map((u) => u.paymentId).sort();
+      expect(unresolvedIds).toEqual([idByDateIndex.get(1)!, idByDateIndex.get(2)!].sort());
+    }
+  });
+
+  it('the invariant, stated once: proposed splits for a household never exceed its total outstanding', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const a = await book(env, home, 40, '2026-07-01');
+    const b = await book(env, home, 25, '2026-07-10');
+    await credit(env, home.accountId, 40, '2026-06-01');
+    await credit(env, home.accountId, 40, '2026-06-02');
+    await credit(env, home.accountId, 40, '2026-06-03');
+    await credit(env, home.accountId, 30, '2026-06-04');
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    const totalOutstanding = 40 + 25; // bookings a and b
+    const totalProposed = body.proposals.reduce(
+      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amount, 0),
+      0,
+    );
+    expect(totalProposed).toBeLessThanOrEqual(totalOutstanding);
+    // Sanity: every split lands on one of this household's two bookings.
+    for (const p of body.proposals)
+      for (const split of p.splits) expect([a, b]).toContain(split.bookingId);
+  });
+});

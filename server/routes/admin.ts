@@ -3144,21 +3144,42 @@ export const adminRoutes = new Hono<AppEnv>()
       // outstanding > 0 only — see the doc comment above for why this must happen before
       // proposeAttribution ever sees the list.
       const candidates = detail.bookings.filter((b) => b.expected - b.paidTotal > 0);
-      const bookingSummary = (b: (typeof candidates)[number]) => ({
-        bookingId: b.bookingId,
-        serviceType: b.serviceType,
-        startDate: b.startDate,
-        status: b.status,
-        outstanding: b.expected - b.paidTotal,
-      });
-      const summaryByBookingId = new Map(candidates.map((b) => [b.bookingId, bookingSummary(b)]));
-      const unpaidBookings = candidates.map((b) => ({
-        bookingId: b.bookingId,
-        startDate: b.startDate,
-        outstanding: b.expected - b.paidTotal,
-      }));
+      const staticById = new Map(
+        candidates.map((b) => [
+          b.bookingId,
+          {
+            bookingId: b.bookingId,
+            serviceType: b.serviceType,
+            startDate: b.startDate,
+            status: b.status,
+          },
+        ]),
+      );
+      // MUTABLE, and carried forward across this household's credits — a household's credits are
+      // NOT independent proposals against the same fixed list. Each one is proposed against
+      // whatever is still outstanding after every earlier credit's splits are subtracted, so a
+      // $40 booking with three $40 credits gets ONE proposal, not three each claiming the full
+      // $40. A booking that reaches 0 here simply stops appearing with positive outstanding, and
+      // `proposeAttribution` already treats "no candidate with outstanding > 0" as
+      // `no-unpaid-bookings` — the true answer for a later credit with nothing left to attach to.
+      const outstandingById = new Map(
+        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      );
 
-      for (const row of credits) {
+      // Oldest PAID date first, tied-broken by payment id for a stable order across runs: the
+      // money that arrived first is the money that settled the earliest stay, so it gets first
+      // claim on a booking's outstanding before any later credit sees it.
+      const orderedCredits = [...credits].sort((a, b) => {
+        if (a.PaidDate !== b.PaidDate) return a.PaidDate < b.PaidDate ? -1 : 1;
+        return a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0;
+      });
+
+      for (const row of orderedCredits) {
+        const unpaidBookings = candidates.map((b) => ({
+          bookingId: b.bookingId,
+          startDate: b.startDate,
+          outstanding: outstandingById.get(b.bookingId)!,
+        }));
         const proposal = proposeAttribution(
           { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
           unpaidBookings,
@@ -3171,10 +3192,14 @@ export const adminRoutes = new Hono<AppEnv>()
             paidDate: row.PaidDate,
             splits: proposal.splits.map((s) => ({
               amount: s.amount,
-              ...summaryByBookingId.get(s.bookingId)!,
+              ...staticById.get(s.bookingId)!,
+              outstanding: outstandingById.get(s.bookingId)!,
             })),
             remainder: proposal.remainder,
           });
+          // Carry the decrement forward for the next credit in this household.
+          for (const s of proposal.splits)
+            outstandingById.set(s.bookingId, outstandingById.get(s.bookingId)! - s.amount);
         } else {
           unresolved.push({
             accountId,
@@ -3183,7 +3208,9 @@ export const adminRoutes = new Hono<AppEnv>()
             paidDate: row.PaidDate,
             reason: proposal.reason,
             detail: proposal.detail,
-            bookings: candidates.map((b) => summaryByBookingId.get(b.bookingId)!),
+            bookings: unpaidBookings
+              .filter((b) => b.outstanding > 0)
+              .map((b) => ({ ...staticById.get(b.bookingId)!, outstanding: b.outstanding })),
           });
         }
       }
