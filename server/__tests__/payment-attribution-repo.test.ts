@@ -407,9 +407,11 @@ describe('applyAttribution (repo)', () => {
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     // A db whose batch() carries one extra, doomed statement — `Amount = -1` violates
-    // `CHECK (Amount > 0)` — placed after the delete and the split inserts have already run. The
-    // test shim runs batch inside a real BEGIN/COMMIT (helpers.ts), so this is the genuine
-    // all-or-nothing question and not a simulation of it.
+    // `CHECK (Amount > 0)` — spliced in before the LAST statement, which is the DELETE. So every
+    // split insert and the remainder insert have already run when it fires, and the delete has
+    // not: real writes are on the table and the source row is still there to lose. The test shim
+    // runs batch inside a real BEGIN/COMMIT (helpers.ts), so this is the genuine all-or-nothing
+    // question and not a simulation of it.
     const db = env.PAWSERVATION_DB;
     const poisoned = {
       prepare: (sql: string) => db.prepare(sql),
@@ -598,5 +600,38 @@ describe('applyAttribution (repo)', () => {
     ).toEqual({ ok: true });
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toHaveLength(1);
     expect(paymentRows(raw)).toHaveLength(1);
+  });
+
+  it("files the remainder under the SOURCE's account id, not the caller's", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen'); // accountId 'p_jen'
+    const only = await book(env, home, 100);
+    const paymentId = (await credit(env, home.accountId, 150))!; // filed under 'p_jen'
+
+    // The two ids now DIFFER: a pet sorting first renames the household to 'p_aaa', while the
+    // payment stays filed under 'p_jen'. The caller passes the current name; the leftover money
+    // must nonetheless stay exactly where it was. Re-filing it under the caller's id would move
+    // money between account ids as a side effect of attribution — harmless-looking here, but it is
+    // how a deceased-pet anchor gets dropped and a payment is orphaned.
+    seedPets(raw, TENANT_C, home.ownerId, [{ id: 'p_aaa', petType: 'dog' }]);
+    const renamed = (await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].accountId;
+    expect(renamed).toBe('p_aaa');
+    expect(renamed).not.toBe(home.accountId);
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+
+    expect(
+      await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+        paymentId,
+        accountId: renamed,
+        splits: [{ bookingId: only, amount: 100 }],
+        remainder: 50,
+      }),
+    ).toEqual({ ok: true });
+
+    const remainderRow = paymentRows(raw).find((r) => r.BookingRequestId === null)!;
+    expect(remainderRow).toMatchObject({ Amount: 50, AccountId: home.accountId });
+    expect(remainderRow.AccountId).not.toBe(renamed);
+    // And it still rolls up to the same household — the money has not moved, only its shape has.
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
   });
 });

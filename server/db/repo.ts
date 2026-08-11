@@ -1644,11 +1644,15 @@ export async function applyAttribution(
   // payment — the common case — has no protection from it at all, and a double-clicked Apply
   // button is the whole trigger.
   //
-  // A vanished source makes the scalar subquery NULL, `amount * NULL` NULL, and the NOT NULL /
-  // `CHECK (Amount > 0)` on `Payments.Amount` aborts the entire batch. Absence RAISES instead of
-  // quietly writing, which is the same property the plain `INSERT ... VALUES` above protects.
-  // `splits` is non-empty here, so exactly one statement carries the guard and one is enough: it
-  // takes the whole transaction down with it.
+  // A vanished source makes the scalar subquery NULL and `amount * NULL` NULL, and the abort rests
+  // SPECIFICALLY on `Payments.Amount` being `INTEGER NOT NULL` (sql/schema.sql). Not on its
+  // `CHECK (Amount > 0)`: SQLite treats a CHECK that evaluates to NULL as SATISFIED, so the CHECK
+  // would let a NULL amount straight through. If that column is ever relaxed to nullable, this
+  // guard stops aborting SILENTLY and the duplicate-money race returns with no test failing —
+  // re-guard it here before touching the column. Absence RAISES instead of quietly writing, the
+  // same property the plain `INSERT ... VALUES` above protects. `splits` is non-empty here, so
+  // exactly one statement carries the guard, and one is enough: it takes the whole transaction
+  // down with it.
   //
   // ORDER MATTERS: the DELETE goes LAST. Ahead of the guard it would remove the very row the
   // subquery looks for, and every attribution would abort.
