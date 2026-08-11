@@ -147,6 +147,14 @@ describe('parseEventDescription', () => {
   it('trims the raw Booking value', () => {
     expect(parseEventDescription('Booking:   walk  ').booking).toBe('walk');
   });
+
+  it('parses CRLF line endings — Google can return \\r\\n', () => {
+    expect(parseEventDescription('Owner: Lauren Kotin\r\nCost: 40\r\nBooking: walk\r\n')).toEqual({
+      cost: 40,
+      booking: 'walk',
+      ownerIds: [],
+    });
+  });
 });
 
 const PETS = [
@@ -718,6 +726,139 @@ describe('classifyEvent — the description is preferred over the title', () => 
       }),
     });
     expect(out).toMatchObject({ kind: 'adopt', estCost: 40 });
+  });
+
+  it('flags unknown-service when the description names a service the tenant does not offer, instead of silently falling back to the title', () => {
+    // CTX only offers 'walk'. The title alone would resolve fine ('Sadie Walk' -> walk), but the
+    // sitter's own record naming a service she does not offer is a fact worth surfacing, not
+    // something the title should override.
+    const out = classifyEvent(
+      event({ summary: 'Sadie Walk', description: 'Booking: grooming' }),
+      CTX,
+    );
+    expect(out).toMatchObject({ kind: 'flag', reason: 'unknown-service' });
+  });
+
+  // The two owner ids on the CANONICAL production description belong to ONE household (two
+  // co-owners), not two — the headline "adopts the real Sadie Walk event" test above never
+  // exercises the owner-id match path at all (CTX's u1/u2/u3 share no suffix with either UUID), so
+  // these exercise it directly against a roster where the ids actually do.
+  describe("resolving the description's owner ids to a billing ACCOUNT, not owner count", () => {
+    const OWNER_A = 'aaefb00f-c993-4de1-8d44-b335ecc3adb4'; // Lauren Kotin
+    const OWNER_B = '47da31e8-8cd4-4198-bebc-cddaf7cd01de'; // Ian Fisher
+    const REAL_DESC_OWNER_IDS = `Owner ID: ${OWNER_A}, ${OWNER_B}\nCost: 40\nBooking: walk`;
+
+    it('two co-owned clients (ids ending with both UUIDs, sharing a pet) fuse into ONE account and adopt', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [
+          // Both clients own the SAME pet — buildAccounts fuses them into one account.
+          { EndUserId: `eu_lauren_${OWNER_A}`, PetId: 'p1' },
+          { EndUserId: `eu_ian_${OWNER_B}`, PetId: 'p1' },
+        ],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 999 }),
+      };
+      const out = classifyEvent(
+        event({ summary: 'Sadie Walk', description: REAL_DESC_OWNER_IDS }),
+        ctx,
+      );
+      // The canonical representative is the lexicographically-first owner id in the fused
+      // account — 'eu_ian_…' sorts before 'eu_lauren_…' — so the SAME household always writes
+      // under the SAME EndUserId regardless of which co-owner an event happens to name.
+      expect(out).toMatchObject({
+        kind: 'adopt',
+        endUserId: `eu_ian_${OWNER_B}`,
+        estCost: 40,
+      });
+    });
+
+    it('two clients in genuinely SEPARATE accounts (no shared pet) refuse multiple-households', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [
+          { EndUserId: `eu_lauren_${OWNER_A}`, PetId: 'p1' }, // owns Sadie
+          { EndUserId: `eu_ian_${OWNER_B}`, PetId: 'p2' }, // a wholly separate account
+        ],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 999 }),
+      };
+      const out = classifyEvent(
+        event({ summary: 'Sadie Walk', description: REAL_DESC_OWNER_IDS }),
+        ctx,
+      );
+      expect(out).toMatchObject({ kind: 'flag', reason: 'multiple-households' });
+    });
+
+    it('matches an owner id case-insensitively', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [{ EndUserId: `eu_lauren_${OWNER_A}`, PetId: 'p1' }],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 999 }),
+      };
+      const out = classifyEvent(
+        event({
+          summary: 'Sadie Walk',
+          description: `Owner ID: ${OWNER_A.toUpperCase()}\nCost: 40\nBooking: walk`,
+        }),
+        ctx,
+      );
+      expect(out).toMatchObject({ kind: 'adopt', endUserId: `eu_lauren_${OWNER_A}` });
+    });
+
+    it('does not tail-match an owner id across a non-boundary character', () => {
+      const ctx = {
+        pets: [{ id: 'p1', name: 'Sadie', petType: 'dog' }],
+        links: [
+          { EndUserId: 'u1', PetId: 'p1' }, // the pet-derived household
+          // Ends with '1', but NOT at a boundary — the preceding char '0' is alphanumeric, so
+          // owner id '1' must not tail-match this id.
+          { EndUserId: 'eu_201', PetId: 'p2' },
+        ],
+        services: [
+          {
+            serviceType: 'walk',
+            label: 'Dog Walk',
+            optionKey: 'standard',
+            shape: 'single' as const,
+          },
+        ],
+        adoptedEventIds: new Set<string>(),
+        priceFor: () => ({ priced: true as const, cost: 20 }),
+      };
+      const out = classifyEvent(
+        event({ summary: 'Sadie Walk', description: 'Owner ID: 1\nCost: 40\nBooking: walk' }),
+        ctx,
+      );
+      // No genuine match, so this falls back to the pet-derived household (u1) rather than a
+      // false "different client" conflict against 'eu_201'.
+      expect(out).toMatchObject({ kind: 'adopt', endUserId: 'u1' });
+    });
   });
 });
 

@@ -423,46 +423,85 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   const parsed = parseEventSummary(event.summary);
   // The sitter's own record, when the event carries one — preferred over our reading of the
   // title everywhere below, because it is what actually happened rather than our guess at it.
+  // Google can hand back an HTML description (e.g. `<br>`-separated) for an event edited in a
+  // rich-text client; that collapses to one line here and only its first `Key: value` parses —
+  // not seen in production data so far, but worth the next reader knowing.
   const meta = parseEventDescription(event.description);
 
   const pets = resolvePetsByName(parsed.petNames, ctx.pets);
   if (!pets.ok) return flag(pets.reason, pets.detail);
 
-  // 1. Service — the description's `Booking:` value first, the title's parsed hint as fallback.
-  // Either way, a service this tenant does not offer still flags unknown-service.
+  // 1. Service — the description's `Booking:` value first, the title's parsed hint as fallback —
+  // but ONLY as a fallback for an ABSENT description value. A description that names a service
+  // this tenant does not offer is a fact worth surfacing on its own (the sitter's own record is
+  // wrong or the tenant stopped offering it), never silently overridden by the title's guess.
   let service = resolveService(meta.booking, ctx.services);
-  if (!service.ok) service = resolveService(parsed.serviceHint, ctx.services);
+  if (!service.ok && (meta.booking === null || meta.booking.trim() === '')) {
+    service = resolveService(parsed.serviceHint, ctx.services);
+  }
   if (!service.ok) return flag(service.reason, service.detail);
 
   // 2. Household — the description's owner id(s), when present, take precedence over the
-  // pet-derived household below. Matched by SUFFIX rather than any hardcoded id prefix or scheme:
-  // the owner id from the sitter's previous system commonly survives inside the pawservation
-  // client id verbatim, but as a suffix of it (e.g. a `eu_<slug>_<legacy id>` shape) — matching by
-  // suffix reads that fact without this repo learning or hardcoding another product's id scheme.
+  // pet-derived household below. A household is a billing ACCOUNT (a connected component over
+  // the owner<->pet graph, per `buildAccounts`/`resolveHousehold`) — owner COUNT is not household
+  // count: the canonical production description names two co-owners (`Owner: Lauren Kotin, Ian
+  // Fisher`) who are ONE household, not two, so matched owner ids are resolved to the distinct
+  // ACCOUNTS they fall into, never compared or refused by raw id count.
+  //
+  // Matched by SUFFIX rather than any hardcoded id prefix or scheme: the owner id from the
+  // sitter's previous system commonly survives inside the pawservation client id verbatim, but as
+  // a suffix of it (e.g. a `eu_<slug>_<legacy id>` shape) — matching by suffix reads that fact
+  // without this repo learning or hardcoding another product's id scheme. The match is anchored
+  // at a non-alphanumeric boundary (or exact equality) so a short owner id cannot accidentally
+  // tail-match an unrelated client id (e.g. owner id '1' must not match '...eu_201').
   const petHousehold = resolveHousehold(pets.pets, ctx.links);
   let household: typeof petHousehold;
   if (meta.ownerIds.length > 0) {
-    const distinctEndUserIds = [...new Set(ctx.links.map((link) => link.EndUserId))];
-    const matches = distinctEndUserIds.filter((endUserId) =>
-      meta.ownerIds.some((ownerId) => endUserId.toLowerCase().endsWith(ownerId.toLowerCase())),
+    const accounts = buildAccounts(
+      ctx.links.map((link) => ({ ownerId: link.EndUserId, petId: link.PetId })),
     );
-    if (matches.length === 1) {
-      // The pet-derived household is still computed above; if it resolved to a DIFFERENT client
+    const isSuffixMatch = (endUserId: string, ownerId: string): boolean => {
+      const id = endUserId.toLowerCase();
+      const owner = ownerId.toLowerCase();
+      if (!id.endsWith(owner)) return false;
+      if (id.length === owner.length) return true;
+      const boundary = id[id.length - owner.length - 1]!;
+      return !/[a-z0-9]/.test(boundary);
+    };
+    const distinctEndUserIds = [...new Set(ctx.links.map((link) => link.EndUserId))];
+    const matchedEndUserIds = distinctEndUserIds.filter((endUserId) =>
+      meta.ownerIds.some((ownerId) => isSuffixMatch(endUserId, ownerId)),
+    );
+    const matchedAccountIds = new Set(
+      matchedEndUserIds
+        .map((endUserId) => accounts.find((a) => a.ownerIds.includes(endUserId)))
+        .filter((a): a is (typeof accounts)[number] => a != null)
+        .map((a) => a.id),
+    );
+    if (matchedAccountIds.size === 1) {
+      const account = accounts.find((a) => matchedAccountIds.has(a.id))!;
+      // The pet-derived household is still computed above; if it resolved to a DIFFERENT account
       // than the description names, that is a genuine conflict — never silently pick one.
-      if (petHousehold.ok && petHousehold.endUserId !== matches[0]) {
-        return flag(
-          'multiple-households',
-          `The description names a different client than the pets in the title do`,
-        );
+      if (petHousehold.ok) {
+        const petAccount = accounts.find((a) => a.ownerIds.includes(petHousehold.endUserId));
+        if (petAccount && petAccount.id !== account.id) {
+          return flag(
+            'multiple-households',
+            `The description names a different client than the pets in the title do`,
+          );
+        }
       }
-      household = { ok: true, endUserId: matches[0] };
-    } else if (matches.length > 1) {
+      // The canonical representative — the same account is always written under the same
+      // EndUserId, regardless of which co-owner an event happens to name.
+      household = { ok: true, endUserId: account.ownerIds[0]! };
+    } else if (matchedAccountIds.size > 1) {
       return flag(
         'multiple-households',
-        `The description's owner id matches ${matches.length} clients`,
+        `The description's owner ids match ${matchedAccountIds.size} different clients`,
       );
     } else {
-      // No client's id carries this owner id as a suffix — fall back to the pet-derived answer.
+      // No client's id carries any of these owner ids as a suffix — fall back to the pet-derived
+      // answer.
       household = petHousehold;
     }
   } else {
