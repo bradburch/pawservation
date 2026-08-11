@@ -20,6 +20,8 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
+  getHouseholdBalances,
+  getHouseholdDetail,
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
@@ -48,6 +50,7 @@ import {
   listEndUserPets,
   listOwnerPetLinks,
   listPaymentExternalRefs,
+  listPaymentsForAccount,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetNamesForTenantBookings,
@@ -74,6 +77,7 @@ import {
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
+import { proposeAttribution } from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
 import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
@@ -3034,6 +3038,148 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * PREVIEW HOW A SITTER'S IMPORTED HOUSEHOLD CREDITS WOULD SETTLE (Task 3 of payment
+   * attribution) — for each unapplied account-level credit of one household, or of every
+   * household when `accountId` is omitted, asks the PURE `proposeAttribution`
+   * (server/lib/payment-attribution.ts) how it would split against that household's unpaid
+   * bookings. Read-only: it never calls `applyAttribution`, so nothing here ever moves money —
+   * only the sitter's own explicit "apply" action (a later task) does that.
+   *
+   * "Unapplied account-level credit" needs no extra query of its own: `Payments.AccountId` and
+   * `Payments.BookingRequestId` are mutually exclusive by `CHECK`, so every row
+   * `listPaymentsForAccount` returns for a household IS an unapplied credit — one already
+   * attributed to a booking would carry `BookingRequestId` instead and simply not be in that list.
+   *
+   * CANDIDATE BOOKINGS ARE RESTRICTED TO `outstanding > 0`, computed here from
+   * `getHouseholdDetail`'s own `expected`/`paidTotal` (the same figures the household balance is
+   * built from) rather than trusted from anywhere else. This is the fix a prior review asked for:
+   * `getHouseholdDetail` also lists `declined` bookings, whose `expected` is zeroed by
+   * `CREDITABLE_AMOUNT_SQL` but which can still carry a payment recorded before they were
+   * declined (`insertPayment` allows it while a booking is still pending) — leaving a NEGATIVE
+   * outstanding. Handing that straight to `proposeAttribution` would trip its own
+   * unreadable-amount guard and refuse the household's ENTIRE credit, not just skip the one
+   * booking nobody will ever bill (`insertPayment`'s payability predicate already refuses a
+   * declined booking, so a split onto one would settle a stay that can never be collected on).
+   * Filtering to `outstanding > 0` before the pure module ever sees the list is what keeps a
+   * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
+   *
+   * `accountId` is resolved the way every other household read resolves it — by asking
+   * `getHouseholdDetail`/`getHouseholdBalances` for the CURRENT id, never by equality on whatever
+   * the caller happened to send — because a household's account id is its lexicographically-first
+   * pet and a newly added pet renames it (see `householdPetIds`). An id `getHouseholdDetail`
+   * cannot resolve for this tenant — another tenant's, or no household at all — is the same 404
+   * every sibling household route gives.
+   */
+  .post('/:slug/admin/payments/attribute/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ accountId?: unknown }>()
+      .catch(() => ({}) as { accountId?: unknown });
+    const requestedAccountId =
+      typeof body.accountId === 'string' && body.accountId !== '' ? body.accountId : undefined;
+
+    const targets: {
+      accountId: string;
+      detail: NonNullable<Awaited<ReturnType<typeof getHouseholdDetail>>>;
+    }[] = [];
+    if (requestedAccountId !== undefined) {
+      const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, requestedAccountId);
+      if (!detail) return c.json({ error: 'Not found.' }, 404);
+      targets.push({ accountId: detail.accountId, detail });
+    } else {
+      const households = await getHouseholdBalances(c.env.PAWSERVATION_DB, tenant.Id);
+      for (const h of households) {
+        const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, h.accountId);
+        if (detail) targets.push({ accountId: h.accountId, detail });
+      }
+    }
+
+    const proposals: {
+      accountId: string;
+      paymentId: string;
+      amount: number;
+      paidDate: string;
+      splits: {
+        bookingId: string;
+        amount: number;
+        serviceType: string;
+        startDate: string;
+        status: string;
+      }[];
+      remainder: number;
+    }[] = [];
+    const unresolved: {
+      accountId: string;
+      paymentId: string;
+      amount: number;
+      paidDate: string;
+      reason: string;
+      detail: string;
+      bookings: {
+        bookingId: string;
+        serviceType: string;
+        startDate: string;
+        status: string;
+        outstanding: number;
+      }[];
+    }[] = [];
+
+    for (const { accountId, detail } of targets) {
+      const credits = await listPaymentsForAccount(c.env.PAWSERVATION_DB, tenant.Id, accountId);
+      if (credits.length === 0) continue;
+
+      // outstanding > 0 only — see the doc comment above for why this must happen before
+      // proposeAttribution ever sees the list.
+      const candidates = detail.bookings.filter((b) => b.expected - b.paidTotal > 0);
+      const bookingSummary = (b: (typeof candidates)[number]) => ({
+        bookingId: b.bookingId,
+        serviceType: b.serviceType,
+        startDate: b.startDate,
+        status: b.status,
+        outstanding: b.expected - b.paidTotal,
+      });
+      const summaryByBookingId = new Map(candidates.map((b) => [b.bookingId, bookingSummary(b)]));
+      const unpaidBookings = candidates.map((b) => ({
+        bookingId: b.bookingId,
+        startDate: b.startDate,
+        outstanding: b.expected - b.paidTotal,
+      }));
+
+      for (const row of credits) {
+        const proposal = proposeAttribution(
+          { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
+          unpaidBookings,
+        );
+        if (proposal.ok) {
+          proposals.push({
+            accountId,
+            paymentId: proposal.paymentId,
+            amount: row.Amount,
+            paidDate: row.PaidDate,
+            splits: proposal.splits.map((s) => ({
+              amount: s.amount,
+              ...summaryByBookingId.get(s.bookingId)!,
+            })),
+            remainder: proposal.remainder,
+          });
+        } else {
+          unresolved.push({
+            accountId,
+            paymentId: proposal.paymentId,
+            amount: row.Amount,
+            paidDate: row.PaidDate,
+            reason: proposal.reason,
+            detail: proposal.detail,
+            bookings: candidates.map((b) => summaryByBookingId.get(b.bookingId)!),
+          });
+        }
+      }
+    }
+
+    return c.json({ proposals, unresolved });
   })
 
   /**
