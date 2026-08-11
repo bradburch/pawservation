@@ -1553,6 +1553,12 @@ export async function deleteAccountPayment(
  * a fee-free `cancelled` one, so a split against either is refused here as ordinary overpayment —
  * no separate status check is needed, matching the preview's own `outstanding > 0` candidate
  * filter rather than inventing a second rule for the same fact.
+ *
+ * A THIRD WAY TO OVER-FUND ONE BOOKING, caught before either of the above even runs a query: the
+ * SAME booking id named twice within one attribution's OWN splits. Checked in isolation against
+ * live outstanding, two splits on one booking can each individually be fine while summing past
+ * what it owes — so a duplicate booking id is refused outright rather than aggregated, on the same
+ * "refuse rather than guess" doctrine `proposeAttribution` already applies to a duplicate candidate.
  */
 export async function applyAttribution(
   db: D1Database,
@@ -1583,6 +1589,27 @@ export async function applyAttribution(
     return {
       ok: false,
       reason: `Remainder ${remainder} is not a whole, non-negative number of dollars.`,
+    };
+  }
+
+  // REFUSED OUTRIGHT, NOT AGGREGATED — the same booking id named twice in one attribution's
+  // splits (`[{B,100},{B,50}]`) would otherwise pass conservation (each split is individually
+  // positive and, checked in isolation below, individually within outstanding) while together
+  // over-funding B. Aggregating the two into one $150 comparison would also FIX that, but this
+  // refuses instead: two different figures for the same booking is not a shape `proposeAttribution`
+  // ever emits, so a caller sending it is either malformed or means something ambiguous (which of
+  // the two did the sitter actually intend?) — the same "refuse rather than guess" doctrine
+  // `proposeAttribution` itself applies to a duplicate candidate id
+  // (server/lib/payment-attribution.ts, `duplicate-booking-id`). Checked before any DB read: it
+  // needs nothing but the splits array itself.
+  const bookingIdCounts = new Map<string, number>();
+  for (const s of splits)
+    bookingIdCounts.set(s.bookingId, (bookingIdCounts.get(s.bookingId) ?? 0) + 1);
+  const duplicateBookingId = [...bookingIdCounts.entries()].find(([, count]) => count > 1)?.[0];
+  if (duplicateBookingId !== undefined) {
+    return {
+      ok: false,
+      reason: `Booking ${duplicateBookingId} appears more than once among this attribution's splits; refusing rather than risk applying part of the credit to it twice.`,
     };
   }
 
@@ -1665,7 +1692,11 @@ export async function applyAttribution(
   // own `outstanding > 0` candidate filter.
   const overpaid = splits.find((s) => s.amount > outstandingByBooking.get(s.bookingId)!);
   if (overpaid) {
-    const owed = Math.max(0, outstandingByBooking.get(overpaid.bookingId)!);
+    // Reported EXACTLY as computed, never clamped to 0 — a booking already sitting in credit
+    // (outstanding negative, because it was overpaid some other way) is a fact worth showing the
+    // sitter as-is; rounding it to "owes $0" would read as merely settled rather than already
+    // over-paid, which is a different, more actionable, situation.
+    const owed = outstandingByBooking.get(overpaid.bookingId)!;
     return {
       ok: false,
       reason: `Booking ${overpaid.bookingId} owes $${owed} but this split names $${overpaid.amount}; refusing rather than overpay it.`,

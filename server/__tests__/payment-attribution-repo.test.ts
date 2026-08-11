@@ -7,6 +7,7 @@ import {
   insertAccountPayment,
   insertBookingRequest,
   insertInvitedCustomer,
+  insertPayment,
   listPaymentsForAccount,
   listPaymentsForBooking,
 } from '../db/repo';
@@ -322,6 +323,107 @@ describe('applyAttribution (repo)', () => {
 
     expect(paymentRows(raw)).toHaveLength(1);
     expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 100 });
+  });
+
+  it('refuses a split that names the same booking twice within one attribution, and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const only = await book(env, home, 100);
+    const paymentId = (await credit(env, home.accountId, 150))!;
+
+    // Each of these two splits is individually within the booking's $100 outstanding — the defect
+    // this pins is that nothing decrements outstanding as splits are consumed, so two splits on the
+    // SAME booking would otherwise both clear the per-split check while together over-funding it by
+    // $50.
+    const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+      paymentId,
+      accountId: home.accountId,
+      splits: [
+        { bookingId: only, amount: 100 },
+        { bookingId: only, amount: 50 },
+      ],
+      remainder: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toContain(only);
+    expect(result.reason).toContain('more than once');
+
+    expect(paymentRows(raw)).toHaveLength(1);
+    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 150 });
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toEqual([]);
+  });
+
+  it('refuses a split that overpays a booking by even $1 against a NON-ZERO outstanding — pins the boundary exactly', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const only = await book(env, home, 150);
+    // $50 already paid directly against the booking, so its outstanding is $100 — not $0 and not
+    // $150. An off-by-one loosening of the guard (e.g. `amount > outstanding + 1`) would slip past
+    // a test built only on a $0-outstanding booking; this pins the boundary at a non-zero value.
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
+      bookingRequestId: only,
+      amount: 50,
+      method: 'cash',
+      paidDate: '2026-06-01',
+      note: null,
+      externalRef: null,
+    });
+    const paymentId = (await credit(env, home.accountId, 101))!;
+
+    const overResult = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId: only, amount: 101 }],
+      remainder: 0,
+    });
+    expect(overResult.ok).toBe(false);
+    if (overResult.ok) throw new Error('unreachable');
+    expect(overResult.reason).toContain('owes $100');
+    expect(overResult.reason).toContain('names $101');
+    // The source credit and the direct $50 payment, untouched.
+    expect(paymentRows(raw)).toHaveLength(2);
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toHaveLength(1);
+
+    // The exact boundary — a split of precisely $100 — is allowed, confirming the guard is `>`,
+    // not `>=`.
+    const exactResult = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId: only, amount: 100 }],
+      remainder: 1,
+    });
+    expect(exactResult).toEqual({ ok: true });
+    expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toHaveLength(2);
+  });
+
+  it('reports the ACTUAL outstanding when a booking is already over-paid, never clamped to $0', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const only = await book(env, home, 50);
+    // Already $100 paid directly against a $50 booking — genuinely $50 over-paid before this
+    // attribution ever runs.
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
+      bookingRequestId: only,
+      amount: 100,
+      method: 'cash',
+      paidDate: '2026-06-01',
+      note: null,
+      externalRef: null,
+    });
+    const paymentId = (await credit(env, home.accountId, 10))!;
+
+    const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId: only, amount: 10 }],
+      remainder: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    // The real, negative figure — not "$0", which would misreport an already-over-paid booking as
+    // merely settled rather than over-paid.
+    expect(result.reason).toContain('owes $-50');
   });
 
   it('suffixes ExternalRef per derived row — unique, and traceable back to the source', async () => {
