@@ -13,6 +13,8 @@ export {
   isWeekend,
   nightsBetween,
   getPacificDateStr,
+  parseDateUtc,
+  MS_PER_DAY,
   DATE_RE,
   DEFAULT_TIMEZONE,
 } from './util/dates.js';
