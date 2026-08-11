@@ -3064,17 +3064,29 @@ export const adminRoutes = new Hono<AppEnv>()
       )
     ).filter((e) => e.status !== 'cancelled');
 
-    if (events.length > MAX_BACKFILL_EVENTS)
-      return c.json(
-        {
-          error:
-            `This range has ${events.length} events. Choose a shorter one and ` +
-            `import ${MAX_BACKFILL_EVENTS} or fewer at a time.`,
-        },
-        400,
-      );
+    // Classify at most MAX_BACKFILL_EVENTS per pass, oldest first, rather than refusing a range
+    // that holds more than that — the platform's subrequest/CPU budget is real (same reasoning as
+    // MAX_BACKFILL_EVENTS's own doc comment), but staying inside it is this route's job, not
+    // something to push back onto the sitter as "pick a shorter range". Sorted defensively —
+    // Google's own `orderBy: startTime` already returns events in this order, but nothing here
+    // should depend on that holding forever.
+    const sorted = [...events].sort((a, b) => a.start.localeCompare(b.start));
+    const capped = sorted.length > MAX_BACKFILL_EVENTS;
+    const slice = capped ? sorted.slice(0, MAX_BACKFILL_EVENTS) : sorted;
+    // Resume from the LAST CLASSIFIED EVENT'S OWN START DATE — never "the day after it". Two
+    // events can share a start date, and a sibling of the cut-off event can sort AFTER it within
+    // that same day; resuming from the day after would silently skip that sibling, and skipping
+    // is unrecoverable (the caller has no way to notice a gap it was never told about).
+    // Resuming from the same date instead means the next pass may RECLASSIFY a few events from
+    // that date — harmless, since this route writes nothing and the import route's own adoption
+    // is idempotent on GCalEventId — but it can never skip one. The one failure mode this leaves
+    // is more than MAX_BACKFILL_EVENTS events sharing a single start date, which would make
+    // nextFrom stop advancing; the caller is expected to give up after a bounded number of passes
+    // rather than loop forever chasing it.
+    const nextFrom = capped ? slice[slice.length - 1].start : null;
+    const remaining = sorted.length - slice.length;
 
-    const { classified, pets } = await classifyAll(c, tenant, events);
+    const { classified, pets } = await classifyAll(c, tenant, slice);
     // Display-only: the classifier's Classified type stays pure (petIds only). Names are resolved
     // here, against the same pet list classifyAll already fetched, so the panel can offer a pet
     // filter without guessing from the event title. Ordered as `petIds` is ordered so the two
@@ -3100,6 +3112,8 @@ export const adminRoutes = new Hono<AppEnv>()
         .map(withPetNames),
       flags: classified.filter((r) => r.kind === 'flag'),
       skipped: classified.filter((r) => r.kind === 'skip').length,
+      nextFrom,
+      remaining,
     });
   })
 

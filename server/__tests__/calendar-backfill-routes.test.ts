@@ -10,9 +10,10 @@ import {
 // (forcing a mid-loop write failure) without touching every other test's real DB behavior.
 import * as repoModule from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
-import { buildMixKey, mixFromPetTypes } from '../../src/shared/index.js';
+import { addDays, buildMixKey, mixFromPetTypes } from '../../src/shared/index.js';
 import { adminHeaders, createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
 import type { Classified } from '../lib/calendar-backfill';
+import { MAX_BACKFILL_EVENTS } from '../routes/admin';
 
 // Fixed by sql/seed.sql for tnt_sunnypaws / slug sunny-paws: owner eu_sp_jess with pets Bella
 // (dog, pet_sp_bella) and Mochi (cat, pet_sp_mochi); services 'boarding' (range/night, one
@@ -69,7 +70,33 @@ type PreviewBody = {
   needsPrice: Classified[];
   flags: Classified[];
   skipped: number;
+  nextFrom: string | null;
+  remaining: number;
 };
+
+// A run of events, one per day, each naming an unresolvable pet ("Sadie" isn't seeded for
+// TENANT_A) — every one lands as a `flag` row, which (unlike a `skip`) carries its own eventId,
+// so a test can track exactly which ids were classified across one or more preview passes.
+function sequentialEvents(count: number, startDate = '2026-01-01'): FakeEvent[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `ev${i}`,
+    summary: 'Sadie Walk',
+    start: { date: addDays(startDate, i) },
+    end: { date: addDays(startDate, i) },
+  }));
+}
+
+// Google's own `timeMin` filtering, reproduced just accurately enough for the resume tests: real
+// Google would only return events on/after the requested `from`, so the mock must too, or a
+// resumed preview call would just see the whole fixture again and every test here would pass
+// without the resume logic actually doing anything.
+function mockCalendarFilteredByFrom(events: FakeEvent[]) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : (input as Request).url;
+    const minDate = new URL(url).searchParams.get('timeMin')?.slice(0, 10) ?? '';
+    return calendarResponse(events.filter((e) => (e.start?.date ?? '') >= minDate));
+  });
+}
 
 async function preview(env: Env, from = '2026-06-01', to = '2026-06-30'): Promise<PreviewBody> {
   const res = await app.request(
@@ -86,28 +113,84 @@ async function preview(env: Env, from = '2026-06-01', to = '2026-06-30'): Promis
 }
 
 describe('POST /:slug/admin/calendar/backfill/preview', () => {
-  it('refuses a range with more events than the cap, naming the count', async () => {
+  it('returns nextFrom: null and remaining: 0 for a range under the cap', async () => {
     const { env } = await createTestEnv();
     await connectCalendar(env);
-    // 201 events, one over MAX_BACKFILL_EVENTS.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      calendarResponse(
-        Array.from({ length: 201 }, (_, i) => ({ id: `ev${i}`, summary: 'Sadie Walk' })),
-      ),
-    );
+    mockCalendarFilteredByFrom(sequentialEvents(3));
 
-    const res = await app.request(
-      '/api/sunny-paws/admin/calendar/backfill/preview',
-      {
-        method: 'POST',
-        headers: await adminHeaders(TENANT_A),
-        body: JSON.stringify({ from: '2026-01-01', to: '2026-12-31' }),
-      },
-      env,
-    );
+    const body = await preview(env, '2026-01-01', '2026-12-31');
+    expect(body.flags).toHaveLength(3);
+    expect(body.nextFrom).toBeNull();
+    expect(body.remaining).toBe(0);
+  });
 
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('201');
+  it('classifies exactly the cap and returns a non-null cursor for a range over it', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    const events = sequentialEvents(MAX_BACKFILL_EVENTS + 5);
+    mockCalendarFilteredByFrom(events);
+
+    const body = await preview(env, '2026-01-01', '2026-12-31');
+    expect(body.flags).toHaveLength(MAX_BACKFILL_EVENTS);
+    expect(body.remaining).toBe(5);
+    // The boundary is the LAST classified event's own start date, not the day after — see the
+    // route's comment. That event is events[MAX_BACKFILL_EVENTS - 1], dated day (cap - 1).
+    expect(body.nextFrom).toBe(addDays('2026-01-01', MAX_BACKFILL_EVENTS - 1));
+  });
+
+  it('resuming from nextFrom covers the remainder — the union of both passes misses no event', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    const total = MAX_BACKFILL_EVENTS + 5;
+    const events = sequentialEvents(total);
+    mockCalendarFilteredByFrom(events);
+
+    const first = await preview(env, '2026-01-01', '2026-12-31');
+    expect(first.nextFrom).not.toBeNull();
+    const second = await preview(env, first.nextFrom!, '2026-12-31');
+    expect(second.nextFrom).toBeNull(); // the remainder easily fits under the cap
+
+    const idsOf = (b: PreviewBody) =>
+      [...b.adopt, ...b.needsPrice, ...b.flags].map((r) => (r as { eventId: string }).eventId);
+    const union = new Set([...idsOf(first), ...idsOf(second)]);
+    expect(union.size).toBe(total);
+    for (let i = 0; i < total; i++) expect(union.has(`ev${i}`)).toBe(true);
+  });
+
+  it('two events sharing a start date across the boundary are not skipped', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    // Index MAX_BACKFILL_EVENTS - 1 (the last event the first pass classifies) and index
+    // MAX_BACKFILL_EVENTS (the first one it doesn't) share the exact same start date. A resume
+    // boundary of "the day after the last classified event" would skip the second of the pair
+    // forever; this pins that it does not.
+    const boundaryDate = addDays('2026-01-01', MAX_BACKFILL_EVENTS - 1);
+    const events: FakeEvent[] = [
+      ...sequentialEvents(MAX_BACKFILL_EVENTS - 1), // ev0..ev(cap-2), one per day
+      { id: `ev${MAX_BACKFILL_EVENTS - 1}`, summary: 'Sadie Walk', start: { date: boundaryDate } },
+      { id: `ev${MAX_BACKFILL_EVENTS}`, summary: 'Sadie Walk', start: { date: boundaryDate } },
+      // A few more after the shared date, so the first pass is genuinely capped.
+      ...Array.from({ length: 4 }, (_, i) => ({
+        id: `ev${MAX_BACKFILL_EVENTS + 1 + i}`,
+        summary: 'Sadie Walk',
+        start: { date: addDays(boundaryDate, i + 1) },
+      })),
+    ];
+    mockCalendarFilteredByFrom(events);
+
+    const first = await preview(env, '2026-01-01', '2026-12-31');
+    expect(first.nextFrom).toBe(boundaryDate);
+    const firstIds = new Set(first.flags.map((f) => (f as { eventId: string }).eventId));
+    // The first of the shared-date pair IS classified this pass ...
+    expect(firstIds.has(`ev${MAX_BACKFILL_EVENTS - 1}`)).toBe(true);
+    // ... its sibling on the same date is not skipped over — it's simply left for the resume.
+    expect(firstIds.has(`ev${MAX_BACKFILL_EVENTS}`)).toBe(false);
+
+    const second = await preview(env, first.nextFrom!, '2026-12-31');
+    const secondIds = new Set(second.flags.map((f) => (f as { eventId: string }).eventId));
+    // The resume picks the sibling up — the whole point of resuming from the SAME date rather
+    // than the day after it.
+    expect(secondIds.has(`ev${MAX_BACKFILL_EVENTS}`)).toBe(true);
   });
 
   it('refuses a malformed range', async () => {
