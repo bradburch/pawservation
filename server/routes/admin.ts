@@ -133,6 +133,7 @@ import {
 import {
   applyMapping,
   detectCsvShape,
+  MAX_CSV_ROWS,
   matchCsvPayments,
   parseCsvColumnMapping,
 } from '../lib/payment-csv';
@@ -2900,6 +2901,105 @@ export const adminRoutes = new Hono<AppEnv>()
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
     const preview = matchCsvPayments({ payments: parsed.payments, ...inputs });
     return c.json({ ...preview, problems: parsed.problems });
+  })
+
+  /**
+   * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS — the mapped-CSV sibling of
+   * `payments/venmo/import`, same security shape. The body supplies the file, the mapping, and only
+   * WHICH row goes on which household (`choices`): `applyMapping` and `matchCsvPayments` both run
+   * again from scratch, so every amount, date, method and note is the server's own re-reading of the
+   * file, never the browser's. An `accountId` is honoured only when the fresh matching independently
+   * resolves that row's payer to EXACTLY that household — anything else is skipped with a reason,
+   * never guessed at. The file itself is still never stored.
+   */
+  .post('/:slug/admin/payments/csv/import', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ csv?: unknown; mapping?: unknown; defaultMethod?: unknown; choices?: unknown }>()
+      .catch(
+        () =>
+          ({}) as { csv?: unknown; mapping?: unknown; defaultMethod?: unknown; choices?: unknown },
+      );
+    if (!isPaymentMethod(body.defaultMethod))
+      return c.json({ error: 'Choose a valid default payment method.' }, 400);
+    const mapping = parseCsvColumnMapping(body.mapping);
+    if (!mapping) return c.json({ error: 'That column mapping is malformed.' }, 400);
+    if (!Array.isArray(body.choices) || body.choices.length === 0)
+      return c.json({ error: 'Choose at least one payment to record.' }, 400);
+    if (body.choices.length > MAX_CSV_ROWS)
+      return c.json({ error: `Record ${MAX_CSV_ROWS} payments or fewer at a time.` }, 400);
+    const choices: { dedupeKey: string; accountId: string }[] = [];
+    for (const raw of body.choices) {
+      const choice = raw as { dedupeKey?: unknown; accountId?: unknown };
+      if (
+        typeof choice.dedupeKey !== 'string' ||
+        choice.dedupeKey === '' ||
+        typeof choice.accountId !== 'string' ||
+        choice.accountId === ''
+      )
+        return c.json({ error: 'That list of payments is malformed.' }, 400);
+      choices.push({ dedupeKey: choice.dedupeKey, accountId: choice.accountId });
+    }
+
+    const parsed = applyMapping(
+      typeof body.csv === 'string' ? body.csv : '',
+      mapping,
+      body.defaultMethod,
+      tenant.Id,
+    );
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
+    const paymentByKey = new Map(parsed.payments.map((p) => [p.dedupeKey, p]));
+
+    const skipped: { dedupeKey: string; reason: string }[] = [];
+    let imported = 0;
+    let totalAmount = 0;
+
+    for (const { dedupeKey, accountId } of choices) {
+      const payment = paymentByKey.get(dedupeKey);
+      if (!payment) {
+        skipped.push({ dedupeKey, reason: 'That payment is not in this file' });
+        continue;
+      }
+      if (inputs.alreadyImported.has(dedupeKey)) {
+        skipped.push({ dedupeKey, reason: 'Already imported' });
+        continue;
+      }
+      // Re-resolve from THIS request's data; the browser's idea of the match is never trusted.
+      // resolveMatchClient is the SAME function the preview uses — a name that's ambiguous there
+      // is refused here too, never silently resolved by whichever client happened to sort last.
+      const client = resolveMatchClient(inputs.clients, payment.payer);
+      if (!client || client.accountId === null || client.accountId !== accountId) {
+        skipped.push({
+          dedupeKey,
+          reason: 'That household is no longer a match for this payment',
+        });
+        continue;
+      }
+      const note = `CSV import — ${payment.payer}${payment.note ? `: ${payment.note}` : ''}`;
+      try {
+        const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
+          accountId,
+          amount: payment.amount,
+          method: payment.method,
+          paidDate: payment.date,
+          note: note.slice(0, 300),
+          externalRef: dedupeKey,
+        });
+        if (!paymentId) {
+          skipped.push({ dedupeKey, reason: 'That household can no longer take a payment' });
+          continue;
+        }
+        imported++;
+        totalAmount += payment.amount;
+      } catch (err) {
+        // The partial unique index caught a replay that slipped past the pre-read (a concurrent
+        // import of the same file). Idempotency is the index's job, and it did it.
+        if (isUniqueViolation(err)) skipped.push({ dedupeKey, reason: 'Already imported' });
+        else throw err;
+      }
+    }
+    return c.json({ imported, totalAmount, skipped });
   })
 
   /**

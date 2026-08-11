@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { insertAccountPayment } from '../db/repo';
+import { insertAccountPayment, insertInvitedCustomer } from '../db/repo';
 import app from '../index';
-import { adminHeaders, createTestEnv, TENANT_A } from './helpers';
+import { adminHeaders, createTestEnv, seedPets, TENANT_A } from './helpers';
 
 /**
  * A generic bank-style export, deliberately shaped nothing like Venmo's: no preamble, a
@@ -192,6 +192,176 @@ describe('POST /:slug/admin/payments/csv/preview', () => {
     const { env } = createTestEnv();
     const res = await app.request(
       '/api/sunny-paws/admin/payments/csv/preview',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      env,
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
+/**
+ * Story 2.5's mapped-CSV sibling of `payments/venmo/import`. Same security shape: the body carries
+ * only WHICH row goes on which household — `applyMapping` and `matchCsvPayments` both run again
+ * from the raw file, so an `accountId` is honoured only when the fresh match independently agrees.
+ */
+describe('POST /:slug/admin/payments/csv/import', () => {
+  const choices = [{ dedupeKey: 'csv:REF1', accountId: 'pet_sp_bella' }];
+
+  it('records a matched row against its household with the amount, method and date the SERVER read from the file', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ imported: 1, totalAmount: 45, skipped: [] });
+    const row = raw
+      .prepare(
+        'SELECT BookingRequestId, AccountId, Amount, Method, PaidDate, ExternalRef FROM Payments',
+      )
+      .get();
+    expect(row).toMatchObject({
+      BookingRequestId: null,
+      AccountId: 'pet_sp_bella',
+      Amount: 45,
+      Method: 'cash',
+      PaidDate: '2026-07-01',
+      ExternalRef: 'csv:REF1',
+    });
+  });
+
+  it('is idempotent: re-running the identical import records nothing the second time', async () => {
+    const { env, raw } = createTestEnv();
+    await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices,
+    });
+    const again = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices,
+    });
+    expect(await again.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ dedupeKey: 'csv:REF1', reason: 'Already imported' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
+  });
+
+  it('skips a row whose payer no longer resolves to the given accountId, and writes nothing for it', async () => {
+    const { env, raw } = createTestEnv();
+    const other = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'other@example.com',
+      'Other Client',
+    );
+    const [otherPet] = seedPets(raw, TENANT_A, other.Id, [{ id: 'p_other', petType: 'dog' }]);
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      // Jess Demo's row (REF1) resolves to pet_sp_bella, NOT this other client's household.
+      choices: [{ dedupeKey: 'csv:REF1', accountId: otherPet }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [
+        { dedupeKey: 'csv:REF1', reason: 'That household is no longer a match for this payment' },
+      ],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('refuses an accountId belonging to another tenant', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      // 'pet_ht_otis' is Happy Tails' household, not Sunny Paws' Jess Demo.
+      choices: [{ dedupeKey: 'csv:REF1', accountId: 'pet_ht_otis' }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [
+        { dedupeKey: 'csv:REF1', reason: 'That household is no longer a match for this payment' },
+      ],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('skips a dedupeKey absent from the re-read file instead of inventing it', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, 'payments/csv/import', {
+      csv: CSV,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:not-in-this-file', accountId: 'pet_sp_bella' }],
+    });
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ dedupeKey: 'csv:not-in-this-file', reason: 'That payment is not in this file' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('imports two identical unreferenced rows in one file — the duplicate-rank key at work', async () => {
+    const { env, raw } = createTestEnv();
+    // No Reference column mapped: applyMapping keys these on the content hash + duplicate-rank,
+    // producing two DIFFERENT dedupeKeys for two otherwise-identical rows.
+    const csv = ['Date,Amount,Payer', '2026-07-01,15,Jess Demo', '2026-07-01,15,Jess Demo'].join(
+      '\n',
+    );
+    const mapping = { date: 0, amount: 1, payer: 2 };
+    const preview = (await (
+      await post(env, 'payments/csv/preview', { csv, mapping, defaultMethod: 'cash' })
+    ).json()) as { matched: { dedupeKey: string; accountId: string }[] };
+    expect(preview.matched).toHaveLength(2);
+    const dupeChoices = preview.matched.map((m) => ({
+      dedupeKey: m.dedupeKey,
+      accountId: m.accountId,
+    }));
+    expect(new Set(dupeChoices.map((c) => c.dedupeKey)).size).toBe(2); // two DISTINCT keys
+
+    const res = await post(env, 'payments/csv/import', {
+      csv,
+      mapping,
+      defaultMethod: 'cash',
+      choices: dupeChoices,
+    });
+    expect(await res.json()).toMatchObject({ imported: 2, totalAmount: 30, skipped: [] });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 2 });
+  });
+
+  it('400s a malformed choices array, writing nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const base = { csv: CSV, mapping: MAPPING, defaultMethod: 'cash' };
+    expect((await post(env, 'payments/csv/import', base)).status).toBe(400);
+    expect((await post(env, 'payments/csv/import', { ...base, choices: [] })).status).toBe(400);
+    expect(
+      (await post(env, 'payments/csv/import', { ...base, choices: [{ dedupeKey: 5 }] })).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(env, 'payments/csv/import', {
+          ...base,
+          choices: [{ dedupeKey: 'csv:REF1' }],
+        })
+      ).status,
+    ).toBe(400);
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
+  it('requires an admin token', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/payments/csv/import',
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       env,
     );
