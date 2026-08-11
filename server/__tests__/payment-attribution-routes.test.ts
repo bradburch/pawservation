@@ -508,6 +508,41 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
       splits: [{ bookingId, amount: 560, outstanding: 600 }],
     });
   });
+
+  it('still offers an ambiguous credit a booking that an earlier credit in the same preview drove to zero', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // Same reasoning as the test above, one level up: WHICH bookings an ambiguous credit is
+    // offered must also be decided by the live figure. `zeroed` is claimed in full by the older
+    // credit, so its SEQUENCED outstanding is 0 by the time the younger credit is considered —
+    // but the sitter may untick that older credit, and then `zeroed` is a perfectly legitimate
+    // choice worth $100. Filtering the options on the sequenced value removed it from the list
+    // entirely, so the sitter could not express that at all.
+    const zeroed = await book(env, home, 100, '2026-07-01');
+    const near = await book(env, home, 100, '2026-08-01');
+    const alsoNear = await book(env, home, 100, '2026-08-05');
+    // Nearest to 2026-06-01 is `zeroed` (30 days, vs 61 and 65), and $100 covers it exactly.
+    await credit(env, home.accountId, 100, '2026-06-01');
+    // Equidistant from `near` and `alsoNear` (2 days either way), and big enough to settle either
+    // one in full but not both — the one shape the proposer refuses to decide, which is what
+    // routes this credit into `unresolved` rather than resolving it or reporting a remainder.
+    const tied = (await credit(env, home.accountId, 150, '2026-08-03'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    const ambiguous = body.unresolved.find((u) => u.paymentId === tied);
+    expect(ambiguous?.reason).toBe('ambiguous');
+    // All three bookings are offered, `zeroed` among them, each reporting its live outstanding.
+    expect(new Map(ambiguous!.bookings.map((b) => [b.bookingId, b.outstanding]))).toEqual(
+      new Map([
+        [zeroed, 100],
+        [near, 100],
+        [alsoNear, 100],
+      ]),
+    );
+  });
 });
 
 /**

@@ -3122,6 +3122,9 @@ export const adminRoutes = new Hono<AppEnv>()
         serviceType: string;
         startDate: string;
         status: string;
+        // Declared, not merely emitted: the panel's over-split guard reads this, so dropping it
+        // must be a type error rather than a silent `undefined` that quietly disables the guard.
+        outstanding: number;
       }[];
       remainder: number;
     }[] = [];
@@ -3176,7 +3179,8 @@ export const adminRoutes = new Hono<AppEnv>()
       // excludes an earlier credit and raises a later one to settle the booking outright, which
       // the server would accept (see task-5-report.md, round 2). So every `outstanding` field
       // returned below — on a resolved split AND on an ambiguous credit's candidate bookings —
-      // reads this map instead.
+      // reads this map instead, and so does the membership test deciding WHICH candidate
+      // bookings an ambiguous credit is offered.
       //
       // Accepted consequence: two credits proposed within the SAME household preview can each
       // report the booking's full live outstanding, so a sitter could compose a batch that
@@ -3232,8 +3236,13 @@ export const adminRoutes = new Hono<AppEnv>()
             paidDate: row.PaidDate,
             reason: proposal.reason,
             detail: proposal.detail,
+            // Membership is decided by the LIVE figure, not the sequenced one, for the same
+            // reason the reported figure is: a booking an earlier credit in this preview drove
+            // to zero is still a booking the sitter may legitimately choose here, once they
+            // untick that earlier credit. Filtering on the sequenced value removed the option
+            // altogether — the same false-block as the cap, one level up.
             bookings: unpaidBookings
-              .filter((b) => b.outstanding > 0)
+              .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
               .map((b) => ({
                 ...staticById.get(b.bookingId)!,
                 outstanding: liveOutstandingById.get(b.bookingId)!,
