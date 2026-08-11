@@ -34,48 +34,110 @@ type EditableCredit = {
   paidDate: string;
   rows: Row[];
   included: boolean;
+  /** The server's OWN remainder for this credit as proposed (`AttributionProposal.remainder`) —
+   *  shown verbatim until the sitter changes a row, rather than recomputed from scratch for a
+   *  state that hasn't moved. `null` for an ambiguous credit: the server proposed nothing for it
+   *  at all, so there is no server figure to prefer over the live derivation. */
+  serverRemainder: number | null;
+  /** A snapshot of `rows` at construction (bookingId/checked/amountText only), so `isUnedited`
+   *  below can tell "still exactly what the server proposed" from "the sitter touched this." */
+  originalRows: { bookingId: string; checked: boolean; amountText: string }[];
 };
 
+function snapshotRows(rows: Row[]): EditableCredit['originalRows'] {
+  return rows.map((r) => ({
+    bookingId: r.bookingId,
+    checked: r.checked,
+    amountText: r.amountText,
+  }));
+}
+
+/** True while `credit.rows` still matches `credit.originalRows` exactly — the sitter hasn't
+ *  touched a checkbox or an amount on this credit since it was built from the preview response. */
+function isUnedited(credit: EditableCredit): boolean {
+  return (
+    credit.rows.length === credit.originalRows.length &&
+    credit.rows.every((r, i) => {
+      const o = credit.originalRows[i];
+      return (
+        o.bookingId === r.bookingId && o.checked === r.checked && o.amountText === r.amountText
+      );
+    })
+  );
+}
+
 function fromProposal(p: AttributionProposal): EditableCredit {
+  const rows = p.splits.map((s) => ({ ...s, checked: true, amountText: String(s.amount) }));
   return {
     paymentId: p.paymentId,
     accountId: p.accountId,
     amount: p.amount,
     paidDate: p.paidDate,
-    rows: p.splits.map((s) => ({ ...s, checked: true, amountText: String(s.amount) })),
+    rows,
     // A proposal can legitimately carry NO splits — an unaffordable tie the credit couldn't have
     // reached anyway is not something `proposeAttribution` refuses, it just leaves the whole
     // amount as remainder (see its own doc comment). There is nothing to check in that case, so
     // it starts un-included: ticking it would only submit an empty, server-refused attribution.
     included: p.splits.length > 0,
+    serverRemainder: p.remainder,
+    originalRows: snapshotRows(rows),
   };
 }
 
 function fromAmbiguous(u: AttributionUnresolved): EditableCredit {
+  const rows = u.bookings.map((b) => ({ ...b, checked: false, amountText: '' }));
   return {
     paymentId: u.paymentId,
     accountId: u.accountId,
     amount: u.amount,
     paidDate: u.paidDate,
-    rows: u.bookings.map((b) => ({ ...b, checked: false, amountText: '' })),
+    rows,
     included: false,
+    // The server never proposed a split for an ambiguous credit — there is no figure to prefer,
+    // so this always falls through to the live derivation in `remainderFor`.
+    serverRemainder: null,
+    originalRows: snapshotRows(rows),
   };
 }
 
 /**
  * The client-side mirror of `proposeAttribution`'s conservation rule
  * (`balancedRemainder`, src/shared/invoicing/attribution-splits.ts) applied to what the sitter
- * currently has checked and typed for one credit. `null` means "not submittable yet" — an
- * unusable amount on a checked row, or a total that overshoots the credit — which is exactly what
- * blocks Apply and shows the inline message, before the server ever sees it.
+ * currently has checked and typed for one credit — extended with the one check that rule can't
+ * make on its own: a checked row's amount must not exceed THAT booking's own outstanding (also
+ * shown on the row), the same live-outstanding refusal `applyAttribution` would otherwise hand
+ * back after a round trip (server/db/repo.ts). `null` means "not submittable yet" — an unusable
+ * amount on a checked row, a split bigger than its booking's outstanding, or a total that
+ * overshoots the credit — which is exactly what blocks Apply and shows the inline message, before
+ * the server ever sees it.
  */
 function remainderFor(credit: EditableCredit): number | null {
   const checked = credit.rows.filter((r) => r.checked);
-  if (checked.some((r) => !isWholeDollar(r.amountText))) return null;
+  for (const r of checked) {
+    if (!isWholeDollar(r.amountText)) return null;
+    if (Number(r.amountText) > r.outstanding) return null;
+  }
   return balancedRemainder(
     credit.amount,
     checked.map((r) => ({ amount: Number(r.amountText) })),
   );
+}
+
+/**
+ * Why `remainderFor` refused, in words — split out so the inline message names the actual
+ * problem instead of one generic "doesn't add up" for three different causes: a blank or
+ * fractional amount, a split bigger than what's outstanding on that booking, or a total that
+ * overshoots the credit. Only called once `remainderFor` has already returned `null`.
+ */
+function creditIssue(credit: EditableCredit): string {
+  const checked = credit.rows.filter((r) => r.checked);
+  const blank = checked.find((r) => !isWholeDollar(r.amountText));
+  if (blank) return `Type a whole-dollar amount for ${blank.serviceType}.`;
+  const overOutstanding = checked.find((r) => Number(r.amountText) > r.outstanding);
+  if (overOutstanding)
+    return `$${overOutstanding.amountText} is more than the $${overOutstanding.outstanding} outstanding on ${overOutstanding.serviceType}.`;
+  const sum = checked.reduce((s, r) => s + Number(r.amountText), 0);
+  return `These splits add up to $${sum}, more than the $${credit.amount} payment.`;
 }
 
 /** One credit's editable block — the split rows plus the master include tick, shared by the
@@ -84,6 +146,7 @@ function remainderFor(credit: EditableCredit): number | null {
 function CreditEditor({
   credit,
   label,
+  detail,
   busy,
   onToggleIncluded,
   onToggleRow,
@@ -91,12 +154,22 @@ function CreditEditor({
 }: {
   credit: EditableCredit;
   label: string;
+  /** The server's own explanation for why this credit needed a decision at all (only set for an
+   *  `ambiguous` credit) — rendered inside this one `<li>` rather than a wrapping element the
+   *  caller adds, which used to nest a second `<li>` with nothing between it and this one. */
+  detail?: string;
   busy: boolean;
   onToggleIncluded: () => void;
   onToggleRow: (bookingId: string) => void;
   onRowAmount: (bookingId: string, value: string) => void;
 }) {
   const remainder = remainderFor(credit);
+  // The server's own remainder, shown verbatim while nothing has moved since the preview — the
+  // moment the sitter touches a row it's necessarily stale and the live derivation takes over.
+  const displayRemainder =
+    remainder !== null && credit.serverRemainder !== null && isUnedited(credit)
+      ? credit.serverRemainder
+      : remainder;
   const anyChecked = credit.rows.some((r) => r.checked);
   return (
     <li>
@@ -104,15 +177,23 @@ function CreditEditor({
         <input
           type="checkbox"
           checked={credit.included}
-          disabled={busy || !anyChecked}
+          disabled={busy}
           onChange={onToggleIncluded}
         />{' '}
         <strong>${credit.amount}</strong> from {label} on {formatFriendlyDate(credit.paidDate)}
       </label>
+      {detail && <p className="pb-hint">{detail}</p>}
       {credit.rows.length === 0 ? (
-        <p className="pb-hint">
-          Nothing to attach this to yet — ${credit.amount} would stay as account credit.
-        </p>
+        <>
+          <p className="pb-hint">
+            Nothing to attach this to yet — ${credit.amount} would stay as account credit.
+          </p>
+          {credit.included && (
+            <p className="pb-error">
+              There&rsquo;s nothing to check here — untick this credit to exclude it from Apply.
+            </p>
+          )}
+        </>
       ) : (
         <>
           <ul>
@@ -134,6 +215,7 @@ function CreditEditor({
                     type="number"
                     min={1}
                     step={1}
+                    max={r.outstanding}
                     value={r.amountText}
                     disabled={busy || !r.checked}
                     onChange={(e) => onRowAmount(r.bookingId, e.target.value)}
@@ -143,11 +225,17 @@ function CreditEditor({
               </li>
             ))}
           </ul>
+          {credit.included && !anyChecked && (
+            <p className="pb-error">
+              Nothing is checked below &mdash; check a booking above, or untick this credit to
+              exclude it from Apply.
+            </p>
+          )}
           {anyChecked &&
             (remainder === null ? (
-              <p className="pb-error">These splits don&rsquo;t add up to ${credit.amount} yet.</p>
+              <p className="pb-error">{creditIssue(credit)}</p>
             ) : (
-              <p className="pb-hint">${remainder} would stay as account credit.</p>
+              <p className="pb-hint">${displayRemainder} would stay as account credit.</p>
             ))}
         </>
       )}
@@ -191,12 +279,22 @@ export function AttributionPanel({
   const [credits, setCredits] = useState<Map<string, EditableCredit>>(new Map());
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AttributionApplyResult | null>(null);
+  // Snapshotted from `credits` at the moment `runApply` fires (CsvImportPanel's `chosenInfo`
+  // idiom) — a `skipped` reason only names a `paymentId`, and by the time it's rendered a later
+  // preview may have already rebuilt `credits` without that entry, or removed a since-applied one
+  // it briefly shared an id namespace with. This is the only place left that still knows which
+  // household and amount a given skipped id was.
+  const [resultInfo, setResultInfo] = useState<Map<string, { amount: number; label: string }>>(
+    new Map(),
+  );
 
   const label = (accountId: string) => households?.get(accountId) ?? accountId;
 
   const reset = () => {
     setPreviewData(null);
     setCredits(new Map());
+    setResult(null);
+    setResultInfo(new Map());
   };
 
   const runPreview = async () => {
@@ -276,16 +374,25 @@ export function AttributionPanel({
       remainder,
     });
   }
-  const totalAmount = toApply.reduce((sum, a) => {
-    const credit = credits.get(a.paymentId);
-    return sum + (credit?.amount ?? 0);
-  }, 0);
 
   const runApply = async () => {
     if (busy || toApply.length === 0 || hasBlockedIncluded) return;
     clearError();
     setBusy(true);
     try {
+      // Snapshotted BEFORE the batch's own removals below touch `credits` — every id in
+      // `toApply` is still in the map at this point, applied or skipped alike.
+      setResultInfo(
+        new Map(
+          toApply.map((a) => {
+            const credit = credits.get(a.paymentId)!;
+            return [
+              a.paymentId,
+              { amount: credit.amount, label: label(credit.accountId) },
+            ] as const;
+          }),
+        ),
+      );
       const outcome = await adminApi.payments.attributeApply(session.slug, session.token, toApply);
       setResult(outcome);
       const skippedIds = new Set(outcome.skipped.map((s) => s.paymentId));
@@ -361,7 +468,15 @@ export function AttributionPanel({
         <p className="pb-applies" role="status">
           Applied {result.applied} attribution{result.applied === 1 ? '' : 's'}.
           {result.skipped.length > 0
-            ? ` ${result.skipped.length} skipped: ${result.skipped.map((s) => s.reason).join('; ')}.`
+            ? ` ${result.skipped.length} skipped: ${result.skipped
+                .map((s) => {
+                  // The server's own `reason` is shown VERBATIM and already ends in a period —
+                  // no separator/trailing punctuation is added around it, just an identifying
+                  // prefix so a sitter with dozens of skips can tell which credit each is about.
+                  const info = resultInfo.get(s.paymentId);
+                  return info ? `$${info.amount} from ${info.label} — ${s.reason}` : s.reason;
+                })
+                .join(' ')}`
             : ''}
         </p>
       )}
@@ -405,19 +520,18 @@ export function AttributionPanel({
                   const credit = credits.get(u.paymentId);
                   if (!credit) return null;
                   return (
-                    <li key={u.paymentId}>
-                      <p className="pb-hint">{u.detail}</p>
-                      <CreditEditor
-                        credit={credit}
-                        label={label(credit.accountId)}
-                        busy={busy}
-                        onToggleIncluded={() => toggleIncluded(u.paymentId)}
-                        onToggleRow={(bookingId) => toggleRow(u.paymentId, bookingId)}
-                        onRowAmount={(bookingId, value) =>
-                          setRowAmount(u.paymentId, bookingId, value)
-                        }
-                      />
-                    </li>
+                    <CreditEditor
+                      key={u.paymentId}
+                      credit={credit}
+                      label={label(credit.accountId)}
+                      detail={u.detail}
+                      busy={busy}
+                      onToggleIncluded={() => toggleIncluded(u.paymentId)}
+                      onToggleRow={(bookingId) => toggleRow(u.paymentId, bookingId)}
+                      onRowAmount={(bookingId, value) =>
+                        setRowAmount(u.paymentId, bookingId, value)
+                      }
+                    />
                   );
                 })}
               </ul>
@@ -465,7 +579,14 @@ export function AttributionPanel({
               >
                 {busy
                   ? 'Applying…'
-                  : `Apply ${toApply.length} attribution${toApply.length === 1 ? '' : 's'} ($${totalAmount})`}
+                  : // No dollar figure here on purpose — a credit's face value isn't what lands
+                    // on a booking (a $600 credit can have a $40 split and a $560 remainder), and
+                    // there is no server total for "amount attributed" to substitute instead.
+                    // Each credit's own remainder line above already says what stays as account
+                    // credit; summing face values here would be exactly the client-side money
+                    // EarningsSection's own invariant forbids ("nothing on this page adds up a
+                    // household").
+                    `Apply ${toApply.length} attribution${toApply.length === 1 ? '' : 's'}`}
               </button>
             </div>
           )}

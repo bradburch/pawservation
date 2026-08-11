@@ -1963,7 +1963,9 @@ body {
 }
 
 /* The collapsed-by-default inert buckets in AttributionPanel (e.g. "no unpaid bookings to attach
-   to") — a native disclosure, so 700+ rows cost nothing until the sitter actually opens one. */
+   to") — a native disclosure, closed by default so 700+ rows aren't the first thing the sitter
+   sees. React still creates every <li> in the DOM up front regardless of `open`; only layout and
+   paint are skipped while collapsed. */
 .pb-attribution-inert {
   margin: 12px 0;
 }
