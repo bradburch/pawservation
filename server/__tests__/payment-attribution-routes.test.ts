@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   addBookingPets,
+  getHouseholdDetail,
   insertAccountPayment,
   insertBookingRequest,
   insertInvitedCustomer,
@@ -122,6 +123,30 @@ async function preview(env: Env, tenantId: string, accountId?: string) {
     env,
   );
   return res;
+}
+
+type ApplyAttributionInput = {
+  paymentId: string;
+  accountId: string;
+  splits: { bookingId: string; amount: number }[];
+  remainder: number;
+};
+
+type ApplyBody = {
+  applied: number;
+  skipped: { paymentId: string; reason: string }[];
+};
+
+async function apply(env: Env, tenantId: string, body: unknown) {
+  return app.request(
+    `/api/${SLUG_C}/admin/payments/attribute/apply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await adminHeaders(tenantId)) },
+      body: JSON.stringify(body),
+    },
+    env,
+  );
 }
 
 describe('POST /:slug/admin/payments/attribute/preview', () => {
@@ -445,5 +470,146 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     // Sanity: every split lands on one of this household's two bookings.
     for (const p of body.proposals)
       for (const split of p.splits) expect([a, b]).toContain(split.bookingId);
+  });
+});
+
+/**
+ * THE APPLY ROUTE (Task 4) — `POST /:slug/admin/payments/attribute/apply` is the only code path
+ * in this feature that moves money. It takes from the browser only WHICH payment goes on which
+ * bookings and in what amounts, and re-derives everything else from live state through
+ * `applyAttribution` (server/db/repo.ts, done and reviewed): the source payment is re-read, its
+ * amount is the only authority, and a stale or over-claiming request is refused with a reason
+ * rather than applied. A per-attribution failure is skipped, not fatal to the rest of the batch —
+ * that is what makes a double-submit or a mixed-validity batch safe.
+ */
+describe('POST /:slug/admin/payments/attribute/apply', () => {
+  it('a valid attribution applies and the household balance is unchanged', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+
+    const before = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(before?.balance).toBe(0); // fully covered by the household-level credit already
+
+    const attribution: ApplyAttributionInput = {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId, amount: 100 }],
+      remainder: 0,
+    };
+    const res = await apply(env, TENANT_C, { attributions: [attribution] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body).toEqual({ applied: 1, skipped: [] });
+
+    const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(after?.balance).toBe(before?.balance);
+
+    const rows = paymentRows(raw);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ BookingRequestId: bookingId, AccountId: null, Amount: 100 });
+  });
+
+  it('a double-submit applies once', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+    const attribution: ApplyAttributionInput = {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId, amount: 100 }],
+      remainder: 0,
+    };
+
+    const first = await apply(env, TENANT_C, { attributions: [attribution] });
+    expect(first.status).toBe(200);
+    expect((await first.json()) as ApplyBody).toEqual({ applied: 1, skipped: [] });
+
+    const second = await apply(env, TENANT_C, { attributions: [attribution] });
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as ApplyBody;
+    expect(secondBody.applied).toBe(0);
+    expect(secondBody.skipped).toHaveLength(1);
+    expect(secondBody.skipped[0].paymentId).toBe(paymentId);
+    expect(secondBody.skipped[0].reason).toBeTruthy();
+
+    // Exactly one booking-level payment of $100 — the second call never duplicated the money.
+    const rows = paymentRows(raw);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ BookingRequestId: bookingId, AccountId: null, Amount: 100 });
+  });
+
+  it('an attribution whose splits do not sum is refused with nothing written', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+
+    const before = paymentRows(raw);
+    const attribution: ApplyAttributionInput = {
+      paymentId,
+      accountId: home.accountId,
+      // $60 of splits + $0 remainder accounts for only $60 of a $100 payment.
+      splits: [{ bookingId, amount: 60 }],
+      remainder: 0,
+    };
+    const res = await apply(env, TENANT_C, { attributions: [attribution] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body.applied).toBe(0);
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].paymentId).toBe(paymentId);
+    expect(body.skipped[0].reason).toBeTruthy();
+
+    expect(paymentRows(raw)).toEqual(before);
+  });
+
+  it("another tenant's payment is refused", async () => {
+    const { env, raw } = createTestEnv();
+    const foreignHome = await household(env, raw, 'jen', TENANT_A);
+    const foreignBooking = await book(env, foreignHome, 100, '2026-07-01', 'confirmed', TENANT_A);
+    const foreignPaymentId = (await credit(
+      env,
+      foreignHome.accountId,
+      100,
+      '2026-07-01',
+      TENANT_A,
+    ))!;
+
+    const beforeForeign = paymentRows(raw, TENANT_A);
+    const attribution: ApplyAttributionInput = {
+      paymentId: foreignPaymentId,
+      accountId: foreignHome.accountId,
+      splits: [{ bookingId: foreignBooking, amount: 100 }],
+      remainder: 0,
+    };
+    // Authenticated as TENANT_C, naming TENANT_A's own payment and household.
+    const res = await apply(env, TENANT_C, { attributions: [attribution] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body.applied).toBe(0);
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].paymentId).toBe(foreignPaymentId);
+
+    expect(paymentRows(raw, TENANT_A)).toEqual(beforeForeign);
+  });
+
+  it('a malformed body is a 400 with nothing written', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    await book(env, home, 100, '2026-07-01');
+    await credit(env, home.accountId, 100);
+
+    const before = paymentRows(raw);
+    // `splits` is not an array — malformed shape, not a semantically-refusable attribution.
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        { paymentId: 'whatever', accountId: home.accountId, splits: 'nope', remainder: 0 },
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect(paymentRows(raw)).toEqual(before);
   });
 });

@@ -6,6 +6,7 @@ import {
   addCoOwnerToPets,
   addEndUserPet,
   addPetOwner,
+  applyAttribution,
   clearProviderConnection,
   countBookingsForService,
   countBookingsForUser,
@@ -3217,6 +3218,101 @@ export const adminRoutes = new Hono<AppEnv>()
     }
 
     return c.json({ proposals, unresolved });
+  })
+
+  /**
+   * APPLY THE ATTRIBUTIONS A SITTER APPROVED (Task 4 of payment attribution) — the only route in
+   * this feature that moves money. The browser supplies only WHICH payment goes on which bookings
+   * and in what amounts; everything else is re-derived from live state, because the browser's copy
+   * is a snapshot from whenever the preview ran and money moves in between.
+   *
+   * `applyAttribution` (server/db/repo.ts) does the re-derivation: it re-reads the source payment
+   * (its `Amount` is the only authority, never the caller's), re-checks conservation
+   * (`sum(splits) + remainder === Amount` exactly, whole dollars), resolves the household by pet-id
+   * MEMBERSHIP rather than `AccountId` equality (an account id is the household's
+   * lexicographically-first pet and moves when a pet is added — see its own doc comment), and
+   * writes the whole thing as one `db.batch` so a partially-applied attribution can never happen.
+   * This route does not re-implement any of that; it is a thin per-item loop around it.
+   *
+   * EACH ATTRIBUTION IS ITS OWN try/catch, so one failure — a booking since paid, a payment since
+   * attributed by an earlier request in this same array, a genuine fault — cannot abort the rest of
+   * a batch the sitter approved together. A payment `applyAttribution` can no longer find as a
+   * household-level payment of the given account (because an earlier call already attributed or
+   * deleted it) comes back as an ordinary refusal, not a throw — which is what makes a double-submit
+   * of the exact same body apply once: the second call's `applyAttribution` re-reads the row, finds
+   * it gone, and skips with a reason instead of duplicating the money.
+   *
+   * BODY SHAPE IS VALIDATED IN FULL BEFORE ANYTHING IS APPLIED — a structurally malformed
+   * attribution (wrong types, missing fields) is a 400 for the WHOLE request with nothing written,
+   * the same posture the CSV-import route above takes toward a malformed `choices` list. That is a
+   * different failure than a well-formed attribution `applyAttribution` refuses on the merits (bad
+   * conservation, foreign booking, vanished payment, wrong tenant) — those are reported per-item in
+   * `skipped`, never as a 400, so one bad row in an otherwise-good batch doesn't block the rest.
+   */
+  .post('/:slug/admin/payments/attribute/apply', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ attributions?: unknown }>()
+      .catch(() => ({}) as { attributions?: unknown });
+    if (!Array.isArray(body.attributions) || body.attributions.length === 0)
+      return c.json({ error: 'Choose at least one attribution to apply.' }, 400);
+
+    const attributions: {
+      paymentId: string;
+      accountId: string;
+      splits: { bookingId: string; amount: number }[];
+      remainder: number;
+    }[] = [];
+    for (const raw of body.attributions) {
+      const a = raw as {
+        paymentId?: unknown;
+        accountId?: unknown;
+        splits?: unknown;
+        remainder?: unknown;
+      };
+      if (
+        typeof a.paymentId !== 'string' ||
+        a.paymentId === '' ||
+        typeof a.accountId !== 'string' ||
+        a.accountId === '' ||
+        !Array.isArray(a.splits) ||
+        typeof a.remainder !== 'number'
+      )
+        return c.json({ error: 'That list of attributions is malformed.' }, 400);
+
+      const splits: { bookingId: string; amount: number }[] = [];
+      for (const rawSplit of a.splits) {
+        const s = rawSplit as { bookingId?: unknown; amount?: unknown };
+        if (typeof s.bookingId !== 'string' || s.bookingId === '' || typeof s.amount !== 'number')
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        splits.push({ bookingId: s.bookingId, amount: s.amount });
+      }
+      attributions.push({
+        paymentId: a.paymentId,
+        accountId: a.accountId,
+        splits,
+        remainder: a.remainder,
+      });
+    }
+
+    let applied = 0;
+    const skipped: { paymentId: string; reason: string }[] = [];
+    for (const attribution of attributions) {
+      try {
+        const result = await applyAttribution(c.env.PAWSERVATION_DB, tenant.Id, attribution);
+        if (result.ok) applied++;
+        else skipped.push({ paymentId: attribution.paymentId, reason: result.reason });
+      } catch {
+        // Genuine fault (not a refusal `applyAttribution` already turned into `{ ok: false }`) —
+        // skipped rather than allowed to abort the rest of a batch the sitter approved together.
+        skipped.push({
+          paymentId: attribution.paymentId,
+          reason: `Payment ${attribution.paymentId} could not be applied due to an unexpected error; nothing was written for it.`,
+        });
+      }
+    }
+
+    return c.json({ applied, skipped });
   })
 
   /**
