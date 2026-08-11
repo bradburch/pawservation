@@ -1,7 +1,12 @@
 /** Tiny same-origin API client for the widget + admin pages. */
 
 export { PAYMENT_METHODS } from '../../src/shared/index.js';
-import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
+import type {
+  PaymentMethod,
+  ServiceConstraints,
+  ServiceOption,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 
 // Re-exported as-is: the widget/admin config wire format is field-for-field the shared shape —
 // see src/shared/booking/service-rules.ts for the single definition.
@@ -262,6 +267,50 @@ export type VenmoImportResult = {
   imported: number;
   totalAmount: number;
   skipped: { txnId: string; reason: string }[];
+};
+
+/** The generic mapped-CSV importer's sibling of the Venmo types above — hand-mirrors
+ *  server/lib/payment-csv.ts, which owns every shape here. */
+export type CsvShape = { headers: string[]; sample: string[][]; dataRowCount: number };
+
+/** Which column (0-indexed, against the file's own header row) holds each field — matches
+ *  server/lib/payment-csv.ts's `ColumnMapping` field-for-field. */
+export type CsvColumnMapping = {
+  date: number;
+  amount: number;
+  payer: number;
+  method?: number;
+  reference?: number;
+  note?: number;
+};
+
+export type CsvPreviewRow = {
+  dedupeKey: string;
+  row: number;
+  date: string;
+  amount: number;
+  payer: string;
+  method: PaymentMethod;
+  reference: string | null;
+  note: string;
+};
+export type CsvPreview = {
+  matched: (CsvPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    accountId: string;
+  })[];
+  unmatched: (CsvPreviewRow & { reason: string })[];
+  alreadyImported: CsvPreviewRow[];
+  problems: { row: number; reason: string }[];
+  /** Every household of this tenant a payment may be filed against, so the sitter can place a row
+   *  the matcher couldn't. The same list the import route validates their choice against. */
+  households: { accountId: string; label: string }[];
+};
+export type CsvImportResult = {
+  imported: number;
+  totalAmount: number;
+  skipped: { dedupeKey: string; reason: string }[];
 };
 
 /** Why one calendar event couldn't be adopted outright — hand-mirrors server/lib/calendar-
@@ -814,6 +863,37 @@ export const adminApi = {
         method: 'POST',
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, choices }),
+      }),
+    csvColumns: (slug: string, token: string, csv: string) =>
+      request<CsvShape>(`/api/${slug}/admin/payments/csv/columns`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv }),
+      }),
+    csvPreview: (
+      slug: string,
+      token: string,
+      csv: string,
+      mapping: CsvColumnMapping,
+      defaultMethod: PaymentMethod,
+    ) =>
+      request<CsvPreview>(`/api/${slug}/admin/payments/csv/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, mapping, defaultMethod }),
+      }),
+    csvImport: (
+      slug: string,
+      token: string,
+      csv: string,
+      mapping: CsvColumnMapping,
+      defaultMethod: PaymentMethod,
+      choices: { dedupeKey: string; accountId: string }[],
+    ) =>
+      request<CsvImportResult>(`/api/${slug}/admin/payments/csv/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, mapping, defaultMethod, choices }),
       }),
   },
   households: {

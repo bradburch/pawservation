@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { adminApi, type AnalyticsPayload, type HouseholdDetail } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
 import { CalendarBackfillPanel } from '../CalendarBackfillPanel';
+import { CsvImportPanel } from '../CsvImportPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
@@ -328,6 +329,18 @@ export function EarningsView({
 
       {session && onChanged && handleError && clearError && (
         <VenmoImportPanel
+          session={session}
+          onImported={onChanged}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+
+      {/* The generic mapped-CSV importer, for a sitter whose bank or payment app doesn't export
+          Venmo's fixed shape — same "bring outside records into Earnings" job, one extra mapping
+          step up front. */}
+      {session && onChanged && handleError && clearError && (
+        <CsvImportPanel
           session={session}
           onImported={onChanged}
           handleError={handleError}
