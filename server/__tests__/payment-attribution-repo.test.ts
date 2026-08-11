@@ -423,7 +423,7 @@ describe('applyAttribution (repo)', () => {
     if (result.ok) throw new Error('unreachable');
     // The real, negative figure — not "$0", which would misreport an already-over-paid booking as
     // merely settled rather than over-paid.
-    expect(result.reason).toContain('owes $-50');
+    expect(result.reason).toContain('is $50 over-paid');
   });
 
   it('suffixes ExternalRef per derived row — unique, and traceable back to the source', async () => {

@@ -1697,9 +1697,12 @@ export async function applyAttribution(
     // sitter as-is; rounding it to "owes $0" would read as merely settled rather than already
     // over-paid, which is a different, more actionable, situation.
     const owed = outstandingByBooking.get(overpaid.bookingId)!;
+    // Negative outstanding is stated as over-paid rather than rendered `$-50`, which reads as a
+    // typo in a sitter-facing message; the figure itself is still reported exactly.
+    const standing = owed < 0 ? `is $${-owed} over-paid` : `owes $${owed}`;
     return {
       ok: false,
-      reason: `Booking ${overpaid.bookingId} owes $${owed} but this split names $${overpaid.amount}; refusing rather than overpay it.`,
+      reason: `Booking ${overpaid.bookingId} ${standing} but this split names $${overpaid.amount}; refusing rather than overpay it.`,
     };
   }
 
