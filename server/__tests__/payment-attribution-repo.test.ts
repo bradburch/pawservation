@@ -4,12 +4,16 @@ import {
   addBookingPets,
   applyAttribution,
   getHouseholdBalances,
+  getHouseholdDetail,
+  householdOutstandingByBooking,
   insertAccountPayment,
+  insertBookingCharge,
   insertBookingRequest,
   insertInvitedCustomer,
   insertPayment,
   listPaymentsForAccount,
   listPaymentsForBooking,
+  updateBookingStatus,
 } from '../db/repo';
 import { recoverSourceRef } from '../lib/payment-attribution';
 import { createTestEnv, seedPets, TENANT_A } from './helpers';
@@ -739,5 +743,113 @@ describe('applyAttribution (repo)', () => {
     expect(remainderRow.AccountId).not.toBe(renamed);
     // And it still rolls up to the same household — the money has not moved, only its shape has.
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+});
+
+/**
+ * THE TWO READERS OF "WHAT DOES THIS BOOKING STILL OWE" MUST NOT DRIFT.
+ *
+ * `applyAttribution`'s overpay and membership guards used to ask `getHouseholdDetail` — six reads
+ * to use one derived number per booking. They now ask `householdOutstandingByBooking`, which
+ * answers in two. That is only a narrowing if the answer is IDENTICAL, and "identical" is not
+ * something a doc comment can promise: the second reader's money expression, its charges join and
+ * its one-booking-one-household attachment rule are three separate places it can silently start
+ * meaning something else, each with a real defect behind it.
+ *
+ * So this asserts the map itself against the one derived from `getHouseholdDetail` — the reference
+ * every other household figure on the Earnings page is built from — over a fixture that puts all
+ * three properties under load at once. Mechanical rather than behavioural on purpose: a guard test
+ * only covers the refusals somebody thought to write, whereas equality covers every booking shape
+ * this fixture can hold, including the ones added to it later.
+ */
+describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
+  it("over a charge, a declined booking, an assessed cancellation fee and another household's booking on our pet", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+
+    // 1. AN EXTRA CHARGE IS STILL OWED. $100 quoted plus a $25 charge — reading this as
+    //    `BASE_AMOUNT_SQL` would put it at $100 and refuse a legitimate $125 split as overpayment.
+    const charged = await book(env, home, 100, '2026-07-01');
+    expect(
+      await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
+        bookingRequestId: charged,
+        label: 'Late pickup',
+        amount: 25,
+      }),
+    ).not.toBeNull();
+
+    // 2. A DECLINED BOOKING MAY KEEP NOTHING. It took $50 while still pending, so its creditable
+    //    amount is 0 and it sits at -$50 — never a candidate. Reading this as
+    //    `EXPECTED_AMOUNT_SQL` would put it at +$50 and let a credit be attributed to a booking
+    //    the sitter said no to.
+    const declined = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
+      endUserId: home.ownerId,
+      serviceType: 'boarding',
+      startDate: '2026-07-02',
+      endDate: '2026-07-04',
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 100,
+      status: 'pending',
+    });
+    await addBookingPets(env.PAWSERVATION_DB, TENANT_C, declined, home.petIds);
+    expect(
+      await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
+        bookingRequestId: declined,
+        amount: 50,
+        method: 'cash',
+        paidDate: '2026-06-15',
+        note: null,
+        externalRef: null,
+      }),
+    ).not.toBeNull();
+    expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined')).toBe(
+      true,
+    );
+
+    // 3. A CANCELLED BOOKING CARRYING AN ASSESSED FEE IS A LIVE RECEIVABLE — worth its fee, not
+    //    its old quote, and attributable exactly that far.
+    const cancelled = await book(env, home, 200, '2026-07-03');
+    expect(
+      await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelled, 'cancelled', 30),
+    ).toBe(true);
+
+    // 4. ANOTHER HOUSEHOLD'S BOOKING, ON OUR PET. It matches the candidate predicate (our pet is
+    //    on it) but attaches to its CUSTOMER's household, so it is not ours to attribute against
+    //    — returning the raw candidate superset instead of running the attachment rule would make
+    //    someone else's booking settleable from this household's credit.
+    const neighbour = await household(env, raw, 'sam');
+    const theirs = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
+      endUserId: neighbour.ownerId,
+      serviceType: 'boarding',
+      startDate: '2026-07-05',
+      endDate: '2026-07-07',
+      optionKey: 'standard',
+      petCount: 2,
+      estCost: 400,
+      status: 'confirmed',
+    });
+    await addBookingPets(env.PAWSERVATION_DB, TENANT_C, theirs, [
+      ...neighbour.petIds,
+      ...home.petIds,
+    ]);
+
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const fromDetail = new Map(
+      (detail?.bookings ?? []).map((b) => [b.bookingId, b.expected - b.paidTotal]),
+    );
+    const lean = await householdOutstandingByBooking(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(lean).toEqual(fromDetail);
+
+    // Pinned absolutely as well as relatively: equality alone would still hold if BOTH readers
+    // were mutated the same way, and an empty map equals an empty map.
+    expect(lean).toEqual(
+      new Map([
+        [charged, 125], // $100 quoted + $25 charge, nothing paid
+        [declined, -50], // may keep nothing, yet holds $50 — over-paid, never a candidate
+        [cancelled, 30], // the assessed fee, not the $200 quote
+      ]),
+    );
+    expect(lean.has(theirs)).toBe(false);
   });
 });

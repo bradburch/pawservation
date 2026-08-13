@@ -8,7 +8,11 @@ import {
   type AttributionProposal,
   type AttributionUnresolved,
 } from '../shared-ui/api.js';
-import { balancedRemainder, formatFriendlyDate } from '../../src/shared/index.js';
+import {
+  balancedRemainder,
+  formatFriendlyDate,
+  MAX_ATTRIBUTIONS_PER_REQUEST,
+} from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
@@ -17,6 +21,21 @@ import { Hint } from './Hint';
 function isWholeDollar(value: string): boolean {
   return /^[1-9]\d*$/.test(value.trim());
 }
+
+/**
+ * How many attributions one Apply request carries. The apply route refuses more than this
+ * (MAX_ATTRIBUTIONS_PER_REQUEST, src/shared/invoicing/attribution-splits.ts, where the
+ * subrequest arithmetic behind the number is spelled out), so a set larger than it goes in
+ * successive requests — the SAME constant the server enforces, exactly as
+ * `CalendarBackfillPanel`'s `IMPORT_CHUNK_SIZE` shares `MAX_BACKFILL_EVENTS`, so the two can
+ * never drift into a flat 400 the sitter cannot act on.
+ *
+ * The sitter still clicks Apply ONCE. The live account this was built for has 47 actionable
+ * credits and a ceiling of 6 per request; telling her to tick six at a time, eight times over,
+ * would be the platform's budget pushed onto the person least able to do anything about it (the
+ * same call PR #124 made for the calendar backfill's date range).
+ */
+const APPLY_CHUNK_SIZE = MAX_ATTRIBUTIONS_PER_REQUEST;
 
 /** One candidate booking a credit could land on, plus the sitter's current, editable decision
  *  about it: whether it's checked (part of this attribution) and what to send for it. Starts
@@ -278,7 +297,22 @@ export function AttributionPanel({
   const [previewData, setPreviewData] = useState<AttributionPreview | null>(null);
   const [credits, setCredits] = useState<Map<string, EditableCredit>>(new Map());
   const [busy, setBusy] = useState(false);
+  // Progress text for a chunked Apply ("Applying — 12 of 47…"), shown in the button itself the way
+  // CalendarBackfillPanel shows its own. Null whenever one request covers the whole set.
+  const [applyStatus, setApplyStatus] = useState<string | null>(null);
   const [result, setResult] = useState<AttributionApplyResult | null>(null);
+  /**
+   * What a failed chunked run got through, shown ALONGSIDE the server's own error rather than
+   * instead of it.
+   *
+   * The failure itself goes to `handleError` UNWRAPPED, and that is load-bearing: `App.tsx`'s
+   * `handle` signs the sitter out on a 401/403 `ApiError` and routes a disabled account by
+   * `e.message === 'account_disabled'` — both `instanceof` checks, so both only work while the
+   * error is still an `ApiError`. (Not `e.code`: that is undefined on this route.) Rewrapping the
+   * progress and the failure into one `new Error` threw the server's own message away, which for
+   * an expired mid-run token left the sitter re-pressing Apply forever, never told to sign in.
+   */
+  const [failureNote, setFailureNote] = useState<string | null>(null);
   // Snapshotted from `credits` at the moment `runApply` fires (CsvImportPanel's `chosenInfo`
   // idiom) — a `skipped` reason only names a `paymentId`, and by the time it's rendered a later
   // preview may have already rebuilt `credits` without that entry, or removed a since-applied one
@@ -295,12 +329,17 @@ export function AttributionPanel({
     setCredits(new Map());
     setResult(null);
     setResultInfo(new Map());
+    setFailureNote(null);
   };
 
   const runPreview = async () => {
     if (busy) return;
     clearError();
     setResult(null);
+    // Cleared with `result`, for the same reason and against the same staleness: a fresh preview
+    // is a fresh run, and a note about what the LAST Apply got through would read as if it were
+    // about the list now on screen.
+    setFailureNote(null);
     setBusy(true);
     try {
       const next = await adminApi.payments.attributePreview(session.slug, session.token);
@@ -375,38 +414,95 @@ export function AttributionPanel({
     });
   }
 
+  /**
+   * Apply everything the sitter approved, in chunks of APPLY_CHUNK_SIZE, on one click.
+   *
+   * `applied` and `skipped` ACCUMULATE across chunks and land in one `result` — the sitter
+   * approved one set and is owed one answer about it, with every server `reason` still verbatim.
+   * `result` is updated after each chunk rather than only at the end, so a long run shows its own
+   * progress and a failure partway through still leaves the earlier chunks' outcome on screen:
+   * those are real, committed writes on the server, not something a client-side rollback could or
+   * should undo (`CalendarBackfillPanel.runImport`'s posture, same reasoning).
+   */
   const runApply = async () => {
     if (busy || toApply.length === 0 || hasBlockedIncluded) return;
     clearError();
+    // Cleared BEFORE the run, not merely overwritten after the first chunk succeeds: a run whose
+    // very first chunk throws would otherwise leave the PREVIOUS run's "Applied 5 attributions"
+    // banner sitting under a fresh error that says "what succeeded is already reflected above."
+    setResult(null);
+    setFailureNote(null);
     setBusy(true);
-    try {
-      // Snapshotted BEFORE the batch's own removals below touch `credits` — every id in
-      // `toApply` is still in the map at this point, applied or skipped alike.
-      setResultInfo(
-        new Map(
-          toApply.map((a) => {
-            const credit = credits.get(a.paymentId)!;
-            return [
-              a.paymentId,
-              { amount: credit.amount, label: label(credit.accountId) },
-            ] as const;
-          }),
-        ),
-      );
-      const outcome = await adminApi.payments.attributeApply(session.slug, session.token, toApply);
-      setResult(outcome);
-      const skippedIds = new Set(outcome.skipped.map((s) => s.paymentId));
+    // Snapshotted BEFORE the removals below touch `credits` — every id in `toApply` is still in
+    // the map at this point, applied or skipped alike.
+    setResultInfo(
+      new Map(
+        toApply.map((a) => {
+          const credit = credits.get(a.paymentId)!;
+          return [a.paymentId, { amount: credit.amount, label: label(credit.accountId) }] as const;
+        }),
+      ),
+    );
+    const chunked = toApply.length > APPLY_CHUNK_SIZE;
+    if (chunked) setApplyStatus(`Applying — 0 of ${toApply.length}…`);
+
+    let applied = 0;
+    const skipped: AttributionApplyResult['skipped'] = [];
+    const appliedIds = new Set<string>();
+    let failure: unknown = null;
+    for (let i = 0; i < toApply.length; i += APPLY_CHUNK_SIZE) {
+      const chunk = toApply.slice(i, i + APPLY_CHUNK_SIZE);
+      try {
+        const outcome = await adminApi.payments.attributeApply(session.slug, session.token, chunk);
+        applied += outcome.applied;
+        skipped.push(...outcome.skipped);
+        const skippedIds = new Set(outcome.skipped.map((s) => s.paymentId));
+        for (const a of chunk) if (!skippedIds.has(a.paymentId)) appliedIds.add(a.paymentId);
+        setResult({ applied, skipped: [...skipped] });
+        if (chunked) setApplyStatus(`Applying — ${i + chunk.length} of ${toApply.length}…`);
+      } catch (e) {
+        failure = e;
+        // THREE OUTCOMES, NOT TWO. The chunk that threw WAS SENT, so its fate is genuinely
+        // unknown — the request can fail after the server committed every write in it (a dropped
+        // connection on the response). Counting it with the ones that were never sent would tell
+        // the sitter that money which may well have moved was "not attempted", and then hand her
+        // the refusals to prove it when she re-applies. Only what comes AFTER the in-flight chunk
+        // was truly never attempted.
+        setFailureNote(
+          // Skipped ones are named too, or the three counts read like they should sum to the
+          // total and quietly don't — the server can refuse a credit inside a chunk that
+          // otherwise succeeded, and those live in the result banner above, not here.
+          `${applied} of the ${toApply.length} you approved ${applied === 1 ? 'was' : 'were'} applied` +
+            (skipped.length > 0
+              ? ` and ${skipped.length} ${skipped.length === 1 ? 'was' : 'were'} refused (listed above). `
+              : '. ') +
+            `${chunk.length} ${chunk.length === 1 ? 'was' : 'were'} sent without an answer coming back, so ${chunk.length === 1 ? 'it may or may not have' : 'they may or may not have'} been recorded; ` +
+            `${toApply.length - i - chunk.length} ${toApply.length - i - chunk.length === 1 ? 'was' : 'were'} not attempted. ` +
+            // Deliberately does NOT promise the words the refusal will use. Re-applying an
+            // already-recorded credit refuses with "… is not a household-level payment of account
+            // …" (repo.ts), because the source row is gone — accurate, but it reads like a
+            // wrong-account error to anyone told to expect "already attributed".
+            'Press Apply again to pick up the rest. Nothing can be applied twice: a credit that was already recorded comes back as a refusal rather than a second payment, whatever wording it uses.',
+        );
+        break;
+      }
+    }
+
+    setApplyStatus(null);
+    setBusy(false);
+    // Exactly the credits the server confirmed it applied leave the list — never the whole chunk,
+    // and never the ones a later chunk never reached. A skipped credit stays on screen with its
+    // reason beside it, which is the only way the sitter can act on it.
+    if (appliedIds.size > 0)
       setCredits((prev) => {
         const next = new Map(prev);
-        for (const a of toApply) if (!skippedIds.has(a.paymentId)) next.delete(a.paymentId);
+        for (const id of appliedIds) next.delete(id);
         return next;
       });
-      await onApplied();
-    } catch (e) {
-      handleError(e);
-    } finally {
-      setBusy(false);
-    }
+    if (appliedIds.size > 0 || !failure) await onApplied();
+
+    // The failure itself, untouched — see `failureNote` above for why it is never rewrapped.
+    if (failure) handleError(failure);
   };
 
   // Filtered against the LIVE `credits` map, not the raw preview response — a credit `runApply`
@@ -478,6 +574,15 @@ export function AttributionPanel({
                 })
                 .join(' ')}`
             : ''}
+        </p>
+      )}
+
+      {/* `status`, not `alert` as every other `pb-error` here uses: this is progress information
+          that always fires alongside App's own `role="alert"` banner, and two simultaneous
+          assertive announcements talk over each other. */}
+      {failureNote && (
+        <p className="pb-error" role="status">
+          {failureNote}
         </p>
       )}
 
@@ -578,7 +683,7 @@ export function AttributionPanel({
                 disabled={busy || toApply.length === 0 || hasBlockedIncluded}
               >
                 {busy
-                  ? 'Applying…'
+                  ? (applyStatus ?? 'Applying…')
                   : // No dollar figure here on purpose — a credit's face value isn't what lands
                     // on a booking (a $600 credit can have a $40 split and a $560 remainder), and
                     // there is no server total for "amount attributed" to substitute instead.
