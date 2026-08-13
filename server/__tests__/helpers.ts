@@ -154,6 +154,27 @@ export function seedPets(
   return specs.map((s) => s.id);
 }
 
+/**
+ * Drop the base seed's bookings for a tenant, so a test whose OWN fixtures are relative to the
+ * real clock can assert over a date window and mean it.
+ *
+ * `sql/seed.sql` dates its bookings ABSOLUTELY — `seed_sp_pend2` is a 2026-08-20→23 pending
+ * boarding hold on Sunny Paws — while tests build windows like TODAY+5. Those two only stay apart
+ * by luck: as the real date advances the window slides across the fixture, and an assertion that
+ * a window is empty starts failing on a day nobody changed any code. (`sql/seed-demo.sql` uses
+ * `date('now', …)` and has no such problem; the test seed is the one pinned to absolute dates.)
+ *
+ * Call this in any test that asserts over ALL rows in a window rather than about one row it
+ * seeded itself.
+ */
+export async function clearSeededBookings(env: Env, tenantId = TENANT_A): Promise<void> {
+  await env.PAWSERVATION_DB.prepare(
+    "DELETE FROM BookingRequests WHERE TenantId = ? AND Id LIKE 'seed_%'",
+  )
+    .bind(tenantId)
+    .run();
+}
+
 /** A valid admin session token for a tenant — Authorization: `Bearer ${adminToken(...)}`. */
 export function adminToken(tenantId: string): Promise<string> {
   return mintAdminToken(`tu_${tenantId}`, tenantId, TEST_SECRET);
