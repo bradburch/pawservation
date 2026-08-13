@@ -302,6 +302,66 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     });
   });
 
+  it("a second tenant's households, bookings and credits are invisible to a tenant-wide preview", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const booking = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 250))!;
+
+    // TENANT_A: a fully independent household, with its own booking and its own credit — ordinary
+    // data that must never surface in TENANT_C's tenant-wide preview.
+    const foreignHome = await household(env, raw, 'zeke', TENANT_A);
+    const foreignBooking = await book(env, foreignHome, 500, '2026-07-01', 'confirmed', TENANT_A);
+    const foreignPaymentId = (await credit(
+      env,
+      foreignHome.accountId,
+      500,
+      '2026-07-01',
+      TENANT_A,
+    ))!;
+
+    // A booking tagged TENANT_A but pointed at TENANT_C's OWN household (`home`'s real owner and
+    // pet) — the exact row shape `WHERE b.TenantId = ?` exists to exclude. `foreignHome` above
+    // can't discriminate the bulk queries' tenant scoping on its own: an unrelated tenant's
+    // owner/pet ids never match this tenant's account graph, so its booking falls out as
+    // unattached whether or not the SQL filters by tenant (`buildHouseholdBalances` drops any
+    // booking whose owner/pets resolve to no household). This one reuses `home`'s real ids, so
+    // ONLY the TenantId predicate stands between it and `jen`'s statement — if the bulk read ever
+    // stops filtering by tenant, this $999 booking joins the split below.
+    const crossTenantBooking = await book(env, home, 999, '2026-07-02', 'confirmed', TENANT_A);
+
+    const res = await preview(env, TENANT_C);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    const proposal = body.proposals[0];
+    expect(proposal.accountId).toBe(home.accountId);
+    expect(proposal.paymentId).toBe(paymentId);
+    // $250 credit against ONLY the $100 real booking — $150 left over, not applied to the
+    // cross-tenant booking that a leaking read would have offered it to.
+    expect(proposal.remainder).toBe(150);
+    expect(proposal.splits).toEqual([
+      {
+        bookingId: booking,
+        amount: 100,
+        serviceType: 'boarding',
+        startDate: '2026-07-01',
+        status: 'confirmed',
+        outstanding: 100,
+      },
+    ]);
+
+    const bookingIdsInBody = new Set(
+      body.proposals.flatMap((p) => p.splits.map((s) => s.bookingId)),
+    );
+    expect(bookingIdsInBody.has(crossTenantBooking)).toBe(false);
+    expect(bookingIdsInBody.has(foreignBooking)).toBe(false);
+    expect(body.proposals.some((p) => p.accountId === foreignHome.accountId)).toBe(false);
+    expect(body.proposals.some((p) => p.paymentId === foreignPaymentId)).toBe(false);
+  });
+
   it('previewing every household loads the account graph ONCE, not once per household', async () => {
     const { env, raw } = createTestEnv();
     // Three households, each with real work to do, so a per-household reload would show up as a
@@ -826,5 +886,198 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const secondRows = rows.filter((r) => r.Id === secondPaymentId);
     expect(secondRows).toHaveLength(1);
     expect(secondRows[0].AccountId).toBe(second.accountId);
+  });
+});
+
+/**
+ * THE READ COST OF A TENANT-WIDE PREVIEW — a production blocker, not a micro-optimisation.
+ *
+ * Cloudflare counts every binding call (each D1 query is one) against a per-invocation subrequest
+ * ceiling — 50 on the Workers Free plan, the same budget `MAX_BACKFILL_EVENTS` and the CSV
+ * importer's hoist to a constant 7 both exist to respect. The panel always previews TENANT-WIDE
+ * (`AttributionPanel.tsx` never sends an `accountId`), so a per-household detail read made the
+ * very first click on a real 53-household account issue ~216 prepares and fail outright.
+ *
+ * The fix is a CONSTANT read count, so these two assertions have to hold together:
+ *
+ *  - the prepare count is under `MAX_PREVIEW_PREPARES` for a tenant far larger than the one that
+ *    broke — a reintroduced per-household query would add ~40 here and blow straight past it; and
+ *  - the response body is EXACTLY what it was before the hoist, asserted whole rather than
+ *    sampled, so a cheap-but-wrong implementation cannot buy its way under the ceiling. This
+ *    fixture deliberately spans all three answers the route can give: multi-booking splits with a
+ *    remainder, a sequenced household whose later credits find nothing left, and a household with
+ *    no credit at all that must cost nothing and appear nowhere.
+ */
+
+/**
+ * The ceiling one tenant-wide preview's D1 prepares must stay under, HOWEVER MANY HOUSEHOLDS the
+ * tenant has. Deliberately generous next to what the route actually needs (the account graph, the
+ * tenant's household payments, and one bulk read each for bookings, booking<->pet edges and
+ * charges, plus the admin session lookup) and still far below Workers' 50: the gap is headroom for
+ * an honest extra read, never for a per-household one, which at `READ_COST_HOUSEHOLDS` scale
+ * cannot fit under this number by any margin.
+ */
+const MAX_PREVIEW_PREPARES = 20;
+
+/** Households holding a credit in the read-cost fixture — comfortably past the 53-household
+ *  account that hit the ceiling in production once the old 4-reads-each is applied to it. */
+const READ_COST_HOUSEHOLDS = 40;
+
+/** Wraps a test env's D1 so every `prepare` is counted, exactly as the production measurement did. */
+function countingEnv(env: Env): { env: Env; prepares: () => number } {
+  let count = 0;
+  const counted = {
+    prepare: (sql: string) => {
+      count++;
+      return env.PAWSERVATION_DB.prepare(sql);
+    },
+    batch: (statements: D1PreparedStatement[]) => env.PAWSERVATION_DB.batch(statements),
+  } as unknown as D1Database;
+  return { env: { ...env, PAWSERVATION_DB: counted }, prepares: () => count };
+}
+
+describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
+  it('a tenant-wide preview costs a CONSTANT number of D1 prepares, and returns the same body', async () => {
+    const { env, raw } = createTestEnv();
+
+    // Forty ordinary households: two unpaid bookings at distinct distances from the credit's paid
+    // date (so the split order is proximity, never a tie) and one credit that overshoots both.
+    const homes: { home: Household; near: string; far: string; paymentId: string }[] = [];
+    for (let i = 0; i < READ_COST_HOUSEHOLDS; i++) {
+      const home = await household(env, raw, `h${String(i).padStart(2, '0')}`);
+      const near = await book(env, home, 100, '2026-06-30');
+      const far = await book(env, home, 60, '2026-07-05');
+      const paymentId = (await credit(env, home.accountId, 200))!;
+      homes.push({ home, near, far, paymentId });
+    }
+
+    // One household whose three credits chase a single $40 booking: the first settles it, the
+    // other two have nothing left to claim. Pins the sequenced-vs-live outstanding separation
+    // inside the bulk path — the later credits are unresolved, yet each still OFFERS the booking
+    // at its LIVE $40, because a sitter may untick the first credit.
+    const seq = await household(env, raw, 'seq');
+    const seqBooking = await book(env, seq, 40, '2026-07-01');
+    const seqFirst = (await credit(env, seq.accountId, 40, '2026-06-01'))!;
+    const seqSecond = (await credit(env, seq.accountId, 40, '2026-06-02'))!;
+    const seqThird = (await credit(env, seq.accountId, 40, '2026-06-03'))!;
+
+    // A household whose declined booking still carries the $50 it took while pending: `Expected`
+    // in the bulk query must stay `CREDITABLE_AMOUNT_SQL` (zeroed once declined), the same rule
+    // `householdDetailFor` uses, or this booking's outstanding goes from -50 (never a candidate)
+    // to 50 (offered as one) — exactly the defect the single-account test above ("a declined
+    // booking is NOT offered as a candidate") already covers for the per-household path. `p_wdc`
+    // sorts after `p_seq` and before `p_zzz` below, so it slots straight into the account-id order
+    // the response is pinned to.
+    const declinedHome = await household(env, raw, 'wdc');
+    const declinedBooking = await book(env, declinedHome, 100, '2026-07-01', 'pending');
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
+      bookingRequestId: declinedBooking,
+      amount: 50,
+      method: 'cash',
+      paidDate: '2026-06-15',
+      note: null,
+      externalRef: null,
+    });
+    expect(
+      await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declinedBooking, 'declined'),
+    ).toBe(true);
+    const declinedUnpaid = await book(env, declinedHome, 100, '2026-07-01');
+    const declinedPaymentId = (await credit(env, declinedHome.accountId, 100))!;
+
+    // A household with an unpaid booking and NO credit: it must appear nowhere in the response,
+    // and a constant-cost reader must not pay a detail read for it either.
+    const quiet = await household(env, raw, 'zzz');
+    await book(env, quiet, 500, '2026-07-01');
+
+    const counted = countingEnv(env);
+    const res = await preview(counted.env, TENANT_C);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    // Households are read in account-id order (`buildAccounts` sorts them), so the response order
+    // is pinned too: p_h00…p_h39, then p_seq, then p_wdc. p_zzz never appears.
+    const expected = {
+      proposals: [
+        ...homes.map((h) => ({
+          accountId: h.home.accountId,
+          paymentId: h.paymentId,
+          amount: 200,
+          paidDate: '2026-07-01',
+          splits: [
+            {
+              bookingId: h.near,
+              amount: 100,
+              serviceType: 'boarding',
+              startDate: '2026-06-30',
+              status: 'confirmed',
+              outstanding: 100,
+            },
+            {
+              bookingId: h.far,
+              amount: 60,
+              serviceType: 'boarding',
+              startDate: '2026-07-05',
+              status: 'confirmed',
+              outstanding: 60,
+            },
+          ],
+          remainder: 40,
+        })),
+        {
+          accountId: seq.accountId,
+          paymentId: seqFirst,
+          amount: 40,
+          paidDate: '2026-06-01',
+          splits: [
+            {
+              bookingId: seqBooking,
+              amount: 40,
+              serviceType: 'boarding',
+              startDate: '2026-07-01',
+              status: 'confirmed',
+              outstanding: 40,
+            },
+          ],
+          remainder: 0,
+        },
+        {
+          accountId: declinedHome.accountId,
+          paymentId: declinedPaymentId,
+          amount: 100,
+          paidDate: '2026-07-01',
+          splits: [
+            {
+              bookingId: declinedUnpaid,
+              amount: 100,
+              serviceType: 'boarding',
+              startDate: '2026-07-01',
+              status: 'confirmed',
+              outstanding: 100,
+            },
+          ],
+          remainder: 0,
+        },
+      ],
+      unresolved: [seqSecond, seqThird].map((paymentId, index) => ({
+        accountId: seq.accountId,
+        paymentId,
+        amount: 40,
+        paidDate: `2026-06-0${index + 2}`,
+        reason: 'no-unpaid-bookings',
+        detail: `No unpaid bookings to attribute payment ${paymentId} against.`,
+        bookings: [
+          {
+            bookingId: seqBooking,
+            serviceType: 'boarding',
+            startDate: '2026-07-01',
+            status: 'confirmed',
+            outstanding: 40,
+          },
+        ],
+      })),
+    };
+    expect(body).toEqual(expected);
+
+    expect(counted.prepares()).toBeLessThan(MAX_PREVIEW_PREPARES);
   });
 });

@@ -3081,13 +3081,15 @@ export const adminRoutes = new Hono<AppEnv>()
    * route gives.
    *
    * THE OMITTED-`accountId` PATH USES `getHouseholdsWithUnappliedCredits`, NOT A LOOP OF
-   * `getHouseholdDetail` PLUS `listPaymentsForAccount` — one household is cheap, but both of those
-   * independently reload the FULL tenant-wide account graph on every call
-   * (`loadAccountGraph`/`householdPetIds`), so looping either once per household would pay for
-   * that reload N times, sequentially, for a single preview. The tenant-wide reader loads the
-   * graph once, reads every household-level payment of the tenant in one query, and only pays for
-   * a household's detail read at all when that household actually has a credit to place (see its
-   * own doc comment in `server/db/repo.ts`).
+   * `getHouseholdDetail` PLUS `listPaymentsForAccount`, AND THIS IS A HARD CONSTRAINT RATHER THAN A
+   * PREFERENCE: the panel ALWAYS previews tenant-wide (`AttributionPanel.tsx` never sends an
+   * `accountId`), Cloudflare counts every D1 query against a per-invocation subrequest ceiling of
+   * 50 on the Workers Free plan, and any per-household read multiplies by the tenant's household
+   * count. A real 53-household account issued 216 of them and the feature simply did not run. The
+   * tenant-wide reader is a CONSTANT six queries for any tenant, whatever its size — see its own
+   * doc comment in `server/db/repo.ts`, and the prepare-counting test in
+   * `server/__tests__/payment-attribution-routes.test.ts` that fails if a per-household read ever
+   * comes back.
    */
   .post('/:slug/admin/payments/attribute/preview', async (c) => {
     const tenant = c.get('tenant');
