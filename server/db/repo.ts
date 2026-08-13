@@ -2561,8 +2561,9 @@ function assembleHouseholdDetail(
   return {
     accountId: household.accountId,
     // `household.bookingIds` is already ordered (the booking query sorts by StartDate, then Id)
-    // — reusing that order rather than the IN-clause's own row order keeps the detail list in the
-    // same sequence a sitter would expect a statement to read in.
+    // — reusing that order keeps the detail list in the same sequence a sitter would expect a
+    // statement to read in, for both callers: the IN-clause `householdDetailFor` issues and the
+    // tenant-wide, no-IN-clause read `bulkHouseholdDetails` issues.
     bookings: household.bookingIds.map((bookingId) => {
       const row = bookingsById.get(bookingId)!;
       return {

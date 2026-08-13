@@ -302,6 +302,66 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     });
   });
 
+  it("a second tenant's households, bookings and credits are invisible to a tenant-wide preview", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const booking = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 250))!;
+
+    // TENANT_A: a fully independent household, with its own booking and its own credit — ordinary
+    // data that must never surface in TENANT_C's tenant-wide preview.
+    const foreignHome = await household(env, raw, 'zeke', TENANT_A);
+    const foreignBooking = await book(env, foreignHome, 500, '2026-07-01', 'confirmed', TENANT_A);
+    const foreignPaymentId = (await credit(
+      env,
+      foreignHome.accountId,
+      500,
+      '2026-07-01',
+      TENANT_A,
+    ))!;
+
+    // A booking tagged TENANT_A but pointed at TENANT_C's OWN household (`home`'s real owner and
+    // pet) — the exact row shape `WHERE b.TenantId = ?` exists to exclude. `foreignHome` above
+    // can't discriminate the bulk queries' tenant scoping on its own: an unrelated tenant's
+    // owner/pet ids never match this tenant's account graph, so its booking falls out as
+    // unattached whether or not the SQL filters by tenant (`buildHouseholdBalances` drops any
+    // booking whose owner/pets resolve to no household). This one reuses `home`'s real ids, so
+    // ONLY the TenantId predicate stands between it and `jen`'s statement — if the bulk read ever
+    // stops filtering by tenant, this $999 booking joins the split below.
+    const crossTenantBooking = await book(env, home, 999, '2026-07-02', 'confirmed', TENANT_A);
+
+    const res = await preview(env, TENANT_C);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    const proposal = body.proposals[0];
+    expect(proposal.accountId).toBe(home.accountId);
+    expect(proposal.paymentId).toBe(paymentId);
+    // $250 credit against ONLY the $100 real booking — $150 left over, not applied to the
+    // cross-tenant booking that a leaking read would have offered it to.
+    expect(proposal.remainder).toBe(150);
+    expect(proposal.splits).toEqual([
+      {
+        bookingId: booking,
+        amount: 100,
+        serviceType: 'boarding',
+        startDate: '2026-07-01',
+        status: 'confirmed',
+        outstanding: 100,
+      },
+    ]);
+
+    const bookingIdsInBody = new Set(
+      body.proposals.flatMap((p) => p.splits.map((s) => s.bookingId)),
+    );
+    expect(bookingIdsInBody.has(crossTenantBooking)).toBe(false);
+    expect(bookingIdsInBody.has(foreignBooking)).toBe(false);
+    expect(body.proposals.some((p) => p.accountId === foreignHome.accountId)).toBe(false);
+    expect(body.proposals.some((p) => p.paymentId === foreignPaymentId)).toBe(false);
+  });
+
   it('previewing every household loads the account graph ONCE, not once per household', async () => {
     const { env, raw } = createTestEnv();
     // Three households, each with real work to do, so a per-household reload would show up as a
@@ -901,6 +961,29 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
     const seqSecond = (await credit(env, seq.accountId, 40, '2026-06-02'))!;
     const seqThird = (await credit(env, seq.accountId, 40, '2026-06-03'))!;
 
+    // A household whose declined booking still carries the $50 it took while pending: `Expected`
+    // in the bulk query must stay `CREDITABLE_AMOUNT_SQL` (zeroed once declined), the same rule
+    // `householdDetailFor` uses, or this booking's outstanding goes from -50 (never a candidate)
+    // to 50 (offered as one) — exactly the defect the single-account test above ("a declined
+    // booking is NOT offered as a candidate") already covers for the per-household path. `p_wdc`
+    // sorts after `p_seq` and before `p_zzz` below, so it slots straight into the account-id order
+    // the response is pinned to.
+    const declinedHome = await household(env, raw, 'wdc');
+    const declinedBooking = await book(env, declinedHome, 100, '2026-07-01', 'pending');
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
+      bookingRequestId: declinedBooking,
+      amount: 50,
+      method: 'cash',
+      paidDate: '2026-06-15',
+      note: null,
+      externalRef: null,
+    });
+    expect(
+      await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declinedBooking, 'declined'),
+    ).toBe(true);
+    const declinedUnpaid = await book(env, declinedHome, 100, '2026-07-01');
+    const declinedPaymentId = (await credit(env, declinedHome.accountId, 100))!;
+
     // A household with an unpaid booking and NO credit: it must appear nowhere in the response,
     // and a constant-cost reader must not pay a detail read for it either.
     const quiet = await household(env, raw, 'zzz');
@@ -912,7 +995,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
     const body = (await res.json()) as PreviewBody;
 
     // Households are read in account-id order (`buildAccounts` sorts them), so the response order
-    // is pinned too: p_h00…p_h39, then p_seq. p_zzz never appears.
+    // is pinned too: p_h00…p_h39, then p_seq, then p_wdc. p_zzz never appears.
     const expected = {
       proposals: [
         ...homes.map((h) => ({
@@ -953,6 +1036,23 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
               startDate: '2026-07-01',
               status: 'confirmed',
               outstanding: 40,
+            },
+          ],
+          remainder: 0,
+        },
+        {
+          accountId: declinedHome.accountId,
+          paymentId: declinedPaymentId,
+          amount: 100,
+          paidDate: '2026-07-01',
+          splits: [
+            {
+              bookingId: declinedUnpaid,
+              amount: 100,
+              serviceType: 'boarding',
+              startDate: '2026-07-01',
+              status: 'confirmed',
+              outstanding: 100,
             },
           ],
           remainder: 0,
