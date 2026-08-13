@@ -306,8 +306,9 @@ export function AttributionPanel({
    * instead of it.
    *
    * The failure itself goes to `handleError` UNWRAPPED, and that is load-bearing: `App.tsx`'s
-   * `handle` signs the sitter out on a 401/403 `ApiError` and names a disabled account by its
-   * `code` — both of which it can only do while the error is still an `ApiError`. Rewrapping the
+   * `handle` signs the sitter out on a 401/403 `ApiError` and routes a disabled account by
+   * `e.message === 'account_disabled'` — both `instanceof` checks, so both only work while the
+   * error is still an `ApiError`. (Not `e.code`: that is undefined on this route.) Rewrapping the
    * progress and the failure into one `new Error` threw the server's own message away, which for
    * an expired mid-run token left the sitter re-pressing Apply forever, never told to sign in.
    */
@@ -468,10 +469,20 @@ export function AttributionPanel({
         // the refusals to prove it when she re-applies. Only what comes AFTER the in-flight chunk
         // was truly never attempted.
         setFailureNote(
-          `${applied} of the ${toApply.length} you approved ${applied === 1 ? 'was' : 'were'} applied. ` +
+          // Skipped ones are named too, or the three counts read like they should sum to the
+          // total and quietly don't — the server can refuse a credit inside a chunk that
+          // otherwise succeeded, and those live in the result banner above, not here.
+          `${applied} of the ${toApply.length} you approved ${applied === 1 ? 'was' : 'were'} applied` +
+            (skipped.length > 0
+              ? ` and ${skipped.length} ${skipped.length === 1 ? 'was' : 'were'} refused (listed above). `
+              : '. ') +
             `${chunk.length} ${chunk.length === 1 ? 'was' : 'were'} sent without an answer coming back, so ${chunk.length === 1 ? 'it may or may not have' : 'they may or may not have'} been recorded; ` +
             `${toApply.length - i - chunk.length} ${toApply.length - i - chunk.length === 1 ? 'was' : 'were'} not attempted. ` +
-            'Press Apply again to pick up the rest — anything already recorded comes back refused as already attributed, so nothing can be applied twice.',
+            // Deliberately does NOT promise the words the refusal will use. Re-applying an
+            // already-recorded credit refuses with "… is not a household-level payment of account
+            // …" (repo.ts), because the source row is gone — accurate, but it reads like a
+            // wrong-account error to anyone told to expect "already attributed".
+            'Press Apply again to pick up the rest. Nothing can be applied twice: a credit that was already recorded comes back as a refusal rather than a second payment, whatever wording it uses.',
         );
         break;
       }
@@ -566,6 +577,9 @@ export function AttributionPanel({
         </p>
       )}
 
+      {/* `status`, not `alert` as every other `pb-error` here uses: this is progress information
+          that always fires alongside App's own `role="alert"` banner, and two simultaneous
+          assertive announcements talk over each other. */}
       {failureNote && (
         <p className="pb-error" role="status">
           {failureNote}
