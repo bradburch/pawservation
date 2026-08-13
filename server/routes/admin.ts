@@ -6,6 +6,7 @@ import {
   addCoOwnerToPets,
   addEndUserPet,
   addPetOwner,
+  applyAttribution,
   clearProviderConnection,
   countBookingsForService,
   countBookingsForUser,
@@ -20,6 +21,8 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
+  getHouseholdDetail,
+  getHouseholdsWithUnappliedCredits,
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
@@ -48,6 +51,7 @@ import {
   listEndUserPets,
   listOwnerPetLinks,
   listPaymentExternalRefs,
+  listPaymentsForAccount,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetNamesForTenantBookings,
@@ -74,6 +78,7 @@ import {
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
+import { expandImportedRefs, proposeAttribution } from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
 import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
@@ -240,7 +245,12 @@ async function loadPaymentMatchInputs(
   }
   return {
     clients,
-    alreadyImported: new Set(refs),
+    // NOT `new Set(refs)`: attribution rewrites an imported payment's `ExternalRef` and deletes
+    // the row that carried the original, so the live column alone no longer answers "has this
+    // tenant already recorded this transaction". `expandImportedRefs` adds back the original
+    // behind every derived ref, which is what stops a re-upload of an already-attributed export
+    // recording the whole file a second time. Both importers read this one set.
+    alreadyImported: expandImportedRefs(refs),
     households: [...labelsByAccount]
       .map(([accountId, labels]) => ({ accountId, label: labels.join(' & ') }))
       .sort((a, b) => a.label.localeCompare(b.label)),
@@ -3035,6 +3045,334 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * PREVIEW HOW A SITTER'S IMPORTED HOUSEHOLD CREDITS WOULD SETTLE (Task 3 of payment
+   * attribution) — for each unapplied account-level credit of one household, or of every
+   * household when `accountId` is omitted, asks the PURE `proposeAttribution`
+   * (server/lib/payment-attribution.ts) how it would split against that household's unpaid
+   * bookings. Read-only: it never calls `applyAttribution`, so nothing here ever moves money —
+   * only the sitter's own explicit "apply" action (a later task) does that.
+   *
+   * "Unapplied account-level credit" needs no extra query of its own: `Payments.AccountId` and
+   * `Payments.BookingRequestId` are mutually exclusive by `CHECK`, so every row
+   * `listPaymentsForAccount` returns for a household IS an unapplied credit — one already
+   * attributed to a booking would carry `BookingRequestId` instead and simply not be in that list.
+   *
+   * CANDIDATE BOOKINGS ARE RESTRICTED TO `outstanding > 0`, computed here from
+   * `getHouseholdDetail`'s own `expected`/`paidTotal` (the same figures the household balance is
+   * built from) rather than trusted from anywhere else. This is the fix a prior review asked for:
+   * `getHouseholdDetail` also lists `declined` bookings, whose `expected` is zeroed by
+   * `CREDITABLE_AMOUNT_SQL` but which can still carry a payment recorded before they were
+   * declined (`insertPayment` allows it while a booking is still pending) — leaving a NEGATIVE
+   * outstanding. Handing that straight to `proposeAttribution` would trip its own
+   * unreadable-amount guard and refuse the household's ENTIRE credit, not just skip the one
+   * booking nobody will ever bill (`insertPayment`'s payability predicate already refuses a
+   * declined booking, so a split onto one would settle a stay that can never be collected on).
+   * Filtering to `outstanding > 0` before the pure module ever sees the list is what keeps a
+   * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
+   *
+   * `accountId` is resolved the way every other household read resolves it — by asking
+   * `getHouseholdDetail` for the CURRENT id, never by equality on whatever the caller happened to
+   * send — because a household's account id is its lexicographically-first pet and a newly added
+   * pet renames it (see `householdPetIds`). An id `getHouseholdDetail` cannot resolve for this
+   * tenant — another tenant's, or no household at all — is the same 404 every sibling household
+   * route gives.
+   *
+   * THE OMITTED-`accountId` PATH USES `getHouseholdsWithUnappliedCredits`, NOT A LOOP OF
+   * `getHouseholdDetail` PLUS `listPaymentsForAccount` — one household is cheap, but both of those
+   * independently reload the FULL tenant-wide account graph on every call
+   * (`loadAccountGraph`/`householdPetIds`), so looping either once per household would pay for
+   * that reload N times, sequentially, for a single preview. The tenant-wide reader loads the
+   * graph once, reads every household-level payment of the tenant in one query, and only pays for
+   * a household's detail read at all when that household actually has a credit to place (see its
+   * own doc comment in `server/db/repo.ts`).
+   */
+  .post('/:slug/admin/payments/attribute/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ accountId?: unknown }>()
+      .catch(() => ({}) as { accountId?: unknown });
+    const requestedAccountId =
+      typeof body.accountId === 'string' && body.accountId !== '' ? body.accountId : undefined;
+
+    const targets: {
+      accountId: string;
+      detail: NonNullable<Awaited<ReturnType<typeof getHouseholdDetail>>>;
+      credits: Awaited<ReturnType<typeof listPaymentsForAccount>>;
+    }[] = [];
+    if (requestedAccountId !== undefined) {
+      const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, requestedAccountId);
+      if (!detail) return c.json({ error: 'Not found.' }, 404);
+      const credits = await listPaymentsForAccount(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        detail.accountId,
+      );
+      if (credits.length > 0) targets.push({ accountId: detail.accountId, detail, credits });
+    } else {
+      const candidates = await getHouseholdsWithUnappliedCredits(c.env.PAWSERVATION_DB, tenant.Id);
+      for (const { accountId, detail, credits } of candidates)
+        targets.push({ accountId, detail, credits });
+    }
+
+    const proposals: {
+      accountId: string;
+      paymentId: string;
+      amount: number;
+      paidDate: string;
+      splits: {
+        bookingId: string;
+        amount: number;
+        serviceType: string;
+        startDate: string;
+        status: string;
+        // Declared, not merely emitted: the panel's over-split guard reads this, so dropping it
+        // must be a type error rather than a silent `undefined` that quietly disables the guard.
+        outstanding: number;
+      }[];
+      remainder: number;
+    }[] = [];
+    const unresolved: {
+      accountId: string;
+      paymentId: string;
+      amount: number;
+      paidDate: string;
+      reason: string;
+      detail: string;
+      bookings: {
+        bookingId: string;
+        serviceType: string;
+        startDate: string;
+        status: string;
+        outstanding: number;
+      }[];
+    }[] = [];
+
+    for (const { accountId, detail, credits } of targets) {
+      // outstanding > 0 only — see the doc comment above for why this must happen before
+      // proposeAttribution ever sees the list.
+      const candidates = detail.bookings.filter((b) => b.expected - b.paidTotal > 0);
+      const staticById = new Map(
+        candidates.map((b) => [
+          b.bookingId,
+          {
+            bookingId: b.bookingId,
+            serviceType: b.serviceType,
+            startDate: b.startDate,
+            status: b.status,
+          },
+        ]),
+      );
+      // MUTABLE, and carried forward across this household's credits — a household's credits are
+      // NOT independent proposals against the same fixed list. Each one is proposed against
+      // whatever is still outstanding after every earlier credit's splits are subtracted, so a
+      // $40 booking with three $40 credits gets ONE proposal, not three each claiming the full
+      // $40. A booking that reaches 0 here simply stops appearing with positive outstanding, and
+      // `proposeAttribution` already treats "no candidate with outstanding > 0" as
+      // `no-unpaid-bookings` — the true answer for a later credit with nothing left to attach to.
+      const outstandingById = new Map(
+        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      );
+      // The booking's genuinely LIVE outstanding — never decremented as this loop works through
+      // the household's credits, unlike `outstandingById` above. `outstandingById` still has to
+      // drive `proposeAttribution` itself (it genuinely needs to know what an earlier credit in
+      // THIS batch already claimed, or it would double-propose the same dollar to two credits).
+      // But the figure sent to the CLIENT for display/capping must not be that sequenced number:
+      // it is true only if the sitter applies this exact batch, unedited, in this exact order,
+      // and presenting it as "outstanding" false-blocks a sitter who edits or reorders — e.g.
+      // excludes an earlier credit and raises a later one to settle the booking outright, which
+      // the server would accept (see task-5-report.md, round 2). So every `outstanding` field
+      // returned below — on a resolved split AND on an ambiguous credit's candidate bookings —
+      // reads this map instead, and so does the membership test deciding WHICH candidate
+      // bookings an ambiguous credit is offered.
+      //
+      // Accepted consequence: two credits proposed within the SAME household preview can each
+      // report the booking's full live outstanding, so a sitter could compose a batch that
+      // over-attributes across them (e.g. approve both credits above at full value). That's
+      // already caught server-side — `applyAttribution`'s loop is sequential and each call
+      // re-reads live state, so the second attribution in such a batch is refused with a reason
+      // this panel already surfaces (`AttributionPanel.tsx`'s skipped-reason rendering). Blocking
+      // it here too would be a nice-to-have; blocking a legal single settlement, which is what
+      // this fixes, is not acceptable.
+      const liveOutstandingById = new Map(
+        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      );
+
+      // Oldest PAID date first, tied-broken by payment id for a stable order across runs: the
+      // money that arrived first is the money that settled the earliest stay, so it gets first
+      // claim on a booking's outstanding before any later credit sees it.
+      const orderedCredits = [...credits].sort((a, b) => {
+        if (a.PaidDate !== b.PaidDate) return a.PaidDate < b.PaidDate ? -1 : 1;
+        return a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0;
+      });
+
+      for (const row of orderedCredits) {
+        const unpaidBookings = candidates.map((b) => ({
+          bookingId: b.bookingId,
+          startDate: b.startDate,
+          outstanding: outstandingById.get(b.bookingId)!,
+        }));
+        const proposal = proposeAttribution(
+          { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
+          unpaidBookings,
+        );
+        if (proposal.ok) {
+          proposals.push({
+            accountId,
+            paymentId: proposal.paymentId,
+            amount: row.Amount,
+            paidDate: row.PaidDate,
+            splits: proposal.splits.map((s) => ({
+              amount: s.amount,
+              ...staticById.get(s.bookingId)!,
+              outstanding: liveOutstandingById.get(s.bookingId)!,
+            })),
+            remainder: proposal.remainder,
+          });
+          // Carry the decrement forward for the next credit in this household.
+          for (const s of proposal.splits)
+            outstandingById.set(s.bookingId, outstandingById.get(s.bookingId)! - s.amount);
+        } else {
+          unresolved.push({
+            accountId,
+            paymentId: proposal.paymentId,
+            amount: row.Amount,
+            paidDate: row.PaidDate,
+            reason: proposal.reason,
+            detail: proposal.detail,
+            // Membership is decided by the LIVE figure, not the sequenced one, for the same
+            // reason the reported figure is: a booking an earlier credit in this preview drove
+            // to zero is still a booking the sitter may legitimately choose here, once they
+            // untick that earlier credit. Filtering on the sequenced value removed the option
+            // altogether — the same false-block as the cap, one level up.
+            bookings: unpaidBookings
+              .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
+              .map((b) => ({
+                ...staticById.get(b.bookingId)!,
+                outstanding: liveOutstandingById.get(b.bookingId)!,
+              })),
+          });
+        }
+      }
+    }
+
+    return c.json({ proposals, unresolved });
+  })
+
+  /**
+   * APPLY THE ATTRIBUTIONS A SITTER APPROVED (Task 4 of payment attribution) — the only route in
+   * this feature that moves money. The browser supplies only WHICH payment goes on which bookings
+   * and in what amounts; everything else is re-derived from live state, because the browser's copy
+   * is a snapshot from whenever the preview ran and money moves in between.
+   *
+   * `applyAttribution` (server/db/repo.ts) does the re-derivation: it re-reads the source payment
+   * (its `Amount` is the only authority, never the caller's), re-checks conservation
+   * (`sum(splits) + remainder === Amount` exactly, whole dollars), re-reads EVERY TARGET BOOKING'S
+   * OWN LIVE OUTSTANDING (`getHouseholdDetail`'s `expected - paidTotal`) and refuses any split that
+   * would exceed it, resolves the household by pet-id MEMBERSHIP rather than `AccountId` equality
+   * (an account id is the household's lexicographically-first pet and moves when a pet is added —
+   * see its own doc comment), and writes the whole thing as one `db.batch` so a partially-applied
+   * attribution can never happen. This route does not re-implement any of that; it is a thin
+   * per-item loop around it.
+   *
+   * THE LOOP BELOW IS SEQUENTIAL — `await`ed one attribution at a time, deliberately not
+   * `Promise.all`'d — which is what makes the per-booking outstanding re-check above effective
+   * ACROSS a batch, not just within one attribution: two attributions in the same request that both
+   * land on the same booking (a hand-crafted body, or a stale preview reused after the sitter
+   * settled that booking some other way) commit one after the other, so the second one's re-read
+   * sees the first one's write already applied and refuses the overpay, rather than both reading a
+   * stale pre-batch snapshot and both succeeding.
+   *
+   * EACH ATTRIBUTION IS ITS OWN try/catch, so one failure — a booking since paid, a payment since
+   * attributed by an earlier request in this same array, a genuine fault — cannot abort the rest of
+   * a batch the sitter approved together. A payment `applyAttribution` can no longer find as a
+   * household-level payment of the given account (because an earlier call already attributed or
+   * deleted it) comes back as an ordinary refusal, not a throw — which is what makes a double-submit
+   * of the exact same body apply once: the second call's `applyAttribution` re-reads the row, finds
+   * it gone, and skips with a reason instead of duplicating the money.
+   *
+   * BODY SHAPE IS VALIDATED IN FULL BEFORE ANYTHING IS APPLIED — a structurally malformed
+   * attribution (wrong types, missing fields) is a 400 for the WHOLE request with nothing written,
+   * the same posture the CSV-import route above takes toward a malformed `choices` list. That is a
+   * different failure than a well-formed attribution `applyAttribution` refuses on the merits (bad
+   * conservation, foreign booking, vanished payment, wrong tenant) — those are reported per-item in
+   * `skipped`, never as a 400, so one bad row in an otherwise-good batch doesn't block the rest.
+   */
+  .post('/:slug/admin/payments/attribute/apply', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ attributions?: unknown }>()
+      .catch(() => ({}) as { attributions?: unknown });
+    if (!Array.isArray(body.attributions) || body.attributions.length === 0)
+      return c.json({ error: 'Choose at least one attribution to apply.' }, 400);
+
+    const attributions: {
+      paymentId: string;
+      accountId: string;
+      splits: { bookingId: string; amount: number }[];
+      remainder: number;
+    }[] = [];
+    for (const raw of body.attributions) {
+      // `typeof null === 'object'`, so a `null` element must be turned away before the property
+      // reads below ever run on it — otherwise a malformed `[null]` body 500s instead of 400ing.
+      if (typeof raw !== 'object' || raw === null)
+        return c.json({ error: 'That list of attributions is malformed.' }, 400);
+      const a = raw as {
+        paymentId?: unknown;
+        accountId?: unknown;
+        splits?: unknown;
+        remainder?: unknown;
+      };
+      if (
+        typeof a.paymentId !== 'string' ||
+        a.paymentId === '' ||
+        typeof a.accountId !== 'string' ||
+        a.accountId === '' ||
+        !Array.isArray(a.splits) ||
+        typeof a.remainder !== 'number'
+      )
+        return c.json({ error: 'That list of attributions is malformed.' }, 400);
+
+      const splits: { bookingId: string; amount: number }[] = [];
+      for (const rawSplit of a.splits) {
+        if (typeof rawSplit !== 'object' || rawSplit === null)
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        const s = rawSplit as { bookingId?: unknown; amount?: unknown };
+        if (typeof s.bookingId !== 'string' || s.bookingId === '' || typeof s.amount !== 'number')
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        splits.push({ bookingId: s.bookingId, amount: s.amount });
+      }
+      attributions.push({
+        paymentId: a.paymentId,
+        accountId: a.accountId,
+        splits,
+        remainder: a.remainder,
+      });
+    }
+
+    let applied = 0;
+    const skipped: { paymentId: string; reason: string }[] = [];
+    for (const attribution of attributions) {
+      try {
+        const result = await applyAttribution(c.env.PAWSERVATION_DB, tenant.Id, attribution);
+        if (result.ok) applied++;
+        else skipped.push({ paymentId: attribution.paymentId, reason: result.reason });
+      } catch (err) {
+        // Genuine fault (not a refusal `applyAttribution` already turned into `{ ok: false }`) —
+        // skipped rather than allowed to abort the rest of a batch the sitter approved together,
+        // but logged so it's distinguishable from an ordinary refusal in the logs rather than
+        // collapsing into the same generic skip a sitter sees.
+        console.error('payment attribution apply failed', attribution.paymentId, err);
+        skipped.push({
+          paymentId: attribution.paymentId,
+          reason: `Payment ${attribution.paymentId} could not be applied due to an unexpected error; nothing was written for it.`,
+        });
+      }
+    }
+
+    return c.json({ applied, skipped });
   })
 
   /**

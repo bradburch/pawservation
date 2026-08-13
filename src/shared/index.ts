@@ -13,6 +13,8 @@ export {
   isWeekend,
   nightsBetween,
   getPacificDateStr,
+  parseDateUtc,
+  MS_PER_DAY,
   DATE_RE,
   DEFAULT_TIMEZONE,
 } from './util/dates.js';
@@ -84,6 +86,7 @@ export {
   type HouseholdBalances,
   type HouseholdBooking,
 } from './invoicing/balances.js';
+export { balancedRemainder } from './invoicing/attribution-splits.js';
 export {
   cancellationFee,
   validateCancellationTiers,

@@ -33,6 +33,8 @@ import {
   parseMixKey,
   quarterlyBreakdown,
 } from '../../src/shared/index.js';
+import { isUniqueViolation } from '../lib/db-errors';
+import { deriveAttributedRef } from '../lib/payment-attribution';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
 
@@ -1492,6 +1494,346 @@ export async function deleteAccountPayment(
 }
 
 /**
+ * APPLY ONE ATTRIBUTION — turn a household-level credit into the booking-level payments it
+ * actually settled, in ONE transaction. The riskiest write in this file: it is the only one that
+ * destroys money and re-creates it.
+ *
+ * A sitter who imported payment history has money recorded against a HOUSEHOLD and against no
+ * particular stay, so every booking still reads unpaid while the client reads "in credit".
+ * `proposeAttribution` (server/lib/payment-attribution.ts) DECIDES the split, purely; this applies
+ * it. The two are kept apart so the decision can be reviewed before any money moves.
+ *
+ * NOT AN UPDATE — A DELETE PLUS INSERTS. `Payments` carries
+ * `CHECK ((BookingRequestId IS NULL) <> (AccountId IS NULL))`: a row settles a booking OR a
+ * household, never both. The account-level row therefore cannot be re-pointed at a booking; it
+ * must be deleted and the booking-level rows created. Which is why EVERY statement goes in ONE
+ * `db.batch` — D1 runs a batch as a single transaction (the test shim wraps it in a real
+ * BEGIN/COMMIT too, see helpers.ts). A partially-applied attribution either duplicates the money
+ * or loses it, and best-effort cleanup afterwards is not good enough for a ledger.
+ *
+ * THE STATEMENTS ARE BUILT HERE rather than by calling `insertPayment`, `insertAccountPayment` and
+ * `deleteAccountPayment`: those three each `.run()` their own statement, so composing them would
+ * be three separate transactions, which is precisely the failure mode above. The column lists
+ * below are IDENTICAL to theirs, deliberately, so the two spellings cannot drift.
+ *
+ * They are plain `INSERT ... VALUES`, NOT `insertPayment`'s guarded `INSERT ... SELECT ... WHERE`.
+ * A guard that refuses inside a batch writes zero rows WITHOUT raising, and by the time
+ * `meta.changes` could be inspected the batch has committed — source row deleted, its money gone.
+ * So every guard runs BEFORE the batch, and every statement inside it writes exactly one row or
+ * throws.
+ *
+ * AND THE SOURCE ROW MUST STILL BE THERE WHEN THE BATCH RUNS. A zero-row DELETE does not raise, so
+ * two overlapping applies of the same payment would both pass every guard and the second would
+ * delete nothing and insert a second complete set of booking rows — money from nowhere. One
+ * in-batch statement therefore DEPENDS on the source row (see `guardedFirstSplit` below), so its
+ * absence aborts the transaction instead of quietly duplicating. This is enforced here rather than
+ * by serialising at the route: the ledger's integrity cannot rest on every future caller
+ * remembering to.
+ *
+ * THE SOURCE PAYMENT IS RE-READ HERE and its `Amount` is the only authority on how much money is
+ * in play; a caller-supplied figure is never trusted. `sum(splits) + remainder` must equal it
+ * EXACTLY — whole dollars, integer arithmetic, no rounding anywhere. That equation is
+ * CONSERVATION, and it is the reason attribution can never create or destroy money. Both figures
+ * are named in the refusal, because "the split doesn't add up" is unactionable without them.
+ *
+ * `ExternalRef` is MARKED, not dropped: `attr:1:<ref>`, `attr:2:<ref>`, … and `attr:r:<ref>` for
+ * the remainder (`deriveAttributedRef`, server/lib/payment-attribution.ts). The derived rows share
+ * `idx_Payments_Tenant_ExternalRef` (partial unique) with the source, so they cannot inherit it
+ * unchanged. The marker LEADS and the original is carried verbatim as the tail precisely so that
+ * recovery is unambiguous — a suffix cannot be undone against a key like `csv:<hash>:<rank>` that
+ * already ends in `:` plus digits. A source with no `ExternalRef` yields rows with none.
+ *
+ * THAT REWRITE IS ONLY HALF THE SCHEME, AND THE OTHER HALF IS NOT HERE. Deleting the source row
+ * removes the key both payment importers dedupe against, so on its own this would let the next
+ * upload of the same file record the payment a SECOND time — creating money, on the CSV
+ * importer's own documented expected case of overlapping monthly exports. What prevents that is
+ * `expandImportedRefs`, applied where the importers build their dedupe set (server/routes/admin.ts,
+ * `loadPaymentMatchInputs`): it adds the recovered original behind every derived ref, so an
+ * attributed key still reads as already-imported. Do not remove that call as redundant defence —
+ * it is the protection, not a belt on top of one. Pinned by
+ * server/__tests__/payment-attribution-reimport.test.ts, which drives both importers end to end.
+ *
+ * EVERY TARGET BOOKING'S OWN LIVE OUTSTANDING IS RE-READ TOO, from the same `getHouseholdDetail`
+ * that computes the balance this attribution must leave unchanged — a caller-supplied split is
+ * conservation-checked against the SOURCE payment above, but conservation alone cannot catch a
+ * split that is internally consistent yet lands more money on a booking than it still owes. That
+ * happens two ways: a stale client (a preview rendered before the booking was paid some other way,
+ * or before an earlier attribution in the SAME request already settled it — this function is
+ * called once per attribution, sequentially, by its one caller in `admin.ts`, so a second call in
+ * one batch sees the first one's write already committed) or a hand-crafted request. `expected` is
+ * `CREDITABLE_AMOUNT_SQL`, already 0 for a `declined` booking and `CancellationFee` (default 0) for
+ * a fee-free `cancelled` one, so a split against either is refused here as ordinary overpayment —
+ * no separate status check is needed, matching the preview's own `outstanding > 0` candidate
+ * filter rather than inventing a second rule for the same fact.
+ *
+ * A THIRD WAY TO OVER-FUND ONE BOOKING, caught before either of the above even runs a query: the
+ * SAME booking id named twice within one attribution's OWN splits. Checked in isolation against
+ * live outstanding, two splits on one booking can each individually be fine while summing past
+ * what it owes — so a duplicate booking id is refused outright rather than aggregated, on the same
+ * "refuse rather than guess" doctrine `proposeAttribution` already applies to a duplicate candidate.
+ */
+export async function applyAttribution(
+  db: D1Database,
+  tenantId: string,
+  input: {
+    paymentId: string;
+    accountId: string;
+    splits: { bookingId: string; amount: number }[];
+    remainder: number;
+  },
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const { paymentId, accountId, splits, remainder } = input;
+
+  if (splits.length === 0) {
+    return {
+      ok: false,
+      reason: `Attribution of payment ${paymentId} names no bookings; there is nothing to attribute it to.`,
+    };
+  }
+  const badSplit = splits.find((s) => !Number.isInteger(s.amount) || s.amount <= 0);
+  if (badSplit) {
+    return {
+      ok: false,
+      reason: `Split for booking ${badSplit.bookingId} is ${badSplit.amount}; every split must be a whole number of dollars greater than zero.`,
+    };
+  }
+  if (!Number.isInteger(remainder) || remainder < 0) {
+    return {
+      ok: false,
+      reason: `Remainder ${remainder} is not a whole, non-negative number of dollars.`,
+    };
+  }
+
+  // REFUSED OUTRIGHT, NOT AGGREGATED — the same booking id named twice in one attribution's
+  // splits (`[{B,100},{B,50}]`) would otherwise pass conservation (each split is individually
+  // positive and, checked in isolation below, individually within outstanding) while together
+  // over-funding B. Aggregating the two into one $150 comparison would also FIX that, but this
+  // refuses instead: two different figures for the same booking is not a shape `proposeAttribution`
+  // ever emits, so a caller sending it is either malformed or means something ambiguous (which of
+  // the two did the sitter actually intend?) — the same "refuse rather than guess" doctrine
+  // `proposeAttribution` itself applies to a duplicate candidate id
+  // (server/lib/payment-attribution.ts, `duplicate-booking-id`). Checked before any DB read: it
+  // needs nothing but the splits array itself.
+  const bookingIdCounts = new Map<string, number>();
+  for (const s of splits)
+    bookingIdCounts.set(s.bookingId, (bookingIdCounts.get(s.bookingId) ?? 0) + 1);
+  const duplicateBookingId = [...bookingIdCounts.entries()].find(([, count]) => count > 1)?.[0];
+  if (duplicateBookingId !== undefined) {
+    return {
+      ok: false,
+      reason: `Booking ${duplicateBookingId} appears more than once among this attribution's splits; refusing rather than risk applying part of the credit to it twice.`,
+    };
+  }
+
+  // MEMBERSHIP, NOT EQUALITY — `AccountId IN (householdPetIds)`, exactly as
+  // `listPaymentsForAccount` and `deleteAccountPayment` do it. The account id is the household's
+  // lexicographically-first pet and a pet added later RENAMES it, so a payment filed under the old
+  // name is still this household's money. Matching on equality here would leave a payment the
+  // sitter can see and can delete under the current account id impossible to ATTRIBUTE under it —
+  // fail-closed, but it strands precisely the households the anchor machinery exists for. The
+  // orphan fallback is `deleteAccountPayment`'s too: with no household, the id answers only for
+  // payments filed under itself (any split is then refused below, since an orphan has no bookings).
+  const petIds = (await householdPetIds(db, tenantId, accountId)) ?? [accountId];
+  const petPlaceholders = petIds.map(() => '?').join(', ');
+
+  // The row in the database is the authority — on the amount, and on this being a household-level
+  // payment of this tenant at all. `AccountId` comes back too: the remainder is re-filed under the
+  // id the source was filed under, not under the caller's, so leftover money never moves.
+  const source = await db
+    .prepare(
+      `SELECT Amount, AccountId, Method, PaidDate, Note, ExternalRef FROM Payments
+       WHERE TenantId = ? AND Id = ? AND AccountId IN (${petPlaceholders})
+         AND BookingRequestId IS NULL`,
+    )
+    .bind(tenantId, paymentId, ...petIds)
+    .first<{
+      Amount: number;
+      AccountId: string;
+      Method: PaymentMethod;
+      PaidDate: string;
+      Note: string | null;
+      ExternalRef: string | null;
+    }>();
+  if (!source) {
+    return {
+      ok: false,
+      reason: `Payment ${paymentId} is not a household-level payment of account ${accountId} in this tenant.`,
+    };
+  }
+
+  const attributed = splits.reduce((sum, s) => sum + s.amount, 0) + remainder;
+  if (attributed !== source.Amount) {
+    return {
+      ok: false,
+      reason: `Attribution of payment ${paymentId} accounts for $${attributed} (splits plus remainder) but the payment is $${source.Amount}; refusing rather than create or destroy money.`,
+    };
+  }
+
+  // "Is this booking in this household, and what does it still owe RIGHT NOW" is asked of
+  // `getHouseholdDetail` — the same tenant-scoped rollup that computes the balance this attribution
+  // must leave unchanged — rather than a fresh predicate written here, so the two can never come to
+  // mean different things. A `null` detail (the account id names no household) leaves the map empty
+  // and every split is refused.
+  const detail = await getHouseholdDetail(db, tenantId, accountId);
+  const outstandingByBooking = new Map(
+    (detail?.bookings ?? []).map((b) => [b.bookingId, b.expected - b.paidTotal]),
+  );
+  const foreign = splits.find((s) => !outstandingByBooking.has(s.bookingId));
+  if (foreign) {
+    return {
+      ok: false,
+      reason: `Booking ${foreign.bookingId} is not a booking of account ${accountId} in this tenant.`,
+    };
+  }
+
+  // LIVE OUTSTANDING, RE-READ HERE, NOT TRUSTED FROM THE CALLER — the fix for the defect a review
+  // caught at the REQUEST level, the same shape as the sequential-allocation bug `proposeAttribution`
+  // was already fixed against: nothing before this point ever compares a split to what its booking
+  // actually still owes, so two attributions in one batch (or a stale preview reused after the
+  // booking was settled some other way) could each land their full split on the SAME booking and
+  // overpay it. `getHouseholdDetail` is re-read fresh on every call, so the second of two
+  // applications in a batch — this function is called once per attribution, sequentially, awaited —
+  // sees the first one's write already committed and refuses rather than doubling it.
+  //
+  // `expected` is `CREDITABLE_AMOUNT_SQL`, which is already 0 for a `declined` booking and
+  // `CancellationFee` (defaulting to 0) for a `cancelled` one — so a split against a declined, or a
+  // fee-free-cancelled, booking is refused here with no separate status check: its outstanding is
+  // already <= 0, and every split is a positive whole dollar amount (checked above), so it can never
+  // clear this bar. A cancelled booking that DOES carry an assessed fee or a live charge is a genuine
+  // receivable and is allowed exactly as far as that fee/charge still goes, matching the preview's
+  // own `outstanding > 0` candidate filter.
+  const overpaid = splits.find((s) => s.amount > outstandingByBooking.get(s.bookingId)!);
+  if (overpaid) {
+    // Reported EXACTLY as computed, never clamped to 0 — a booking already sitting in credit
+    // (outstanding negative, because it was overpaid some other way) is a fact worth showing the
+    // sitter as-is; rounding it to "owes $0" would read as merely settled rather than already
+    // over-paid, which is a different, more actionable, situation.
+    const owed = outstandingByBooking.get(overpaid.bookingId)!;
+    // Negative outstanding is stated as over-paid rather than rendered `$-50`, which reads as a
+    // typo in a sitter-facing message; the figure itself is still reported exactly.
+    const standing = owed < 0 ? `is $${-owed} over-paid` : `owes $${owed}`;
+    return {
+      ok: false,
+      reason: `Booking ${overpaid.bookingId} ${standing} but this split names $${overpaid.amount}; refusing rather than overpay it.`,
+    };
+  }
+
+  // `attr:<segment>:<the source's own ref>` — see `deriveAttributedRef`
+  // (server/lib/payment-attribution.ts) for why the original is carried VERBATIM as the tail
+  // rather than suffixed. In short: this DELETE removes the last row holding the importers'
+  // idempotency key, so unless that key can be read back out of what attribution leaves behind,
+  // a re-upload of the same export records every attributed payment all over again.
+  const derivedRef = (segment: string) => deriveAttributedRef(source.ExternalRef, segment);
+
+  // THE FIRST SPLIT'S AMOUNT IS MULTIPLIED BY A LOOKUP OF THE SOURCE ROW, and that is load-bearing
+  // rather than decorative. Between the re-read above and this batch, another request applying the
+  // SAME payment can commit: its DELETE takes the source, and ours would then match zero rows —
+  // WITHOUT raising, because a zero-row DELETE is a perfectly ordinary result — leaving this batch
+  // to insert a second, complete set of booking rows. The household would gain `source.Amount` out
+  // of nothing. The unique index on `ExternalRef` catches that for IMPORTED payments only: it is
+  // PARTIAL (`WHERE ExternalRef IS NOT NULL`, sql/schema.sql), so every hand-recorded household
+  // payment — the common case — has no protection from it at all, and a double-clicked Apply
+  // button is the whole trigger.
+  //
+  // A vanished source makes the scalar subquery NULL and `amount * NULL` NULL, and the abort rests
+  // SPECIFICALLY on `Payments.Amount` being `INTEGER NOT NULL` (sql/schema.sql). Not on its
+  // `CHECK (Amount > 0)`: SQLite treats a CHECK that evaluates to NULL as SATISFIED, so the CHECK
+  // would let a NULL amount straight through. If that column is ever relaxed to nullable, this
+  // guard stops aborting SILENTLY and the duplicate-money race returns with no test failing —
+  // re-guard it here before touching the column. Absence RAISES instead of quietly writing, the
+  // same property the plain `INSERT ... VALUES` above protects. `splits` is non-empty here, so
+  // exactly one statement carries the guard, and one is enough: it takes the whole transaction
+  // down with it.
+  //
+  // ORDER MATTERS: the DELETE goes LAST. Ahead of the guard it would remove the very row the
+  // subquery looks for, and every attribution would abort.
+  const guardedFirstSplit = `? * (SELECT 1 FROM Payments
+      WHERE TenantId = ? AND Id = ? AND BookingRequestId IS NULL)`;
+
+  const statements = [
+    // Column list identical to insertPayment's.
+    ...splits.map((s, i) =>
+      db
+        .prepare(
+          `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
+           VALUES (?, ?, ?, ${i === 0 ? guardedFirstSplit : '?'}, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          tenantId,
+          s.bookingId,
+          ...(i === 0 ? [s.amount, tenantId, paymentId] : [s.amount]),
+          source.Method,
+          source.PaidDate,
+          source.Note,
+          derivedRef(String(i + 1)),
+        ),
+    ),
+  ];
+  // Whatever the splits did not claim stays where it was: household-level money, still visible as
+  // a credit, and still filed under the source's own account id. Zero writes no row at all rather
+  // than a $0 payment (`CHECK (Amount > 0)`).
+  if (remainder > 0) {
+    // Column list identical to insertAccountPayment's.
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, ExternalRef)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          tenantId,
+          source.AccountId,
+          remainder,
+          source.Method,
+          source.PaidDate,
+          source.Note,
+          derivedRef('r'),
+        ),
+    );
+  }
+  statements.push(
+    db
+      .prepare(
+        `DELETE FROM Payments
+         WHERE TenantId = ? AND Id = ? AND AccountId IN (${petPlaceholders})
+           AND BookingRequestId IS NULL`,
+      )
+      .bind(tenantId, paymentId, ...petIds),
+  );
+
+  try {
+    await db.batch(statements);
+  } catch (err) {
+    // A derived ref collides with one this tenant already holds. The batch rolled back, so the
+    // source payment is untouched and this is a refusal rather than a fault.
+    if (isUniqueViolation(err)) {
+      return {
+        ok: false,
+        reason: `Attribution of payment ${paymentId} would reuse an external reference this tenant already holds; nothing was written.`,
+      };
+    }
+    // The guard above fired, or something else did. Reported as a refusal ONLY when the source row
+    // is positively confirmed gone — the precondition this function checked and lost. Re-reading to
+    // decide is the difference between naming a race the sitter can retry past and swallowing a
+    // genuine database fault as though it were ordinary; anything still holding its source rethrows.
+    const stillThere = await db
+      .prepare('SELECT 1 FROM Payments WHERE TenantId = ? AND Id = ? AND BookingRequestId IS NULL')
+      .bind(tenantId, paymentId)
+      .first<{ 1: number }>();
+    if (!stillThere) {
+      return {
+        ok: false,
+        reason: `Payment ${paymentId} was attributed or deleted by another request while this attribution was being applied; nothing was written.`,
+      };
+    }
+    throw err;
+  }
+  return { ok: true };
+}
+
+/**
  * Add one extra charge to a booking. Uses insertPayment's INSERT...SELECT...WHERE idiom so the
  * tenant + existence guard is part of the same statement — a foreign booking id or the 'blocked'
  * sentinel inserts nothing and returns null (the route 404s on null).
@@ -2224,6 +2566,91 @@ export async function getHouseholdDetail(
   // concerned, and a drill-down that 404'd on it would strand the payment it lists.
   const resolved = resolveHousehold(graph, { accountId });
   return resolved ? householdDetailFor(db, tenantId, graph, resolved) : null;
+}
+
+/**
+ * EVERY HOUSEHOLD OF A TENANT THAT HOLDS AT LEAST ONE UNAPPLIED CREDIT, together with its detail
+ * (the bookings a credit might attribute against) and the credits themselves — everything the
+ * payment-attribution preview (Task 3) needs, in a number of reads that does NOT grow with how
+ * many households the tenant has.
+ *
+ * NAIVELY, "preview every household" means looping `getHouseholdDetail` AND
+ * `listPaymentsForAccount` once per household. Both independently call `loadAccountGraph` under
+ * the hood (`householdDetailFor`'s caller, and `listPaymentsForAccount`'s `householdPetIds`),
+ * reloading the FULL tenant-wide owner<->pet graph from scratch every time — for a tenant with
+ * hundreds of households, hundreds of redundant copies of the same two queries, sequentially, for
+ * one preview request. That is exactly the budget the calendar backfill's 200-event cap and the
+ * CSV importer's hoist to a constant 7 subrequests both exist to protect (Workers' per-request
+ * subrequest ceiling).
+ *
+ * So this loads the graph ONCE, reads every household-level payment of the tenant in ONE query
+ * (`Payments WHERE AccountId IS NOT NULL` — the same predicate `listPaymentsForAccount` applies
+ * per household) and buckets those rows into households by MEMBERSHIP using that one graph — live
+ * pets AND anchors, exactly as `householdPetIds` resolves them for a single household — rather
+ * than resolving membership once per household. Only a household that buckets at least one credit
+ * pays for the (unavoidably per-household) detail read at all; a household that has never
+ * prepaid costs nothing here, and never reaches `proposeAttribution` with an empty credit list.
+ *
+ * Deliberately NOT a change to `getHouseholdDetail`/`listPaymentsForAccount` themselves — a single
+ * account id is one household and already cheap, and every other caller of either wants exactly
+ * one household, not the whole tenant.
+ */
+export type HouseholdAttributionCandidate = {
+  accountId: string;
+  detail: HouseholdDetailRow;
+  credits: PaymentRow[];
+};
+
+export async function getHouseholdsWithUnappliedCredits(
+  db: D1Database,
+  tenantId: string,
+): Promise<HouseholdAttributionCandidate[]> {
+  const [graph, paymentsRes] = await Promise.all([
+    loadAccountGraph(db, tenantId),
+    // Column list identical to listPaymentsForAccount's — every household-level payment of the
+    // tenant, in one query instead of one per household.
+    db
+      .prepare(
+        `SELECT Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate, Note, CreatedAt
+         FROM Payments WHERE TenantId = ? AND AccountId IS NOT NULL
+         ORDER BY PaidDate DESC, CreatedAt DESC`,
+      )
+      .bind(tenantId)
+      .all<PaymentRow>(),
+  ]);
+
+  // Every pet id a payment may be filed under, mapped to the household it resolves to — live pets
+  // of each account, PLUS anchors for pets that have since died (buildPaymentAnchors) — the exact
+  // membership `householdPetIds` computes per call, built once here for the whole tenant instead.
+  const householdIdForPet = new Map<string, string>();
+  for (const account of graph.accounts) {
+    for (const petId of account.petIds) householdIdForPet.set(petId, account.id);
+  }
+  for (const [petId, accountId] of graph.anchors) householdIdForPet.set(petId, accountId);
+
+  const creditsByHousehold = new Map<string, PaymentRow[]>();
+  for (const row of paymentsRes.results) {
+    const accountId = row.AccountId === null ? undefined : householdIdForPet.get(row.AccountId);
+    // No household resolves this pet id (a `deleteCustomer` cascade orphaned it) — that payment is
+    // `getOrphanedAccountPayments`'s territory, not attributable to any household here.
+    if (!accountId) continue;
+    const list = creditsByHousehold.get(accountId) ?? [];
+    list.push(row);
+    creditsByHousehold.set(accountId, list);
+  }
+
+  const candidates = await Promise.all(
+    graph.accounts
+      .filter((account) => creditsByHousehold.has(account.id))
+      .map(async (account): Promise<HouseholdAttributionCandidate | null> => {
+        const resolved = resolveHousehold(graph, { accountId: account.id });
+        if (!resolved) return null;
+        const detail = await householdDetailFor(db, tenantId, graph, resolved);
+        if (!detail) return null;
+        return { accountId: account.id, detail, credits: creditsByHousehold.get(account.id)! };
+      }),
+  );
+  return candidates.filter((c): c is HouseholdAttributionCandidate => c !== null);
 }
 
 /**
