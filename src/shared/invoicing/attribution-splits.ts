@@ -29,8 +29,11 @@
  *   1  the "was the source taken from under us?" re-read, on the batch-abort path only
  *   = 7 worst case, 6 ordinarily
  *
- * plus 1 for the admin session lookup the route makes before any of that. 1 + 6 × 7 = 43, seven
- * subrequests clear of the ceiling. Those reads deliberately do NOT hoist out of the loop: each
+ * plus the request's own fixed overhead, which is `tenantMiddleware` → `resolveTenant`
+ * (server/lib/tenant-resolve.ts): 1 KV `get` when the tenant is cached, or `get` + a D1 read +
+ * `put` = 3 when it is not. `adminAuth` adds NOTHING — it verifies a JWT in-process and makes no
+ * binding call at all. So the worst case is 3 + 6 × 7 = 45, five subrequests clear of the ceiling.
+ * Those reads deliberately do NOT hoist out of the loop: each
  * attribution must see the previous one's write committed, which is what refuses a second credit
  * landing on a booking the first already settled (server/db/repo.ts, `applyAttribution`). Lower
  * this if the per-attribution cost ever rises; do not raise it to make a caller's life easier.

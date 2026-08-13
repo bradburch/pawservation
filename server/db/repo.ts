@@ -1685,10 +1685,8 @@ export async function applyAttribution(
   // `expected - paidTotal` from, minus the statement's payments, charge rows and totals, which no
   // guard here reads (see its doc comment for why that is a narrowing rather than a second rule).
   // A household this account id does not resolve to leaves the map empty and every split is refused,
-  // exactly as a `null` detail did.
-  const outstandingByBooking = resolved
-    ? await householdOutstandingByBooking(db, tenantId, graph, resolved.account)
-    : new Map<string, number>();
+  // exactly as a `null` detail did. The graph loaded above is handed back rather than re-read.
+  const outstandingByBooking = await householdOutstandingByBooking(db, tenantId, accountId, graph);
   const foreign = splits.find((s) => !outstandingByBooking.has(s.bookingId));
   if (foreign) {
     return {
@@ -2749,13 +2747,31 @@ async function bulkHouseholdDetails(
  *    payments move the household's totals, never which booking attaches where, and a household with
  *    no candidate bookings yields an empty map either way — every split then refused as foreign,
  *    exactly as a `null` detail did.
+ *
+ * EXPORTED ONLY SO THOSE THREE PROPERTIES CAN BE MECHANICALLY PINNED. `applyAttribution` is its
+ * one production caller. Prose asserting "the same answer as `getHouseholdDetail`" is worth
+ * nothing on its own: swapping the money expression here for `EXPECTED_AMOUNT_SQL` (a credit
+ * lands on a DECLINED booking) or for `BASE_AMOUNT_SQL` (a legitimate split covering a booking's
+ * extra charge is refused as overpayment) left the whole suite green, because every declined- and
+ * charge-bearing fixture in this feature's tests exercises the preview path instead. The
+ * equivalence test in `payment-attribution-repo.test.ts` compares this map against the one
+ * derived from `getHouseholdDetail` over a fixture carrying both, and both mutations now fail it.
  */
-async function householdOutstandingByBooking(
+export async function householdOutstandingByBooking(
   db: D1Database,
   tenantId: string,
-  graph: AccountGraph,
-  account: Account,
+  accountId: string,
+  /** The caller's already-loaded graph. `applyAttribution` has one (it resolved this household's
+   *  payment pet ids from it) and passing it back is what keeps this to TWO reads; omitting it
+   *  costs the two graph reads on top, which is the shape a test or a future caller wants. */
+  loadedGraph?: AccountGraph,
 ): Promise<Map<string, number>> {
+  const graph = loadedGraph ?? (await loadAccountGraph(db, tenantId));
+  // Same membership resolution `applyAttribution` already made — an in-memory find over a graph
+  // that is in hand, not a second query. An account id naming no household returns an empty map,
+  // and every split is then refused as foreign, exactly as a `null` detail did.
+  const account = resolveHousehold(graph, { accountId })?.account;
+  if (!account) return new Map();
   const owners = account.ownerIds.map(() => '?').join(', ');
   const pets = account.petIds.map(() => '?').join(', ');
   const bookingRes = await db

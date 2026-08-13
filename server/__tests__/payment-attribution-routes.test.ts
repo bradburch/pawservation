@@ -932,6 +932,13 @@ const READ_COST_HOUSEHOLDS = 40;
  * the statements handed to it are counted out again and the batch itself counted once. Prepares
  * remain the per-attribution regression signal (they scale with the reads a code path makes);
  * subrequests are what tells you whether a request fits.
+ *
+ * D1 ONLY, THOUGH. KV is a binding too and `resolveTenant` spends 1–2 of it per request (a `get`,
+ * plus a `put` when the tenant was not cached — the D1 read of that cold path IS counted here).
+ * So a figure of 37 below is really ~39 against the ceiling, and the true headroom is ~11 rather
+ * than 13. Left uncounted deliberately: this test exists to catch a per-attribution D1 regression,
+ * and the constant it is asserted against carries the KV overhead in its own arithmetic
+ * (MAX_ATTRIBUTIONS_PER_REQUEST, src/shared/invoicing/attribution-splits.ts).
  */
 function countingEnv(env: Env): {
   env: Env;

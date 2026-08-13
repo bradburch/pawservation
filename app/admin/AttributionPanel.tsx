@@ -301,6 +301,17 @@ export function AttributionPanel({
   // CalendarBackfillPanel shows its own. Null whenever one request covers the whole set.
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
   const [result, setResult] = useState<AttributionApplyResult | null>(null);
+  /**
+   * What a failed chunked run got through, shown ALONGSIDE the server's own error rather than
+   * instead of it.
+   *
+   * The failure itself goes to `handleError` UNWRAPPED, and that is load-bearing: `App.tsx`'s
+   * `handle` signs the sitter out on a 401/403 `ApiError` and names a disabled account by its
+   * `code` — both of which it can only do while the error is still an `ApiError`. Rewrapping the
+   * progress and the failure into one `new Error` threw the server's own message away, which for
+   * an expired mid-run token left the sitter re-pressing Apply forever, never told to sign in.
+   */
+  const [failureNote, setFailureNote] = useState<string | null>(null);
   // Snapshotted from `credits` at the moment `runApply` fires (CsvImportPanel's `chosenInfo`
   // idiom) — a `skipped` reason only names a `paymentId`, and by the time it's rendered a later
   // preview may have already rebuilt `credits` without that entry, or removed a since-applied one
@@ -317,12 +328,17 @@ export function AttributionPanel({
     setCredits(new Map());
     setResult(null);
     setResultInfo(new Map());
+    setFailureNote(null);
   };
 
   const runPreview = async () => {
     if (busy) return;
     clearError();
     setResult(null);
+    // Cleared with `result`, for the same reason and against the same staleness: a fresh preview
+    // is a fresh run, and a note about what the LAST Apply got through would read as if it were
+    // about the list now on screen.
+    setFailureNote(null);
     setBusy(true);
     try {
       const next = await adminApi.payments.attributePreview(session.slug, session.token);
@@ -410,6 +426,11 @@ export function AttributionPanel({
   const runApply = async () => {
     if (busy || toApply.length === 0 || hasBlockedIncluded) return;
     clearError();
+    // Cleared BEFORE the run, not merely overwritten after the first chunk succeeds: a run whose
+    // very first chunk throws would otherwise leave the PREVIOUS run's "Applied 5 attributions"
+    // banner sitting under a fresh error that says "what succeeded is already reflected above."
+    setResult(null);
+    setFailureNote(null);
     setBusy(true);
     // Snapshotted BEFORE the removals below touch `credits` — every id in `toApply` is still in
     // the map at this point, applied or skipped alike.
@@ -427,10 +448,6 @@ export function AttributionPanel({
     let applied = 0;
     const skipped: AttributionApplyResult['skipped'] = [];
     const appliedIds = new Set<string>();
-    // How many of `toApply` were never sent at all, because an earlier chunk threw. Reported
-    // rather than left to be inferred from a count that stopped moving: silently dropping the
-    // rest of a set the sitter approved is the failure this whole chunking exists to avoid.
-    let notAttempted = 0;
     let failure: unknown = null;
     for (let i = 0; i < toApply.length; i += APPLY_CHUNK_SIZE) {
       const chunk = toApply.slice(i, i + APPLY_CHUNK_SIZE);
@@ -444,7 +461,18 @@ export function AttributionPanel({
         if (chunked) setApplyStatus(`Applying — ${i + chunk.length} of ${toApply.length}…`);
       } catch (e) {
         failure = e;
-        notAttempted = toApply.length - i;
+        // THREE OUTCOMES, NOT TWO. The chunk that threw WAS SENT, so its fate is genuinely
+        // unknown — the request can fail after the server committed every write in it (a dropped
+        // connection on the response). Counting it with the ones that were never sent would tell
+        // the sitter that money which may well have moved was "not attempted", and then hand her
+        // the refusals to prove it when she re-applies. Only what comes AFTER the in-flight chunk
+        // was truly never attempted.
+        setFailureNote(
+          `${applied} of the ${toApply.length} you approved ${applied === 1 ? 'was' : 'were'} applied. ` +
+            `${chunk.length} ${chunk.length === 1 ? 'was' : 'were'} sent without an answer coming back, so ${chunk.length === 1 ? 'it may or may not have' : 'they may or may not have'} been recorded; ` +
+            `${toApply.length - i - chunk.length} ${toApply.length - i - chunk.length === 1 ? 'was' : 'were'} not attempted. ` +
+            'Press Apply again to pick up the rest — anything already recorded comes back refused as already attributed, so nothing can be applied twice.',
+        );
         break;
       }
     }
@@ -462,16 +490,8 @@ export function AttributionPanel({
       });
     if (appliedIds.size > 0 || !failure) await onApplied();
 
-    if (failure)
-      handleError(
-        applied > 0 || notAttempted > 0
-          ? new Error(
-              `Applied ${applied} attribution${applied === 1 ? '' : 's'} before this failed; ` +
-                `${notAttempted} of the ${toApply.length} you approved ${notAttempted === 1 ? 'was' : 'were'} not attempted. ` +
-                'What succeeded is already reflected above — press Apply again to pick up the rest.',
-            )
-          : failure,
-      );
+    // The failure itself, untouched — see `failureNote` above for why it is never rewrapped.
+    if (failure) handleError(failure);
   };
 
   // Filtered against the LIVE `credits` map, not the raw preview response — a credit `runApply`
@@ -543,6 +563,12 @@ export function AttributionPanel({
                 })
                 .join(' ')}`
             : ''}
+        </p>
+      )}
+
+      {failureNote && (
+        <p className="pb-error" role="status">
+          {failureNote}
         </p>
       )}
 
