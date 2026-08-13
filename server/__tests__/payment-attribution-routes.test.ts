@@ -10,6 +10,7 @@ import {
   updateBookingStatus,
 } from '../db/repo';
 import { adminHeaders, createTestEnv, seedPets, TENANT_A } from './helpers';
+import { MAX_ATTRIBUTIONS_PER_REQUEST } from '../../src/shared/index.js';
 import app from '../index';
 
 /**
@@ -923,17 +924,39 @@ const MAX_PREVIEW_PREPARES = 20;
  *  account that hit the ceiling in production once the old 4-reads-each is applied to it. */
 const READ_COST_HOUSEHOLDS = 40;
 
-/** Wraps a test env's D1 so every `prepare` is counted, exactly as the production measurement did. */
-function countingEnv(env: Env): { env: Env; prepares: () => number } {
+/**
+ * Wraps a test env's D1 so every `prepare` is counted, exactly as the production measurement did.
+ *
+ * `subrequests()` is the figure the 50-per-invocation ceiling is actually spent against, and it is
+ * NOT the prepare count: a `db.batch` is ONE binding call however many statements it carries, so
+ * the statements handed to it are counted out again and the batch itself counted once. Prepares
+ * remain the per-attribution regression signal (they scale with the reads a code path makes);
+ * subrequests are what tells you whether a request fits.
+ */
+function countingEnv(env: Env): {
+  env: Env;
+  prepares: () => number;
+  subrequests: () => number;
+} {
   let count = 0;
+  let batches = 0;
+  let batched = 0;
   const counted = {
     prepare: (sql: string) => {
       count++;
       return env.PAWSERVATION_DB.prepare(sql);
     },
-    batch: (statements: D1PreparedStatement[]) => env.PAWSERVATION_DB.batch(statements),
+    batch: (statements: D1PreparedStatement[]) => {
+      batches++;
+      batched += statements.length;
+      return env.PAWSERVATION_DB.batch(statements);
+    },
   } as unknown as D1Database;
-  return { env: { ...env, PAWSERVATION_DB: counted }, prepares: () => count };
+  return {
+    env: { ...env, PAWSERVATION_DB: counted },
+    prepares: () => count,
+    subrequests: () => count - batched + batches,
+  };
 }
 
 describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
@@ -1079,5 +1102,142 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
     expect(body).toEqual(expected);
 
     expect(counted.prepares()).toBeLessThan(MAX_PREVIEW_PREPARES);
+  });
+});
+
+/**
+ * THE READ COST OF AN APPLY, AND THE CAP THAT KEEPS ONE REQUEST INSIDE THE PLATFORM'S BUDGET —
+ * the same production blocker the preview above hit, one route along.
+ *
+ * `applyAttribution` re-reads the source payment AND every target booking's LIVE outstanding on
+ * every call, and that re-read is load-bearing correctness rather than overhead: it is what makes
+ * two credits landing on one booking in a single request refuse the second instead of doubling the
+ * money ("a batch that lands two credits on the same booking…" above). So the fix here is NOT the
+ * preview's hoist-to-a-constant — the per-attribution reads must stay per-attribution. The two
+ * independent things that CAN change are how much each one costs, and how many of them one request
+ * is allowed to carry.
+ *
+ * Both are asserted here against one cap-sized request, which is by construction the most
+ * expensive request this route can ever be asked to serve.
+ */
+
+/**
+ * What one attribution may cost in D1 prepares, in the shape the preview actually proposes (two
+ * splits plus a remainder). The reads are the account graph (2), the source payment (1), and the
+ * lean candidate-bookings + booking<->pet pair the outstanding guard needs (2) — five, plus the
+ * batch's own four statements. Ten leaves headroom for one honest extra read and no more: the
+ * `getHouseholdDetail` this used to call cost SIX reads on its own (a second account-graph load
+ * plus four detail reads, of which the household payments and the charge rows were read and thrown
+ * away), which put this at thirteen and the whole request past the ceiling below.
+ */
+const MAX_APPLY_PREPARES_PER_ATTRIBUTION = 10;
+
+/**
+ * Cloudflare's per-invocation subrequest ceiling on the Workers Free plan, which every D1 binding
+ * call is spent against (`docs/superpowers/specs/2026-08-09-calendar-backfill-design.md:52,144` —
+ * "Binding calls count."). Not a target to approach: the assertion below is what proves a
+ * cap-sized Apply fits inside it with room to spare.
+ */
+const WORKERS_SUBREQUEST_LIMIT = 50;
+
+describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-request cap', () => {
+  it('a cap-sized batch stays under the subrequest ceiling, and every attribution still applies', async () => {
+    const { env, raw } = createTestEnv();
+
+    // Every attribution carries the shape the preview proposes: two unpaid bookings at distinct
+    // distances from the credit's paid date, and a credit that overshoots both — two splits and a
+    // remainder, which is four statements in the batch rather than the cheapest possible one.
+    const homes: { home: Household; near: string; far: string; paymentId: string }[] = [];
+    for (let i = 0; i < MAX_ATTRIBUTIONS_PER_REQUEST; i++) {
+      const home = await household(env, raw, `a${i}`);
+      const near = await book(env, home, 100, '2026-06-30');
+      const far = await book(env, home, 60, '2026-07-05');
+      const paymentId = (await credit(env, home.accountId, 200))!;
+      homes.push({ home, near, far, paymentId });
+    }
+
+    const counted = countingEnv(env);
+    const res = await apply(counted.env, TENANT_C, {
+      attributions: homes.map((h) => ({
+        paymentId: h.paymentId,
+        accountId: h.home.accountId,
+        splits: [
+          { bookingId: h.near, amount: 100 },
+          { bookingId: h.far, amount: 60 },
+        ],
+        remainder: 40,
+      })),
+    });
+    expect(res.status).toBe(200);
+    // Cheap is worthless if it stopped applying things: every attribution landed, none skipped.
+    expect((await res.json()) as ApplyBody).toEqual({
+      applied: MAX_ATTRIBUTIONS_PER_REQUEST,
+      skipped: [],
+    });
+
+    // The money actually moved, per booking, exactly as named — a fast path that quietly refused
+    // (or quietly mis-split) would otherwise sail under both ceilings.
+    const rows = paymentRows(raw);
+    for (const h of homes) {
+      expect(rows.filter((r) => r.BookingRequestId === h.near)).toMatchObject([{ Amount: 100 }]);
+      expect(rows.filter((r) => r.BookingRequestId === h.far)).toMatchObject([{ Amount: 60 }]);
+      expect(rows.filter((r) => r.Id === h.paymentId)).toEqual([]); // source consumed
+    }
+
+    expect(counted.prepares() / MAX_ATTRIBUTIONS_PER_REQUEST).toBeLessThan(
+      MAX_APPLY_PREPARES_PER_ATTRIBUTION,
+    );
+    // The assertion the blocker is actually about. A batch is ONE binding call however many
+    // statements it holds, so this counts them out again — see `countingEnv`.
+    expect(counted.subrequests()).toBeLessThan(WORKERS_SUBREQUEST_LIMIT);
+  });
+
+  it('more attributions than the cap is a 400 with nothing written', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+    const before = paymentRows(raw);
+
+    // One valid attribution, repeated past the cap. The FIRST one would apply cleanly on its own,
+    // so nothing being written proves the cap refuses the whole request up front rather than
+    // applying what fits — a client is not trusted to chunk, and a partial apply it never asked
+    // for is worse than a refusal it can act on.
+    const one = {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId, amount: 100 }],
+      remainder: 0,
+    };
+    const res = await apply(env, TENANT_C, {
+      attributions: Array.from({ length: MAX_ATTRIBUTIONS_PER_REQUEST + 1 }, () => one),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      String(MAX_ATTRIBUTIONS_PER_REQUEST),
+    );
+    expect(paymentRows(raw)).toEqual(before);
+  });
+
+  it('exactly the cap is accepted', async () => {
+    const { env, raw } = createTestEnv();
+    const attributions: ApplyAttributionInput[] = [];
+    for (let i = 0; i < MAX_ATTRIBUTIONS_PER_REQUEST; i++) {
+      const home = await household(env, raw, `b${i}`);
+      const bookingId = await book(env, home, 100, '2026-07-01');
+      const paymentId = (await credit(env, home.accountId, 100))!;
+      attributions.push({
+        paymentId,
+        accountId: home.accountId,
+        splits: [{ bookingId, amount: 100 }],
+        remainder: 0,
+      });
+    }
+    const res = await apply(env, TENANT_C, { attributions });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as ApplyBody).toEqual({
+      applied: MAX_ATTRIBUTIONS_PER_REQUEST,
+      skipped: [],
+    });
   });
 });

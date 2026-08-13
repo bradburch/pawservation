@@ -1633,7 +1633,17 @@ export async function applyAttribution(
   // fail-closed, but it strands precisely the households the anchor machinery exists for. The
   // orphan fallback is `deleteAccountPayment`'s too: with no household, the id answers only for
   // payments filed under itself (any split is then refused below, since an orphan has no bookings).
-  const petIds = (await householdPetIds(db, tenantId, accountId)) ?? [accountId];
+  //
+  // The graph is loaded HERE and carried down to the outstanding read below, rather than each of
+  // them loading its own copy: resolving "which household is this?" and reading that household are
+  // one question asked twice, and this function is called once per attribution in a batch, so a
+  // duplicated pair of reads is duplicated once per approved credit. That is the same sharing
+  // `getHouseholdDetail` already does between `resolveHousehold` and `householdDetailFor` — NOT a
+  // hoist out of the per-attribution loop, which would break the live re-read the overpay guard
+  // below depends on.
+  const graph = await loadAccountGraph(db, tenantId);
+  const resolved = resolveHousehold(graph, { accountId });
+  const petIds = resolved?.paymentPetIds ?? [accountId];
   const petPlaceholders = petIds.map(() => '?').join(', ');
 
   // The row in the database is the authority — on the amount, and on this being a household-level
@@ -1670,14 +1680,15 @@ export async function applyAttribution(
   }
 
   // "Is this booking in this household, and what does it still owe RIGHT NOW" is asked of
-  // `getHouseholdDetail` — the same tenant-scoped rollup that computes the balance this attribution
-  // must leave unchanged — rather than a fresh predicate written here, so the two can never come to
-  // mean different things. A `null` detail (the account id names no household) leaves the map empty
-  // and every split is refused.
-  const detail = await getHouseholdDetail(db, tenantId, accountId);
-  const outstandingByBooking = new Map(
-    (detail?.bookings ?? []).map((b) => [b.bookingId, b.expected - b.paidTotal]),
-  );
+  // `householdOutstandingByBooking` — the same money expressions, the same candidate predicate and
+  // the same one-booking-one-household attachment rule `getHouseholdDetail` computes its own
+  // `expected - paidTotal` from, minus the statement's payments, charge rows and totals, which no
+  // guard here reads (see its doc comment for why that is a narrowing rather than a second rule).
+  // A household this account id does not resolve to leaves the map empty and every split is refused,
+  // exactly as a `null` detail did.
+  const outstandingByBooking = resolved
+    ? await householdOutstandingByBooking(db, tenantId, graph, resolved.account)
+    : new Map<string, number>();
   const foreign = splits.find((s) => !outstandingByBooking.has(s.bookingId));
   if (foreign) {
     return {
@@ -2706,6 +2717,100 @@ async function bulkHouseholdDetails(
     );
   }
   return details;
+}
+
+/**
+ * WHAT ONE HOUSEHOLD'S BOOKINGS STILL OWE, RIGHT NOW — and nothing else.
+ *
+ * The same question `getHouseholdDetail(...).bookings` answers with `expected - paidTotal`, asked
+ * with two queries instead of six. `applyAttribution` is the caller, and it is the reason this
+ * exists at all: it must re-read live outstanding ON EVERY CALL (that re-read is what refuses a
+ * second credit landing on a booking the previous attribution in the same request already settled),
+ * so the cost is paid per attribution and cannot be hoisted out of the loop the way the preview's
+ * reads were. What CAN change is the size of it. `getHouseholdDetail` re-loaded the account graph
+ * its caller already held and then read the household's payments and every charge row to build a
+ * statement — of which the guard used one derived number per booking and discarded the rest.
+ *
+ * IDENTICAL ANSWERS, NOT MERELY SIMILAR, on three counts that each have a defect behind them:
+ *
+ *  - `Expected` is `CREDITABLE_AMOUNT_SQL`, never `BASE_AMOUNT_SQL`. It zeroes a `declined`
+ *    booking, which is what makes a split against one refuse as ordinary overpayment with no
+ *    separate status check — the overpay guard depends on it, and the preview's read-cost test
+ *    pins the same expression in the bulk path for the same reason.
+ *  - CHARGES ARE STILL COUNTED, through `CHARGES_JOIN_SQL` inside that expression. The charge ROWS
+ *    are not read (the guard needs their total, not their labels), but a booking carrying an extra
+ *    charge still owes it, and dropping the join would quietly refuse a legitimate split.
+ *  - A CANDIDATE IS NOT A MEMBER. The SQL predicate is the superset `householdDetailFor` uses
+ *    ("customer is one of ours, or one of our pets is on it"), and `buildHouseholdBalances` then
+ *    attaches each candidate to EXACTLY ONE household by its own rule — the customer wins, pets are
+ *    the fallback. Returning the raw superset instead would make a booking that belongs to a
+ *    DIFFERENT household (its customer's) attributable from this one's credit, which is a refusal
+ *    this function must keep making. Its `payments` input is deliberately omitted: household
+ *    payments move the household's totals, never which booking attaches where, and a household with
+ *    no candidate bookings yields an empty map either way — every split then refused as foreign,
+ *    exactly as a `null` detail did.
+ */
+async function householdOutstandingByBooking(
+  db: D1Database,
+  tenantId: string,
+  graph: AccountGraph,
+  account: Account,
+): Promise<Map<string, number>> {
+  const owners = account.ownerIds.map(() => '?').join(', ');
+  const pets = account.petIds.map(() => '?').join(', ');
+  const bookingRes = await db
+    .prepare(
+      `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId,
+              ${CREDITABLE_AMOUNT_SQL} AS Expected,
+              COALESCE(paid.Total, 0) AS PaidTotal
+       FROM BookingRequests b
+       ${PAYMENTS_JOIN_SQL}
+       ${CHARGES_JOIN_SQL}
+       WHERE b.TenantId = ? AND b.ServiceType NOT IN ('blocked', 'external')
+         AND (b.EndUserId IN (${owners})
+              OR b.Id IN (SELECT BookingRequestId FROM BookingRequestPets WHERE PetId IN (${pets})))
+       ORDER BY b.StartDate, b.Id`,
+    )
+    .bind(tenantId, tenantId, tenantId, ...account.ownerIds, ...account.petIds)
+    .all<{ BookingId: string; EndUserId: string | null; Expected: number; PaidTotal: number }>();
+
+  const candidateIds = bookingRes.results.map((r) => r.BookingId);
+  if (candidateIds.length === 0) return new Map();
+  const idList = candidateIds.map(() => '?').join(', ');
+  // Tenancy flows through the parent booking — `BookingRequestPets` has no `TenantId` column, and
+  // every id in the list came from a `b.TenantId = ?` read above. Same idiom as `householdDetailFor`.
+  const petsRes = await db
+    .prepare(
+      `SELECT BookingRequestId AS BookingId, PetId
+       FROM BookingRequestPets WHERE BookingRequestId IN (${idList})
+       ORDER BY BookingRequestId, PetId`,
+    )
+    .bind(...candidateIds)
+    .all<{ BookingId: string; PetId: string }>();
+  const petsByBooking = new Map<string, string[]>();
+  for (const row of petsRes.results) {
+    const list = petsByBooking.get(row.BookingId) ?? [];
+    list.push(row.PetId);
+    petsByBooking.set(row.BookingId, list);
+  }
+
+  const { households } = buildHouseholdBalances({
+    links: graph.links,
+    anchorLinks: graph.anchorLinks,
+    bookings: bookingRes.results.map((row) => ({
+      bookingId: row.BookingId,
+      ownerId: row.EndUserId,
+      petIds: petsByBooking.get(row.BookingId) ?? [],
+      expected: row.Expected,
+      paid: row.PaidTotal,
+    })),
+  });
+  const mine = new Set(households.find((h) => h.accountId === account.id)?.bookingIds ?? []);
+  return new Map(
+    bookingRes.results
+      .filter((r) => mine.has(r.BookingId))
+      .map((r) => [r.BookingId, r.Expected - r.PaidTotal]),
+  );
 }
 
 export async function getHouseholdDetail(

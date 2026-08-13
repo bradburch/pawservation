@@ -174,6 +174,7 @@ import {
   cancellationFee,
   getPacificDateStr,
   isDedicatedCalendarId,
+  MAX_ATTRIBUTIONS_PER_REQUEST,
   MAX_BACKFILL_EVENTS,
   parseMixKey,
   petCountOf,
@@ -3309,6 +3310,19 @@ export const adminRoutes = new Hono<AppEnv>()
       .catch(() => ({}) as { attributions?: unknown });
     if (!Array.isArray(body.attributions) || body.attributions.length === 0)
       return c.json({ error: 'Choose at least one attribution to apply.' }, 400);
+    // THE SERVER CAPS THE ARRAY TOO — a client is not trusted to chunk. `AttributionPanel.tsx`
+    // sends approved credits in chunks of exactly this size and continues by itself (the sitter
+    // clicks Apply once), but the ceiling this protects is the platform's, not the panel's: see
+    // MAX_ATTRIBUTIONS_PER_REQUEST's own doc comment for the subrequest arithmetic behind the
+    // number. Refused WHOLE rather than truncated to what fits — a partial apply nobody asked for
+    // is worse than a refusal, and the same posture the malformed-body checks below take.
+    if (body.attributions.length > MAX_ATTRIBUTIONS_PER_REQUEST)
+      return c.json(
+        {
+          error: `Apply at most ${MAX_ATTRIBUTIONS_PER_REQUEST} attributions in one request; nothing was written.`,
+        },
+        400,
+      );
 
     const attributions: {
       paymentId: string;

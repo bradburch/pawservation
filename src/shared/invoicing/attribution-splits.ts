@@ -12,6 +12,31 @@
  * whether they add up — the same "whole dollars, exact integer arithmetic, no rounding" rule the
  * server-side proposer states for itself.
  */
+/**
+ * How many attributions one `POST .../attribute/apply` request may carry — the cap the server
+ * enforces AND the size the panel chunks a longer approved set into, one constant so the two can
+ * never drift (the same arrangement `MAX_BACKFILL_EVENTS` has with `CalendarBackfillPanel`).
+ *
+ * THE ARITHMETIC, because a number like this is only defensible if it is shown. Cloudflare counts
+ * every binding call against a per-invocation subrequest ceiling of 50 on the Workers Free plan
+ * (docs/superpowers/specs/2026-08-09-calendar-backfill-design.md:52,144 — "Binding calls count.").
+ * One attribution costs, measured:
+ *
+ *   2  the account graph (live links + deceased-pet anchor links)
+ *   1  the source payment, re-read because its own `Amount` is the only authority
+ *   2  the candidate bookings' live outstanding, and their booking<->pet edges
+ *   1  the write itself — `db.batch` is ONE binding call however many statements it carries
+ *   1  the "was the source taken from under us?" re-read, on the batch-abort path only
+ *   = 7 worst case, 6 ordinarily
+ *
+ * plus 1 for the admin session lookup the route makes before any of that. 1 + 6 × 7 = 43, seven
+ * subrequests clear of the ceiling. Those reads deliberately do NOT hoist out of the loop: each
+ * attribution must see the previous one's write committed, which is what refuses a second credit
+ * landing on a booking the first already settled (server/db/repo.ts, `applyAttribution`). Lower
+ * this if the per-attribution cost ever rises; do not raise it to make a caller's life easier.
+ */
+export const MAX_ATTRIBUTIONS_PER_REQUEST = 6;
+
 export function balancedRemainder(
   creditAmount: number,
   splits: { amount: number }[],
