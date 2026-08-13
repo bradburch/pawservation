@@ -17,7 +17,14 @@ import {
 } from '../db/repo';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, addMonths, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { adminToken, createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
+import {
+  adminToken,
+  clearSeededBookings,
+  createTestEnv,
+  endUserToken,
+  TENANT_A,
+  TEST_SECRET,
+} from './helpers';
 import type { Tenant } from '../types';
 
 const tenant = {
@@ -96,18 +103,6 @@ async function seedSyncedBooking(
   });
   await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_1', null);
   return id;
-}
-
-/** The base seed carries ABSOLUTE-dated bookings (sql/seed.sql) while this file's fixtures are
- *  relative to the real clock — so for three days a year TODAY+10 lands inside seed_sp_pend2's
- *  2026-08-20→23 pending boarding hold and Sunny Paws' 2-pet pool is not empty. Clear the seeded
- *  rows so a status assertion means what it says. */
-async function clearSeededBookings(env: Env) {
-  await env.PAWSERVATION_DB.prepare(
-    "DELETE FROM BookingRequests WHERE TenantId = ? AND Id LIKE 'seed_%'",
-  )
-    .bind(TENANT_A)
-    .run();
 }
 
 async function statusOf(env: Env, id: string): Promise<string> {

@@ -12,7 +12,14 @@ import {
 import { redriveCalendarOutbox, reconcileBookingsWithCalendar } from '../lib/calendar-sync';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
-import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TEST_SECRET } from './helpers';
+import {
+  adminHeaders,
+  clearSeededBookings,
+  createTestEnv,
+  endUserToken,
+  TENANT_A,
+  TEST_SECRET,
+} from './helpers';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Tenant } from '../types';
 
@@ -497,6 +504,10 @@ describe('a [CANCELLED] event must not block capacity', () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
     await connectCalendar(env);
+    // The closing assertion is "nothing at all occupies this window", so the base seed's
+    // absolute-dated bookings have to go — otherwise it passes or fails depending on where
+    // TODAY+5 happens to fall relative to seed_sp_pend2's 2026-08-20→23 hold.
+    await clearSeededBookings(env);
     const start = addDays(TODAY, 5);
     const id = await seedBooking(env, { startsInDays: 5, gcalEventId: 'evt_cap2' });
 
