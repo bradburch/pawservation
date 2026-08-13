@@ -2515,17 +2515,52 @@ async function householdDetailFor(
   const household = households.find((h) => h.accountId === account.id);
   if (!household) return null;
 
-  const chargesByBooking = new Map<string, { id: string; label: string; amount: number }[]>();
-  for (const row of chargeRes.results) {
-    const list = chargesByBooking.get(row.BookingRequestId) ?? [];
-    list.push({ id: row.Id, label: row.Label, amount: row.Amount });
-    chargesByBooking.set(row.BookingRequestId, list);
-  }
-  const bookingsById = new Map(bookingRes.results.map((r) => [r.BookingId, r]));
+  return assembleHouseholdDetail(
+    household,
+    new Map(bookingRes.results.map((r) => [r.BookingId, r])),
+    groupChargesByBooking(chargeRes.results),
+    paymentRows.results,
+  );
+}
 
+/** `BookingCharges` rows keyed by their booking, in the order the query returned them. */
+function groupChargesByBooking(
+  rows: BookingChargeRow[],
+): Map<string, { id: string; label: string; amount: number }[]> {
+  const byBooking = new Map<string, { id: string; label: string; amount: number }[]>();
+  for (const row of rows) {
+    const list = byBooking.get(row.BookingRequestId) ?? [];
+    list.push({ id: row.Id, label: row.Label, amount: row.Amount });
+    byBooking.set(row.BookingRequestId, list);
+  }
+  return byBooking;
+}
+
+/**
+ * ONE household's rows turned into its statement — pure, and shared by BOTH readers below
+ * (`householdDetailFor`, which narrows its queries to one household, and `bulkHouseholdDetails`,
+ * which reads the tenant once and slices it). Shared deliberately: the two differ only in HOW the
+ * rows were fetched, and a second copy of this assembly is a second place the drill-down could
+ * drift from the balance above it.
+ *
+ * `household` is whatever `buildHouseholdBalances` returned for this account — its totals are
+ * passed through, never recomputed here.
+ */
+function assembleHouseholdDetail(
+  household: {
+    accountId: string;
+    bookingIds: string[];
+    expectedTotal: number;
+    paidTotal: number;
+    balance: number;
+  },
+  bookingsById: Map<string, HouseholdDetailBookingRow>,
+  chargesByBooking: Map<string, { id: string; label: string; amount: number }[]>,
+  payments: PaymentRow[],
+): HouseholdDetailRow {
   return {
     accountId: household.accountId,
-    // `household.bookingIds` is already ordered (the candidate query sorts by StartDate, then Id)
+    // `household.bookingIds` is already ordered (the booking query sorts by StartDate, then Id)
     // — reusing that order rather than the IN-clause's own row order keeps the detail list in the
     // same sequence a sitter would expect a statement to read in.
     bookings: household.bookingIds.map((bookingId) => {
@@ -2542,7 +2577,7 @@ async function householdDetailFor(
         expected: row.Expected,
       };
     }),
-    householdPayments: paymentRows.results.map((p) => ({
+    householdPayments: payments.map((p) => ({
       id: p.Id,
       amount: p.Amount,
       method: p.Method,
@@ -2553,6 +2588,123 @@ async function householdDetailFor(
     paidTotal: household.paidTotal,
     balance: household.balance,
   };
+}
+
+/**
+ * THE SAME STATEMENT AS `householdDetailFor`, FOR MANY HOUSEHOLDS, IN A FIXED NUMBER OF QUERIES.
+ *
+ * `householdDetailFor` costs FOUR queries per household. That is right for the one-household
+ * callers it serves, and wrong the moment a caller wants every household of a tenant: the payment
+ * attribution panel always previews tenant-wide, and 53 households × 4 is 212 binding calls in one
+ * invocation — past Workers' 50-subrequest ceiling (Free plan) before the request does anything
+ * else. That is not a slow preview, it is a preview that cannot run at all; see
+ * `docs/superpowers/specs/2026-08-09-calendar-backfill-design.md` for the same budget being
+ * respected elsewhere, and `server/lib/payment-csv.ts` for the same hoist-to-a-constant answer.
+ *
+ * So this reads the TENANT once — three queries, plus the household payments and the account graph
+ * its caller already holds — and slices the result per household in memory. THREE, whether the
+ * tenant has one household or a thousand.
+ *
+ * NO `IN (…)` LIST, HENCE NO CHUNKING AND NO VARIABLE-LIMIT ARITHMETIC TO GET WRONG: each query is
+ * scoped by `TenantId` alone and binds at most three parameters (the two join subqueries plus the
+ * WHERE), so the count is fixed by the code rather than by the data. These are the same tenant-wide
+ * predicates `computeHouseholdRollup` already runs for the Earnings page, so the volume read here
+ * is a volume this codebase already reads on its hottest admin page.
+ *
+ * IDENTICAL OUTPUT, NOT MERELY SIMILAR. `buildHouseholdBalances` attaches every booking to EXACTLY
+ * ONE household by its own rule, so a household's row is the same whether the pure module was
+ * handed that household's candidate bookings (what `householdDetailFor` does) or the tenant's
+ * entire set — the bookings that belong elsewhere simply land elsewhere, as its own doc comment
+ * says. The money expressions, the orderings and the assembly (`assembleHouseholdDetail`) are
+ * literally the same code, so the drill-down cannot drift from the per-household reader either.
+ *
+ * `payments` is the caller's already-loaded set of tenant household payments, passed in rather than
+ * re-read: bucketing it here by the SAME membership rule (`householdIdForPet`) is what makes each
+ * household's `householdPayments` exactly the list `AccountId IN (petIds ∪ anchors)` would return.
+ */
+async function bulkHouseholdDetails(
+  db: D1Database,
+  tenantId: string,
+  graph: AccountGraph,
+  wantedAccountIds: Set<string>,
+  payments: PaymentRow[],
+  paymentsByHousehold: Map<string, PaymentRow[]>,
+): Promise<Map<string, HouseholdDetailRow>> {
+  const [bookingRes, petsRes, chargeRes] = await Promise.all([
+    db
+      .prepare(
+        `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
+                b.StartDate AS StartDate, b.Status AS Status,
+                ${BASE_AMOUNT_SQL} AS Cost,
+                COALESCE(chg.Total, 0) AS ChargesTotal,
+                COALESCE(paid.Total, 0) AS PaidTotal,
+                ${CREDITABLE_AMOUNT_SQL} AS Expected
+         FROM BookingRequests b
+         ${PAYMENTS_JOIN_SQL}
+         ${CHARGES_JOIN_SQL}
+         WHERE b.TenantId = ? AND b.ServiceType NOT IN ('blocked', 'external')
+         ORDER BY b.StartDate, b.Id`,
+      )
+      .bind(tenantId, tenantId, tenantId)
+      .all<HouseholdDetailBookingRow & { EndUserId: string | null }>(),
+    // BookingRequestPets carries no TenantId; tenancy flows through its parent booking, the idiom
+    // `computeHouseholdRollup` uses for the same edges.
+    db
+      .prepare(
+        `SELECT brp.BookingRequestId AS BookingId, brp.PetId AS PetId
+         FROM BookingRequestPets brp
+         JOIN BookingRequests b ON b.Id = brp.BookingRequestId
+         WHERE b.TenantId = ?
+         ORDER BY brp.BookingRequestId, brp.PetId`,
+      )
+      .bind(tenantId)
+      .all<{ BookingId: string; PetId: string }>(),
+    db
+      .prepare(
+        `SELECT Id, TenantId, BookingRequestId, Label, Amount, Origin, CreatedAt
+         FROM BookingCharges WHERE TenantId = ?
+         ORDER BY BookingRequestId, CreatedAt, Id`,
+      )
+      .bind(tenantId)
+      .all<BookingChargeRow>(),
+  ]);
+
+  const petsByBooking = new Map<string, string[]>();
+  for (const row of petsRes.results) {
+    const list = petsByBooking.get(row.BookingId) ?? [];
+    list.push(row.PetId);
+    petsByBooking.set(row.BookingId, list);
+  }
+
+  const { households } = buildHouseholdBalances({
+    links: graph.links,
+    anchorLinks: graph.anchorLinks,
+    bookings: bookingRes.results.map((row) => ({
+      bookingId: row.BookingId,
+      ownerId: row.EndUserId,
+      petIds: petsByBooking.get(row.BookingId) ?? [],
+      expected: row.Expected,
+      paid: row.PaidTotal,
+    })),
+    payments: payments.map((p) => ({ accountId: p.AccountId!, amount: p.Amount })),
+  });
+
+  const bookingsById = new Map(bookingRes.results.map((r) => [r.BookingId, r]));
+  const chargesByBooking = groupChargesByBooking(chargeRes.results);
+  const details = new Map<string, HouseholdDetailRow>();
+  for (const household of households) {
+    if (!wantedAccountIds.has(household.accountId)) continue;
+    details.set(
+      household.accountId,
+      assembleHouseholdDetail(
+        household,
+        bookingsById,
+        chargesByBooking,
+        paymentsByHousehold.get(household.accountId) ?? [],
+      ),
+    );
+  }
+  return details;
 }
 
 export async function getHouseholdDetail(
@@ -2574,26 +2726,33 @@ export async function getHouseholdDetail(
  * payment-attribution preview (Task 3) needs, in a number of reads that does NOT grow with how
  * many households the tenant has.
  *
- * NAIVELY, "preview every household" means looping `getHouseholdDetail` AND
- * `listPaymentsForAccount` once per household. Both independently call `loadAccountGraph` under
- * the hood (`householdDetailFor`'s caller, and `listPaymentsForAccount`'s `householdPetIds`),
- * reloading the FULL tenant-wide owner<->pet graph from scratch every time — for a tenant with
- * hundreds of households, hundreds of redundant copies of the same two queries, sequentially, for
- * one preview request. That is exactly the budget the calendar backfill's 200-event cap and the
- * CSV importer's hoist to a constant 7 subrequests both exist to protect (Workers' per-request
- * subrequest ceiling).
+ * CONSTANT MEANS CONSTANT — SIX QUERIES, FOR ANY TENANT. Not "constant apart from the detail
+ * reads", which is what this used to be and what made the feature unusable on the account it was
+ * built for: the graph and the payments were hoisted, the per-household detail was not, so a
+ * 53-household tenant issued 4 × 53 + 4 = 216 binding calls in one invocation and blew straight
+ * past Workers' 50-subrequest ceiling (Free plan). Every click of "Check for unattached credits"
+ * failed. That is the same budget the calendar backfill's 200-event cap and the CSV importer's
+ * hoist to a constant 7 subrequests exist to protect.
  *
- * So this loads the graph ONCE, reads every household-level payment of the tenant in ONE query
- * (`Payments WHERE AccountId IS NOT NULL` — the same predicate `listPaymentsForAccount` applies
- * per household) and buckets those rows into households by MEMBERSHIP using that one graph — live
- * pets AND anchors, exactly as `householdPetIds` resolves them for a single household — rather
- * than resolving membership once per household. Only a household that buckets at least one credit
- * pays for the (unavoidably per-household) detail read at all; a household that has never
- * prepaid costs nothing here, and never reaches `proposeAttribution` with an empty credit list.
+ * The six: two for the account graph (`loadAccountGraph`), one for every household-level payment
+ * of the tenant (`Payments WHERE AccountId IS NOT NULL` — the same predicate
+ * `listPaymentsForAccount` applies per household), and three for `bulkHouseholdDetails`, which
+ * reads the tenant's bookings, booking<->pet edges and charges once each and slices them per
+ * household in memory. A tenant with no household credits at all pays only the first three: the
+ * bulk read is skipped outright rather than issued and discarded.
+ *
+ * MEMBERSHIP, NEVER `AccountId = ?` EQUALITY. Payments are bucketed into households through
+ * `householdIdForPet` — every account's live pets PLUS the anchors of pets that have since died
+ * (`buildPaymentAnchors`) — which is exactly what `householdPetIds` resolves for a single
+ * household, built once here for the whole tenant. An account id is its component's
+ * lexicographically-first pet and MOVES when a pet is added, so equality would silently lose the
+ * money filed under the household's older name.
  *
  * Deliberately NOT a change to `getHouseholdDetail`/`listPaymentsForAccount` themselves — a single
  * account id is one household and already cheap, and every other caller of either wants exactly
- * one household, not the whole tenant.
+ * one household, not the whole tenant. `bulkHouseholdDetails` is a second PATH to the same rows,
+ * sharing this one's money expressions, orderings and assembly step, not a rewrite of the
+ * one-household reader out from under its callers.
  */
 export type HouseholdAttributionCandidate = {
   accountId: string;
@@ -2639,18 +2798,32 @@ export async function getHouseholdsWithUnappliedCredits(
     creditsByHousehold.set(accountId, list);
   }
 
-  const candidates = await Promise.all(
-    graph.accounts
-      .filter((account) => creditsByHousehold.has(account.id))
-      .map(async (account): Promise<HouseholdAttributionCandidate | null> => {
-        const resolved = resolveHousehold(graph, { accountId: account.id });
-        if (!resolved) return null;
-        const detail = await householdDetailFor(db, tenantId, graph, resolved);
-        if (!detail) return null;
-        return { accountId: account.id, detail, credits: creditsByHousehold.get(account.id)! };
-      }),
+  // In account-id order, which `buildAccounts` already sorted — the order the preview reports its
+  // proposals in, and stable across runs.
+  const wanted = graph.accounts.filter((account) => creditsByHousehold.has(account.id));
+  // Nothing prepaid anywhere: no household has a credit to place, so there is nothing for the bulk
+  // detail read to be read FOR. Skipped rather than issued and thrown away.
+  if (wanted.length === 0) return [];
+
+  const details = await bulkHouseholdDetails(
+    db,
+    tenantId,
+    graph,
+    new Set(wanted.map((account) => account.id)),
+    paymentsRes.results,
+    // A household's credits ARE its household-level payments: `Payments.AccountId` and
+    // `BookingRequestId` are mutually exclusive by CHECK, so the list bucketed above is the same
+    // list `householdPayments` must show. One bucketing, both uses — they cannot disagree.
+    creditsByHousehold,
   );
-  return candidates.filter((c): c is HouseholdAttributionCandidate => c !== null);
+  return wanted.flatMap((account) => {
+    const detail = details.get(account.id);
+    // `buildHouseholdBalances` drops a household with no bookings AND no payments; this one has a
+    // credit, so it is always present. Guarded anyway, to hold the same "empty statement, not an
+    // error" contract `householdDetailFor` has.
+    if (!detail) return [];
+    return [{ accountId: account.id, detail, credits: creditsByHousehold.get(account.id)! }];
+  });
 }
 
 /**
