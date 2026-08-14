@@ -1494,6 +1494,23 @@ export async function deleteAccountPayment(
 }
 
 /**
+ * True when err (or its D1-wrapped cause) is the NOT NULL violation `applyAttribution`'s two
+ * in-batch guards abort through — matched on the exact column, `Payments.Amount`, because that
+ * column is the whole mechanism (a guard's scalar subquery yields NULL, `amount * NULL` is NULL,
+ * and `INTEGER NOT NULL` refuses it). Deliberately narrow: an unrecognised message falls through to
+ * a rethrow, which the apply route already reports as a fault rather than a refusal, so a wording
+ * change upstream degrades to "logged as unexpected" and never to "quietly written".
+ *
+ * Lives here rather than beside `isUniqueViolation` in server/lib/db-errors.ts only because it has
+ * exactly one caller, twenty lines below, and no meaning away from it.
+ */
+function isNotNullViolation(err: unknown): boolean {
+  const hit = (e: unknown) =>
+    e instanceof Error && e.message.includes('NOT NULL constraint failed: Payments.Amount');
+  return hit(err) || (err instanceof Error && hit(err.cause));
+}
+
+/**
  * APPLY ONE ATTRIBUTION — turn a household-level credit into the booking-level payments it
  * actually settled, in ONE transaction. The riskiest write in this file: it is the only one that
  * destroys money and re-creates it.
@@ -1525,7 +1542,7 @@ export async function deleteAccountPayment(
  * AND THE SOURCE ROW MUST STILL BE THERE WHEN THE BATCH RUNS. A zero-row DELETE does not raise, so
  * two overlapping applies of the same payment would both pass every guard and the second would
  * delete nothing and insert a second complete set of booking rows — money from nowhere. One
- * in-batch statement therefore DEPENDS on the source row (see `guardedFirstSplit` below), so its
+ * in-batch statement therefore DEPENDS on the source row (see `sourceStillThereGuard` below), so its
  * absence aborts the transaction instead of quietly duplicating. This is enforced here rather than
  * by serialising at the route: the ledger's integrity cannot rest on every future caller
  * remembering to.
@@ -1756,8 +1773,46 @@ export async function applyAttribution(
   //
   // ORDER MATTERS: the DELETE goes LAST. Ahead of the guard it would remove the very row the
   // subquery looks for, and every attribution would abort.
-  const guardedFirstSplit = `? * (SELECT 1 FROM Payments
+  const sourceStillThereGuard = `(SELECT 1 FROM Payments
       WHERE TenantId = ? AND Id = ? AND BookingRequestId IS NULL)`;
+
+  // AND THE SAME TRICK AGAIN, POINTED AT THE TARGET RATHER THAN THE SOURCE — the guard above says
+  // nothing whatever about the booking a split lands on, and the overpay pre-read that does is a
+  // read-then-write with a gap in the middle. TWO REQUESTS ATTRIBUTING **DIFFERENT** PAYMENTS ONTO
+  // ONE BOOKING both satisfy the source guard (each holds its own source row, neither took the
+  // other's), both read the booking's outstanding before either writes, both see it unclaimed, and
+  // both commit: a $100 booking receives $200. The sequential route loop cannot produce this — each
+  // apply there commits before the next one's read — so the pre-read is sufficient for one request
+  // and for nothing else. This makes the WRITE ITSELF assert what the read merely observed.
+  //
+  // `? * (SELECT 1 ... WHERE outstanding >= ?)`: no row when the booking no longer owes at least
+  // this split, so the scalar subquery is NULL, `amount * NULL` is NULL, and the INSERT aborts the
+  // whole transaction. The abort rests on `Payments.Amount` being `INTEGER NOT NULL`, EXACTLY as the
+  // source guard does and for exactly the same reason — SQLite treats a `CHECK` evaluating to NULL
+  // as SATISFIED, so `CHECK (Amount > 0)` would wave a NULL amount straight through. Every caveat on
+  // the source guard about relaxing that column applies here word for word.
+  //
+  // THE MONEY EXPRESSION IS `CREDITABLE_AMOUNT_SQL` OVER THE SAME TWO JOINS the pre-read's
+  // `householdOutstandingByBooking` uses, spliced from the same constants so the backstop and the
+  // readable check cannot come to mean different things. Household membership is deliberately NOT
+  // re-asserted here: the pre-read owns that question (it is not racy — a booking does not change
+  // households under a live request), and this guard owns the one fact that moves underneath it.
+  //
+  // ORDER STILL HOLDS, and for a new reason worth re-deriving rather than assuming. The DELETE must
+  // stay LAST because the source guard's subquery looks for the very row it removes. This guard is
+  // indifferent to that: the row it deletes is HOUSEHOLD-level (`BookingRequestId IS NULL`), and the
+  // `paid` join groups by `BookingRequestId` and matches on `b.Id`, which a NULL never equals — so
+  // the source row contributes nothing to any booking's paid total, before or after. Nor do the
+  // splits interfere with each other: duplicate booking ids are refused outright above, so each
+  // split's guard reads a booking no other statement in this batch touches. Every split carries the
+  // guard, not just the first — one is enough for the source (there is one source), but each split
+  // names a different booking and each booking's outstanding is its own fact.
+  const outstandingStillOwedGuard = `(SELECT 1
+      FROM BookingRequests b
+      ${PAYMENTS_JOIN_SQL}
+      ${CHARGES_JOIN_SQL}
+      WHERE b.TenantId = ? AND b.Id = ?
+        AND ${CREDITABLE_AMOUNT_SQL} - COALESCE(paid.Total, 0) >= ?)`;
 
   const statements = [
     // Column list identical to insertPayment's.
@@ -1765,13 +1820,21 @@ export async function applyAttribution(
       db
         .prepare(
           `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
-           VALUES (?, ?, ?, ${i === 0 ? guardedFirstSplit : '?'}, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?${i === 0 ? ` * ${sourceStillThereGuard}` : ''} * ${outstandingStillOwedGuard}, ?, ?, ?, ?)`,
         )
         .bind(
           crypto.randomUUID(),
           tenantId,
           s.bookingId,
-          ...(i === 0 ? [s.amount, tenantId, paymentId] : [s.amount]),
+          s.amount,
+          ...(i === 0 ? [tenantId, paymentId] : []),
+          // `PAYMENTS_JOIN_SQL`, then `CHARGES_JOIN_SQL`, then the booking itself — the same bind
+          // order `householdOutstandingByBooking` uses for the same three placeholders.
+          tenantId,
+          tenantId,
+          tenantId,
+          s.bookingId,
+          s.amount,
           source.Method,
           source.PaidDate,
           source.Note,
@@ -1835,6 +1898,21 @@ export async function applyAttribution(
       return {
         ok: false,
         reason: `Payment ${paymentId} was attributed or deleted by another request while this attribution was being applied; nothing was written.`,
+      };
+    }
+    // SOURCE INTACT, YET AN `Amount` WENT NULL — which the target guard is now the only remaining
+    // way to produce. Every other value bound into those inserts is a validated non-null (the split
+    // amounts are whole positive integers, checked at the top; method, date and ref come off the
+    // source row), so a NOT NULL violation on this batch is a positive identification of the race
+    // rather than a guess about one. Read at ZERO cost — the re-read above is the one this path
+    // already paid for, and no second one is added, which is what keeps the per-attribution
+    // worst case at the seven subrequests `MAX_ATTRIBUTIONS_PER_REQUEST` is derived from.
+    // Named without the booking id deliberately: recovering WHICH booking would cost the very read
+    // the arithmetic has no room for, and the sitter's next preview shows it settled anyway.
+    if (isNotNullViolation(err)) {
+      return {
+        ok: false,
+        reason: `A booking named by payment ${paymentId} was settled by another request while this attribution was being applied; nothing was written.`,
       };
     }
     throw err;
