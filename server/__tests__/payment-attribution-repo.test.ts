@@ -703,7 +703,7 @@ describe('applyAttribution (repo)', () => {
     const refused = outcomes.find((o) => !(o.status === 'fulfilled' && o.value.ok))!;
     expect(refused.status).toBe('fulfilled');
     if (refused.status !== 'fulfilled' || refused.value.ok) throw new Error('unreachable');
-    expect(refused.value.reason).toContain('settled by another request');
+    expect(refused.value.reason).toContain('no longer owes at least the amount');
     expect(refused.value.reason).toContain('nothing was written');
 
     // THE WHOLE POINT: one $100 payment against a $100 booking, never two.
@@ -724,6 +724,68 @@ describe('applyAttribution (repo)', () => {
 
     // Two rows in total, and the household holds exactly the money it started with.
     expect(paymentRows(raw)).toHaveLength(2);
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+
+  it('guards EVERY split, not just the first, when a later booking is settled underneath it', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const first = await book(env, home, 60, '2026-06-28');
+    const second = await book(env, home, 40, '2026-07-04');
+    // The credit that splits across BOTH, and a second credit that will settle `second` from
+    // under it. The split onto `second` is index 1, so it carries the outstanding guard but NOT
+    // the source guard — which is exactly the axis the single-split test above cannot reach.
+    const splitter = (await credit(env, home.accountId, 100, null))!;
+    const rival = (await credit(env, home.accountId, 40, null))!;
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+
+    // Same queueing shim and the same reasoning as the test above: both calls finish every
+    // pre-batch read before either batch runs, so both see `second` owing its full $40.
+    const db = env.PAWSERVATION_DB;
+    let queue: Promise<unknown> = Promise.resolve();
+    const serialised = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: (statements: D1PreparedStatement[]) => {
+        const next = queue.then(() => db.batch(statements));
+        queue = next.catch(() => undefined);
+        return next;
+      },
+    } as unknown as D1Database;
+
+    const outcomes = await Promise.allSettled([
+      applyAttribution(serialised, TENANT_C, {
+        paymentId: rival,
+        accountId: home.accountId,
+        splits: [{ bookingId: second, amount: 40 }],
+        remainder: 0,
+      }),
+      applyAttribution(serialised, TENANT_C, {
+        paymentId: splitter,
+        accountId: home.accountId,
+        splits: [
+          { bookingId: first, amount: 60 },
+          { bookingId: second, amount: 40 },
+        ],
+        remainder: 0,
+      }),
+    ]);
+
+    // Whichever ran second is refused WHOLE — the batch is one transaction, so the $60 split onto
+    // `first`, which was still perfectly fundable, is rolled back with it. That is the correct
+    // outcome: a partially-applied attribution would not conserve.
+    const applied = outcomes.filter((o) => o.status === 'fulfilled' && o.value.ok);
+    expect(applied).toHaveLength(1);
+    const refused = outcomes.find((o) => !(o.status === 'fulfilled' && o.value.ok))!;
+    if (refused.status !== 'fulfilled' || refused.value.ok) throw new Error('unreachable');
+    expect(refused.value.reason).toContain('no longer owes at least the amount');
+
+    // `second` never holds more than the $40 it owed, however the race fell out. Without the
+    // guard on split index 1 it holds $80 — the rival's $40 plus the splitter's, since only the
+    // first split of an attribution carries the source guard and nothing else would refuse it.
+    const secondPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, second);
+    expect(secondPayments.reduce((sum, p) => sum + p.Amount, 0)).toBeLessThanOrEqual(40);
+    // And the household still holds exactly the money it started with — attribution moves money
+    // between columns, it never creates or destroys any, whichever call won the race.
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
   });
 

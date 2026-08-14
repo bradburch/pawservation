@@ -33,7 +33,7 @@ import {
   parseMixKey,
   quarterlyBreakdown,
 } from '../../src/shared/index.js';
-import { isUniqueViolation } from '../lib/db-errors';
+import { isNotNullViolation, isUniqueViolation } from '../lib/db-errors';
 import { deriveAttributedRef } from '../lib/payment-attribution';
 import { constantTimeEqual } from '../lib/timing';
 import { DEMO_EMAIL } from '../lib/demo';
@@ -1494,23 +1494,6 @@ export async function deleteAccountPayment(
 }
 
 /**
- * True when err (or its D1-wrapped cause) is the NOT NULL violation `applyAttribution`'s two
- * in-batch guards abort through — matched on the exact column, `Payments.Amount`, because that
- * column is the whole mechanism (a guard's scalar subquery yields NULL, `amount * NULL` is NULL,
- * and `INTEGER NOT NULL` refuses it). Deliberately narrow: an unrecognised message falls through to
- * a rethrow, which the apply route already reports as a fault rather than a refusal, so a wording
- * change upstream degrades to "logged as unexpected" and never to "quietly written".
- *
- * Lives here rather than beside `isUniqueViolation` in server/lib/db-errors.ts only because it has
- * exactly one caller, twenty lines below, and no meaning away from it.
- */
-function isNotNullViolation(err: unknown): boolean {
-  const hit = (e: unknown) =>
-    e instanceof Error && e.message.includes('NOT NULL constraint failed: Payments.Amount');
-  return hit(err) || (err instanceof Error && hit(err.cause));
-}
-
-/**
  * APPLY ONE ATTRIBUTION — turn a household-level credit into the booking-level payments it
  * actually settled, in ONE transaction. The riskiest write in this file: it is the only one that
  * destroys money and re-creates it.
@@ -1912,7 +1895,13 @@ export async function applyAttribution(
     if (isNotNullViolation(err)) {
       return {
         ok: false,
-        reason: `A booking named by payment ${paymentId} was settled by another request while this attribution was being applied; nothing was written.`,
+        // States only what was actually checked. A concurrent payment is the expected cause, but
+        // the guard fires on ANY drop in live outstanding between the pre-read and the write — an
+        // admin lowering EstCost in another tab, a status flip to `declined` (which zeroes
+        // CREDITABLE_AMOUNT_SQL), a deleted charge. Naming "settled by another request" would
+        // assert a fact the code did not establish, and send the sitter looking for a payment
+        // that isn't there.
+        reason: `A booking named by payment ${paymentId} no longer owes at least the amount this attribution names; nothing was written.`,
       };
     }
     throw err;
