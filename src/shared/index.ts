@@ -86,7 +86,11 @@ export {
   type HouseholdBalances,
   type HouseholdBooking,
 } from './invoicing/balances.js';
-export { balancedRemainder, MAX_ATTRIBUTIONS_PER_REQUEST } from './invoicing/attribution-splits.js';
+export {
+  balancedRemainder,
+  MAX_ATTRIBUTIONS_PER_REQUEST,
+  sitterPicksFirst,
+} from './invoicing/attribution-splits.js';
 export {
   cancellationFee,
   validateCancellationTiers,

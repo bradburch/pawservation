@@ -12,6 +12,7 @@ import {
   balancedRemainder,
   formatFriendlyDate,
   MAX_ATTRIBUTIONS_PER_REQUEST,
+  sitterPicksFirst,
 } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -436,7 +437,15 @@ export function AttributionPanel({
   // untouched or half-edited credit can never ride along in the batch by accident.
   const toApply: AttributionInput[] = [];
   let hasBlockedIncluded = false;
-  for (const credit of credits.values()) {
+  // THE SITTER'S OWN PICKS GO FIRST. `applyAttribution` runs them in order and each re-reads live
+  // state, so when two included credits name the same stay the FIRST one wins and the second is
+  // refused. A credit the sitter chose a booking for herself has `serverRemainder === null` (the
+  // server proposed nothing for it); a pre-ticked proposal has a number. Sending proposals first
+  // would mean the oldest-first guess beats the deliberate correction — and since the winning
+  // credit's own PaidDate, Method and Note are what get stamped on the booking, the record would
+  // carry the guess. The panel pre-ticks proposals, so it cannot also make the sitter untick one
+  // to be heard.
+  for (const credit of sitterPicksFirst([...credits.values()])) {
     if (!credit.included) continue;
     const checked = credit.rows.filter((r) => r.checked);
     const remainder = remainderFor(credit);
@@ -560,9 +569,14 @@ export function AttributionPanel({
    * third credit that paid the stay has no way to say so, because unticking the first doesn't
    * surface the third and re-previewing reproduces the same order.
    */
+  // Keyed on `isActionable` and NOT on the reason string, deliberately: `runPreview` admits a
+  // credit to `credits` on `isActionable` alone (:388), so if the server ever adds another
+  // placeable reason, matching `=== 'no-unpaid-bookings'` here would leave that credit sitting in
+  // panel state with no section rendering it — invisible rather than merely unhandled. Ambiguous
+  // credits are excluded because they have their own editor above, not because of their reason.
   const sequencedOut = previewData
     ? previewData.unresolved.filter(
-        (u) => u.reason === 'no-unpaid-bookings' && isActionable(u) && credits.has(u.paymentId),
+        (u) => isActionable(u) && u.reason !== 'ambiguous' && credits.has(u.paymentId),
       )
     : [];
   // The same reason with NO candidates: the household is genuinely settled and there is nothing
@@ -570,9 +584,12 @@ export function AttributionPanel({
   const noUnpaidBookings = previewData
     ? previewData.unresolved.filter((u) => u.reason === 'no-unpaid-bookings' && !isActionable(u))
     : [];
+  // Every unresolved credit must land in exactly one rendered section. Ambiguous, sequenced-out
+  // and genuinely-settled are handled above; `otherIssues` below is the catch-all, so nothing can
+  // fall between them.
   const otherIssues = previewData
     ? previewData.unresolved.filter(
-        (u) => u.reason !== 'ambiguous' && u.reason !== 'no-unpaid-bookings',
+        (u) => !isActionable(u) && u.reason !== 'ambiguous' && u.reason !== 'no-unpaid-bookings',
       )
     : [];
 
@@ -704,8 +721,9 @@ export function AttributionPanel({
               <p className="pb-applies">
                 Each household&rsquo;s credits are proposed oldest first, so these ones found every
                 unpaid stay already spoken for. If one of them is the credit that actually paid a
-                stay, pick the booking and the amount here &mdash; and untick the earlier proposal
-                above, or the same stay would be paid twice and the second one refused.
+                stay, pick the booking and the amount here. Your choice is applied before the
+                proposal above that claimed the same stay, so yours is the one recorded and the
+                earlier one comes back refused &mdash; untick it too if you want it left alone.
               </p>
               <ul>
                 {sequencedOut.map((u) => {

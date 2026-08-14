@@ -55,3 +55,27 @@ export function balancedRemainder(
 
   return creditAmount - sum;
 }
+
+/**
+ * Order a sitter's approved credits so HER OWN PICKS ARE SENT FIRST.
+ *
+ * `applyAttribution` processes a request's attributions in order, each re-reading live state, so
+ * when two approved credits name the same stay the FIRST one wins and the second is refused for
+ * overpaying. That makes send order a decision about which credit gets recorded — and the winning
+ * credit's own `PaidDate`, `Method` and `Note` are what end up stamped on the booking.
+ *
+ * The preview proposes a household's credits oldest-paid-first and the panel pre-ticks those
+ * proposals; a credit the sitter placed herself (a tie she broke, or one the sequencing skipped)
+ * is one the server proposed nothing for. Sending proposals first would let the oldest-first guess
+ * beat the deliberate correction — the guess `docs/superpowers/specs/2026-08-10-payment-attribution-design.md`
+ * rejects in as many words — and would make the sitter untick a box the panel ticked for her just
+ * to be heard. So hers go first and the guess is the one that comes back refused.
+ *
+ * Stable within each group: `Array.prototype.sort` is required to be stable, so credits keep the
+ * preview's own order among themselves.
+ */
+export function sitterPicksFirst<T extends { serverRemainder: number | null }>(credits: T[]): T[] {
+  return [...credits].sort(
+    (a, b) => Number(a.serverRemainder !== null) - Number(b.serverRemainder !== null),
+  );
+}
