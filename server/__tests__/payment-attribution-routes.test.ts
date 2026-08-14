@@ -108,7 +108,9 @@ type PreviewBody = {
   unresolved: {
     accountId: string;
     paymentId: string;
+    amount: number;
     reason: string;
+    detail: string;
     bookings: { bookingId: string; outstanding: number }[];
   }[];
 };
@@ -607,6 +609,177 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
 });
 
 /**
+ * PLACING A CREDIT THE SEQUENCING LEFT WITH NOTHING — the override the design demands and the
+ * sequential decrement, on its own, forecloses.
+ *
+ * The decrement above is a critical fix and stays exactly as it is: without it several credits
+ * each claim the same booking's full outstanding. Its side effect is that every credit after the
+ * first gets `no-unpaid-bookings` — which is oldest-paid-first-automatic, the guess
+ * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` rejects in as many words
+ * ("Picking the earlier one because it sorted first is exactly the guess this product does not
+ * make"). Money conserves either way; the attribution simply lands on the wrong stay.
+ *
+ * The fix is a contract, not a new proposal: `unresolved[].bookings` means ONE thing on every
+ * reason that carries it — "the candidates this credit could still be placed on, each with its
+ * LIVE outstanding." So a `no-unpaid-bookings` credit whose household still has live-outstanding
+ * bookings names them and is actionable; one whose household has none at all names nothing and is
+ * genuinely inert (772 of 821 on the live tenant). The server proposes nothing extra and decides
+ * everything: the sitter's pick goes through the ordinary apply route, which re-derives and
+ * re-validates against live state exactly as before.
+ */
+describe('POST /:slug/admin/payments/attribute/preview — placing a credit the sequencing skipped', () => {
+  it('a credit the sequencing left with nothing still names the household’s live-outstanding bookings', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // The live tenant's shape: one $40 booking, three $40 credits. The oldest is proposed; the
+    // other two must still be placeable, because the sitter may know it was the THIRD that paid
+    // this stay and unticking the first has to surface it.
+    const bookingId = await book(env, home, 40, '2026-07-01');
+    const first = (await credit(env, home.accountId, 40, '2026-06-01'))!;
+    const second = (await credit(env, home.accountId, 40, '2026-06-02'))!;
+    const third = (await credit(env, home.accountId, 40, '2026-06-03'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    // The sequencing is untouched — still exactly one proposal, still the oldest credit.
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({ paymentId: first });
+
+    expect(body.unresolved).toHaveLength(2);
+    for (const u of body.unresolved) {
+      expect([second, third]).toContain(u.paymentId);
+      expect(u.reason).toBe('no-unpaid-bookings');
+      // The booking is offered, at its LIVE $40 — not the sequenced $0 the earlier credit's
+      // proposal left behind, which is what would false-block the very pick this exists for.
+      expect(u.bookings).toHaveLength(1);
+      expect(u.bookings[0]).toMatchObject({ bookingId, outstanding: 40 });
+      // And the sentence shown verbatim beside it says what actually happened, rather than the
+      // pure proposer's "no unpaid bookings", which a non-empty `bookings` flatly contradicts.
+      expect(u.detail).toContain('Earlier credits');
+    }
+  });
+
+  it('a credit whose household has no unpaid bookings AT ALL names none — genuinely inert, not actionable', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const settled = await book(env, home, 40, '2026-07-01');
+    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
+      bookingRequestId: settled,
+      amount: 40,
+      method: 'cash',
+      paidDate: '2026-06-15',
+      note: null,
+      externalRef: null,
+    });
+    const paymentId = (await credit(env, home.accountId, 40, '2026-06-01'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({ paymentId, reason: 'no-unpaid-bookings' });
+    // Nothing to offer, so nothing is offered — this is the arm that stays summarised.
+    expect(body.unresolved[0].bookings).toEqual([]);
+    expect(body.unresolved[0].detail).not.toContain('Earlier credits');
+  });
+
+  it('a refusal that is neither ambiguous nor no-unpaid-bookings names NO candidate bookings', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // An ordinary unpaid booking is present the whole time — so a populated `bookings` here would
+    // be the route emitting candidates for a credit that cannot be placed at all, which is what
+    // `AttributionUnresolved`'s own type comment promises never happens.
+    await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100, 'not-a-date'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({ paymentId, reason: 'invalid-date' });
+    expect(body.unresolved[0].bookings).toEqual([]);
+  });
+
+  it('the override end to end: the sitter places the THIRD credit on the stay, and the other two go inert', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 40, '2026-07-01');
+    const first = (await credit(env, home.accountId, 40, '2026-06-01'))!;
+    const second = (await credit(env, home.accountId, 40, '2026-06-02'))!;
+    const third = (await credit(env, home.accountId, 40, '2026-06-03'))!;
+
+    const before = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+
+    // The sitter unticks the proposed (oldest) credit and sends the one she knows actually paid
+    // the stay. Nothing about the request is special — it is the ordinary apply shape.
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId: third,
+          accountId: home.accountId,
+          splits: [{ bookingId, amount: 40 }],
+          remainder: 0,
+        } satisfies ApplyAttributionInput,
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ applied: 1, skipped: [] });
+
+    // The money landed on the stay the sitter named, and the household's total is unmoved.
+    const rows = paymentRows(raw);
+    expect(rows.filter((r) => r.BookingRequestId === bookingId)).toHaveLength(1);
+    expect(rows.find((r) => r.BookingRequestId === bookingId)?.Amount).toBe(40);
+    const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(after?.balance).toBe(before?.balance);
+
+    // And now there is genuinely nothing left: both survivors report no candidates, so they fall
+    // into the summarised list rather than staying interactive forever.
+    const second_ = await preview(env, TENANT_C, home.accountId);
+    const body = (await second_.json()) as PreviewBody;
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved.map((u) => u.paymentId).sort()).toEqual([first, second].sort());
+    for (const u of body.unresolved) {
+      expect(u.reason).toBe('no-unpaid-bookings');
+      expect(u.bookings).toEqual([]);
+    }
+  });
+
+  it('the server still decides: an over-claim against the live outstanding is refused with its reason', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 40, '2026-07-01');
+    await credit(env, home.accountId, 40, '2026-06-01');
+    const third = (await credit(env, home.accountId, 100, '2026-06-03'))!;
+
+    // $100 named against a $40 stay. The panel caps at the booking's live outstanding, but the
+    // cap is UX — the authority is here.
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId: third,
+          accountId: home.accountId,
+          splits: [{ bookingId, amount: 100 }],
+          remainder: 0,
+        } satisfies ApplyAttributionInput,
+      ],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body.applied).toBe(0);
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].paymentId).toBe(third);
+    expect(body.skipped[0].reason).toContain('$40');
+    expect(paymentRows(raw).every((r) => r.BookingRequestId === null)).toBe(true);
+  });
+});
+
+/**
  * THE APPLY ROUTE (Task 4) — `POST /:slug/admin/payments/attribute/apply` is the only code path
  * in this feature that moves money. It takes from the browser only WHICH payment goes on which
  * bookings and in what amounts, and re-derives everything else from live state through
@@ -1094,7 +1267,14 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
         amount: 40,
         paidDate: `2026-06-0${index + 2}`,
         reason: 'no-unpaid-bookings',
-        detail: `No unpaid bookings to attribute payment ${paymentId} against.`,
+        // Not the pure proposer's "no unpaid bookings" sentence: this credit IS placeable (the
+        // booking below is offered at its live $40), and only this route knows that the reason
+        // it wasn't proposed is the household's own earlier credit.
+        detail:
+          `Earlier credits from this household were proposed for every unpaid stay first, so ` +
+          `nothing is left for payment ${paymentId} in this batch. If this is the credit that ` +
+          `actually paid one of them, choose the booking yourself — and untick the earlier ` +
+          `proposal, or it will be refused as an overpayment.`,
         bookings: [
           {
             bookingId: seqBooking,

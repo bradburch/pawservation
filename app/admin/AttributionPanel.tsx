@@ -39,7 +39,7 @@ const APPLY_CHUNK_SIZE = MAX_ATTRIBUTIONS_PER_REQUEST;
 
 /** One candidate booking a credit could land on, plus the sitter's current, editable decision
  *  about it: whether it's checked (part of this attribution) and what to send for it. Starts
- *  from either a proposal's own split (checked, pre-filled) or an ambiguous credit's named
+ *  from either a proposal's own split (checked, pre-filled) or an unresolved credit's named
  *  candidate (unchecked, blank — nothing here is ever guessed on the sitter's behalf). */
 type Row = AttributionCandidateBooking & { checked: boolean; amountText: string };
 
@@ -55,8 +55,9 @@ type EditableCredit = {
   included: boolean;
   /** The server's OWN remainder for this credit as proposed (`AttributionProposal.remainder`) —
    *  shown verbatim until the sitter changes a row, rather than recomputed from scratch for a
-   *  state that hasn't moved. `null` for an ambiguous credit: the server proposed nothing for it
-   *  at all, so there is no server figure to prefer over the live derivation. */
+   *  state that hasn't moved. `null` for an unresolved credit (a tie, or one the sequencing
+   *  skipped): the server proposed nothing for it at all, so there is no server figure to prefer
+   *  over the live derivation. */
   serverRemainder: number | null;
   /** A snapshot of `rows` at construction (bookingId/checked/amountText only), so `isUnedited`
    *  below can tell "still exactly what the server proposed" from "the sitter touched this." */
@@ -103,7 +104,20 @@ function fromProposal(p: AttributionProposal): EditableCredit {
   };
 }
 
-function fromAmbiguous(u: AttributionUnresolved): EditableCredit {
+/**
+ * The editor for a credit the SERVER placed nowhere but still named candidates for — an
+ * `'ambiguous'` tie it refused to break, or a `'no-unpaid-bookings'` credit the preview's
+ * oldest-paid-first sequencing handed every stay to an earlier credit of the same household.
+ * `AttributionUnresolved.bookings` (app/shared-ui/api.ts) means the same thing in both cases —
+ * the candidates, at their LIVE outstanding — so both get the SAME editor rather than a second
+ * mechanism invented for the second case.
+ *
+ * Starts unticked with every amount blank in both cases, for one reason: nothing here is ever
+ * guessed on the sitter's behalf. Pre-filling a sequencing-skipped credit with the amount the
+ * earlier credit was proposed for would be the same oldest-first guess, just moved one screen
+ * later.
+ */
+function fromUnresolved(u: AttributionUnresolved): EditableCredit {
   const rows = u.bookings.map((b) => ({ ...b, checked: false, amountText: '' }));
   return {
     paymentId: u.paymentId,
@@ -112,11 +126,19 @@ function fromAmbiguous(u: AttributionUnresolved): EditableCredit {
     paidDate: u.paidDate,
     rows,
     included: false,
-    // The server never proposed a split for an ambiguous credit — there is no figure to prefer,
+    // The server never proposed a split for an unresolved credit — there is no figure to prefer,
     // so this always falls through to the live derivation in `remainderFor`.
     serverRemainder: null,
     originalRows: snapshotRows(rows),
   };
+}
+
+/** True for an unresolved credit the sitter can actually do something about: the server named at
+ *  least one candidate booking for it. The empty case is genuinely inert — a household with
+ *  nothing outstanding at all, or a credit whose own record can't be read — and stays summarised
+ *  (772 of 821 on the live tenant; making those interactive would bury the rest). */
+function isActionable(u: AttributionUnresolved): boolean {
+  return u.bookings.length > 0;
 }
 
 /**
@@ -270,12 +292,25 @@ function CreditEditor({
  * (`POST .../attribute/apply`'s own doc comment in server/routes/admin.ts) — the browser only
  * ever names which payment goes on which booking(s) and for how much.
  *
- * `proposeAttribution`'s three outcomes are kept visually distinct on purpose: a resolved
- * proposal is ticked and ready; an `ambiguous` credit is a tie the server deliberately refused to
- * break, so it starts UNticked and empty until the sitter picks a booking; `no-unpaid-bookings`
- * (and every other refusal) is a fact about the data, not something to act on, and is collapsed by
- * default — on this tenant's real numbers, 772 of 821 credits land there, and a flat list would
- * bury the ~47 the sitter can actually do something with.
+ * WHAT A CREDIT LANDS IN IS DECIDED BY WHETHER THE SERVER NAMED CANDIDATES FOR IT, not by its
+ * refusal reason alone (`AttributionUnresolved.bookings`, app/shared-ui/api.ts):
+ *
+ * - a resolved proposal is ticked and ready;
+ * - an `ambiguous` credit is a tie the server deliberately refused to break, so it starts
+ *   UNticked and empty until the sitter picks a booking;
+ * - a `no-unpaid-bookings` credit that still NAMES bookings is one the preview's oldest-paid-first
+ *   sequencing skipped — the household has unpaid stays, they were simply all proposed to an
+ *   earlier credit. It gets the SAME editor as a tie, because it is the same question: which stay
+ *   did this money pay? Leaving it inert is what made the panel oldest-first-automatic with no
+ *   override, which the design (docs/superpowers/specs/2026-08-10-payment-attribution-design.md)
+ *   rejects outright — money conserves either way, it just lands on the wrong stay;
+ * - everything else — `no-unpaid-bookings` with no candidates, and every data-fault reason — is a
+ *   fact about the data, not something to act on, and stays collapsed. On this tenant's real
+ *   numbers 772 of 821 credits land there, and making those interactive would bury the rest.
+ *
+ * The panel proposes nothing of its own in any of these: the sitter's pick goes through the same
+ * apply route, which re-derives the payment and re-reads live outstanding, and refuses an
+ * over-claim with its reason shown.
  */
 export function AttributionPanel({
   session,
@@ -346,8 +381,11 @@ export function AttributionPanel({
       setPreviewData(next);
       const nextCredits = new Map<string, EditableCredit>();
       for (const p of next.proposals) nextCredits.set(p.paymentId, fromProposal(p));
+      // Every unresolved credit the server named candidates for gets an editor — the tie it
+      // refused to break AND the one its own sequencing skipped. Keyed off `bookings`, not off
+      // `reason`, so the two stay one mechanism.
       for (const u of next.unresolved)
-        if (u.reason === 'ambiguous') nextCredits.set(u.paymentId, fromAmbiguous(u));
+        if (isActionable(u)) nextCredits.set(u.paymentId, fromUnresolved(u));
       setCredits(nextCredits);
     } catch (e) {
       reset();
@@ -515,8 +553,22 @@ export function AttributionPanel({
   const ambiguous = previewData
     ? previewData.unresolved.filter((u) => u.reason === 'ambiguous' && credits.has(u.paymentId))
     : [];
+  /**
+   * A credit the preview's oldest-paid-first sequencing left with nothing, in a household that
+   * still HAS unpaid stays — actionable, and the whole point of this section existing. Without
+   * it the panel is oldest-first-automatic with no override: the sitter who knows it was the
+   * third credit that paid the stay has no way to say so, because unticking the first doesn't
+   * surface the third and re-previewing reproduces the same order.
+   */
+  const sequencedOut = previewData
+    ? previewData.unresolved.filter(
+        (u) => u.reason === 'no-unpaid-bookings' && isActionable(u) && credits.has(u.paymentId),
+      )
+    : [];
+  // The same reason with NO candidates: the household is genuinely settled and there is nothing
+  // to offer. Summarised, never interactive.
   const noUnpaidBookings = previewData
-    ? previewData.unresolved.filter((u) => u.reason === 'no-unpaid-bookings')
+    ? previewData.unresolved.filter((u) => u.reason === 'no-unpaid-bookings' && !isActionable(u))
     : [];
   const otherIssues = previewData
     ? previewData.unresolved.filter(
@@ -528,6 +580,7 @@ export function AttributionPanel({
     previewData !== null &&
     proposalIds.length === 0 &&
     ambiguous.length === 0 &&
+    sequencedOut.length === 0 &&
     noUnpaidBookings.length === 0 &&
     otherIssues.length === 0;
 
@@ -643,6 +696,43 @@ export function AttributionPanel({
             </>
           )}
 
+          {sequencedOut.length > 0 && (
+            <>
+              <h4>
+                Needs your call — an earlier credit was proposed first ({sequencedOut.length})
+              </h4>
+              <p className="pb-applies">
+                Each household&rsquo;s credits are proposed oldest first, so these ones found every
+                unpaid stay already spoken for. If one of them is the credit that actually paid a
+                stay, pick the booking and the amount here &mdash; and untick the earlier proposal
+                above, or the same stay would be paid twice and the second one refused.
+              </p>
+              <ul>
+                {sequencedOut.map((u) => {
+                  const credit = credits.get(u.paymentId);
+                  if (!credit) return null;
+                  return (
+                    <CreditEditor
+                      key={u.paymentId}
+                      credit={credit}
+                      label={label(credit.accountId)}
+                      // No per-credit `detail` here, unlike the tied section: the server's
+                      // sentence for these is the same one for every credit (the tie's names the
+                      // specific bookings it refused between), and repeating it down a list of
+                      // dozens buries the rows it sits above. The paragraph says it once.
+                      busy={busy}
+                      onToggleIncluded={() => toggleIncluded(u.paymentId)}
+                      onToggleRow={(bookingId) => toggleRow(u.paymentId, bookingId)}
+                      onRowAmount={(bookingId, value) =>
+                        setRowAmount(u.paymentId, bookingId, value)
+                      }
+                    />
+                  );
+                })}
+              </ul>
+            </>
+          )}
+
           {noUnpaidBookings.length > 0 && (
             <details className="pb-attribution-inert">
               <summary>
@@ -676,7 +766,7 @@ export function AttributionPanel({
             </details>
           )}
 
-          {(proposalIds.length > 0 || ambiguous.length > 0) && (
+          {(proposalIds.length > 0 || ambiguous.length > 0 || sequencedOut.length > 0) && (
             <div className="pb-row">
               <button
                 onClick={() => void runApply()}

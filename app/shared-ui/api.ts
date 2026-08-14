@@ -437,9 +437,24 @@ export type AttributionProposal = {
 
 /** A credit `proposeAttribution` refused to place — `reason` is the closed union the pure
  *  proposer returns (see `payment-attribution.ts`'s `Proposal`); `detail` is the sitter-facing
- *  sentence, written to be shown verbatim. `bookings` is only ever non-empty for `'ambiguous'`
- *  (the tied candidates the sitter must choose between) — every other reason means there was
- *  nothing left to attach to, or the credit/booking data itself couldn't be read. */
+ *  sentence, written to be shown verbatim (for a sequencing-skipped credit the route writes it
+ *  itself; see below).
+ *
+ *  `bookings` MEANS ONE THING on every reason that carries it: the candidates this credit could
+ *  still be placed on, each with its LIVE outstanding — never a sequenced figure. It is non-empty
+ *  for exactly two reasons:
+ *
+ *  - `'ambiguous'` — the tied candidates the sitter must choose between.
+ *  - `'no-unpaid-bookings'` WHEN the household still has stays with live outstanding, i.e. the
+ *    preview's oldest-paid-first sequencing handed them all to an earlier credit. Without the
+ *    list this credit would be unplaceable, which is oldest-first-automatic — the guess the
+ *    design rejects. With it, the sitter unticks the earlier proposal and places this one.
+ *
+ *  Empty for everything else, and the emptiness is load-bearing: `'no-unpaid-bookings'` with no
+ *  bookings is a household with genuinely nothing outstanding — inert, and summarised rather than
+ *  made interactive (772 of 821 credits on the live tenant). `'invalid-date'`, `'invalid-amount'`
+ *  and `'duplicate-booking-id'` are faults in the credit's or household's own data: the stay may
+ *  exist, but this credit cannot be placed on it until the record is fixed. */
 export type AttributionUnresolved = {
   accountId: string;
   paymentId: string;
