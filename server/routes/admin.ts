@@ -3074,6 +3074,21 @@ export const adminRoutes = new Hono<AppEnv>()
    * Filtering to `outstanding > 0` before the pure module ever sees the list is what keeps a
    * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
    *
+   * A HOUSEHOLD'S CREDITS ARE PROPOSED IN SEQUENCE (oldest `PaidDate` first, each against what
+   * earlier ones left), which is what stops three $40 credits from each claiming the same $40
+   * booking. The side effect is that every credit after the first comes back
+   * `no-unpaid-bookings` — and left there, that is oldest-paid-first-automatic, the guess
+   * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` explicitly rejects. So the
+   * `unresolved[].bookings` list is the override: a credit the sequencing skipped still NAMES the
+   * household's live-outstanding stays, so the sitter can untick the proposed one and place this
+   * one instead. A credit whose household has no unpaid stay at all names nothing, and that
+   * emptiness is the only signal the panel needs to tell an actionable refusal (offer an editor)
+   * from an inert one (772 of 821 on the live tenant — summarised, never interactive).
+   *
+   * The server still decides everything: this route proposes nothing extra and writes nothing.
+   * Whatever the sitter picks goes through the ordinary apply route, which re-derives the source
+   * payment and re-reads live outstanding, and refuses an over-claim with its reason.
+   *
    * `accountId` is resolved the way every other household read resolves it — by asking
    * `getHouseholdDetail` for the CURRENT id, never by equality on whatever the caller happened to
    * send — because a household's account id is its lexicographically-first pet and a newly added
@@ -3238,24 +3253,51 @@ export const adminRoutes = new Hono<AppEnv>()
           for (const s of proposal.splits)
             outstandingById.set(s.bookingId, outstandingById.get(s.bookingId)! - s.amount);
         } else {
+          // `bookings` MEANS ONE THING, ON EVERY REASON THAT CARRIES IT: the candidates this
+          // credit could still be placed on, each with its LIVE outstanding — i.e. exactly what
+          // a sitter may choose from. Only two reasons can have any: `ambiguous` (a tie the
+          // proposer refused to break) and `no-unpaid-bookings` (the sequencing below claimed
+          // everything for an earlier credit of the same household). The remaining reasons —
+          // `invalid-date`, `invalid-amount`, `duplicate-booking-id` — are faults in the credit's
+          // or the household's own data: the household may well still have unpaid stays, but
+          // this credit cannot be placed on any of them until the underlying record is fixed, so
+          // naming candidates beside it would offer a choice that has nowhere to go. They carry
+          // an empty list, which is what `AttributionUnresolved`'s type comment
+          // (app/shared-ui/api.ts) states and what the panel's actionable/inert split reads.
+          const placeable =
+            proposal.reason === 'ambiguous' || proposal.reason === 'no-unpaid-bookings';
+          // Membership is decided by the LIVE figure, not the sequenced one, for the same
+          // reason the reported figure is: a booking an earlier credit in this preview drove
+          // to zero is still a booking the sitter may legitimately choose here, once they
+          // untick that earlier credit. Filtering on the sequenced value removed the option
+          // altogether — the same false-block as the cap, one level up.
+          const bookings = placeable
+            ? unpaidBookings
+                .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
+                .map((b) => ({
+                  ...staticById.get(b.bookingId)!,
+                  outstanding: liveOutstandingById.get(b.bookingId)!,
+                }))
+            : [];
           unresolved.push({
             accountId,
             paymentId: proposal.paymentId,
             amount: row.Amount,
             paidDate: row.PaidDate,
             reason: proposal.reason,
-            detail: proposal.detail,
-            // Membership is decided by the LIVE figure, not the sequenced one, for the same
-            // reason the reported figure is: a booking an earlier credit in this preview drove
-            // to zero is still a booking the sitter may legitimately choose here, once they
-            // untick that earlier credit. Filtering on the sequenced value removed the option
-            // altogether — the same false-block as the cap, one level up.
-            bookings: unpaidBookings
-              .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
-              .map((b) => ({
-                ...staticById.get(b.bookingId)!,
-                outstanding: liveOutstandingById.get(b.bookingId)!,
-              })),
+            // THE PURE PROPOSER'S SENTENCE IS REPLACED, NOT DECORATED, FOR THE ONE CASE IT CANNOT
+            // SEE. `proposeAttribution` is handed the SEQUENCED outstanding, so when an earlier
+            // credit of this household has already claimed every stay it truthfully reports "no
+            // unpaid bookings to attribute this against" — a sentence a non-empty `bookings`
+            // flatly contradicts, and one that reads as "this household is settled" when in fact
+            // the sitter is being invited to pick. The sequencing is a fact only this loop holds,
+            // so only this loop can say it. Every other reason keeps the proposer's own wording
+            // verbatim.
+            detail:
+              proposal.reason === 'no-unpaid-bookings' && bookings.length > 0
+                ? `Earlier credits from this household were proposed for every unpaid stay first, so nothing is left for payment ${proposal.paymentId} in this batch. If this is the credit that actually paid one of them, choose the booking yourself — and untick the earlier proposal, or it will be refused as an overpayment.`
+                : proposal.detail,
+            bookings,
           });
         }
       }
