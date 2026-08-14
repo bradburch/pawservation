@@ -655,6 +655,140 @@ describe('applyAttribution (repo)', () => {
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toEqual([]);
   });
 
+  it('refuses the SECOND of two concurrent attributions of DIFFERENT payments onto the SAME booking', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const only = await book(env, home, 100);
+    // TWO separate household credits, each big enough to settle the booking on its own. NO
+    // ExternalRef on either: the partial unique index covers only non-NULL refs, so nothing but the
+    // in-batch guard stands between these two and a $100 booking holding $200.
+    const firstPaymentId = (await credit(env, home.accountId, 100, null))!;
+    const secondPaymentId = (await credit(env, home.accountId, 100, null))!;
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+
+    // A DIFFERENT RACE FROM THE ONE ABOVE, and the pre-batch guards cannot see it. Two requests
+    // attributing the SAME payment are caught by the source row's own in-batch lookup; these two
+    // name different sources, so that guard is satisfied for both. What they collide over is the
+    // TARGET: both read `only`'s live outstanding ($100), both find their $100 split fits, and both
+    // then write. The sequential route loop never produces this — each apply there commits before
+    // the next one's read — so it takes genuinely interleaved calls to reach it.
+    //
+    // Batches are queued for the same reason as the overlapping-source test above: one SQLite
+    // connection cannot nest two BEGINs, whereas D1 gives each batch its own transaction and
+    // commits them one at a time. The read/write interleaving that IS the bug is untouched — both
+    // calls have finished every pre-batch read before either batch runs.
+    const db = env.PAWSERVATION_DB;
+    let queue: Promise<unknown> = Promise.resolve();
+    const serialised = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: (statements: D1PreparedStatement[]) => {
+        const next = queue.then(() => db.batch(statements));
+        queue = next.catch(() => undefined);
+        return next;
+      },
+    } as unknown as D1Database;
+
+    const apply = (paymentId: string) =>
+      applyAttribution(serialised, TENANT_C, {
+        paymentId,
+        accountId: home.accountId,
+        splits: [{ bookingId: only, amount: 100 }],
+        remainder: 0,
+      });
+    const outcomes = await Promise.allSettled([apply(firstPaymentId), apply(secondPaymentId)]);
+
+    // Exactly one applied; the other refused rather than threw, and said why.
+    const applied = outcomes.filter((o) => o.status === 'fulfilled' && o.value.ok);
+    expect(applied).toHaveLength(1);
+    const refused = outcomes.find((o) => !(o.status === 'fulfilled' && o.value.ok))!;
+    expect(refused.status).toBe('fulfilled');
+    if (refused.status !== 'fulfilled' || refused.value.ok) throw new Error('unreachable');
+    expect(refused.value.reason).toContain('no longer owes at least the amount');
+    expect(refused.value.reason).toContain('nothing was written');
+
+    // THE WHOLE POINT: one $100 payment against a $100 booking, never two.
+    const bookingPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only);
+    expect(bookingPayments).toHaveLength(1);
+    expect(bookingPayments[0]).toMatchObject({ Amount: 100 });
+
+    // The loser's source credit survives WHOLE — household-level, its full amount, still there for
+    // the sitter to attribute somewhere it actually fits.
+    const survivors = await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0]).toMatchObject({
+      Amount: 100,
+      AccountId: home.accountId,
+      BookingRequestId: null,
+    });
+    expect([firstPaymentId, secondPaymentId]).toContain(survivors[0].Id);
+
+    // Two rows in total, and the household holds exactly the money it started with.
+    expect(paymentRows(raw)).toHaveLength(2);
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+
+  it('guards EVERY split, not just the first, when a later booking is settled underneath it', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const first = await book(env, home, 60, '2026-06-28');
+    const second = await book(env, home, 40, '2026-07-04');
+    // The credit that splits across BOTH, and a second credit that will settle `second` from
+    // under it. The split onto `second` is index 1, so it carries the outstanding guard but NOT
+    // the source guard — which is exactly the axis the single-split test above cannot reach.
+    const splitter = (await credit(env, home.accountId, 100, null))!;
+    const rival = (await credit(env, home.accountId, 40, null))!;
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+
+    // Same queueing shim and the same reasoning as the test above: both calls finish every
+    // pre-batch read before either batch runs, so both see `second` owing its full $40.
+    const db = env.PAWSERVATION_DB;
+    let queue: Promise<unknown> = Promise.resolve();
+    const serialised = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: (statements: D1PreparedStatement[]) => {
+        const next = queue.then(() => db.batch(statements));
+        queue = next.catch(() => undefined);
+        return next;
+      },
+    } as unknown as D1Database;
+
+    const outcomes = await Promise.allSettled([
+      applyAttribution(serialised, TENANT_C, {
+        paymentId: rival,
+        accountId: home.accountId,
+        splits: [{ bookingId: second, amount: 40 }],
+        remainder: 0,
+      }),
+      applyAttribution(serialised, TENANT_C, {
+        paymentId: splitter,
+        accountId: home.accountId,
+        splits: [
+          { bookingId: first, amount: 60 },
+          { bookingId: second, amount: 40 },
+        ],
+        remainder: 0,
+      }),
+    ]);
+
+    // Whichever ran second is refused WHOLE — the batch is one transaction, so the $60 split onto
+    // `first`, which was still perfectly fundable, is rolled back with it. That is the correct
+    // outcome: a partially-applied attribution would not conserve.
+    const applied = outcomes.filter((o) => o.status === 'fulfilled' && o.value.ok);
+    expect(applied).toHaveLength(1);
+    const refused = outcomes.find((o) => !(o.status === 'fulfilled' && o.value.ok))!;
+    if (refused.status !== 'fulfilled' || refused.value.ok) throw new Error('unreachable');
+    expect(refused.value.reason).toContain('no longer owes at least the amount');
+
+    // `second` never holds more than the $40 it owed, however the race fell out. Without the
+    // guard on split index 1 it holds $80 — the rival's $40 plus the splitter's, since only the
+    // first split of an attribution carries the source guard and nothing else would refuse it.
+    const secondPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, second);
+    expect(secondPayments.reduce((sum, p) => sum + p.Amount, 0)).toBeLessThanOrEqual(40);
+    // And the household still holds exactly the money it started with — attribution moves money
+    // between columns, it never creates or destroys any, whichever call won the race.
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
+  });
+
   it('refuses when a derived ExternalRef collides with one the tenant already holds', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
