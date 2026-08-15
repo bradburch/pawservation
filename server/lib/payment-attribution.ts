@@ -47,6 +47,12 @@
  * them do. Ties are now only possible within one direction, and there they are refused exactly as
  * before: two stays equally far in the past are still the sitter's call, not this function's.
  *
+ * PROXIMITY IS ALSO MEASURED TO THE WHOLE STAY, not to the day it starts — `intervalDistance`, the
+ * single helper every rule above and below asks. A payment made while a house sit is running is 0
+ * days from it; one made after checkout is measured from the end date. Only the near side keeps
+ * measuring from the start, because "prepayment" means money that arrived before the work began.
+ * See that function's own comment for the sitter's report that produced it.
+ *
  * A LEFTOVER IS NOT THE SAME CLAIM AS A MATCH. The nearest stay is the one this credit is FOR,
  * and it may be part-paid — a deposit against a big boarding is real. Every stay after it is a
  * spill, an assertion that one payment covered several stays, and it only receives money when the
@@ -54,7 +60,7 @@
  * `MAX_SPILL_DAYS` bounds how far a spill target may be as a secondary check. See the spill rule
  * inside the allocation loop, and `MAX_SPILL_DAYS`'s own comment, for the measured cases.
  *
- * Dates are just as load-bearing as amounts: an unparseable or impossible `startDate` /
+ * Dates are just as load-bearing as amounts: an unparseable or impossible `startDate` / `endDate` /
  * `paidDate` can't be sorted by distance without silently falling into an array-order tie-break
  * (`NaN` comparator results are unspecified), so every date is validated with the house
  * `isRealDate` (server/lib/validation.ts) — tolerant of a trailing `T…` time-of-day, stripped
@@ -148,8 +154,11 @@ export function expandImportedRefs(refs: string[]): Set<string> {
 }
 
 /**
- * HOW LONG AFTER A STAY A PAYMENT MAY ARRIVE AND STILL SETTLE IT, in whole days — the window for
- * a candidate whose `startDate` falls ON OR BEFORE the credit's `paidDate`.
+ * HOW LONG AFTER A STAY A PAYMENT MAY ARRIVE AND STILL SETTLE IT, in whole days — the window for a
+ * candidate that BEGAN on or before the credit's `paidDate`, measured (via `intervalDistance`) from
+ * the day the stay ENDED. A payment made DURING a stay is 0 days from it and is inside this window
+ * by construction, which is the point: it is neither late nor a prepayment, and the work was under
+ * way, so it belongs on this side.
  *
  * Date proximity is the ONLY matching rule here, and it only carries signal while the candidates
  * are actually near. Without a floor, a stay 600 days away beats one 601 days away and the result
@@ -183,8 +192,11 @@ export const MAX_LATE_PAYMENT_DAYS = 90;
 
 /**
  * HOW FAR AHEAD OF A STAY A PAYMENT MAY ARRIVE AND STILL BE READ AS PREPAYING IT, in whole days —
- * the window for a candidate whose `startDate` falls AFTER the credit's `paidDate`. DELIBERATELY
- * TIGHTER than `MAX_LATE_PAYMENT_DAYS`, because the two directions are not the same event.
+ * the window for a candidate whose `startDate` falls AFTER the credit's `paidDate`, measured from
+ * that start date — the one endpoint that does not move when the stay is a range, because money
+ * that arrived before the work began is early by however long it is until the work begins.
+ * DELIBERATELY TIGHTER than `MAX_LATE_PAYMENT_DAYS`, because the two directions are not the same
+ * event.
  *
  * A payment settles services that have already happened; that is the ordinary direction, and it
  * is why the windows are asymmetric at all. Money arriving BEFORE a stay is a real thing too — a
@@ -219,7 +231,19 @@ export const MAX_PREPAYMENT_DAYS = 30;
  */
 export const MAX_SPILL_DAYS = 14;
 
-export type UnpaidBooking = { bookingId: string; startDate: string; outstanding: number };
+export type UnpaidBooking = {
+  bookingId: string;
+  startDate: string;
+  /**
+   * The stay's exclusive checkout, or `null` for a SINGLE-DAY service. Nullability is how the
+   * schema itself draws the range/single distinction (`BookingRequests.EndDate` — "exclusive
+   * checkout for boarding/blocked ranges; NULL for single-day walks"), stamped at insert from the
+   * service's `shape` (`server/lib/booking-ops.ts`: `shape === 'range' ? end : null`). So reading
+   * the column is reading the shape; nothing here needs the service row to know which it has.
+   */
+  endDate: string | null;
+  outstanding: number;
+};
 export type Credit = { paymentId: string; amount: number; paidDate: string };
 export type Split = { bookingId: string; amount: number };
 export type Proposal =
@@ -242,18 +266,52 @@ function isUsableDate(value: string): boolean {
   return isRealDate(value.split('T')[0]);
 }
 
-/** Whole-day distance between two (optionally time-stamped) ISO date strings. */
-function dayDistance(a: string, b: string): number {
-  return Math.abs(parseDateUtc(a) - parseDateUtc(b)) / MS_PER_DAY;
+/**
+ * HOW FAR A PAYMENT IS FROM A STAY — measured to the WHOLE INTERVAL `[startDate, endDate]`, not to
+ * a point. THE ONE PLACE the question is answered, deliberately: the ordering, the directional
+ * windows, the tie grouping, `MAX_SPILL_DAYS` and the cross-credit ranking in
+ * `nearestCandidateDistance` all ask it, and any one of them measuring differently is a rule that
+ * silently disagrees with the rest.
+ *
+ *   paid date INSIDE the stay  → 0     (the money arrived while the work was under way)
+ *   paid date BEFORE the stay  → days to `startDate`
+ *   paid date AFTER  the stay  → days to `endDate`
+ *
+ * WHY, IN THE SITTER'S OWN WORDS: *"This payment is in August. The end date is far away. Not all
+ * payments should be windowed by start date — end date is also a consideration."* Measuring from
+ * the start alone is right for a pack walk, which begins and ends the same day, and wrong for a
+ * stay that spans weeks: her house sit ran 2026-07-29 → 2026-08-21 and the client sent money on
+ * 2026-08-18 — while the sitter was in the house — which a start-date rule reads as 20 days late,
+ * far enough to lose the stay to any short booking nearer the payment, and far enough to fall out
+ * of the windows entirely once the stay is longer still.
+ *
+ * A SINGLE-DAY SERVICE IS UNCHANGED, exactly. `endDate` is NULL there (see `UnpaidBooking`), the
+ * interval collapses to the start date, and every distance is the one this module computed before.
+ * A stored end BEFORE its own start is not an interval either, and collapses the same way rather
+ * than being trusted into a negative-width span.
+ */
+function intervalDistance(booking: UnpaidBooking, paidDate: string): number {
+  const start = parseDateUtc(booking.startDate);
+  const paid = parseDateUtc(paidDate);
+  if (paid < start) return (start - paid) / MS_PER_DAY;
+  const end = booking.endDate === null ? start : Math.max(start, parseDateUtc(booking.endDate));
+  return paid > end ? (paid - end) / MS_PER_DAY : 0;
 }
 
 /**
- * Does this stay start AFTER the payment was made? The signed half of proximity, kept alongside
- * `dayDistance` rather than folded into it: distance answers "how near", this answers "which
- * side", and every rule below needs both. A stay ON the paid date is not after it — same-day is
- * settlement, the strongest match there is, and it must never fall into the prepayment window.
- * Compared through the same `parseDateUtc` as the distance, so a `T…` time-of-day on either date
- * is stripped identically and can never flip a same-day stay to the future side.
+ * Does this stay begin AFTER the payment was made? The signed half of proximity, kept alongside
+ * `intervalDistance` rather than folded into it: distance answers "how near", this answers "which
+ * side", and every rule below needs both.
+ *
+ * MEASURED FROM THE START, AND ONLY THE START, which is what makes the three cases come out right
+ * once distance is an interval. "Prepayment" means money that arrived before the work began, so it
+ * is exactly `startDate > paidDate`. Everything else — a payment ON the first day, DURING the stay,
+ * or after checkout — is the late side, and that is the correct home for a payment made mid-stay:
+ * the work was under way, so the money settles rather than anticipates, and it must rank with the
+ * stays behind the payment rather than the ones still to come. A stay ON the paid date is likewise
+ * not after it — same-day is settlement, the strongest match there is. Compared through the same
+ * `parseDateUtc` as the distance, so a `T…` time-of-day on either date is stripped identically and
+ * can never flip a same-day stay to the future side.
  */
 function isAfterPaymentDate(startDate: string, paidDate: string): boolean {
   return parseDateUtc(startDate) > parseDateUtc(paidDate);
@@ -285,7 +343,7 @@ function proximityWindow(startDate: string, paidDate: string): number {
  * carry a distance it was refusing to act on.
  *
  * ELIGIBILITY IS THE SAME QUESTION `proposeAttribution` ASKS, and it is asked here through the same
- * `proximityWindow` / `dayDistance` / `isUsableDate` helpers rather than re-derived: only stays
+ * `proximityWindow` / `intervalDistance` / `isUsableDate` helpers rather than re-derived: only stays
  * with outstanding left, inside the directional windows, on readable dates. A ranking that counted
  * a stay the proposer would then drop would send a credit to the front of the queue for a match it
  * cannot make. `null` therefore means "this credit has nothing to claim right now" — the caller's
@@ -300,7 +358,10 @@ export function nearestCandidateDistance(
   let nearest: number | null = null;
   for (const b of bookings) {
     if (!(b.outstanding > 0) || !isUsableDate(b.startDate)) continue;
-    const distance = dayDistance(b.startDate, paidDate);
+    // An unreadable END is skipped for the same reason an unreadable start is: the distance would
+    // be `NaN`, and the refusal (with its reason and its sentence) belongs to `proposeAttribution`.
+    if (b.endDate !== null && !isUsableDate(b.endDate)) continue;
+    const distance = intervalDistance(b, paidDate);
     if (distance > proximityWindow(b.startDate, paidDate)) continue;
     if (nearest === null || distance < nearest) nearest = distance;
   }
@@ -377,6 +438,20 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     };
   }
 
+  // The END is just as load-bearing as the start now that distance is measured to the whole
+  // interval — an unreadable one makes `intervalDistance` `NaN`, which compares false against every
+  // ceiling and would drop the booking silently instead of refusing. NULL is not unreadable: it is
+  // how a single-day service says it has no end at all.
+  const badEndDate = unpaid.find((b) => b.endDate !== null && !isUsableDate(b.endDate));
+  if (badEndDate) {
+    return {
+      ok: false,
+      paymentId: credit.paymentId,
+      reason: 'invalid-date',
+      detail: `Booking ${badEndDate.bookingId} has an unreadable end date ("${badEndDate.endDate}"); refusing rather than sort against an undefined distance.`,
+    };
+  }
+
   // THE STALENESS FLOOR, APPLIED TO THE CANDIDATE LIST RATHER THAN TO THE CREDIT — see
   // `MAX_LATE_PAYMENT_DAYS` / `MAX_PREPAYMENT_DAYS`. Filtering, not refusing wholesale, is the
   // whole point: a credit that genuinely settles a nearby stay must still settle it, with anything
@@ -393,30 +468,37 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
   // "this household is settled" is a different fact from "nothing is near enough" that the sitter
   // acts on differently.
   const nearby = unpaid.filter(
-    (b) =>
-      dayDistance(b.startDate, credit.paidDate) <= proximityWindow(b.startDate, credit.paidDate),
+    (b) => intervalDistance(b, credit.paidDate) <= proximityWindow(b.startDate, credit.paidDate),
   );
   if (nearby.length === 0) {
     // `unpaid` is non-empty here (checked above), so this reduce needs no seed.
     const nearest = unpaid.reduce((best, b) =>
-      dayDistance(b.startDate, credit.paidDate) < dayDistance(best.startDate, credit.paidDate)
-        ? b
-        : best,
+      intervalDistance(b, credit.paidDate) < intervalDistance(best, credit.paidDate) ? b : best,
     );
     // Rounded for the SENTENCE only, never for the comparison above: a `paidDate` carrying a
     // time-of-day makes every distance fractional, and "612.5 days" is noise in a sitter's ear.
-    const gap = Math.round(dayDistance(nearest.startDate, credit.paidDate));
+    const gap = Math.round(intervalDistance(nearest, credit.paidDate));
     // DIRECTION IS PART OF THE DIAGNOSIS, not decoration: "the nearest stay is 84 days later" and
     // "84 days earlier" tell the sitter two completely different things about her data — the first
     // that the stays this money paid for have not been adopted yet, the second that the payment is
     // ahead of anything it could plausibly be a deposit for.
     const after = isAfterPaymentDate(nearest.startDate, credit.paidDate);
+    // WHICH ENDPOINT THE GAP WAS MEASURED FROM IS NAMED, because it is now a real choice and a
+    // sentence that names the other one is a sentence the sitter cannot check. Nothing reaching
+    // here is INSIDE a stay (that distance is 0, which is under every window), so a candidate is
+    // either ahead of the payment — measured, as always, from the day it starts — or behind it,
+    // measured from the day it ended, when it has an end at all. A single-day service has none,
+    // so it keeps the sentence it has always had.
+    const measuredFrom =
+      !after && nearest.endDate !== null
+        ? `ends ${nearest.endDate.split('T')[0]}`
+        : `starts ${nearest.startDate.split('T')[0]}`;
     return {
       ok: false,
       paymentId: credit.paymentId,
       reason: 'no-recent-booking',
       detail:
-        `The nearest unpaid stay to payment ${credit.paymentId} starts ${nearest.startDate.split('T')[0]}, ${gap} days ${after ? 'after' : 'before'} it — ` +
+        `The nearest unpaid stay to payment ${credit.paymentId} ${measuredFrom}, ${gap} days ${after ? 'after' : 'before'} it — ` +
         (after
           ? `further ahead than the ${MAX_PREPAYMENT_DAYS} days within which a payment reads as prepaying a stay still to come. `
           : `further back than the ${MAX_LATE_PAYMENT_DAYS} days within which a payment reads as settling a stay that already happened. `) +
@@ -434,7 +516,7 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     const sideA = isAfterPaymentDate(a.startDate, credit.paidDate) ? 1 : 0;
     const sideB = isAfterPaymentDate(b.startDate, credit.paidDate) ? 1 : 0;
     if (sideA !== sideB) return sideA - sideB;
-    return dayDistance(a.startDate, credit.paidDate) - dayDistance(b.startDate, credit.paidDate);
+    return intervalDistance(a, credit.paidDate) - intervalDistance(b, credit.paidDate);
   });
 
   let remaining = credit.amount;
@@ -447,12 +529,12 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     // distance), so the run must match on both: a stay 7 days behind the payment and one 7 days
     // ahead of it are the same `dayDistance` but not the same candidate, and treating them as
     // tied is exactly the bug this direction fixes.
-    const distance = dayDistance(ordered[i].startDate, credit.paidDate);
+    const distance = intervalDistance(ordered[i], credit.paidDate);
     const after = isAfterPaymentDate(ordered[i].startDate, credit.paidDate);
     let j = i;
     while (
       j + 1 < ordered.length &&
-      dayDistance(ordered[j + 1].startDate, credit.paidDate) === distance &&
+      intervalDistance(ordered[j + 1], credit.paidDate) === distance &&
       isAfterPaymentDate(ordered[j + 1].startDate, credit.paidDate) === after
     ) {
       j++;

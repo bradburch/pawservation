@@ -2549,6 +2549,11 @@ type HouseholdDetailBookingRow = {
   BookingId: string;
   ServiceType: string;
   StartDate: string;
+  /** Exclusive checkout for a range-shaped stay; NULL for a single-day service. Selected here
+   *  rather than in a query of its own because payment attribution measures a payment's proximity
+   *  to the WHOLE stay (`intervalDistance`, server/lib/payment-attribution.ts), and the preview
+   *  route's read cost is pinned to a constant by its own test. */
+  EndDate: string | null;
   Status: string;
   Cost: number;
   ChargesTotal: number;
@@ -2640,7 +2645,7 @@ async function householdDetailFor(
     db
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
-                b.StartDate AS StartDate, b.Status AS Status,
+                b.StartDate AS StartDate, b.EndDate AS EndDate, b.Status AS Status,
                 ${BASE_AMOUNT_SQL} AS Cost,
                 COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal,
@@ -2772,6 +2777,7 @@ function assembleHouseholdDetail(
         bookingId,
         serviceType: row.ServiceType,
         startDate: row.StartDate,
+        endDate: row.EndDate,
         status: row.Status,
         cost: row.Cost,
         charges: chargesByBooking.get(bookingId) ?? [],
@@ -2837,7 +2843,7 @@ async function bulkHouseholdDetails(
     db
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
-                b.StartDate AS StartDate, b.Status AS Status,
+                b.StartDate AS StartDate, b.EndDate AS EndDate, b.Status AS Status,
                 ${BASE_AMOUNT_SQL} AS Cost,
                 COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal,

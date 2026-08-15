@@ -3234,9 +3234,14 @@ export const adminRoutes = new Hono<AppEnv>()
       });
 
       while (remainingCredits.length > 0) {
+        // `endDate` comes along free: `getHouseholdDetail` / the bulk read already select it on
+        // the same statement they select the start date on, so the route's constant prepare count
+        // is untouched. It is what lets `proposeAttribution` and `nearestCandidateDistance`
+        // measure to the whole stay — a payment made mid-house-sit is 0 days from it, not 20.
         const unpaidBookings = candidates.map((b) => ({
           bookingId: b.bookingId,
           startDate: b.startDate,
+          endDate: b.endDate,
           outstanding: outstandingById.get(b.bookingId)!,
         }));
 

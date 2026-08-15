@@ -611,6 +611,8 @@ export type HouseholdDetail = {
     bookingId: string;
     serviceType: string;
     startDate: string;
+    /** Exclusive checkout for a range-shaped stay; NULL for a single-day service. */
+    endDate: string | null;
     status: string;
     cost: number;
     charges: { id: string; label: string; amount: number }[];

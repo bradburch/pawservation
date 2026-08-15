@@ -44,6 +44,16 @@ async function household(
   return { ownerId: owner.Id, accountId: petIds[0], petIds };
 }
 
+/**
+ * A SINGLE-DAY booking — one walk, on `startDate`, `EndDate` NULL. That is what every test in this
+ * file that says "a stay on 2026-07-05" actually means, and it is the shape proximity was measured
+ * against before it became an interval, so every distance below is exactly the number it was.
+ *
+ * It used to say `boarding` with a fixed `endDate: '2030-01-03'` bearing no relation to its own
+ * start — invisible while only the start date mattered, and a lie the moment proximity began
+ * measuring to the whole stay: a 2023 walk that "ends" in 2030 contains every payment date this
+ * file uses and is 0 days from all of them. Use `bookStay` when a test means a real range.
+ */
 async function book(
   env: Env,
   home: Household,
@@ -58,13 +68,36 @@ async function book(
 ): Promise<string> {
   const id = await insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId: home.ownerId,
-    serviceType: 'boarding',
+    serviceType: 'walk',
     startDate,
-    endDate: '2030-01-03',
+    endDate: null,
     optionKey: 'standard',
     petCount: 1,
     estCost,
     status,
+  });
+  await addBookingPets(env.PAWSERVATION_DB, tenantId, id, home.petIds);
+  return id;
+}
+
+/** A RANGE-shaped stay — house sitting, `EndDate` the exclusive checkout. */
+async function bookStay(
+  env: Env,
+  home: Household,
+  estCost: number,
+  startDate: string,
+  endDate: string,
+  tenantId = TENANT_C,
+): Promise<string> {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
+    endUserId: home.ownerId,
+    serviceType: 'housesitting',
+    startDate,
+    endDate,
+    optionKey: 'standard',
+    petCount: 1,
+    estCost,
+    status: 'confirmed',
   });
   await addBookingPets(env.PAWSERVATION_DB, tenantId, id, home.petIds);
   return id;
@@ -371,7 +404,7 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
       {
         bookingId: booking,
         amount: 100,
-        serviceType: 'boarding',
+        serviceType: 'walk',
         startDate: '2026-07-01',
         status: 'confirmed',
         outstanding: 100,
@@ -1056,6 +1089,40 @@ describe('POST /:slug/admin/payments/attribute/preview — the staleness floor s
 });
 
 /**
+ * THE END DATE REACHES THE PROPOSER — the route half of measuring proximity to the whole stay.
+ * `proposeAttribution` and `nearestCandidateDistance` are pure and already proved (see
+ * server/__tests__/payment-attribution.test.ts); what only this route can prove is that the stay's
+ * end date is actually IN HAND when they are called. It is read on the same statement as the start
+ * date, so no query is added — the constant-prepare test above is the guard on that.
+ */
+describe('POST /:slug/admin/payments/attribute/preview — proximity to the whole stay', () => {
+  it("THE SITTER'S CASE: money sent mid-house-sit lands on the stay, not on a nearer walk", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // Her live shape: a 23-night house sit, and a walk three days before the payment. The credit
+    // covers either one but not both.
+    const sit = await bookStay(env, home, 400, '2026-07-29', '2026-08-21');
+    const walk = await book(env, home, 40, '2026-08-15');
+    const paymentId = (await credit(env, home.accountId, 40, '2026-08-18'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    // 0 days from the stay it was made during, 3 from the walk. A route that dropped `endDate`
+    // would measure the stay from 2026-07-29 — 20 days — and hand the money to the walk.
+    expect(body.proposals[0]).toMatchObject({
+      paymentId,
+      splits: [{ bookingId: sit, amount: 40 }],
+      remainder: 0,
+    });
+    expect(body.proposals[0].splits.some((s) => s.bookingId === walk)).toBe(false);
+  });
+});
+
+/**
  * THE APPLY ROUTE (Task 4) — `POST /:slug/admin/payments/attribute/apply` is the only code path
  * in this feature that moves money. It takes from the browser only WHICH payment goes on which
  * bookings and in what amounts, and re-derives everything else from live state through
@@ -1550,7 +1617,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
             {
               bookingId: h.near,
               amount: 100,
-              serviceType: 'boarding',
+              serviceType: 'walk',
               startDate: '2026-06-30',
               status: 'confirmed',
               outstanding: 100,
@@ -1558,7 +1625,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
             {
               bookingId: h.far,
               amount: 60,
-              serviceType: 'boarding',
+              serviceType: 'walk',
               startDate: '2026-07-05',
               status: 'confirmed',
               outstanding: 60,
@@ -1575,7 +1642,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
             {
               bookingId: seqBooking,
               amount: 40,
-              serviceType: 'boarding',
+              serviceType: 'walk',
               startDate: '2026-07-01',
               status: 'confirmed',
               outstanding: 40,
@@ -1592,7 +1659,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
             {
               bookingId: declinedUnpaid,
               amount: 100,
-              serviceType: 'boarding',
+              serviceType: 'walk',
               startDate: '2026-07-01',
               status: 'confirmed',
               outstanding: 100,
@@ -1620,7 +1687,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
         bookings: [
           {
             bookingId: seqBooking,
-            serviceType: 'boarding',
+            serviceType: 'walk',
             startDate: '2026-07-01',
             status: 'confirmed',
             outstanding: 40,

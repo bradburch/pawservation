@@ -6,14 +6,26 @@ import {
   nearestCandidateDistance,
   proposeAttribution,
 } from '../lib/payment-attribution';
+import type { UnpaidBooking } from '../lib/payment-attribution';
 import { addDays } from '../../src/shared/index.js';
 
 const credit = (amount: number, paidDate = '2026-07-10') => ({ paymentId: 'p1', amount, paidDate });
-const bk = (bookingId: string, startDate: string, outstanding: number) => ({
+/** A SINGLE-DAY service — `BookingRequests.EndDate` is NULL, the shape a walk or drop-in has.
+ *  Every test written before proximity became an interval uses this, and none of their numbers
+ *  may move: a null end date must still measure from `startDate` alone. */
+const bk = (bookingId: string, startDate: string, outstanding: number): UnpaidBooking => ({
   bookingId,
   startDate,
+  endDate: null,
   outstanding,
 });
+/** A RANGE-shaped stay — boarding or house sitting, `EndDate` set (exclusive checkout). */
+const stay = (
+  bookingId: string,
+  startDate: string,
+  endDate: string,
+  outstanding: number,
+): UnpaidBooking => ({ bookingId, startDate, endDate, outstanding });
 
 describe('proposeAttribution', () => {
   it('fills the nearest booking first', () => {
@@ -747,6 +759,166 @@ describe('proposeAttribution', () => {
         if (!out.ok) continue;
         expect(out.splits.reduce((sum, s) => sum + s.amount, 0) + out.remainder).toBe(amount);
       }
+    });
+  });
+
+  /**
+   * PROXIMITY IS MEASURED TO THE WHOLE STAY, NOT TO ITS FIRST DAY. Reported by the sitter reading
+   * real proposals: *"This payment is in August. The end date is far away. Not all payments should
+   * be windowed by start date — end date is also a consideration."* Her live case is a house sit
+   * 2026-07-29 → 2026-08-21 (23 nights) with money sent on 2026-08-18 — made WHILE the sitter was
+   * in the house, and measured by a start-date-only rule as 20 days late.
+   *
+   * A single-day service (`EndDate` NULL) is untouched: its interval is its start date, so every
+   * number in every test above stays exactly what it was.
+   */
+  describe('the whole stay, not its start date', () => {
+    // 2026-07-29 → 2026-08-21 exclusive checkout — the sitter's own 23-night house sit.
+    const houseSit = (outstanding: number) =>
+      stay('b_sit', '2026-07-29', '2026-08-21', outstanding);
+
+    it("THE SITTER'S CASE: money sent DURING a 23-night house sit is 0 days from it, not 20", () => {
+      expect(nearestCandidateDistance('2026-08-18', [houseSit(400)])).toBe(0);
+      expect(proposeAttribution(credit(400, '2026-08-18'), [houseSit(400)])).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_sit', amount: 400 }],
+        remainder: 0,
+      });
+    });
+
+    it('money sent AFTER the stay is measured from its END date — 4 days, not 27', () => {
+      expect(nearestCandidateDistance('2026-08-25', [houseSit(400)])).toBe(4);
+      expect(proposeAttribution(credit(400, '2026-08-25'), [houseSit(400)]).ok).toBe(true);
+    });
+
+    it('money sent BEFORE the stay is still measured from its START date — 9 days, not 32', () => {
+      // The prepayment side must NOT move to the end date: 2026-07-20 is 9 days ahead of the
+      // house sit's first night and 32 ahead of its checkout, and only the first of those is
+      // inside MAX_PREPAYMENT_DAYS. Measuring the near side from the far endpoint would refuse a
+      // deposit the sitter obviously took.
+      expect(nearestCandidateDistance('2026-07-20', [houseSit(400)])).toBe(9);
+      expect(proposeAttribution(credit(400, '2026-07-20'), [houseSit(400)])).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_sit', amount: 400 }],
+        remainder: 0,
+      });
+    });
+
+    it('A SINGLE-DAY SERVICE IS UNCHANGED: a NULL end date still measures from the start alone', () => {
+      // Same two dates as the sitter's case, against a walk instead of a stay. If a null end date
+      // were read as an open-ended interval — or defaulted to anything but the start — this would
+      // collapse to 0 and the whole point-shaped half of the module would be gone.
+      expect(nearestCandidateDistance('2026-08-18', [bk('b_walk', '2026-07-29', 40)])).toBe(20);
+      expect(nearestCandidateDistance('2026-08-25', [bk('b_walk', '2026-07-29', 40)])).toBe(27);
+    });
+
+    it('A LONG STAY NO LONGER LOSES TO A SHORT ONE: 0 days inside it beats a walk 3 days out', () => {
+      // The ordering consequence, and the one that actually mis-attributes money. $40 covers
+      // either candidate but not both; under a start-date-only rule the house sit measures 20
+      // days and the walk 3, so the walk wins and the sitter's stay reads unpaid.
+      const out = proposeAttribution(credit(40, '2026-08-18'), [
+        houseSit(400),
+        bk('b_walk', '2026-08-15', 40),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_sit', amount: 40 }],
+        remainder: 0,
+      });
+    });
+
+    it('the LATE window is measured from the END: 90 days past checkout is in, 91 is out', () => {
+      const atFloor = addDays('2026-08-21', MAX_LATE_PAYMENT_DAYS);
+      const beyond = addDays('2026-08-21', MAX_LATE_PAYMENT_DAYS + 1);
+      expect(proposeAttribution(credit(400, atFloor), [houseSit(400)]).ok).toBe(true);
+      const out = proposeAttribution(credit(400, beyond), [houseSit(400)]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('no-recent-booking');
+    });
+
+    it('the PREPAYMENT window is measured from the START: 30 days before it is in, 31 is out', () => {
+      const atFloor = addDays('2026-07-29', -MAX_PREPAYMENT_DAYS);
+      const beyond = addDays('2026-07-29', -(MAX_PREPAYMENT_DAYS + 1));
+      expect(proposeAttribution(credit(400, atFloor), [houseSit(400)]).ok).toBe(true);
+      const out = proposeAttribution(credit(400, beyond), [houseSit(400)]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('no-recent-booking');
+    });
+
+    it('a payment inside the stay is neither late nor prepaid, and ranks with the LATE side', () => {
+      // The work was under way when the money arrived, so it settles rather than anticipates. A
+      // walk the same number of days AHEAD of the payment must not outrank it, exactly as a stay
+      // behind the payment outranks one ahead of it today.
+      const out = proposeAttribution(credit(40, '2026-08-18'), [
+        houseSit(40),
+        bk('b_ahead', '2026-08-18', 40),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+      // Both are distance 0 on the same (late) side — a genuine tie, refused. Were the stay
+      // classified as a prepayment it would sort second and the walk would simply win.
+      expect(out.ok === false && out.detail).toContain('b_sit');
+      expect(out.ok === false && out.detail).toContain('b_ahead');
+    });
+
+    it('two stays that both CONTAIN the payment date tie at 0 and are refused, not ranked by start', () => {
+      // The sitter's tenant has exactly this: a house sit 07-29 → 08-21 and a boarding
+      // 08-10 → 08-21, both running on 08-18. Under start-date-only they are 20 and 8 days out —
+      // an ordering, and a confident wrong answer. They are both 0 days from the money.
+      const out = proposeAttribution(credit(400, '2026-08-18'), [
+        houseSit(400),
+        stay('b_board', '2026-08-10', '2026-08-21', 300),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+    });
+
+    it('the no-recent-booking sentence names the END date when that is what the gap was measured from', () => {
+      const out = proposeAttribution(
+        credit(400, addDays('2026-08-21', MAX_LATE_PAYMENT_DAYS + 1)),
+        [houseSit(400)],
+      );
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.detail).toContain('ends 2026-08-21');
+      expect(out.ok === false && out.detail).toContain(`${MAX_LATE_PAYMENT_DAYS + 1} days before`);
+      // A single-day service has no end to name, so it keeps the sentence it has today.
+      const walk = proposeAttribution(credit(40, '2026-07-20'), [
+        bk('b_old', addDays('2026-07-20', -200), 40),
+      ]);
+      expect(walk.ok === false && walk.detail).toContain('starts');
+      expect(walk.ok === false && walk.detail).toContain('200 days before');
+    });
+
+    it('MAX_SPILL_DAYS is measured to the interval too, so a leftover reaches a long stay it is inside', () => {
+      // The spill target's START is 20 days behind the payment — beyond MAX_SPILL_DAYS — but the
+      // payment falls inside the stay, so it is 0 days from it.
+      const out = proposeAttribution(credit(70, '2026-08-18'), [
+        bk('b_walk', '2026-08-18', 40),
+        stay('b_sit', '2026-07-29', '2026-08-21', 30),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [
+          { bookingId: 'b_walk', amount: 40 },
+          { bookingId: 'b_sit', amount: 30 },
+        ],
+        remainder: 0,
+      });
+    });
+
+    it('refuses an unreadable END date rather than sorting against an undefined distance', () => {
+      const out = proposeAttribution(credit(400, '2026-08-18'), [
+        stay('b_broken', '2026-07-29', 'not-a-date', 400),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('invalid-date');
+      expect(
+        nearestCandidateDistance('2026-08-18', [stay('b_broken', '2026-07-29', 'x', 40)]),
+      ).toBe(null);
     });
   });
 });
