@@ -3386,6 +3386,15 @@ export const adminRoutes = new Hono<AppEnv>()
    * of the exact same body apply once: the second call's `applyAttribution` re-reads the row, finds
    * it gone, and skips with a reason instead of duplicating the money.
    *
+   * AN ATTRIBUTION MAY CARRY A `tip` — `{ bookingId, amount }`, naming one of its own splits'
+   * bookings. That is the one part of a payment that is not settlement: `applyAttribution` records
+   * it as a `BookingCharges` row on the stay instead of leaving it as an account-level credit that
+   * would tell the sitter she owes her client money she was thanked with. THE SPLIT IS SENT
+   * EXCLUSIVE OF IT and the server adds it, so conservation is `sum(splits) + tip + remainder ===
+   * the payment` — see `applyAttribution`'s own doc comment for why that framing rather than an
+   * inclusive split. Only the SHAPE is checked below; every rule about the figure and the booking
+   * is re-decided server-side against live state.
+   *
    * BODY SHAPE IS VALIDATED IN FULL BEFORE ANYTHING IS APPLIED — a structurally malformed
    * attribution (wrong types, missing fields) is a 400 for the WHOLE request with nothing written,
    * the same posture the CSV-import route above takes toward a malformed `choices` list. That is a
@@ -3419,6 +3428,7 @@ export const adminRoutes = new Hono<AppEnv>()
       accountId: string;
       splits: { bookingId: string; amount: number }[];
       remainder: number;
+      tip?: { bookingId: string; amount: number };
     }[] = [];
     for (const raw of body.attributions) {
       // `typeof null === 'object'`, so a `null` element must be turned away before the property
@@ -3430,6 +3440,7 @@ export const adminRoutes = new Hono<AppEnv>()
         accountId?: unknown;
         splits?: unknown;
         remainder?: unknown;
+        tip?: unknown;
       };
       if (
         typeof a.paymentId !== 'string' ||
@@ -3450,11 +3461,32 @@ export const adminRoutes = new Hono<AppEnv>()
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
         splits.push({ bookingId: s.bookingId, amount: s.amount });
       }
+
+      // THE OPTIONAL TIP — part of this payment the client meant as thanks, which
+      // `applyAttribution` records as a `BookingCharges` row on one of the bookings above rather
+      // than as an account-level credit that would read as a debt. SHAPE ONLY is checked here: that
+      // the amount is a whole positive dollar figure, that the booking is one of this attribution's
+      // own splits, and that it belongs to this payment's household are all decided by
+      // `applyAttribution` against LIVE state, and are refusals on the merits (per-item `skipped`)
+      // rather than malformed bodies. Absent is the ordinary case and stays `undefined`, so the
+      // repo function's own `tip === undefined` branch is what every existing caller keeps hitting.
+      let tip: { bookingId: string; amount: number } | undefined;
+      if (a.tip !== undefined) {
+        // `typeof null === 'object'`, so a null tip must be turned away before the property reads.
+        if (typeof a.tip !== 'object' || a.tip === null)
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        const t = a.tip as { bookingId?: unknown; amount?: unknown };
+        if (typeof t.bookingId !== 'string' || t.bookingId === '' || typeof t.amount !== 'number')
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        tip = { bookingId: t.bookingId, amount: t.amount };
+      }
+
       attributions.push({
         paymentId: a.paymentId,
         accountId: a.accountId,
         splits,
         remainder: a.remainder,
+        tip,
       });
     }
 

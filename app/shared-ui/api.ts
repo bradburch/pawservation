@@ -492,6 +492,17 @@ export type AttributionInput = {
   accountId: string;
   splits: { bookingId: string; amount: number }[];
   remainder: number;
+  /**
+   * Part of this payment the client meant as thanks rather than as settlement — recorded server-
+   * side as a `BookingCharges` row labelled "Tip" on the named booking, which must be one THIS
+   * attribution's own `splits` name. Without it the excess becomes `remainder`, an account-level
+   * credit, which says the sitter OWES the money back and then reappears in every future preview.
+   *
+   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is `sum(splits) + tip + remainder === amount`,
+   * and the server writes `split + tip` against the booking (`applyAttribution`, server/db/repo.ts).
+   * Sending an already-inclusive split fails conservation rather than paying the tip twice.
+   */
+  tip?: { bookingId: string; amount: number };
 };
 
 export type AttributionApplyResult = {

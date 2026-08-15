@@ -41,8 +41,16 @@ const APPLY_CHUNK_SIZE = MAX_ATTRIBUTIONS_PER_REQUEST;
 /** One candidate booking a credit could land on, plus the sitter's current, editable decision
  *  about it: whether it's checked (part of this attribution) and what to send for it. Starts
  *  from either a proposal's own split (checked, pre-filled) or an unresolved credit's named
- *  candidate (unchecked, blank — nothing here is ever guessed on the sitter's behalf). */
-type Row = AttributionCandidateBooking & { checked: boolean; amountText: string };
+ *  candidate (unchecked, blank — nothing here is ever guessed on the sitter's behalf).
+ *
+ *  `tipText` is the one figure here the server never proposes and never could: whether the client
+ *  meant part of this payment as thanks is a fact only the sitter knows. Always starts blank, on
+ *  the same rule as every other amount on this panel. */
+type Row = AttributionCandidateBooking & {
+  checked: boolean;
+  amountText: string;
+  tipText: string;
+};
 
 /** One credit the sitter can act on, built once from the preview response and edited in place.
  *  `included` is the master tick for this credit — independent of which rows are checked, so
@@ -60,9 +68,9 @@ type EditableCredit = {
    *  skipped): the server proposed nothing for it at all, so there is no server figure to prefer
    *  over the live derivation. */
   serverRemainder: number | null;
-  /** A snapshot of `rows` at construction (bookingId/checked/amountText only), so `isUnedited`
-   *  below can tell "still exactly what the server proposed" from "the sitter touched this." */
-  originalRows: { bookingId: string; checked: boolean; amountText: string }[];
+  /** A snapshot of `rows` at construction (the editable fields only), so `isUnedited` below can
+   *  tell "still exactly what the server proposed" from "the sitter touched this." */
+  originalRows: { bookingId: string; checked: boolean; amountText: string; tipText: string }[];
 };
 
 function snapshotRows(rows: Row[]): EditableCredit['originalRows'] {
@@ -70,6 +78,7 @@ function snapshotRows(rows: Row[]): EditableCredit['originalRows'] {
     bookingId: r.bookingId,
     checked: r.checked,
     amountText: r.amountText,
+    tipText: r.tipText,
   }));
 }
 
@@ -81,14 +90,22 @@ function isUnedited(credit: EditableCredit): boolean {
     credit.rows.every((r, i) => {
       const o = credit.originalRows[i];
       return (
-        o.bookingId === r.bookingId && o.checked === r.checked && o.amountText === r.amountText
+        o.bookingId === r.bookingId &&
+        o.checked === r.checked &&
+        o.amountText === r.amountText &&
+        o.tipText === r.tipText
       );
     })
   );
 }
 
 function fromProposal(p: AttributionProposal): EditableCredit {
-  const rows = p.splits.map((s) => ({ ...s, checked: true, amountText: String(s.amount) }));
+  const rows = p.splits.map((s) => ({
+    ...s,
+    checked: true,
+    amountText: String(s.amount),
+    tipText: '',
+  }));
   return {
     paymentId: p.paymentId,
     accountId: p.accountId,
@@ -120,7 +137,7 @@ function fromProposal(p: AttributionProposal): EditableCredit {
  * later.
  */
 function fromUnresolved(u: AttributionUnresolved): EditableCredit {
-  const rows = u.bookings.map((b) => ({ ...b, checked: false, amountText: '' }));
+  const rows = u.bookings.map((b) => ({ ...b, checked: false, amountText: '', tipText: '' }));
   return {
     paymentId: u.paymentId,
     accountId: u.accountId,
@@ -144,15 +161,50 @@ function isActionable(u: AttributionUnresolved): boolean {
 }
 
 /**
+ * The one tip the sitter has typed against this credit, ready to send — or `'invalid'` for
+ * something that isn't a usable tip yet, or `null` for the ordinary case of no tip at all.
+ *
+ * ONE TIP PER CREDIT, because the wire shape carries one (`AttributionInput.tip`) and the server
+ * accepts one. Two typed at once is `'invalid'` rather than a pick: choosing between them would be
+ * the panel deciding where a sitter's money goes, which is exactly what nothing here does.
+ *
+ * A tip on an UNCHECKED row is ignored, matching the server's own rule that a tip must name a
+ * booking among this attribution's splits — untick the stay and its tip goes with it.
+ */
+function tipOf(credit: EditableCredit): { bookingId: string; amount: number } | 'invalid' | null {
+  const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
+  if (typed.length === 0) return null;
+  if (typed.length > 1) return 'invalid';
+  if (!isWholeDollar(typed[0].tipText)) return 'invalid';
+  return { bookingId: typed[0].bookingId, amount: Number(typed[0].tipText) };
+}
+
+/**
+ * What would be left over if NOTHING were tipped — the money a tip could come out of, and the only
+ * thing that decides whether a tip field is offered on a row at all. Deliberately blind to the
+ * tips already typed, so the field cannot vanish underneath the sitter the moment she fills it in.
+ * `null` when the splits themselves aren't usable yet, in which case there is no coherent leftover
+ * to offer against.
+ */
+function leftoverBeforeTip(credit: EditableCredit): number | null {
+  const checked = credit.rows.filter((r) => r.checked);
+  for (const r of checked) if (!isWholeDollar(r.amountText)) return null;
+  return balancedRemainder(
+    credit.amount,
+    checked.map((r) => ({ amount: Number(r.amountText) })),
+  );
+}
+
+/**
  * The client-side mirror of `proposeAttribution`'s conservation rule
  * (`balancedRemainder`, src/shared/invoicing/attribution-splits.ts) applied to what the sitter
- * currently has checked and typed for one credit — extended with the one check that rule can't
+ * currently has checked and typed for one credit — extended with the two checks that rule can't
  * make on its own: a checked row's amount must not exceed THAT booking's own outstanding (also
  * shown on the row), the same live-outstanding refusal `applyAttribution` would otherwise hand
- * back after a round trip (server/db/repo.ts). `null` means "not submittable yet" — an unusable
- * amount on a checked row, a split bigger than its booking's outstanding, or a total that
- * overshoots the credit — which is exactly what blocks Apply and shows the inline message, before
- * the server ever sees it.
+ * back after a round trip (server/db/repo.ts); and the tip, if any, must be one usable figure.
+ * `null` means "not submittable yet" — an unusable amount on a checked row, a split bigger than its
+ * booking's outstanding, an unusable or duplicated tip, or a total that overshoots the credit —
+ * which is exactly what blocks Apply and shows the inline message, before the server ever sees it.
  */
 function remainderFor(credit: EditableCredit): number | null {
   const checked = credit.rows.filter((r) => r.checked);
@@ -160,10 +212,16 @@ function remainderFor(credit: EditableCredit): number | null {
     if (!isWholeDollar(r.amountText)) return null;
     if (Number(r.amountText) > r.outstanding) return null;
   }
-  return balancedRemainder(
-    credit.amount,
-    checked.map((r) => ({ amount: Number(r.amountText) })),
-  );
+  const tip = tipOf(credit);
+  if (tip === 'invalid') return null;
+  // THE TIP IS A THIRD TERM, NOT PART OF A SPLIT — the server's conservation rule is
+  // `sum(splits) + tip + remainder === amount` and the split it is sent alongside stays EXCLUSIVE
+  // of it (`applyAttribution`, server/db/repo.ts). Folding it into a split here would send an
+  // inclusive figure the server then refuses for double-counting.
+  return balancedRemainder(credit.amount, [
+    ...checked.map((r) => ({ amount: Number(r.amountText) })),
+    ...(tip === null ? [] : [{ amount: tip.amount }]),
+  ]);
 }
 
 /**
@@ -179,8 +237,20 @@ function creditIssue(credit: EditableCredit): string {
   const overOutstanding = checked.find((r) => Number(r.amountText) > r.outstanding);
   if (overOutstanding)
     return `$${overOutstanding.amountText} is more than the $${overOutstanding.outstanding} outstanding on ${overOutstanding.serviceType}.`;
+  const tip = tipOf(credit);
+  if (tip === 'invalid') {
+    const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
+    if (typed.length > 1)
+      return 'Only one booking can carry the tip — clear it from the others, or add them up onto one.';
+    return `Type a whole-dollar tip of $1 or more for ${typed[0].serviceType}, or clear it.`;
+  }
   const sum = checked.reduce((s, r) => s + Number(r.amountText), 0);
-  return `These splits add up to $${sum}, more than the $${credit.amount} payment.`;
+  // The tip is named separately in the sentence for the same reason it is a separate term on the
+  // wire: it is the figure most likely to be the one that overshot, and burying it inside "these
+  // splits" would leave the sitter looking at the wrong box.
+  return tip === null
+    ? `These splits add up to $${sum}, more than the $${credit.amount} payment.`
+    : `These splits and a $${tip.amount} tip add up to $${sum + tip.amount}, more than the $${credit.amount} payment.`;
 }
 
 /** One credit's editable block — the split rows plus the master include tick, shared by the
@@ -194,6 +264,7 @@ function CreditEditor({
   onToggleIncluded,
   onToggleRow,
   onRowAmount,
+  onRowTip,
 }: {
   credit: EditableCredit;
   label: string;
@@ -205,8 +276,15 @@ function CreditEditor({
   onToggleIncluded: () => void;
   onToggleRow: (bookingId: string) => void;
   onRowAmount: (bookingId: string, value: string) => void;
+  onRowTip: (bookingId: string, value: string) => void;
 }) {
   const remainder = remainderFor(credit);
+  // Only offered where there is money spare to have been a tip — a payment that exactly settles
+  // its stay has nothing left to thank anyone with, and a field offering to invent some would be
+  // the panel proposing money. Blind to the tips already typed (see `leftoverBeforeTip`), so it
+  // stays put while the sitter fills it in.
+  const leftover = leftoverBeforeTip(credit);
+  const canTip = leftover !== null && leftover > 0;
   // The server's own remainder, shown verbatim while nothing has moved since the preview — the
   // moment the sitter touches a row it's necessarily stale and the live derivation takes over.
   const displayRemainder =
@@ -265,6 +343,26 @@ function CreditEditor({
                     aria-label={`Amount for ${r.serviceType} on ${r.startDate}`}
                   />
                 </label>
+                {/* Kept rendered while it holds a value even once `canTip` goes false, so a tip
+                    the sitter typed and then squeezed out by raising a split stays visible and
+                    clearable rather than silently blocking Apply from off-screen. */}
+                {r.checked && (canTip || r.tipText.trim() !== '') && (
+                  <>
+                    {' '}
+                    <label className="pb-inline">
+                      plus tip $
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={r.tipText}
+                        disabled={busy}
+                        onChange={(e) => onRowTip(r.bookingId, e.target.value)}
+                        aria-label={`Tip for ${r.serviceType} on ${r.startDate}`}
+                      />
+                    </label>
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -437,6 +535,18 @@ export function AttributionPanel({
       return next;
     });
 
+  const setRowTip = (paymentId: string, bookingId: string, value: string) =>
+    setCredits((prev) => {
+      const credit = prev.get(paymentId);
+      if (!credit) return prev;
+      const next = new Map(prev);
+      next.set(paymentId, {
+        ...credit,
+        rows: credit.rows.map((r) => (r.bookingId === bookingId ? { ...r, tipText: value } : r)),
+      });
+      return next;
+    });
+
   // Only a credit the sitter actually ticked, with at least one checked booking and a set of
   // splits that conserves, is ever sent — the same guard `applyAttribution` states for itself
   // ("names no bookings; there is nothing to attribute it to"), checked here first so an
@@ -459,10 +569,15 @@ export function AttributionPanel({
       hasBlockedIncluded = true;
       continue;
     }
+    // `remainder !== null` already means the tip is usable — `remainderFor` returns null for
+    // `'invalid'` — so this narrowing can never drop a tip the sitter typed.
+    const tip = tipOf(credit);
     toApply.push({
       paymentId: credit.paymentId,
       accountId: credit.accountId,
+      // EXCLUSIVE of the tip, which travels as its own term. See `AttributionInput.tip`.
       splits: checked.map((r) => ({ bookingId: r.bookingId, amount: Number(r.amountText) })),
+      ...(tip === null || tip === 'invalid' ? {} : { tip }),
       remainder,
     });
   }
@@ -684,6 +799,7 @@ export function AttributionPanel({
                       onToggleIncluded={() => toggleIncluded(id)}
                       onToggleRow={(bookingId) => toggleRow(id, bookingId)}
                       onRowAmount={(bookingId, value) => setRowAmount(id, bookingId, value)}
+                      onRowTip={(bookingId, value) => setRowTip(id, bookingId, value)}
                     />
                   );
                 })}
@@ -714,6 +830,7 @@ export function AttributionPanel({
                       onRowAmount={(bookingId, value) =>
                         setRowAmount(u.paymentId, bookingId, value)
                       }
+                      onRowTip={(bookingId, value) => setRowTip(u.paymentId, bookingId, value)}
                     />
                   );
                 })}
@@ -753,6 +870,7 @@ export function AttributionPanel({
                       onRowAmount={(bookingId, value) =>
                         setRowAmount(u.paymentId, bookingId, value)
                       }
+                      onRowTip={(bookingId, value) => setRowTip(u.paymentId, bookingId, value)}
                     />
                   );
                 })}

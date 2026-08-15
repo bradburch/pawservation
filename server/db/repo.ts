@@ -1571,6 +1571,29 @@ export async function deleteAccountPayment(
  * live outstanding, two splits on one booking can each individually be fine while summing past
  * what it owes — so a duplicate booking id is refused outright rather than aggregated, on the same
  * "refuse rather than guess" doctrine `proposeAttribution` already applies to a duplicate candidate.
+ *
+ * PART OF THE PAYMENT MAY BE A TIP, and that is the one thing here that deliberately CHANGES what a
+ * household is owed rather than merely re-filing it. A client who pays $50 for a $40 walk has not
+ * lent the sitter $10; without `tip` that excess becomes `remainder` — an account-level credit,
+ * which reads as a debt and then reappears in every future preview hunting for a stay to attach to.
+ * `tip` records it as a `BookingCharges` row labelled `TIP_LABEL` with `Origin` NULL ("the sitter
+ * entered this herself"), so `CHARGES_JOIN_SQL` folds it into what the stay is expected to total
+ * and the stay lands settled instead of over-paid. No second money rule and no schema change.
+ *
+ * THE CALLER SENDS THE SPLIT **EXCLUSIVE** OF THE TIP; THE SERVER ADDS IT. Conservation becomes
+ * `sum(splits) + tip + remainder === source.Amount`, and the booking-level payment written for the
+ * tipped booking is `split + tip`. Chosen over an inclusive split for two reasons: it is the one
+ * framing under which the equation above is literally the money in play, and it leaves the
+ * per-split overpay guard UNTOUCHED — the tip raises that booking's expected total and its payment
+ * by the same amount, so the ceiling a split is checked against is still its PRE-TIP outstanding. A
+ * caller who sent an inclusive split therefore fails conservation loudly rather than paying the tip
+ * twice in silence. Every refusal below names the split figure, the tip and the total, because "it
+ * doesn't add up" is unactionable when three numbers can be the one at fault.
+ *
+ * THE TIP'S OWN THREE RULES: a whole number of dollars greater than zero; a booking of this
+ * payment's household; and a booking THIS ATTRIBUTION'S OWN SPLITS ALREADY NAME — a tip is thanks
+ * for a stay this money is settling, and one attached to any other stay is either malformed or an
+ * unstated second attribution.
  */
 export async function applyAttribution(
   db: D1Database,
@@ -1580,9 +1603,12 @@ export async function applyAttribution(
     accountId: string;
     splits: { bookingId: string; amount: number }[];
     remainder: number;
+    /** Part of this payment the client meant as thanks rather than as settlement. `bookingId` must
+     *  be one of `splits`' own; `amount` is EXCLUDED from that split (see above). */
+    tip?: { bookingId: string; amount: number };
   },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const { paymentId, accountId, splits, remainder } = input;
+  const { paymentId, accountId, splits, remainder, tip } = input;
 
   if (splits.length === 0) {
     return {
@@ -1601,6 +1627,16 @@ export async function applyAttribution(
     return {
       ok: false,
       reason: `Remainder ${remainder} is not a whole, non-negative number of dollars.`,
+    };
+  }
+  // The same bar every split clears, and for the same reason: `BookingCharges.Amount` is
+  // `INTEGER NOT NULL CHECK (Amount >= 1)`, so a zero, fractional or negative tip would either be
+  // silently truncated or abort a batch that has already deleted the source. Refused here, before
+  // any read, on the figure alone.
+  if (tip && (!Number.isInteger(tip.amount) || tip.amount <= 0)) {
+    return {
+      ok: false,
+      reason: `Tip for booking ${tip.bookingId} is ${tip.amount}; a tip must be a whole number of dollars greater than zero.`,
     };
   }
 
@@ -1671,11 +1707,20 @@ export async function applyAttribution(
     };
   }
 
-  const attributed = splits.reduce((sum, s) => sum + s.amount, 0) + remainder;
+  // CONSERVATION, with the tip INSIDE it. The splits are exclusive of the tip (see the doc comment
+  // above), so all three terms are disjoint slices of the one payment and the sum is the whole of
+  // the money in play. Every figure is named in the refusal: with three terms, "the split doesn't
+  // add up" cannot tell the sitter which of them she got wrong.
+  const splitTotal = splits.reduce((sum, s) => sum + s.amount, 0);
+  const tipAmount = tip?.amount ?? 0;
+  const attributed = splitTotal + tipAmount + remainder;
   if (attributed !== source.Amount) {
+    const parts = tip
+      ? `$${splitTotal} in splits, a $${tipAmount} tip and $${remainder} left over`
+      : 'splits plus remainder';
     return {
       ok: false,
-      reason: `Attribution of payment ${paymentId} accounts for $${attributed} (splits plus remainder) but the payment is $${source.Amount}; refusing rather than create or destroy money.`,
+      reason: `Attribution of payment ${paymentId} accounts for $${attributed} (${parts}) but the payment is $${source.Amount}; refusing rather than create or destroy money.`,
     };
   }
 
@@ -1695,6 +1740,25 @@ export async function applyAttribution(
     };
   }
 
+  // THE TIP'S TWO MEMBERSHIP RULES, in the order that makes each one reachable. A tip on another
+  // household's (or another tenant's) booking fails the FIRST — the same map, the same rule and the
+  // same sentence a foreign split gets, because it is the same fact. A tip on a booking of THIS
+  // household that this attribution simply isn't settling fails the second. Checked in this order
+  // because the splits-membership rule would otherwise swallow the foreign case and report it as a
+  // bookkeeping slip rather than as a cross-household write.
+  if (tip && !outstandingByBooking.has(tip.bookingId)) {
+    return {
+      ok: false,
+      reason: `Tipped booking ${tip.bookingId} is not a booking of account ${accountId} in this tenant.`,
+    };
+  }
+  if (tip && !splits.some((s) => s.bookingId === tip.bookingId)) {
+    return {
+      ok: false,
+      reason: `Tip of $${tip.amount} names booking ${tip.bookingId}, which is not among this attribution's splits; a tip can only go on a stay this payment is settling.`,
+    };
+  }
+
   // LIVE OUTSTANDING, RE-READ HERE, NOT TRUSTED FROM THE CALLER — the fix for the defect a review
   // caught at the REQUEST level, the same shape as the sequential-allocation bug `proposeAttribution`
   // was already fixed against: nothing before this point ever compares a split to what its booking
@@ -1711,6 +1775,13 @@ export async function applyAttribution(
   // clear this bar. A cancelled booking that DOES carry an assessed fee or a live charge is a genuine
   // receivable and is allowed exactly as far as that fee/charge still goes, matching the preview's
   // own `outstanding > 0` candidate filter.
+  //
+  // THE TIP DOES NOT ENTER THIS COMPARISON, and that is a decision rather than an omission. The tip
+  // raises the tipped booking's expected total (a charge) and the payment written against it by the
+  // SAME amount, so it funds only itself and the ceiling a split may reach is still the booking's
+  // PRE-TIP outstanding. Comparing `s.amount` against `outstanding + tip` would let a split
+  // over-claim by exactly the tip and leave the stay over-paid — which is the defect this whole
+  // guard exists to prevent, reintroduced through the new field.
   const overpaid = splits.find((s) => s.amount > outstandingByBooking.get(s.bookingId)!);
   if (overpaid) {
     // Reported EXACTLY as computed, never clamped to 0 — a booking already sitting in credit
@@ -1797,7 +1868,43 @@ export async function applyAttribution(
       WHERE b.TenantId = ? AND b.Id = ?
         AND ${CREDITABLE_AMOUNT_SQL} - COALESCE(paid.Total, 0) >= ?)`;
 
+  /** What this booking's own payment row carries on top of its split: the tip, or nothing. */
+  const tipOn = (bookingId: string) => (tip && tip.bookingId === bookingId ? tip.amount : 0);
+
   const statements = [
+    // THE TIP CHARGE GOES FIRST IN THE BATCH, AND THE ORDERING IS LOAD-BEARING IN BOTH DIRECTIONS.
+    //
+    // `outstandingStillOwedGuard` below reads `CREDITABLE_AMOUNT_SQL`, which includes
+    // `CHARGES_JOIN_SQL` — so it sees charges written EARLIER IN THIS SAME BATCH. The tipped
+    // booking's split insert binds `split + tip` as both the amount and the threshold, and the
+    // booking only owes `split + tip` once the tip charge exists. Insert the charge AFTER the split
+    // and the guard reads the pre-tip figure, `outstanding >= split + tip` is false, the scalar
+    // subquery is NULL, and every tipped attribution aborts — the guard firing on a write that was
+    // never wrong. Insert it BEFORE, as here, and the guard reads exactly the state the write is
+    // about to create, so it still refuses a booking that was settled underneath us (the race it
+    // exists for) and passes the honest case.
+    //
+    // The DELETE stays LAST for its own unrelated reason (the source guard's subquery looks for the
+    // very row it removes), and this statement does not disturb that: it touches `BookingCharges`,
+    // not `Payments`.
+    //
+    // A plain `INSERT ... VALUES`, not `insertBookingCharge`'s guarded `INSERT ... SELECT ... WHERE`
+    // — the same rule every other statement in this batch follows: a guard that refuses inside a
+    // batch writes zero rows WITHOUT raising, and by then the source row is gone. Every fact this
+    // charge depends on (the booking exists, is this household's, is not 'blocked'/'external') was
+    // established by `outstandingByBooking` above, and the split's own in-batch guard re-asserts
+    // tenancy and existence on the very same booking id. `Origin` is left NULL — "the sitter typed
+    // this herself", which a confirmed tip is, and the value a customer time-edit leaves untouched.
+    ...(tip
+      ? [
+          db
+            .prepare(
+              `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
+               VALUES (?, ?, ?, ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), tenantId, tip.bookingId, TIP_LABEL, tip.amount),
+        ]
+      : []),
     // Column list identical to insertPayment's.
     ...splits.map((s, i) =>
       db
@@ -1809,7 +1916,10 @@ export async function applyAttribution(
           crypto.randomUUID(),
           tenantId,
           s.bookingId,
-          s.amount,
+          // Split PLUS tip: the caller's split is exclusive of it, and the stay must end holding
+          // the whole of what the client handed over for it. Bound to the guard's threshold below
+          // as the same figure, so the write asserts precisely what it is about to do.
+          s.amount + tipOn(s.bookingId),
           ...(i === 0 ? [tenantId, paymentId] : []),
           // `PAYMENTS_JOIN_SQL`, then `CHARGES_JOIN_SQL`, then the booking itself — the same bind
           // order `householdOutstandingByBooking` uses for the same three placeholders.
@@ -1817,7 +1927,9 @@ export async function applyAttribution(
           tenantId,
           tenantId,
           s.bookingId,
-          s.amount,
+          // The guard's threshold is the figure actually being written, tip included — and the tip
+          // charge inserted above has already raised this booking's expected total by exactly it.
+          s.amount + tipOn(s.bookingId),
           source.Method,
           source.PaidDate,
           source.Note,
@@ -2154,6 +2266,20 @@ const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`
 
 /** The label every kept-overpayment charge carries. One string, so the UI and the ledger agree. */
 export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
+
+/**
+ * The label every attributed TIP charge carries (`applyAttribution`). One string for the same
+ * reason `KEPT_OVERPAYMENT_LABEL` is one: the charges list, the household statement and the ledger
+ * must all call it the same thing, and a sitter scanning her charges should be able to tell a tip
+ * from a vet visit at a glance.
+ *
+ * Deliberately NOT the same charge as a kept overpayment, though both close a gap between what was
+ * paid and what was owed. That one is retrospective — money already sitting on a booking that the
+ * client agreed the sitter keeps. This one is stated up front, at the moment the payment is
+ * attributed, by a sitter who knows her client tips. Merging them would make the ledger unable to
+ * answer "how much was I tipped this year?" without also counting every rounding she absorbed.
+ */
+export const TIP_LABEL = 'Tip';
 
 export type KeepCreditResult =
   { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };

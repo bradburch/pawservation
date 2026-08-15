@@ -137,7 +137,24 @@ type ApplyAttributionInput = {
   accountId: string;
   splits: { bookingId: string; amount: number }[];
   remainder: number;
+  /** Part of this payment the client meant as a tip, recorded as a `BookingCharges` row on one of
+   *  the bookings this attribution's own splits name. The split stays EXCLUSIVE of it. */
+  tip?: { bookingId: string; amount: number };
 };
+
+function chargeRows(raw: DatabaseSync, tenantId = TENANT_C) {
+  return raw
+    .prepare(
+      `SELECT BookingRequestId, Label, Amount, Origin
+       FROM BookingCharges WHERE TenantId = ? ORDER BY Amount DESC, Id`,
+    )
+    .all(tenantId) as {
+    BookingRequestId: string;
+    Label: string;
+    Amount: number;
+    Origin: string | null;
+  }[];
+}
 
 type ApplyBody = {
   applied: number;
@@ -1211,6 +1228,70 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(res2.status).toBe(400);
   });
 
+  it("carries a tip through to a Tip charge on the stay — Kelly's $50 settles a $40 walk with $10 of thanks", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'kelly');
+    const walk = await book(env, home, 40, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 50))!;
+
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          // EXCLUSIVE of the tip: $40 is what the walk owed, and the server adds the $10.
+          splits: [{ bookingId: walk, amount: 40 }],
+          tip: { bookingId: walk, amount: 10 },
+          remainder: 0,
+        } satisfies ApplyAttributionInput,
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as ApplyBody).toEqual({ applied: 1, skipped: [] });
+
+    expect(chargeRows(raw)).toEqual([
+      { BookingRequestId: walk, Label: 'Tip', Amount: 10, Origin: null },
+    ]);
+    // One booking payment for the whole $50, and no account-level credit left looking for a stay.
+    const rows = paymentRows(raw);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ BookingRequestId: walk, AccountId: null, Amount: 50 });
+    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    expect(detail?.balance).toBe(0);
+  });
+
+  it('a malformed tip is a 400 with nothing written', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'kelly');
+    const walk = await book(env, home, 40, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 50))!;
+    const before = paymentRows(raw);
+    const base = {
+      paymentId,
+      accountId: home.accountId,
+      splits: [{ bookingId: walk, amount: 40 }],
+    };
+
+    // A structurally broken tip is a fault in the request, not a refusable attribution — same
+    // posture as a malformed split. Each of these must 400 the WHOLE request.
+    for (const tip of [
+      null,
+      'ten',
+      { bookingId: walk },
+      { amount: 10 },
+      { bookingId: 42, amount: 10 },
+      { bookingId: walk, amount: '10' },
+      { bookingId: '', amount: 10 },
+    ]) {
+      const res = await apply(env, TENANT_C, {
+        attributions: [{ ...base, tip, remainder: 0 }],
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(paymentRows(raw)).toEqual(before);
+    expect(chargeRows(raw)).toEqual([]);
+  });
+
   it('a batch that lands two credits on the same booking applies the first and refuses the second — the money is never doubled', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
@@ -1577,6 +1658,12 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
  * `getHouseholdDetail` this used to call cost SIX reads on its own (a second account-graph load
  * plus four detail reads, of which the household payments and the charge rows were read and thrown
  * away), which put this at thirteen and the whole request past the ceiling below.
+ *
+ * IT BOUNDS READS PLUS BATCH STATEMENTS, AND ONLY THE READS ARE SUBREQUESTS: the statements ride
+ * inside one `db.batch`, billed as a single binding call. A TIPPED attribution therefore sits at
+ * exactly ten — its charge INSERT spends the headroom in the one place where spending it costs the
+ * ceiling nothing, which the tip test above measures directly rather than inferring from here.
+ * What this number still guards is a sixth READ creeping in.
  */
 const MAX_APPLY_PREPARES_PER_ATTRIBUTION = 10;
 
@@ -1638,6 +1725,67 @@ describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-r
     // The assertion the blocker is actually about. A batch is ONE binding call however many
     // statements it holds, so this counts them out again — see `countingEnv`.
     expect(counted.subrequests()).toBeLessThan(WORKERS_SUBREQUEST_LIMIT);
+  });
+
+  it('a tip costs ZERO extra subrequests — it is a statement in a batch, not a binding call', async () => {
+    // THE CLAIM UNDER TEST, stated in `MAX_ATTRIBUTIONS_PER_REQUEST`'s own arithmetic: `db.batch`
+    // is ONE binding call however many statements it carries, so the tip's charge INSERT is free
+    // against the ceiling the cap is derived from. Asserted by running the SAME cap-sized request
+    // twice over identical fixtures — once plain, once with every attribution tipped — because a
+    // bare "under 50" would still pass if a tip cost a whole extra subrequest each.
+    const build = async ({ env, raw }: ReturnType<typeof createTestEnv>) => {
+      const homes: { home: Household; near: string; far: string; paymentId: string }[] = [];
+      for (let i = 0; i < MAX_ATTRIBUTIONS_PER_REQUEST; i++) {
+        const home = await household(env, raw, `t${i}`);
+        const near = await book(env, home, 100, '2026-06-30');
+        const far = await book(env, home, 60, '2026-07-05');
+        const paymentId = (await credit(env, home.accountId, 200))!;
+        homes.push({ home, near, far, paymentId });
+      }
+      return homes;
+    };
+    // Same credit, same splits, same bookings — the ONLY difference is that $10 of each payment is
+    // recorded as a tip instead of staying as remainder.
+    const attribution = (
+      h: { home: Household; near: string; far: string; paymentId: string },
+      tipped: boolean,
+    ): ApplyAttributionInput => ({
+      paymentId: h.paymentId,
+      accountId: h.home.accountId,
+      splits: [
+        { bookingId: h.near, amount: 100 },
+        { bookingId: h.far, amount: 60 },
+      ],
+      ...(tipped ? { tip: { bookingId: h.near, amount: 10 } } : {}),
+      remainder: tipped ? 30 : 40,
+    });
+
+    const run = async (tipped: boolean) => {
+      const fixture = createTestEnv();
+      const homes = await build(fixture);
+      const counted = countingEnv(fixture.env);
+      const res = await apply(counted.env, TENANT_C, {
+        attributions: homes.map((h) => attribution(h, tipped)),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()) as ApplyBody).toEqual({
+        applied: MAX_ATTRIBUTIONS_PER_REQUEST,
+        skipped: [],
+      });
+      // Both runs actually did the work — a refusal would make the counts meaningless.
+      expect(chargeRows(fixture.raw)).toHaveLength(tipped ? MAX_ATTRIBUTIONS_PER_REQUEST : 0);
+      return { prepares: counted.prepares(), subrequests: counted.subrequests() };
+    };
+
+    const plain = await run(false);
+    const tipped = await run(true);
+
+    // IDENTICAL subrequests: the extra statement rode inside the batch that was already being sent.
+    expect(tipped.subrequests).toBe(plain.subrequests);
+    expect(tipped.subrequests).toBeLessThan(WORKERS_SUBREQUEST_LIMIT);
+    // And it IS a real extra statement — one per attribution — so the equality above is a fact
+    // about how batches are billed rather than about the tip having quietly done nothing.
+    expect(tipped.prepares).toBe(plain.prepares + MAX_ATTRIBUTIONS_PER_REQUEST);
   });
 
   it('more attributions than the cap is a 400 with nothing written', async () => {
