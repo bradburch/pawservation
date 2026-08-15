@@ -192,3 +192,37 @@ are the simplest), look at the result, then do the rest.
 
 _Produced by running the preview route against a read-only copy of production data loaded into a
 local test database. No production data was modified._
+
+## Verifying these before you apply — `attribution-review.csv`
+
+`docs/attribution-review.csv` is the same 34 proposals broken out to **one row per split**, so every
+pairing can be judged on its own. `docs/attribution-bookings.csv` lists all 53 bookings with the
+same short refs, for when you want to point a payment somewhere else.
+
+Both of your real-world patterns are in here and read naturally:
+
+- **One payment across several stays** — 12 payments do this. They share a `payment` ref across
+  consecutive rows; `left_as_credit` is filled in only on the last of them, since it belongs to the
+  payment, not the split.
+- **Several payments onto one stay** — 3 bookings do this, one of them funded by four separate
+  payments. They share a `booking` ref across rows that are otherwise unrelated.
+
+Columns to read: `paid_date` against `booking_date`, with `gap_days` between them — that gap is the
+only evidence the matcher had. `booking_owes` is what the stay was short before this split;
+`allocated` is what this payment puts against it.
+
+Columns to fill in:
+
+| Column              | What to put                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| `ok?`               | `y` if the pairing is right, `n` if it isn't. Blank means unreviewed.                             |
+| `change_to_booking` | the `booking` ref this payment should have gone to instead                                        |
+| `change_amount`     | a different amount, if the split is right but the figure is wrong                                 |
+| `notes`             | anything you want recorded — including "this payment was for a stay that isn't in the system yet" |
+
+Leave a row alone and it stands as proposed. Nothing here is applied by editing the file; hand it
+back and the corrections become the batch that gets sent, with everything marked `n` and left
+unassigned simply excluded.
+
+A pairing with a large `gap_days` is not automatically wrong — 84 days is normal if a client
+prepays a season — but it is where to look first. Every gap here is 90 days or less by construction.
