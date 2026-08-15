@@ -3255,9 +3255,14 @@ export const adminRoutes = new Hono<AppEnv>()
         } else {
           // `bookings` MEANS ONE THING, ON EVERY REASON THAT CARRIES IT: the candidates this
           // credit could still be placed on, each with its LIVE outstanding — i.e. exactly what
-          // a sitter may choose from. Only two reasons can have any: `ambiguous` (a tie the
-          // proposer refused to break) and `no-unpaid-bookings` (the sequencing below claimed
-          // everything for an earlier credit of the same household). The remaining reasons —
+          // a sitter may choose from. Three reasons can have any: `ambiguous` (a tie the proposer
+          // refused to break), `no-unpaid-bookings` (the sequencing below claimed everything for
+          // an earlier credit of the same household), and `no-recent-booking` (no stay is within
+          // `MAX_ATTRIBUTION_GAP_DAYS` of the payment, so proximity has nothing to say). The last
+          // one is placeable for precisely the reason it exists: the floor takes away the
+          // automatic GUESS, never the sitter's ability to attribute — she may well know which
+          // stay an old payment settled, and refusing to name candidates would turn a refusal to
+          // guess into a refusal to record. The remaining reasons —
           // `invalid-date`, `invalid-amount`, `duplicate-booking-id` — are faults in the credit's
           // or the household's own data: the household may well still have unpaid stays, but
           // this credit cannot be placed on any of them until the underlying record is fixed, so
@@ -3265,7 +3270,9 @@ export const adminRoutes = new Hono<AppEnv>()
           // an empty list, which is what `AttributionUnresolved`'s type comment
           // (app/shared-ui/api.ts) states and what the panel's actionable/inert split reads.
           const placeable =
-            proposal.reason === 'ambiguous' || proposal.reason === 'no-unpaid-bookings';
+            proposal.reason === 'ambiguous' ||
+            proposal.reason === 'no-unpaid-bookings' ||
+            proposal.reason === 'no-recent-booking';
           // Membership is decided by the LIVE figure, not the sequenced one, for the same
           // reason the reported figure is: a booking an earlier credit in this preview drove
           // to zero is still a booking the sitter may legitimately choose here, once they

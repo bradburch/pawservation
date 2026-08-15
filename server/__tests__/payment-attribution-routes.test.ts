@@ -780,6 +780,68 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
 });
 
 /**
+ * THE STALENESS FLOOR, THROUGH THE ROUTE — `proposeAttribution` refusing a credit no stay is near
+ * enough to (`'no-recent-booking'`, see server/__tests__/payment-attribution.test.ts) is only half
+ * the behaviour. The other half is that the sitter loses the automatic GUESS and not the ability
+ * to attribute at all, which is a property of this route: the refusal has to come back with the
+ * household's live-outstanding stays in `bookings`, the same contract `'ambiguous'` and a
+ * sequencing-skipped `'no-unpaid-bookings'` already carry, or the panel renders it inert and the
+ * credit is unplaceable forever.
+ */
+describe('POST /:slug/admin/payments/attribute/preview — the staleness floor stays placeable', () => {
+  it('a credit no stay is near enough to is refused as no-recent-booking, with every live stay still offered', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // Both stays are more than a year from the payment — the live tenant's ordinary shape, where
+    // proximity ordering is meaningless and the old code still proposed a confident split.
+    const older = await book(env, home, 40, '2026-06-01');
+    const newer = await book(env, home, 60, '2026-06-15');
+    const paymentId = (await credit(env, home.accountId, 42, '2028-01-10'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({
+      accountId: home.accountId,
+      paymentId,
+      reason: 'no-recent-booking',
+    });
+    // The whole point: non-empty, at LIVE outstanding, so the panel's actionable/inert split
+    // (keyed on `bookings.length`) makes this editable rather than a summarised dead end.
+    expect(new Map(body.unresolved[0].bookings.map((b) => [b.bookingId, b.outstanding]))).toEqual(
+      new Map([
+        [older, 40],
+        [newer, 60],
+      ]),
+    );
+  });
+
+  it('a credit with one stay inside the floor is still proposed against it, with the rest as remainder', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const near = await book(env, home, 40, '2026-07-05');
+    const far = await book(env, home, 60, '2023-01-05');
+    const paymentId = (await credit(env, home.accountId, 100, '2026-07-01'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({
+      paymentId,
+      splits: [{ bookingId: near, amount: 40 }],
+      remainder: 60,
+    });
+    expect(body.proposals[0].splits.some((s) => s.bookingId === far)).toBe(false);
+  });
+});
+
+/**
  * THE APPLY ROUTE (Task 4) — `POST /:slug/admin/payments/attribute/apply` is the only code path
  * in this feature that moves money. It takes from the browser only WHICH payment goes on which
  * bookings and in what amounts, and re-derives everything else from live state through

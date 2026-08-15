@@ -107,13 +107,14 @@ function fromProposal(p: AttributionProposal): EditableCredit {
 
 /**
  * The editor for a credit the SERVER placed nowhere but still named candidates for — an
- * `'ambiguous'` tie it refused to break, or a `'no-unpaid-bookings'` credit the preview's
- * oldest-paid-first sequencing handed every stay to an earlier credit of the same household.
- * `AttributionUnresolved.bookings` (app/shared-ui/api.ts) means the same thing in both cases —
- * the candidates, at their LIVE outstanding — so both get the SAME editor rather than a second
- * mechanism invented for the second case.
+ * `'ambiguous'` tie it refused to break, a `'no-unpaid-bookings'` credit the preview's
+ * oldest-paid-first sequencing handed every stay to an earlier credit of the same household, or a
+ * `'no-recent-booking'` credit no stay is near enough to to match on dates.
+ * `AttributionUnresolved.bookings` (app/shared-ui/api.ts) means the same thing in all three cases
+ * — the candidates, at their LIVE outstanding — so all three get the SAME editor rather than a
+ * new mechanism invented per reason.
  *
- * Starts unticked with every amount blank in both cases, for one reason: nothing here is ever
+ * Starts unticked with every amount blank in every case, for one reason: nothing here is ever
  * guessed on the sitter's behalf. Pre-filling a sequencing-skipped credit with the amount the
  * earlier credit was proposed for would be the same oldest-first guess, just moved one screen
  * later.
@@ -305,6 +306,10 @@ function CreditEditor({
  *   did this money pay? Leaving it inert is what made the panel oldest-first-automatic with no
  *   override, which the design (docs/superpowers/specs/2026-08-10-payment-attribution-design.md)
  *   rejects outright — money conserves either way, it just lands on the wrong stay;
+ * - a `no-recent-booking` credit is one no stay is near enough to for date proximity to mean
+ *   anything (MAX_ATTRIBUTION_GAP_DAYS, server/lib/payment-attribution.ts). Same editor again,
+ *   same question, and the same reason it must not be inert: the floor takes away the guess, not
+ *   the sitter's ability to say which stay this money settled;
  * - everything else — `no-unpaid-bookings` with no candidates, and every data-fault reason — is a
  *   fact about the data, not something to act on, and stays collapsed. On this tenant's real
  *   numbers 772 of 821 credits land there, and making those interactive would bury the rest.
@@ -563,18 +568,20 @@ export function AttributionPanel({
     ? previewData.unresolved.filter((u) => u.reason === 'ambiguous' && credits.has(u.paymentId))
     : [];
   /**
-   * A credit the preview's oldest-paid-first sequencing left with nothing, in a household that
-   * still HAS unpaid stays — actionable, and the whole point of this section existing. Without
-   * it the panel is oldest-first-automatic with no override: the sitter who knows it was the
-   * third credit that paid the stay has no way to say so, because unticking the first doesn't
-   * surface the third and re-previewing reproduces the same order.
+   * A credit the server placed nowhere but still named candidates for, other than a tie: the
+   * preview's oldest-paid-first sequencing left it with nothing in a household that still HAS
+   * unpaid stays (`no-unpaid-bookings`), or no stay is near enough to the payment for proximity
+   * to mean anything (`no-recent-booking`). Actionable, and the whole point of this section
+   * existing: without it the panel is automatic with no override — the sitter who knows it was
+   * the third credit that paid the stay, or which stay a two-year-old payment settled, has no way
+   * to say so. Each row carries the server's own sentence, because the reasons differ.
    */
   // Keyed on `isActionable` and NOT on the reason string, deliberately: `runPreview` admits a
   // credit to `credits` on `isActionable` alone (:388), so if the server ever adds another
-  // placeable reason, matching `=== 'no-unpaid-bookings'` here would leave that credit sitting in
-  // panel state with no section rendering it — invisible rather than merely unhandled. Ambiguous
+  // placeable reason, matching a reason literal here would leave that credit sitting in panel
+  // state with no section rendering it — invisible rather than merely unhandled. Ambiguous
   // credits are excluded because they have their own editor above, not because of their reason.
-  const sequencedOut = previewData
+  const unplaced = previewData
     ? previewData.unresolved.filter(
         (u) => isActionable(u) && u.reason !== 'ambiguous' && credits.has(u.paymentId),
       )
@@ -597,7 +604,7 @@ export function AttributionPanel({
     previewData !== null &&
     proposalIds.length === 0 &&
     ambiguous.length === 0 &&
-    sequencedOut.length === 0 &&
+    unplaced.length === 0 &&
     noUnpaidBookings.length === 0 &&
     otherIssues.length === 0;
 
@@ -713,20 +720,20 @@ export function AttributionPanel({
             </>
           )}
 
-          {sequencedOut.length > 0 && (
+          {unplaced.length > 0 && (
             <>
-              <h4>
-                Needs your call — an earlier credit was proposed first ({sequencedOut.length})
-              </h4>
+              <h4>Needs your call — not matched to a stay ({unplaced.length})</h4>
               <p className="pb-applies">
-                Each household&rsquo;s credits are proposed oldest first, so these ones found every
-                unpaid stay already spoken for. If one of them is the credit that actually paid a
-                stay, pick the booking and the amount here. Your choice is applied before the
-                proposal above that claimed the same stay, so yours is the one recorded and the
-                earlier one comes back refused &mdash; untick it too if you want it left alone.
+                Nothing was proposed for these, and each one says why underneath: an earlier credit
+                from the same household was proposed for every unpaid stay first, or no stay is
+                close enough to the payment&rsquo;s date to call it a match. If you know which stay
+                one of them paid for, pick the booking and the amount here. Your choice is applied
+                before any proposal above that claimed the same stay, so yours is the one recorded
+                and the earlier one comes back refused &mdash; untick it too if you want it left
+                alone.
               </p>
               <ul>
-                {sequencedOut.map((u) => {
+                {unplaced.map((u) => {
                   const credit = credits.get(u.paymentId);
                   if (!credit) return null;
                   return (
@@ -734,10 +741,11 @@ export function AttributionPanel({
                       key={u.paymentId}
                       credit={credit}
                       label={label(credit.accountId)}
-                      // No per-credit `detail` here, unlike the tied section: the server's
-                      // sentence for these is the same one for every credit (the tie's names the
-                      // specific bookings it refused between), and repeating it down a list of
-                      // dozens buries the rows it sits above. The paragraph says it once.
+                      // The server's own sentence, per credit — this section now holds more than
+                      // one reason (a sequencing skip and a payment too far from any stay), and
+                      // the paragraph above can only say "one of these two". Which one applies to
+                      // THIS credit, and the gap and stay behind it, is the server's to state.
+                      detail={u.detail}
                       busy={busy}
                       onToggleIncluded={() => toggleIncluded(u.paymentId)}
                       onToggleRow={(bookingId) => toggleRow(u.paymentId, bookingId)}
@@ -784,7 +792,7 @@ export function AttributionPanel({
             </details>
           )}
 
-          {(proposalIds.length > 0 || ambiguous.length > 0 || sequencedOut.length > 0) && (
+          {(proposalIds.length > 0 || ambiguous.length > 0 || unplaced.length > 0) && (
             <div className="pb-row">
               <button
                 onClick={() => void runApply()}

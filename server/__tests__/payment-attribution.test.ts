@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { proposeAttribution } from '../lib/payment-attribution';
+import { MAX_ATTRIBUTION_GAP_DAYS, proposeAttribution } from '../lib/payment-attribution';
+import { addDays } from '../../src/shared/index.js';
 
 const credit = (amount: number, paidDate = '2026-07-10') => ({ paymentId: 'p1', amount, paidDate });
 const bk = (bookingId: string, startDate: string, outstanding: number) => ({
@@ -331,6 +332,108 @@ describe('proposeAttribution', () => {
         bk('C', '2026-07-20', 30),
       ]);
       expect(out).toEqual({ ok: true, paymentId: 'p1', splits: [], remainder: 30 });
+    });
+  });
+
+  /**
+   * THE STALENESS FLOOR. Proximity is the only matching rule this function has, so it only means
+   * something while the candidates are actually near: a dry run over the live `brad-paws` tenant
+   * put 52 of 77 proposed splits ($1,895 of $2,640) more than eighteen months from the stay they
+   * were proposed against, ordered purely by which of two equally meaningless distances was
+   * smaller. These assert that a credit with no candidate inside `MAX_ATTRIBUTION_GAP_DAYS` is
+   * REFUSED and reported, never placed — and, just as importantly, that a credit which does have
+   * a near candidate is still placed on it exactly as before.
+   */
+  describe('the staleness floor: no candidate near enough is a refusal, not a proposal', () => {
+    it('REFUSES a credit whose nearest unpaid stay is far beyond the floor, naming the gap and that stay', () => {
+      const nearest = addDays('2026-07-10', -200);
+      const out = proposeAttribution(credit(42), [
+        bk('bk_ancient', addDays('2026-07-10', -600), 40),
+        bk('bk_nearest', nearest, 40),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('no-recent-booking');
+      // The sitter has to be able to see WHY, which means the actual distance and the actual stay
+      // — not a generic "too far".
+      expect(out.ok === false && out.detail).toContain('200');
+      expect(out.ok === false && out.detail).toContain(nearest);
+    });
+
+    it('places a credit on the one candidate inside the floor and leaves the excess as remainder', () => {
+      // The floor filters CANDIDATES; it does not refuse a credit that has a good match merely
+      // because it also has money left over. The $60 excess must NOT dribble onto a stay 400 days
+      // away, and the whole credit must not be refused either.
+      const out = proposeAttribution(credit(100), [
+        bk('b_near', '2026-07-09', 40),
+        bk('b_far', addDays('2026-07-10', 400), 60),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_near', amount: 40 }],
+        remainder: 60,
+      });
+    });
+
+    it('accepts a stay exactly MAX_ATTRIBUTION_GAP_DAYS away and refuses one a day beyond — in both directions', () => {
+      // `dayDistance` is absolute, so a payment that arrived a quarter EARLY and one that arrived
+      // a quarter LATE must be treated identically. A signed comparison would pass one direction
+      // and silently keep proposing in the other.
+      for (const sign of [1, -1]) {
+        const atFloor = addDays('2026-07-10', sign * MAX_ATTRIBUTION_GAP_DAYS);
+        const beyondFloor = addDays('2026-07-10', sign * (MAX_ATTRIBUTION_GAP_DAYS + 1));
+
+        expect(proposeAttribution(credit(40), [bk('b_at', atFloor, 40)])).toEqual({
+          ok: true,
+          paymentId: 'p1',
+          splits: [{ bookingId: 'b_at', amount: 40 }],
+          remainder: 0,
+        });
+
+        const beyond = proposeAttribution(credit(40), [bk('b_beyond', beyondFloor, 40)]);
+        expect(beyond.ok).toBe(false);
+        expect(beyond.ok === false && beyond.reason).toBe('no-recent-booking');
+      }
+    });
+
+    it('still reports no-unpaid-bookings, not the floor, for a household with nothing outstanding', () => {
+      // Order of refusals matters: "this household is settled" and "nothing is near enough" are
+      // different facts and the sitter acts on them differently. The settled one wins.
+      const out = proposeAttribution(credit(40), [bk('b_far_paid', addDays('2026-07-10', 500), 0)]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('no-unpaid-bookings');
+    });
+
+    it('still reports the data faults, not the floor, when a distant booking is also unreadable', () => {
+      // The floor cannot run before the dates and amounts are known good — a distance off an
+      // unparseable date is `NaN`, which compares false against any ceiling.
+      const badDate = proposeAttribution(credit(40), [
+        bk('b_far', addDays('2026-07-10', 500), 40),
+        bk('b_broken', 'not-a-date', 40),
+      ]);
+      expect(badDate.ok === false && badDate.reason).toBe('invalid-date');
+
+      const badAmount = proposeAttribution(credit(40), [
+        bk('b_far', addDays('2026-07-10', 500), 40),
+        bk('b_broken', addDays('2026-07-10', 501), 40.5),
+      ]);
+      expect(badAmount.ok === false && badAmount.reason).toBe('invalid-amount');
+    });
+
+    it('leaves the tie refusal exactly as it was when both tied stays are inside the floor', () => {
+      // The floor is an ADDITIONAL refusal, never a relaxation of an existing one: a tie inside
+      // the floor is still the sitter's call, and a far third candidate does not change that.
+      const out = proposeAttribution(credit(40), [
+        bk('b_before', '2026-07-09', 40),
+        bk('b_after', '2026-07-11', 40),
+        bk('b_far', addDays('2026-07-10', 400), 40),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+      expect(out.ok === false && out.detail).toContain('b_before');
+      expect(out.ok === false && out.detail).toContain('b_after');
+      // The far booking was filtered out before ordering, so it is not one of the tied names.
+      expect(out.ok === false && out.detail).not.toContain('b_far');
     });
   });
 });

@@ -28,6 +28,15 @@
  * anyway (it can't fully fund even the cheapest tied booking) is not a decision the sitter needs
  * to make, so it is not refused — the leftover simply becomes `remainder`.
  *
+ * That rule has a second edge, added after the first dry run against production: a tie is not the
+ * only shape ambiguity takes. Proximity is this function's ONLY matching rule, so a candidate 600
+ * days from the payment is not a better match than one 601 days away — it is the absence of a
+ * match, which the ordering below cannot tell apart from a real one. Candidates further than
+ * `MAX_ATTRIBUTION_GAP_DAYS` from the credit's `paidDate` are therefore dropped before any
+ * ordering happens, and a credit left with none of them is refused as `no-recent-booking` rather
+ * than placed somewhere arbitrary. See that constant's own doc comment for the measured
+ * distribution the number is calibrated against.
+ *
  * Dates are just as load-bearing as amounts: an unparseable or impossible `startDate` /
  * `paidDate` can't be sorted by distance without silently falling into an array-order tie-break
  * (`NaN` comparator results are unspecified), so every date is validated with the house
@@ -121,6 +130,39 @@ export function expandImportedRefs(refs: string[]): Set<string> {
   return set;
 }
 
+/**
+ * HOW FAR A STAY MAY BE FROM A CREDIT'S PAID DATE AND STILL COUNT AS A PROXIMITY MATCH, in whole
+ * days — the floor below which this function refuses instead of proposing.
+ *
+ * Date proximity is the ONLY matching rule here, and it only carries signal while the candidates
+ * are actually near. Without a floor, a stay 600 days away beats one 601 days away and the result
+ * is reported as a confident proposal: the tie check refuses two candidates that are equally near,
+ * but nothing refused two that are equally MEANINGLESS. That is the same guess
+ * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` rejects — ambiguity reported,
+ * never resolved by picking — arriving through a door the tie check does not watch.
+ *
+ * THE NUMBER, MEASURED. A dry run over the live `brad-paws` tenant (payments from Aug 2023, only
+ * July 2026 bookings adopted) produced 47 proposals / 77 splits distributed like this:
+ *
+ *   same week          2 splits    $80
+ *   same month         1 split     $40
+ *   2–6 months         3 splits   $120
+ *   6–18 months       19 splits   $505
+ *   over 18 months    52 splits $1,895   ← 72% of the money
+ *
+ * At those distances the proposer is a conveyor belt, not a judgment: one household's $42 credit
+ * was split $5 onto one walk and $37 onto the next purely because that is where the running
+ * bucket happened to be full. A sitter reads a proposal as a judgment, so the honest answer is a
+ * refusal she can place herself.
+ *
+ * 90 days is DELIBERATELY GENEROUS, and generous is the right direction to err: a client settling
+ * a month late or prepaying a month ahead is ordinary, and every one of those (the top three rows
+ * above — 6 splits, $240) still resolves exactly as before. A payment more than a quarter from
+ * any stay it could have paid for is not a proximity match; it is the absence of one. Raise this
+ * only against a measurement, and never to make a batch look tidier.
+ */
+export const MAX_ATTRIBUTION_GAP_DAYS = 90;
+
 export type UnpaidBooking = { bookingId: string; startDate: string; outstanding: number };
 export type Credit = { paymentId: string; amount: number; paidDate: string };
 export type Split = { bookingId: string; amount: number };
@@ -131,6 +173,7 @@ export type Proposal =
       paymentId: string;
       reason:
         | 'no-unpaid-bookings'
+        | 'no-recent-booking'
         | 'ambiguous'
         | 'invalid-date'
         | 'invalid-amount'
@@ -218,10 +261,45 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     };
   }
 
+  // THE STALENESS FLOOR, APPLIED TO THE CANDIDATE LIST RATHER THAN TO THE CREDIT — see
+  // `MAX_ATTRIBUTION_GAP_DAYS`. Filtering, not refusing wholesale, is the whole point: a credit
+  // that genuinely settles a nearby stay must still settle it, with anything left over becoming
+  // `remainder` instead of dribbling onto a stay two years away. Only when NOTHING is near enough
+  // is there no proximity match to report at all.
+  //
+  // It runs here, after the date and amount guards and after `no-unpaid-bookings`, because it
+  // depends on both: a distance off an unreadable date is `NaN` (which compares false against any
+  // ceiling, so an unreadable booking would be silently filtered out rather than refused), and
+  // "this household is settled" is a different fact from "nothing is near enough" that the sitter
+  // acts on differently.
+  const nearby = unpaid.filter(
+    (b) => dayDistance(b.startDate, credit.paidDate) <= MAX_ATTRIBUTION_GAP_DAYS,
+  );
+  if (nearby.length === 0) {
+    // `unpaid` is non-empty here (checked above), so this reduce needs no seed.
+    const nearest = unpaid.reduce((best, b) =>
+      dayDistance(b.startDate, credit.paidDate) < dayDistance(best.startDate, credit.paidDate)
+        ? b
+        : best,
+    );
+    // Rounded for the SENTENCE only, never for the comparison above: a `paidDate` carrying a
+    // time-of-day makes every distance fractional, and "612.5 days" is noise in a sitter's ear.
+    const gap = Math.round(dayDistance(nearest.startDate, credit.paidDate));
+    return {
+      ok: false,
+      paymentId: credit.paymentId,
+      reason: 'no-recent-booking',
+      detail:
+        `The nearest unpaid stay to payment ${credit.paymentId} starts ${nearest.startDate.split('T')[0]}, ${gap} days away — ` +
+        `further than the ${MAX_ATTRIBUTION_GAP_DAYS} days within which a payment and a stay are near enough to match on dates alone. ` +
+        `If you know which stay this paid for, choose it yourself.`,
+    };
+  }
+
   // Order by date proximity to the credit, nearest first. Ties are left in place here — grouping
   // and refusing an unresolved tie happens explicitly below, not by however `sort` happens to
   // order equal elements.
-  const ordered = [...unpaid].sort(
+  const ordered = [...nearby].sort(
     (a, b) => dayDistance(a.startDate, credit.paidDate) - dayDistance(b.startDate, credit.paidDate),
   );
 
