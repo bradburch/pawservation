@@ -934,3 +934,163 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
     expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-05' }]);
   });
 });
+
+/**
+ * A description `Cost:` on a RANGE-shaped service is the sitter's PER-NIGHT rate, not the total
+ * for the stay — her own convention in her own calendar, confirmed by her directly. Reading it as
+ * a total understated every multi-night stay she had already adopted: a 3-night boarding written
+ * `Cost: 100` is $300 owed, not $100.
+ *
+ * Nights come from the repo's one night-counting helper (`nightsBetween`, over the same
+ * `spanEndExclusive` span the rate card is asked for), so the backfill and the rate card can never
+ * disagree about what a night is.
+ */
+describe('classifyEvent — a description Cost: on a RANGE service is a PER-NIGHT rate', () => {
+  // Any priceFor answer here is deliberately absurd: a description Cost: must win outright, so if
+  // one of these numbers ever shows up in an assertion the rate card was consulted when it
+  // should not have been.
+  const rangeCtx = (serviceType: string, label: string) => ({
+    ...CTX,
+    services: [{ serviceType, label, optionKey: 'standard', shape: 'range' as const }],
+    priceFor: () => ({ priced: true as const, cost: 999 }),
+  });
+
+  it('a 3-night boarding described Cost: 100 adopts at 300, not 100', () => {
+    // The sitter's live 2026-07-17 → 07-20 boarding, verbatim.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 300 });
+  });
+
+  it('a 3-night house sit described Cost: 110 adopts at 330', () => {
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie House sit',
+        description: 'Cost: 110',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      rangeCtx('house-sitting', 'House sitting'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 330 });
+  });
+
+  it('a 23-night house sit described Cost: 110 adopts at 2530, across a month boundary', () => {
+    // The sitter's live 2026-07-29 → 08-21 sit. Any month-length assumption (30 or 31 days) or a
+    // day-of-month subtraction lands somewhere other than 23 nights.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie House sit',
+        description: 'Cost: 110',
+        start: '2026-07-29',
+        end: '2026-08-21',
+        allDay: true,
+      }),
+      rangeCtx('house-sitting', 'House sitting'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 2530 });
+  });
+
+  it('a 1-night stay described Cost: 100 adopts at 100 — the multiplier is not off by one', () => {
+    // nightsBetween('2026-07-17', '2026-07-18') === 1 (the repo's own definition of a night: the
+    // end date is exclusive). Billing nights + 1 would read $200 here.
+    expect(nightsBetween('2026-07-17', '2026-07-18')).toBe(1);
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-18',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 100 });
+  });
+
+  it('multiplies over the NORMALIZED span of a timed event, not its raw inclusive end', () => {
+    // Fri 18:00 – Sun 09:00: Google's end is inclusive on a timed event, so the stay is 3 nights
+    // (Fri/Sat/Sun), not 2. Multiplying the raw end would read $100.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 50',
+        start: '2026-07-03',
+        end: '2026-07-05',
+        allDay: false,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-06', estCost: 150 });
+  });
+
+  it('a single-day service adopts its description Cost: unchanged', () => {
+    // CTX's walk is shape: 'single' — there are no nights to multiply by and the figure is the
+    // whole charge.
+    const out = classifyEvent(event({ summary: 'Sadie Walk', description: 'Cost: 40' }), CTX);
+    expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 40 });
+  });
+
+  it('a single-day service spanning several days STILL adopts its Cost: unchanged', () => {
+    // The shape gate, isolated: this walk's span is 3 days wide, so an implementation that
+    // multiplied without checking shape would read $120. A single-shaped row carries no end date
+    // and therefore no nights at all.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Walk',
+        description: 'Cost: 40',
+        start: '2026-07-01',
+        end: '2026-07-04',
+        allDay: true,
+      }),
+      CTX,
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 40 });
+  });
+
+  it('leaves the rate card path alone — its cost is already a total for the whole span', () => {
+    // No description Cost: at all, so priceFor answers. That number is a computed total and must
+    // be adopted as-is; multiplying it too would read $450.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Owner: Lauren Kotin',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      {
+        ...rangeCtx('boarding', 'Boarding'),
+        priceFor: () => ({ priced: true as const, cost: 150 }),
+      },
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 150 });
+  });
+
+  it('refuses a range span with no whole night rather than adopting a $0 stay', () => {
+    // A degenerate all-day event (end === start) yields 0 nights. There is no honest product to
+    // adopt, so this takes the same needs-price arm an unpriced pet set takes — the sitter prices
+    // it herself. No cost field is invented: not 0, not null, not the un-multiplied rate.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-17',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'needs-price', startDate: '2026-07-17' });
+    expect(out).not.toHaveProperty('estCost');
+  });
+});

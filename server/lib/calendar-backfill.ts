@@ -7,7 +7,7 @@
  * pure and dependency-free, so importing `buildAccounts` from it does not violate that rule.
  */
 
-import { addDays, buildAccounts } from '../../src/shared/index.js';
+import { addDays, buildAccounts, nightsBetween } from '../../src/shared/index.js';
 import type { CalendarEvent } from './google-calendar';
 import type { PriceResult } from './availability';
 
@@ -513,10 +513,48 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   const endDate = service.service.shape === 'range' ? spanEndExclusive(event) : null;
   const petIds = pets.pets.map((p) => p.id);
 
-  // 3. Cost — a description Cost: is what was actually charged, so it wins over the rate card
-  // outright: the row adopts on that number even when the rate card itself couldn't price this
-  // pet set (an unpriced combination that would otherwise flag needs-price).
+  /** Everything resolved except the money — see the `needs-price` arm of `Classified`. NO cost
+   *  field is ever present on it: not null, not zero, not a half-derived figure. */
+  const needsPrice = (): Classified => ({
+    kind: 'needs-price',
+    eventId: event.id,
+    summary: event.summary,
+    startDate: event.start,
+    endDate,
+    endUserId: household.endUserId,
+    serviceType: service.service.serviceType,
+    optionKey: service.service.optionKey,
+    petIds,
+    cancelled: parsed.cancelled,
+  });
+
+  // 3. Cost — a description `Cost:` is the sitter's own figure and wins over the rate card
+  // outright: the row adopts on it even when the rate card itself couldn't price this pet set (an
+  // unpriced combination that would otherwise return needs-price).
+  //
+  // What that figure MEANS depends on the service's shape, and this is the sitter's own
+  // convention in her own calendar, confirmed by her directly:
+  //
+  //  - RANGE (a boarding, a house sit) — it is her PER-NIGHT rate, NOT the total for the stay. A
+  //    2026-07-17 → 07-20 boarding written `Cost: 100` was $300, three nights at a hundred. Read
+  //    as a total it understates every multi-night stay by a factor of its own length, which is
+  //    exactly what it did before this multiplication existed.
+  //  - SINGLE (a walk, a drop-in) — there are no nights to bill, so it is the whole charge and is
+  //    adopted unchanged.
+  //
+  // Nights come from `nightsBetween` over the SAME `spanEndExclusive` span the rate card is asked
+  // for below, so the backfill and the rate card can never disagree about what a night is.
   if (meta.cost !== null) {
+    const nights =
+      service.service.shape === 'range' ? nightsBetween(event.start, spanEndExclusive(event)) : 1;
+    const total = meta.cost * nights;
+    // A range span yielding no whole night is broken data, not a $0 stay, and whole-dollar
+    // arithmetic that has left the exact-integer range is not money anyone can be billed. Neither
+    // is adoptable, and neither is roundable: hand both to the sitter as needs-price — the same
+    // arm an unpriced pet set takes — rather than write a number nobody charged.
+    if (!Number.isSafeInteger(nights) || nights < 1 || !Number.isSafeInteger(total)) {
+      return needsPrice();
+    }
     return {
       kind: 'adopt',
       eventId: event.id,
@@ -527,7 +565,7 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
       serviceType: service.service.serviceType,
       optionKey: service.service.optionKey,
       petIds,
-      estCost: meta.cost,
+      estCost: total,
       cancelled: parsed.cancelled,
     };
   }
@@ -535,20 +573,8 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   const price = ctx.priceFor(service.service, pets.pets, event.start, spanEndExclusive(event));
   if (!price.priced) {
     // The free product's own "available but not priced" outcome — but everything else DID
-    // resolve, so this is a question for the sitter, not a failure. No number is invented here:
-    // there is no estCost field at all, not null and not zero.
-    return {
-      kind: 'needs-price',
-      eventId: event.id,
-      summary: event.summary,
-      startDate: event.start,
-      endDate,
-      endUserId: household.endUserId,
-      serviceType: service.service.serviceType,
-      optionKey: service.service.optionKey,
-      petIds,
-      cancelled: parsed.cancelled,
-    };
+    // resolve, so this is a question for the sitter, not a failure.
+    return needsPrice();
   }
 
   return {
@@ -561,6 +587,8 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
     serviceType: service.service.serviceType,
     optionKey: service.service.optionKey,
     petIds,
+    // Already the total for the whole span — the rate card was handed the span itself and applied
+    // the service's own per-night/per-day unit inside. Never multiplied again here.
     estCost: price.cost,
     cancelled: parsed.cancelled,
   };
