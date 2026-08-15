@@ -240,6 +240,49 @@ function proximityWindow(startDate: string, paidDate: string): number {
   return isAfterPaymentDate(startDate, paidDate) ? MAX_PREPAYMENT_DAYS : MAX_LATE_PAYMENT_DAYS;
 }
 
+/**
+ * HOW NEAR THE NEAREST STAY THIS CREDIT COULD ACTUALLY BE PLACED ON IS, in whole days — or `null`
+ * when there is no such stay at all. The one number a caller needs to decide WHICH CREDIT GOES
+ * NEXT, and nothing more.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM `proposeAttribution`. Proposing is a decision about one credit
+ * against one candidate list; ordering a household's credits is a decision ACROSS credits, and it
+ * belongs to the caller that holds them all (the preview route, where the per-household loop and
+ * its decrementing outstanding map already live). Left to oldest-`PaidDate`-first, that caller
+ * makes the placement every credit-local rule is powerless to stop: the oldest credit greedily
+ * takes its own nearest stay, consumes it, and a credit that lands ON one of those stays finds
+ * nothing left. Nothing inside `proposeAttribution` can see that, because by construction it never
+ * sees the other credits.
+ *
+ * A HELPER RATHER THAN A WIDER RETURN SHAPE, deliberately: `proposeAttribution` stays PURE and its
+ * `Proposal` union keeps meaning exactly what it means today ("here is the split, or here is why
+ * there isn't one"). Ranking needs an answer for credits it is NOT proposing yet, and asking the
+ * proposer for one would mean either running the full allocation n² times or widening a refusal to
+ * carry a distance it was refusing to act on.
+ *
+ * ELIGIBILITY IS THE SAME QUESTION `proposeAttribution` ASKS, and it is asked here through the same
+ * `proximityWindow` / `dayDistance` / `isUsableDate` helpers rather than re-derived: only stays
+ * with outstanding left, inside the directional windows, on readable dates. A ranking that counted
+ * a stay the proposer would then drop would send a credit to the front of the queue for a match it
+ * cannot make. `null` therefore means "this credit has nothing to claim right now" — the caller's
+ * signal to rank it last, not a refusal in its own right; the refusal, with its reason and its
+ * sentence, still comes from `proposeAttribution` alone.
+ */
+export function nearestCandidateDistance(
+  paidDate: string,
+  bookings: UnpaidBooking[],
+): number | null {
+  if (!isUsableDate(paidDate)) return null;
+  let nearest: number | null = null;
+  for (const b of bookings) {
+    if (!(b.outstanding > 0) || !isUsableDate(b.startDate)) continue;
+    const distance = dayDistance(b.startDate, paidDate);
+    if (distance > proximityWindow(b.startDate, paidDate)) continue;
+    if (nearest === null || distance < nearest) nearest = distance;
+  }
+  return nearest;
+}
+
 export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): Proposal {
   if (!Number.isInteger(credit.amount) || credit.amount < 0) {
     return {

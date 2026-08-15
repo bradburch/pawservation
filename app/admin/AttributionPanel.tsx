@@ -108,7 +108,7 @@ function fromProposal(p: AttributionProposal): EditableCredit {
 /**
  * The editor for a credit the SERVER placed nowhere but still named candidates for — an
  * `'ambiguous'` tie it refused to break, a `'no-unpaid-bookings'` credit the preview's
- * oldest-paid-first sequencing handed every stay to an earlier credit of the same household, or a
+ * closest-pair sequencing handed every stay to a nearer credit of the same household, or a
  * `'no-recent-booking'` credit no stay is near enough to to match on dates.
  * `AttributionUnresolved.bookings` (app/shared-ui/api.ts) means the same thing in all three cases
  * — the candidates, at their LIVE outstanding — so all three get the SAME editor rather than a
@@ -116,7 +116,7 @@ function fromProposal(p: AttributionProposal): EditableCredit {
  *
  * Starts unticked with every amount blank in every case, for one reason: nothing here is ever
  * guessed on the sitter's behalf. Pre-filling a sequencing-skipped credit with the amount the
- * earlier credit was proposed for would be the same oldest-first guess, just moved one screen
+ * earlier credit was proposed for would be the same automatic guess, just moved one screen
  * later.
  */
 function fromUnresolved(u: AttributionUnresolved): EditableCredit {
@@ -300,10 +300,10 @@ function CreditEditor({
  * - a resolved proposal is ticked and ready;
  * - an `ambiguous` credit is a tie the server deliberately refused to break, so it starts
  *   UNticked and empty until the sitter picks a booking;
- * - a `no-unpaid-bookings` credit that still NAMES bookings is one the preview's oldest-paid-first
+ * - a `no-unpaid-bookings` credit that still NAMES bookings is one the preview's closest-pair
  *   sequencing skipped — the household has unpaid stays, they were simply all proposed to an
  *   earlier credit. It gets the SAME editor as a tie, because it is the same question: which stay
- *   did this money pay? Leaving it inert is what made the panel oldest-first-automatic with no
+ *   did this money pay? Leaving it inert is what made the panel automatic with no
  *   override, which the design (docs/superpowers/specs/2026-08-10-payment-attribution-design.md)
  *   rejects outright — money conserves either way, it just lands on the wrong stay;
  * - a `no-recent-booking` credit is one no stay is near enough to for date proximity to mean
@@ -447,7 +447,7 @@ export function AttributionPanel({
   // state, so when two included credits name the same stay the FIRST one wins and the second is
   // refused. A credit the sitter chose a booking for herself has `serverRemainder === null` (the
   // server proposed nothing for it); a pre-ticked proposal has a number. Sending proposals first
-  // would mean the oldest-first guess beats the deliberate correction — and since the winning
+  // would mean the server's automatic guess beats the deliberate correction — and since the winning
   // credit's own PaidDate, Method and Note are what get stamped on the booking, the record would
   // carry the guess. The panel pre-ticks proposals, so it cannot also make the sitter untick one
   // to be heard.
@@ -570,7 +570,7 @@ export function AttributionPanel({
     : [];
   /**
    * A credit the server placed nowhere but still named candidates for, other than a tie: the
-   * preview's oldest-paid-first sequencing left it with nothing in a household that still HAS
+   * preview's closest-pair sequencing left it with nothing in a household that still HAS
    * unpaid stays (`no-unpaid-bookings`), or no stay is near enough to the payment for proximity
    * to mean anything (`no-recent-booking`). Actionable, and the whole point of this section
    * existing: without it the panel is automatic with no override — the sitter who knows it was

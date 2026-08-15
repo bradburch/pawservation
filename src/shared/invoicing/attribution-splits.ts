@@ -64,9 +64,9 @@ export function balancedRemainder(
  * overpaying. That makes send order a decision about which credit gets recorded — and the winning
  * credit's own `PaidDate`, `Method` and `Note` are what end up stamped on the booking.
  *
- * The preview proposes a household's credits oldest-paid-first and the panel pre-ticks those
+ * The preview proposes a household's credits closest-pair-first and the panel pre-ticks those
  * proposals; a credit the sitter placed herself (a tie she broke, or one the sequencing skipped)
- * is one the server proposed nothing for. Sending proposals first would let the oldest-first guess
+ * is one the server proposed nothing for. Sending proposals first would let the automatic guess
  * beat the deliberate correction — the guess `docs/superpowers/specs/2026-08-10-payment-attribution-design.md`
  * rejects in as many words — and would make the sitter untick a box the panel ticked for her just
  * to be heard. So hers go first and the guess is the one that comes back refused.

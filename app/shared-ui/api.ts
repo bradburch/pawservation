@@ -448,8 +448,8 @@ export type AttributionProposal = {
  *    is what the proposer refused to break, but the sitter may know the money belonged to a stay
  *    that was never in the tie at all, so the whole set is offered.
  *  - `'no-unpaid-bookings'` WHEN the household still has stays with live outstanding, i.e. the
- *    preview's oldest-paid-first sequencing handed them all to an earlier credit. Without the
- *    list this credit would be unplaceable, which is oldest-first-automatic — the guess the
+ *    preview's closest-pair sequencing handed them all to a nearer credit. Without the
+ *    list this credit would be unplaceable, which is automatic-with-no-override — the guess the
  *    design rejects. With it, the sitter places this one; the panel sends her own picks ahead of
  *    the pre-ticked proposals, so hers wins the stay and the earlier guess is the one refused.
  *  - `'no-recent-booking'` — no stay falls inside the payment's proximity windows

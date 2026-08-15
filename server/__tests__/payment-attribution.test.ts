@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_LATE_PAYMENT_DAYS,
   MAX_PREPAYMENT_DAYS,
+  nearestCandidateDistance,
   proposeAttribution,
 } from '../lib/payment-attribution';
 import { addDays } from '../../src/shared/index.js';
@@ -599,5 +600,69 @@ describe('proposeAttribution', () => {
       ]);
       expect(early.ok === false && early.detail).toContain('84 days after');
     });
+  });
+});
+
+/**
+ * THE RANKING NUMBER — `nearestCandidateDistance` answers "how near is the nearest stay this
+ * credit could actually be placed on", which is what lets the preview route decide WHICH CREDIT
+ * GOES NEXT instead of falling back to oldest-paid-first (the ordering that mis-attributed every
+ * stay of a client who pays on the day). It must agree with `proposeAttribution` about what counts
+ * as a candidate at all, or a credit is ranked first for a match the proposer then refuses to make.
+ */
+describe('nearestCandidateDistance', () => {
+  it('is 0 for a stay on the paid date — the strongest match there is', () => {
+    expect(nearestCandidateDistance('2026-07-23', [bk('b', '2026-07-23', 40)])).toBe(0);
+  });
+
+  it('reports the NEAREST eligible stay, not the first or the largest', () => {
+    expect(
+      nearestCandidateDistance('2026-07-17', [
+        bk('b_far', '2026-06-01', 400),
+        bk('b_near', '2026-07-16', 40),
+        bk('b_mid', '2026-07-01', 40),
+      ]),
+    ).toBe(1);
+  });
+
+  it('ignores a stay with nothing outstanding — an earlier credit already claimed it', () => {
+    expect(
+      nearestCandidateDistance('2026-07-23', [
+        bk('b_claimed', '2026-07-23', 0),
+        bk('b_open', '2026-07-16', 40),
+      ]),
+    ).toBe(7);
+  });
+
+  it('applies the same directional windows the proposer does, not one symmetric ceiling', () => {
+    // 60 days BEHIND the payment is inside MAX_LATE_PAYMENT_DAYS; 60 days AHEAD is well past
+    // MAX_PREPAYMENT_DAYS, so it is not a candidate at all and cannot rank a credit ahead of one
+    // with a real match.
+    expect(nearestCandidateDistance('2026-07-20', [bk('b', addDays('2026-07-20', -60), 40)])).toBe(
+      60,
+    );
+    expect(
+      nearestCandidateDistance('2026-07-20', [bk('b', addDays('2026-07-20', 60), 40)]),
+    ).toBeNull();
+    expect(
+      nearestCandidateDistance('2026-07-20', [
+        bk('b_edge', addDays('2026-07-20', MAX_PREPAYMENT_DAYS), 40),
+      ]),
+    ).toBe(MAX_PREPAYMENT_DAYS);
+    expect(
+      nearestCandidateDistance('2026-07-20', [
+        bk('b_edge', addDays('2026-07-20', -MAX_LATE_PAYMENT_DAYS), 40),
+      ]),
+    ).toBe(MAX_LATE_PAYMENT_DAYS);
+  });
+
+  it('is null when there is nothing to rank: no bookings, none in range, or an unreadable date', () => {
+    expect(nearestCandidateDistance('2026-07-23', [])).toBeNull();
+    expect(nearestCandidateDistance('2026-07-23', [bk('b', '2020-01-01', 40)])).toBeNull();
+    // An unreadable date is the PROPOSER's refusal to make, with its own reason and sentence —
+    // here it simply means "cannot be ranked", so the credit sinks to the back of the queue and
+    // gets that refusal in its turn.
+    expect(nearestCandidateDistance('not-a-date', [bk('b', '2026-07-23', 40)])).toBeNull();
+    expect(nearestCandidateDistance('2026-07-23', [bk('b', 'not-a-date', 40)])).toBeNull();
   });
 });

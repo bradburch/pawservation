@@ -78,7 +78,11 @@ import {
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
-import { expandImportedRefs, proposeAttribution } from '../lib/payment-attribution';
+import {
+  expandImportedRefs,
+  nearestCandidateDistance,
+  proposeAttribution,
+} from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
 import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
@@ -3074,10 +3078,13 @@ export const adminRoutes = new Hono<AppEnv>()
    * Filtering to `outstanding > 0` before the pure module ever sees the list is what keeps a
    * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
    *
-   * A HOUSEHOLD'S CREDITS ARE PROPOSED IN SEQUENCE (oldest `PaidDate` first, each against what
-   * earlier ones left), which is what stops three $40 credits from each claiming the same $40
-   * booking. The side effect is that every credit after the first comes back
-   * `no-unpaid-bookings` — and left there, that is oldest-paid-first-automatic, the guess
+   * A HOUSEHOLD'S CREDITS ARE PROPOSED IN SEQUENCE (each against what earlier ones left), which is
+   * what stops three $40 credits from each claiming the same $40 booking. WHICH credit goes next is
+   * closest-pair, not oldest-paid: the credit whose nearest still-available stay is nearest goes
+   * first, with oldest `PaidDate` (then payment id) surviving only as the tie-break — see the loop
+   * itself for why the older ordering mis-attributed a whole client. The side effect is unchanged:
+   * a credit that comes second to a stay comes back
+   * `no-unpaid-bookings` — and left there, that is automatic-with-no-override, the guess
    * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` explicitly rejects. So the
    * `unresolved[].bookings` list is the override: a credit the sequencing skipped still NAMES the
    * household's live-outstanding stays, so the sitter can untick the proposed one and place this
@@ -3218,20 +3225,53 @@ export const adminRoutes = new Hono<AppEnv>()
         candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
       );
 
-      // Oldest PAID date first, tied-broken by payment id for a stable order across runs: the
-      // money that arrived first is the money that settled the earliest stay, so it gets first
-      // claim on a booking's outstanding before any later credit sees it.
-      const orderedCredits = [...credits].sort((a, b) => {
+      // The pool this household's credits are drawn from, in the order that decides every TIE:
+      // oldest PAID date first, then payment id, so a run over the same data always produces the
+      // same allocation. It is no longer the order they are PROPOSED in — see the loop below.
+      const remainingCredits = [...credits].sort((a, b) => {
         if (a.PaidDate !== b.PaidDate) return a.PaidDate < b.PaidDate ? -1 : 1;
         return a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0;
       });
 
-      for (const row of orderedCredits) {
+      while (remainingCredits.length > 0) {
         const unpaidBookings = candidates.map((b) => ({
           bookingId: b.bookingId,
           startDate: b.startDate,
           outstanding: outstandingById.get(b.bookingId)!,
         }));
+
+        // CLOSEST PAIR FIRST, NOT OLDEST CREDIT FIRST — the ordering fix. Each round proposes the
+        // credit whose nearest still-available stay is nearest, rather than the credit that
+        // happened to be paid earliest.
+        //
+        // Oldest-first was a per-credit optimum with a queue: the first credit took its own
+        // nearest stay and consumed it, and nothing ever compared one credit's "0 days" against
+        // another's "28 days". On a client who pays on the day, that is every stay attributed to
+        // the wrong payment — a June credit 28 days out claimed the mid-July walk, and the credit
+        // paid ON that walk fell out as `no-recent-booking`. The comparison the sitter makes
+        // instantly (this payment is the same day as that walk) is exactly the one only a
+        // cross-credit ranking can make.
+        //
+        // O(credits²) over data ALREADY IN MEMORY. `nearestCandidateDistance` reads the same
+        // `unpaidBookings` array `proposeAttribution` is about to be handed, decremented in place
+        // by earlier rounds — no query, no per-credit read, so the route's constant prepare count
+        // is untouched. A household holds ~100 credits at the top end; the loop is arithmetic.
+        //
+        // `null` (nothing left this credit could claim) never wins a round, so those credits fall
+        // out at the end in pool order — oldest paid first — and get their refusal from
+        // `proposeAttribution` exactly as before. Strict `<` keeps the pool's own order as the
+        // tie-break, which is what makes equal distances resolve oldest-paid-first, stably.
+        let pickedIndex = 0;
+        let bestDistance: number | null = null;
+        for (let i = 0; i < remainingCredits.length; i++) {
+          const distance = nearestCandidateDistance(remainingCredits[i].PaidDate, unpaidBookings);
+          if (distance === null) continue;
+          if (bestDistance === null || distance < bestDistance) {
+            bestDistance = distance;
+            pickedIndex = i;
+          }
+        }
+        const row = remainingCredits.splice(pickedIndex, 1)[0];
         const proposal = proposeAttribution(
           { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
           unpaidBookings,
