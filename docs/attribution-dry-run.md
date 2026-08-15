@@ -187,6 +187,16 @@ plausible target today and an obvious one once 2024's walks exist.
 after the stay", "12 days before the stay"). `docs/attribution-bookings.csv` lists every booking
 with the same short refs, for redirecting one.
 
+**Tips.** A payment can be more than the stay cost because the client tipped. Today any excess
+becomes `left_as_credit` — which tells you the client is owed money when in fact they were thanking
+you. Put the tip amount in the `tip` column on the row it belongs to and it stops being credit: it
+is recorded as a charge on that stay, so the stay expects the larger figure and the payment settles
+it exactly.
+
+Two things to look for: a small leftover on a payment that closely matches one stay (Kelly Snider's
+$50 on 07-29 covers a $40 same-day walk and spills $10 onto a boarding twelve days earlier — that
+$10 is much more likely a tip), and a large `left_as_credit` on a payment made just after a stay.
+
 Fill in `ok?` with `y`/`n`; use `change_to_booking` and `change_amount` where a pairing is wrong,
 and `notes` for anything worth recording — including "this was for a stay not in the system yet",
 which is the honest answer for a payment whose real target hasn't been adopted. Blank rows stand as
