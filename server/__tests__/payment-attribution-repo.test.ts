@@ -52,7 +52,9 @@ async function book(
   env: Env,
   home: Household,
   estCost: number,
-  startDate = '2030-01-01',
+  // Within MAX_ATTRIBUTION_GAP_DAYS of the credit helper's default `paidDate` (2026-07-01), so
+  // a test taking both defaults exercises a real proposal rather than the staleness refusal.
+  startDate = '2026-07-08',
   tenantId = TENANT_C,
 ): Promise<string> {
   const id = await insertBookingRequest(env.PAWSERVATION_DB, tenantId, {

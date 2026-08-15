@@ -8,26 +8,43 @@ Whole dollars throughout; nothing is rounded.
 
 ## The headline
 
-|                                                          |                            |
-| -------------------------------------------------------- | -------------------------: |
-| Unattached credits sitting on the account                | **821**, worth **$92,941** |
-| Households holding them                                  |             **48** (of 53) |
-| Credits that would be placed on a booking                |                     **47** |
-| Money that would move onto bookings                      |                 **$2,640** |
-| Of those 47 credits, money left over as household credit |                   **$559** |
-| Credits needing your decision (a tie)                    |      **2**, worth **$100** |
-| Credits with no unpaid booking to attach to — untouched  | **772**, worth **$89,642** |
+|                                                          |                                |
+| -------------------------------------------------------- | -----------------------------: |
+| Unattached credits on the account                        |     **821**, worth **$92,941** |
+| Credits that would be placed                             | **34**, across **58** bookings |
+| Money that would move onto bookings                      |                     **$2,640** |
+| Credits with no stay within 90 days — **yours to place** |     **346**, worth **$42,614** |
+| Credits whose household owes nothing — untouched         |     **441**, worth **$45,552** |
 
-**$2,640 is every dollar currently outstanding across the whole account.** Applying the 47
-proposals settles every unpaid booking you have; nothing would be left owing afterwards.
+**$2,640 is every dollar currently outstanding across the account.** Applying these settles
+every unpaid booking; nothing is left owing.
 
-**One thing to be aware of before you decide.** Only July 2026 exists as bookings in the system
-(54 stays, 2026‑07‑01 to 2026‑08‑10 — what was adopted from the calendar). Your payment history
-goes back to August 2023. So most of these proposals place _old_ money — a 2023 or 2024 payment —
-onto a _July 2026_ stay, because the July stay is the only unpaid booking that money can reach.
-Arithmetically it is correct and the totals conserve exactly; historically it is not "that payment
-was for that walk". If what you want is the ledger to stop showing July as unpaid, this does it.
-If what you want is a true history, that needs the earlier bookings imported first.
+## What changed, and why it matters
+
+An earlier run of this same dry run proposed **47 credits over 77 splits** — also $2,640, also
+conserving exactly. It was arithmetically perfect and substantively wrong:
+
+| Gap between payment and stay |                 Before |                 Now |
+| ---------------------------- | ---------------------: | ------------------: |
+| within a month               |        3 splits / $120 | **8 splits / $540** |
+| 2–6 months                   |        3 splits / $120 |  50 splits / $2,100 |
+| 6–18 months                  |       19 splits / $505 |                   0 |
+| **over 18 months**           | **52 splits / $1,895** |               **0** |
+
+The matcher's only rule is date proximity. With payments going back to 2023 and only July 2026
+bookings adopted, every candidate was one to three years away — so proximity carried no signal and
+the proposer degenerated into filling the oldest unpaid booking, then the next. One household's
+$42 credit was split **$5 onto one walk and $37 onto another**, purely because that is where the
+running total happened to sit.
+
+A **90-day floor** now applies: when no stay is within a quarter of the payment, the credit is
+refused rather than proposed. It is offered to you to place by hand instead — the automatic guess
+is what was removed, not the ability to attribute.
+
+The same $2,640 still lands. The floor did not reduce coverage; it made the proposer skip the 2023
+money and use the 2026 money that was always there. The clearest case is Marissa McVittie: seven
+$40 credits now map one-to-one onto seven $40 walks, where before they dribbled across boundaries
+in $1, $3 and $5 fragments.
 
 ## Every proposal
 
@@ -35,156 +52,143 @@ Blank cells continue the row above: one credit splitting across several bookings
 
 | Household                                  | Credit | Paid       | Goes to                  | Amount | Left as credit |
 | ------------------------------------------ | -----: | ---------- | ------------------------ | -----: | -------------: |
-| Alana Wang (Argyle)                        |    $40 | 2026-03-19 | Pack walk 2026-07-16     |    $40 |             $0 |
-| Alana Wang (Argyle)                        |    $40 | 2026-03-26 | Pack walk 2026-07-23     |    $40 |             $0 |
-| Alana Wang (Argyle)                        |    $40 | 2026-04-02 | Pack walk 2026-07-30     |    $40 |             $0 |
-| Asja Sever (Sailor, Daisy)                 |   $100 | 2023-10-29 | Pack walk 2026-07-14     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-15     |    $40 |            $20 |
-| Asja Sever (Sailor, Daisy)                 |   $250 | 2024-01-12 | Pack walk 2026-07-16     |    $40 |                |
+| Alana Wang (Argyle)                        |    $40 | 2026-04-23 | Pack walk 2026-07-16     |    $40 |             $0 |
+| Alana Wang (Argyle)                        |    $40 | 2026-04-30 | Pack walk 2026-07-23     |    $40 |             $0 |
+| Alana Wang (Argyle)                        |    $40 | 2026-05-07 | Pack walk 2026-07-30     |    $40 |             $0 |
+| Asja Sever (Sailor, Daisy)                 |   $750 | 2026-04-15 | Pack walk 2026-07-14     |    $40 |           $710 |
+| Asja Sever (Sailor, Daisy)                 |   $570 | 2026-04-22 | Pack walk 2026-07-15     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-16     |    $40 |                |
 |                                            |        |            | Pack walk 2026-07-16     |    $40 |                |
 |                                            |        |            | Pack walk 2026-07-20     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-21     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-22     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-21     |    $40 |           $370 |
+| Asja Sever (Sailor, Daisy)                 |   $450 | 2026-05-08 | Pack walk 2026-07-22     |    $40 |                |
 |                                            |        |            | Pack walk 2026-07-23     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-27     |    $10 |             $0 |
-| Asja Sever (Sailor, Daisy)                 |   $200 | 2024-01-16 | Pack walk 2026-07-27     |    $30 |                |
+|                                            |        |            | Pack walk 2026-07-27     |    $40 |                |
 |                                            |        |            | Pack walk 2026-07-28     |    $40 |                |
-|                                            |        |            | House sitting 2026-07-29 |   $110 |            $20 |
+|                                            |        |            | House sitting 2026-07-29 |   $110 |           $180 |
 | Brianna Key (Chia, Summer)                 |    $80 | 2026-06-30 | Pack walk 2026-07-13     |    $40 |            $40 |
-| Christine Rhee & Mike Starr (Frieda, Theo) |   $300 | 2024-10-01 | House sitting 2026-07-17 |   $110 |                |
-|                                            |        |            | House sitting 2026-07-25 |   $190 |             $0 |
-| Christine Rhee & Mike Starr (Frieda, Theo) |   $105 | 2024-10-03 | House sitting 2026-07-25 |   $105 |             $0 |
-| Christine Rhee & Mike Starr (Frieda, Theo) |    $30 | 2024-10-29 | House sitting 2026-07-25 |    $30 |             $0 |
-| Christine Rhee & Mike Starr (Frieda, Theo) |   $330 | 2025-01-15 | House sitting 2026-07-25 |    $75 |           $255 |
-| Dwayne Jarrell (Fiddle)                    |    $30 | 2023-08-31 | Pack walk 2026-07-27     |    $30 |             $0 |
-| Dwayne Jarrell (Fiddle)                    |    $20 | 2023-09-01 | Pack walk 2026-07-27     |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-29     |    $10 |             $0 |
-| Dwayne Jarrell (Fiddle)                    |    $20 | 2023-09-11 | Pack walk 2026-07-29     |    $20 |             $0 |
-| Dwayne Jarrell (Fiddle)                    |    $70 | 2023-09-14 | Pack walk 2026-07-29     |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-30     |    $40 |            $20 |
-| Emma Annand & Morgan Morrell (Kevin)       |    $30 | 2025-05-28 | Pack walk 2026-07-14     |    $30 |             $0 |
-| Emma Annand & Morgan Morrell (Kevin)       |    $60 | 2025-06-25 | Pack walk 2026-07-15     |    $30 |                |
-|                                            |        |            | Pack walk 2026-07-29     |    $30 |             $0 |
-| Emma Annand & Morgan Morrell (Kevin)       |    $30 | 2025-07-08 | Pack walk 2026-07-30     |    $30 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $60 | 2024-09-11 | Pack walk 2026-07-01     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-02     |    $20 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $30 | 2024-09-18 | Pack walk 2026-07-02     |    $20 |                |
-|                                            |        |            | Pack walk 2026-07-14     |    $10 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $30 | 2024-09-26 | Pack walk 2026-07-14     |    $30 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $30 | 2024-09-29 | Pack walk 2026-07-15     |    $30 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $20 | 2024-10-04 | Pack walk 2026-07-15     |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-16     |    $10 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $30 | 2024-10-09 | Pack walk 2026-07-16     |    $30 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $30 | 2024-10-16 | Pack walk 2026-07-20     |    $30 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $60 | 2024-10-29 | Pack walk 2026-07-20     |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-21     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-22     |    $10 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |    $30 | 2024-11-06 | Pack walk 2026-07-22     |    $30 |             $0 |
-| Ian Fisher & Lauren Kotin (Sadie)          |   $225 | 2024-11-12 | Boarding 2026-07-23      |    $90 |                |
-|                                            |        |            | Pack walk 2026-07-28     |    $40 |                |
+| Christine Rhee & Mike Starr (Frieda, Theo) |   $220 | 2026-05-02 | House sitting 2026-07-17 |   $110 |                |
+|                                            |        |            | House sitting 2026-07-25 |   $110 |             $0 |
+| Christine Rhee & Mike Starr (Frieda, Theo) |    $50 | 2026-05-03 | House sitting 2026-07-25 |    $50 |             $0 |
+| Christine Rhee & Mike Starr (Frieda, Theo) |   $165 | 2026-07-16 | House sitting 2026-07-25 |   $165 |             $0 |
+| Christine Rhee & Mike Starr (Frieda, Theo) |   $170 | 2026-07-27 | House sitting 2026-07-25 |    $75 |            $95 |
+| Dwayne Jarrell (Fiddle)                    |   $150 | 2026-05-01 | Pack walk 2026-07-27     |    $40 |                |
 |                                            |        |            | Pack walk 2026-07-29     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-30     |    $40 |            $15 |
-| Jenna Siflinger (Lola)                     |    $30 | 2025-10-28 | Pack walk 2026-07-20     |    $30 |             $0 |
-| Jenna Siflinger (Lola)                     |    $90 | 2025-11-01 | Pack walk 2026-07-21     |    $30 |                |
+|                                            |        |            | Pack walk 2026-07-30     |    $40 |            $30 |
+| Emma Annand & Morgan Morrell (Kevin)       |    $60 | 2026-04-15 | Pack walk 2026-07-14     |    $30 |            $30 |
+| Emma Annand & Morgan Morrell (Kevin)       |    $60 | 2026-04-22 | Pack walk 2026-07-15     |    $30 |            $30 |
+| Emma Annand & Morgan Morrell (Kevin)       |    $60 | 2026-04-30 | Pack walk 2026-07-29     |    $30 |            $30 |
+| Emma Annand & Morgan Morrell (Kevin)       |    $60 | 2026-05-27 | Pack walk 2026-07-30     |    $30 |            $30 |
+| Ian Fisher & Lauren Kotin (Sadie)          |   $120 | 2026-04-06 | Pack walk 2026-07-01     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-02     |    $40 |            $40 |
+| Ian Fisher & Lauren Kotin (Sadie)          |    $80 | 2026-04-20 | Pack walk 2026-07-14     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-15     |    $40 |             $0 |
+| Ian Fisher & Lauren Kotin (Sadie)          |   $120 | 2026-04-25 | Pack walk 2026-07-16     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-20     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-21     |    $40 |             $0 |
+| Ian Fisher & Lauren Kotin (Sadie)          |    $80 | 2026-05-04 | Pack walk 2026-07-22     |    $40 |                |
+|                                            |        |            | Boarding 2026-07-23      |    $40 |             $0 |
+| Ian Fisher & Lauren Kotin (Sadie)          |   $120 | 2026-05-11 | Boarding 2026-07-23      |    $50 |                |
+|                                            |        |            | Pack walk 2026-07-28     |    $40 |                |
+|                                            |        |            | Pack walk 2026-07-29     |    $30 |             $0 |
+| Ian Fisher & Lauren Kotin (Sadie)          |   $160 | 2026-05-16 | Pack walk 2026-07-29     |    $10 |                |
+|                                            |        |            | Pack walk 2026-07-30     |    $40 |           $110 |
+| Jenna Siflinger (Lola)                     |   $400 | 2026-05-16 | Pack walk 2026-07-20     |    $30 |                |
+|                                            |        |            | Pack walk 2026-07-21     |    $30 |                |
 |                                            |        |            | Pack walk 2026-07-22     |    $30 |                |
-|                                            |        |            | Pack walk 2026-07-23     |    $30 |             $0 |
-| Jenna Siflinger (Lola)                     |   $150 | 2025-11-24 | Pack walk 2026-07-30     |    $30 |           $120 |
-| Kelly Snider (Desi)                        |    $20 | 2023-10-15 | Boarding 2026-07-17      |    $20 |             $0 |
-| Kelly Snider (Desi)                        |    $20 | 2023-10-20 | Boarding 2026-07-17      |    $20 |             $0 |
-| Kelly Snider (Desi)                        |    $20 | 2023-11-19 | Boarding 2026-07-17      |    $20 |             $0 |
-| Kelly Snider (Desi)                        |    $30 | 2024-08-28 | Boarding 2026-07-17      |    $30 |             $0 |
-| Kelly Snider (Desi)                        |    $30 | 2024-09-01 | Boarding 2026-07-17      |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-29     |    $20 |             $0 |
-| Kelly Snider (Desi)                        |    $30 | 2024-09-03 | Pack walk 2026-07-29     |    $20 |            $10 |
+|                                            |        |            | Pack walk 2026-07-23     |    $30 |                |
+|                                            |        |            | Pack walk 2026-07-30     |    $30 |           $250 |
+| Kelly Snider (Desi)                        |   $280 | 2026-07-20 | Boarding 2026-07-17      |   $100 |                |
+|                                            |        |            | Pack walk 2026-07-29     |    $40 |           $140 |
 | Liza Avramenko (Luna)                      |    $40 | 2026-07-30 | Pack walk 2026-07-30     |    $40 |             $0 |
-| Marissa McVittie (Teddy)                   |    $30 | 2024-10-11 | Pack walk 2026-07-02     |    $30 |             $0 |
-| Marissa McVittie (Teddy)                   |    $40 | 2024-11-03 | Pack walk 2026-07-02     |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-16     |    $30 |             $0 |
-| Marissa McVittie (Teddy)                   |    $65 | 2025-01-18 | Pack walk 2026-07-16     |    $10 |                |
-|                                            |        |            | Pack walk 2026-07-17     |    $40 |                |
-|                                            |        |            | Pack walk 2026-07-23     |    $15 |             $0 |
-| Marissa McVittie (Teddy)                   |    $60 | 2025-03-28 | Pack walk 2026-07-23     |    $25 |                |
-|                                            |        |            | Pack walk 2026-07-24     |    $35 |             $0 |
-| Marissa McVittie (Teddy)                   |    $42 | 2025-04-19 | Pack walk 2026-07-24     |     $5 |                |
-|                                            |        |            | Pack walk 2026-07-30     |    $37 |             $0 |
-| Marissa McVittie (Teddy)                   |    $42 | 2025-05-07 | Pack walk 2026-07-30     |     $3 |                |
-|                                            |        |            | Pack walk 2026-07-31     |    $39 |             $0 |
-| Marissa McVittie (Teddy)                   |    $40 | 2025-05-20 | Pack walk 2026-07-31     |     $1 |            $39 |
-| Patrick Haluska (Olive)                    |    $60 | 2025-02-21 | Pack walk 2026-07-22     |    $40 |            $20 |
+| Marissa McVittie (Teddy)                   |    $40 | 2026-04-08 | Pack walk 2026-07-02     |    $40 |             $0 |
+| Marissa McVittie (Teddy)                   |    $40 | 2026-05-07 | Pack walk 2026-07-16     |    $40 |             $0 |
+| Marissa McVittie (Teddy)                   |    $40 | 2026-05-08 | Pack walk 2026-07-17     |    $40 |             $0 |
+| Marissa McVittie (Teddy)                   |    $40 | 2026-05-13 | Pack walk 2026-07-23     |    $40 |             $0 |
+| Marissa McVittie (Teddy)                   |    $40 | 2026-05-14 | Pack walk 2026-07-24     |    $40 |             $0 |
+| Marissa McVittie (Teddy)                   |    $40 | 2026-05-15 | Pack walk 2026-07-30     |    $40 |             $0 |
+| Marissa McVittie (Teddy)                   |    $80 | 2026-05-22 | Pack walk 2026-07-31     |    $40 |            $40 |
+| Patrick Haluska (Olive)                    |    $50 | 2026-08-06 | Pack walk 2026-07-22     |    $40 |            $10 |
 | Philippe Maman (Cashew)                    |    $40 | 2026-07-29 | Pack walk 2026-07-29     |    $40 |             $0 |
 
-Thirteen households in total. Credits are worked through oldest-paid first within each household,
-and each one only sees what is still owed after the earlier ones have been applied — which is why
-a $42 credit can end up putting $5 on one walk and $37 on the next.
+## The 346 credits with no stay within 90 days
 
-## The two you have to decide
+These are **not** errors and they are **not** stuck. Each one's household has unpaid stays, but the
+nearest is more than a quarter away from the payment date, so the system declines to guess which
+stay it paid for. They appear in the panel under _Needs your call — not matched to a stay_, each
+with the booking list and the reason, for you to place or leave.
 
-Both are Asja Sever's, and both hit the same tie:
+Worth **$42,614** in total. Most will resolve on their own once earlier months are adopted from the
+calendar: a 2024 payment has no plausible target today, and an obvious one once 2024's walks exist.
 
-| Credit | Paid       | Tied between                                                                           |
-| -----: | ---------- | -------------------------------------------------------------------------------------- |
-|    $50 | 2023-12-09 | Pack walk 2026-07-16 (Sadie, $40 owing) **or** pack walk 2026-07-16 (Daisy, $40 owing) |
-|    $50 | 2024-01-07 | the same two                                                                           |
+## The 441 credits whose household owes nothing
 
-The system will not choose for you: both bookings are the same distance from the payment date and
-$50 covers one of them but not both, so it refuses rather than guess.
+**$45,552** across households with no unpaid booking at all — nothing to attach to, so they stay as
+household credit, visible and untouched. Largest first:
 
-**In practice you can ignore both.** Asja's household owes $510, and the three proposals above
-already place $510 — including both 2026-07-16 walks. If you apply the batch as proposed, these two
-$50 credits simply stay as credit on her account, and there is nothing left for them to attach to.
-
-**Checked, and they are not duplicates.** The two 2026-07-16 pack walks look identical in the table
-because both are $40 walks on the same day for the same household — but they are **different dogs**,
-Sadie and Daisy, and they came from **two different Google Calendar events**
-(`b97vps39…` and `90iln857…`). Both are real receivables; neither should be deleted. The backfill
-adopted one booking per calendar event, which is exactly right.
-
-That is also why the tie is a genuine tie rather than an artefact: two equally-close, equally-priced
-walks, and $50 covers one but not both. There is no fact in the data that says which dog's walk the
-payment was for, so the system declines to invent one.
-
-## The 772 credits that stay exactly where they are
-
-**772 credits, $89,642, across 47 households** come back as *no unpaid bookings*. The largest are
-Dwayne Jarrell (99 credits, $15,189), Asja Sever (59, $14,895), Ian Fisher & Lauren Kotin (79,
-$9,850), Emma Burkhardt & Ryan Somerfield (44, $8,025) and Cat Ku & Matthew Rosenthal (10, $4,210);
-the rest tail off from there. They are not listed individually here — it would be several hundred
-rows of noise.
-
-This is **not** the matcher failing. Those payments cover stays from 2023, 2024 and 2025, and there
-are no bookings in the system from those years: only July 2026 was adopted from the calendar. There
-is nothing to attach the money to, so it stays as household credit, visible and untouched, exactly
-as it is today. If earlier bookings are imported later, these credits become attributable then.
+- Emma Burkhardt & Ryan Somerfield (Kira): 44 / $8025
+- Cat Ku & Matthew Rosenthal (Cardi): 10 / $4210
+- Mckenna Hearn & Olivia Barnhill (Zoe): 60 / $4140
+- Asja Sever (Sailor, Daisy): 3 / $3740
+- Claire Koory & Thomas Finch (Frankie): 64 / $2460
+- Kyle Dillon & Rayven Wray (Prince, Romeo): 11 / $2160
+- Ian Fisher & Lauren Kotin (Sadie): 9 / $2060
+- Thu Le (Marygold, Jed): 16 / $1982
+- Natalia Olazabal (Sancho): 47 / $1410
+- Alanna Kueffer (Sunny): 30 / $1227
+- Jean Hayden (Isaac): 3 / $1220
+- Dwayne Jarrell (Fiddle): 5 / $1075
+- Naomi Fuhrmann (Shuki): 21 / $1030
+- Ocoee Wilson (Goose): 9 / $995
+- Lori Barnhill (Otis): 1 / $800
+- Aryele Dube (Coco, Gigi): 8 / $780
+- Marissa McVittie (Teddy): 17 / $680
+- Jenna Siflinger (Lola): 2 / $620
+- Mary Jean Gomes (Ashbury, Cole): 8 / $569
+- Pete Tiburzio (Benji): 1 / $540
+- Bradley Smith (Cosmos): 3 / $500
+- Sarah Holmes (Pepper): 1 / $500
+- Robin Kutner & Jeremy Besmer (Winnie, Penny): 6 / $450
+- Emma Annand & Morgan Morrell (Kevin): 7 / $450
+- Kelsi Buckley & Spencer Sheaff (Pete): 5 / $440
+- Theresa Mah (Reggie): 10 / $388
+- Alana Wang (Argyle): 9 / $360
+- Rowan Baginsky (Emma): 1 / $340
+- Becca Wheeler (Ralph): 8 / $340
+- KJ Glynn (Rio): 1 / $300
+- Jay Van Vliet (Bertram): 2 / $250
+- Aainy Zahra (Beamer): 1 / $220
+- Mary Thoma (Frankie): 1 / $200
+- Elyse Dvorkin (Charlie): 1 / $200
+- Elizabeth Flynn (Blue): 4 / $170
+- Stephen Le (Bernie): 1 / $160
+- Laura Koon & Matthew Goerz (Roxie): 2 / $130
+- Garner Kropp (Izzy): 1 / $100
+- Jenny Kong & Boris Yanovsky (Pepper): 2 / $91
+- Kelly Snider (Desi): 1 / $50
+- Kristy Abo (Maple): 1 / $45
+- Brooke Bray (Marty): 1 / $45
+- Philippe Maman (Cashew): 1 / $40
+- Brianna Key (Chia, Summer): 1 / $40
+- Laurelly Dale (Gatsby): 1 / $20
 
 ## What happens if you apply this
 
-For each credit you approve, the system:
+For each credit you approve, the system removes the household-level credit row, writes one payment
+against each booking it was split onto (same amount, date, method and note as the original), and
+writes back whatever was left over as a smaller household credit. A $0 leftover writes nothing.
 
-1. **removes** the household-level credit row, and
-2. **writes one payment against each booking** it was split onto — same amount, same date, same
-   method, same note as the original, and
-3. **writes back whatever was left over** as a smaller household credit (the "Left as credit"
-   column). A $0 leftover writes nothing.
+Money is conserved exactly at every step, and each attribution is re-checked against live balances
+at the moment it is applied — anything settled in the meantime is refused rather than overpaid, with
+the reason shown to you. They are sent in small batches automatically; you click Apply once.
 
-Money is conserved exactly at every step: the splits plus the leftover always equal the original
-credit. Each one is re-checked against live balances at the moment it is applied, so anything that
-was settled in the meantime is refused rather than overpaid, and the refusal is shown to you. The
-47 are sent in small batches automatically — you click Apply once.
-
-**Effect on what you see:** the July bookings stop showing as unpaid, your outstanding total goes
-from $2,640 to $0, and $559 of change moves from those credits into smaller credits on the same
-households. Nothing changes for the other 772 credits.
-
-**Recovery, honestly:** there is no undo button. To reverse an attribution you delete the payment
-rows it created — one per booking, from that booking's payments — and the leftover credit row, then
-re-record the original credit against the household by hand. Everything you need to do that is
-preserved (amount, date, method, note, and this document), but it is manual, one row at a time, and
-the new rows have new ids. Reversing all 47 would be tedious. If you are unsure, apply one
-household first (Alana Wang's three $40 credits are the simplest), look at the result, then do the
-rest.
+**Recovery, honestly:** there is no undo. Reversing an attribution means deleting the payment rows
+it created — one per booking — and the leftover credit row, then re-recording the original credit
+against the household by hand. Everything needed to do that is preserved, but it is manual and the
+new rows have new ids. If you are unsure, apply one household first (Alana Wang's three $40 credits
+are the simplest), look at the result, then do the rest.
 
 ---
 
-_Produced by running the preview route against a read-only copy of production data
-(821 payments, 631 bookings, 65 pets, 53 households) loaded into a local test database. No
-production data was modified._
+_Produced by running the preview route against a read-only copy of production data loaded into a
+local test database. No production data was modified._

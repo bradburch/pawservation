@@ -48,7 +48,10 @@ async function book(
   env: Env,
   home: Household,
   estCost: number,
-  startDate = '2030-01-01',
+  // Within MAX_ATTRIBUTION_GAP_DAYS of `credit()`'s default `paidDate` (2026-07-01), so a test
+  // that takes both defaults gets a PROPOSAL. A far-future default silently produced
+  // `no-recent-booking` instead, which reads as a broken fixture rather than the floor working.
+  startDate = '2026-07-08',
   status: 'pending' | 'confirmed' = 'confirmed',
   tenantId = TENANT_C,
 ): Promise<string> {
