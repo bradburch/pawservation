@@ -3257,8 +3257,9 @@ export const adminRoutes = new Hono<AppEnv>()
           // credit could still be placed on, each with its LIVE outstanding — i.e. exactly what
           // a sitter may choose from. Three reasons can have any: `ambiguous` (a tie the proposer
           // refused to break), `no-unpaid-bookings` (the sequencing below claimed everything for
-          // an earlier credit of the same household), and `no-recent-booking` (no stay is within
-          // `MAX_ATTRIBUTION_GAP_DAYS` of the payment, so proximity has nothing to say). The last
+          // an earlier credit of the same household), and `no-recent-booking` (no stay falls
+          // inside the payment's proximity windows — `MAX_LATE_PAYMENT_DAYS` behind it,
+          // `MAX_PREPAYMENT_DAYS` ahead — so proximity has nothing to say). The last
           // one is placeable for precisely the reason it exists: the floor takes away the
           // automatic GUESS, never the sitter's ability to attribute — she may well know which
           // stay an old payment settled, and refusing to name candidates would turn a refusal to

@@ -48,7 +48,8 @@ async function book(
   env: Env,
   home: Household,
   estCost: number,
-  // Within MAX_ATTRIBUTION_GAP_DAYS of `credit()`'s default `paidDate` (2026-07-01), so a test
+  // Seven days after `credit()`'s default `paidDate` (2026-07-01), so inside the tighter
+  // MAX_PREPAYMENT_DAYS window that governs a stay AHEAD of the payment — and so a test
   // that takes both defaults gets a PROPOSAL. A far-future default silently produced
   // `no-recent-booking` instead, which reads as a broken fixture rather than the floor working.
   startDate = '2026-07-08',
@@ -200,10 +201,11 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
   it('an ambiguous credit is reported as ambiguous, not resolved', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    // Both bookings sit exactly 1 day from the credit's paid date, and $100 covers only one of
-    // the two $100 bookings — a genuine tie the credit cannot fully resolve.
+    // Both bookings start the same day, one day BEFORE the credit's paid date — same distance on
+    // the same side of the payment, so proximity cannot separate them — and $100 covers only one
+    // of the two $100 bookings: a genuine tie the credit cannot fully resolve.
     const before = await book(env, home, 100, '2026-06-30');
-    const after = await book(env, home, 100, '2026-07-02');
+    const after = await book(env, home, 100, '2026-06-30');
     const paymentId = (await credit(env, home.accountId, 100, '2026-07-01'))!;
 
     const res = await preview(env, TENANT_C, home.accountId);
@@ -586,12 +588,14 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     // entirely, so the sitter could not express that at all.
     const zeroed = await book(env, home, 100, '2026-07-01');
     const near = await book(env, home, 100, '2026-08-01');
-    const alsoNear = await book(env, home, 100, '2026-08-05');
-    // Nearest to 2026-06-01 is `zeroed` (30 days, vs 61 and 65), and $100 covers it exactly.
-    await credit(env, home.accountId, 100, '2026-06-01');
-    // Equidistant from `near` and `alsoNear` (2 days either way), and big enough to settle either
-    // one in full but not both — the one shape the proposer refuses to decide, which is what
-    // routes this credit into `unresolved` rather than resolving it or reporting a remainder.
+    const alsoNear = await book(env, home, 100, '2026-08-01');
+    // Nearest to 2026-07-05 is `zeroed` (4 days before it; the other two are 27 days after), and
+    // $100 covers it exactly.
+    await credit(env, home.accountId, 100, '2026-07-05');
+    // `near` and `alsoNear` both start 2 days before this credit's paid date — the same distance
+    // on the same side of it — and it is big enough to settle either one in full but not both:
+    // the one shape the proposer refuses to decide, which is what routes this credit into
+    // `unresolved` rather than resolving it or reporting a remainder.
     const tied = (await credit(env, home.accountId, 150, '2026-08-03'))!;
 
     const res = await preview(env, TENANT_C, home.accountId);

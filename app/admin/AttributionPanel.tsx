@@ -307,7 +307,8 @@ function CreditEditor({
  *   override, which the design (docs/superpowers/specs/2026-08-10-payment-attribution-design.md)
  *   rejects outright — money conserves either way, it just lands on the wrong stay;
  * - a `no-recent-booking` credit is one no stay is near enough to for date proximity to mean
- *   anything (MAX_ATTRIBUTION_GAP_DAYS, server/lib/payment-attribution.ts). Same editor again,
+ *   anything (MAX_LATE_PAYMENT_DAYS / MAX_PREPAYMENT_DAYS, server/lib/payment-attribution.ts).
+ *   Same editor again,
  *   same question, and the same reason it must not be inert: the floor takes away the guess, not
  *   the sitter's ability to say which stay this money settled;
  * - everything else — `no-unpaid-bookings` with no candidates, and every data-fault reason — is a

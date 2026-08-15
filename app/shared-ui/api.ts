@@ -452,10 +452,11 @@ export type AttributionProposal = {
  *    list this credit would be unplaceable, which is oldest-first-automatic — the guess the
  *    design rejects. With it, the sitter places this one; the panel sends her own picks ahead of
  *    the pre-ticked proposals, so hers wins the stay and the earlier guess is the one refused.
- *  - `'no-recent-booking'` — no stay is within `MAX_ATTRIBUTION_GAP_DAYS`
- *    (server/lib/payment-attribution.ts) of the payment, so date proximity has nothing to say
- *    about which stay it paid for. The candidates are still offered for the same reason: the
- *    floor removes the automatic guess, not the sitter's ability to attribute.
+ *  - `'no-recent-booking'` — no stay falls inside the payment's proximity windows
+ *    (`MAX_LATE_PAYMENT_DAYS` behind it, the tighter `MAX_PREPAYMENT_DAYS` ahead of it;
+ *    server/lib/payment-attribution.ts), so date proximity has nothing to say about which stay it
+ *    paid for. The candidates are still offered for the same reason: the floor removes the
+ *    automatic guess, not the sitter's ability to attribute.
  *
  *  Empty for everything else, and the emptiness is load-bearing: `'no-unpaid-bookings'` with no
  *  bookings is a household with genuinely nothing outstanding — inert, and summarised rather than

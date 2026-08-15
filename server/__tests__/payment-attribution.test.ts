@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ATTRIBUTION_GAP_DAYS, proposeAttribution } from '../lib/payment-attribution';
+import {
+  MAX_LATE_PAYMENT_DAYS,
+  MAX_PREPAYMENT_DAYS,
+  proposeAttribution,
+} from '../lib/payment-attribution';
 import { addDays } from '../../src/shared/index.js';
 
 const credit = (amount: number, paidDate = '2026-07-10') => ({ paymentId: 'p1', amount, paidDate });
@@ -62,16 +66,16 @@ describe('proposeAttribution', () => {
   });
 
   it('REFUSES a tie it cannot cover rather than picking by id order', () => {
-    // Both one day away, on opposite sides. $40 covers exactly one of them — choosing is the
-    // sitter's call, not ours.
+    // Both one day BEFORE the payment — same distance, same side of it, so proximity genuinely
+    // cannot separate them. $40 covers exactly one — choosing is the sitter's call, not ours.
     const out = proposeAttribution(credit(40), [
-      bk('b_before', '2026-07-09', 40),
-      bk('b_after', '2026-07-11', 40),
+      bk('b_tied_a', '2026-07-09', 40),
+      bk('b_tied_b', '2026-07-09', 40),
     ]);
     expect(out.ok).toBe(false);
     expect(out.ok === false && out.reason).toBe('ambiguous');
-    expect(out.ok === false && out.detail).toContain('b_before');
-    expect(out.ok === false && out.detail).toContain('b_after');
+    expect(out.ok === false && out.detail).toContain('b_tied_a');
+    expect(out.ok === false && out.detail).toContain('b_tied_b');
   });
 
   it('reports a household with nothing unpaid', () => {
@@ -99,17 +103,18 @@ describe('proposeAttribution', () => {
   });
 
   it('does NOT flag a tie as ambiguous when the credit covers both tied bookings in full', () => {
-    // Both exactly 1 day away, but $80 is enough to fully cover both — nothing to choose between.
+    // Both exactly 1 day before the payment, but $80 is enough to fully cover both — nothing to
+    // choose between.
     const out = proposeAttribution(credit(80), [
-      bk('b_before', '2026-07-09', 40),
-      bk('b_after', '2026-07-11', 40),
+      bk('b_tied_a', '2026-07-09', 40),
+      bk('b_tied_b', '2026-07-09', 40),
     ]);
     expect(out).toEqual({
       ok: true,
       paymentId: 'p1',
       splits: [
-        { bookingId: 'b_before', amount: 40 },
-        { bookingId: 'b_after', amount: 40 },
+        { bookingId: 'b_tied_a', amount: 40 },
+        { bookingId: 'b_tied_b', amount: 40 },
       ],
       remainder: 0,
     });
@@ -118,7 +123,7 @@ describe('proposeAttribution', () => {
   it('refuses a tie even when the tied bookings have different outstanding amounts', () => {
     const out = proposeAttribution(credit(10), [
       bk('b_small', '2026-07-09', 100),
-      bk('b_big', '2026-07-11', 5),
+      bk('b_big', '2026-07-09', 5),
     ]);
     expect(out.ok).toBe(false);
     expect(out.ok === false && out.reason).toBe('ambiguous');
@@ -177,13 +182,13 @@ describe('proposeAttribution', () => {
       // distances were ever exactly equal and this tie went undetected — the credit was paid in
       // full to whichever booking sorted first.
       const out = proposeAttribution(credit(40, '2026-07-10T12:00:00Z'), [
-        bk('b_before', '2026-07-09', 40),
-        bk('b_after', '2026-07-11', 40),
+        bk('b_tied_a', '2026-07-09', 40),
+        bk('b_tied_b', '2026-07-09', 40),
       ]);
       expect(out.ok).toBe(false);
       expect(out.ok === false && out.reason).toBe('ambiguous');
-      expect(out.ok === false && out.detail).toContain('b_before');
-      expect(out.ok === false && out.detail).toContain('b_after');
+      expect(out.ok === false && out.detail).toContain('b_tied_a');
+      expect(out.ok === false && out.detail).toContain('b_tied_b');
     });
 
     it('a T-suffixed paidDate still resolves cleanly against a non-tied booking', () => {
@@ -244,10 +249,10 @@ describe('proposeAttribution', () => {
       // ids make the assertion discriminate.
       const out = proposeAttribution(credit(50), [
         bk('bk_alpha', '2026-07-09', 40),
-        bk('bk_bravo', '2026-07-11', 40),
-        bk('bk_charlie', '2026-07-11', 40),
+        bk('bk_bravo', '2026-07-09', 40),
+        bk('bk_charlie', '2026-07-09', 40),
       ]);
-      // bk_alpha is 1 day away (07-09), bk_bravo and bk_charlie are also 1 day away (07-11) —
+      // All three start the same day, one day before the payment — same distance, same side, so
       // all three tie.
       expect(out.ok).toBe(false);
       expect(out.ok === false && out.reason).toBe('ambiguous');
@@ -258,9 +263,9 @@ describe('proposeAttribution', () => {
 
     it('names every member of a 4-way tie the credit cannot fully cover', () => {
       const out = proposeAttribution(credit(100), [
-        bk('bk_whiskey', '2026-07-11', 40),
+        bk('bk_whiskey', '2026-07-09', 40),
         bk('bk_xray', '2026-07-09', 40),
-        bk('bk_yankee', '2026-07-11', 40),
+        bk('bk_yankee', '2026-07-09', 40),
         bk('bk_zulu', '2026-07-09', 40),
       ]);
       expect(out.ok).toBe(false);
@@ -272,12 +277,13 @@ describe('proposeAttribution', () => {
 
     it('does not refuse a tie the credit could never have reached, and still keeps the unambiguous split it already made', () => {
       // N is uniquely nearest (same day) and gets paid in full first. What's left ($1) can't
-      // fully fund either A or B (both $40, tied 1 day out on opposite sides) — nothing to
-      // decide between them, so it becomes remainder instead of voiding the whole proposal.
+      // fully fund either A or B (both $40, both starting the day before the payment, so tied) —
+      // nothing to decide between them, so it becomes remainder instead of voiding the whole
+      // proposal.
       const out = proposeAttribution(credit(31), [
         bk('N', '2026-07-10', 30),
         bk('A', '2026-07-09', 40),
-        bk('B', '2026-07-11', 40),
+        bk('B', '2026-07-09', 40),
       ]);
       expect(out).toEqual({
         ok: true,
@@ -323,12 +329,13 @@ describe('proposeAttribution', () => {
     });
 
     it('a distant unaffordable tie leaves a farther, unambiguous, fully-fundable booking unpaid (deliberate)', () => {
-      // A and B tie at 1 day out and together cost more than the credit; C is farther (10 days)
-      // but alone costs exactly what's left over. This function does not reach past the nearer,
-      // stuck tie to fund C — that would be a guess about which stay the sitter meant to settle.
+      // A and B tie at 1 day before the payment and together cost more than the credit; C is
+      // farther (10 days) but alone costs exactly what's left over. This function does not reach
+      // past the nearer, stuck tie to fund C — that would be a guess about which stay the sitter
+      // meant to settle.
       const out = proposeAttribution(credit(30), [
         bk('A', '2026-07-09', 40),
-        bk('B', '2026-07-11', 40),
+        bk('B', '2026-07-09', 40),
         bk('C', '2026-07-20', 30),
       ]);
       expect(out).toEqual({ ok: true, paymentId: 'p1', splits: [], remainder: 30 });
@@ -340,9 +347,10 @@ describe('proposeAttribution', () => {
    * something while the candidates are actually near: a dry run over the live `brad-paws` tenant
    * put 52 of 77 proposed splits ($1,895 of $2,640) more than eighteen months from the stay they
    * were proposed against, ordered purely by which of two equally meaningless distances was
-   * smaller. These assert that a credit with no candidate inside `MAX_ATTRIBUTION_GAP_DAYS` is
-   * REFUSED and reported, never placed — and, just as importantly, that a credit which does have
-   * a near candidate is still placed on it exactly as before.
+   * smaller. These assert that a credit with no candidate inside its proximity windows
+   * (`MAX_LATE_PAYMENT_DAYS` behind the payment, `MAX_PREPAYMENT_DAYS` ahead of it) is REFUSED and
+   * reported, never placed — and, just as importantly, that a credit which does have a near
+   * candidate is still placed on it exactly as before.
    */
   describe('the staleness floor: no candidate near enough is a refusal, not a proposal', () => {
     it('REFUSES a credit whose nearest unpaid stay is far beyond the floor, naming the gap and that stay', () => {
@@ -375,25 +383,52 @@ describe('proposeAttribution', () => {
       });
     });
 
-    it('accepts a stay exactly MAX_ATTRIBUTION_GAP_DAYS away and refuses one a day beyond — in both directions', () => {
-      // `dayDistance` is absolute, so a payment that arrived a quarter EARLY and one that arrived
-      // a quarter LATE must be treated identically. A signed comparison would pass one direction
-      // and silently keep proposing in the other.
-      for (const sign of [1, -1]) {
-        const atFloor = addDays('2026-07-10', sign * MAX_ATTRIBUTION_GAP_DAYS);
-        const beyondFloor = addDays('2026-07-10', sign * (MAX_ATTRIBUTION_GAP_DAYS + 1));
+    it('accepts a stay exactly MAX_LATE_PAYMENT_DAYS BEFORE the payment and refuses one a day earlier', () => {
+      // The generous direction: the stay already happened and the money is settling it late.
+      const atFloor = addDays('2026-07-10', -MAX_LATE_PAYMENT_DAYS);
+      const beyondFloor = addDays('2026-07-10', -(MAX_LATE_PAYMENT_DAYS + 1));
 
-        expect(proposeAttribution(credit(40), [bk('b_at', atFloor, 40)])).toEqual({
-          ok: true,
-          paymentId: 'p1',
-          splits: [{ bookingId: 'b_at', amount: 40 }],
-          remainder: 0,
-        });
+      expect(proposeAttribution(credit(40), [bk('b_at', atFloor, 40)])).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_at', amount: 40 }],
+        remainder: 0,
+      });
 
-        const beyond = proposeAttribution(credit(40), [bk('b_beyond', beyondFloor, 40)]);
-        expect(beyond.ok).toBe(false);
-        expect(beyond.ok === false && beyond.reason).toBe('no-recent-booking');
-      }
+      const beyond = proposeAttribution(credit(40), [bk('b_beyond', beyondFloor, 40)]);
+      expect(beyond.ok).toBe(false);
+      expect(beyond.ok === false && beyond.reason).toBe('no-recent-booking');
+    });
+
+    it('accepts a stay exactly MAX_PREPAYMENT_DAYS AFTER the payment and refuses one a day later', () => {
+      // The tight direction: money ahead of a stay is a deposit on something imminent, and the
+      // window says how imminent. Sharing a ceiling with the late-payment window would let a
+      // payment a quarter ahead of a walk read as prepaying it.
+      const atFloor = addDays('2026-07-10', MAX_PREPAYMENT_DAYS);
+      const beyondFloor = addDays('2026-07-10', MAX_PREPAYMENT_DAYS + 1);
+
+      expect(proposeAttribution(credit(40), [bk('b_at', atFloor, 40)])).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_at', amount: 40 }],
+        remainder: 0,
+      });
+
+      const beyond = proposeAttribution(credit(40), [bk('b_beyond', beyondFloor, 40)]);
+      expect(beyond.ok).toBe(false);
+      expect(beyond.ok === false && beyond.reason).toBe('no-recent-booking');
+    });
+
+    it('a stay ON the paid date is inside the window from the PAST side, never the prepayment one', () => {
+      // Same-day is settlement — the strongest match there is. It must not be classified as a
+      // stay still to come, which is what a `>=` in the direction test would do.
+      expect(MAX_PREPAYMENT_DAYS).toBeLessThan(MAX_LATE_PAYMENT_DAYS);
+      expect(proposeAttribution(credit(40), [bk('b_same_day', '2026-07-10', 40)])).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_same_day', amount: 40 }],
+        remainder: 0,
+      });
     });
 
     it('still reports no-unpaid-bookings, not the floor, for a household with nothing outstanding', () => {
@@ -424,16 +459,145 @@ describe('proposeAttribution', () => {
       // The floor is an ADDITIONAL refusal, never a relaxation of an existing one: a tie inside
       // the floor is still the sitter's call, and a far third candidate does not change that.
       const out = proposeAttribution(credit(40), [
-        bk('b_before', '2026-07-09', 40),
-        bk('b_after', '2026-07-11', 40),
+        bk('b_tied_a', '2026-07-09', 40),
+        bk('b_tied_b', '2026-07-09', 40),
         bk('b_far', addDays('2026-07-10', 400), 40),
       ]);
       expect(out.ok).toBe(false);
       expect(out.ok === false && out.reason).toBe('ambiguous');
-      expect(out.ok === false && out.detail).toContain('b_before');
-      expect(out.ok === false && out.detail).toContain('b_after');
+      expect(out.ok === false && out.detail).toContain('b_tied_a');
+      expect(out.ok === false && out.detail).toContain('b_tied_b');
       // The far booking was filtered out before ordering, so it is not one of the tied names.
       expect(out.ok === false && out.detail).not.toContain('b_far');
+    });
+  });
+
+  /**
+   * DIRECTIONAL PROXIMITY. A payment settles services that have ALREADY HAPPENED, so proximity
+   * is asymmetric: a stay a week in the past is the obvious candidate for a payment, and a stay
+   * a week in the future has not been delivered yet. The sitter said it plainly — *"someone may
+   * forget to pay one week and then send 2 weeks in one payment"* — and the symmetric rule could
+   * not express it: it ranked the forgotten week and the undelivered one exactly equal, and
+   * reported the pair as an ambiguous tie.
+   */
+  describe('directional proximity: a payment settles stays that have already happened', () => {
+    it("THE SITTER'S CASE: forgot a week, sent double — splits onto both stays, nearest first", () => {
+      // Two $25 walks, 07-13 (the week they forgot) and 07-20. One $50 payment on 07-20.
+      const out = proposeAttribution(credit(50, '2026-07-20'), [
+        bk('b_forgotten', '2026-07-13', 25),
+        bk('b_this_week', '2026-07-20', 25),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [
+          { bookingId: 'b_this_week', amount: 25 },
+          { bookingId: 'b_forgotten', amount: 25 },
+        ],
+        remainder: 0,
+      });
+    });
+
+    it('prefers the stay in the PAST over one the same distance in the future, and reports no tie', () => {
+      // 07-13 and 07-27 are both 7 days from a 07-20 payment; $25 covers exactly one of them.
+      // Under the symmetric rule this was an ambiguous tie. It is not ambiguous at all: 07-27
+      // has not happened yet.
+      const out = proposeAttribution(credit(25, '2026-07-20'), [
+        bk('b_past', '2026-07-13', 25),
+        bk('b_future', '2026-07-27', 25),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_past', amount: 25 }],
+        remainder: 0,
+      });
+    });
+
+    it('orders a whole run of stays past-first, then future, each nearest-first', () => {
+      // Distances from 07-20: p1 = 1 day past, p2 = 10 days past, f1 = 1 day future.
+      // Direction outranks distance, so the 10-day-old stay is funded before the 1-day-future
+      // one — an ordering the absolute-distance sort could never produce.
+      const out = proposeAttribution(credit(75, '2026-07-20'), [
+        bk('b_future_1', '2026-07-21', 25),
+        bk('b_past_1', '2026-07-19', 25),
+        bk('b_past_10', '2026-07-10', 25),
+      ]);
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.splits).toEqual([
+        { bookingId: 'b_past_1', amount: 25 },
+        { bookingId: 'b_past_10', amount: 25 },
+        { bookingId: 'b_future_1', amount: 25 },
+      ]);
+      expect(out.remainder).toBe(0);
+    });
+
+    it('STILL refuses two equally-past stays as a tie — direction narrows ties, it does not remove them', () => {
+      const out = proposeAttribution(credit(25, '2026-07-20'), [
+        bk('b_past_a', '2026-07-13', 25),
+        bk('b_past_b', '2026-07-13', 25),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+      expect(out.ok === false && out.detail).toContain('b_past_a');
+      expect(out.ok === false && out.detail).toContain('b_past_b');
+    });
+
+    it('still refuses two equally-FUTURE stays as a tie, when nothing in the past outranks them', () => {
+      const out = proposeAttribution(credit(25, '2026-07-20'), [
+        bk('b_future_a', '2026-07-27', 25),
+        bk('b_future_b', '2026-07-27', 25),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+      expect(out.ok === false && out.detail).toContain('b_future_a');
+      expect(out.ok === false && out.detail).toContain('b_future_b');
+    });
+
+    it('THE ASYMMETRY ITSELF: a stay 60 days AFTER is refused at a distance a stay 60 days BEFORE is accepted at', () => {
+      // The single statement of why this change exists. 60 days is inside the late-payment
+      // window and outside the prepayment one, so the same distance resolves differently
+      // depending only on which side of the payment the stay falls.
+      const before = proposeAttribution(credit(40, '2026-07-20'), [
+        bk('b_before', addDays('2026-07-20', -60), 40),
+      ]);
+      expect(before).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_before', amount: 40 }],
+        remainder: 0,
+      });
+
+      const after = proposeAttribution(credit(40, '2026-07-20'), [
+        bk('b_after', addDays('2026-07-20', 60), 40),
+      ]);
+      expect(after.ok).toBe(false);
+      expect(after.ok === false && after.reason).toBe('no-recent-booking');
+    });
+
+    it("the live tenant's shape: an April payment does not land on a July walk", () => {
+      // 53 of 58 splits measured on the live tenant were payments made ~84–90 days BEFORE the
+      // stay they were matched to — April/May money landing on July walks because the April/May
+      // walks are not adopted yet. Under a directional rule that refuses, and the refusal is the
+      // correct answer.
+      const out = proposeAttribution(credit(40, '2026-04-27'), [bk('b_july', '2026-07-20', 40)]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('no-recent-booking');
+    });
+
+    it('says WHICH WAY the nearest stay is off, so the sitter can see how the data is wrong', () => {
+      // "84 days later" and "84 days earlier" are two different diagnoses; a direction-free
+      // sentence tells the sitter neither.
+      const late = proposeAttribution(credit(40, '2026-07-20'), [
+        bk('b_old', addDays('2026-07-20', -200), 40),
+      ]);
+      expect(late.ok === false && late.detail).toContain('200 days before');
+
+      const early = proposeAttribution(credit(40, '2026-07-20'), [
+        bk('b_ahead', addDays('2026-07-20', 84), 40),
+      ]);
+      expect(early.ok === false && early.detail).toContain('84 days after');
     });
   });
 });

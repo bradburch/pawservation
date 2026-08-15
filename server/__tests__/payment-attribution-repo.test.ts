@@ -52,8 +52,9 @@ async function book(
   env: Env,
   home: Household,
   estCost: number,
-  // Within MAX_ATTRIBUTION_GAP_DAYS of the credit helper's default `paidDate` (2026-07-01), so
-  // a test taking both defaults exercises a real proposal rather than the staleness refusal.
+  // Seven days after the credit helper's default `paidDate` (2026-07-01), so inside the tighter
+  // MAX_PREPAYMENT_DAYS window that governs a stay AHEAD of the payment — a test taking both
+  // defaults exercises a real proposal rather than the staleness refusal.
   startDate = '2026-07-08',
   tenantId = TENANT_C,
 ): Promise<string> {
