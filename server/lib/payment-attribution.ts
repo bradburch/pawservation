@@ -47,6 +47,13 @@
  * them do. Ties are now only possible within one direction, and there they are refused exactly as
  * before: two stays equally far in the past are still the sitter's call, not this function's.
  *
+ * A LEFTOVER IS NOT THE SAME CLAIM AS A MATCH. The nearest stay is the one this credit is FOR,
+ * and it may be part-paid — a deposit against a big boarding is real. Every stay after it is a
+ * spill, an assertion that one payment covered several stays, and it only receives money when the
+ * remainder SETTLES IT IN FULL; otherwise allocation stops there and the rest is `remainder`.
+ * `MAX_SPILL_DAYS` bounds how far a spill target may be as a secondary check. See the spill rule
+ * inside the allocation loop, and `MAX_SPILL_DAYS`'s own comment, for the measured cases.
+ *
  * Dates are just as load-bearing as amounts: an unparseable or impossible `startDate` /
  * `paidDate` can't be sorted by distance without silently falling into an array-order tie-break
  * (`NaN` comparator results are unspecified), so every date is validated with the house
@@ -194,6 +201,23 @@ export const MAX_LATE_PAYMENT_DAYS = 90;
  * stays are simply missing from the data".
  */
 export const MAX_PREPAYMENT_DAYS = 30;
+
+/**
+ * HOW FAR FROM THE PAYMENT A STAY MAY BE AND STILL RECEIVE A LEFTOVER — the bound on the SECOND
+ * and later stays only, in whole days. Deliberately much tighter than either primary window,
+ * because a spill is a different claim from a match: the primary windows have to tolerate someone
+ * settling up months late for ONE stay, whereas a payment that bundles SEVERAL stays is covering a
+ * batch from around the same fortnight — a client sending two or three weeks of walks in one
+ * transfer, which is the case the sitter actually named.
+ *
+ * SECONDARY, AND SAID PLAINLY: the load-bearing rule is the full-settlement one below, not this
+ * number. The measured cases are separated by COVERAGE, not distance — Kelly Snider's bad $10
+ * spill was 12 days out while several of Jenna Siflinger's good ones were 9, so no distance bound
+ * could have told those two apart. This exists because the sitter asked for a bound, and because a
+ * leftover that exactly settles a stay from months ago is still a coincidence rather than a
+ * judgment. If the two rules ever seem to disagree, the full-settlement one is the one to trust.
+ */
+export const MAX_SPILL_DAYS = 14;
 
 export type UnpaidBooking = { bookingId: string; startDate: string; outstanding: number };
 export type Credit = { paymentId: string; amount: number; paidDate: string };
@@ -435,8 +459,36 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     }
     const group = ordered.slice(i, j + 1);
 
+    // THE SPILL RULE — everything below applies to the SECOND and later stays only. The nearest
+    // stay is a MATCH: this credit is the money for that stay, and part-paying it is a deposit,
+    // an ordinary thing a sitter records. Every stay after it is a SPILL: a claim that one
+    // payment covered several stays, which is only credible when the money actually finishes each
+    // one off.
+    //
+    // Measured on the live tenant: every good spill fully settles what it lands on (Jenna's $120
+    // onto four walks at exactly $30, Dwayne's $175 onto three at exactly $40, Asja's $1,340
+    // across eleven stays each covered in full). The one bad spill is the only partial — Kelly
+    // Snider's $50 settling a $40 walk and then dribbling $10 onto a $100 boarding twelve days
+    // earlier, which is a tip on the walk being reported as a tenth of a boarding.
+    //
+    // `splits.length > 0` is exactly "a stay has already been funded": `remaining > 0` guards the
+    // loop and every branch below funds a strictly positive amount, so the first pass through
+    // here is the only one with no splits behind it.
+    const isSpill = splits.length > 0;
+
+    // The proximity half — see `MAX_SPILL_DAYS`, and note it is the secondary rule. It is checked
+    // before the group is examined at all, because a group beyond the bound is not a spill target
+    // in the first place: exactly as with a tie the credit could never have afforded, there is no
+    // decision here for the sitter to be asked about, so the rest becomes `remainder`.
+    if (isSpill && distance > MAX_SPILL_DAYS) break;
+
     if (group.length === 1) {
       const booking = group[0];
+      // The full-settlement half, and the load-bearing one. Stopping — rather than skipping ahead
+      // to some cheaper stay further out that the leftover COULD settle — is the same promise the
+      // unaffordable-tie case below keeps: nearest-first is the order this function proposes in,
+      // not a suggestion it routes around when the front of the line gets stuck.
+      if (isSpill && remaining < booking.outstanding) break;
       const take = Math.min(remaining, booking.outstanding);
       splits.push({ bookingId: booking.bookingId, amount: take });
       remaining -= take;
@@ -444,7 +496,10 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
       continue;
     }
 
-    // A genuine tie among two or more bookings. If the credit can't even fully fund the cheapest
+    // A genuine tie among two or more bookings — and one needing no separate full-settlement
+    // check of its own, spill or not: the branches below already fund a tied group ONLY when
+    // `remaining` covers every member outright, and otherwise stop or refuse. If the credit can't
+    // even fully fund the cheapest
     // of them, there is nothing to decide between them — the choice is moot, so the rest simply
     // becomes remainder rather than dribbling an arbitrary partial amount to one of them by
     // array order.

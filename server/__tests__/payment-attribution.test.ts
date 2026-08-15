@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_LATE_PAYMENT_DAYS,
   MAX_PREPAYMENT_DAYS,
+  MAX_SPILL_DAYS,
   nearestCandidateDistance,
   proposeAttribution,
 } from '../lib/payment-attribution';
@@ -28,7 +29,10 @@ describe('proposeAttribution', () => {
     });
   });
 
-  it('splits one payment across several bookings', () => {
+  it('splits one payment across several bookings, stopping at the first it cannot settle', () => {
+    // $100 settles b1 and b2 outright. The $20 left cannot finish b3, and a spill that only
+    // part-pays a stay is the fiction the spill rule exists to refuse (see its own describe
+    // below) — so b3 gets nothing and the $20 is reported as remainder.
     const out = proposeAttribution(credit(100), [
       bk('b1', '2026-07-09', 40),
       bk('b2', '2026-07-11', 40),
@@ -39,9 +43,8 @@ describe('proposeAttribution', () => {
     expect(out.splits).toEqual([
       { bookingId: 'b1', amount: 40 },
       { bookingId: 'b2', amount: 40 },
-      { bookingId: 'b3', amount: 20 },
     ]);
-    expect(out.remainder).toBe(0);
+    expect(out.remainder).toBe(20);
   });
 
   it('leaves the excess as account credit', () => {
@@ -599,6 +602,151 @@ describe('proposeAttribution', () => {
         bk('b_ahead', addDays('2026-07-20', 84), 40),
       ]);
       expect(early.ok === false && early.detail).toContain('84 days after');
+    });
+  });
+
+  /**
+   * WHAT A LEFTOVER MAY SPILL ONTO. Pouring the running remainder into each nearer stay in turn
+   * produces the bundled payment correctly and produces a fiction just as readily: on the live
+   * tenant, Kelly Snider's $50 settled that day's $40 walk and then dribbled the last $10 onto a
+   * $100 boarding from twelve days earlier, covering a tenth of it. The sitter reads that stay as
+   * 10% paid; what actually happened is that she was tipped $10 on a walk.
+   *
+   * The measured cases separate on COVERAGE, not distance: every good spill in that tenant
+   * (Jenna's four walks at exactly $30, Dwayne's three at exactly $40, Asja's eleven stays each
+   * covered in full) fully settles the stay it lands on, and the bad one is the only partial. So
+   * the rule is full settlement for every stay after the first, with `MAX_SPILL_DAYS` as a
+   * secondary bound — Kelly's bad spill is 12 days out while some of Jenna's good ones are 9, so
+   * distance alone could never have told them apart.
+   */
+  describe('the spill rule: a leftover only lands on a stay it can settle outright', () => {
+    it("KELLY'S CASE: the leftover after a same-day walk does not part-pay a boarding twelve days back", () => {
+      // $50 on 07-29: $40 settles that day's pack walk, and the $10 left is a tip on the walk, not
+      // a tenth of a $100 boarding from 07-17.
+      const out = proposeAttribution(credit(50, '2026-07-29'), [
+        bk('b_walk', '2026-07-29', 40),
+        bk('b_boarding', '2026-07-17', 100),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_walk', amount: 40 }],
+        remainder: 10,
+      });
+    });
+
+    it("THE BUNDLED CASE STILL WORKS: Jenna's $120 settles four $30 walks inside the fortnight", () => {
+      // The spill rule must not cost the case the whole feature exists for. Four walks, each
+      // covered in full, nearest first, nothing left over.
+      const out = proposeAttribution(credit(120, '2026-07-30'), [
+        bk('b_w1', '2026-07-30', 30),
+        bk('b_w2', '2026-07-27', 30),
+        bk('b_w3', '2026-07-24', 30),
+        bk('b_w4', '2026-07-21', 30),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [
+          { bookingId: 'b_w1', amount: 30 },
+          { bookingId: 'b_w2', amount: 30 },
+          { bookingId: 'b_w3', amount: 30 },
+          { bookingId: 'b_w4', amount: 30 },
+        ],
+        remainder: 0,
+      });
+    });
+
+    it('A DEPOSIT STILL WORKS: the NEAREST stay may still be part-paid', () => {
+      // The full-settlement rule governs stays after the first and nothing else — $60 against a
+      // $150 boarding is a deposit, a real thing a sitter records, and it must keep resolving.
+      const out = proposeAttribution(credit(60, '2026-07-20'), [
+        bk('b_boarding', '2026-07-18', 150),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_boarding', amount: 60 }],
+        remainder: 0,
+      });
+    });
+
+    it('a second stay it cannot settle STOPS the spill — it does not skip ahead to a cheaper one', () => {
+      // $60 settles the $50 stay a day back; $10 is left, the next candidate owes $40, and a $10
+      // stay sits further away that the leftover could cover exactly. Reaching past the next
+      // candidate to fund it would be a guess about which stay the sitter meant — nearest-first is
+      // a promise this function keeps, the same one it keeps for an unaffordable tie.
+      const out = proposeAttribution(credit(60, '2026-07-20'), [
+        bk('b_near', '2026-07-19', 50),
+        bk('b_next', '2026-07-15', 40),
+        bk('b_cheap', '2026-07-10', 10),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_near', amount: 50 }],
+        remainder: 10,
+      });
+    });
+
+    it('a spill target beyond MAX_SPILL_DAYS gets nothing, even though the leftover would settle it in full', () => {
+      const first = bk('b_first', '2026-07-20', 40);
+      const beyond = proposeAttribution(credit(70, '2026-07-20'), [
+        first,
+        bk('b_spill', addDays('2026-07-20', -(MAX_SPILL_DAYS + 1)), 30),
+      ]);
+      expect(beyond).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_first', amount: 40 }],
+        remainder: 30,
+      });
+
+      // Exactly at the bound is inside it.
+      const atBound = proposeAttribution(credit(70, '2026-07-20'), [
+        first,
+        bk('b_spill', addDays('2026-07-20', -MAX_SPILL_DAYS), 30),
+      ]);
+      expect(atBound).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [
+          { bookingId: 'b_first', amount: 40 },
+          { bookingId: 'b_spill', amount: 30 },
+        ],
+        remainder: 30 - 30,
+      });
+    });
+
+    it('the spill bound binds only the stays after the first — the nearest stay keeps the primary windows', () => {
+      // A single stay 60 days back is well beyond MAX_SPILL_DAYS and still inside
+      // MAX_LATE_PAYMENT_DAYS, and it is the first stay, so it is funded exactly as before. A
+      // bound applied to the first stay would silently shrink the primary window to a fortnight.
+      expect(MAX_SPILL_DAYS).toBeLessThan(MAX_PREPAYMENT_DAYS);
+      expect(MAX_SPILL_DAYS).toBeLessThan(MAX_LATE_PAYMENT_DAYS);
+      const out = proposeAttribution(credit(40, '2026-07-20'), [
+        bk('b_old', addDays('2026-07-20', -60), 40),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'b_old', amount: 40 }],
+        remainder: 0,
+      });
+    });
+
+    it('conserves the credit exactly when the spill is refused', () => {
+      // The stopped money becomes remainder; it is never dropped, and never rounded to make the
+      // arithmetic close.
+      for (const amount of [45, 50, 79, 140]) {
+        const out = proposeAttribution(credit(amount, '2026-07-29'), [
+          bk('b_walk', '2026-07-29', 40),
+          bk('b_boarding', '2026-07-17', 100),
+        ]);
+        expect(out.ok).toBe(true);
+        if (!out.ok) continue;
+        expect(out.splits.reduce((sum, s) => sum + s.amount, 0) + out.remainder).toBe(amount);
+      }
     });
   });
 });
