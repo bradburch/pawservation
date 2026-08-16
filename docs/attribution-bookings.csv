@@ -1,4 +1,4 @@
-booking,client,service,booking_date,booking_end,booking_owes
+booking,client,service,stay_start,stay_end,booking_owes
 B01,Lauren Kotin,Pack walk,2026-07-01,,40
 B02,Marissa McVittie,Pack walk,2026-07-02,,40
 B03,Lauren Kotin,Pack walk,2026-07-02,,40
@@ -14,8 +14,8 @@ B12,Asja Sever,Pack walk,2026-07-16,,40
 B13,Asja Sever,Pack walk,2026-07-16,,40
 B14,Lauren Kotin,Pack walk,2026-07-16,,40
 B15,Alana Wang,Pack walk,2026-07-16,,40
-B16,Kelly Snider,Boarding,2026-07-17,,100
-B17,Mike Starr,House sitting,2026-07-17,,110
+B16,Kelly Snider,Boarding,2026-07-17,2026-07-20,100
+B17,Mike Starr,House sitting,2026-07-17,2026-07-20,110
 B18,Marissa McVittie,Pack walk,2026-07-17,,40
 B19,Asja Sever,Pack walk,2026-07-20,,40
 B20,Asja Sever,Pack walk,2026-07-21,,40
@@ -25,18 +25,18 @@ B23,Asja Sever,Pack walk,2026-07-22,,40
 B24,Lauren Kotin,Pack walk,2026-07-22,,40
 B25,Jenna Siflinger,Pack walk,2026-07-22,,30
 B26,Patrick Haluska,Pack walk,2026-07-22,,40
-B27,Lauren Kotin,Boarding,2026-07-23,,90
+B27,Lauren Kotin,Boarding,2026-07-23,2026-07-25,90
 B28,Marissa McVittie,Pack walk,2026-07-23,,40
 B29,Asja Sever,Pack walk,2026-07-23,,40
 B30,Alana Wang,Pack walk,2026-07-23,,40
 B31,Jenna Siflinger,Pack walk,2026-07-23,,30
 B32,Marissa McVittie,Pack walk,2026-07-24,,40
-B33,Mike Starr,House sitting,2026-07-25,,400
+B33,Mike Starr,House sitting,2026-07-25,2026-07-27,400
 B34,Asja Sever,Pack walk,2026-07-27,,40
 B35,Dwayne Jarrell,Pack walk,2026-07-27,,40
 B36,Asja Sever,Pack walk,2026-07-28,,40
 B37,Lauren Kotin,Pack walk,2026-07-28,,40
-B38,Asja Sever,House sitting,2026-07-29,,110
+B38,Asja Sever,House sitting,2026-07-29,2026-08-21,110
 B39,Philippe Maman,Pack walk,2026-07-29,,40
 B40,Kelly Snider,Pack walk,2026-07-29,,40
 B41,Morgan Morrell,Pack walk,2026-07-29,,30
