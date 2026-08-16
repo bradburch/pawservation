@@ -112,10 +112,11 @@ function fromProposal(p: AttributionProposal): EditableCredit {
     amount: p.amount,
     paidDate: p.paidDate,
     rows,
-    // A proposal can legitimately carry NO splits — an unaffordable tie the credit couldn't have
-    // reached anyway is not something `proposeAttribution` refuses, it just leaves the whole
-    // amount as remainder (see its own doc comment). There is nothing to check in that case, so
-    // it starts un-included: ticking it would only submit an empty, server-refused attribution.
+    // A proposal can still carry NO splits — a $0 credit resolves cleanly to nothing at all. (It
+    // used to also cover an unaffordable tie the credit could fund no member of; that is a
+    // decision for the sitter and now comes back as an `'ambiguous'` refusal with its candidates,
+    // handled by the editor below.) There is nothing to check either way, so it starts
+    // un-included: ticking it would only submit an empty, server-refused attribution.
     included: p.splits.length > 0,
     serverRemainder: p.remainder,
     originalRows: snapshotRows(rows),

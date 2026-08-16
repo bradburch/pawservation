@@ -279,6 +279,31 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     );
   });
 
+  it('a credit too small to fund EITHER tied stay reaches the sitter as a decision, not as a proposal of nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'deposit');
+    // $50 against two equidistant $100 boardings. The credit cannot settle either, so nothing is
+    // "moot" about the choice: it is a deposit on ONE of them and only the sitter knows which.
+    // Reported as a success with no splits it was worse than useless — `applyAttribution` refuses
+    // a zero-split attribution outright, so it was a confident proposal that could not be applied.
+    const first = await book(env, home, 100, '2026-07-15');
+    const second = await book(env, home, 100, '2026-07-15');
+    const paymentId = (await credit(env, home.accountId, 50, '2026-07-20'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({ paymentId, amount: 50, reason: 'ambiguous' });
+    // Placeable: the sitter is offered exactly the stays the refusal is about.
+    expect(new Set(body.unresolved[0].bookings.map((b) => b.bookingId))).toEqual(
+      new Set([first, second]),
+    );
+    for (const b of body.unresolved[0].bookings) expect(b.outstanding).toBe(100);
+  });
+
   it('a declined booking is NOT offered as a candidate', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
@@ -809,11 +834,12 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
     expect(await run([2, 0, 4, 1, 3])).toEqual(forward);
   });
 
-  it('credits whose nearest stays are equally close fall back to oldest-paid-first', async () => {
-    // One stay, two credits exactly five days from it — one before, one after. Nothing about
-    // distance separates them, so the old rule decides, and it decides the same way every run.
-    // (Direction is the PROPOSER's tie-break between two stays for one credit; between two
-    // CREDITS the ranking is distance alone, then paid date, then payment id.)
+  it('a stay five days either side goes to the credit that SETTLES it, not to the prepayment', async () => {
+    // One stay, two credits exactly five days from it — one before, one after. Raw days call them
+    // equal, and the oldest-paid tie-break then hands the stay to the PREPAYMENT every single
+    // time, because at equal raw distance the earlier paid date IS the early side. Direction is
+    // not a secondary consideration the cross-credit ranking may skip: it is the same rule the
+    // PROPOSER applies between two stays for one credit, and the two must be one rule.
     async function run(reversed: boolean) {
       const { env, raw } = createTestEnv();
       const home = await household(env, raw, 'jen');
@@ -825,15 +851,83 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
       return { walk, idByDate, body: (await res.json()) as PreviewBody };
     }
 
+    // Both insertion orders: the answer is a property of the dates, not of which row came back
+    // first.
     for (const { walk, idByDate, body } of [await run(false), await run(true)]) {
       expect(body.proposals).toHaveLength(1);
       expect(body.proposals[0]).toMatchObject({
-        paymentId: idByDate.get('2026-07-10'),
+        paymentId: idByDate.get('2026-07-20'),
         splits: [{ bookingId: walk, amount: 40 }],
       });
       expect(body.unresolved).toHaveLength(1);
-      expect(body.unresolved[0].paymentId).toBe(idByDate.get('2026-07-20'));
+      expect(body.unresolved[0].paymentId).toBe(idByDate.get('2026-07-10'));
     }
+  });
+
+  it('credits whose keys are genuinely equal still fall back to oldest-paid-first, stably', async () => {
+    // Two credits the same number of days behind their own nearest stay — the same side and the
+    // same distance, so the ranking genuinely has nothing to separate them and the pool's own
+    // order (paid date, then payment id) decides. Both stays are settled either way; what this
+    // pins is that the answer does not move between runs or insertion orders.
+    async function run(reversed: boolean) {
+      const { env, raw } = createTestEnv();
+      const home = await household(env, raw, 'jen');
+      const early = await book(env, home, 40, '2026-07-10');
+      const late = await book(env, home, 40, '2026-07-20');
+      const dates = reversed ? ['2026-07-25', '2026-07-15'] : ['2026-07-15', '2026-07-25'];
+      const idByDate = new Map<string, string>();
+      for (const d of dates) idByDate.set(d, (await credit(env, home.accountId, 40, d))!);
+      const res = await preview(env, TENANT_C, home.accountId);
+      return { early, late, idByDate, body: (await res.json()) as PreviewBody };
+    }
+
+    for (const { early, late, idByDate, body } of [await run(false), await run(true)]) {
+      expect(body.unresolved).toEqual([]);
+      const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+      expect(byPaymentId.get(idByDate.get('2026-07-15')!)).toMatchObject({
+        splits: [{ bookingId: early, amount: 40 }],
+      });
+      expect(byPaymentId.get(idByDate.get('2026-07-25')!)).toMatchObject({
+        splits: [{ bookingId: late, amount: 40 }],
+      });
+    }
+  });
+
+  it('THE RANKED STAY IS THE FUNDED STAY: a credit never wins its round on a stay it spends past', async () => {
+    // The second half of the same bug. The $100 credit is 3 days AHEAD of the boarding and 40 days
+    // BEHIND an old walk. Ranked on raw days it looks like the boarding's best claim (3), wins the
+    // round on it — and then allocates past-first, spending $40 on the walk and stopping, because
+    // the $60 left cannot settle the boarding outright. The boarding then takes a $40 deposit from
+    // the smaller credit and stays $60 unpaid, while the $100 credit reports a $60 remainder.
+    //
+    // Ranked on the key the proposer actually allocates by, the $100 credit is the WALK's claim
+    // (40 days behind it) and the $40 credit — 3 days after the boarding — wins the round and
+    // funds it. What we assert is the outcome that follows: every stay fully settled, no credit
+    // left holding a remainder, and the boarding funded by BOTH credits rather than half-funded.
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'ranked');
+    const oldWalk = await book(env, home, 40, '2026-06-10');
+    const boarding = await book(env, home, 100, '2026-07-23');
+    const big = (await credit(env, home.accountId, 100, '2026-07-20'))!;
+    const small = (await credit(env, home.accountId, 40, '2026-07-26'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+    expect(byPaymentId.get(small)).toMatchObject({
+      remainder: 0,
+      splits: [{ bookingId: boarding, amount: 40 }],
+    });
+    expect(byPaymentId.get(big)!.remainder).toBe(0);
+    expect(new Map(byPaymentId.get(big)!.splits.map((s) => [s.bookingId, s.amount]))).toEqual(
+      new Map([
+        [oldWalk, 40],
+        [boarding, 60],
+      ]),
+    );
   });
 
   it('re-ordering never over-allocates: proposed splits still never exceed the household total', async () => {
@@ -937,37 +1031,65 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
     );
   });
 
-  it('an equally-distant credit does NOT take the spill away — the proposed credit keeps it', async () => {
+  it('a SETTLING credit the same raw distance away DOES take the spill — direction is not a tie', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'even');
-    // `contested` is exactly 5 days from BOTH credits — 5 days ahead of the one paid 07-20, 5 days
-    // behind the one paid 07-30. Equal is not closer, so the credit being proposed keeps it and the
-    // spill stands. If the filter ever read "closer or equal", the $100 would settle `own` alone
-    // and report a $60 remainder instead.
+    // `contested` is exactly 5 raw days from BOTH credits — 5 days AHEAD of the one paid 07-20, 5
+    // days BEHIND the one paid 07-30. Raw days make that a tie and hand the stay to whichever
+    // credit is being proposed; the ordering the proposer itself uses does not: a stay that has
+    // already happened when the money arrives is that money's claim, and the 07-30 credit is
+    // therefore strictly closer. So the spill stops at `own` and `contested` waits one round for
+    // the credit that settles it. Both stays end up paid and neither credit is left inert.
     const own = await book(env, home, 40, '2026-07-20');
     const contested = await book(env, home, 40, '2026-07-25');
     const proposed = (await credit(env, home.accountId, 100, '2026-07-20'))!;
-    const equidistant = (await credit(env, home.accountId, 40, '2026-07-30'))!;
+    const settling = (await credit(env, home.accountId, 40, '2026-07-30'))!;
 
     const res = await preview(env, TENANT_C, home.accountId);
     expect(res.status).toBe(200);
     const body = (await res.json()) as PreviewBody;
 
+    expect(body.unresolved).toEqual([]);
+    const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+    expect(byPaymentId.get(proposed)).toMatchObject({
+      remainder: 60,
+      splits: [{ bookingId: own, amount: 40 }],
+    });
+    expect(byPaymentId.get(settling)).toMatchObject({
+      remainder: 0,
+      splits: [{ bookingId: contested, amount: 40 }],
+    });
+  });
+
+  it('an EQUALLY-RANKED credit does not take the spill away — the proposed credit keeps it', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'even2');
+    // Equal now means equal on the SAME side: both credits were paid 07-30, so `contested` is 5
+    // days behind each of them and `own` 10 days behind each. Equal is not closer, so whichever
+    // credit the pool's order proposes first keeps `contested` and spills onto `own`. If the
+    // filter ever read "closer or equal", the winner would settle `contested` alone and report a
+    // $60 remainder while the other credit took `own`.
+    const own = await book(env, home, 40, '2026-07-20');
+    const contested = await book(env, home, 40, '2026-07-25');
+    await credit(env, home.accountId, 100, '2026-07-30');
+    await credit(env, home.accountId, 100, '2026-07-30');
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    // Asserted by role rather than by id: with the same paid date the tie-break is the payment id,
+    // which is generated — what matters is that ONE credit took both stays, not which.
     expect(body.proposals).toHaveLength(1);
-    expect(body.proposals[0]).toMatchObject({ paymentId: proposed, remainder: 20 });
+    expect(body.proposals[0].remainder).toBe(20);
     expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amount]))).toEqual(
       new Map([
-        [own, 40],
         [contested, 40],
+        [own, 40],
       ]),
     );
-    // The other credit is left with nothing to claim — the ordinary sequencing outcome, and still
-    // placeable by hand.
     expect(body.unresolved).toHaveLength(1);
-    expect(body.unresolved[0]).toMatchObject({
-      paymentId: equidistant,
-      reason: 'no-unpaid-bookings',
-    });
+    expect(body.unresolved[0]).toMatchObject({ reason: 'no-unpaid-bookings' });
   });
 
   it('the closer credit actually collects the stay withheld from the spill, in a later round', async () => {
@@ -1269,7 +1391,7 @@ describe('POST /:slug/admin/payments/attribute/preview — the staleness floor s
 
 /**
  * THE END DATE REACHES THE PROPOSER — the route half of measuring proximity to the whole stay.
- * `proposeAttribution` and `nearestCandidateDistance` are pure and already proved (see
+ * `proposeAttribution` and `nearestCandidateRank` are pure and already proved (see
  * server/__tests__/payment-attribution.test.ts); what only this route can prove is that the stay's
  * end date is actually IN HAND when they are called. It is read on the same statement as the start
  * date, so no query is added — the constant-prepare test above is the guard on that.

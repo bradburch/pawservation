@@ -24,9 +24,16 @@
  * `ambiguous` naming every tied booking, rather than picking one by id order, array order, or
  * size. That choice belongs to the sitter — the same posture `resolveMatchClient`
  * (server/lib/payment-import.ts) takes toward a colliding payer name, and the calendar backfill
- * takes toward an event it cannot place unambiguously. A tie the credit could not have reached
- * anyway (it can't fully fund even the cheapest tied booking) is not a decision the sitter needs
- * to make, so it is not refused — the leftover simply becomes `remainder`.
+ * takes toward an event it cannot place unambiguously.
+ *
+ * THAT INCLUDES A TIE THE CREDIT CANNOT AFFORD AT ALL, when it is the first thing the credit
+ * meets. It was once reasoned that a credit unable to fully fund even the cheapest tied booking
+ * had no decision in it — the choice was "moot" — and the leftover simply became `remainder`. It
+ * is not moot: a $50 credit against two equidistant $100 boardings is a real question about which
+ * stay it is a deposit on, and reporting `ok` with `splits: []` answered it with a confident
+ * proposal that proposed nothing and that `applyAttribution` then refuses to apply. What IS a
+ * leftover is the same tie met AFTER something was funded — the credit settled the stay it was
+ * for, and the rest is remainder. See the tie branch in the allocation loop for both halves.
  *
  * That rule has a second edge, added after the first dry run against production: a tie is not the
  * only shape ambiguity takes. Proximity is this function's ONLY matching rule, so a candidate 600
@@ -268,10 +275,9 @@ function isUsableDate(value: string): boolean {
 
 /**
  * HOW FAR A PAYMENT IS FROM A STAY — measured to the WHOLE INTERVAL `[startDate, endDate]`, not to
- * a point. THE ONE PLACE the question is answered, deliberately: the ordering, the directional
- * windows, the tie grouping, `MAX_SPILL_DAYS` and the cross-credit ranking in
- * `nearestCandidateDistance` all ask it, and any one of them measuring differently is a rule that
- * silently disagrees with the rest.
+ * a point. THE ONE PLACE the question is answered, deliberately: the directional windows,
+ * `MAX_SPILL_DAYS` and `proximityRank` (which every ordering in the feature goes through) all ask
+ * it, and any one of them measuring differently is a rule that silently disagrees with the rest.
  *
  *   paid date INSIDE the stay  → 0     (the money arrived while the work was under way)
  *   paid date BEFORE the stay  → days to `startDate`
@@ -323,32 +329,80 @@ function proximityWindow(startDate: string, paidDate: string): number {
 }
 
 /**
- * HOW NEAR ONE STAY IS TO ONE PAID DATE, in whole days — or `null` when this stay is not a candidate
- * for that payment at all: unreadable dates on either side, or a distance outside the directional
- * window that applies (`MAX_LATE_PAYMENT_DAYS` behind the payment, `MAX_PREPAYMENT_DAYS` ahead of
- * it). Deliberately says nothing about `outstanding` — that is the caller's question, and the two
- * callers ask it differently.
+ * HOW FAR BEHIND EVERY SETTLING CANDIDATE A PREPAYMENT RANKS — added to a future-side candidate's
+ * distance in `proximityRank` so that SIDE dominates DISTANCE, exactly as the doctrine at the top
+ * of this file says it must. Any value above the widest window would do (a rank is only ever
+ * compared for a candidate inside `MAX_LATE_PAYMENT_DAYS` / `MAX_PREPAYMENT_DAYS`, so a raw
+ * distance can never reach it); a round million is used so the two halves of a rank read apart at
+ * a glance in a failing test.
+ */
+export const PREPAYMENT_RANK_OFFSET = 1_000_000;
+
+/**
+ * THE ONE ORDERING KEY OF THIS ENTIRE FEATURE — lower is the better claim on a stay. Side first
+ * (every candidate on or before the paid date outranks every candidate after it, at any distance),
+ * then distance, nearest first. It is a plain number, comparable with `<` and `-`, so a sort, a
+ * tie test and a cross-credit comparison are all written against the same value rather than
+ * against three re-derivations of it.
+ *
+ * EVERY ORDERING IN THIS FEATURE GOES THROUGH HERE, AND THEY MUST NEVER DIVERGE AGAIN. They did,
+ * and it cost two systematic misattributions — the bug this key was introduced to kill
+ * (`attribution-unify-distance`): `proposeAttribution` ordered its own candidates side-first while
+ * the CROSS-CREDIT ranking that decides which credit is proposed each round — `nearestCandidateRank`
+ * below, and the preview route's spill-contention filter — used raw, side-blind days. Neither
+ * consequence was occasional:
+ *
+ *   1. OPPOSITE-SIDE TIES RESOLVED BACKWARDS, STRUCTURALLY. A stay with one credit five days after
+ *      it and another five days before it ranked both at 5, and the oldest-paid tie-break then
+ *      handed the stay to the PREPAYMENT every time — because at equal raw distance the earlier
+ *      paid date IS the early side. The reading this module calls secondary won by default.
+ *   2. A CREDIT COULD WIN ITS ROUND ON A STAY IT NEVER FUNDED. Ranked at 3 days on a stay ahead of
+ *      it while sitting 40 days behind another, it won the queue on the near one, then allocated
+ *      past-first and spent itself on the far one — and the stay that won it the round went to a
+ *      worse-placed credit, or to nobody.
+ */
+export function proximityRank(booking: UnpaidBooking, paidDate: string): number {
+  const distance = intervalDistance(booking, paidDate);
+  return isAfterPaymentDate(booking.startDate, paidDate)
+    ? PREPAYMENT_RANK_OFFSET + distance
+    : distance;
+}
+
+/**
+ * HOW GOOD A CLAIM THIS PAYMENT HAS ON THIS STAY, as a `proximityRank` — or `null` when the stay is
+ * not a candidate for that payment at all: unreadable dates on either side, or a distance outside
+ * the directional window that applies (`MAX_LATE_PAYMENT_DAYS` behind the payment,
+ * `MAX_PREPAYMENT_DAYS` ahead of it). Deliberately says nothing about `outstanding` — that is the
+ * caller's question, and the two callers ask it differently.
  *
  * THE ONE ANSWER TO "IS THIS STAY A MATCH FOR THIS PAYMENT, AND HOW GOOD A ONE", shared by
- * `nearestCandidateDistance` below (which ranks a household's credits by it) and by the preview
+ * `nearestCandidateRank` below (which ranks a household's credits by it) and by the preview
  * route's cross-credit exclusion (which drops from a credit's candidate list any stay a different,
- * not-yet-proposed credit of the same household is STRICTLY nearer to). Both are decisions ACROSS
- * credits, which is why neither lives in `proposeAttribution` — but a second notion of closeness
- * behind either of them would be a rule that silently disagrees with the proposer it feeds.
+ * not-yet-proposed credit of the same household is STRICTLY better placed on). Both are decisions
+ * ACROSS credits, which is why neither lives in `proposeAttribution` — and both answer with the
+ * same key the proposer orders by, which is the whole point: see `proximityRank` for what a second
+ * notion of closeness cost the one time there was one.
  */
-export function candidateDistance(booking: UnpaidBooking, paidDate: string): number | null {
+export function candidateRank(booking: UnpaidBooking, paidDate: string): number | null {
   if (!isUsableDate(paidDate) || !isUsableDate(booking.startDate)) return null;
   // An unreadable END is skipped for the same reason an unreadable start is: the distance would be
   // `NaN`, and the refusal (with its reason and its sentence) belongs to `proposeAttribution`.
   if (booking.endDate !== null && !isUsableDate(booking.endDate)) return null;
-  const distance = intervalDistance(booking, paidDate);
-  return distance > proximityWindow(booking.startDate, paidDate) ? null : distance;
+  if (intervalDistance(booking, paidDate) > proximityWindow(booking.startDate, paidDate))
+    return null;
+  return proximityRank(booking, paidDate);
 }
 
 /**
- * HOW NEAR THE NEAREST STAY THIS CREDIT COULD ACTUALLY BE PLACED ON IS, in whole days — or `null`
- * when there is no such stay at all. The one number a caller needs to decide WHICH CREDIT GOES
- * NEXT, and nothing more.
+ * THE BEST CLAIM THIS CREDIT HAS ON ANY STAY IT COULD ACTUALLY BE PLACED ON, as a `proximityRank`
+ * — or `null` when there is no such stay at all. The one number a caller needs to decide WHICH
+ * CREDIT GOES NEXT, and nothing more.
+ *
+ * A RANK RATHER THAN A DAY COUNT, and that is load-bearing rather than cosmetic: the stay a credit
+ * is ranked on has to be the stay `proposeAttribution` would actually fund FIRST, or a credit wins
+ * its round on a claim it never makes and spends itself elsewhere (see `proximityRank`, failure 2).
+ * Because both sides now go through that one key, the minimum taken here IS the head of the order
+ * the proposer allocates in — by construction, not by inspection.
  *
  * WHY THIS EXISTS SEPARATELY FROM `proposeAttribution`. Proposing is a decision about one credit
  * against one candidate list; ordering a household's credits is a decision ACROSS credits, and it
@@ -366,25 +420,22 @@ export function candidateDistance(booking: UnpaidBooking, paidDate: string): num
  * carry a distance it was refusing to act on.
  *
  * ELIGIBILITY IS THE SAME QUESTION `proposeAttribution` ASKS, and it is asked here through
- * `candidateDistance` rather than re-derived: only stays with outstanding left, inside the
+ * `candidateRank` rather than re-derived: only stays with outstanding left, inside the
  * directional windows, on readable dates. A ranking that counted a stay the proposer would then
  * drop would send a credit to the front of the queue for a match it cannot make. `null` therefore
  * means "this credit has nothing to claim right now" — the caller's signal to rank it last, not a
  * refusal in its own right; the refusal, with its reason and its sentence, still comes from
  * `proposeAttribution` alone.
  */
-export function nearestCandidateDistance(
-  paidDate: string,
-  bookings: UnpaidBooking[],
-): number | null {
-  let nearest: number | null = null;
+export function nearestCandidateRank(paidDate: string, bookings: UnpaidBooking[]): number | null {
+  let best: number | null = null;
   for (const b of bookings) {
     if (!(b.outstanding > 0)) continue;
-    const distance = candidateDistance(b, paidDate);
-    if (distance === null) continue;
-    if (nearest === null || distance < nearest) nearest = distance;
+    const rank = candidateRank(b, paidDate);
+    if (rank === null) continue;
+    if (best === null || rank < best) best = rank;
   }
-  return nearest;
+  return best;
 }
 
 export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): Proposal {
@@ -525,18 +576,20 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     };
   }
 
-  // Order by proximity to the credit, PAST FIRST: every candidate on or before the paid date,
-  // nearest first, then every candidate after it, nearest first. The direction term dominates, so
-  // a stay a week behind the payment outranks one a week ahead of it instead of tying with it —
-  // the forgotten week beats the undelivered one, which is the whole shape of the change. Ties
-  // within one direction are left in place here — grouping and refusing an unresolved tie happens
+  // Order by `proximityRank` — PAST FIRST: every candidate on or before the paid date, nearest
+  // first, then every candidate after it, nearest first. The direction term dominates, so a stay a
+  // week behind the payment outranks one a week ahead of it instead of tying with it — the
+  // forgotten week beats the undelivered one, which is the whole shape of the change. Ties within
+  // one direction are left in place here — grouping and refusing an unresolved tie happens
   // explicitly below, not by however `sort` happens to order equal elements.
-  const ordered = [...nearby].sort((a, b) => {
-    const sideA = isAfterPaymentDate(a.startDate, credit.paidDate) ? 1 : 0;
-    const sideB = isAfterPaymentDate(b.startDate, credit.paidDate) ? 1 : 0;
-    if (sideA !== sideB) return sideA - sideB;
-    return intervalDistance(a, credit.paidDate) - intervalDistance(b, credit.paidDate);
-  });
+  //
+  // THE KEY IS SHARED, NOT RESTATED. This sort used to spell the side-then-distance comparison out
+  // by hand, and the cross-credit ranking that feeds this function then answered a DIFFERENT
+  // question — see `proximityRank` for the two misattributions that produced. Both call it now;
+  // neither may go back to computing its own.
+  const ordered = [...nearby].sort(
+    (a, b) => proximityRank(a, credit.paidDate) - proximityRank(b, credit.paidDate),
+  );
 
   let remaining = credit.amount;
   const splits: Split[] = [];
@@ -544,18 +597,17 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
 
   while (i < ordered.length && remaining > 0) {
     // Collect every booking tied with ordered[i] for "nearest" — a contiguous run in sorted
-    // order, since equal sort keys sort adjacent to each other. The key is the PAIR (side,
-    // distance), so the run must match on both: a stay 7 days behind the payment and one 7 days
-    // ahead of it are the same `dayDistance` but not the same candidate, and treating them as
-    // tied is exactly the bug this direction fixes.
+    // order, since equal sort keys sort adjacent to each other. Tied means EQUAL `proximityRank`,
+    // the same key the sort above used: a stay 7 days behind the payment and one 7 days ahead of
+    // it are the same number of days out but not the same candidate, and treating them as tied is
+    // exactly the bug direction fixed.
+    //
+    // `distance` is the RAW day count, kept separately because `MAX_SPILL_DAYS` below is a
+    // statement about days, not about rank.
+    const rank = proximityRank(ordered[i], credit.paidDate);
     const distance = intervalDistance(ordered[i], credit.paidDate);
-    const after = isAfterPaymentDate(ordered[i].startDate, credit.paidDate);
     let j = i;
-    while (
-      j + 1 < ordered.length &&
-      intervalDistance(ordered[j + 1], credit.paidDate) === distance &&
-      isAfterPaymentDate(ordered[j + 1].startDate, credit.paidDate) === after
-    ) {
+    while (j + 1 < ordered.length && proximityRank(ordered[j + 1], credit.paidDate) === rank) {
       j++;
     }
     const group = ordered.slice(i, j + 1);
@@ -599,18 +651,36 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
 
     // A genuine tie among two or more bookings — and one needing no separate full-settlement
     // check of its own, spill or not: the branches below already fund a tied group ONLY when
-    // `remaining` covers every member outright, and otherwise stop or refuse. If the credit can't
-    // even fully fund the cheapest
-    // of them, there is nothing to decide between them — the choice is moot, so the rest simply
-    // becomes remainder rather than dribbling an arbitrary partial amount to one of them by
-    // array order.
+    // `remaining` covers every member outright, and otherwise stop or refuse.
     const smallestOutstanding = Math.min(...group.map((b) => b.outstanding));
     if (remaining < smallestOutstanding) {
-      // Deliberate: stop here rather than reaching past this unaffordable tied group to fund a
-      // farther, cheaper, unambiguous booking later in `ordered`. Skipping ahead would be a
-      // judgment call about which stay the sitter meant to settle — nearest-first order is a
-      // promise this function keeps, not a suggestion it route around when the front of the line
-      // gets stuck. The unspent amount is reported as `remainder`, not lost.
+      // WHETHER THIS IS A DECISION OR A LEFTOVER DEPENDS ENTIRELY ON WHETHER ANYTHING WAS FUNDED,
+      // and the two answers are not close together. `splits.length === 0` means the credit funded
+      // NOTHING and this tie is the reason: a $50 credit against two equidistant $100 boardings
+      // is a real question — which stay is it a deposit on? — and only the sitter can answer it.
+      // This used to be called "moot" and reported as `ok` with `splits: []` and the whole amount
+      // as `remainder`, which was worse than saying nothing: a confident-looking proposal that
+      // proposed nothing, and one `applyAttribution` (server/db/repo.ts) refuses outright because
+      // a zero-split attribution is not applicable. Refusing as `ambiguous` puts the choice where
+      // it belongs, with the tied stays named — and the preview route already treats that reason
+      // as placeable, so the sitter gets them as candidates.
+      if (splits.length === 0) {
+        return {
+          ok: false,
+          paymentId: credit.paymentId,
+          reason: 'ambiguous',
+          detail:
+            `Payment ${credit.paymentId} is equidistant from bookings ${group.map((b) => b.bookingId).join(', ')}, ` +
+            `and does not fully cover any of them — choose which one it is a deposit on.`,
+        };
+      }
+      // Something WAS funded, so this credit is not stuck: it settled the stay it is for, and what
+      // is left is a leftover rather than a claim. Stop here rather than reaching past the
+      // unaffordable tied group to fund a farther, cheaper, unambiguous booking later in
+      // `ordered` — skipping ahead would be a judgment call about which stay the sitter meant to
+      // settle, and nearest-first order is a promise this function keeps, not a suggestion it
+      // routes around when the front of the line gets stuck. The unspent amount is reported as
+      // `remainder`, not lost.
       break;
     }
 
