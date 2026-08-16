@@ -48,7 +48,7 @@ describe('balancedRemainder', () => {
  * name the same stay the first one wins outright and the second is refused for overpaying. The
  * booking then carries the winner's own PaidDate, Method and Note.
  *
- * The panel pre-ticks the preview's oldest-paid-first proposals, so without this the sitter would
+ * The panel pre-ticks the preview's automatic proposals, so without this the sitter would
  * have to untick a box she never ticked just to make her own correction count.
  */
 describe('sitterPicksFirst', () => {
