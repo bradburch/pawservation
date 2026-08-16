@@ -139,7 +139,12 @@ type PreviewBody = {
     accountId: string;
     paymentId: string;
     amount: number;
-    splits: { bookingId: string; amount: number; outstanding: number }[];
+    splits: {
+      bookingId: string;
+      amount: number;
+      outstanding: number;
+      endDate: string | null;
+    }[];
     remainder: number;
   }[];
   unresolved: {
@@ -148,7 +153,7 @@ type PreviewBody = {
     amount: number;
     reason: string;
     detail: string;
-    bookings: { bookingId: string; outstanding: number }[];
+    bookings: { bookingId: string; outstanding: number; endDate: string | null }[];
   }[];
 };
 
@@ -406,6 +411,7 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
         amount: 100,
         serviceType: 'walk',
         startDate: '2026-07-01',
+        endDate: null,
         status: 'confirmed',
         outstanding: 100,
       },
@@ -1293,6 +1299,75 @@ describe('POST /:slug/admin/payments/attribute/preview — proximity to the whol
     });
     expect(body.proposals[0].splits.some((s) => s.bookingId === walk)).toBe(false);
   });
+
+  // THE WIRE GAP THIS CLOSES: `intervalDistance` has measured against the whole stay since
+  // `a2e5ff3`, but the preview route only ever put `startDate` on the wire, so the panel had no
+  // way to show the sitter the interval the server was actually matching against. These four
+  // tests are about the RESPONSE SHAPE, not the matching — the test above already proves matching
+  // is correct; these fail if `endDate` is ever dropped from the route's declared response types
+  // or from the object it actually builds.
+  it("a range booking's proposal split carries the stay's own end date, not just its start", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const sit = await bookStay(env, home, 400, '2026-07-29', '2026-08-21');
+    const paymentId = (await credit(env, home.accountId, 400, '2026-08-05'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({ paymentId });
+    // Mutation this catches: dropping `endDate` from the route's inline response type, or from
+    // the `staticById` entry it is spread from, turns this into `undefined` — a type error at
+    // the route, not a silent pass here, since `PreviewBody` above declares the field too.
+    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: sit, endDate: '2026-08-21' });
+  });
+
+  it('a single-day booking reports endDate: null on a proposal split, not its own start date', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const walk = await book(env, home, 40, '2026-07-08');
+    const paymentId = (await credit(env, home.accountId, 40, '2026-07-01'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({ paymentId });
+    // Mutation this catches: substituting `startDate` for a missing `endDate` (rather than
+    // reporting NULL for a single-day service) would pass a naive `toBeTruthy` check but fail
+    // this exact-value assertion, and would make a walk indistinguishable from a stay in the
+    // panel — exactly what the task forbids.
+    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: walk, endDate: null });
+  });
+
+  it("an ambiguous credit's candidate bookings each carry their own end date, range and single-day alike", async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    // Same shape as the plain ambiguity test above, but one candidate is a range: a stay whose
+    // CHECKOUT lands one day before the payment (distance 1, same as the walk's start one day
+    // before it) so the two are genuinely tied and $100 cannot resolve both $100 bookings.
+    const stay = await bookStay(env, home, 100, '2026-06-25', '2026-06-30');
+    const walk = await book(env, home, 100, '2026-06-30');
+    const paymentId = (await credit(env, home.accountId, 100, '2026-07-01'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({ paymentId, reason: 'ambiguous' });
+    const endDateById = new Map(body.unresolved[0].bookings.map((b) => [b.bookingId, b.endDate]));
+    // Mutation this catches: dropping `endDate` from the `unresolved[].bookings` response type,
+    // or from the shared `staticById` map the ambiguous path reads from, drops it here too —
+    // the sitter choosing between two tied candidates would see two identical start dates and no
+    // way to tell a 5-night stay from a walk.
+    expect(endDateById.get(stay)).toBe('2026-06-30');
+    expect(endDateById.get(walk)).toBeNull();
+  });
 });
 
 /**
@@ -1792,6 +1867,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
               amount: 100,
               serviceType: 'walk',
               startDate: '2026-06-30',
+              endDate: null,
               status: 'confirmed',
               outstanding: 100,
             },
@@ -1800,6 +1876,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
               amount: 60,
               serviceType: 'walk',
               startDate: '2026-07-05',
+              endDate: null,
               status: 'confirmed',
               outstanding: 60,
             },
@@ -1817,6 +1894,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
               amount: 40,
               serviceType: 'walk',
               startDate: '2026-07-01',
+              endDate: null,
               status: 'confirmed',
               outstanding: 40,
             },
@@ -1834,6 +1912,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
               amount: 100,
               serviceType: 'walk',
               startDate: '2026-07-01',
+              endDate: null,
               status: 'confirmed',
               outstanding: 100,
             },
@@ -1862,6 +1941,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
             bookingId: seqBooking,
             serviceType: 'walk',
             startDate: '2026-07-01',
+            endDate: null,
             status: 'confirmed',
             outstanding: 40,
           },

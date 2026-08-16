@@ -327,8 +327,11 @@ function CreditEditor({
                     disabled={busy}
                     onChange={() => onToggleRow(r.bookingId)}
                   />{' '}
-                  {r.serviceType} ({formatFriendlyDate(r.startDate)}) — {r.status}, ${r.outstanding}{' '}
-                  outstanding
+                  {r.serviceType} (
+                  {r.endDate === null
+                    ? formatFriendlyDate(r.startDate)
+                    : `${formatFriendlyDate(r.startDate)} → ${formatFriendlyDate(r.endDate)}`}
+                  ) — {r.status}, ${r.outstanding} outstanding
                 </label>{' '}
                 <label className="pb-inline">
                   $

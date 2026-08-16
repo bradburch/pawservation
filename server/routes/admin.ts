@@ -3157,6 +3157,11 @@ export const adminRoutes = new Hono<AppEnv>()
         amount: number;
         serviceType: string;
         startDate: string;
+        // `null` means a single-day service (a walk); a range service (a stay) carries its own
+        // checkout date here. Declared, not merely emitted — same reasoning as `outstanding`
+        // below: a prior review found `outstanding` emitted but undeclared, so dropping this
+        // line would again be silent rather than a type error.
+        endDate: string | null;
         status: string;
         // Declared, not merely emitted: the panel's over-split guard reads this, so dropping it
         // must be a type error rather than a silent `undefined` that quietly disables the guard.
@@ -3175,6 +3180,8 @@ export const adminRoutes = new Hono<AppEnv>()
         bookingId: string;
         serviceType: string;
         startDate: string;
+        // Same meaning as the split's `endDate` above: `null` for a single-day service.
+        endDate: string | null;
         status: string;
         outstanding: number;
       }[];
@@ -3191,6 +3198,7 @@ export const adminRoutes = new Hono<AppEnv>()
             bookingId: b.bookingId,
             serviceType: b.serviceType,
             startDate: b.startDate,
+            endDate: b.endDate,
             status: b.status,
           },
         ]),

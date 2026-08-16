@@ -415,6 +415,9 @@ export type AttributionCandidateBooking = {
   bookingId: string;
   serviceType: string;
   startDate: string;
+  // `null` means a single-day service (a walk); a range service (a stay) carries its own
+  // checkout date here — the whole interval `proposeAttribution` measures proximity against.
+  endDate: string | null;
   status: string;
   outstanding: number;
 };
