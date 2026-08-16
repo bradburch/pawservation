@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- and not a boolean: a boolean needs a job to flip it and is wrong for as long as that job is
   -- late. The free product stores this and publishes one derived flag; it gates nothing itself.
   PremiumUntil TEXT,
+  -- How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
+  -- 'total' = that figure is the whole charge for the stay; 'per-night' = it is a nightly rate and
+  -- the backfill multiplies it by the stay's nights. A SINGLE-shaped service (a walk) has no
+  -- nights, so its `Cost:` is the whole charge under both and this setting never reaches it.
+  -- DEFAULT 'total' deliberately: reading a total as a per-night rate OVERCHARGES A CLIENT, while
+  -- reading a per-night rate as a total only undercharges the sitter — the harm the sitter owns
+  -- and can correct herself. It is also the pre-0013 behaviour, so no tenant's billing changes
+  -- until someone chooses per-night in the admin.
+  CalendarCostBasis TEXT NOT NULL DEFAULT 'total'
+    CHECK (CalendarCostBasis IN ('total', 'per-night')),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

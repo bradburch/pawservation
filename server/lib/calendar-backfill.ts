@@ -7,7 +7,12 @@
  * pure and dependency-free, so importing `buildAccounts` from it does not violate that rule.
  */
 
-import { addDays, buildAccounts, nightsBetween } from '../../src/shared/index.js';
+import {
+  addDays,
+  buildAccounts,
+  nightsBetween,
+  type CalendarCostBasis,
+} from '../../src/shared/index.js';
 import type { CalendarEvent } from './google-calendar';
 import type { PriceResult } from './availability';
 
@@ -335,6 +340,11 @@ export type BackfillContext = {
   services: BackfillService[];
   /** Event ids already adopted for this tenant — the idempotency key. */
   adoptedEventIds: Set<string>;
+  /** This tenant's stored reading of a description `Cost:` on a RANGE service
+   *  (`Tenants.CalendarCostBasis`, 0013). Carried on the context rather than passed down as an
+   *  argument so `classifyEvent` stays pure and the loader keeps its one tenant read: the route
+   *  already holds the tenant row, and no new D1 call exists to fetch this. */
+  costBasis: CalendarCostBasis;
   priceFor: (
     service: BackfillService,
     pets: BackfillPet[],
@@ -532,27 +542,31 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   // outright: the row adopts on it even when the rate card itself couldn't price this pet set (an
   // unpriced combination that would otherwise return needs-price).
   //
-  // What that figure MEANS depends on the service's shape, and this is the sitter's own
-  // convention in her own calendar, confirmed by her directly:
+  // What that figure MEANS is a fact about the individual sitter's own habit in her own calendar,
+  // which nothing here can derive — so it is a stored choice, `ctx.costBasis`
+  // (`Tenants.CalendarCostBasis`, migration 0013), and it applies ONLY where a stay has nights:
   //
-  //  - RANGE (a boarding, a house sit) — it is her PER-NIGHT rate, NOT the total for the stay. A
-  //    2026-07-17 → 07-20 boarding written `Cost: 100` was $300, three nights at a hundred. Read
-  //    as a total it understates every multi-night stay by a factor of its own length, which is
-  //    exactly what it did before this multiplication existed.
-  //  - SINGLE (a walk, a drop-in) — there are no nights to bill, so it is the whole charge and is
-  //    adopted unchanged.
+  //  - RANGE (a boarding, a house sit) — 'total' takes the figure as the whole charge for the
+  //    stay; 'per-night' takes it as a nightly rate and multiplies. One sitter writes
+  //    `Cost: 100` on a 2026-07-17 → 07-20 boarding meaning $300; another means $100. Reading the
+  //    first as a total undercharges HER; reading the second as per-night OVERCHARGES HER CLIENT,
+  //    which is why the default is 'total' (see `calendar-cost-basis.ts`).
+  //  - SINGLE (a walk, a drop-in) — there are no nights to bill, so the figure is the whole charge
+  //    under BOTH settings and is adopted unchanged. The setting never reaches this path.
   //
   // Nights come from `nightsBetween` over the SAME `spanEndExclusive` span the rate card is asked
   // for below, so the backfill and the rate card can never disagree about what a night is.
   if (meta.cost !== null) {
-    const nights =
-      service.service.shape === 'range' ? nightsBetween(event.start, spanEndExclusive(event)) : 1;
+    const perNight = service.service.shape === 'range' && ctx.costBasis === 'per-night';
+    const nights = perNight ? nightsBetween(event.start, spanEndExclusive(event)) : 1;
     const total = meta.cost * nights;
     // A range span yielding no whole night is broken data, not a $0 stay, and whole-dollar
     // arithmetic that has left the exact-integer range is not money anyone can be billed. Neither
     // is adoptable, and neither is roundable: hand both to the sitter as needs-price — the same
-    // arm an unpriced pet set takes — rather than write a number nobody charged.
-    if (!Number.isSafeInteger(nights) || nights < 1 || !Number.isSafeInteger(total)) {
+    // arm an unpriced pet set takes — rather than write a number nobody charged. Only the
+    // multiplying path can manufacture those: under 'total' the figure is adopted as typed, and
+    // the sitter's own stated total on an odd span is still the total she stated.
+    if (perNight && (!Number.isSafeInteger(nights) || nights < 1 || !Number.isSafeInteger(total))) {
       return needsPrice();
     }
     return {

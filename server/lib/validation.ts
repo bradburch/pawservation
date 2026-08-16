@@ -9,20 +9,24 @@ import {
   isPaymentMethod,
   isValidRate,
   isPetRateMode,
+  isCalendarCostBasis,
   type PaymentMethod,
   type PetRateMode,
+  type CalendarCostBasis,
 } from '../../src/shared/index.js';
 
-/** `isValidRate`/`isPetRateMode` live in `src/shared/pricing/rate.ts` so the admin bundle imports
- * the SAME predicates; re-exported here unchanged, and still enforced server-side at the trust
- * boundary. */
+/** `isValidRate`/`isPetRateMode` live in `src/shared/pricing/rate.ts`, and `isCalendarCostBasis` in
+ * `src/shared/pricing/calendar-cost-basis.ts`, so the admin bundle imports the SAME predicates;
+ * re-exported here unchanged, and still enforced server-side at the trust boundary. */
 export {
   PAYMENT_METHODS,
   isPaymentMethod,
   isValidRate,
   isPetRateMode,
+  isCalendarCostBasis,
   type PaymentMethod,
   type PetRateMode,
+  type CalendarCostBasis,
 };
 
 /**

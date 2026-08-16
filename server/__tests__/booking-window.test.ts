@@ -48,6 +48,10 @@ async function setHorizon(env: Env, months: number | null): Promise<void> {
     contactPhone: t.ContactPhone,
     maxAdvanceMonths: months,
     housesitBoardingOverlapDays: t.HousesitBoardingOverlapDays,
+    // Carried through, not defaulted — see updateTenantSettings's own comment: the UPDATE
+    // overwrites this column, so a helper that sets a booking horizon would otherwise re-mode her
+    // calendar cost basis on the way past.
+    calendarCostBasis: t.CalendarCostBasis,
   });
 }
 

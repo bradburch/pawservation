@@ -170,6 +170,27 @@ below about the two prior incidents). Nothing needs to be hand-applied before th
   **Numbered 0012 deliberately**: 0010 and 0011 are taken by two other unmerged branches, and the
   numbers are first-come by branch point, not by merge order.
 
+- **`0013_calendar_cost_basis.sql`** (`calendar-cost-basis-setting`) — adds
+  `Tenants.CalendarCostBasis` (`'total' | 'per-night'`, `NOT NULL DEFAULT 'total'`, `CHECK`ed):
+  how the calendar backfill reads a description `Cost:` line on a **range-shaped** service
+  (boarding, house sitting). `'total'` = that figure is the whole charge for the stay;
+  `'per-night'` = it is a nightly rate and the backfill multiplies it by the stay's nights. A
+  single-shaped service (a walk) has no nights, so its `Cost:` is the whole charge under both and
+  the setting never reaches that path. Replaces a hardcoded per-night rule that was one sitter's
+  own convention applied to every tenant. Additive only (one `ALTER TABLE … ADD COLUMN`, the same
+  shape as 0005's `PetRateMode`), and the DEFAULT stamps every existing row with the pre-per-night
+  behaviour, so applying it moves nobody's money. **The default is `'total'` as a SAFETY choice,
+  not merely a compatible one**: reading a total as a per-night rate triples a three-night stay and
+  overcharges a real client, while the reverse only undercharges the sitter — the harm that belongs
+  to the party who owns the setting. **This IS a `Tenants` column the request path reads** (the
+  backfill preview/import routes classify against the cached tenant row, and anything that is not
+  the string `'per-night'` reads as "total"), **so the KV tenant-config cache key was bumped
+  `…:config:v3` → `…:config:v4` in the same commit** — a v3 entry would bill a sitter who has
+  chosen per-night at a third of her rate for the remainder of its 60-second TTL.
+  **NOT YET APPLIED to the remote DB** — it must be hand-applied before this branch merges:
+  `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0013_calendar_cost_basis.sql`.
+  Like every bare `ADD COLUMN` above, it must not be run twice.
+
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,
 `0002_holiday_and_charges.sql`, `0003_gcal_sync.sql`, `0004_booking_window.sql`,

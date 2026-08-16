@@ -72,24 +72,33 @@ describe('Tenants.PremiumUntil — the column', () => {
 });
 
 describe('the tenant KV cache key is versioned for exactly this', () => {
-  it('caches under v3, so entries written by the pre-0010 worker are never read back', async () => {
+  it('caches under v4, so no entry from an earlier worker is ever read back', async () => {
     const { env } = createTestEnv();
 
-    // A v2 entry is what the PREVIOUS worker left behind: the same row, minus the column this
-    // migration added. If the new code read it, `PremiumUntil` would come back `undefined` — a
-    // paying sitter demoted to free for a whole TTL, with the type insisting it cannot happen.
-    await env.PAWSERVATION_CACHE.put(
-      'tenant:sunny-paws:config:v2',
-      JSON.stringify({ Id: TENANT_A, Slug: 'sunny-paws', DisplayName: 'Stale', DisabledAt: null }),
-    );
+    // Each older key is what some PREVIOUS worker left behind: the same row, minus the column its
+    // migration added. Read either one and the field it lacks comes back `undefined` — a paying
+    // sitter demoted to free (v2/0010), or a sitter who chose per-night billed at a third of her
+    // rate (v3/0013) — for a whole TTL, with the type insisting neither can happen.
+    for (const key of ['tenant:sunny-paws:config:v2', 'tenant:sunny-paws:config:v3']) {
+      await env.PAWSERVATION_CACHE.put(
+        key,
+        JSON.stringify({
+          Id: TENANT_A,
+          Slug: 'sunny-paws',
+          DisplayName: 'Stale',
+          DisabledAt: null,
+        }),
+      );
+    }
 
     const tenant = await resolveTenant('sunny-paws', env);
-    expect(tenant?.DisplayName).not.toBe('Stale'); // the stale shape was not consulted
+    expect(tenant?.DisplayName).not.toBe('Stale'); // no stale shape was consulted
     expect(tenant?.PremiumUntil).toBeNull(); // null, never undefined
     expect('PremiumUntil' in tenant!).toBe(true);
+    expect(tenant?.CalendarCostBasis).toBe('total'); // the real column, never undefined
 
     // The new entry lands under the new key.
-    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v3')).not.toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v4')).not.toBeNull();
   });
 });
 

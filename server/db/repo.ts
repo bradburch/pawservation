@@ -25,7 +25,7 @@ import type {
 import { EXTRA_TIME_ORIGINS } from '../types';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
-import type { Account, ServiceQuestion } from '../../src/shared/index.js';
+import type { Account, CalendarCostBasis, ServiceQuestion } from '../../src/shared/index.js';
 import {
   buildAccounts,
   buildHouseholdBalances,
@@ -46,7 +46,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CalendarCostBasis';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -3203,13 +3203,19 @@ export async function updateTenantSettings(
      *  unlike the older optional fields above: this UPDATE overwrites the column unconditionally,
      *  so an omitted value would silently turn a tenant's rule OFF. Callers must state it. */
     housesitBoardingOverlapDays: number | null;
+    /** How a description `Cost:` is read on a RANGE service (0013). REQUIRED, for exactly the
+     *  reason `housesitBoardingOverlapDays` above is: this UPDATE overwrites the column
+     *  unconditionally, so an omitted value would silently revert a sitter who chose 'per-night'
+     *  back to the default on any unrelated save — and revert it to a reading that quietly
+     *  undercharges her on every multi-night stay she adopts afterwards. Callers must state it. */
+    calendarCostBasis: CalendarCostBasis;
   },
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, Timezone = ?,
          ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ?,
-         HousesitBoardingOverlapDays = ? WHERE Id = ?`,
+         HousesitBoardingOverlapDays = ?, CalendarCostBasis = ? WHERE Id = ?`,
     )
     .bind(
       settings.displayName,
@@ -3219,6 +3225,7 @@ export async function updateTenantSettings(
       settings.contactPhone ?? null,
       settings.maxAdvanceMonths ?? null,
       settings.housesitBoardingOverlapDays,
+      settings.calendarCostBasis,
       tenantId,
     )
     .run();

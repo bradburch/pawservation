@@ -46,6 +46,8 @@ async function setAllowance(env: Env, days: number | null): Promise<void> {
     contactPhone: t.ContactPhone,
     maxAdvanceMonths: t.MaxAdvanceMonths,
     housesitBoardingOverlapDays: days,
+    // Carried through, not defaulted — see updateTenantSettings's own comment.
+    calendarCostBasis: t.CalendarCostBasis,
   });
   // The admin PUT does this too — tenant config is read through a 60s KV-cached seam, so a write
   // that skips the route has to drop the cached row or the next request reads the old allowance.

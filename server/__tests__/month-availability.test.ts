@@ -736,6 +736,8 @@ describe('the month grid and the cross-kind handover rule', () => {
       contactPhone: t.ContactPhone,
       maxAdvanceMonths: t.MaxAdvanceMonths,
       housesitBoardingOverlapDays: days,
+      // Carried through, not defaulted — see updateTenantSettings's own comment.
+      calendarCostBasis: t.CalendarCostBasis,
     });
     await invalidateTenantCache('sunny-paws', env);
   }

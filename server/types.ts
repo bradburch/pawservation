@@ -1,6 +1,6 @@
 import type { CapacityKind, PetType, RateUnit, ServiceShape, ServiceType } from './lib/services';
 import type { PaymentMethod, PetRateMode } from './lib/validation';
-import type { ServiceQuestion, CancellationTier } from '../src/shared/index.js';
+import type { ServiceQuestion, CancellationTier, CalendarCostBasis } from '../src/shared/index.js';
 
 export type {
   CapacityKind,
@@ -10,6 +10,7 @@ export type {
   ServiceType,
   CancellationTier,
   PetRateMode,
+  CalendarCostBasis,
 };
 
 export type Tenant = {
@@ -35,6 +36,12 @@ export type Tenant = {
    *  effect on its own, with nothing to run and nothing to flip. The free product publishes the
    *  derived boolean on `/api/:slug/config`; it gates nothing on it. */
   PremiumUntil: string | null;
+  /** How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
+   *  'total' = the whole charge for the stay; 'per-night' = a nightly rate, multiplied by the
+   *  stay's nights. Never reaches a SINGLE-shaped service (a walk), which has no nights to bill.
+   *  NOT NULL, DEFAULT 'total' — the reading that can only ever undercharge the sitter, because
+   *  the other direction overcharges a client who agreed to no such thing. */
+  CalendarCostBasis: CalendarCostBasis;
 };
 
 export type TenantUser = {
