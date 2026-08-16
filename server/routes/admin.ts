@@ -79,6 +79,7 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import {
+  candidateDistance,
   expandImportedRefs,
   nearestCandidateDistance,
   proposeAttribution,
@@ -3082,7 +3083,11 @@ export const adminRoutes = new Hono<AppEnv>()
    * what stops three $40 credits from each claiming the same $40 booking. WHICH credit goes next is
    * closest-pair, not oldest-paid: the credit whose nearest still-available stay is nearest goes
    * first, with oldest `PaidDate` (then payment id) surviving only as the tie-break — see the loop
-   * itself for why the older ordering mis-attributed a whole client. The side effect is unchanged:
+   * itself for why the older ordering mis-attributed a whole client. Ranking alone only settles who
+   * gets the FIRST stay, so before a credit is proposed its candidate list also DROPS any stay a
+   * different, not-yet-proposed credit of the same household is strictly closer to — otherwise the
+   * round's winner spills onto a stay another credit was paid on the day of. The side effect is
+   * unchanged:
    * a credit that comes second to a stay comes back
    * `no-unpaid-bookings` — and left there, that is automatic-with-no-override, the guess
    * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` explicitly rejects. So the
@@ -3277,9 +3282,52 @@ export const adminRoutes = new Hono<AppEnv>()
           }
         }
         const row = remainingCredits.splice(pickedIndex, 1)[0];
+
+        // A STAY SOME OTHER CREDIT IS SITTING CLOSER TO IS NOT OFFERED TO THIS ONE — the half of
+        // closest-pair the ranking above cannot reach, and an in-memory filter over the arrays this
+        // loop already holds (no query, so the route's constant prepare count is untouched).
+        //
+        // The ranking decides which credit gets the FIRST stay. `proposeAttribution` is pure and
+        // per-credit by design, so once a credit wins a round it spills greedily onto every further
+        // stay inside `MAX_SPILL_DAYS` it can settle in full — and nothing inside it can ask whether
+        // a credit not yet proposed matches those stays more closely, because by construction it
+        // never sees them. Live shape: a boarding ending 07-20 and a walk on 07-29, with $280 paid
+        // 07-20 and $50 paid 07-29. The $280 ranked first at distance 0, took the boarding, then
+        // spilled nine days forward onto the walk — and the $50 paid ON that walk came back
+        // `no-unpaid-bookings`.
+        //
+        // STRICTLY closer, never equal: on a tie the credit being proposed keeps the stay, so the
+        // ranking (and its oldest-paid-first tie-break) still decides and nothing here becomes
+        // order-dependent.
+        //
+        // APPLIED TO EVERY CANDIDATE, NOT ONLY SPILL TARGETS, deliberately — a uniform rule is
+        // easier to reason about and cannot change the primary match anyway: this credit won its
+        // round because its own nearest eligible stay is nearest of all, so no remaining credit can
+        // be strictly closer to that stay than it is. It is therefore never excluded, and a credit
+        // with anything to claim is never filtered down to nothing.
+        //
+        // NOT A RESERVATION AND NOT A BACKTRACK. A withheld stay is simply absent from THIS call;
+        // the closer credit meets it in a later round of the same loop, and if that credit turns out
+        // not to fund it the stay stays unpaid and is offered to whoever comes next — the sitter
+        // still sees it in `unresolved[].bookings` either way, which is why the list below is built
+        // from the unfiltered `unpaidBookings`.
+        //
+        // `candidateDistance` is `null` for a stay this credit could not be placed on at all
+        // (unreadable dates, outside the directional windows). Those are KEPT: dropping them would
+        // silently swallow the very refusals — `invalid-date`, `no-recent-booking` — that
+        // `proposeAttribution` alone is allowed to make.
+        const offered = unpaidBookings.filter((b) => {
+          const mine = candidateDistance(b, row.PaidDate);
+          if (mine === null) return true;
+          return !remainingCredits.some((other) => {
+            const theirs = candidateDistance(b, other.PaidDate);
+            return theirs !== null && theirs < mine;
+          });
+        });
+
         const proposal = proposeAttribution(
           { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
-          unpaidBookings,
+          offered,
         );
         if (proposal.ok) {
           proposals.push({

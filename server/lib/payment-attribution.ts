@@ -323,6 +323,29 @@ function proximityWindow(startDate: string, paidDate: string): number {
 }
 
 /**
+ * HOW NEAR ONE STAY IS TO ONE PAID DATE, in whole days — or `null` when this stay is not a candidate
+ * for that payment at all: unreadable dates on either side, or a distance outside the directional
+ * window that applies (`MAX_LATE_PAYMENT_DAYS` behind the payment, `MAX_PREPAYMENT_DAYS` ahead of
+ * it). Deliberately says nothing about `outstanding` — that is the caller's question, and the two
+ * callers ask it differently.
+ *
+ * THE ONE ANSWER TO "IS THIS STAY A MATCH FOR THIS PAYMENT, AND HOW GOOD A ONE", shared by
+ * `nearestCandidateDistance` below (which ranks a household's credits by it) and by the preview
+ * route's cross-credit exclusion (which drops from a credit's candidate list any stay a different,
+ * not-yet-proposed credit of the same household is STRICTLY nearer to). Both are decisions ACROSS
+ * credits, which is why neither lives in `proposeAttribution` — but a second notion of closeness
+ * behind either of them would be a rule that silently disagrees with the proposer it feeds.
+ */
+export function candidateDistance(booking: UnpaidBooking, paidDate: string): number | null {
+  if (!isUsableDate(paidDate) || !isUsableDate(booking.startDate)) return null;
+  // An unreadable END is skipped for the same reason an unreadable start is: the distance would be
+  // `NaN`, and the refusal (with its reason and its sentence) belongs to `proposeAttribution`.
+  if (booking.endDate !== null && !isUsableDate(booking.endDate)) return null;
+  const distance = intervalDistance(booking, paidDate);
+  return distance > proximityWindow(booking.startDate, paidDate) ? null : distance;
+}
+
+/**
  * HOW NEAR THE NEAREST STAY THIS CREDIT COULD ACTUALLY BE PLACED ON IS, in whole days — or `null`
  * when there is no such stay at all. The one number a caller needs to decide WHICH CREDIT GOES
  * NEXT, and nothing more.
@@ -342,27 +365,23 @@ function proximityWindow(startDate: string, paidDate: string): number {
  * proposer for one would mean either running the full allocation n² times or widening a refusal to
  * carry a distance it was refusing to act on.
  *
- * ELIGIBILITY IS THE SAME QUESTION `proposeAttribution` ASKS, and it is asked here through the same
- * `proximityWindow` / `intervalDistance` / `isUsableDate` helpers rather than re-derived: only stays
- * with outstanding left, inside the directional windows, on readable dates. A ranking that counted
- * a stay the proposer would then drop would send a credit to the front of the queue for a match it
- * cannot make. `null` therefore means "this credit has nothing to claim right now" — the caller's
- * signal to rank it last, not a refusal in its own right; the refusal, with its reason and its
- * sentence, still comes from `proposeAttribution` alone.
+ * ELIGIBILITY IS THE SAME QUESTION `proposeAttribution` ASKS, and it is asked here through
+ * `candidateDistance` rather than re-derived: only stays with outstanding left, inside the
+ * directional windows, on readable dates. A ranking that counted a stay the proposer would then
+ * drop would send a credit to the front of the queue for a match it cannot make. `null` therefore
+ * means "this credit has nothing to claim right now" — the caller's signal to rank it last, not a
+ * refusal in its own right; the refusal, with its reason and its sentence, still comes from
+ * `proposeAttribution` alone.
  */
 export function nearestCandidateDistance(
   paidDate: string,
   bookings: UnpaidBooking[],
 ): number | null {
-  if (!isUsableDate(paidDate)) return null;
   let nearest: number | null = null;
   for (const b of bookings) {
-    if (!(b.outstanding > 0) || !isUsableDate(b.startDate)) continue;
-    // An unreadable END is skipped for the same reason an unreadable start is: the distance would
-    // be `NaN`, and the refusal (with its reason and its sentence) belongs to `proposeAttribution`.
-    if (b.endDate !== null && !isUsableDate(b.endDate)) continue;
-    const distance = intervalDistance(b, paidDate);
-    if (distance > proximityWindow(b.startDate, paidDate)) continue;
+    if (!(b.outstanding > 0)) continue;
+    const distance = candidateDistance(b, paidDate);
+    if (distance === null) continue;
     if (nearest === null || distance < nearest) nearest = distance;
   }
   return nearest;

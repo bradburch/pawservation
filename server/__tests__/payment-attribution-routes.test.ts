@@ -855,6 +855,179 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
 });
 
 /**
+ * A SPILL MAY NOT TAKE A STAY SOME OTHER CREDIT IS SITTING ON — the half of closest-pair the
+ * ranking above cannot reach.
+ *
+ * Ranking decides which credit gets the FIRST stay. But `proposeAttribution` is pure and per-credit:
+ * once a credit is proposed it spills greedily onto every further stay inside `MAX_SPILL_DAYS` it
+ * can settle in full, and nothing inside it can ask whether some other credit of the same household
+ * matches those stays better. So the winner of round one could eat a stay a not-yet-proposed credit
+ * was paid ON, and that credit came back `no-unpaid-bookings`.
+ *
+ * The fix is a filter in the route, where the household's whole credit pool lives: before proposing
+ * a credit, drop from its candidate list any stay a DIFFERENT, not-yet-proposed credit is STRICTLY
+ * closer to (same `intervalDistance`, same windows — one notion of closeness). Strictly, so an equal
+ * distance leaves the stay with the credit being proposed and the existing ranking (and its
+ * oldest-paid-first tie-break) still decides everything.
+ */
+describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a closer credit’s stay', () => {
+  it('a stay is left for the credit paid on its own date, not swallowed by an earlier credit’s spill', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'kelly');
+    // The live shape this regressed on: a boarding the $280 was plainly paid for (the payment lands
+    // on its checkout day, 0 days from the stay), and a pack walk nine days later with a $50 paid
+    // ON it. Without the filter the $280 takes the boarding and then spills 9 days forward onto the
+    // walk — inside MAX_SPILL_DAYS and settling it in full — and the $50 reports
+    // `no-unpaid-bookings`.
+    const boarding = await bookStay(env, home, 100, '2026-07-17', '2026-07-20');
+    const walk = await book(env, home, 40, '2026-07-29');
+    const big = (await credit(env, home.accountId, 280, '2026-07-20'))!;
+    const sameDay = (await credit(env, home.accountId, 50, '2026-07-29'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(2);
+    const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+    // The $280 settles the boarding and stops: the walk is not its to take.
+    expect(byPaymentId.get(big)).toMatchObject({
+      splits: [{ bookingId: boarding, amount: 100 }],
+      remainder: 180,
+    });
+    expect(byPaymentId.get(big)!.splits.some((s) => s.bookingId === walk)).toBe(false);
+    // And the credit paid on the walk's own day gets the walk.
+    expect(byPaymentId.get(sameDay)).toMatchObject({
+      splits: [{ bookingId: walk, amount: 40 }],
+      remainder: 10,
+    });
+  });
+
+  it('a bundled payment still spills across a fortnight of walks when no other credit is closer', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jenna');
+    // The good spill the sitter named — three weekly walks settled by one transfer. Nothing else is
+    // near them, so the filter must remove nothing at all: an exclusion that ignored "a DIFFERENT
+    // credit" and compared the credit against itself would strand two of these three.
+    const first = await book(env, home, 40, '2026-07-20');
+    const second = await book(env, home, 40, '2026-07-24');
+    const third = await book(env, home, 40, '2026-07-28');
+    const paymentId = (await credit(env, home.accountId, 120, '2026-07-30'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({ paymentId, remainder: 0 });
+    expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amount]))).toEqual(
+      new Map([
+        [third, 40],
+        [second, 40],
+        [first, 40],
+      ]),
+    );
+  });
+
+  it('an equally-distant credit does NOT take the spill away — the proposed credit keeps it', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'even');
+    // `contested` is exactly 5 days from BOTH credits — 5 days ahead of the one paid 07-20, 5 days
+    // behind the one paid 07-30. Equal is not closer, so the credit being proposed keeps it and the
+    // spill stands. If the filter ever read "closer or equal", the $100 would settle `own` alone
+    // and report a $60 remainder instead.
+    const own = await book(env, home, 40, '2026-07-20');
+    const contested = await book(env, home, 40, '2026-07-25');
+    const proposed = (await credit(env, home.accountId, 100, '2026-07-20'))!;
+    const equidistant = (await credit(env, home.accountId, 40, '2026-07-30'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({ paymentId: proposed, remainder: 20 });
+    expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amount]))).toEqual(
+      new Map([
+        [own, 40],
+        [contested, 40],
+      ]),
+    );
+    // The other credit is left with nothing to claim — the ordinary sequencing outcome, and still
+    // placeable by hand.
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({
+      paymentId: equidistant,
+      reason: 'no-unpaid-bookings',
+    });
+  });
+
+  it('the closer credit actually collects the stay withheld from the spill, in a later round', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'later');
+    // The withheld stay must not be stranded: `late` is 3 days from `second` and 11 days from
+    // `first`, so `second` is not offered to the big credit — and `late`, ranked second because its
+    // own nearest stay is 3 days out rather than 0, must then pick it up.
+    const firstWalk = await book(env, home, 40, '2026-07-10');
+    const secondWalk = await book(env, home, 40, '2026-07-18');
+    const big = (await credit(env, home.accountId, 200, '2026-07-10'))!;
+    const late = (await credit(env, home.accountId, 60, '2026-07-21'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
+    expect(byPaymentId.get(big)).toMatchObject({
+      splits: [{ bookingId: firstWalk, amount: 40 }],
+      remainder: 160,
+    });
+    expect(byPaymentId.get(late)).toMatchObject({
+      splits: [{ bookingId: secondWalk, amount: 40 }],
+      remainder: 20,
+    });
+  });
+
+  it('the exclusion is a property of the data, not of the order the credits were inserted in', async () => {
+    // Kelly's fixture again, both insertion orders: the filter reads the pool, and the pool is
+    // sorted, so the allocation may not depend on which credit `Payments` happens to return first.
+    async function run(bigFirst: boolean) {
+      const { env, raw } = createTestEnv();
+      const home = await household(env, raw, 'kelly');
+      const boarding = await bookStay(env, home, 100, '2026-07-17', '2026-07-20');
+      await book(env, home, 40, '2026-07-29');
+      const ids = bigFirst
+        ? {
+            big: (await credit(env, home.accountId, 280, '2026-07-20'))!,
+            sameDay: (await credit(env, home.accountId, 50, '2026-07-29'))!,
+          }
+        : {
+            sameDay: (await credit(env, home.accountId, 50, '2026-07-29'))!,
+            big: (await credit(env, home.accountId, 280, '2026-07-20'))!,
+          };
+      const res = await preview(env, TENANT_C, home.accountId);
+      const body = (await res.json()) as PreviewBody;
+      // Rendered by role rather than by generated id, so the two runs compare directly.
+      return body.proposals
+        .map(
+          (p) =>
+            `${p.paymentId === ids.big ? 'big' : 'sameDay'}->${p.splits
+              .map((s) => `${s.bookingId === boarding ? 'boarding' : 'walk'}:${s.amount}`)
+              .join(',')}+${p.remainder}`,
+        )
+        .sort();
+    }
+
+    const forward = await run(true);
+    expect(forward).toEqual(['big->boarding:100+180', 'sameDay->walk:40+10']);
+    expect(await run(false)).toEqual(forward);
+  });
+});
+
+/**
  * PLACING A CREDIT THE SEQUENCING LEFT WITH NOTHING — the override the design demands and the
  * sequential decrement, on its own, forecloses.
  *
