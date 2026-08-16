@@ -1,4 +1,5 @@
 import type {
+  CalendarCostBasis,
   PetRateMode,
   ServiceConstraints,
   ServiceOption,
@@ -76,6 +77,10 @@ export type Settings = {
   /** How many days a house sit and a boarding may overlap, at the tail ends only (0006).
    *  0 = never; 1 = the default; 2 = one at each end; null = no limit. */
   housesitBoardingOverlapDays: number | null;
+  /** How the calendar backfill reads a description `Cost:` on a BOARDING or HOUSE SIT (0013):
+   *  'total' = the whole charge for the stay; 'per-night' = a nightly rate x the stay's nights.
+   *  Never applies to a walk, which has no nights. Default 'total'. */
+  calendarCostBasis: CalendarCostBasis;
   /** The authenticated admin's own login email — wizard prefill for a missing contactEmail. */
   adminEmail: string | null;
   petTypes: { petType: string; label: string }[];
@@ -128,6 +133,7 @@ export type SettingsPayload = {
   contactPhone: string | null;
   maxAdvanceMonths: number | null;
   housesitBoardingOverlapDays: number | null;
+  calendarCostBasis: CalendarCostBasis;
   services: ServicePayload[];
 };
 

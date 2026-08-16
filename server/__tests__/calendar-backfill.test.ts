@@ -457,6 +457,10 @@ const CTX = {
     { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
   ],
   adoptedEventIds: new Set<string>(),
+  // The product DEFAULT (`Tenants.CalendarCostBasis`, 0013) — a description `Cost:` is the whole
+  // charge. Stated here rather than left off so every test in this file that does not care about
+  // the setting is nonetheless running under the reading a tenant who never touched it gets.
+  costBasis: 'total' as const,
   priceFor: () => ({ priced: true as const, cost: 25 }),
 };
 
@@ -652,6 +656,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
       ],
       adoptedEventIds: new Set<string>(),
+      costBasis: 'total' as const,
       // The rate card's linear two-pet answer — $40/pet — which is the wrong number this change
       // exists to stop using.
       priceFor: () => ({ priced: true as const, cost: 80 }),
@@ -703,6 +708,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         { serviceType: 'walk', label: 'Dog Walk', optionKey: 'standard', shape: 'single' as const },
       ],
       adoptedEventIds: new Set<string>(),
+      costBasis: 'total' as const,
       priceFor: () => ({ priced: true as const, cost: 20 }),
     };
     const out = classifyEvent(
@@ -765,6 +771,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
           },
         ],
         adoptedEventIds: new Set<string>(),
+        costBasis: 'total' as const,
         priceFor: () => ({ priced: true as const, cost: 999 }),
       };
       const out = classifyEvent(
@@ -797,6 +804,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
           },
         ],
         adoptedEventIds: new Set<string>(),
+        costBasis: 'total' as const,
         priceFor: () => ({ priced: true as const, cost: 999 }),
       };
       const out = classifyEvent(
@@ -819,6 +827,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
           },
         ],
         adoptedEventIds: new Set<string>(),
+        costBasis: 'total' as const,
         priceFor: () => ({ priced: true as const, cost: 999 }),
       };
       const out = classifyEvent(
@@ -849,6 +858,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
           },
         ],
         adoptedEventIds: new Set<string>(),
+        costBasis: 'total' as const,
         priceFor: () => ({ priced: true as const, cost: 20 }),
       };
       const out = classifyEvent(
@@ -932,5 +942,220 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
 
     expect(out).toMatchObject({ endDate: '2026-07-05', estCost: 100 });
     expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-05' }]);
+  });
+});
+
+/**
+ * A description `Cost:` on a RANGE-shaped service is read under the TENANT'S OWN stored choice
+ * (`Tenants.CalendarCostBasis`, 0013), because what the figure means is a fact about that sitter's
+ * habit in her own calendar and nothing here can derive it:
+ *
+ *   'total'     — the whole charge for the stay. THE DEFAULT, and what every tenant had before.
+ *   'per-night' — a nightly rate; multiplied by the stay's nights.
+ *
+ * EVERY TEST BELOW THAT EXPECTS A MULTIPLICATION SETS 'per-night' EXPLICITLY. That is the point:
+ * if one of them passes without setting it, the default has been flipped to the reading that
+ * OVERCHARGES a client whose sitter writes totals — three times the money on a three-night stay,
+ * silently. The default's own lock lives with the column, in `calendar-cost-basis.test.ts`.
+ *
+ * Nights come from the repo's one night-counting helper (`nightsBetween`, over the same
+ * `spanEndExclusive` span the rate card is asked for), so the backfill and the rate card can never
+ * disagree about what a night is.
+ */
+describe('classifyEvent — a description Cost: on a RANGE service, per the tenant’s cost basis', () => {
+  // Any priceFor answer here is deliberately absurd: a description Cost: must win outright, so if
+  // one of these numbers ever shows up in an assertion the rate card was consulted when it
+  // should not have been.
+  const rangeCtx = (
+    serviceType: string,
+    label: string,
+    costBasis: 'total' | 'per-night' = 'per-night',
+  ) => ({
+    ...CTX,
+    services: [{ serviceType, label, optionKey: 'standard', shape: 'range' as const }],
+    costBasis,
+    priceFor: () => ({ priced: true as const, cost: 999 }),
+  });
+
+  it('a 3-night boarding described Cost: 100 adopts at 100 under the DEFAULT total basis', () => {
+    // ** THE DEFAULT'S BEHAVIOURAL LOCK, at the classifier. ** The same event as the next test,
+    // the only difference being the tenant's stored reading. A sitter who writes the whole charge
+    // in her descriptions must not have her client billed $300 for a stay she quoted at $100.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding', 'total'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 100 });
+  });
+
+  it('a degenerate range span still adopts its stated TOTAL — there is nothing to multiply', () => {
+    // The needs-price guard exists because 0 nights × a rate is $0, a number nobody charged. Under
+    // 'total' no multiplication happens, so the sitter's own stated figure stands: refusing it
+    // here would invent a question out of an answer she already gave.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-17',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding', 'total'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 100 });
+  });
+
+  it('a 3-night boarding described Cost: 100 adopts at 300, not 100', () => {
+    // The sitter's live 2026-07-17 → 07-20 boarding, verbatim.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 300 });
+  });
+
+  it('a 3-night house sit described Cost: 110 adopts at 330', () => {
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie House sit',
+        description: 'Cost: 110',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      rangeCtx('house-sitting', 'House sitting'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 330 });
+  });
+
+  it('a 23-night house sit described Cost: 110 adopts at 2530, across a month boundary', () => {
+    // The sitter's live 2026-07-29 → 08-21 sit. Any month-length assumption (30 or 31 days) or a
+    // day-of-month subtraction lands somewhere other than 23 nights.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie House sit',
+        description: 'Cost: 110',
+        start: '2026-07-29',
+        end: '2026-08-21',
+        allDay: true,
+      }),
+      rangeCtx('house-sitting', 'House sitting'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 2530 });
+  });
+
+  it('a 1-night stay described Cost: 100 adopts at 100 — the multiplier is not off by one', () => {
+    // nightsBetween('2026-07-17', '2026-07-18') === 1 (the repo's own definition of a night: the
+    // end date is exclusive). Billing nights + 1 would read $200 here.
+    expect(nightsBetween('2026-07-17', '2026-07-18')).toBe(1);
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-18',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 100 });
+  });
+
+  it('multiplies over the NORMALIZED span of a timed event, not its raw inclusive end', () => {
+    // Fri 18:00 – Sun 09:00: Google's end is inclusive on a timed event, so the stay is 3 nights
+    // (Fri/Sat/Sun), not 2. Multiplying the raw end would read $100.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 50',
+        start: '2026-07-03',
+        end: '2026-07-05',
+        allDay: false,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-06', estCost: 150 });
+  });
+
+  // A walk has no nights, so the setting must never reach it: BOTH values, same $40. Run as a
+  // pair rather than once under the default, because "the setting doesn't apply here" is only
+  // shown by the value that WOULD have changed the answer if the shape gate were missing.
+  for (const costBasis of ['total', 'per-night'] as const) {
+    it(`a single-day service adopts its description Cost: unchanged under ${costBasis}`, () => {
+      // CTX's walk is shape: 'single' — there are no nights to multiply by and the figure is the
+      // whole charge.
+      const out = classifyEvent(event({ summary: 'Sadie Walk', description: 'Cost: 40' }), {
+        ...CTX,
+        costBasis,
+      });
+      expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 40 });
+    });
+
+    it(`a single-day service spanning several days STILL adopts its Cost: unchanged under ${costBasis}`, () => {
+      // The shape gate, isolated: this walk's span is 3 days wide, so an implementation that
+      // multiplied without checking shape would read $120 under 'per-night'. A single-shaped row
+      // carries no end date and therefore no nights at all.
+      const out = classifyEvent(
+        event({
+          summary: 'Sadie Walk',
+          description: 'Cost: 40',
+          start: '2026-07-01',
+          end: '2026-07-04',
+          allDay: true,
+        }),
+        { ...CTX, costBasis },
+      );
+      expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 40 });
+    });
+  }
+
+  it('leaves the rate card path alone — its cost is already a total for the whole span', () => {
+    // No description Cost: at all, so priceFor answers. That number is a computed total and must
+    // be adopted as-is; multiplying it too would read $450.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Owner: Lauren Kotin',
+        start: '2026-07-17',
+        end: '2026-07-20',
+        allDay: true,
+      }),
+      {
+        ...rangeCtx('boarding', 'Boarding'),
+        priceFor: () => ({ priced: true as const, cost: 150 }),
+      },
+    );
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 150 });
+  });
+
+  it('refuses a range span with no whole night rather than adopting a $0 stay', () => {
+    // A degenerate all-day event (end === start) yields 0 nights, and under 'per-night' that makes
+    // the product $0. There is no honest number to adopt, so this takes the same needs-price arm
+    // an unpriced pet set takes — the sitter prices it herself. No cost field is invented: not 0,
+    // not null, not the un-multiplied rate.
+    const out = classifyEvent(
+      event({
+        summary: 'Sadie Boarding',
+        description: 'Cost: 100',
+        start: '2026-07-17',
+        end: '2026-07-17',
+        allDay: true,
+      }),
+      rangeCtx('boarding', 'Boarding'),
+    );
+    expect(out).toMatchObject({ kind: 'needs-price', startDate: '2026-07-17' });
+    expect(out).not.toHaveProperty('estCost');
   });
 });

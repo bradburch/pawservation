@@ -26,8 +26,15 @@ const TENANT_CACHE_TTL_SECONDS = 60;
  * paid as free for the remainder of its TTL: no error, no log, just a surface that declines to
  * appear. Worth naming that the failure is one-directional — an entry can only understate
  * entitlement, never grant it — because that is precisely what makes it easy to miss.
+ *
+ * v4: `CalendarCostBasis` (migration 0013). The calendar backfill classifies against the tenant row
+ * this cache hands it, and reads anything that is not the string `'per-night'` as "total" — so a v3
+ * entry would quietly bill a sitter who HAS chosen per-night at a third of her rate for the
+ * remainder of its TTL, on stays she is adopting one click later. One-directional again, and in the
+ * safe direction (a stale entry can only undercharge, never overcharge a client), which is exactly
+ * why it would go unnoticed.
  */
-const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v3`;
+const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v4`;
 
 export async function resolveTenant(slug: string, env: Env): Promise<Tenant | null> {
   const key = tenantCacheKey(slug);

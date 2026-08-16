@@ -78,6 +78,9 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     HousesitBoardingOverlapDays: 1,
     DisabledAt: null,
     PremiumUntil: null, // free; availability has never had an opinion about entitlement
+    // The product default (0013). Availability never reads it — it is the calendar BACKFILL's
+    // reading of a description Cost:, not a pricing input — but the row must be complete.
+    CalendarCostBasis: 'total',
     ...over,
   };
 }

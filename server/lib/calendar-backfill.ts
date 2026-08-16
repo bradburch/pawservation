@@ -7,7 +7,12 @@
  * pure and dependency-free, so importing `buildAccounts` from it does not violate that rule.
  */
 
-import { addDays, buildAccounts } from '../../src/shared/index.js';
+import {
+  addDays,
+  buildAccounts,
+  nightsBetween,
+  type CalendarCostBasis,
+} from '../../src/shared/index.js';
 import type { CalendarEvent } from './google-calendar';
 import type { PriceResult } from './availability';
 
@@ -335,6 +340,11 @@ export type BackfillContext = {
   services: BackfillService[];
   /** Event ids already adopted for this tenant — the idempotency key. */
   adoptedEventIds: Set<string>;
+  /** This tenant's stored reading of a description `Cost:` on a RANGE service
+   *  (`Tenants.CalendarCostBasis`, 0013). Carried on the context rather than passed down as an
+   *  argument so `classifyEvent` stays pure and the loader keeps its one tenant read: the route
+   *  already holds the tenant row, and no new D1 call exists to fetch this. */
+  costBasis: CalendarCostBasis;
   priceFor: (
     service: BackfillService,
     pets: BackfillPet[],
@@ -513,10 +523,52 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   const endDate = service.service.shape === 'range' ? spanEndExclusive(event) : null;
   const petIds = pets.pets.map((p) => p.id);
 
-  // 3. Cost — a description Cost: is what was actually charged, so it wins over the rate card
-  // outright: the row adopts on that number even when the rate card itself couldn't price this
-  // pet set (an unpriced combination that would otherwise flag needs-price).
+  /** Everything resolved except the money — see the `needs-price` arm of `Classified`. NO cost
+   *  field is ever present on it: not null, not zero, not a half-derived figure. */
+  const needsPrice = (): Classified => ({
+    kind: 'needs-price',
+    eventId: event.id,
+    summary: event.summary,
+    startDate: event.start,
+    endDate,
+    endUserId: household.endUserId,
+    serviceType: service.service.serviceType,
+    optionKey: service.service.optionKey,
+    petIds,
+    cancelled: parsed.cancelled,
+  });
+
+  // 3. Cost — a description `Cost:` is the sitter's own figure and wins over the rate card
+  // outright: the row adopts on it even when the rate card itself couldn't price this pet set (an
+  // unpriced combination that would otherwise return needs-price).
+  //
+  // What that figure MEANS is a fact about the individual sitter's own habit in her own calendar,
+  // which nothing here can derive — so it is a stored choice, `ctx.costBasis`
+  // (`Tenants.CalendarCostBasis`, migration 0013), and it applies ONLY where a stay has nights:
+  //
+  //  - RANGE (a boarding, a house sit) — 'total' takes the figure as the whole charge for the
+  //    stay; 'per-night' takes it as a nightly rate and multiplies. One sitter writes
+  //    `Cost: 100` on a 2026-07-17 → 07-20 boarding meaning $300; another means $100. Reading the
+  //    first as a total undercharges HER; reading the second as per-night OVERCHARGES HER CLIENT,
+  //    which is why the default is 'total' (see `calendar-cost-basis.ts`).
+  //  - SINGLE (a walk, a drop-in) — there are no nights to bill, so the figure is the whole charge
+  //    under BOTH settings and is adopted unchanged. The setting never reaches this path.
+  //
+  // Nights come from `nightsBetween` over the SAME `spanEndExclusive` span the rate card is asked
+  // for below, so the backfill and the rate card can never disagree about what a night is.
   if (meta.cost !== null) {
+    const perNight = service.service.shape === 'range' && ctx.costBasis === 'per-night';
+    const nights = perNight ? nightsBetween(event.start, spanEndExclusive(event)) : 1;
+    const total = meta.cost * nights;
+    // A range span yielding no whole night is broken data, not a $0 stay, and whole-dollar
+    // arithmetic that has left the exact-integer range is not money anyone can be billed. Neither
+    // is adoptable, and neither is roundable: hand both to the sitter as needs-price — the same
+    // arm an unpriced pet set takes — rather than write a number nobody charged. Only the
+    // multiplying path can manufacture those: under 'total' the figure is adopted as typed, and
+    // the sitter's own stated total on an odd span is still the total she stated.
+    if (perNight && (!Number.isSafeInteger(nights) || nights < 1 || !Number.isSafeInteger(total))) {
+      return needsPrice();
+    }
     return {
       kind: 'adopt',
       eventId: event.id,
@@ -527,7 +579,7 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
       serviceType: service.service.serviceType,
       optionKey: service.service.optionKey,
       petIds,
-      estCost: meta.cost,
+      estCost: total,
       cancelled: parsed.cancelled,
     };
   }
@@ -535,20 +587,8 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   const price = ctx.priceFor(service.service, pets.pets, event.start, spanEndExclusive(event));
   if (!price.priced) {
     // The free product's own "available but not priced" outcome — but everything else DID
-    // resolve, so this is a question for the sitter, not a failure. No number is invented here:
-    // there is no estCost field at all, not null and not zero.
-    return {
-      kind: 'needs-price',
-      eventId: event.id,
-      summary: event.summary,
-      startDate: event.start,
-      endDate,
-      endUserId: household.endUserId,
-      serviceType: service.service.serviceType,
-      optionKey: service.service.optionKey,
-      petIds,
-      cancelled: parsed.cancelled,
-    };
+    // resolve, so this is a question for the sitter, not a failure.
+    return needsPrice();
   }
 
   return {
@@ -561,6 +601,8 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
     serviceType: service.service.serviceType,
     optionKey: service.service.optionKey,
     petIds,
+    // Already the total for the whole span — the rate card was handed the span itself and applied
+    // the service's own per-night/per-day unit inside. Never multiplied again here.
     estCost: price.cost,
     cancelled: parsed.cancelled,
   };

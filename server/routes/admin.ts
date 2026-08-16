@@ -155,6 +155,7 @@ import {
   isNullableLimit,
   isPaymentMethod,
   isPetRateMode,
+  isCalendarCostBasis,
   isRealDate,
   isValidDuration,
   isValidRate,
@@ -394,6 +395,11 @@ async function classifyAll(
     links,
     services: backfillServices,
     adoptedEventIds,
+    // Straight off the tenant row this route was already handed (`c.get('tenant')`) — no extra D1
+    // read exists for it, and both the preview and the import reach the classifier through here,
+    // so the number the sitter approves is computed under the same stored choice as the one she
+    // was shown.
+    costBasis: tenant.CalendarCostBasis,
     priceFor,
   };
   return { classified: events.map((event) => classifyEvent(event, ctx)), pets };
@@ -733,6 +739,11 @@ type SettingsBody = {
    *  semantics — and 0 is a MEANINGFUL value here ("never overlap"), which is why `patchNullable`
    *  keys off `in`, not falsiness. */
   housesitBoardingOverlapDays?: number | null;
+  /** How a description `Cost:` is read on a RANGE service by the calendar backfill (0013):
+   *  'total' | 'per-night'. PATCH: absent = keep current — NEVER coerced to the default here, for
+   *  the same reason `petRateMode` is not: coercing would silently re-mode the tenant on any
+   *  partial save. Anything outside the union is refused, not repaired. */
+  calendarCostBasis?: unknown;
   services?: ServiceBody[];
 };
 
@@ -801,6 +812,10 @@ export const adminRoutes = new Hono<AppEnv>()
       contactPhone: tenant.ContactPhone,
       maxAdvanceMonths: tenant.MaxAdvanceMonths,
       housesitBoardingOverlapDays: tenant.HousesitBoardingOverlapDays,
+      // How the calendar backfill reads a description `Cost:` on a boarding or house sit (0013).
+      // Published so the admin renders her STORED choice — a GET that omitted it would render the
+      // default and then save that default back over her choice on the next unrelated edit.
+      calendarCostBasis: tenant.CalendarCostBasis,
       // The signed-in sitter's own login email — never a client-settable field; the setup wizard
       // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
       adminEmail,
@@ -903,6 +918,22 @@ export const adminRoutes = new Hono<AppEnv>()
         },
         400,
       );
+    // Present in the body ⇒ it must be one of the two readings, and anything else is REFUSED
+    // rather than repaired: a value outside the union would be read downstream as "not per-night"
+    // and behave as a total, so a typo would look like a saved setting and quietly do something
+    // else. Absent ⇒ keep the tenant's stored choice — this is the field the admin app's every
+    // unrelated save omits, and defaulting it there would revert her choice behind her back.
+    if ('calendarCostBasis' in body && !isCalendarCostBasis(body.calendarCostBasis))
+      return c.json(
+        {
+          error:
+            'Calendar cost basis must be "total" (the description Cost: is the whole stay) or "per-night".',
+        },
+        400,
+      );
+    const calendarCostBasis = isCalendarCostBasis(body.calendarCostBasis)
+      ? body.calendarCostBasis
+      : tenant.CalendarCostBasis;
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
     // included in a service's body ⇒ take it; absent ⇒ keep that service's current value. Without
@@ -1152,6 +1183,7 @@ export const adminRoutes = new Hono<AppEnv>()
       contactPhone,
       maxAdvanceMonths,
       housesitBoardingOverlapDays,
+      calendarCostBasis,
     });
     for (const svc of services) {
       const svcType = svc.type as string;

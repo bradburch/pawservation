@@ -50,6 +50,11 @@ export {
 export { billableUnits } from './pricing/booking-cost.js';
 export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';
 export {
+  isCalendarCostBasis,
+  DEFAULT_CALENDAR_COST_BASIS,
+  type CalendarCostBasis,
+} from './pricing/calendar-cost-basis.js';
+export {
   buildGroupKey,
   buildMixKey,
   dedupePets,
