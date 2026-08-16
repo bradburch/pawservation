@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  candidateRank,
   MAX_LATE_PAYMENT_DAYS,
   MAX_PREPAYMENT_DAYS,
   MAX_SPILL_DAYS,
-  nearestCandidateDistance,
+  nearestCandidateRank,
+  PREPAYMENT_RANK_OFFSET,
   proposeAttribution,
 } from '../lib/payment-attribution';
 import type { UnpaidBooking } from '../lib/payment-attribution';
@@ -349,12 +351,78 @@ describe('proposeAttribution', () => {
       // farther (10 days) but alone costs exactly what's left over. This function does not reach
       // past the nearer, stuck tie to fund C — that would be a guess about which stay the sitter
       // meant to settle.
+      //
+      // The credit funds NOTHING here, and the tie is why, so the answer is the tie refusal — see
+      // the describe below. What this test still pins is that C is not reached past it: the
+      // refusal names A and B only, and nothing is proposed against C.
+      // Distinctive ids, for the reason the 3-way-tie test above gives: 'A'/'B'/'C' would match
+      // the refusal's own prose and the assertion would not discriminate.
       const out = proposeAttribution(credit(30), [
-        bk('A', '2026-07-09', 40),
-        bk('B', '2026-07-09', 40),
-        bk('C', '2026-07-20', 30),
+        bk('bk_alpha', '2026-07-09', 40),
+        bk('bk_bravo', '2026-07-09', 40),
+        bk('bk_charlie', '2026-07-20', 30),
       ]);
-      expect(out).toEqual({ ok: true, paymentId: 'p1', splits: [], remainder: 30 });
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+      expect(out.ok === false && out.detail).toContain('bk_alpha');
+      expect(out.ok === false && out.detail).toContain('bk_bravo');
+      expect(out.ok === false && out.detail).not.toContain('bk_charlie');
+    });
+  });
+
+  /**
+   * AN UNAFFORDABLE TIE THE CREDIT NEVER GOT PAST IS A DECISION, NOT A SUCCESS. When the FIRST
+   * group this credit meets is a tie it cannot fully fund even one member of, the old code broke
+   * out of the loop and returned `ok` with `splits: []` and the whole amount as `remainder`,
+   * calling the choice "moot". It is not moot: a $50 credit against two equidistant $100 boardings
+   * is a real question about which stay it is a deposit on, and the sitter is the one who knows.
+   * Worse, the proposal it returned could not even be applied — `applyAttribution`
+   * (server/db/repo.ts) refuses a zero-split attribution outright — so it was a confident-looking
+   * answer that proposed nothing and could do nothing.
+   *
+   * The line the fix has to hold is the DEPOSIT case below it: a credit that funds something and
+   * THEN meets an unaffordable tie is not stuck at all, and still reports what it funded plus its
+   * remainder.
+   */
+  describe('an unaffordable tie the credit funded nothing past is refused, not reported ok', () => {
+    it('a credit that can fund NO member of the tie is ambiguous, naming every tied booking', () => {
+      // $50 against two $100 boardings, both 5 days behind the payment. Same side, same distance,
+      // and the credit is a deposit on exactly one of them — which one is the sitter's call.
+      const out = proposeAttribution(credit(50, '2026-07-20'), [
+        bk('bk_alpha', '2026-07-15', 100),
+        bk('bk_bravo', '2026-07-15', 100),
+      ]);
+      expect(out.ok).toBe(false);
+      expect(out.ok === false && out.reason).toBe('ambiguous');
+      expect(out.ok === false && out.detail).toContain('bk_alpha');
+      expect(out.ok === false && out.detail).toContain('bk_bravo');
+    });
+
+    it('THE DEPOSIT CASE IS UNTOUCHED: funding a stay and then meeting an unaffordable tie is still ok', () => {
+      // The walk on the paid date is funded outright; the $50 left cannot finish either tied
+      // boarding, and a spill that only part-pays is refused as it always was. That is a real
+      // proposal with a real remainder, not a stuck credit — it must NOT become a refusal.
+      const out = proposeAttribution(credit(90, '2026-07-20'), [
+        bk('bk_walk', '2026-07-20', 40),
+        bk('bk_alpha', '2026-07-15', 100),
+        bk('bk_bravo', '2026-07-15', 100),
+      ]);
+      expect(out).toEqual({
+        ok: true,
+        paymentId: 'p1',
+        splits: [{ bookingId: 'bk_walk', amount: 40 }],
+        remainder: 50,
+      });
+    });
+
+    it('a zero-amount credit is still a clean success, not an ambiguity it never reached', () => {
+      // $0 never enters the allocation loop at all, so there is no group it got stuck on and
+      // nothing for the sitter to decide.
+      const out = proposeAttribution(credit(0, '2026-07-20'), [
+        bk('bk_alpha', '2026-07-15', 100),
+        bk('bk_bravo', '2026-07-15', 100),
+      ]);
+      expect(out).toEqual({ ok: true, paymentId: 'p1', splits: [], remainder: 0 });
     });
   });
 
@@ -778,7 +846,7 @@ describe('proposeAttribution', () => {
       stay('b_sit', '2026-07-29', '2026-08-21', outstanding);
 
     it("THE SITTER'S CASE: money sent DURING a 23-night house sit is 0 days from it, not 20", () => {
-      expect(nearestCandidateDistance('2026-08-18', [houseSit(400)])).toBe(0);
+      expect(nearestCandidateRank('2026-08-18', [houseSit(400)])).toBe(0);
       expect(proposeAttribution(credit(400, '2026-08-18'), [houseSit(400)])).toEqual({
         ok: true,
         paymentId: 'p1',
@@ -788,7 +856,7 @@ describe('proposeAttribution', () => {
     });
 
     it('money sent AFTER the stay is measured from its END date — 4 days, not 27', () => {
-      expect(nearestCandidateDistance('2026-08-25', [houseSit(400)])).toBe(4);
+      expect(nearestCandidateRank('2026-08-25', [houseSit(400)])).toBe(4);
       expect(proposeAttribution(credit(400, '2026-08-25'), [houseSit(400)]).ok).toBe(true);
     });
 
@@ -797,7 +865,11 @@ describe('proposeAttribution', () => {
       // house sit's first night and 32 ahead of its checkout, and only the first of those is
       // inside MAX_PREPAYMENT_DAYS. Measuring the near side from the far endpoint would refuse a
       // deposit the sitter obviously took.
-      expect(nearestCandidateDistance('2026-07-20', [houseSit(400)])).toBe(9);
+      //
+      // The rank carries `PREPAYMENT_RANK_OFFSET` because this stay has not happened yet — that is
+      // the side term, and it is what keeps a prepayment behind every settling claim across
+      // credits. The DAY COUNT inside it is the assertion here, and it is 9.
+      expect(nearestCandidateRank('2026-07-20', [houseSit(400)])).toBe(PREPAYMENT_RANK_OFFSET + 9);
       expect(proposeAttribution(credit(400, '2026-07-20'), [houseSit(400)])).toEqual({
         ok: true,
         paymentId: 'p1',
@@ -810,8 +882,8 @@ describe('proposeAttribution', () => {
       // Same two dates as the sitter's case, against a walk instead of a stay. If a null end date
       // were read as an open-ended interval — or defaulted to anything but the start — this would
       // collapse to 0 and the whole point-shaped half of the module would be gone.
-      expect(nearestCandidateDistance('2026-08-18', [bk('b_walk', '2026-07-29', 40)])).toBe(20);
-      expect(nearestCandidateDistance('2026-08-25', [bk('b_walk', '2026-07-29', 40)])).toBe(27);
+      expect(nearestCandidateRank('2026-08-18', [bk('b_walk', '2026-07-29', 40)])).toBe(20);
+      expect(nearestCandidateRank('2026-08-25', [bk('b_walk', '2026-07-29', 40)])).toBe(27);
     });
 
     it('A LONG STAY NO LONGER LOSES TO A SHORT ONE: 0 days inside it beats a walk 3 days out', () => {
@@ -916,28 +988,28 @@ describe('proposeAttribution', () => {
       ]);
       expect(out.ok).toBe(false);
       expect(out.ok === false && out.reason).toBe('invalid-date');
-      expect(
-        nearestCandidateDistance('2026-08-18', [stay('b_broken', '2026-07-29', 'x', 40)]),
-      ).toBe(null);
+      expect(nearestCandidateRank('2026-08-18', [stay('b_broken', '2026-07-29', 'x', 40)])).toBe(
+        null,
+      );
     });
   });
 });
 
 /**
- * THE RANKING NUMBER — `nearestCandidateDistance` answers "how near is the nearest stay this
+ * THE RANKING NUMBER — `nearestCandidateRank` answers "how near is the nearest stay this
  * credit could actually be placed on", which is what lets the preview route decide WHICH CREDIT
  * GOES NEXT instead of falling back to oldest-paid-first (the ordering that mis-attributed every
  * stay of a client who pays on the day). It must agree with `proposeAttribution` about what counts
  * as a candidate at all, or a credit is ranked first for a match the proposer then refuses to make.
  */
-describe('nearestCandidateDistance', () => {
+describe('nearestCandidateRank', () => {
   it('is 0 for a stay on the paid date — the strongest match there is', () => {
-    expect(nearestCandidateDistance('2026-07-23', [bk('b', '2026-07-23', 40)])).toBe(0);
+    expect(nearestCandidateRank('2026-07-23', [bk('b', '2026-07-23', 40)])).toBe(0);
   });
 
   it('reports the NEAREST eligible stay, not the first or the largest', () => {
     expect(
-      nearestCandidateDistance('2026-07-17', [
+      nearestCandidateRank('2026-07-17', [
         bk('b_far', '2026-06-01', 400),
         bk('b_near', '2026-07-16', 40),
         bk('b_mid', '2026-07-01', 40),
@@ -947,7 +1019,7 @@ describe('nearestCandidateDistance', () => {
 
   it('ignores a stay with nothing outstanding — an earlier credit already claimed it', () => {
     expect(
-      nearestCandidateDistance('2026-07-23', [
+      nearestCandidateRank('2026-07-23', [
         bk('b_claimed', '2026-07-23', 0),
         bk('b_open', '2026-07-16', 40),
       ]),
@@ -958,31 +1030,124 @@ describe('nearestCandidateDistance', () => {
     // 60 days BEHIND the payment is inside MAX_LATE_PAYMENT_DAYS; 60 days AHEAD is well past
     // MAX_PREPAYMENT_DAYS, so it is not a candidate at all and cannot rank a credit ahead of one
     // with a real match.
-    expect(nearestCandidateDistance('2026-07-20', [bk('b', addDays('2026-07-20', -60), 40)])).toBe(
-      60,
-    );
+    expect(nearestCandidateRank('2026-07-20', [bk('b', addDays('2026-07-20', -60), 40)])).toBe(60);
+    expect(nearestCandidateRank('2026-07-20', [bk('b', addDays('2026-07-20', 60), 40)])).toBeNull();
+    // A candidate exactly at the prepayment edge is IN the window — and ranks on the future side,
+    // which is what keeps it behind every stay that has already happened rather than competing
+    // with them on raw days.
     expect(
-      nearestCandidateDistance('2026-07-20', [bk('b', addDays('2026-07-20', 60), 40)]),
-    ).toBeNull();
-    expect(
-      nearestCandidateDistance('2026-07-20', [
+      nearestCandidateRank('2026-07-20', [
         bk('b_edge', addDays('2026-07-20', MAX_PREPAYMENT_DAYS), 40),
       ]),
-    ).toBe(MAX_PREPAYMENT_DAYS);
+    ).toBe(PREPAYMENT_RANK_OFFSET + MAX_PREPAYMENT_DAYS);
     expect(
-      nearestCandidateDistance('2026-07-20', [
+      nearestCandidateRank('2026-07-20', [
         bk('b_edge', addDays('2026-07-20', -MAX_LATE_PAYMENT_DAYS), 40),
       ]),
     ).toBe(MAX_LATE_PAYMENT_DAYS);
   });
 
   it('is null when there is nothing to rank: no bookings, none in range, or an unreadable date', () => {
-    expect(nearestCandidateDistance('2026-07-23', [])).toBeNull();
-    expect(nearestCandidateDistance('2026-07-23', [bk('b', '2020-01-01', 40)])).toBeNull();
+    expect(nearestCandidateRank('2026-07-23', [])).toBeNull();
+    expect(nearestCandidateRank('2026-07-23', [bk('b', '2020-01-01', 40)])).toBeNull();
     // An unreadable date is the PROPOSER's refusal to make, with its own reason and sentence —
     // here it simply means "cannot be ranked", so the credit sinks to the back of the queue and
     // gets that refusal in its turn.
-    expect(nearestCandidateDistance('not-a-date', [bk('b', '2026-07-23', 40)])).toBeNull();
-    expect(nearestCandidateDistance('2026-07-23', [bk('b', 'not-a-date', 40)])).toBeNull();
+    expect(nearestCandidateRank('not-a-date', [bk('b', '2026-07-23', 40)])).toBeNull();
+    expect(nearestCandidateRank('2026-07-23', [bk('b', 'not-a-date', 40)])).toBeNull();
+  });
+});
+
+/**
+ * ONE NOTION OF CLOSENESS, SHARED — the bug these exist to keep dead.
+ *
+ * `proposeAttribution` orders its own candidates SIDE FIRST (a stay on or before the paid date
+ * outranks one after it at any distance, because a payment settles services that have already
+ * happened) and only then by distance. The CROSS-CREDIT ranking that decides which credit is
+ * proposed each round used to answer a different question — raw, side-blind days — and two
+ * disagreeing definitions of "closest" inside one feature produced two systematic failures:
+ *
+ *  1. OPPOSITE-SIDE TIES RESOLVED BACKWARDS. A stay with a credit five days after it and another
+ *     five days before it ranked both at 5, so the oldest-paid tie-break handed the stay to the
+ *     PREPAYMENT — and at equal raw distance the earlier paid date IS the early side, so this was
+ *     structural, not occasional.
+ *  2. A CREDIT WON ITS ROUND ON A STAY IT NEVER FUNDED. Ranked at 3 days on a stay ahead of it, it
+ *     won the queue and then allocated past-first onto a stay 40 days behind it, spending itself
+ *     there while the stay that won it the round went to a worse-placed credit or to nobody.
+ *
+ * The two now share one key. These tests fail if they are ever separated again.
+ */
+describe('the cross-credit rank and the proposer are the same ordering', () => {
+  it('a SETTLING stay outranks a PREPAYMENT the same raw number of days away', () => {
+    const walk = [bk('b_walk', '2026-07-15', 40)];
+    const settling = nearestCandidateRank('2026-07-20', walk)!; // paid 5 days AFTER the walk
+    const prepaying = nearestCandidateRank('2026-07-10', walk)!; // paid 5 days BEFORE it
+    // Ranks, not day counts: what the route compares is which credit is the better claim on this
+    // stay, and the one that settles it always is.
+    expect(settling).toBeLessThan(prepaying);
+  });
+
+  it('a settling stay outranks a prepayment even from the far edge of the late window', () => {
+    // 86 days behind the payment against 1 day ahead of it. Raw distance says the prepayment wins
+    // by 85 days; direction says the stay that has already happened is the claim, at any distance
+    // inside its own window — exactly what the proposer's sort key says.
+    const settlingFar = candidateRank(bk('b_past', '2026-04-25', 40), '2026-07-20')!;
+    const prepaymentNear = candidateRank(bk('b_future', '2026-07-21', 40), '2026-07-20')!;
+    expect(settlingFar).toBeLessThan(prepaymentNear);
+  });
+
+  it('THE SENTINEL: sorting candidates by rank reproduces the order the proposer funds them in', () => {
+    // Distances from 07-20: past_1 = 1 day behind, past_10 = 10 behind, future_1 = 1 ahead. Each
+    // is $25 and the credit is $75, so every one is funded in full and the split order IS the
+    // allocation order. If the ranking key and the proposer's sort key ever diverge, these two
+    // lists stop matching — which is the whole failure this pair of bugs was made of.
+    const bookings = [
+      bk('b_future_1', '2026-07-21', 25),
+      bk('b_past_1', '2026-07-19', 25),
+      bk('b_past_10', '2026-07-10', 25),
+    ];
+    const byRank = [...bookings]
+      .map((b) => ({ b, rank: candidateRank(b, '2026-07-20')! }))
+      .sort((x, y) => x.rank - y.rank)
+      .map((x) => x.b.bookingId);
+
+    const out = proposeAttribution(credit(75, '2026-07-20'), bookings);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.splits.map((s) => s.bookingId)).toEqual(byRank);
+  });
+
+  it('A CREDIT RANKS ON THE STAY IT ACTUALLY FUNDS FIRST, never on one it will spend past', () => {
+    // The second bug, at its own level. This credit is 3 days ahead of one stay and 40 days behind
+    // another; it allocates past-first, so the 40-day-old stay is the one it funds — and the
+    // number the route ranks it by has to be that stay's, or the credit wins a round on a claim it
+    // does not make.
+    const cases: { name: string; paidDate: string; amount: number; bookings: UnpaidBooking[] }[] = [
+      {
+        name: '3 days ahead of one stay, 40 days behind another',
+        paidDate: '2026-07-20',
+        amount: 40,
+        bookings: [bk('b_past_40', '2026-06-10', 40), bk('b_future_3', '2026-07-23', 40)],
+      },
+      {
+        name: 'five days either side',
+        paidDate: '2026-07-20',
+        amount: 40,
+        bookings: [bk('b_past_5', '2026-07-15', 40), bk('b_future_5', '2026-07-25', 40)],
+      },
+      {
+        name: 'behind the payment on both sides — unchanged by direction',
+        paidDate: '2026-07-20',
+        amount: 40,
+        bookings: [bk('b_past_2', '2026-07-18', 40), bk('b_past_9', '2026-07-11', 40)],
+      },
+    ];
+    for (const { name, paidDate, amount, bookings } of cases) {
+      const out = proposeAttribution(credit(amount, paidDate), bookings);
+      expect(out.ok, name).toBe(true);
+      if (!out.ok) continue;
+      const funded = bookings.find((b) => b.bookingId === out.splits[0].bookingId)!;
+      expect(nearestCandidateRank(paidDate, bookings), name).toBe(candidateRank(funded, paidDate));
+    }
   });
 });

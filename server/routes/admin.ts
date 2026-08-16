@@ -79,9 +79,9 @@ import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/em
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import {
-  candidateDistance,
+  candidateRank,
   expandImportedRefs,
-  nearestCandidateDistance,
+  nearestCandidateRank,
   proposeAttribution,
 } from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
@@ -3281,7 +3281,7 @@ export const adminRoutes = new Hono<AppEnv>()
       while (remainingCredits.length > 0) {
         // `endDate` comes along free: `getHouseholdDetail` / the bulk read already select it on
         // the same statement they select the start date on, so the route's constant prepare count
-        // is untouched. It is what lets `proposeAttribution` and `nearestCandidateDistance`
+        // is untouched. It is what lets `proposeAttribution` and `nearestCandidateRank`
         // measure to the whole stay — a payment made mid-house-sit is 0 days from it, not 20.
         const unpaidBookings = candidates.map((b) => ({
           bookingId: b.bookingId,
@@ -3302,7 +3302,7 @@ export const adminRoutes = new Hono<AppEnv>()
         // instantly (this payment is the same day as that walk) is exactly the one only a
         // cross-credit ranking can make.
         //
-        // O(credits²) over data ALREADY IN MEMORY. `nearestCandidateDistance` reads the same
+        // O(credits²) over data ALREADY IN MEMORY. `nearestCandidateRank` reads the same
         // `unpaidBookings` array `proposeAttribution` is about to be handed, decremented in place
         // by earlier rounds — no query, no per-credit read, so the route's constant prepare count
         // is untouched. A household holds ~100 credits at the top end; the loop is arithmetic.
@@ -3310,20 +3310,28 @@ export const adminRoutes = new Hono<AppEnv>()
         // `null` (nothing left this credit could claim) never wins a round, so those credits fall
         // out at the end in pool order — oldest paid first — and get their refusal from
         // `proposeAttribution` exactly as before. Strict `<` keeps the pool's own order as the
-        // tie-break, which is what makes equal distances resolve oldest-paid-first, stably.
+        // tie-break, which is what makes equal RANKS resolve oldest-paid-first, stably.
+        //
+        // RANKS, NOT RAW DAYS, and the distinction is the whole of `proximityRank`
+        // (server/lib/payment-attribution.ts): side first, then distance — the same key
+        // `proposeAttribution` orders its own candidates by. When this loop compared raw days
+        // instead, it disagreed with the proposer it feeds, and two failures followed: an
+        // opposite-side "tie" handed every stay to the PREPAYMENT via the oldest-paid tie-break,
+        // and a credit could win its round on a stay it then spent itself past. Neither this
+        // ranking nor the contention filter below may go back to a notion of closeness of its own.
         let pickedIndex = 0;
-        let bestDistance: number | null = null;
+        let bestRank: number | null = null;
         for (let i = 0; i < remainingCredits.length; i++) {
-          const distance = nearestCandidateDistance(remainingCredits[i].PaidDate, unpaidBookings);
-          if (distance === null) continue;
-          if (bestDistance === null || distance < bestDistance) {
-            bestDistance = distance;
+          const rank = nearestCandidateRank(remainingCredits[i].PaidDate, unpaidBookings);
+          if (rank === null) continue;
+          if (bestRank === null || rank < bestRank) {
+            bestRank = rank;
             pickedIndex = i;
           }
         }
         const row = remainingCredits.splice(pickedIndex, 1)[0];
 
-        // A STAY SOME OTHER CREDIT IS SITTING CLOSER TO IS NOT OFFERED TO THIS ONE — the half of
+        // A STAY SOME OTHER CREDIT IS BETTER PLACED ON IS NOT OFFERED TO THIS ONE — the half of
         // closest-pair the ranking above cannot reach, and an in-memory filter over the arrays this
         // loop already holds (no query, so the route's constant prepare count is untouched).
         //
@@ -3336,15 +3344,20 @@ export const adminRoutes = new Hono<AppEnv>()
         // spilled nine days forward onto the walk — and the $50 paid ON that walk came back
         // `no-unpaid-bookings`.
         //
-        // STRICTLY closer, never equal: on a tie the credit being proposed keeps the stay, so the
-        // ranking (and its oldest-paid-first tie-break) still decides and nothing here becomes
-        // order-dependent.
+        // BETTER PLACED IS `proximityRank`, THE SAME KEY AS EVERYWHERE ELSE — so a credit that
+        // SETTLES a stay outranks one that would be prepaying it, however many raw days each is
+        // away. A stay five days ahead of one credit and five days behind another is not contested
+        // ground: it belongs to the one it settles.
+        //
+        // STRICTLY better, never equal: on an equal rank the credit being proposed keeps the stay,
+        // so the ranking (and its oldest-paid-first tie-break) still decides and nothing here
+        // becomes order-dependent.
         //
         // APPLIED TO EVERY CANDIDATE, NOT ONLY SPILL TARGETS, deliberately — a uniform rule is
         // easier to reason about and cannot change the primary match anyway: this credit won its
-        // round because its own nearest eligible stay is nearest of all, so no remaining credit can
-        // be strictly closer to that stay than it is. It is therefore never excluded, and a credit
-        // with anything to claim is never filtered down to nothing.
+        // round because its own best-ranked eligible stay is the best of all, so no remaining
+        // credit can be strictly better placed on that stay than it is. It is therefore never
+        // excluded, and a credit with anything to claim is never filtered down to nothing.
         //
         // NOT A RESERVATION AND NOT A BACKTRACK. A withheld stay is simply absent from THIS call;
         // the closer credit meets it in a later round of the same loop, and if that credit turns out
@@ -3352,15 +3365,15 @@ export const adminRoutes = new Hono<AppEnv>()
         // still sees it in `unresolved[].bookings` either way, which is why the list below is built
         // from the unfiltered `unpaidBookings`.
         //
-        // `candidateDistance` is `null` for a stay this credit could not be placed on at all
+        // `candidateRank` is `null` for a stay this credit could not be placed on at all
         // (unreadable dates, outside the directional windows). Those are KEPT: dropping them would
         // silently swallow the very refusals — `invalid-date`, `no-recent-booking` — that
         // `proposeAttribution` alone is allowed to make.
         const offered = unpaidBookings.filter((b) => {
-          const mine = candidateDistance(b, row.PaidDate);
+          const mine = candidateRank(b, row.PaidDate);
           if (mine === null) return true;
           return !remainingCredits.some((other) => {
-            const theirs = candidateDistance(b, other.PaidDate);
+            const theirs = candidateRank(b, other.PaidDate);
             return theirs !== null && theirs < mine;
           });
         });
