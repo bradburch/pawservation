@@ -78,7 +78,12 @@ import {
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
-import { expandImportedRefs, proposeAttribution } from '../lib/payment-attribution';
+import {
+  candidateDistance,
+  expandImportedRefs,
+  nearestCandidateDistance,
+  proposeAttribution,
+} from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
 import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
@@ -3106,10 +3111,17 @@ export const adminRoutes = new Hono<AppEnv>()
    * Filtering to `outstanding > 0` before the pure module ever sees the list is what keeps a
    * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
    *
-   * A HOUSEHOLD'S CREDITS ARE PROPOSED IN SEQUENCE (oldest `PaidDate` first, each against what
-   * earlier ones left), which is what stops three $40 credits from each claiming the same $40
-   * booking. The side effect is that every credit after the first comes back
-   * `no-unpaid-bookings` — and left there, that is oldest-paid-first-automatic, the guess
+   * A HOUSEHOLD'S CREDITS ARE PROPOSED IN SEQUENCE (each against what earlier ones left), which is
+   * what stops three $40 credits from each claiming the same $40 booking. WHICH credit goes next is
+   * closest-pair, not oldest-paid: the credit whose nearest still-available stay is nearest goes
+   * first, with oldest `PaidDate` (then payment id) surviving only as the tie-break — see the loop
+   * itself for why the older ordering mis-attributed a whole client. Ranking alone only settles who
+   * gets the FIRST stay, so before a credit is proposed its candidate list also DROPS any stay a
+   * different, not-yet-proposed credit of the same household is strictly closer to — otherwise the
+   * round's winner spills onto a stay another credit was paid on the day of. The side effect is
+   * unchanged:
+   * a credit that comes second to a stay comes back
+   * `no-unpaid-bookings` — and left there, that is automatic-with-no-override, the guess
    * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` explicitly rejects. So the
    * `unresolved[].bookings` list is the override: a credit the sequencing skipped still NAMES the
    * household's live-outstanding stays, so the sitter can untick the proposed one and place this
@@ -3177,6 +3189,11 @@ export const adminRoutes = new Hono<AppEnv>()
         amount: number;
         serviceType: string;
         startDate: string;
+        // `null` means a single-day service (a walk); a range service (a stay) carries its own
+        // checkout date here. Declared, not merely emitted — same reasoning as `outstanding`
+        // below: a prior review found `outstanding` emitted but undeclared, so dropping this
+        // line would again be silent rather than a type error.
+        endDate: string | null;
         status: string;
         // Declared, not merely emitted: the panel's over-split guard reads this, so dropping it
         // must be a type error rather than a silent `undefined` that quietly disables the guard.
@@ -3195,6 +3212,8 @@ export const adminRoutes = new Hono<AppEnv>()
         bookingId: string;
         serviceType: string;
         startDate: string;
+        // Same meaning as the split's `endDate` above: `null` for a single-day service.
+        endDate: string | null;
         status: string;
         outstanding: number;
       }[];
@@ -3211,6 +3230,7 @@ export const adminRoutes = new Hono<AppEnv>()
             bookingId: b.bookingId,
             serviceType: b.serviceType,
             startDate: b.startDate,
+            endDate: b.endDate,
             status: b.status,
           },
         ]),
@@ -3250,23 +3270,104 @@ export const adminRoutes = new Hono<AppEnv>()
         candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
       );
 
-      // Oldest PAID date first, tied-broken by payment id for a stable order across runs: the
-      // money that arrived first is the money that settled the earliest stay, so it gets first
-      // claim on a booking's outstanding before any later credit sees it.
-      const orderedCredits = [...credits].sort((a, b) => {
+      // The pool this household's credits are drawn from, in the order that decides every TIE:
+      // oldest PAID date first, then payment id, so a run over the same data always produces the
+      // same allocation. It is no longer the order they are PROPOSED in — see the loop below.
+      const remainingCredits = [...credits].sort((a, b) => {
         if (a.PaidDate !== b.PaidDate) return a.PaidDate < b.PaidDate ? -1 : 1;
         return a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0;
       });
 
-      for (const row of orderedCredits) {
+      while (remainingCredits.length > 0) {
+        // `endDate` comes along free: `getHouseholdDetail` / the bulk read already select it on
+        // the same statement they select the start date on, so the route's constant prepare count
+        // is untouched. It is what lets `proposeAttribution` and `nearestCandidateDistance`
+        // measure to the whole stay — a payment made mid-house-sit is 0 days from it, not 20.
         const unpaidBookings = candidates.map((b) => ({
           bookingId: b.bookingId,
           startDate: b.startDate,
+          endDate: b.endDate,
           outstanding: outstandingById.get(b.bookingId)!,
         }));
+
+        // CLOSEST PAIR FIRST, NOT OLDEST CREDIT FIRST — the ordering fix. Each round proposes the
+        // credit whose nearest still-available stay is nearest, rather than the credit that
+        // happened to be paid earliest.
+        //
+        // Oldest-first was a per-credit optimum with a queue: the first credit took its own
+        // nearest stay and consumed it, and nothing ever compared one credit's "0 days" against
+        // another's "28 days". On a client who pays on the day, that is every stay attributed to
+        // the wrong payment — a June credit 28 days out claimed the mid-July walk, and the credit
+        // paid ON that walk fell out as `no-recent-booking`. The comparison the sitter makes
+        // instantly (this payment is the same day as that walk) is exactly the one only a
+        // cross-credit ranking can make.
+        //
+        // O(credits²) over data ALREADY IN MEMORY. `nearestCandidateDistance` reads the same
+        // `unpaidBookings` array `proposeAttribution` is about to be handed, decremented in place
+        // by earlier rounds — no query, no per-credit read, so the route's constant prepare count
+        // is untouched. A household holds ~100 credits at the top end; the loop is arithmetic.
+        //
+        // `null` (nothing left this credit could claim) never wins a round, so those credits fall
+        // out at the end in pool order — oldest paid first — and get their refusal from
+        // `proposeAttribution` exactly as before. Strict `<` keeps the pool's own order as the
+        // tie-break, which is what makes equal distances resolve oldest-paid-first, stably.
+        let pickedIndex = 0;
+        let bestDistance: number | null = null;
+        for (let i = 0; i < remainingCredits.length; i++) {
+          const distance = nearestCandidateDistance(remainingCredits[i].PaidDate, unpaidBookings);
+          if (distance === null) continue;
+          if (bestDistance === null || distance < bestDistance) {
+            bestDistance = distance;
+            pickedIndex = i;
+          }
+        }
+        const row = remainingCredits.splice(pickedIndex, 1)[0];
+
+        // A STAY SOME OTHER CREDIT IS SITTING CLOSER TO IS NOT OFFERED TO THIS ONE — the half of
+        // closest-pair the ranking above cannot reach, and an in-memory filter over the arrays this
+        // loop already holds (no query, so the route's constant prepare count is untouched).
+        //
+        // The ranking decides which credit gets the FIRST stay. `proposeAttribution` is pure and
+        // per-credit by design, so once a credit wins a round it spills greedily onto every further
+        // stay inside `MAX_SPILL_DAYS` it can settle in full — and nothing inside it can ask whether
+        // a credit not yet proposed matches those stays more closely, because by construction it
+        // never sees them. Live shape: a boarding ending 07-20 and a walk on 07-29, with $280 paid
+        // 07-20 and $50 paid 07-29. The $280 ranked first at distance 0, took the boarding, then
+        // spilled nine days forward onto the walk — and the $50 paid ON that walk came back
+        // `no-unpaid-bookings`.
+        //
+        // STRICTLY closer, never equal: on a tie the credit being proposed keeps the stay, so the
+        // ranking (and its oldest-paid-first tie-break) still decides and nothing here becomes
+        // order-dependent.
+        //
+        // APPLIED TO EVERY CANDIDATE, NOT ONLY SPILL TARGETS, deliberately — a uniform rule is
+        // easier to reason about and cannot change the primary match anyway: this credit won its
+        // round because its own nearest eligible stay is nearest of all, so no remaining credit can
+        // be strictly closer to that stay than it is. It is therefore never excluded, and a credit
+        // with anything to claim is never filtered down to nothing.
+        //
+        // NOT A RESERVATION AND NOT A BACKTRACK. A withheld stay is simply absent from THIS call;
+        // the closer credit meets it in a later round of the same loop, and if that credit turns out
+        // not to fund it the stay stays unpaid and is offered to whoever comes next — the sitter
+        // still sees it in `unresolved[].bookings` either way, which is why the list below is built
+        // from the unfiltered `unpaidBookings`.
+        //
+        // `candidateDistance` is `null` for a stay this credit could not be placed on at all
+        // (unreadable dates, outside the directional windows). Those are KEPT: dropping them would
+        // silently swallow the very refusals — `invalid-date`, `no-recent-booking` — that
+        // `proposeAttribution` alone is allowed to make.
+        const offered = unpaidBookings.filter((b) => {
+          const mine = candidateDistance(b, row.PaidDate);
+          if (mine === null) return true;
+          return !remainingCredits.some((other) => {
+            const theirs = candidateDistance(b, other.PaidDate);
+            return theirs !== null && theirs < mine;
+          });
+        });
+
         const proposal = proposeAttribution(
           { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
-          unpaidBookings,
+          offered,
         );
         if (proposal.ok) {
           proposals.push({
@@ -3287,9 +3388,15 @@ export const adminRoutes = new Hono<AppEnv>()
         } else {
           // `bookings` MEANS ONE THING, ON EVERY REASON THAT CARRIES IT: the candidates this
           // credit could still be placed on, each with its LIVE outstanding — i.e. exactly what
-          // a sitter may choose from. Only two reasons can have any: `ambiguous` (a tie the
-          // proposer refused to break) and `no-unpaid-bookings` (the sequencing below claimed
-          // everything for an earlier credit of the same household). The remaining reasons —
+          // a sitter may choose from. Three reasons can have any: `ambiguous` (a tie the proposer
+          // refused to break), `no-unpaid-bookings` (the sequencing below claimed everything for
+          // an earlier credit of the same household), and `no-recent-booking` (no stay falls
+          // inside the payment's proximity windows — `MAX_LATE_PAYMENT_DAYS` behind it,
+          // `MAX_PREPAYMENT_DAYS` ahead — so proximity has nothing to say). The last
+          // one is placeable for precisely the reason it exists: the floor takes away the
+          // automatic GUESS, never the sitter's ability to attribute — she may well know which
+          // stay an old payment settled, and refusing to name candidates would turn a refusal to
+          // guess into a refusal to record. The remaining reasons —
           // `invalid-date`, `invalid-amount`, `duplicate-booking-id` — are faults in the credit's
           // or the household's own data: the household may well still have unpaid stays, but
           // this credit cannot be placed on any of them until the underlying record is fixed, so
@@ -3297,7 +3404,9 @@ export const adminRoutes = new Hono<AppEnv>()
           // an empty list, which is what `AttributionUnresolved`'s type comment
           // (app/shared-ui/api.ts) states and what the panel's actionable/inert split reads.
           const placeable =
-            proposal.reason === 'ambiguous' || proposal.reason === 'no-unpaid-bookings';
+            proposal.reason === 'ambiguous' ||
+            proposal.reason === 'no-unpaid-bookings' ||
+            proposal.reason === 'no-recent-booking';
           // Membership is decided by the LIVE figure, not the sequenced one, for the same
           // reason the reported figure is: a booking an earlier credit in this preview drove
           // to zero is still a booking the sitter may legitimately choose here, once they
@@ -3370,6 +3479,15 @@ export const adminRoutes = new Hono<AppEnv>()
    * of the exact same body apply once: the second call's `applyAttribution` re-reads the row, finds
    * it gone, and skips with a reason instead of duplicating the money.
    *
+   * AN ATTRIBUTION MAY CARRY A `tip` — `{ bookingId, amount }`, naming one of its own splits'
+   * bookings. That is the one part of a payment that is not settlement: `applyAttribution` records
+   * it as a `BookingCharges` row on the stay instead of leaving it as an account-level credit that
+   * would tell the sitter she owes her client money she was thanked with. THE SPLIT IS SENT
+   * EXCLUSIVE OF IT and the server adds it, so conservation is `sum(splits) + tip + remainder ===
+   * the payment` — see `applyAttribution`'s own doc comment for why that framing rather than an
+   * inclusive split. Only the SHAPE is checked below; every rule about the figure and the booking
+   * is re-decided server-side against live state.
+   *
    * BODY SHAPE IS VALIDATED IN FULL BEFORE ANYTHING IS APPLIED — a structurally malformed
    * attribution (wrong types, missing fields) is a 400 for the WHOLE request with nothing written,
    * the same posture the CSV-import route above takes toward a malformed `choices` list. That is a
@@ -3403,6 +3521,7 @@ export const adminRoutes = new Hono<AppEnv>()
       accountId: string;
       splits: { bookingId: string; amount: number }[];
       remainder: number;
+      tip?: { bookingId: string; amount: number };
     }[] = [];
     for (const raw of body.attributions) {
       // `typeof null === 'object'`, so a `null` element must be turned away before the property
@@ -3414,6 +3533,7 @@ export const adminRoutes = new Hono<AppEnv>()
         accountId?: unknown;
         splits?: unknown;
         remainder?: unknown;
+        tip?: unknown;
       };
       if (
         typeof a.paymentId !== 'string' ||
@@ -3434,11 +3554,32 @@ export const adminRoutes = new Hono<AppEnv>()
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
         splits.push({ bookingId: s.bookingId, amount: s.amount });
       }
+
+      // THE OPTIONAL TIP — part of this payment the client meant as thanks, which
+      // `applyAttribution` records as a `BookingCharges` row on one of the bookings above rather
+      // than as an account-level credit that would read as a debt. SHAPE ONLY is checked here: that
+      // the amount is a whole positive dollar figure, that the booking is one of this attribution's
+      // own splits, and that it belongs to this payment's household are all decided by
+      // `applyAttribution` against LIVE state, and are refusals on the merits (per-item `skipped`)
+      // rather than malformed bodies. Absent is the ordinary case and stays `undefined`, so the
+      // repo function's own `tip === undefined` branch is what every existing caller keeps hitting.
+      let tip: { bookingId: string; amount: number } | undefined;
+      if (a.tip !== undefined) {
+        // `typeof null === 'object'`, so a null tip must be turned away before the property reads.
+        if (typeof a.tip !== 'object' || a.tip === null)
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        const t = a.tip as { bookingId?: unknown; amount?: unknown };
+        if (typeof t.bookingId !== 'string' || t.bookingId === '' || typeof t.amount !== 'number')
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        tip = { bookingId: t.bookingId, amount: t.amount };
+      }
+
       attributions.push({
         paymentId: a.paymentId,
         accountId: a.accountId,
         splits,
         remainder: a.remainder,
+        tip,
       });
     }
 

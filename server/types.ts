@@ -345,6 +345,11 @@ export type HouseholdDetailRow = {
     bookingId: string;
     serviceType: string;
     startDate: string;
+    /** Exclusive checkout for a range-shaped stay (boarding, house sitting); NULL for a single-day
+     *  service. Carried on the statement so payment attribution can measure a payment's proximity
+     *  to the WHOLE stay rather than to the day it began — see `intervalDistance`
+     *  (server/lib/payment-attribution.ts) and the preview route in `server/routes/admin.ts`. */
+    endDate: string | null;
     status: string;
     /** The quote, or the assessed cancellation fee on a cancelled row — EXCLUDING extra charges,
      *  so a cancellation fee stays readable as its own figure rather than folded into one number. */

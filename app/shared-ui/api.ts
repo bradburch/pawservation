@@ -415,6 +415,9 @@ export type AttributionCandidateBooking = {
   bookingId: string;
   serviceType: string;
   startDate: string;
+  // `null` means a single-day service (a walk); a range service (a stay) carries its own
+  // checkout date here — the whole interval `proposeAttribution` measures proximity against.
+  endDate: string | null;
   status: string;
   outstanding: number;
 };
@@ -448,10 +451,15 @@ export type AttributionProposal = {
  *    is what the proposer refused to break, but the sitter may know the money belonged to a stay
  *    that was never in the tie at all, so the whole set is offered.
  *  - `'no-unpaid-bookings'` WHEN the household still has stays with live outstanding, i.e. the
- *    preview's oldest-paid-first sequencing handed them all to an earlier credit. Without the
- *    list this credit would be unplaceable, which is oldest-first-automatic — the guess the
+ *    preview's closest-pair sequencing handed them all to a nearer credit. Without the
+ *    list this credit would be unplaceable, which is automatic-with-no-override — the guess the
  *    design rejects. With it, the sitter places this one; the panel sends her own picks ahead of
  *    the pre-ticked proposals, so hers wins the stay and the earlier guess is the one refused.
+ *  - `'no-recent-booking'` — no stay falls inside the payment's proximity windows
+ *    (`MAX_LATE_PAYMENT_DAYS` behind it, the tighter `MAX_PREPAYMENT_DAYS` ahead of it;
+ *    server/lib/payment-attribution.ts), so date proximity has nothing to say about which stay it
+ *    paid for. The candidates are still offered for the same reason: the floor removes the
+ *    automatic guess, not the sitter's ability to attribute.
  *
  *  Empty for everything else, and the emptiness is load-bearing: `'no-unpaid-bookings'` with no
  *  bookings is a household with genuinely nothing outstanding — inert, and summarised rather than
@@ -464,7 +472,12 @@ export type AttributionUnresolved = {
   amount: number;
   paidDate: string;
   reason:
-    'no-unpaid-bookings' | 'ambiguous' | 'invalid-date' | 'invalid-amount' | 'duplicate-booking-id';
+    | 'no-unpaid-bookings'
+    | 'no-recent-booking'
+    | 'ambiguous'
+    | 'invalid-date'
+    | 'invalid-amount'
+    | 'duplicate-booking-id';
   detail: string;
   bookings: AttributionCandidateBooking[];
 };
@@ -482,6 +495,17 @@ export type AttributionInput = {
   accountId: string;
   splits: { bookingId: string; amount: number }[];
   remainder: number;
+  /**
+   * Part of this payment the client meant as thanks rather than as settlement — recorded server-
+   * side as a `BookingCharges` row labelled "Tip" on the named booking, which must be one THIS
+   * attribution's own `splits` name. Without it the excess becomes `remainder`, an account-level
+   * credit, which says the sitter OWES the money back and then reappears in every future preview.
+   *
+   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is `sum(splits) + tip + remainder === amount`,
+   * and the server writes `split + tip` against the booking (`applyAttribution`, server/db/repo.ts).
+   * Sending an already-inclusive split fails conservation rather than paying the tip twice.
+   */
+  tip?: { bookingId: string; amount: number };
 };
 
 export type AttributionApplyResult = {
@@ -590,6 +614,8 @@ export type HouseholdDetail = {
     bookingId: string;
     serviceType: string;
     startDate: string;
+    /** Exclusive checkout for a range-shaped stay; NULL for a single-day service. */
+    endDate: string | null;
     status: string;
     cost: number;
     charges: { id: string; label: string; amount: number }[];
