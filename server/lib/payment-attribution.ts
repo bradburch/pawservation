@@ -67,6 +67,19 @@
  * `MAX_SPILL_DAYS` bounds how far a spill target may be as a secondary check. See the spill rule
  * inside the allocation loop, and `MAX_SPILL_DAYS`'s own comment, for the measured cases.
  *
+ * AMOUNT CONGRUENCE IS A TIE-BREAKER AND NOTHING MORE. The sitter asked for exactness directly —
+ * *"a $100 payment near a $100 stay is a strong signal"* — and on her live data it is nearly
+ * signal-free: 151 of her credits are $40 and 39 of her stays owe $40, so "exact" picks out one of
+ * 151 indistinguishable candidates. So exactness enters ONLY among candidates already inside the
+ * windows, ONLY behind side and distance, and ONLY when the amount is DISTINCTIVE in the household
+ * — one unpaid stay owing it, one unattributed credit of it. See `distinctiveAmounts` for the
+ * measurement and `CONGRUENCE_RANK_BONUS` for why it cannot outweigh a single day.
+ *
+ * THE DISTINCTIVENESS SET IS PASSED IN, NEVER DERIVED HERE, and that is the whole reason this
+ * function stays PURE and per-credit: "no OTHER credit of this household has this amount" is
+ * knowledge about credits this function must never see. The preview route holds both lists and
+ * computes the set once per household; this function only ever asks whether an amount is in it.
+ *
  * Dates are just as load-bearing as amounts: an unparseable or impossible `startDate` / `endDate` /
  * `paidDate` can't be sorted by distance without silently falling into an array-order tie-break
  * (`NaN` comparator results are unspecified), so every date is validated with the house
@@ -341,9 +354,17 @@ export const PREPAYMENT_RANK_OFFSET = 1_000_000;
 /**
  * THE ONE ORDERING KEY OF THIS ENTIRE FEATURE — lower is the better claim on a stay. Side first
  * (every candidate on or before the paid date outranks every candidate after it, at any distance),
- * then distance, nearest first. It is a plain number, comparable with `<` and `-`, so a sort, a
- * tie test and a cross-credit comparison are all written against the same value rather than
- * against three re-derivations of it.
+ * then distance, nearest first, then — and only as a tie-break among candidates side and distance
+ * have already declared equal — AMOUNT CONGRUENCE. It is a plain number, comparable with `<` and
+ * `-`, so a sort, a tie test and a cross-credit comparison are all written against the same value
+ * rather than against three re-derivations of it.
+ *
+ * CONGRUENCE IS STRICTLY THE LAST TERM, and `CONGRUENCE_RANK_BONUS` (half a day, against distances
+ * that are always whole days) is what enforces that in arithmetic rather than in prose. It cannot
+ * widen a window, cannot cross the side boundary, and cannot beat a candidate one day nearer. A
+ * caller that passes no `Congruence` gets exactly the key this function returned before congruence
+ * existed — the parameter is optional precisely so that adding household knowledge is a decision a
+ * caller makes, never a default it inherits.
  *
  * EVERY ORDERING IN THIS FEATURE GOES THROUGH HERE, AND THEY MUST NEVER DIVERGE AGAIN. They did,
  * and it cost two systematic misattributions — the bug this key was introduced to kill
@@ -361,11 +382,111 @@ export const PREPAYMENT_RANK_OFFSET = 1_000_000;
  *      past-first and spent itself on the far one — and the stay that won it the round went to a
  *      worse-placed credit, or to nobody.
  */
-export function proximityRank(booking: UnpaidBooking, paidDate: string): number {
+/**
+ * HOW MUCH BETTER A CONGRUENT CANDIDATE RANKS THAN AN OTHERWISE IDENTICAL ONE — the third and
+ * LOWEST-PRIORITY term of `proximityRank`, subtracted after side and distance have already been
+ * combined. Composite ordering: SIDE → DISTANCE → CONGRUENCE, and this number is what makes that
+ * ordering true rather than merely intended.
+ *
+ * HALF A DAY, AND THE HALF IS LOAD-BEARING. Every distance this module computes is a whole number
+ * of calendar days — `intervalDistance` divides by `MS_PER_DAY` on values `parseDateUtc` has
+ * already floored to midnight, stripping any `T…` time-of-day — so the smallest gap two distinct
+ * distances can have is 1. A bonus strictly below 1 can therefore ONLY separate candidates whose
+ * proximity is exactly equal; it can never move a congruent stay past one that is even a single day
+ * nearer. And it is nowhere near `PREPAYMENT_RANK_OFFSET`, so it can never carry a prepayment
+ * across the side boundary either. Raising it to 1 would silently promote congruence above
+ * distance, which is the mutation the "never beats distance" test exists to catch.
+ *
+ * IT WIDENS NOTHING. The bonus is applied to a rank, and a rank is only ever computed for a
+ * candidate that has already passed the directional window test (`candidateRank`) or the `nearby`
+ * filter (`proposeAttribution`). A distant exact match is not a near one; it is refused.
+ */
+export const CONGRUENCE_RANK_BONUS = 0.5;
+
+/**
+ * THE CREDIT-SIDE HALF OF CONGRUENCE — the amount being ranked, plus the household's distinctive
+ * amounts. Both are needed and neither is enough: exactness alone is what the measurement below
+ * says is near-signal-free, and a distinctive-amount set says nothing until a specific credit is
+ * compared against a specific stay.
+ */
+export type Congruence = {
+  /** The amount of the credit whose claim on a stay is being ranked. */
+  creditAmount: number;
+  /** This household's one-to-one amounts — the output of `distinctiveAmounts`. */
+  distinctiveAmounts: ReadonlySet<number>;
+};
+
+/**
+ * THE AMOUNTS THAT MEAN SOMETHING IN THIS HOUSEHOLD — every amount matched by EXACTLY ONE unpaid
+ * stay's outstanding AND EXACTLY ONE unattributed credit. A one-to-one correspondence, and nothing
+ * weaker.
+ *
+ * WHY THE GATE IS THIS STRICT, MEASURED. The sitter asked for exactness directly: *"a $100 payment
+ * near a $100 stay is a strong signal."* True in principle, and nearly signal-free on her live
+ * data. Across 48 households there are exactly THREE cases where one credit of $X faces one stay
+ * owing $X — and all three are $40, against 151 credits of $40, 143 of $30, 86 of $60, and 39 stays
+ * owing $40. Her genuinely distinctive stays ($2,530, $400, $300, $180) each occur once and none
+ * has an exactly-matching credit at all. So on a uniform $40 walk, "exact" identifies one of 151
+ * indistinguishable credits; on a $2,530 house sit it would be near-conclusive. Distinctiveness is
+ * the difference between those two, and it is why 151 identical credits can never claim each
+ * other's stays through this rule.
+ *
+ * TWO PLAIN NUMBER LISTS rather than bookings and payment rows, because that is genuinely all this
+ * question needs, and because the caller that has both lists (the preview route, which already
+ * holds a household's live outstanding map and its credit rows) can answer it without building a
+ * single throwaway object.
+ *
+ * OUTSTANDINGS ARE FILTERED THE WAY THE PROPOSER FILTERS THEM — `> 0`, so a settled stay cannot
+ * make an amount ambiguous, and an unreadable one (`NaN`) is excluded by the same comparison rather
+ * than counted as its own distinct amount. Unreadable outstandings are refused outright by
+ * `proposeAttribution`; nothing here has to diagnose them.
+ */
+export function distinctiveAmounts(outstandings: number[], creditAmounts: number[]): Set<number> {
+  const stays = new Map<number, number>();
+  for (const outstanding of outstandings) {
+    if (!(outstanding > 0)) continue;
+    stays.set(outstanding, (stays.get(outstanding) ?? 0) + 1);
+  }
+  const credits = new Map<number, number>();
+  for (const amount of creditAmounts) credits.set(amount, (credits.get(amount) ?? 0) + 1);
+
+  const distinctive = new Set<number>();
+  for (const [amount, count] of stays)
+    if (count === 1 && credits.get(amount) === 1) distinctive.add(amount);
+  return distinctive;
+}
+
+/**
+ * Does this credit settle this stay EXACTLY, on an amount that is one-to-one in the household?
+ * Both halves, never one: exactness alone is 151 credits claiming each other's $40 walks.
+ *
+ * `congruence === undefined` means the caller holds no household knowledge — the pure proposer
+ * called with two arguments, as every test written before this feature calls it — and the answer is
+ * simply "no". Congruence is an OPTIONAL refinement of an ordering that is already total; nothing
+ * degrades without it.
+ */
+function isCongruent(booking: UnpaidBooking, congruence?: Congruence): boolean {
+  if (congruence === undefined) return false;
+  return (
+    booking.outstanding === congruence.creditAmount &&
+    congruence.distinctiveAmounts.has(congruence.creditAmount)
+  );
+}
+
+export function proximityRank(
+  booking: UnpaidBooking,
+  paidDate: string,
+  congruence?: Congruence,
+): number {
   const distance = intervalDistance(booking, paidDate);
-  return isAfterPaymentDate(booking.startDate, paidDate)
+  const proximity = isAfterPaymentDate(booking.startDate, paidDate)
     ? PREPAYMENT_RANK_OFFSET + distance
     : distance;
+  // SUBTRACTED LAST, FROM THE COMBINED PROXIMITY — so it can only ever separate candidates that
+  // side and distance have already declared equal. See `CONGRUENCE_RANK_BONUS` for why half a day
+  // is the value that makes "strictly lower priority" a property of the arithmetic rather than a
+  // claim in a comment.
+  return isCongruent(booking, congruence) ? proximity - CONGRUENCE_RANK_BONUS : proximity;
 }
 
 /**
@@ -383,14 +504,18 @@ export function proximityRank(booking: UnpaidBooking, paidDate: string): number 
  * same key the proposer orders by, which is the whole point: see `proximityRank` for what a second
  * notion of closeness cost the one time there was one.
  */
-export function candidateRank(booking: UnpaidBooking, paidDate: string): number | null {
+export function candidateRank(
+  booking: UnpaidBooking,
+  paidDate: string,
+  congruence?: Congruence,
+): number | null {
   if (!isUsableDate(paidDate) || !isUsableDate(booking.startDate)) return null;
   // An unreadable END is skipped for the same reason an unreadable start is: the distance would be
   // `NaN`, and the refusal (with its reason and its sentence) belongs to `proposeAttribution`.
   if (booking.endDate !== null && !isUsableDate(booking.endDate)) return null;
   if (intervalDistance(booking, paidDate) > proximityWindow(booking.startDate, paidDate))
     return null;
-  return proximityRank(booking, paidDate);
+  return proximityRank(booking, paidDate, congruence);
 }
 
 /**
@@ -427,18 +552,26 @@ export function candidateRank(booking: UnpaidBooking, paidDate: string): number 
  * refusal in its own right; the refusal, with its reason and its sentence, still comes from
  * `proposeAttribution` alone.
  */
-export function nearestCandidateRank(paidDate: string, bookings: UnpaidBooking[]): number | null {
+export function nearestCandidateRank(
+  paidDate: string,
+  bookings: UnpaidBooking[],
+  congruence?: Congruence,
+): number | null {
   let best: number | null = null;
   for (const b of bookings) {
     if (!(b.outstanding > 0)) continue;
-    const rank = candidateRank(b, paidDate);
+    const rank = candidateRank(b, paidDate, congruence);
     if (rank === null) continue;
     if (best === null || rank < best) best = rank;
   }
   return best;
 }
 
-export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): Proposal {
+export function proposeAttribution(
+  credit: Credit,
+  bookings: UnpaidBooking[],
+  householdDistinctiveAmounts?: ReadonlySet<number>,
+): Proposal {
   if (!Number.isInteger(credit.amount) || credit.amount < 0) {
     return {
       ok: false,
@@ -587,8 +720,14 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
   // by hand, and the cross-credit ranking that feeds this function then answered a DIFFERENT
   // question — see `proximityRank` for the two misattributions that produced. Both call it now;
   // neither may go back to computing its own.
+  const congruence: Congruence | undefined =
+    householdDistinctiveAmounts === undefined
+      ? undefined
+      : { creditAmount: credit.amount, distinctiveAmounts: householdDistinctiveAmounts };
+
   const ordered = [...nearby].sort(
-    (a, b) => proximityRank(a, credit.paidDate) - proximityRank(b, credit.paidDate),
+    (a, b) =>
+      proximityRank(a, credit.paidDate, congruence) - proximityRank(b, credit.paidDate, congruence),
   );
 
   let remaining = credit.amount;
@@ -604,10 +743,13 @@ export function proposeAttribution(credit: Credit, bookings: UnpaidBooking[]): P
     //
     // `distance` is the RAW day count, kept separately because `MAX_SPILL_DAYS` below is a
     // statement about days, not about rank.
-    const rank = proximityRank(ordered[i], credit.paidDate);
+    const rank = proximityRank(ordered[i], credit.paidDate, congruence);
     const distance = intervalDistance(ordered[i], credit.paidDate);
     let j = i;
-    while (j + 1 < ordered.length && proximityRank(ordered[j + 1], credit.paidDate) === rank) {
+    while (
+      j + 1 < ordered.length &&
+      proximityRank(ordered[j + 1], credit.paidDate, congruence) === rank
+    ) {
       j++;
     }
     const group = ordered.slice(i, j + 1);

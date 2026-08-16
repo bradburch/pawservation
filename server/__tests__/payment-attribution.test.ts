@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   candidateRank,
+  distinctiveAmounts,
   MAX_LATE_PAYMENT_DAYS,
   MAX_PREPAYMENT_DAYS,
   MAX_SPILL_DAYS,
@@ -1117,6 +1118,70 @@ describe('the cross-credit rank and the proposer are the same ordering', () => {
     expect(out.splits.map((s) => s.bookingId)).toEqual(byRank);
   });
 
+  it('a live distinctive set does not perturb a credit that is not congruent with anything', () => {
+    // The original sentinel's data, re-run with a NON-EMPTY distinctive set in play. $75 matches no
+    // stay's outstanding, so no candidate is congruent and the full order must be bit-for-bit what
+    // it was before congruence existed. Fails if the bonus is ever applied on exactness alone, or
+    // on nothing at all.
+    const bookings = [
+      bk('b_future_1', '2026-07-21', 25),
+      bk('b_past_1', '2026-07-19', 25),
+      bk('b_past_10', '2026-07-10', 25),
+    ];
+    const distinctive = new Set([25]);
+    const cong = { creditAmount: 75, distinctiveAmounts: distinctive };
+    const byRank = [...bookings]
+      .map((b) => ({ b, rank: candidateRank(b, '2026-07-20', cong)! }))
+      .sort((x, y) => x.rank - y.rank)
+      .map((x) => x.b.bookingId);
+
+    const out = proposeAttribution(credit(75, '2026-07-20'), bookings, distinctive);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.splits.map((s) => s.bookingId)).toEqual(byRank);
+  });
+
+  it('THE SENTINEL, WITH CONGRUENCE IN PLAY: rank order still reproduces what the proposer funds', () => {
+    // b_tie_40 is listed FIRST and b_tie_25 second, both 1 day behind the payment — so under a
+    // stable sort they tie and array order decides, unless congruence separates them. The credit is
+    // $25 and only b_tie_25 owes $25, so the proposer funds b_tie_25 and stops.
+    //
+    // This fails BOTH WAYS, which is the point: drop congruence from `candidateRank` and the ranked
+    // head becomes b_tie_40 while the proposer still funds b_tie_25; drop it from the proposer's own
+    // sort and the proposer refuses the pair as `ambiguous` instead of funding anything. One key,
+    // two call sites, and they may not disagree.
+    const bookings = [
+      bk('b_tie_40', '2026-07-19', 40),
+      bk('b_tie_25', '2026-07-19', 25),
+      bk('b_past_10', '2026-07-10', 40),
+      bk('b_future_1', '2026-07-21', 40),
+    ];
+    const distinctive = distinctiveAmounts(
+      bookings.map((b) => b.outstanding),
+      [25],
+    );
+    expect(distinctive).toEqual(new Set([25]));
+    const cong = { creditAmount: 25, distinctiveAmounts: distinctive };
+    const byRank = [...bookings]
+      .map((b) => ({ b, rank: candidateRank(b, '2026-07-20', cong)! }))
+      .sort((x, y) => x.rank - y.rank)
+      .map((x) => x.b.bookingId);
+
+    const out = proposeAttribution(credit(25, '2026-07-20'), bookings, distinctive);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    // The proposer spends itself on the first stay, so its split list is the HEAD of the rank
+    // order — a congruent credit can never fund a second stay, since congruence means its whole
+    // amount settles the first one exactly.
+    expect(out.splits.map((s) => s.bookingId)).toEqual(byRank.slice(0, out.splits.length));
+    expect(out.splits).toEqual([{ bookingId: 'b_tie_25', amount: 25 }]);
+    // And the cross-credit rank names that same stay, at the same number.
+    const funded = bookings.find((b) => b.bookingId === out.splits[0].bookingId)!;
+    expect(nearestCandidateRank('2026-07-20', bookings, cong)).toBe(
+      candidateRank(funded, '2026-07-20', cong),
+    );
+  });
+
   it('A CREDIT RANKS ON THE STAY IT ACTUALLY FUNDS FIRST, never on one it will spend past', () => {
     // The second bug, at its own level. This credit is 3 days ahead of one stay and 40 days behind
     // another; it allocates past-first, so the 40-day-old stay is the one it funds — and the
@@ -1149,5 +1214,222 @@ describe('the cross-credit rank and the proposer are the same ordering', () => {
       const funded = bookings.find((b) => b.bookingId === out.splits[0].bookingId)!;
       expect(nearestCandidateRank(paidDate, bookings), name).toBe(candidateRank(funded, paidDate));
     }
+  });
+});
+
+/**
+ * AMOUNT CONGRUENCE — a TIE-BREAKER, and never anything more.
+ *
+ * The sitter's own words: *"a $100 payment near a $100 stay is a strong signal."* True in
+ * principle, and nearly signal-free on her actual data: across 48 households there are only THREE
+ * cases where exactly one credit of $X faces exactly one stay owing $X, and all three are $40 —
+ * against 151 credits of $40 and 39 stays owing $40. Exactness on a uniform $40 walk identifies
+ * nothing; exactness on a $2,530 house sit would be near-conclusive. So exactness alone is not the
+ * rule: DISTINCTIVENESS is, and it is what these tests hold in place.
+ *
+ * The composite ordering is SIDE → DISTANCE → CONGRUENCE, in that order and no other. Congruence
+ * may separate two candidates that are otherwise exactly equal; it may never move one past a nearer
+ * candidate, past a settling candidate, or through a proximity window. With this tenant's uniform
+ * pricing a window-widening rule would let any 2023 payment claim any 2026 walk — the exact failure
+ * `MAX_LATE_PAYMENT_DAYS` and `MAX_PREPAYMENT_DAYS` exist to have eliminated.
+ */
+describe('amount congruence', () => {
+  describe('distinctiveAmounts', () => {
+    it('is a ONE-TO-ONE correspondence: one stay owing it, one credit of it', () => {
+      expect(distinctiveAmounts([37, 50], [37])).toEqual(new Set([37]));
+    });
+
+    it('is empty when two stays owe the same amount', () => {
+      expect(distinctiveAmounts([40, 40], [40])).toEqual(new Set());
+    });
+
+    it('is empty when two credits share the amount', () => {
+      expect(distinctiveAmounts([37], [37, 37])).toEqual(new Set());
+    });
+
+    it('needs BOTH sides — a lone stay amount no credit matches is not distinctive', () => {
+      expect(distinctiveAmounts([2530], [40])).toEqual(new Set());
+      expect(distinctiveAmounts([40], [2530])).toEqual(new Set());
+    });
+
+    it('counts only stays that are actually unpaid', () => {
+      // A settled stay is not a stay this credit could be about, so it cannot make an amount
+      // ambiguous. Zero and negative are both excluded by the same `> 0` the proposer filters on.
+      expect(distinctiveAmounts([37, 0], [37])).toEqual(new Set([37]));
+    });
+
+    it("the sitter's uniform data produces nothing: four $40 walks, three $40 credits", () => {
+      expect(distinctiveAmounts([40, 40, 40, 40, 100], [40, 40, 40])).toEqual(new Set());
+    });
+  });
+
+  it('BREAKS A GENUINE TIE, and the result is a proposal rather than `ambiguous`', () => {
+    // Two walks on the same day, five days behind the payment: equal side, equal distance, a tie
+    // proximity cannot touch. $37 settles one of them exactly and nothing else in the household
+    // owes $37 or was paid as $37, so the correspondence is one-to-one.
+    //
+    // MUTATION CAUGHT: remove congruence from `proximityRank` and this comes back `ambiguous`
+    // ("does not cover all of them"), which is what it did before this feature existed.
+    const bookings = [bk('b_exact', '2026-07-15', 37), bk('b_other', '2026-07-15', 50)];
+    const distinctive = distinctiveAmounts(
+      bookings.map((b) => b.outstanding),
+      [37],
+    );
+
+    expect(proposeAttribution(credit(37, '2026-07-20'), bookings, distinctive)).toEqual({
+      ok: true,
+      paymentId: 'p1',
+      splits: [{ bookingId: 'b_exact', amount: 37 }],
+      remainder: 0,
+    });
+    // Without the household knowledge, the same credit against the same stays is still a refusal —
+    // the proposer has not started guessing on its own.
+    expect(proposeAttribution(credit(37, '2026-07-20'), bookings).ok).toBe(false);
+  });
+
+  it('NEVER BEATS DISTANCE: a distinctive exact match one day further out still loses', () => {
+    // b_near is 1 day behind the payment, b_exact 2 days behind it — the smallest gap two
+    // candidates can have, since every distance is a whole calendar day.
+    //
+    // MUTATION CAUGHT: any congruence term worth a whole day or more — a bonus of 1, a rank that
+    // sorts congruence before distance, a boolean key ordered ahead of the day count — flips this
+    // to b_exact. The bonus must be strictly smaller than one day.
+    const bookings = [bk('b_near', '2026-07-19', 50), bk('b_exact', '2026-07-18', 37)];
+    const distinctive = distinctiveAmounts(
+      bookings.map((b) => b.outstanding),
+      [37],
+    );
+    expect(distinctive).toEqual(new Set([37]));
+
+    const out = proposeAttribution(credit(37, '2026-07-20'), bookings, distinctive);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.splits).toEqual([{ bookingId: 'b_near', amount: 37 }]);
+
+    const cong = { creditAmount: 37, distinctiveAmounts: distinctive };
+    expect(candidateRank(bookings[0], '2026-07-20', cong)!).toBeLessThan(
+      candidateRank(bookings[1], '2026-07-20', cong)!,
+    );
+  });
+
+  it('NEVER BEATS SIDE: a distinctive exact PREPAYMENT loses to a settling stay four days further away', () => {
+    // b_future_exact is 1 day ahead of the payment and settles to the dollar; b_past is 5 days
+    // behind it and matches nothing. A payment settles work that has already happened, so the
+    // settling stay wins at any distance inside its own window.
+    //
+    // MUTATION CAUGHT: applying the bonus to the raw distance before the side offset, or moving
+    // congruence above the offset in the composite key.
+    const bookings = [bk('b_future_exact', '2026-07-21', 37), bk('b_past', '2026-07-15', 50)];
+    const distinctive = distinctiveAmounts(
+      bookings.map((b) => b.outstanding),
+      [37],
+    );
+
+    const out = proposeAttribution(credit(37, '2026-07-20'), bookings, distinctive);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.splits).toEqual([{ bookingId: 'b_past', amount: 37 }]);
+
+    const cong = { creditAmount: 37, distinctiveAmounts: distinctive };
+    expect(candidateRank(bookings[1], '2026-07-20', cong)!).toBeLessThan(
+      candidateRank(bookings[0], '2026-07-20', cong)!,
+    );
+  });
+
+  it('UNIFORM AMOUNTS DO NOT TRIGGER IT: four $40 walks behave exactly as they did before', () => {
+    // The measurement made flesh. b_w1 ($40) and b_big ($100) are tied one day behind the payment,
+    // and the credit is $40 — exact against b_w1. But four stays owe $40 and three credits are
+    // $40, so $40 says nothing about which stay this is, and the tie stands.
+    //
+    // MUTATION CAUGHT: gate congruence on exactness alone (drop the distinctiveness test) and
+    // b_w1 takes the tie — which is precisely the 151-identical-credits failure this design was
+    // measured to avoid. The expectation below is the PRE-CHANGE one, unchanged.
+    const bookings = [
+      bk('b_w1', '2026-07-19', 40),
+      bk('b_big', '2026-07-19', 100),
+      bk('b_w2', '2026-07-18', 40),
+      bk('b_w3', '2026-07-17', 40),
+      bk('b_w4', '2026-07-16', 40),
+    ];
+    const distinctive = distinctiveAmounts(
+      bookings.map((b) => b.outstanding),
+      [40, 40, 40],
+    );
+    expect(distinctive).toEqual(new Set());
+
+    const withHousehold = proposeAttribution(credit(40, '2026-07-20'), bookings, distinctive);
+    const before = proposeAttribution(credit(40, '2026-07-20'), bookings);
+    expect(withHousehold).toEqual(before);
+    expect(withHousehold.ok).toBe(false);
+    if (withHousehold.ok) return;
+    expect(withHousehold.reason).toBe('ambiguous');
+    expect(withHousehold.detail).toContain('b_w1');
+    expect(withHousehold.detail).toContain('b_big');
+  });
+
+  it('NEVER WIDENS A WINDOW: a distinctive exact match past the late-payment floor is still refused', () => {
+    // $2,530 against a $2,530 house sit — the most distinctive amount on the live tenant, and a
+    // near-conclusive signal if it were near. It is 91 days behind the payment, one day past
+    // MAX_LATE_PAYMENT_DAYS, and proximity is still the gate: no match is no match, however
+    // striking the coincidence.
+    //
+    // MUTATION CAUGHT: reading congruence inside `candidateRank`'s window test, or before the
+    // `nearby` filter in the proposer, so that an exact match is admitted from any distance.
+    const far = bk('b_exact_far', addDays('2026-07-20', -(MAX_LATE_PAYMENT_DAYS + 1)), 2530);
+    const distinctive = distinctiveAmounts([far.outstanding], [2530]);
+    expect(distinctive).toEqual(new Set([2530]));
+
+    const out = proposeAttribution(credit(2530, '2026-07-20'), [far], distinctive);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toBe('no-recent-booking');
+
+    // The same stay is not a candidate for the cross-credit ranking either, congruent or not.
+    expect(
+      candidateRank(far, '2026-07-20', { creditAmount: 2530, distinctiveAmounts: distinctive }),
+    ).toBeNull();
+    expect(
+      nearestCandidateRank('2026-07-20', [far], {
+        creditAmount: 2530,
+        distinctiveAmounts: distinctive,
+      }),
+    ).toBeNull();
+  });
+
+  it('never widens the PREPAYMENT window either', () => {
+    const far = bk('b_exact_ahead', addDays('2026-07-20', MAX_PREPAYMENT_DAYS + 1), 2530);
+    const distinctive = distinctiveAmounts([far.outstanding], [2530]);
+    const out = proposeAttribution(credit(2530, '2026-07-20'), [far], distinctive);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toBe('no-recent-booking');
+  });
+
+  it('does not disturb the spill rule, the tie refusal, or conservation', () => {
+    // A congruent credit settles the stay it matches and has nothing left, so it can never spill:
+    // congruence means its whole amount is that stay's outstanding. Conservation holds in the
+    // congruent branch exactly as everywhere else.
+    const bookings = [bk('b_exact', '2026-07-15', 37), bk('b_other', '2026-07-15', 50)];
+    const distinctive = distinctiveAmounts(
+      bookings.map((b) => b.outstanding),
+      [37],
+    );
+    const out = proposeAttribution(credit(37, '2026-07-20'), bookings, distinctive);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.splits.reduce((sum, s) => sum + s.amount, 0) + out.remainder).toBe(37);
+
+    // Two stays owing $37 cannot both be congruent — distinctiveness forbids it — so a tie between
+    // equal-outstanding stays is refused exactly as before, whatever the credit is.
+    const twins = [bk('b_a', '2026-07-15', 37), bk('b_b', '2026-07-15', 37)];
+    const noneDistinctive = distinctiveAmounts(
+      twins.map((b) => b.outstanding),
+      [37],
+    );
+    expect(noneDistinctive).toEqual(new Set());
+    const tied = proposeAttribution(credit(37, '2026-07-20'), twins, noneDistinctive);
+    expect(tied.ok).toBe(false);
+    if (tied.ok) return;
+    expect(tied.reason).toBe('ambiguous');
   });
 });

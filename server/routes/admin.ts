@@ -80,6 +80,7 @@ import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
 import {
   candidateRank,
+  distinctiveAmounts,
   expandImportedRefs,
   nearestCandidateRank,
   proposeAttribution,
@@ -3129,6 +3130,14 @@ export const adminRoutes = new Hono<AppEnv>()
    * emptiness is the only signal the panel needs to tell an actionable refusal (offer an editor)
    * from an inert one (772 of 821 on the live tenant — summarised, never interactive).
    *
+   * AMOUNT CONGRUENCE IS COMPUTED HERE, ONCE PER HOUSEHOLD, AND ONLY HERE. `proposeAttribution` is
+   * pure and per-credit and must never read another credit, but "no OTHER unattributed credit of
+   * this household is for this amount" is exactly that knowledge. This loop already holds the
+   * household's live outstanding map and its full credit list, so it derives the one-to-one amounts
+   * (`distinctiveAmounts`) from arrays it is already carrying and hands the set to the proposer and
+   * to both cross-credit rankings alike. No query, no extra read, and the same tie-break everywhere
+   * — see the computation itself for why once-per-household rather than once-per-round.
+   *
    * The server still decides everything: this route proposes nothing extra and writes nothing.
    * Whatever the sitter picks goes through the ordinary apply route, which re-derives the source
    * payment and re-reads live outstanding, and refuses an over-claim with its reason.
@@ -3270,6 +3279,29 @@ export const adminRoutes = new Hono<AppEnv>()
         candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
       );
 
+      // AMOUNT CONGRUENCE'S HOUSEHOLD HALF, COMPUTED HERE BECAUSE ONLY HERE CAN IT BE — an amount
+      // is distinctive when exactly one unpaid stay owes it AND exactly one unattributed credit is
+      // for it, and that second clause is knowledge about OTHER CREDITS that `proposeAttribution`
+      // is deliberately blind to (it is pure and per-credit, and must stay that way — see its own
+      // doc comment). This loop already holds both lists, so the set costs no query and no extra
+      // object: two arrays it is already carrying, read once.
+      //
+      // ONCE PER HOUSEHOLD, NOT ONCE PER ROUND, and off the LIVE outstanding rather than the
+      // sequenced `outstandingById`. Distinctiveness is a statement about the household's data as
+      // the sitter sees it, not about what an earlier credit in this batch happens to have claimed
+      // — recomputing it each round would make "is $180 distinctive?" depend on the order the
+      // credits were proposed in, which is exactly the kind of order-dependence the rest of this
+      // loop is built to avoid.
+      //
+      // WHAT IT BUYS, AND HONESTLY: on the live tenant, nothing. Her pricing is uniform — 151
+      // credits of $40 against 39 stays owing $40 — so almost no amount is one-to-one, and the
+      // three that are sit outside the directional windows. That IS the design: exactness only
+      // speaks when the amount could not have belonged to anything else. See `distinctiveAmounts`.
+      const householdDistinctiveAmounts = distinctiveAmounts(
+        [...liveOutstandingById.values()],
+        credits.map((p) => p.Amount),
+      );
+
       // The pool this household's credits are drawn from, in the order that decides every TIE:
       // oldest PAID date first, then payment id, so a run over the same data always produces the
       // same allocation. It is no longer the order they are PROPOSED in — see the loop below.
@@ -3319,10 +3351,18 @@ export const adminRoutes = new Hono<AppEnv>()
         // opposite-side "tie" handed every stay to the PREPAYMENT via the oldest-paid tie-break,
         // and a credit could win its round on a stay it then spent itself past. Neither this
         // ranking nor the contention filter below may go back to a notion of closeness of its own.
+        //
+        // CONGRUENCE TRAVELS WITH THE KEY, HERE AND IN THE FILTER BELOW AND IN THE PROPOSER — all
+        // three read the same `householdDistinctiveAmounts` against the amount of whichever credit
+        // they are ranking. Handing it to one and not the others would recreate the very
+        // divergence `proximityRank` was extracted to kill, one term further down the key.
         let pickedIndex = 0;
         let bestRank: number | null = null;
         for (let i = 0; i < remainingCredits.length; i++) {
-          const rank = nearestCandidateRank(remainingCredits[i].PaidDate, unpaidBookings);
+          const rank = nearestCandidateRank(remainingCredits[i].PaidDate, unpaidBookings, {
+            creditAmount: remainingCredits[i].Amount,
+            distinctiveAmounts: householdDistinctiveAmounts,
+          });
           if (rank === null) continue;
           if (bestRank === null || rank < bestRank) {
             bestRank = rank;
@@ -3369,11 +3409,27 @@ export const adminRoutes = new Hono<AppEnv>()
         // (unreadable dates, outside the directional windows). Those are KEPT: dropping them would
         // silently swallow the very refusals — `invalid-date`, `no-recent-booking` — that
         // `proposeAttribution` alone is allowed to make.
+        // CONGRUENCE ON BOTH SIDES OF THIS COMPARISON, THOUGH ONLY `theirs` CAN CHANGE ITS ANSWER
+        // — and the asymmetry is worth stating so nobody "simplifies" the wrong half back out.
+        // `theirs` matters: a stay this credit is tied with another credit on, where the OTHER one
+        // settles it exactly, is withheld here instead of being spilled onto. `mine` is provably
+        // inert: distances are whole days, so a rival that is strictly nearer is nearer by at
+        // least 1 and half a day cannot close that, and two credits can never both be congruent on
+        // one stay (distinctiveness allows only one credit per amount). It is passed anyway,
+        // because `mine` and `theirs` comparing DIFFERENT keys is precisely the shape of the bug
+        // `proximityRank` was extracted to kill — a rank is only safe to compare against another
+        // rank of the same kind, and "inert today" is not a property to leave load-bearing.
         const offered = unpaidBookings.filter((b) => {
-          const mine = candidateRank(b, row.PaidDate);
+          const mine = candidateRank(b, row.PaidDate, {
+            creditAmount: row.Amount,
+            distinctiveAmounts: householdDistinctiveAmounts,
+          });
           if (mine === null) return true;
           return !remainingCredits.some((other) => {
-            const theirs = candidateRank(b, other.PaidDate);
+            const theirs = candidateRank(b, other.PaidDate, {
+              creditAmount: other.Amount,
+              distinctiveAmounts: householdDistinctiveAmounts,
+            });
             return theirs !== null && theirs < mine;
           });
         });
@@ -3381,6 +3437,7 @@ export const adminRoutes = new Hono<AppEnv>()
         const proposal = proposeAttribution(
           { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
           offered,
+          householdDistinctiveAmounts,
         );
         if (proposal.ok) {
           proposals.push({

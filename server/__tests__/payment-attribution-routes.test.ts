@@ -1493,6 +1493,139 @@ describe('POST /:slug/admin/payments/attribute/preview — proximity to the whol
 });
 
 /**
+ * AMOUNT CONGRUENCE — the household half, which lives HERE and can live nowhere else.
+ *
+ * An amount is distinctive when exactly one unpaid stay owes it AND exactly one unattributed credit
+ * is for it. `proposeAttribution` is pure and per-credit and is forbidden from reading another
+ * credit, so the second clause is a fact only this route holds. These tests are the pair that pins
+ * that down: the same two tied stays, distinguished ONLY by how many credits of $37 the household
+ * has. Compute the set from the credit being proposed alone and the second test breaks.
+ */
+describe('POST /:slug/admin/payments/attribute/preview — amount congruence', () => {
+  it('breaks a tie two stays could not: a distinctive $37 lands on the stay owing $37', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'congruent');
+    // Two walks on the same day, five days behind the payment — equal side, equal distance, a tie
+    // proximity has nothing to say about. $37 settles one of them exactly, and no other stay owes
+    // $37 and no other credit is $37.
+    const exact = await book(env, home, 37, '2026-07-15');
+    const other = await book(env, home, 50, '2026-07-15');
+    const paymentId = (await credit(env, home.accountId, 37, '2026-07-20'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({ paymentId, remainder: 0 });
+    expect(body.proposals[0].splits).toHaveLength(1);
+    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: exact, amount: 37 });
+    expect(other).not.toBe(exact);
+  });
+
+  it('a SECOND $37 credit in the same household un-distinctives the amount, and the tie stands', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'congruent');
+    // Identical stays to the test above. The only difference is a second $37 credit — so "$37"
+    // no longer names one credit, the correspondence is not one-to-one, and exactness says nothing.
+    //
+    // MUTATION CAUGHT: derive the distinctive set from the proposed credit alone (or from the
+    // stays alone) and this reports a proposal, exactly as the test above does. The credit half of
+    // distinctiveness is the half that only this route can supply.
+    const first = await book(env, home, 37, '2026-07-15');
+    const second = await book(env, home, 50, '2026-07-15');
+    await credit(env, home.accountId, 37, '2026-07-20');
+    await credit(env, home.accountId, 37, '2026-07-21');
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(2);
+    for (const u of body.unresolved) {
+      expect(u.reason).toBe('ambiguous');
+      expect(new Set(u.bookings.map((b) => b.bookingId))).toEqual(new Set([first, second]));
+    }
+  });
+
+  it('the sitter’s uniform data is untouched: $40 credits against $40 walks behave as before', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'uniform');
+    // Four $40 walks and a $100 boarding, one $40 walk tied with the boarding one day behind the
+    // payment. 151 of this sitter's credits are $40 and 39 of her stays owe $40, so $40 identifies
+    // nothing — and un-gated exactness would hand the tie to the walk on that non-signal.
+    const walkTied = await book(env, home, 40, '2026-07-19');
+    const boardingTied = await book(env, home, 100, '2026-07-19');
+    await book(env, home, 40, '2026-07-18');
+    await book(env, home, 40, '2026-07-17');
+    await book(env, home, 40, '2026-07-16');
+    await credit(env, home.accountId, 40, '2026-07-20');
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0].reason).toBe('ambiguous');
+    expect(body.unresolved[0].detail).toContain(walkTied);
+    expect(body.unresolved[0].detail).toContain(boardingTied);
+  });
+
+  it('the CROSS-CREDIT ranking honours congruence too: a bundled credit no longer swallows the stay its exact match settles', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'crosscredit');
+    // A house sit running 07-14 → 07-25 owes $40 and CONTAINS both paid dates, so it is 0 days from
+    // each of them — equal side, equal distance, a tie between the two credits that proximity alone
+    // cannot break. The $40 credit settles it exactly and $40 is one-to-one here; the $100 credit is
+    // 0 days from the walk and would otherwise take both at rank 0 and leave the $40 with nothing.
+    //
+    // MUTATION CAUGHT: strip congruence out of the cross-credit layer — `nearestCandidateRank` AND
+    // the contention filter's `theirs` — and the $100 wins the round, the stay is no longer withheld
+    // from it, and it funds walk + stay together while the $40 comes back `no-unpaid-bookings`.
+    // This is the divergence `proximityRank` exists to prevent, one term further down the key.
+    const walk = await book(env, home, 60, '2026-07-16');
+    const sit = await bookStay(env, home, 40, '2026-07-14', '2026-07-25');
+    const bundled = (await credit(env, home.accountId, 100, '2026-07-16'))!;
+    const exact = (await credit(env, home.accountId, 40, '2026-07-18'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(2);
+    const byPayment = new Map(body.proposals.map((p) => [p.paymentId, p]));
+    expect(byPayment.get(exact)!.splits).toMatchObject([{ bookingId: sit, amount: 40 }]);
+    expect(byPayment.get(exact)!.remainder).toBe(0);
+    expect(byPayment.get(bundled)!.splits).toMatchObject([{ bookingId: walk, amount: 60 }]);
+    expect(byPayment.get(bundled)!.remainder).toBe(40);
+  });
+
+  it('a distinctive exact match outside the late-payment window is still refused, never reached for', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'distant');
+    // $2,530 against a $2,530 house sit — the most distinctive amount on the live tenant, 91 days
+    // behind the payment. One day past MAX_LATE_PAYMENT_DAYS is outside, and congruence is a
+    // tie-break inside the windows, never a key to them.
+    const far = await bookStay(env, home, 2530, '2026-04-19', '2026-04-20');
+    const paymentId = (await credit(env, home.accountId, 2530, '2026-07-20'))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.proposals).toEqual([]);
+    expect(body.unresolved).toHaveLength(1);
+    expect(body.unresolved[0]).toMatchObject({ paymentId, reason: 'no-recent-booking' });
+    // Still placeable — the sitter may know which stay it settled; the route just refuses to guess.
+    expect(body.unresolved[0].bookings.map((b) => b.bookingId)).toEqual([far]);
+  });
+});
+
+/**
  * THE APPLY ROUTE (Task 4) — `POST /:slug/admin/payments/attribute/apply` is the only code path
  * in this feature that moves money. It takes from the browser only WHICH payment goes on which
  * bookings and in what amounts, and re-derives everything else from live state through
