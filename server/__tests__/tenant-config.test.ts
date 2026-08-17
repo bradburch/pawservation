@@ -104,6 +104,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       timezone: 'Europe/London',
       housesitBoardingOverlapDays: 1,
       calendarCostBasis: 'total',
+      attributionSpillDays: 14,
     });
     const t = await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws');
     expect(t!.Timezone).toBe('Europe/London');
@@ -113,6 +114,7 @@ describe('config columns — caps live on services, timezone on the tenant', () 
       timezone: null,
       housesitBoardingOverlapDays: 1,
       calendarCostBasis: 'total',
+      attributionSpillDays: 14,
     });
     expect((await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!.Timezone).toBeNull();
   });

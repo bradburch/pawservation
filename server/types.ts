@@ -42,6 +42,13 @@ export type Tenant = {
    *  NOT NULL, DEFAULT 'total' — the reading that can only ever undercharge the sitter, because
    *  the other direction overcharges a client who agreed to no such thing. */
   CalendarCostBasis: CalendarCostBasis;
+  /** How far back ONE payment may reach to cover stays EARLIER than the one it most closely
+   *  matches (0014), in whole days — the bound on a SPILL only. The PRIMARY match is still
+   *  `MAX_LATE_PAYMENT_DAYS` behind the payment and `MAX_PREPAYMENT_DAYS` ahead of it, and this
+   *  cannot widen either. NOT NULL, DEFAULT 14 (`MAX_SPILL_DAYS`, the rule this replaces), range
+   *  0..90: 0 = never spill, 90 = the primary window, past which any value is inert. A sitter paid
+   *  weekly wants ~14; one who invoices monthly wants ~45. */
+  AttributionSpillDays: number;
 };
 
 export type TenantUser = {

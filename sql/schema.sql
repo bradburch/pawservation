@@ -41,6 +41,17 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- until someone chooses per-night in the admin.
   CalendarCostBasis TEXT NOT NULL DEFAULT 'total'
     CHECK (CalendarCostBasis IN ('total', 'per-night')),
+  -- How far back ONE payment may reach to cover stays EARLIER than the one it most closely
+  -- matches (0014) — the bound on a SPILL, i.e. on the second and later stays a credit funds, and
+  -- on nothing else. The PRIMARY match is still MAX_LATE_PAYMENT_DAYS (90) behind the payment and
+  -- MAX_PREPAYMENT_DAYS (30) ahead of it; this setting cannot widen either.
+  -- DEFAULT 14 is exactly the hardcoded rule it replaces, so applying 0014 moves no proposal.
+  -- A sitter paid weekly wants roughly 14; one who invoices monthly wants roughly 45.
+  -- RANGE 0..90: 0 is meaningful ("one payment settles one stay, never a batch"), and 90 is
+  -- MAX_LATE_PAYMENT_DAYS — a spill target outside the primary window is already gone from the
+  -- candidate list, so anything above 90 would be stored, promising, and silently inert.
+  AttributionSpillDays INTEGER NOT NULL DEFAULT 14
+    CHECK (AttributionSpillDays >= 0 AND AttributionSpillDays <= 90),
   CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

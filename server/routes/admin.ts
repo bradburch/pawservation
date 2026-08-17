@@ -82,6 +82,8 @@ import {
   candidateRank,
   distinctiveAmounts,
   expandImportedRefs,
+  isValidSpillDays,
+  MAX_SPILL_DAYS_CAP,
   nearestCandidateRank,
   proposeAttribution,
 } from '../lib/payment-attribution';
@@ -745,6 +747,12 @@ type SettingsBody = {
    *  the same reason `petRateMode` is not: coercing would silently re-mode the tenant on any
    *  partial save. Anything outside the union is refused, not repaired. */
   calendarCostBasis?: unknown;
+  /** How far back one payment may reach to cover EARLIER stays, in whole days (0014). PATCH:
+   *  absent = keep current — never defaulted here, for the same reason `calendarCostBasis` is not:
+   *  defaulting would drag a monthly invoicer back to 14 on any partial save. Anything that is not
+   *  a whole number in [0, MAX_SPILL_DAYS_CAP] is refused, not clamped — 0 is a real choice, and a
+   *  value above the primary window would be silently inert. */
+  attributionSpillDays?: unknown;
   services?: ServiceBody[];
 };
 
@@ -817,6 +825,10 @@ export const adminRoutes = new Hono<AppEnv>()
       // Published so the admin renders her STORED choice — a GET that omitted it would render the
       // default and then save that default back over her choice on the next unrelated edit.
       calendarCostBasis: tenant.CalendarCostBasis,
+      // How far back one payment may reach to cover EARLIER stays (0014). Published for the same
+      // reason the cost basis is: the admin must render her STORED window, or it would render the
+      // default and save that default back over her choice on the next unrelated edit.
+      attributionSpillDays: tenant.AttributionSpillDays,
       // The signed-in sitter's own login email — never a client-settable field; the setup wizard
       // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
       adminEmail,
@@ -935,6 +947,22 @@ export const adminRoutes = new Hono<AppEnv>()
     const calendarCostBasis = isCalendarCostBasis(body.calendarCostBasis)
       ? body.calendarCostBasis
       : tenant.CalendarCostBasis;
+    // Present in the body ⇒ it must be a WHOLE number of days inside the column's own CHECK range,
+    // and anything else is REFUSED rather than repaired. Not clamped, deliberately: a sitter who
+    // types 180 has a belief about how far her payments reach, and silently storing 90 would leave
+    // that belief in place. Not coerced from a string either — `Number('')` is 0, which is a real
+    // and very different setting ("never spill"). Absent ⇒ keep her stored window, since the
+    // admin's every unrelated save omits it.
+    if ('attributionSpillDays' in body && !isValidSpillDays(body.attributionSpillDays))
+      return c.json(
+        {
+          error: `A payment may reach back 0 to ${MAX_SPILL_DAYS_CAP} whole days to cover earlier stays. Beyond ${MAX_SPILL_DAYS_CAP} days a stay is outside the window a payment can settle at all, so a larger number would do nothing.`,
+        },
+        400,
+      );
+    const attributionSpillDays = isValidSpillDays(body.attributionSpillDays)
+      ? body.attributionSpillDays
+      : tenant.AttributionSpillDays;
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
     // included in a service's body ⇒ take it; absent ⇒ keep that service's current value. Without
@@ -1185,6 +1213,7 @@ export const adminRoutes = new Hono<AppEnv>()
       maxAdvanceMonths,
       housesitBoardingOverlapDays,
       calendarCostBasis,
+      attributionSpillDays,
     });
     for (const svc of services) {
       const svcType = svc.type as string;
@@ -3434,10 +3463,19 @@ export const adminRoutes = new Hono<AppEnv>()
           });
         });
 
+        // THE SPILL WINDOW IS THE TENANT'S, AND IT TRAVELS THE SAME WAY THE DISTINCTIVE-AMOUNTS
+        // SET DOES — passed down from the caller that already holds the row, never read inside the
+        // pure proposer. `tenant` is the row this route loaded before the loop began, so this
+        // costs no query and the route's constant prepare count is untouched.
+        //
+        // A sitter's clients pay how her clients pay: 14 days is right for weekly payers and
+        // leaves three quarters of a monthly invoice unplaced for someone billed once a month.
+        // See `MAX_SPILL_DAYS` for why that number was never a general rule.
         const proposal = proposeAttribution(
           { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
           offered,
           householdDistinctiveAmounts,
+          tenant.AttributionSpillDays,
         );
         if (proposal.ok) {
           proposals.push({

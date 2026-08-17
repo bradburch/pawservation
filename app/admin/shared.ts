@@ -81,6 +81,10 @@ export type Settings = {
    *  'total' = the whole charge for the stay; 'per-night' = a nightly rate x the stay's nights.
    *  Never applies to a walk, which has no nights. Default 'total'. */
   calendarCostBasis: CalendarCostBasis;
+  /** How far back one payment may reach to cover EARLIER stays, in whole days (0014). 0..90;
+   *  default 14. Weekly payers ~14, monthly invoicers ~45. Never widens the window that decides
+   *  the payment's own closest stay. */
+  attributionSpillDays: number;
   /** The authenticated admin's own login email — wizard prefill for a missing contactEmail. */
   adminEmail: string | null;
   petTypes: { petType: string; label: string }[];
@@ -134,6 +138,7 @@ export type SettingsPayload = {
   maxAdvanceMonths: number | null;
   housesitBoardingOverlapDays: number | null;
   calendarCostBasis: CalendarCostBasis;
+  attributionSpillDays: number;
   services: ServicePayload[];
 };
 
