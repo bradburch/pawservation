@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { adminHeaders, createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { adminHeaders, createTestEnv, endUserToken, futureWeekday, TENANT_A } from './helpers';
+/** A future Monday — the walk option under test is duration-priced, and the original fixture
+ *  pinned a Monday, so that property is preserved rather than assumed irrelevant. */
+const MONDAY = futureWeekday(1);
 
 async function post(env: Env, body: Record<string, unknown>): Promise<Response> {
   const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
@@ -75,7 +78,7 @@ describe('owner-set arrival time on range bookings', () => {
     const { env } = createTestEnv();
     const res = await post(env, {
       type: 'walk',
-      startDate: '2026-08-17', // a Monday, future
+      startDate: MONDAY,
       optionKey: 'd30',
       petIds: ['pet_sp_bella'],
       startTime: '09:00',
