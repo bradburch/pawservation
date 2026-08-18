@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { mintAdminToken } from '../lib/token';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 
 /**
  * Test env backed by a REAL in-memory SQLite (node:sqlite, built into Node 24) behind a
@@ -152,6 +153,26 @@ export function seedPets(
     insertOwner.run(tenantId, s.id, endUserId);
   }
   return specs.map((s) => s.id);
+}
+
+/**
+ * A date comfortably in the future that falls on a given weekday — `0` Sunday … `6` Saturday.
+ *
+ * A hard-coded "future" date stops being future. `2026-08-17` was written into two tests as
+ * "a Monday, future" and quietly became yesterday, at which point the booking route refused with
+ * `date_in_past` **before reaching the rule under test** — so the failure read as a broken
+ * validator rather than a stale fixture, and it turned `main` red on a day nobody changed any code.
+ * That is the second time this class of bug has done so (see `clearSeededBookings` below for the
+ * first, which was the mirror image: absolute-dated seed rows under a clock-relative window).
+ *
+ * Use this wherever a test needs a specific weekday rather than merely a future day; for any
+ * future day, `addDays(TODAY, n)` is enough and needs no helper.
+ */
+export function futureWeekday(weekday: number, minDaysAhead = 30): string {
+  let date = addDays(getPacificDateStr(new Date(), DEFAULT_TIMEZONE), minDaysAhead);
+  // At most seven steps: some day in any consecutive seven is the one asked for.
+  while (new Date(`${date}T00:00:00Z`).getUTCDay() !== weekday) date = addDays(date, 1);
+  return date;
 }
 
 /**
