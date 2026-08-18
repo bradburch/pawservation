@@ -16,11 +16,14 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import { buildEventResource, type CalendarBooking } from '../lib/google-calendar';
-import { adminHeaders, createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { adminHeaders, createTestEnv, endUserToken, futureWeekday, TENANT_A } from './helpers';
 
 const SLUG = 'sunny-paws';
 const BELLA = 'pet_sp_bella';
 const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
+/** A future Monday — the walk option under test is duration-priced, and the original fixture
+ *  pinned a Monday, so that property is preserved rather than assumed irrelevant. */
+const MONDAY = futureWeekday(1);
 
 async function post(env: Env, body: Record<string, unknown>): Promise<Response> {
   const token = await endUserToken(env, SLUG, 'jess@example.com');
@@ -166,7 +169,7 @@ describe('a duration-priced option still owns the clock', () => {
     const { env } = createTestEnv();
     const res = await post(env, {
       type: 'walk',
-      startDate: '2026-08-17', // a Monday, future
+      startDate: MONDAY,
       optionKey: 'd30',
       petIds: [BELLA],
       startTime: '09:00',
@@ -179,7 +182,7 @@ describe('a duration-priced option still owns the clock', () => {
     const { env } = createTestEnv();
     const res = await post(env, {
       type: 'walk',
-      startDate: '2026-08-17',
+      startDate: MONDAY,
       optionKey: 'd30',
       petIds: [BELLA],
       departureTime: '09:30',
