@@ -248,8 +248,55 @@ export const MAX_PREPAYMENT_DAYS = 30;
  * could have told those two apart. This exists because the sitter asked for a bound, and because a
  * leftover that exactly settles a stay from months ago is still a coincidence rather than a
  * judgment. If the two rules ever seem to disagree, the full-settlement one is the one to trust.
+ *
+ * NOW THE DEFAULT OF A PER-TENANT SETTING (`Tenants.AttributionSpillDays`, migration 0014) RATHER
+ * THAN THE RULE ITSELF — because 14 was calibrated against ONE sitter, the one whose clients pay
+ * weekly, and it makes the feature unusable for a plausible other. A monthly invoicer's $480
+ * covering twelve $40 walks across D1–D28, paid D35, settles the nearest walk and is refused spill
+ * on every walk more than a fortnight back: most of every monthly payment becomes remainder, and
+ * PERMANENTLY, since the remainder row inherits the source `PaidDate` and re-attributing it
+ * reproduces the same refusal. Given the paragraph above already concedes this bound separates
+ * none of the measured cases, a number that varies by how a sitter's clients actually pay belongs
+ * on her tenant row.
+ *
+ * THIS CONSTANT STAYS THE ONE PLACE THE NUMBER 14 IS WRITTEN IN TYPESCRIPT: it is
+ * `proposeAttribution`'s `maxSpillDays` default, so every existing caller and every existing test
+ * that says nothing about a window gets exactly the rule it was written against. The column's SQL
+ * `DEFAULT 14` is its one unavoidable mirror (SQL cannot import a constant), and
+ * `attribution-spill-days.test.ts` asserts every seeded tenant's stored value EQUALS this constant
+ * so the two cannot drift.
  */
 export const MAX_SPILL_DAYS = 14;
+
+/**
+ * THE WIDEST SPILL WINDOW A TENANT MAY STORE — `MAX_LATE_PAYMENT_DAYS`, and it is a real ceiling
+ * rather than a round number. A spill target further from the payment than the PRIMARY window has
+ * already been dropped from the candidate list before spill is considered at all, so a larger
+ * setting could never fund one more stay: it would be stored, it would read as a promise, and it
+ * would do nothing. A setting that is silently inert is worse than one that is refused, so the
+ * route and the column's CHECK both refuse it.
+ */
+export const MAX_SPILL_DAYS_CAP = MAX_LATE_PAYMENT_DAYS;
+
+/**
+ * True for the spill window's accepted domain: a whole number of days in [0, MAX_SPILL_DAYS_CAP].
+ *
+ * NOT NULLABLE, unlike the booking horizon or the overlap allowance, because there is no
+ * "unlimited" reading to express: an unbounded spill is the absence of the rule, and within the
+ * only range the proposer can act on that is exactly what the cap already says.
+ *
+ * ZERO IS INSIDE THE DOMAIN AND MEANS SOMETHING — one payment settles one stay and never a batch —
+ * so every caller must test membership rather than truthiness. A `value || DEFAULT` anywhere in
+ * the chain silently turns a sitter's deliberate "never spill" back into the product default.
+ */
+export function isValidSpillDays(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_SPILL_DAYS_CAP
+  );
+}
 
 export type UnpaidBooking = {
   bookingId: string;
@@ -571,6 +618,19 @@ export function proposeAttribution(
   credit: Credit,
   bookings: UnpaidBooking[],
   householdDistinctiveAmounts?: ReadonlySet<number>,
+  /**
+   * HOW FAR A SPILL TARGET MAY BE, in whole days — `Tenants.AttributionSpillDays` (0014), threaded
+   * in the same way `householdDistinctiveAmounts` is and for the same reason: this function is
+   * PURE and may not read a tenant row, so the caller that already loaded one passes the value
+   * down. Defaults to `MAX_SPILL_DAYS`, so every caller and every test that says nothing about a
+   * window gets exactly the behaviour it was written against.
+   *
+   * Bounds the SECOND and later stays only; the primary match is unaffected, and no value here can
+   * widen `MAX_LATE_PAYMENT_DAYS` / `MAX_PREPAYMENT_DAYS` (see `MAX_SPILL_DAYS_CAP`). 0 is a
+   * meaningful value — never spill — and reaches the comparison intact, because a default
+   * parameter fires on `undefined` alone and never on a falsy 0.
+   */
+  maxSpillDays: number = MAX_SPILL_DAYS,
 ): Proposal {
   if (!Number.isInteger(credit.amount) || credit.amount < 0) {
     return {
@@ -775,7 +835,11 @@ export function proposeAttribution(
     // before the group is examined at all, because a group beyond the bound is not a spill target
     // in the first place: exactly as with a tie the credit could never have afforded, there is no
     // decision here for the sitter to be asked about, so the rest becomes `remainder`.
-    if (isSpill && distance > MAX_SPILL_DAYS) break;
+    //
+    // `maxSpillDays` is the caller's — the tenant's — number, defaulting to `MAX_SPILL_DAYS`. The
+    // comparison is unchanged in every other respect, including that it reads the RAW day count
+    // rather than the rank: this bound is a statement about days.
+    if (isSpill && distance > maxSpillDays) break;
 
     if (group.length === 1) {
       const booking = group[0];

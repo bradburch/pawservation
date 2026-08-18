@@ -46,7 +46,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CalendarCostBasis';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -3341,13 +3341,20 @@ export async function updateTenantSettings(
      *  back to the default on any unrelated save — and revert it to a reading that quietly
      *  undercharges her on every multi-night stay she adopts afterwards. Callers must state it. */
     calendarCostBasis: CalendarCostBasis;
+    /** How far back one payment may reach to cover EARLIER stays, in whole days (0014). REQUIRED,
+     *  for exactly the reason `housesitBoardingOverlapDays` and `calendarCostBasis` above are:
+     *  this UPDATE overwrites the column unconditionally, so an omitted value would silently drag
+     *  a monthly invoicer who chose 45 back to the 14 that leaves most of every invoice unplaced —
+     *  on any unrelated save, and without a word. Callers must state it. */
+    attributionSpillDays: number;
   },
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE Tenants SET DisplayName = ?, AccentColor = ?, Timezone = ?,
          ContactEmail = ?, ContactPhone = ?, MaxAdvanceMonths = ?,
-         HousesitBoardingOverlapDays = ?, CalendarCostBasis = ? WHERE Id = ?`,
+         HousesitBoardingOverlapDays = ?, CalendarCostBasis = ?,
+         AttributionSpillDays = ? WHERE Id = ?`,
     )
     .bind(
       settings.displayName,
@@ -3358,6 +3365,7 @@ export async function updateTenantSettings(
       settings.maxAdvanceMonths ?? null,
       settings.housesitBoardingOverlapDays,
       settings.calendarCostBasis,
+      settings.attributionSpillDays,
       tenantId,
     )
     .run();

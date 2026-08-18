@@ -615,6 +615,10 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         // Sent on every save, always the value the GET handed back — the server overwrites this
         // column unconditionally, so omitting it here would revert her choice on any other edit.
         calendarCostBasis: settings.calendarCostBasis,
+        // Sent on every save for the same reason: the server overwrites this column
+        // unconditionally, so omitting it would drag a monthly invoicer back to 14 days on any
+        // unrelated edit.
+        attributionSpillDays: settings.attributionSpillDays,
         services: settings.services.map((s): ServicePayload => ({
           type: s.type,
           enabled: s.enabled,

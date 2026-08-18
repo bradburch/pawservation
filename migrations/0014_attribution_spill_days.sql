@@ -1,0 +1,55 @@
+-- Attribution spill window (per-tenant, 2026-08-16):
+--   Tenants.AttributionSpillDays — how far back ONE payment may reach to cover stays EARLIER than
+--   the one it most closely matches. It bounds a SPILL — the second and later stays a credit funds
+--   — and nothing else. The PRIMARY match is still governed by MAX_LATE_PAYMENT_DAYS (90) behind
+--   the payment and MAX_PREPAYMENT_DAYS (30) ahead of it; this setting cannot widen either.
+--
+-- WHY IT IS A SETTING AT ALL. The value was hardcoded 14, calibrated against one sitter whose
+-- clients pay weekly, and at 14 the feature is unusable for a sitter who invoices monthly: a $480
+-- payment on D35 covering twelve $40 walks across D1–D28 settles the nearest walk and then refuses
+-- every walk more than a fortnight back, so most of every monthly invoice falls out as remainder
+-- — and PERMANENTLY, because the remainder row inherits the source PaidDate, so re-attributing it
+-- reproduces the same refusal. The same shape appears in corporate arrears: one transfer ~75 days
+-- after a month of stays lands inside the 90-day primary window for exactly one stay, with spill
+-- blocked for the rest. The load-bearing spill rule is FULL SETTLEMENT, not distance — the
+-- constant's own doc comment already concedes the measured good and bad spills are separated by
+-- coverage and not by days (a bad spill at 12 days, good ones at 9) — and a bound that separates
+-- none of the measured cases, and that exists because one sitter asked for it, is exactly the kind
+-- of rule that belongs on that sitter's own tenant row rather than in every tenant's code path.
+--
+-- THE DEFAULT IS 14, which is today's behaviour exactly, so applying this migration moves no
+-- proposal for any tenant. `MAX_SPILL_DAYS` (server/lib/payment-attribution.ts) remains the
+-- exported default in TypeScript and the only place the number is written there; SQL cannot import
+-- it, so the DEFAULT below is the one mirror of it, and `attribution-spill-days.test.ts` asserts
+-- the stored value of every seeded tenant EQUALS `MAX_SPILL_DAYS` so the two cannot drift.
+--
+-- THE RANGE — 0 to 90 inclusive, and both ends are deliberate:
+--
+--   0  is MEANINGFUL, not "unset": one payment settles one stay and never a batch. A sitter whose
+--      clients pay per visit can say so, and the proposer will fund the primary match and report
+--      the rest as remainder rather than reaching for a second stay at all.
+--   90 is MAX_LATE_PAYMENT_DAYS, the primary window, and is the ONLY honest ceiling. A spill
+--      target further out than the primary window has already been dropped from the candidate list
+--      before spill is considered, so any value above 90 would be SILENTLY INERT — a stored
+--      setting that reads as a promise and does nothing. Refusing it is strictly better than
+--      accepting it: a sitter who types 180 gets told the largest reach is 90, instead of believing
+--      she has one.
+--
+-- The CHECK is the last line of defence behind the admin PUT's own validation, which refuses
+-- anything that is not a whole number in the same range rather than coercing it. NOT NULL because
+-- there is no "unlimited" reading available: an unbounded spill is the absence of the rule, which
+-- is what 90 already expresses within the only range the proposer can act on.
+--
+-- Additive and backward-compatible, the same shape as 0013's CalendarCostBasis: `NOT NULL DEFAULT
+-- 14` makes SQLite stamp every existing row with today's behaviour, and every future signup
+-- inherits it without `createTenantFromSignup` naming the column.
+--
+-- This IS a `Tenants` column the request path reads (the attribution preview route hands it to the
+-- pure proposer off the CACHED tenant row), so `tenantCacheKey` is bumped v4 -> v5 in the same
+-- commit. A v4 entry carries no such field, the route would read `undefined`, and `undefined` on an
+-- optional argument silently takes the 14-day DEFAULT — so a sitter who has just chosen 45 would
+-- get 14-day proposals for the remainder of the 60-second TTL, with no error and no log.
+
+ALTER TABLE Tenants
+  ADD COLUMN AttributionSpillDays INTEGER NOT NULL DEFAULT 14
+  CHECK (AttributionSpillDays >= 0 AND AttributionSpillDays <= 90);

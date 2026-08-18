@@ -33,8 +33,16 @@ const TENANT_CACHE_TTL_SECONDS = 60;
  * remainder of its TTL, on stays she is adopting one click later. One-directional again, and in the
  * safe direction (a stale entry can only undercharge, never overcharge a client), which is exactly
  * why it would go unnoticed.
+ *
+ * v5: `AttributionSpillDays` (migration 0014). The attribution preview route hands this column
+ * straight to `proposeAttribution` off the row this cache returns, and the proposer's parameter is
+ * OPTIONAL with a default of `MAX_SPILL_DAYS` — so `undefined` is not an error there, it is the
+ * 14-day rule. A v4 entry (which has no such field) would therefore quietly propose under 14 for a
+ * sitter who has just chosen 45, for the remainder of the TTL, with the panel showing three
+ * settled walks and a $360 remainder instead of a settled month. Silent and one-directional again:
+ * the stale reading can only under-place money, never over-place it.
  */
-const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v4`;
+const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v5`;
 
 export async function resolveTenant(slug: string, env: Env): Promise<Tenant | null> {
   const key = tenantCacheKey(slug);
