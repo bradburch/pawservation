@@ -1378,13 +1378,19 @@ export type MyBooking = {
   status: string;
 };
 
-function parseAnswers(raw: string): Record<string, string> {
+function parseAnswers(raw: string, bookingId: string): Record<string, string> {
   try {
     const parsed: unknown = JSON.parse(raw);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, string>)
       : {};
   } catch {
+    // Stored garbage still renders as "no answers", never a 500 — but that sentence describes the
+    // CUSTOMER ("they told us nothing") when the truth is about the database ("we wrote something we
+    // can no longer read"). Rendering it that way is right; doing it without a word turns a
+    // data-integrity fault into a customer-service mystery. The booking id, never the value: the
+    // value is what the customer typed.
+    console.error('unreadable stored answers', { bookingId });
     return {};
   }
 }
@@ -1443,7 +1449,7 @@ export async function listMyBookings(
         pets: mine.map((p) => p.name),
         /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
          *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
-        answers: parseAnswers(r.Answers),
+        answers: parseAnswers(r.Answers, r.Id),
         estCost: r.EstCost,
         charges: chargesByBooking.get(r.Id) ?? [],
         chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),

@@ -2,8 +2,9 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import app from '../index';
 import { sendSitterInvite } from '../lib/email';
 import { insertInvitedCustomer } from '../db/repo';
+import { reconcileIfStale } from '../lib/calendar-sync';
 import { mintToken } from '../lib/token';
-import { createTestEnv, TENANT_B, TEST_SECRET } from './helpers';
+import { createTestEnv, endUserToken, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
 const env = {
   RESEND_API_KEY: 'k',
@@ -308,5 +309,82 @@ describe('mail that was never configured is a fault, not weather', () => {
     expect(line).toContain('login');
     // Naming the misconfiguration must not become a way to name the person who tripped over it.
     expect(line).not.toContain('jess@example.com');
+  });
+});
+
+/**
+ * The last sweep, against a stricter bar than the first pass used: not "is this failure
+ * interesting" but "is an error being discarded here at all".
+ *
+ * Most of what a `catch {}` does in this repo is not swallowing — a signature that will not verify
+ * (`lib/token.ts`, `lib/signed-link.ts`, `lib/oauth-state.ts`), a timezone string `Intl` rejects
+ * (`routes/admin.ts`) — is an ANSWER, and the catch is how the answer is computed. Those stay
+ * quiet on purpose. What follows is the remainder: places a real fault was being dropped.
+ */
+describe('nothing swallows an error without saying so', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * Intake answers are stored as JSON this product wrote itself. If they come back unparseable,
+   * the row is corrupt — and the booking then renders as "no answers given", which is a sentence
+   * about the customer rather than about the database. Rendering it that way is right; doing so
+   * without a word is how a data-integrity fault becomes a customer-service mystery.
+   */
+  it('logs intake answers that came back out of the database unreadable', async () => {
+    const { env } = createTestEnv();
+    const jwt = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    // Every row for this tenant, so the corruption is guaranteed to be on one this caller can see.
+    await env.PAWSERVATION_DB.prepare('UPDATE BookingRequests SET Answers = ? WHERE TenantId = ?')
+      .bind('{not json at all', TENANT_A)
+      .run();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await app.request(
+      '/api/sunny-paws/bookings/mine',
+      { headers: { Authorization: `Bearer ${jwt}` } },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    // The read still succeeds and still returns bookings — proving the log came from a rendered
+    // row rather than from an empty list that never parsed anything.
+    const body = (await res.json()) as { bookings?: unknown[] };
+    expect(body.bookings?.length).toBeGreaterThan(0);
+    const line = error.mock.calls
+      .flat()
+      .map((a) => (a instanceof Error ? a.message : JSON.stringify(a)))
+      .join('\n');
+    expect(line).toContain('unreadable stored answers');
+    // The corrupt value is a customer's own words. Naming the fault is not licence to quote them.
+    expect(line).not.toContain('not json at all');
+  });
+
+  /**
+   * The opportunistic calendar sync on the dashboard/widget path. Its outer catch is genuinely
+   * best-effort — the 15-minute cron re-drives everything unconditionally, and that cron already
+   * reports its own failures per tenant. But "the cron will cover it" is a reason not to FAIL, not
+   * a reason not to SAY: a request-path sync that throws on every call still throws on every call,
+   * and nothing else in the system is in a position to notice.
+   */
+  it('logs an opportunistic sync that threw, even though the cron covers it', async () => {
+    const { env } = createTestEnv();
+    const tenant = await env.PAWSERVATION_DB.prepare('SELECT * FROM Tenants WHERE Id = ?')
+      .bind(TENANT_A)
+      .first();
+    vi.spyOn(env.PAWSERVATION_DB, 'prepare').mockImplementation(() => {
+      throw new Error('D1 unavailable');
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // Never throws: the caller falls back to current DB state, which is the whole point.
+    await expect(
+      reconcileIfStale(env, tenant as unknown as Parameters<typeof reconcileIfStale>[1]),
+    ).resolves.toBeUndefined();
+
+    const line = error.mock.calls
+      .flat()
+      .map((a) => (a instanceof Error ? a.message : JSON.stringify(a)))
+      .join('\n');
+    expect(line).toContain('opportunistic calendar sync failed');
   });
 });

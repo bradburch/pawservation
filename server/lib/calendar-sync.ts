@@ -713,7 +713,12 @@ export async function reconcileIfStale(
   try {
     await redriveCalendarOutbox(env, tenant);
     await reconcileBookingsWithCalendar(env, tenant);
-  } catch {
-    /* best-effort; the caller falls back to current DB state */
+  } catch (err) {
+    // Best-effort, and it stays that way: the caller falls back to current DB state and the
+    // 15-minute cron re-drives all of this unconditionally. But "the cron will cover it" is a
+    // reason not to FAIL, not a reason not to SAY. A request-path sync that throws on every call
+    // throws on every call, and nothing else in the system is positioned to notice — the cron
+    // succeeding is exactly what would keep it hidden.
+    console.error('opportunistic calendar sync failed', tenant.Id, err);
   }
 }
