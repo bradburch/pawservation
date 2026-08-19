@@ -5,7 +5,7 @@ import {
   looksLikePersonalAccessToken,
   shouldRefreshLastUsed,
 } from './personal-access-token';
-import { securityEvent } from './log';
+import { requestContext, securityEvent } from './log';
 import { resolveTenant } from './tenant-resolve';
 import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
@@ -68,7 +68,7 @@ export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
       // them together are the shape of someone walking a token list, and that is worth seeing.
       securityEvent('personal_access_token_rejected', {
         tenant: tenant.Slug,
-        path: new URL(c.req.url).pathname,
+        ...requestContext(c.req),
       });
       return c.json({ error: 'That token is not valid.' }, 401);
     }
@@ -103,7 +103,7 @@ export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
     // things you want to find out about from a log rather than from a customer.
     securityEvent('wrong_tenant', {
       tenant: tenant.Slug,
-      path: new URL(c.req.url).pathname,
+      ...requestContext(c.req),
     });
     return c.json({ error: 'Wrong tenant.' }, 403);
   }

@@ -38,10 +38,16 @@ export async function checkAndBumpRateLimit(
   await cache.put(rateKey, JSON.stringify({ count: count + 1, windowStart }), {
     expirationTtl: windowSeconds,
   });
-  const overCap = count >= maxPerWindow;
-  // Reported here, once, rather than at three call sites: a cap that trips in silence is
+  // Reported here rather than at three call sites: a cap that trips in silence is
   // indistinguishable from a route nobody is using, and these three routes are the unauthenticated
   // ones — the cap tripping IS the interesting event.
-  if (overCap) securityEvent('rate_limited', { bucket, maxPerWindow, windowSeconds });
-  return overCap;
+  //
+  // Once per window, NOT once per over-cap request. `count` is the pre-increment value and keeps
+  // rising past the cap, so this equality is true for exactly the request that crosses it. The
+  // sustained version would say nothing extra and would hand an unauthenticated caller a dial on
+  // how much log to generate — the limiter exists to make abusive traffic cheap, and burying the
+  // interesting line under its own alarm is the opposite of that.
+  if (count === maxPerWindow)
+    securityEvent('rate_limited', { bucket, maxPerWindow, windowSeconds });
+  return count >= maxPerWindow;
 }

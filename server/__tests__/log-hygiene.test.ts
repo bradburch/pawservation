@@ -213,3 +213,58 @@ describe('unhandled errors carry enough request context to find them again', () 
     expect(line).not.toContain('jess@example.com');
   });
 });
+
+/**
+ * The half of a security log that is easy to get wrong: how MUCH of it there is, and whether it
+ * can be joined to anything.
+ */
+describe('security events are bounded in volume and joinable to the other worker', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * The limiter exists to make abusive traffic cheap. A line per over-cap request makes it less
+   * cheap — and hands an unauthenticated caller a dial on how much log they can generate, which is
+   * how the interesting line gets buried. One line per bucket per window says everything the
+   * sustained version says: this cap tripped, now.
+   */
+  it('logs a tripped cap once per window, not once per over-cap request', async () => {
+    const { env } = createTestEnv();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const send = () =>
+      app.request(
+        '/api/password-reset/start',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9' },
+          body: JSON.stringify({ email: 'jess@example.com' }),
+        },
+        env,
+      );
+    // Five fill the window; the sixth trips it; the next four keep hammering it.
+    for (let i = 0; i < 10; i++) await send();
+
+    const trips = warn.mock.calls.filter((c) => JSON.stringify(c).includes('rate_limited'));
+    expect(trips).toHaveLength(1);
+  });
+
+  /**
+   * `requestContext` is already the answer to "which request was this" — reusing it here means a
+   * credential refusal carries the `cf-ray` too, which is the only id this worker and premium can
+   * both see. Without it these events are the one class of log line that cannot be correlated.
+   */
+  it('carries the ray and the method on a credential refusal', async () => {
+    const { env } = createTestEnv();
+    const foreign = await mintToken('eu_someone', TENANT_B, TEST_SECRET);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await app.request(
+      '/api/sunny-paws/me',
+      { headers: { Authorization: `Bearer ${foreign}`, 'CF-Ray': '7a6b5c4d3e2f1a0b-IAD' } },
+      env,
+    );
+
+    const line = warn.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    expect(line).toContain('7a6b5c4d3e2f1a0b-IAD');
+    expect(line).toContain('GET');
+  });
+});
