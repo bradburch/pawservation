@@ -97,6 +97,11 @@ export const passwordResetRoutes = new Hono<AppEnv>()
 
     if (!isEmailConfigured(c.env)) {
       if (c.env.ENVIRONMENT !== 'development') {
+        // A secret that was never set, not weather. This 503 takes account access down for every
+        // customer of every sitter and answers them with a sentence that reads like an outage; the
+        // one line saying otherwise is this one. `surface` names which door is shut, because all
+        // three shut together and the first report will only mention whichever one was tried.
+        console.error('email not configured', { surface: 'password-reset' });
         return c.json({ error: 'Password reset is temporarily unavailable.' }, 503);
       }
       if (overCap) return c.json({ ok: true });

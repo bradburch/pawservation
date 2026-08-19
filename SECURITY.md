@@ -51,6 +51,12 @@ account and by nobody else. Two channels:
   (`lib/log.ts`). Separate from errors on purpose: these want a different alert, and mixing them
   means the interesting one is buried under calendar-sync noise.
 
+A tripped cap is reported once per window rather than once per refused request: the limiter exists
+to make abusive traffic cheap, and a line per refusal hands an unauthenticated caller a dial on how
+much log to generate. `email not configured` is the one line worth alerting on outright — it means
+the `RESEND_*` secrets are unset on a production deploy, which takes login, password reset and
+signup down together while each answers something that reads like a passing outage.
+
 **Never in a log line, in either channel:** a credential or any prefix/suffix/hash of one; an
 email address, name, phone, or street address; a request's query string; a rate-limit key (ours
 are built from the caller's email and IP, so the key _is_ the PII); or an upstream response body

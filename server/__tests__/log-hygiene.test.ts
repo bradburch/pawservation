@@ -268,3 +268,45 @@ describe('security events are bounded in volume and joinable to the other worker
     expect(line).toContain('GET');
   });
 });
+
+/**
+ * The free product's version of premium's `mcp_token_key_unusable`: a secret that was never set,
+ * disguised as an outage. `isEmailConfigured` false in production takes login, password reset AND
+ * signup down together — every route by which anyone reaches an account — and each answers a
+ * self-describing 503 to the caller while telling the operator nothing at all.
+ *
+ * The 503 is right and stays: a product that cannot send mail genuinely cannot sign anyone in. The
+ * silence is what makes it a mystery rather than a five-second fix.
+ */
+describe('mail that was never configured is a fault, not weather', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('logs which surface went down when RESEND_* is unset in production', async () => {
+    const { env } = createTestEnv();
+    // Production-shaped: no RESEND_* secrets, and not the development carve-out that puts the
+    // code on screen instead. This is a deploy where somebody forgot `wrangler secret put`.
+    Object.assign(env, { ENVIRONMENT: 'production' });
+    await insertInvitedCustomer(env.PAWSERVATION_DB, 'tnt_pawsandrelax', 'jess@example.com', null);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await app.request(
+      '/api/paws-and-relax/identify',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'jess@example.com' }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(503);
+    const line = error.mock.calls
+      .flat()
+      .map((a) => (a instanceof Error ? a.message : JSON.stringify(a)))
+      .join('\n');
+    expect(line).toContain('email not configured');
+    expect(line).toContain('login');
+    // Naming the misconfiguration must not become a way to name the person who tripped over it.
+    expect(line).not.toContain('jess@example.com');
+  });
+});

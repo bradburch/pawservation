@@ -117,6 +117,11 @@ export const authRoutes = new Hono<AppEnv>()
     if (c.env.ENVIRONMENT === 'development') {
       return c.json({ codeId, prototypeCode: code });
     }
+    // A secret that was never set, not weather. This 503 takes account access down for every
+    // customer of every sitter and answers them with a sentence that reads like an outage; the
+    // one line saying otherwise is this one. `surface` names which door is shut, because all
+    // three shut together and the first report will only mention whichever one was tried.
+    console.error('email not configured', { surface: 'login' });
     return c.json({ error: 'Login is temporarily unavailable.' }, 503);
   })
 
