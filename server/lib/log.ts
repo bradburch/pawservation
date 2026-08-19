@@ -24,9 +24,11 @@ export function securityEvent(event: string, detail: Record<string, string | num
 /**
  * The loggable facts about a request: the method, the PATH, and Cloudflare's ray id.
  *
- * The path and not the URL, deliberately. A query string is caller-supplied and this product puts
- * real addresses in one (`?email=` on the identify flow), so `new URL(url).pathname` is the part
- * that names the route without naming the person.
+ * The path and not the URL, deliberately, and the reason is stronger than caller-supplied noise:
+ * `routes/oauth.ts` receives Google's `?code=` and `?state=` on the callback. That code is a live,
+ * single-use credential for the sitter's calendar, and `state` is the CSRF nonce bound to it —
+ * logging the URL on the one route most likely to throw would write both into the log. The
+ * pathname names which route failed and carries neither.
  *
  * `cf-ray` is the only field here that is not merely convenient. Workers observability already
  * groups one invocation's log lines together, so within a single worker this adds nothing — but
