@@ -3,6 +3,7 @@ import { listServiceOptions, listServices } from './db/repo';
 import { runCalendarSweep } from './lib/calendar-cron';
 import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
 import { renderInviteForm } from './lib/invite-form';
+import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
 import { PAGE_STYLE } from './lib/page-style';
 import { premiumOrigin } from './lib/premium';
@@ -1321,7 +1322,7 @@ app.get('/terms', (c) => c.html(TERMS_HTML));
 // through to Hono's plain-text default and break the { error } contract every client parses.
 // Internal detail is logged, never returned.
 app.onError((err, c) => {
-  console.error('unhandled error', err);
+  console.error('unhandled error', requestContext(c.req), err);
   return c.json({ error: 'Something went wrong.' }, 500);
 });
 

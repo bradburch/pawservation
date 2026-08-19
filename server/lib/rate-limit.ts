@@ -1,3 +1,5 @@
+import { securityEvent } from './log';
+
 export type RateWindow = { count: number; windowStart: number };
 
 /**
@@ -17,6 +19,15 @@ export async function checkAndBumpRateLimit(
   rateKey: string,
   maxPerWindow: number,
   windowSeconds: number,
+  /**
+   * What to CALL this cap in the log — `'pwreset'`, `'signup'`, `'invite-request'`.
+   *
+   * Passed separately rather than derived from `rateKey`, because every `rateKey` in this codebase
+   * is built out of the caller's email and IP (see the three `RATE_KEY` builders): the key is the
+   * PII, and a helper that logged "the key, minus the bits I think are sensitive" is one refactor
+   * away from logging all of it. So the loggable name is supplied, and the key is never touched.
+   */
+  bucket: string,
 ): Promise<boolean> {
   const now = Date.now();
   const raw = await cache.get(rateKey);
@@ -27,5 +38,10 @@ export async function checkAndBumpRateLimit(
   await cache.put(rateKey, JSON.stringify({ count: count + 1, windowStart }), {
     expirationTtl: windowSeconds,
   });
-  return count >= maxPerWindow;
+  const overCap = count >= maxPerWindow;
+  // Reported here, once, rather than at three call sites: a cap that trips in silence is
+  // indistinguishable from a route nobody is using, and these three routes are the unauthenticated
+  // ones — the cap tripping IS the interesting event.
+  if (overCap) securityEvent('rate_limited', { bucket, maxPerWindow, windowSeconds });
+  return overCap;
 }

@@ -196,6 +196,7 @@ export const inviteRequestRoutes = new Hono<AppEnv>()
           RATE_KEY(ip),
           RATE_LIMIT_MAX,
           RATE_LIMIT_TTL_SECONDS,
+          'invite-request',
         );
       } catch (err) {
         console.error('invite request rate limit check failed', err);

@@ -109,6 +109,25 @@ export function emailButton(url: string, label: string): string {
   );
 }
 
+/**
+ * What a Resend refusal may be told to say OUT LOUD.
+ *
+ * Every `resendPost` throw is logged verbatim by its caller (`routes/signup.ts`,
+ * `routes/password-reset.ts`, `routes/owner.ts`, `routes/invite-request.ts`), so this message is a
+ * log line, not merely an error string — and Resend's own bodies quote addresses back at you
+ * ("You can only send testing emails to your own email address (x@y.com)"). Pasting the body in
+ * puts a customer's email into the Workers log for a fault that has nothing to do with them.
+ *
+ * So only the machine-readable `name` is lifted, exactly as `lib/google-calendar.ts`'s
+ * `describeTokenError` lifts Google's `error` code — the field that names the remedy, never the
+ * prose that names a person. The status is already outside this function and stays.
+ */
+async function describeResendError(res: Response): Promise<string> {
+  const parsed = (await res.json().catch(() => null)) as { name?: unknown } | null;
+  // Bounded as well as filtered: `name` is Resend's enum, but it is still their string.
+  return typeof parsed?.name === 'string' ? parsed.name.slice(0, 60) : 'unparseable_body';
+}
+
 async function resendPost(env: Env, from: string, body: Record<string, unknown>): Promise<void> {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -116,8 +135,7 @@ async function resendPost(env: Env, from: string, body: Record<string, unknown>)
     body: JSON.stringify({ from, ...body }),
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`Resend send failed (${res.status}): ${detail}`);
+    throw new Error(`Resend send failed (${res.status}): ${await describeResendError(res)}`);
   }
 }
 

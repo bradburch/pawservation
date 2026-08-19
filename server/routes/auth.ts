@@ -101,7 +101,12 @@ export const authRoutes = new Hono<AppEnv>()
     if (isEmailConfigured(c.env)) {
       try {
         await sendLoginCode(c.env, email, code, tenant.DisplayName);
-      } catch {
+      } catch (err) {
+        // Mail IS account access here. A Resend outage locks every customer of every sitter out of
+        // sign-in, and this returned a bare 502 into an empty log — the one failure in the product
+        // whose blast radius is "everyone" was also the one you could not see. `err` carries only
+        // the status and Resend's error name (lib/email.ts's describeResendError), never `email`.
+        console.error('login code send failed', err);
         return c.json({ error: 'Could not send your code. Try again shortly.' }, 502);
       }
       return c.json({ codeId });

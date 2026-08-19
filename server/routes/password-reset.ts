@@ -92,6 +92,7 @@ export const passwordResetRoutes = new Hono<AppEnv>()
       rateKey,
       RATE_LIMIT_MAX,
       RATE_LIMIT_TTL_SECONDS,
+      'pwreset',
     );
 
     if (!isEmailConfigured(c.env)) {

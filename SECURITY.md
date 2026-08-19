@@ -39,6 +39,28 @@ Security-relevant areas include:
 - Bind only the dedicated D1/KV resources for this app; never bind unrelated production
   resources.
 
+## What we log, and what we never log
+
+Logs go to Cloudflare Workers observability (`wrangler tail`, and the Logs tab in the dashboard).
+There is no third-party log sink, so a log line is readable by whoever can reach the Cloudflare
+account and by nobody else. Two channels:
+
+- `console.error('<something> failed', …)` — the product broke. Always an event name first, so the
+  tail is greppable.
+- `console.warn('security', { event, … })` — a credential was refused or a cap was hit
+  (`lib/log.ts`). Separate from errors on purpose: these want a different alert, and mixing them
+  means the interesting one is buried under calendar-sync noise.
+
+**Never in a log line, in either channel:** a credential or any prefix/suffix/hash of one; an
+email address, name, phone, or street address; a request's query string; a rate-limit key (ours
+are built from the caller's email and IP, so the key _is_ the PII); or an upstream response body
+verbatim. Third-party errors are lifted down to their machine-readable code first — see
+`describeTokenError` (Google) and `describeResendError` (Resend), which exist for exactly this.
+
+A request is identified by its Cloudflare ray id (`requestContext` in `lib/log.ts`), never by
+anything about the person making it. The ray is also how a log line here is joined to one in the
+premium worker, which calls this API on the caller's behalf.
+
 ## Known limitations (current release)
 
 These are tracked and slated for upcoming phases. Until then, **do not use this with real

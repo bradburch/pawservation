@@ -90,6 +90,7 @@ export const signupRoutes = new Hono<AppEnv>()
       rateKey,
       RATE_LIMIT_MAX,
       RATE_LIMIT_TTL_SECONDS,
+      'signup',
     );
 
     if (!isEmailConfigured(c.env)) {
