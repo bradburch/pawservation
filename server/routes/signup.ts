@@ -90,12 +90,18 @@ export const signupRoutes = new Hono<AppEnv>()
       rateKey,
       RATE_LIMIT_MAX,
       RATE_LIMIT_TTL_SECONDS,
+      'signup',
     );
 
     if (!isEmailConfigured(c.env)) {
       // No provider outside explicit local development fails CLOSED (same posture as /identify);
       // the 503 is identical for every input, so it reveals nothing per-email.
       if (c.env.ENVIRONMENT !== 'development') {
+        // A secret that was never set, not weather. This 503 takes account access down for every
+        // customer of every sitter and answers them with a sentence that reads like an outage; the
+        // one line saying otherwise is this one. `surface` names which door is shut, because all
+        // three shut together and the first report will only mention whichever one was tried.
+        console.error('email not configured', { surface: 'signup' });
         return c.json({ error: 'Signup is temporarily unavailable.' }, 503);
       }
       // Local-dev degrade (mirrors routes/auth.ts prototypeCode): run the check inline and

@@ -970,7 +970,12 @@ export async function listBookingsForTenant(
         );
       }
     } catch {
-      /* stored garbage renders as "no answers", never a 500 */
+      // Stored garbage still renders as "no answers", never a 500 — but that sentence describes the
+      // CUSTOMER ("they told us nothing") when the truth is about the database ("we wrote something we
+      // can no longer read"). Rendering it that way is right; doing it without a word turns a
+      // data-integrity fault into a customer-service mystery. The booking id, never the value: the
+      // value is what the customer typed.
+      console.error('unreadable stored answers', { bookingId: r.Id });
     }
     return { ...r, Answers: answers };
   });

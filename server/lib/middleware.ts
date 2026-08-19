@@ -5,6 +5,7 @@ import {
   looksLikePersonalAccessToken,
   shouldRefreshLastUsed,
 } from './personal-access-token';
+import { requestContext, securityEvent } from './log';
 import { resolveTenant } from './tenant-resolve';
 import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
@@ -62,7 +63,15 @@ export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
     // One answer for unknown, revoked, and belonging-to-another-sitter: the caller holds the
     // secret, so nothing is hidden from its owner that they could not already determine, and
     // nothing is confirmed to anyone else.
-    if (!row) return c.json({ error: 'That token is not valid.' }, 401);
+    if (!row) {
+      // Unknown, revoked, or another sitter's — one answer to the caller (above), but the three of
+      // them together are the shape of someone walking a token list, and that is worth seeing.
+      securityEvent('personal_access_token_rejected', {
+        tenant: tenant.Slug,
+        ...requestContext(c.req),
+      });
+      return c.json({ error: 'That token is not valid.' }, 401);
+    }
     c.set('endUserId', row.EndUserId);
     c.set('endUserCredential', 'token');
     // "Last used" is for recognising a token in the revoke list, so it is refreshed at most once
@@ -87,7 +96,17 @@ export const endUserAuth = createMiddleware<AppEnv>(async (c, next) => {
 
   const claims = presented ? await verifyToken(presented, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in again.' }, 401);
-  if (claims.tid !== tenant.Id) return c.json({ error: 'Wrong tenant.' }, 403);
+  if (claims.tid !== tenant.Id) {
+    // A VALID signature for the wrong sitter. Not a typo and not an expiry — either a widget
+    // embedded twice on one page reading the neighbour's key (the free product's own demo did
+    // exactly this), or a token being replayed across the tenant boundary on purpose. Both are
+    // things you want to find out about from a log rather than from a customer.
+    securityEvent('wrong_tenant', {
+      tenant: tenant.Slug,
+      ...requestContext(c.req),
+    });
+    return c.json({ error: 'Wrong tenant.' }, 403);
+  }
   c.set('endUserId', claims.sub);
   c.set('endUserCredential', 'widget');
   await next();

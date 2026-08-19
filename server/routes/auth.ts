@@ -101,7 +101,12 @@ export const authRoutes = new Hono<AppEnv>()
     if (isEmailConfigured(c.env)) {
       try {
         await sendLoginCode(c.env, email, code, tenant.DisplayName);
-      } catch {
+      } catch (err) {
+        // Mail IS account access here. A Resend outage locks every customer of every sitter out of
+        // sign-in, and this returned a bare 502 into an empty log — the one failure in the product
+        // whose blast radius is "everyone" was also the one you could not see. `err` carries only
+        // the status and Resend's error name (lib/email.ts's describeResendError), never `email`.
+        console.error('login code send failed', err);
         return c.json({ error: 'Could not send your code. Try again shortly.' }, 502);
       }
       return c.json({ codeId });
@@ -112,6 +117,11 @@ export const authRoutes = new Hono<AppEnv>()
     if (c.env.ENVIRONMENT === 'development') {
       return c.json({ codeId, prototypeCode: code });
     }
+    // A secret that was never set, not weather. This 503 takes account access down for every
+    // customer of every sitter and answers them with a sentence that reads like an outage; the
+    // one line saying otherwise is this one. `surface` names which door is shut, because all
+    // three shut together and the first report will only mention whichever one was tried.
+    console.error('email not configured', { surface: 'login' });
     return c.json({ error: 'Login is temporarily unavailable.' }, 503);
   })
 

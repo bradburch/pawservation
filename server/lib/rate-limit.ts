@@ -1,3 +1,5 @@
+import { securityEvent } from './log';
+
 export type RateWindow = { count: number; windowStart: number };
 
 /**
@@ -17,6 +19,15 @@ export async function checkAndBumpRateLimit(
   rateKey: string,
   maxPerWindow: number,
   windowSeconds: number,
+  /**
+   * What to CALL this cap in the log — `'pwreset'`, `'signup'`, `'invite-request'`.
+   *
+   * Passed separately rather than derived from `rateKey`, because every `rateKey` in this codebase
+   * is built out of the caller's email and IP (see the three `RATE_KEY` builders): the key is the
+   * PII, and a helper that logged "the key, minus the bits I think are sensitive" is one refactor
+   * away from logging all of it. So the loggable name is supplied, and the key is never touched.
+   */
+  bucket: string,
 ): Promise<boolean> {
   const now = Date.now();
   const raw = await cache.get(rateKey);
@@ -27,5 +38,16 @@ export async function checkAndBumpRateLimit(
   await cache.put(rateKey, JSON.stringify({ count: count + 1, windowStart }), {
     expirationTtl: windowSeconds,
   });
+  // Reported here rather than at three call sites: a cap that trips in silence is
+  // indistinguishable from a route nobody is using, and these three routes are the unauthenticated
+  // ones — the cap tripping IS the interesting event.
+  //
+  // Once per window, NOT once per over-cap request. `count` is the pre-increment value and keeps
+  // rising past the cap, so this equality is true for exactly the request that crosses it. The
+  // sustained version would say nothing extra and would hand an unauthenticated caller a dial on
+  // how much log to generate — the limiter exists to make abusive traffic cheap, and burying the
+  // interesting line under its own alarm is the opposite of that.
+  if (count === maxPerWindow)
+    securityEvent('rate_limited', { bucket, maxPerWindow, windowSeconds });
   return count >= maxPerWindow;
 }
