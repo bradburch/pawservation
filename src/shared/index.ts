@@ -50,6 +50,11 @@ export {
 export { billableUnits } from './pricing/booking-cost.js';
 export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';
 export {
+  isCalendarCostBasis,
+  DEFAULT_CALENDAR_COST_BASIS,
+  type CalendarCostBasis,
+} from './pricing/calendar-cost-basis.js';
+export {
   buildGroupKey,
   buildMixKey,
   dedupePets,
@@ -86,7 +91,11 @@ export {
   type HouseholdBalances,
   type HouseholdBooking,
 } from './invoicing/balances.js';
-export { balancedRemainder, MAX_ATTRIBUTIONS_PER_REQUEST } from './invoicing/attribution-splits.js';
+export {
+  balancedRemainder,
+  MAX_ATTRIBUTIONS_PER_REQUEST,
+  sitterPicksFirst,
+} from './invoicing/attribution-splits.js';
 export {
   cancellationFee,
   validateCancellationTiers,

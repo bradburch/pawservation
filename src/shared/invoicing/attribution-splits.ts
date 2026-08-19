@@ -29,6 +29,12 @@
  *   1  the "was the source taken from under us?" re-read, on the batch-abort path only
  *   = 7 worst case, 6 ordinarily
  *
+ * RECORDING PART OF A PAYMENT AS A TIP DOES NOT MOVE THAT NUMBER. The tip is one more `INSERT`
+ * inside the batch that was already being sent, and a batch is billed as one call whatever it
+ * holds — so a fully-tipped, cap-sized request costs exactly what an untipped one does. Measured,
+ * not assumed: server/__tests__/payment-attribution-routes.test.ts runs the same cap-sized request
+ * both ways and asserts the subrequest counts are IDENTICAL while the statement count rises.
+ *
  * plus the request's own fixed overhead, which is `tenantMiddleware` → `resolveTenant`
  * (server/lib/tenant-resolve.ts): 1 KV `get` when the tenant is cached, or `get` + a D1 read +
  * `put` = 3 when it is not. `adminAuth` adds NOTHING — it verifies a JWT in-process and makes no
@@ -54,4 +60,28 @@ export function balancedRemainder(
   if (sum > creditAmount) return null;
 
   return creditAmount - sum;
+}
+
+/**
+ * Order a sitter's approved credits so HER OWN PICKS ARE SENT FIRST.
+ *
+ * `applyAttribution` processes a request's attributions in order, each re-reading live state, so
+ * when two approved credits name the same stay the FIRST one wins and the second is refused for
+ * overpaying. That makes send order a decision about which credit gets recorded — and the winning
+ * credit's own `PaidDate`, `Method` and `Note` are what end up stamped on the booking.
+ *
+ * The preview proposes a household's credits closest-pair-first and the panel pre-ticks those
+ * proposals; a credit the sitter placed herself (a tie she broke, or one the sequencing skipped)
+ * is one the server proposed nothing for. Sending proposals first would let the automatic guess
+ * beat the deliberate correction — the guess `docs/superpowers/specs/2026-08-10-payment-attribution-design.md`
+ * rejects in as many words — and would make the sitter untick a box the panel ticked for her just
+ * to be heard. So hers go first and the guess is the one that comes back refused.
+ *
+ * Stable within each group: `Array.prototype.sort` is required to be stable, so credits keep the
+ * preview's own order among themselves.
+ */
+export function sitterPicksFirst<T extends { serverRemainder: number | null }>(credits: T[]): T[] {
+  return [...credits].sort(
+    (a, b) => Number(a.serverRemainder !== null) - Number(b.serverRemainder !== null),
+  );
 }

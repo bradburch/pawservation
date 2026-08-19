@@ -12,6 +12,7 @@ import {
   balancedRemainder,
   formatFriendlyDate,
   MAX_ATTRIBUTIONS_PER_REQUEST,
+  sitterPicksFirst,
 } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -39,9 +40,17 @@ const APPLY_CHUNK_SIZE = MAX_ATTRIBUTIONS_PER_REQUEST;
 
 /** One candidate booking a credit could land on, plus the sitter's current, editable decision
  *  about it: whether it's checked (part of this attribution) and what to send for it. Starts
- *  from either a proposal's own split (checked, pre-filled) or an ambiguous credit's named
- *  candidate (unchecked, blank — nothing here is ever guessed on the sitter's behalf). */
-type Row = AttributionCandidateBooking & { checked: boolean; amountText: string };
+ *  from either a proposal's own split (checked, pre-filled) or an unresolved credit's named
+ *  candidate (unchecked, blank — nothing here is ever guessed on the sitter's behalf).
+ *
+ *  `tipText` is the one figure here the server never proposes and never could: whether the client
+ *  meant part of this payment as thanks is a fact only the sitter knows. Always starts blank, on
+ *  the same rule as every other amount on this panel. */
+type Row = AttributionCandidateBooking & {
+  checked: boolean;
+  amountText: string;
+  tipText: string;
+};
 
 /** One credit the sitter can act on, built once from the preview response and edited in place.
  *  `included` is the master tick for this credit — independent of which rows are checked, so
@@ -55,12 +64,13 @@ type EditableCredit = {
   included: boolean;
   /** The server's OWN remainder for this credit as proposed (`AttributionProposal.remainder`) —
    *  shown verbatim until the sitter changes a row, rather than recomputed from scratch for a
-   *  state that hasn't moved. `null` for an ambiguous credit: the server proposed nothing for it
-   *  at all, so there is no server figure to prefer over the live derivation. */
+   *  state that hasn't moved. `null` for an unresolved credit (a tie, or one the sequencing
+   *  skipped): the server proposed nothing for it at all, so there is no server figure to prefer
+   *  over the live derivation. */
   serverRemainder: number | null;
-  /** A snapshot of `rows` at construction (bookingId/checked/amountText only), so `isUnedited`
-   *  below can tell "still exactly what the server proposed" from "the sitter touched this." */
-  originalRows: { bookingId: string; checked: boolean; amountText: string }[];
+  /** A snapshot of `rows` at construction (the editable fields only), so `isUnedited` below can
+   *  tell "still exactly what the server proposed" from "the sitter touched this." */
+  originalRows: { bookingId: string; checked: boolean; amountText: string; tipText: string }[];
 };
 
 function snapshotRows(rows: Row[]): EditableCredit['originalRows'] {
@@ -68,6 +78,7 @@ function snapshotRows(rows: Row[]): EditableCredit['originalRows'] {
     bookingId: r.bookingId,
     checked: r.checked,
     amountText: r.amountText,
+    tipText: r.tipText,
   }));
 }
 
@@ -79,32 +90,55 @@ function isUnedited(credit: EditableCredit): boolean {
     credit.rows.every((r, i) => {
       const o = credit.originalRows[i];
       return (
-        o.bookingId === r.bookingId && o.checked === r.checked && o.amountText === r.amountText
+        o.bookingId === r.bookingId &&
+        o.checked === r.checked &&
+        o.amountText === r.amountText &&
+        o.tipText === r.tipText
       );
     })
   );
 }
 
 function fromProposal(p: AttributionProposal): EditableCredit {
-  const rows = p.splits.map((s) => ({ ...s, checked: true, amountText: String(s.amount) }));
+  const rows = p.splits.map((s) => ({
+    ...s,
+    checked: true,
+    amountText: String(s.amount),
+    tipText: '',
+  }));
   return {
     paymentId: p.paymentId,
     accountId: p.accountId,
     amount: p.amount,
     paidDate: p.paidDate,
     rows,
-    // A proposal can legitimately carry NO splits — an unaffordable tie the credit couldn't have
-    // reached anyway is not something `proposeAttribution` refuses, it just leaves the whole
-    // amount as remainder (see its own doc comment). There is nothing to check in that case, so
-    // it starts un-included: ticking it would only submit an empty, server-refused attribution.
+    // A proposal can still carry NO splits — a $0 credit resolves cleanly to nothing at all. (It
+    // used to also cover an unaffordable tie the credit could fund no member of; that is a
+    // decision for the sitter and now comes back as an `'ambiguous'` refusal with its candidates,
+    // handled by the editor below.) There is nothing to check either way, so it starts
+    // un-included: ticking it would only submit an empty, server-refused attribution.
     included: p.splits.length > 0,
     serverRemainder: p.remainder,
     originalRows: snapshotRows(rows),
   };
 }
 
-function fromAmbiguous(u: AttributionUnresolved): EditableCredit {
-  const rows = u.bookings.map((b) => ({ ...b, checked: false, amountText: '' }));
+/**
+ * The editor for a credit the SERVER placed nowhere but still named candidates for — an
+ * `'ambiguous'` tie it refused to break, a `'no-unpaid-bookings'` credit the preview's
+ * closest-pair sequencing handed every stay to a nearer credit of the same household, or a
+ * `'no-recent-booking'` credit no stay is near enough to to match on dates.
+ * `AttributionUnresolved.bookings` (app/shared-ui/api.ts) means the same thing in all three cases
+ * — the candidates, at their LIVE outstanding — so all three get the SAME editor rather than a
+ * new mechanism invented per reason.
+ *
+ * Starts unticked with every amount blank in every case, for one reason: nothing here is ever
+ * guessed on the sitter's behalf. Pre-filling a sequencing-skipped credit with the amount the
+ * earlier credit was proposed for would be the same automatic guess, just moved one screen
+ * later.
+ */
+function fromUnresolved(u: AttributionUnresolved): EditableCredit {
+  const rows = u.bookings.map((b) => ({ ...b, checked: false, amountText: '', tipText: '' }));
   return {
     paymentId: u.paymentId,
     accountId: u.accountId,
@@ -112,23 +146,66 @@ function fromAmbiguous(u: AttributionUnresolved): EditableCredit {
     paidDate: u.paidDate,
     rows,
     included: false,
-    // The server never proposed a split for an ambiguous credit — there is no figure to prefer,
+    // The server never proposed a split for an unresolved credit — there is no figure to prefer,
     // so this always falls through to the live derivation in `remainderFor`.
     serverRemainder: null,
     originalRows: snapshotRows(rows),
   };
 }
 
+/** True for an unresolved credit the sitter can actually do something about: the server named at
+ *  least one candidate booking for it. The empty case is genuinely inert — a household with
+ *  nothing outstanding at all, or a credit whose own record can't be read — and stays summarised
+ *  (772 of 821 on the live tenant; making those interactive would bury the rest). */
+function isActionable(u: AttributionUnresolved): boolean {
+  return u.bookings.length > 0;
+}
+
+/**
+ * The one tip the sitter has typed against this credit, ready to send — or `'invalid'` for
+ * something that isn't a usable tip yet, or `null` for the ordinary case of no tip at all.
+ *
+ * ONE TIP PER CREDIT, because the wire shape carries one (`AttributionInput.tip`) and the server
+ * accepts one. Two typed at once is `'invalid'` rather than a pick: choosing between them would be
+ * the panel deciding where a sitter's money goes, which is exactly what nothing here does.
+ *
+ * A tip on an UNCHECKED row is ignored, matching the server's own rule that a tip must name a
+ * booking among this attribution's splits — untick the stay and its tip goes with it.
+ */
+function tipOf(credit: EditableCredit): { bookingId: string; amount: number } | 'invalid' | null {
+  const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
+  if (typed.length === 0) return null;
+  if (typed.length > 1) return 'invalid';
+  if (!isWholeDollar(typed[0].tipText)) return 'invalid';
+  return { bookingId: typed[0].bookingId, amount: Number(typed[0].tipText) };
+}
+
+/**
+ * What would be left over if NOTHING were tipped — the money a tip could come out of, and the only
+ * thing that decides whether a tip field is offered on a row at all. Deliberately blind to the
+ * tips already typed, so the field cannot vanish underneath the sitter the moment she fills it in.
+ * `null` when the splits themselves aren't usable yet, in which case there is no coherent leftover
+ * to offer against.
+ */
+function leftoverBeforeTip(credit: EditableCredit): number | null {
+  const checked = credit.rows.filter((r) => r.checked);
+  for (const r of checked) if (!isWholeDollar(r.amountText)) return null;
+  return balancedRemainder(
+    credit.amount,
+    checked.map((r) => ({ amount: Number(r.amountText) })),
+  );
+}
+
 /**
  * The client-side mirror of `proposeAttribution`'s conservation rule
  * (`balancedRemainder`, src/shared/invoicing/attribution-splits.ts) applied to what the sitter
- * currently has checked and typed for one credit — extended with the one check that rule can't
+ * currently has checked and typed for one credit — extended with the two checks that rule can't
  * make on its own: a checked row's amount must not exceed THAT booking's own outstanding (also
  * shown on the row), the same live-outstanding refusal `applyAttribution` would otherwise hand
- * back after a round trip (server/db/repo.ts). `null` means "not submittable yet" — an unusable
- * amount on a checked row, a split bigger than its booking's outstanding, or a total that
- * overshoots the credit — which is exactly what blocks Apply and shows the inline message, before
- * the server ever sees it.
+ * back after a round trip (server/db/repo.ts); and the tip, if any, must be one usable figure.
+ * `null` means "not submittable yet" — an unusable amount on a checked row, a split bigger than its
+ * booking's outstanding, an unusable or duplicated tip, or a total that overshoots the credit —
+ * which is exactly what blocks Apply and shows the inline message, before the server ever sees it.
  */
 function remainderFor(credit: EditableCredit): number | null {
   const checked = credit.rows.filter((r) => r.checked);
@@ -136,10 +213,16 @@ function remainderFor(credit: EditableCredit): number | null {
     if (!isWholeDollar(r.amountText)) return null;
     if (Number(r.amountText) > r.outstanding) return null;
   }
-  return balancedRemainder(
-    credit.amount,
-    checked.map((r) => ({ amount: Number(r.amountText) })),
-  );
+  const tip = tipOf(credit);
+  if (tip === 'invalid') return null;
+  // THE TIP IS A THIRD TERM, NOT PART OF A SPLIT — the server's conservation rule is
+  // `sum(splits) + tip + remainder === amount` and the split it is sent alongside stays EXCLUSIVE
+  // of it (`applyAttribution`, server/db/repo.ts). Folding it into a split here would send an
+  // inclusive figure the server then refuses for double-counting.
+  return balancedRemainder(credit.amount, [
+    ...checked.map((r) => ({ amount: Number(r.amountText) })),
+    ...(tip === null ? [] : [{ amount: tip.amount }]),
+  ]);
 }
 
 /**
@@ -155,8 +238,20 @@ function creditIssue(credit: EditableCredit): string {
   const overOutstanding = checked.find((r) => Number(r.amountText) > r.outstanding);
   if (overOutstanding)
     return `$${overOutstanding.amountText} is more than the $${overOutstanding.outstanding} outstanding on ${overOutstanding.serviceType}.`;
+  const tip = tipOf(credit);
+  if (tip === 'invalid') {
+    const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
+    if (typed.length > 1)
+      return 'Only one booking can carry the tip — clear it from the others, or add them up onto one.';
+    return `Type a whole-dollar tip of $1 or more for ${typed[0].serviceType}, or clear it.`;
+  }
   const sum = checked.reduce((s, r) => s + Number(r.amountText), 0);
-  return `These splits add up to $${sum}, more than the $${credit.amount} payment.`;
+  // The tip is named separately in the sentence for the same reason it is a separate term on the
+  // wire: it is the figure most likely to be the one that overshot, and burying it inside "these
+  // splits" would leave the sitter looking at the wrong box.
+  return tip === null
+    ? `These splits add up to $${sum}, more than the $${credit.amount} payment.`
+    : `These splits and a $${tip.amount} tip add up to $${sum + tip.amount}, more than the $${credit.amount} payment.`;
 }
 
 /** One credit's editable block — the split rows plus the master include tick, shared by the
@@ -170,6 +265,7 @@ function CreditEditor({
   onToggleIncluded,
   onToggleRow,
   onRowAmount,
+  onRowTip,
 }: {
   credit: EditableCredit;
   label: string;
@@ -181,8 +277,15 @@ function CreditEditor({
   onToggleIncluded: () => void;
   onToggleRow: (bookingId: string) => void;
   onRowAmount: (bookingId: string, value: string) => void;
+  onRowTip: (bookingId: string, value: string) => void;
 }) {
   const remainder = remainderFor(credit);
+  // Only offered where there is money spare to have been a tip — a payment that exactly settles
+  // its stay has nothing left to thank anyone with, and a field offering to invent some would be
+  // the panel proposing money. Blind to the tips already typed (see `leftoverBeforeTip`), so it
+  // stays put while the sitter fills it in.
+  const leftover = leftoverBeforeTip(credit);
+  const canTip = leftover !== null && leftover > 0;
   // The server's own remainder, shown verbatim while nothing has moved since the preview — the
   // moment the sitter touches a row it's necessarily stale and the live derivation takes over.
   const displayRemainder =
@@ -225,8 +328,11 @@ function CreditEditor({
                     disabled={busy}
                     onChange={() => onToggleRow(r.bookingId)}
                   />{' '}
-                  {r.serviceType} ({formatFriendlyDate(r.startDate)}) — {r.status}, ${r.outstanding}{' '}
-                  outstanding
+                  {r.serviceType} (
+                  {r.endDate === null
+                    ? formatFriendlyDate(r.startDate)
+                    : `${formatFriendlyDate(r.startDate)} → ${formatFriendlyDate(r.endDate)}`}
+                  ) — {r.status}, ${r.outstanding} outstanding
                 </label>{' '}
                 <label className="pb-inline">
                   $
@@ -241,6 +347,26 @@ function CreditEditor({
                     aria-label={`Amount for ${r.serviceType} on ${r.startDate}`}
                   />
                 </label>
+                {/* Kept rendered while it holds a value even once `canTip` goes false, so a tip
+                    the sitter typed and then squeezed out by raising a split stays visible and
+                    clearable rather than silently blocking Apply from off-screen. */}
+                {r.checked && (canTip || r.tipText.trim() !== '') && (
+                  <>
+                    {' '}
+                    <label className="pb-inline">
+                      plus tip $
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={r.tipText}
+                        disabled={busy}
+                        onChange={(e) => onRowTip(r.bookingId, e.target.value)}
+                        aria-label={`Tip for ${r.serviceType} on ${r.startDate}`}
+                      />
+                    </label>
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -270,12 +396,30 @@ function CreditEditor({
  * (`POST .../attribute/apply`'s own doc comment in server/routes/admin.ts) — the browser only
  * ever names which payment goes on which booking(s) and for how much.
  *
- * `proposeAttribution`'s three outcomes are kept visually distinct on purpose: a resolved
- * proposal is ticked and ready; an `ambiguous` credit is a tie the server deliberately refused to
- * break, so it starts UNticked and empty until the sitter picks a booking; `no-unpaid-bookings`
- * (and every other refusal) is a fact about the data, not something to act on, and is collapsed by
- * default — on this tenant's real numbers, 772 of 821 credits land there, and a flat list would
- * bury the ~47 the sitter can actually do something with.
+ * WHAT A CREDIT LANDS IN IS DECIDED BY WHETHER THE SERVER NAMED CANDIDATES FOR IT, not by its
+ * refusal reason alone (`AttributionUnresolved.bookings`, app/shared-ui/api.ts):
+ *
+ * - a resolved proposal is ticked and ready;
+ * - an `ambiguous` credit is a tie the server deliberately refused to break, so it starts
+ *   UNticked and empty until the sitter picks a booking;
+ * - a `no-unpaid-bookings` credit that still NAMES bookings is one the preview's closest-pair
+ *   sequencing skipped — the household has unpaid stays, they were simply all proposed to an
+ *   earlier credit. It gets the SAME editor as a tie, because it is the same question: which stay
+ *   did this money pay? Leaving it inert is what made the panel automatic with no
+ *   override, which the design (docs/superpowers/specs/2026-08-10-payment-attribution-design.md)
+ *   rejects outright — money conserves either way, it just lands on the wrong stay;
+ * - a `no-recent-booking` credit is one no stay is near enough to for date proximity to mean
+ *   anything (MAX_LATE_PAYMENT_DAYS / MAX_PREPAYMENT_DAYS, server/lib/payment-attribution.ts).
+ *   Same editor again,
+ *   same question, and the same reason it must not be inert: the floor takes away the guess, not
+ *   the sitter's ability to say which stay this money settled;
+ * - everything else — `no-unpaid-bookings` with no candidates, and every data-fault reason — is a
+ *   fact about the data, not something to act on, and stays collapsed. On this tenant's real
+ *   numbers 772 of 821 credits land there, and making those interactive would bury the rest.
+ *
+ * The panel proposes nothing of its own in any of these: the sitter's pick goes through the same
+ * apply route, which re-derives the payment and re-reads live outstanding, and refuses an
+ * over-claim with its reason shown.
  */
 export function AttributionPanel({
   session,
@@ -346,8 +490,11 @@ export function AttributionPanel({
       setPreviewData(next);
       const nextCredits = new Map<string, EditableCredit>();
       for (const p of next.proposals) nextCredits.set(p.paymentId, fromProposal(p));
+      // Every unresolved credit the server named candidates for gets an editor — the tie it
+      // refused to break AND the one its own sequencing skipped. Keyed off `bookings`, not off
+      // `reason`, so the two stay one mechanism.
       for (const u of next.unresolved)
-        if (u.reason === 'ambiguous') nextCredits.set(u.paymentId, fromAmbiguous(u));
+        if (isActionable(u)) nextCredits.set(u.paymentId, fromUnresolved(u));
       setCredits(nextCredits);
     } catch (e) {
       reset();
@@ -392,13 +539,33 @@ export function AttributionPanel({
       return next;
     });
 
+  const setRowTip = (paymentId: string, bookingId: string, value: string) =>
+    setCredits((prev) => {
+      const credit = prev.get(paymentId);
+      if (!credit) return prev;
+      const next = new Map(prev);
+      next.set(paymentId, {
+        ...credit,
+        rows: credit.rows.map((r) => (r.bookingId === bookingId ? { ...r, tipText: value } : r)),
+      });
+      return next;
+    });
+
   // Only a credit the sitter actually ticked, with at least one checked booking and a set of
   // splits that conserves, is ever sent — the same guard `applyAttribution` states for itself
   // ("names no bookings; there is nothing to attribute it to"), checked here first so an
   // untouched or half-edited credit can never ride along in the batch by accident.
   const toApply: AttributionInput[] = [];
   let hasBlockedIncluded = false;
-  for (const credit of credits.values()) {
+  // THE SITTER'S OWN PICKS GO FIRST. `applyAttribution` runs them in order and each re-reads live
+  // state, so when two included credits name the same stay the FIRST one wins and the second is
+  // refused. A credit the sitter chose a booking for herself has `serverRemainder === null` (the
+  // server proposed nothing for it); a pre-ticked proposal has a number. Sending proposals first
+  // would mean the server's automatic guess beats the deliberate correction — and since the winning
+  // credit's own PaidDate, Method and Note are what get stamped on the booking, the record would
+  // carry the guess. The panel pre-ticks proposals, so it cannot also make the sitter untick one
+  // to be heard.
+  for (const credit of sitterPicksFirst([...credits.values()])) {
     if (!credit.included) continue;
     const checked = credit.rows.filter((r) => r.checked);
     const remainder = remainderFor(credit);
@@ -406,10 +573,15 @@ export function AttributionPanel({
       hasBlockedIncluded = true;
       continue;
     }
+    // `remainder !== null` already means the tip is usable — `remainderFor` returns null for
+    // `'invalid'` — so this narrowing can never drop a tip the sitter typed.
+    const tip = tipOf(credit);
     toApply.push({
       paymentId: credit.paymentId,
       accountId: credit.accountId,
+      // EXCLUSIVE of the tip, which travels as its own term. See `AttributionInput.tip`.
       splits: checked.map((r) => ({ bookingId: r.bookingId, amount: Number(r.amountText) })),
+      ...(tip === null || tip === 'invalid' ? {} : { tip }),
       remainder,
     });
   }
@@ -515,12 +687,36 @@ export function AttributionPanel({
   const ambiguous = previewData
     ? previewData.unresolved.filter((u) => u.reason === 'ambiguous' && credits.has(u.paymentId))
     : [];
-  const noUnpaidBookings = previewData
-    ? previewData.unresolved.filter((u) => u.reason === 'no-unpaid-bookings')
+  /**
+   * A credit the server placed nowhere but still named candidates for, other than a tie: the
+   * preview's closest-pair sequencing left it with nothing in a household that still HAS
+   * unpaid stays (`no-unpaid-bookings`), or no stay is near enough to the payment for proximity
+   * to mean anything (`no-recent-booking`). Actionable, and the whole point of this section
+   * existing: without it the panel is automatic with no override — the sitter who knows it was
+   * the third credit that paid the stay, or which stay a two-year-old payment settled, has no way
+   * to say so. Each row carries the server's own sentence, because the reasons differ.
+   */
+  // Keyed on `isActionable` and NOT on the reason string, deliberately: `runPreview` admits a
+  // credit to `credits` on `isActionable` alone (:388), so if the server ever adds another
+  // placeable reason, matching a reason literal here would leave that credit sitting in panel
+  // state with no section rendering it — invisible rather than merely unhandled. Ambiguous
+  // credits are excluded because they have their own editor above, not because of their reason.
+  const unplaced = previewData
+    ? previewData.unresolved.filter(
+        (u) => isActionable(u) && u.reason !== 'ambiguous' && credits.has(u.paymentId),
+      )
     : [];
+  // The same reason with NO candidates: the household is genuinely settled and there is nothing
+  // to offer. Summarised, never interactive.
+  const noUnpaidBookings = previewData
+    ? previewData.unresolved.filter((u) => u.reason === 'no-unpaid-bookings' && !isActionable(u))
+    : [];
+  // Every unresolved credit must land in exactly one rendered section. Ambiguous, sequenced-out
+  // and genuinely-settled are handled above; `otherIssues` below is the catch-all, so nothing can
+  // fall between them.
   const otherIssues = previewData
     ? previewData.unresolved.filter(
-        (u) => u.reason !== 'ambiguous' && u.reason !== 'no-unpaid-bookings',
+        (u) => !isActionable(u) && u.reason !== 'ambiguous' && u.reason !== 'no-unpaid-bookings',
       )
     : [];
 
@@ -528,6 +724,7 @@ export function AttributionPanel({
     previewData !== null &&
     proposalIds.length === 0 &&
     ambiguous.length === 0 &&
+    unplaced.length === 0 &&
     noUnpaidBookings.length === 0 &&
     otherIssues.length === 0;
 
@@ -606,6 +803,7 @@ export function AttributionPanel({
                       onToggleIncluded={() => toggleIncluded(id)}
                       onToggleRow={(bookingId) => toggleRow(id, bookingId)}
                       onRowAmount={(bookingId, value) => setRowAmount(id, bookingId, value)}
+                      onRowTip={(bookingId, value) => setRowTip(id, bookingId, value)}
                     />
                   );
                 })}
@@ -636,6 +834,47 @@ export function AttributionPanel({
                       onRowAmount={(bookingId, value) =>
                         setRowAmount(u.paymentId, bookingId, value)
                       }
+                      onRowTip={(bookingId, value) => setRowTip(u.paymentId, bookingId, value)}
+                    />
+                  );
+                })}
+              </ul>
+            </>
+          )}
+
+          {unplaced.length > 0 && (
+            <>
+              <h4>Needs your call — not matched to a stay ({unplaced.length})</h4>
+              <p className="pb-applies">
+                Nothing was proposed for these, and each one says why underneath: an earlier credit
+                from the same household was proposed for every unpaid stay first, or no stay is
+                close enough to the payment&rsquo;s date to call it a match. If you know which stay
+                one of them paid for, pick the booking and the amount here. Your choice is applied
+                before any proposal above that claimed the same stay, so yours is the one recorded
+                and the earlier one comes back refused &mdash; untick it too if you want it left
+                alone.
+              </p>
+              <ul>
+                {unplaced.map((u) => {
+                  const credit = credits.get(u.paymentId);
+                  if (!credit) return null;
+                  return (
+                    <CreditEditor
+                      key={u.paymentId}
+                      credit={credit}
+                      label={label(credit.accountId)}
+                      // The server's own sentence, per credit — this section now holds more than
+                      // one reason (a sequencing skip and a payment too far from any stay), and
+                      // the paragraph above can only say "one of these two". Which one applies to
+                      // THIS credit, and the gap and stay behind it, is the server's to state.
+                      detail={u.detail}
+                      busy={busy}
+                      onToggleIncluded={() => toggleIncluded(u.paymentId)}
+                      onToggleRow={(bookingId) => toggleRow(u.paymentId, bookingId)}
+                      onRowAmount={(bookingId, value) =>
+                        setRowAmount(u.paymentId, bookingId, value)
+                      }
+                      onRowTip={(bookingId, value) => setRowTip(u.paymentId, bookingId, value)}
                     />
                   );
                 })}
@@ -676,7 +915,7 @@ export function AttributionPanel({
             </details>
           )}
 
-          {(proposalIds.length > 0 || ambiguous.length > 0) && (
+          {(proposalIds.length > 0 || ambiguous.length > 0 || unplaced.length > 0) && (
             <div className="pb-row">
               <button
                 onClick={() => void runApply()}
