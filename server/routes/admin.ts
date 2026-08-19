@@ -2,9 +2,11 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import {
+  addBookingPets,
   addCoOwnerToPets,
   addEndUserPet,
   addPetOwner,
+  applyAttribution,
   clearProviderConnection,
   countBookingsForService,
   countBookingsForUser,
@@ -12,12 +14,15 @@ import {
   createPetType,
   createService,
   deleteAllExternalEvents,
+  deleteBookingRequest,
   deletePetTypeAndScrub,
   getAnalytics,
   getBookingSyncData,
   getBookingWithCustomer,
   getEndUserById,
   getEndUserByEmail,
+  getHouseholdDetail,
+  getHouseholdsWithUnappliedCredits,
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
@@ -26,6 +31,7 @@ import {
   deleteService,
   getProviderConnection,
   getTenantUserEmailById,
+  insertBackfilledBooking,
   insertBookingCharge,
   keepBookingCredit,
   insertBookingRequest,
@@ -34,6 +40,7 @@ import {
   insertAccountPayment,
   insertPayment,
   getAccountIdsByOwner,
+  listAdoptedEventIds,
   listAllEndUserPetsByTenant,
   listAllPetGroupPricing,
   listBlockedRanges,
@@ -42,7 +49,9 @@ import {
   listChargesForTenant,
   listCustomers,
   listEndUserPets,
+  listOwnerPetLinks,
   listPaymentExternalRefs,
+  listPaymentsForAccount,
   listPaymentsForBooking,
   listPetNamesForBooking,
   listPetNamesForTenantBookings,
@@ -61,6 +70,7 @@ import {
   setServiceConfig,
   setPetDeceased,
   setEndUserVenmoUsername,
+  updateBackfilledBookingCost,
   updateBookingStatus,
   updateTenantSettings,
   upsertPetGroupRate,
@@ -68,8 +78,17 @@ import {
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
 import { isUniqueViolation } from '../lib/db-errors';
+import {
+  candidateRank,
+  distinctiveAmounts,
+  expandImportedRefs,
+  isValidSpillDays,
+  MAX_SPILL_DAYS_CAP,
+  nearestCandidateRank,
+  proposeAttribution,
+} from '../lib/payment-attribution';
 import { serializeAnalytics } from '../lib/analytics';
-import { confirmOverbookWarning } from '../lib/availability';
+import { confirmOverbookWarning, estimateCost } from '../lib/availability';
 import {
   backfillCalendarEvents,
   deleteBookingCalendarEvent,
@@ -83,11 +102,22 @@ import {
 import type { SyncInput } from '../lib/calendar-sync';
 import {
   buildAuthUrl,
+  callbackUriFor,
   CalendarAuthError,
   createCalendar,
+  listCalendarEvents,
   PET_CALENDAR_SUMMARY,
   revokeToken,
 } from '../lib/google-calendar';
+import type { CalendarEvent } from '../lib/google-calendar';
+import {
+  classifyEvent,
+  type BackfillContext,
+  type BackfillPet,
+  type BackfillService,
+  type Classified,
+  type PetOwnerLink,
+} from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
 import { adminAuth } from '../lib/middleware';
 import { signState } from '../lib/oauth-state';
@@ -113,6 +143,13 @@ import {
   resolveMatchClient,
   type MatchClient,
 } from '../lib/venmo';
+import {
+  applyMapping,
+  detectCsvShape,
+  MAX_CSV_ROWS,
+  matchCsvPayments,
+  parseCsvColumnMapping,
+} from '../lib/payment-csv';
 import { NONCE_KEY } from './oauth';
 import {
   DEFENSIVE_MAX_NIGHTS,
@@ -121,6 +158,7 @@ import {
   isNullableLimit,
   isPaymentMethod,
   isPetRateMode,
+  isCalendarCostBasis,
   isRealDate,
   isValidDuration,
   isValidRate,
@@ -132,14 +170,21 @@ import {
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
-import type { AppEnv, Tenant } from '../types';
-import type { CancellationTier, ServiceQuestion } from '../../src/shared/index.js';
+import type { AppEnv, Tenant, TenantService, TenantServiceOption } from '../types';
+import type {
+  CancellationTier,
+  GroupRate,
+  MixRate,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 import {
   buildGroupKey,
   buildMixKey,
   cancellationFee,
   getPacificDateStr,
   isDedicatedCalendarId,
+  MAX_ATTRIBUTIONS_PER_REQUEST,
+  MAX_BACKFILL_EVENTS,
   parseMixKey,
   petCountOf,
   validateCancellationTiers,
@@ -165,36 +210,202 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
 }
 
 /**
- * The tenant-scoped reads the Venmo importer matches against. Loaded identically by the preview and
- * the confirm step: the confirm re-derives the whole match set rather than trusting what the preview
- * told the browser.
+ * The tenant-scoped reads BOTH payment importers (Venmo, and the generic mapped-CSV importer)
+ * match against. Loaded identically by every preview and every confirm step: a confirm re-derives
+ * the whole match set rather than trusting what the preview told the browser.
  *
  * `accountId` (Story 2.5) is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
  * latter only returns households with existing bookings or payments, and a client's first-ever
- * Venmo payment must still resolve to their household with none of either on record yet.
+ * payment must still resolve to their household with none of either on record yet.
+ *
+ * `households` is every household of this tenant a payment may be filed against — the list the CSV
+ * panel offers for a row the matcher couldn't place, and the SAME list the CSV import route
+ * validates the sitter's choice against, so what the panel offers and what the server accepts can
+ * never be two different sets. Built from `clients`, so a client the sitter cannot see (the
+ * reserved demo identity, which `listCustomers` filters out) is not somewhere money can be filed.
  */
-async function loadVenmoMatchInputs(
+async function loadPaymentMatchInputs(
   env: AppEnv['Bindings'],
   tenantId: string,
 ): Promise<{
   clients: MatchClient[];
   alreadyImported: Set<string>;
+  households: { accountId: string; label: string }[];
 }> {
   const [customers, accountsByOwner, refs] = await Promise.all([
     listCustomers(env.PAWSERVATION_DB, tenantId),
     getAccountIdsByOwner(env.PAWSERVATION_DB, tenantId),
     listPaymentExternalRefs(env.PAWSERVATION_DB, tenantId),
   ]);
+  const clients: MatchClient[] = customers.map((u) => ({
+    endUserId: u.Id,
+    label: u.Name || u.Email,
+    name: u.Name,
+    venmoUsername: u.VenmoUsername,
+    accountId: accountsByOwner.get(u.Id) ?? null,
+  }));
+  // Two clients who share a pet share one household, and it is listed ONCE, under both their
+  // names — exactly as they share one balance and one invoice number.
+  const labelsByAccount = new Map<string, string[]>();
+  for (const client of clients) {
+    if (client.accountId === null) continue;
+    const labels = labelsByAccount.get(client.accountId);
+    if (labels) labels.push(client.label);
+    else labelsByAccount.set(client.accountId, [client.label]);
+  }
   return {
-    clients: customers.map((u) => ({
-      endUserId: u.Id,
-      label: u.Name || u.Email,
-      name: u.Name,
-      venmoUsername: u.VenmoUsername,
-      accountId: accountsByOwner.get(u.Id) ?? null,
-    })),
-    alreadyImported: new Set(refs),
+    clients,
+    // NOT `new Set(refs)`: attribution rewrites an imported payment's `ExternalRef` and deletes
+    // the row that carried the original, so the live column alone no longer answers "has this
+    // tenant already recorded this transaction". `expandImportedRefs` adds back the original
+    // behind every derived ref, which is what stops a re-upload of an already-attributed export
+    // recording the whole file a second time. Both importers read this one set.
+    alreadyImported: expandImportedRefs(refs),
+    households: [...labelsByAccount]
+      .map(([accountId, labels]) => ({ accountId, label: labels.join(' & ') }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
   };
+}
+
+// MAX_BACKFILL_EVENTS itself now lives in src/shared/util/calendar-target.ts (imported above),
+// so CalendarBackfillPanel.tsx can chunk its bulk Adopt calls at the exact same number this route
+// enforces, instead of carrying a second literal that could drift from it. Re-exported here so
+// this route's own tests keep importing it from this module.
+export { MAX_BACKFILL_EVENTS };
+
+/** Same sanity ceiling as every other explicit-bounds field in this file (advance months, lead
+ *  days, overlap days, pet count) — a sitter-typed historical price is real money, but a figure
+ *  with 15 digits behind it is a typo, not a stay anyone actually charged. */
+export const MAX_BACKFILL_EST_COST = 1_000_000;
+
+/**
+ * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
+ * loaded once per pass. Lives here, not in `server/lib/`, because it touches D1 — the same split
+ * `loadPaymentMatchInputs` above uses.
+ */
+async function loadBackfillContext(
+  c: Context<AppEnv>,
+  tenant: Tenant,
+): Promise<{
+  pets: BackfillPet[];
+  links: PetOwnerLink[];
+  backfillServices: BackfillService[];
+  serviceByType: Map<string, TenantService>;
+  optionByType: Map<string, TenantServiceOption>;
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] };
+}> {
+  const [petRows, links, services, options, groupRows, mixRows] = await Promise.all([
+    listAllEndUserPetsByTenant(c.env.PAWSERVATION_DB, tenant.Id),
+    listOwnerPetLinks(c.env.PAWSERVATION_DB, tenant.Id),
+    listServices(c.env.PAWSERVATION_DB, tenant.Id),
+    listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
+    // Both pet-set rate tables, ONE read each, tenant-wide — not routed through `loadPetSetRates`
+    // (which is per-service by design, for the booking flow's single-service callers) and not
+    // called once per enabled service here. `resolvePetSetRate` (inside `estimateCost`) filters
+    // every candidate row by `serviceType`+`optionKey` on each lookup regardless of what superset
+    // of rows it's handed, so passing the full tenant-wide set to every service below is exactly
+    // equivalent to a per-service-scoped read — with none of the redundant D1 cost. This route
+    // classifies every event against every enabled service (up to MAX_SERVICES) in one pass, which
+    // makes it the one caller that actually wants the whole tenant's rate tables at once; a
+    // per-service loop here would reread `TenantServicePetRates` in full, byte-identically, up to
+    // MAX_SERVICES times, which is what blew the Workers Free plan's subrequest budget this cap
+    // exists to protect. `listAllPetGroupPricing` is the same tenant-wide read already used by the
+    // pet-pricing GET route below (:703) and the settings-warning route.
+    listAllPetGroupPricing(c.env.PAWSERVATION_DB, tenant.Id),
+    listServicePetRates(c.env.PAWSERVATION_DB, tenant.Id),
+  ]);
+
+  const pets: BackfillPet[] = petRows.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType }));
+
+  // classifyEvent wants one option per service; take each enabled service's first option, which
+  // is what a title like "Sadie Walk" can name. A service with no option cannot price and is
+  // simply absent, so such an event flags `unknown-service` rather than failing. "First" is
+  // `listServiceOptions`'s own `ORDER BY ServiceType, DurationMinutes` (repo.ts) — i.e. the
+  // SHORTEST-duration option on a multi-option service — not an arbitrary array-order tiebreak;
+  // reordering that query would silently reprice every multi-option service's adopted stays.
+  const serviceByType = new Map<string, TenantService>();
+  const optionByType = new Map<string, TenantServiceOption>();
+  const backfillServices: BackfillService[] = [];
+  for (const s of services) {
+    if (!s.Enabled) continue;
+    const option = options.find((o) => o.ServiceType === s.ServiceType);
+    if (!option) continue;
+    serviceByType.set(s.ServiceType, s);
+    optionByType.set(s.ServiceType, option);
+    backfillServices.push({
+      serviceType: s.ServiceType,
+      label: s.Label,
+      optionKey: option.OptionKey,
+      // TenantServices.Shape, carried through verbatim. classifyEvent uses it to decide whether a
+      // booking keeps its exclusive end date. NEVER inferred from the slug: slugs are per-tenant
+      // text derived from a renameable label, so the built-in "House sitting" template becomes
+      // 'house-sitting' and any hardcoded slug list silently drops the end date off every
+      // multi-night stay.
+      shape: s.Shape,
+    });
+  }
+
+  // Same field mapping `loadPetSetRates` (availability.ts) applies to these two row shapes; kept
+  // in sync by hand since that mapping is a stable 1:1 column rename, not logic.
+  const rates = {
+    groupRates: groupRows.map((r) => ({
+      groupKey: r.GroupKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+    mixRates: mixRows.map((r) => ({
+      mixKey: r.MixKey,
+      rate: r.Rate,
+      serviceType: r.ServiceType,
+      optionKey: r.OptionKey,
+    })),
+  };
+
+  return { pets, links, backfillServices, serviceByType, optionByType, rates };
+}
+
+/**
+ * Classify every Google Calendar event against this tenant's live pets/households/services/rates.
+ * Reused verbatim by the import route (Task 7) so the preview and the actual import classify by
+ * exactly the same code path. Also returns the pet list `loadBackfillContext` resolved, so a
+ * caller that wants display-only pet names (the preview route) doesn't re-read it.
+ */
+async function classifyAll(
+  c: Context<AppEnv>,
+  tenant: Tenant,
+  events: CalendarEvent[],
+): Promise<{ classified: Classified[]; pets: BackfillPet[] }> {
+  const [{ pets, links, backfillServices, serviceByType, optionByType, rates }, adoptedEventIds] =
+    await Promise.all([
+      loadBackfillContext(c, tenant),
+      listAdoptedEventIds(c.env.PAWSERVATION_DB, tenant.Id),
+    ]);
+
+  const priceFor: BackfillContext['priceFor'] = (
+    service,
+    pricedPets,
+    startDate,
+    endDateExclusive,
+  ) => {
+    const tenantService = serviceByType.get(service.serviceType)!;
+    const option = optionByType.get(service.serviceType)!;
+    return estimateCost(tenantService, option, startDate, endDateExclusive, pricedPets, rates);
+  };
+
+  const ctx: BackfillContext = {
+    pets,
+    links,
+    services: backfillServices,
+    adoptedEventIds,
+    // Straight off the tenant row this route was already handed (`c.get('tenant')`) — no extra D1
+    // read exists for it, and both the preview and the import reach the classifier through here,
+    // so the number the sitter approves is computed under the same stored choice as the one she
+    // was shown.
+    costBasis: tenant.CalendarCostBasis,
+    priceFor,
+  };
+  return { classified: events.map((event) => classifyEvent(event, ctx)), pets };
 }
 
 /**
@@ -531,6 +742,17 @@ type SettingsBody = {
    *  semantics — and 0 is a MEANINGFUL value here ("never overlap"), which is why `patchNullable`
    *  keys off `in`, not falsiness. */
   housesitBoardingOverlapDays?: number | null;
+  /** How a description `Cost:` is read on a RANGE service by the calendar backfill (0013):
+   *  'total' | 'per-night'. PATCH: absent = keep current — NEVER coerced to the default here, for
+   *  the same reason `petRateMode` is not: coercing would silently re-mode the tenant on any
+   *  partial save. Anything outside the union is refused, not repaired. */
+  calendarCostBasis?: unknown;
+  /** How far back one payment may reach to cover EARLIER stays, in whole days (0014). PATCH:
+   *  absent = keep current — never defaulted here, for the same reason `calendarCostBasis` is not:
+   *  defaulting would drag a monthly invoicer back to 14 on any partial save. Anything that is not
+   *  a whole number in [0, MAX_SPILL_DAYS_CAP] is refused, not clamped — 0 is a real choice, and a
+   *  value above the primary window would be silently inert. */
+  attributionSpillDays?: unknown;
   services?: ServiceBody[];
 };
 
@@ -599,6 +821,14 @@ export const adminRoutes = new Hono<AppEnv>()
       contactPhone: tenant.ContactPhone,
       maxAdvanceMonths: tenant.MaxAdvanceMonths,
       housesitBoardingOverlapDays: tenant.HousesitBoardingOverlapDays,
+      // How the calendar backfill reads a description `Cost:` on a boarding or house sit (0013).
+      // Published so the admin renders her STORED choice — a GET that omitted it would render the
+      // default and then save that default back over her choice on the next unrelated edit.
+      calendarCostBasis: tenant.CalendarCostBasis,
+      // How far back one payment may reach to cover EARLIER stays (0014). Published for the same
+      // reason the cost basis is: the admin must render her STORED window, or it would render the
+      // default and save that default back over her choice on the next unrelated edit.
+      attributionSpillDays: tenant.AttributionSpillDays,
       // The signed-in sitter's own login email — never a client-settable field; the setup wizard
       // prefills a NULL contactEmail with it (tenants created before signup stamped ContactEmail).
       adminEmail,
@@ -701,6 +931,38 @@ export const adminRoutes = new Hono<AppEnv>()
         },
         400,
       );
+    // Present in the body ⇒ it must be one of the two readings, and anything else is REFUSED
+    // rather than repaired: a value outside the union would be read downstream as "not per-night"
+    // and behave as a total, so a typo would look like a saved setting and quietly do something
+    // else. Absent ⇒ keep the tenant's stored choice — this is the field the admin app's every
+    // unrelated save omits, and defaulting it there would revert her choice behind her back.
+    if ('calendarCostBasis' in body && !isCalendarCostBasis(body.calendarCostBasis))
+      return c.json(
+        {
+          error:
+            'Calendar cost basis must be "total" (the description Cost: is the whole stay) or "per-night".',
+        },
+        400,
+      );
+    const calendarCostBasis = isCalendarCostBasis(body.calendarCostBasis)
+      ? body.calendarCostBasis
+      : tenant.CalendarCostBasis;
+    // Present in the body ⇒ it must be a WHOLE number of days inside the column's own CHECK range,
+    // and anything else is REFUSED rather than repaired. Not clamped, deliberately: a sitter who
+    // types 180 has a belief about how far her payments reach, and silently storing 90 would leave
+    // that belief in place. Not coerced from a string either — `Number('')` is 0, which is a real
+    // and very different setting ("never spill"). Absent ⇒ keep her stored window, since the
+    // admin's every unrelated save omits it.
+    if ('attributionSpillDays' in body && !isValidSpillDays(body.attributionSpillDays))
+      return c.json(
+        {
+          error: `A payment may reach back 0 to ${MAX_SPILL_DAYS_CAP} whole days to cover earlier stays. Beyond ${MAX_SPILL_DAYS_CAP} days a stay is outside the window a payment can settle at all, so a larger number would do nothing.`,
+        },
+        400,
+      );
+    const attributionSpillDays = isValidSpillDays(body.attributionSpillDays)
+      ? body.attributionSpillDays
+      : tenant.AttributionSpillDays;
     const services = body.services ?? [];
     // Per-service PATCH semantics for questions/constraints (mirrors patchNullable above): a field
     // included in a service's body ⇒ take it; absent ⇒ keep that service's current value. Without
@@ -950,6 +1212,8 @@ export const adminRoutes = new Hono<AppEnv>()
       contactPhone,
       maxAdvanceMonths,
       housesitBoardingOverlapDays,
+      calendarCostBasis,
+      attributionSpillDays,
     });
     for (const svc of services) {
       const svcType = svc.type as string;
@@ -1346,37 +1610,8 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     // Disabled tenants are read-only — connecting a calendar is a settings write via the callback.
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
-    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
-
-    // The nonce below is a COOKIE, and a cookie belongs to one host. GOOGLE_OAUTH_REDIRECT_URI
-    // names one host too — but this worker answers on several (the pawservation.com custom domain,
-    // workers.dev with `workers_dev: true`, and a fresh preview URL per `wrangler versions
-    // upload`). A dashboard opened on any host but the redirect's therefore sets the cookie
-    // somewhere the callback can never read it, and the connect dies at the login-CSRF check
-    // looking, to the sitter, exactly like Google refusing her. Refuse here with the host she must
-    // use, rather than handing back an authorize URL that is guaranteed to fail.
-    let callbackOrigin: string;
-    try {
-      callbackOrigin = new URL(c.env.GOOGLE_OAUTH_REDIRECT_URI).origin;
-    } catch {
-      console.error('calendar oauth start: GOOGLE_OAUTH_REDIRECT_URI is not a valid absolute URL');
-      return c.json({ error: 'Google Calendar is not configured correctly on this server.' }, 503);
-    }
-    const dashboardOrigin = new URL(c.req.url).origin;
-    if (dashboardOrigin !== callbackOrigin) {
-      console.error('calendar oauth start refused: dashboard host is not the redirect host', {
-        tenant: tenant.Slug,
-        dashboardOrigin,
-        callbackOrigin,
-      });
-      return c.json(
-        {
-          error: `Google Calendar can only be connected from ${callbackOrigin}. Open your dashboard at ${callbackOrigin}/admin and connect from there.`,
-        },
-        409,
-      );
-    }
 
     const nonce = crypto.randomUUID();
     await c.env.PAWSERVATION_CACHE.put(NONCE_KEY(nonce), '1', { expirationTtl: 600 });
@@ -1387,7 +1622,9 @@ export const adminRoutes = new Hono<AppEnv>()
     });
     // Bind the callback to THIS admin's browser: the nonce travels back as a cookie that an
     // attacker cannot plant in a victim's browser, defeating OAuth login-CSRF. Path-scoped to the
-    // callback only. `secure` is read off the REQUEST's own scheme rather than ENVIRONMENT: that
+    // callback only, and set on whichever host she opened her dashboard on — the same host
+    // `callbackUriFor` sends Google back to, which is what makes the cookie readable there.
+    // `secure` is read off the REQUEST's own scheme rather than ENVIRONMENT: that
     // var is unset in `.dev.vars`, so plain `npm run dev` was marking the cookie Secure over
     // http://localhost — which Chrome tolerates on localhost and Safari does not, breaking the
     // local connect in one browser only. The scheme is right in every environment with nothing to
@@ -1399,7 +1636,7 @@ export const adminRoutes = new Hono<AppEnv>()
       path: '/oauth/google/callback',
       maxAge: 600,
     });
-    return c.json({ url: buildAuthUrl(c.env, state) });
+    return c.json({ url: buildAuthUrl(c.env, state, callbackUriFor(c.req.url)) });
   })
 
   .post('/:slug/admin/providers/calendar/disconnect', async (c) => {
@@ -1431,7 +1668,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
     // A token refresh mid-call needs the client credentials, so the same 503 as oauth/start applies.
-    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET || !c.env.GOOGLE_OAUTH_REDIRECT_URI)
+    if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
 
     const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
@@ -2286,6 +2523,10 @@ export const adminRoutes = new Hono<AppEnv>()
         petNames: petNamesByBooking.get(r.Id) ?? [],
         external: r.ServiceType === 'external',
         externalSummary: r.ExternalSummary,
+        // What the design doc names as the flag the UI reads to label a cost as an estimate
+        // rather than a client-agreed price (docs/superpowers/specs/2026-08-09-calendar-backfill-
+        // design.md) — the same restriction the PATCH .../cost route enforces server-side.
+        isBackfilled: r.Source === 'calendar-backfill',
         answers: r.Answers,
         estCost: r.EstCost,
         paidTotal: r.PaidTotal ?? 0,
@@ -2629,7 +2870,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req.json<{ csv?: unknown }>().catch(() => ({}) as { csv?: unknown });
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
     const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
     return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
   })
@@ -2666,7 +2907,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    const inputs = await loadVenmoMatchInputs(c.env, tenant.Id);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
     const txnById = new Map(parsed.incoming.map((t) => [t.txnId, t]));
 
     const skipped: { txnId: string; reason: string }[] = [];
@@ -2715,4 +2956,1030 @@ export const adminRoutes = new Hono<AppEnv>()
       }
     }
     return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * Read the shape of a sitter-uploaded, arbitrarily-columned payment CSV — its headers and a
+   * sample of real rows — so the mapping panel can ask "which column is the date" against actual
+   * values, never header names alone (the free-form counterpart to the Venmo importer, which knows
+   * its own fixed headers). Writes nothing.
+   */
+  .post('/:slug/admin/payments/csv/columns', async (c) => {
+    const body = await c.req.json<{ csv?: unknown }>().catch(() => ({}) as { csv?: unknown });
+    const shape = detectCsvShape(typeof body.csv === 'string' ? body.csv : '');
+    if (!shape.ok) return c.json({ error: shape.error }, 400);
+    return c.json({
+      headers: shape.headers,
+      sample: shape.sample,
+      dataRowCount: shape.dataRowCount,
+    });
+  })
+
+  /**
+   * Read the sitter's mapped CSV and say what Pawservation THINKS it found — the mapped-CSV sibling
+   * of the Venmo preview above. Writes nothing: the file is re-parsed in memory against the
+   * sitter's own column mapping, matched against this tenant's clients and receivables, and thrown
+   * away with the request.
+   */
+  .post('/:slug/admin/payments/csv/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ csv?: unknown; mapping?: unknown; defaultMethod?: unknown }>()
+      .catch(() => ({}) as { csv?: unknown; mapping?: unknown; defaultMethod?: unknown });
+    if (!isPaymentMethod(body.defaultMethod))
+      return c.json({ error: 'Choose a valid default payment method.' }, 400);
+    const mapping = parseCsvColumnMapping(body.mapping);
+    if (!mapping) return c.json({ error: 'That column mapping is malformed.' }, 400);
+    const parsed = applyMapping(
+      typeof body.csv === 'string' ? body.csv : '',
+      mapping,
+      body.defaultMethod,
+      tenant.Id,
+    );
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
+    const preview = matchCsvPayments({
+      payments: parsed.payments,
+      clients: inputs.clients,
+      alreadyImported: inputs.alreadyImported,
+    });
+    // `households` rides along so the panel can offer a client for a row the matcher couldn't
+    // place — the sitter assigning it is the design's own answer to an unmatched row.
+    return c.json({ ...preview, households: inputs.households, problems: parsed.problems });
+  })
+
+  /**
+   * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS — the mapped-CSV sibling of
+   * `payments/venmo/import`, near-identical security shape. The body supplies the file, the
+   * mapping, and only WHICH row goes on which household (`choices`): `applyMapping` runs again from
+   * scratch, so every amount, date, method and note is the server's own re-reading of the file,
+   * never the browser's. The file itself is still never stored.
+   *
+   * WHERE THIS DELIBERATELY DIFFERS FROM THE VENMO ROUTE. There, an `accountId` is honoured only
+   * when the server independently resolves the sender to exactly that household. Here it need only
+   * name a real household OF THIS TENANT, because matching is by payer name and a bank export's
+   * payer strings often equal no client's stored name at all — so the design's answer to an
+   * unmatched row is that THE SITTER ASSIGNS IT. That is safe because of what each side states: a
+   * mapping is instructions ("column 3 is the amount"), never a claim about a value, so every
+   * figure that becomes money is still read out of the file by the server. Which household a
+   * payment belongs to is a judgement the authenticated sitter is the rightful authority on for
+   * their own business. Their choice is still checked against this tenant's own households, and
+   * `insertAccountPayment` scopes its insert by TenantId underneath — a cross-tenant write is
+   * refused twice. Nothing here guesses: a payer matching two clients is still not resolved for
+   * them, it is simply theirs to place.
+   */
+  .post('/:slug/admin/payments/csv/import', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ csv?: unknown; mapping?: unknown; defaultMethod?: unknown; choices?: unknown }>()
+      .catch(
+        () =>
+          ({}) as { csv?: unknown; mapping?: unknown; defaultMethod?: unknown; choices?: unknown },
+      );
+    if (!isPaymentMethod(body.defaultMethod))
+      return c.json({ error: 'Choose a valid default payment method.' }, 400);
+    const mapping = parseCsvColumnMapping(body.mapping);
+    if (!mapping) return c.json({ error: 'That column mapping is malformed.' }, 400);
+    if (!Array.isArray(body.choices) || body.choices.length === 0)
+      return c.json({ error: 'Choose at least one payment to record.' }, 400);
+    if (body.choices.length > MAX_CSV_ROWS)
+      return c.json({ error: `Record ${MAX_CSV_ROWS} payments or fewer at a time.` }, 400);
+    const choices: { dedupeKey: string; accountId: string }[] = [];
+    for (const raw of body.choices) {
+      const choice = raw as { dedupeKey?: unknown; accountId?: unknown };
+      if (
+        typeof choice.dedupeKey !== 'string' ||
+        choice.dedupeKey === '' ||
+        typeof choice.accountId !== 'string' ||
+        choice.accountId === ''
+      )
+        return c.json({ error: 'That list of payments is malformed.' }, 400);
+      choices.push({ dedupeKey: choice.dedupeKey, accountId: choice.accountId });
+    }
+
+    const parsed = applyMapping(
+      typeof body.csv === 'string' ? body.csv : '',
+      mapping,
+      body.defaultMethod,
+      tenant.Id,
+    );
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
+    const paymentByKey = new Map(parsed.payments.map((p) => [p.dedupeKey, p]));
+    const householdIds = new Set(inputs.households.map((h) => h.accountId));
+
+    const skipped: { dedupeKey: string; reason: string }[] = [];
+    let imported = 0;
+    let totalAmount = 0;
+
+    for (const { dedupeKey, accountId } of choices) {
+      const payment = paymentByKey.get(dedupeKey);
+      if (!payment) {
+        skipped.push({ dedupeKey, reason: 'That payment is not in this file' });
+        continue;
+      }
+      if (inputs.alreadyImported.has(dedupeKey)) {
+        skipped.push({ dedupeKey, reason: 'Already imported' });
+        continue;
+      }
+      // The sitter may file this payment against any household of their OWN business — and only
+      // theirs. Checked against the freshly-loaded household set, never against anything the
+      // preview told the browser.
+      if (!householdIds.has(accountId)) {
+        skipped.push({ dedupeKey, reason: 'That household is not one of your clients' });
+        continue;
+      }
+      const note = `CSV import — ${payment.payer}${payment.note ? `: ${payment.note}` : ''}`;
+      try {
+        const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
+          accountId,
+          amount: payment.amount,
+          method: payment.method,
+          paidDate: payment.date,
+          note: note.slice(0, 300),
+          externalRef: dedupeKey,
+        });
+        if (!paymentId) {
+          skipped.push({ dedupeKey, reason: 'That household can no longer take a payment' });
+          continue;
+        }
+        imported++;
+        totalAmount += payment.amount;
+      } catch (err) {
+        // The partial unique index caught a replay that slipped past the pre-read (a concurrent
+        // import of the same file). Idempotency is the index's job, and it did it.
+        if (isUniqueViolation(err)) skipped.push({ dedupeKey, reason: 'Already imported' });
+        else throw err;
+      }
+    }
+    return c.json({ imported, totalAmount, skipped });
+  })
+
+  /**
+   * PREVIEW HOW A SITTER'S IMPORTED HOUSEHOLD CREDITS WOULD SETTLE (Task 3 of payment
+   * attribution) — for each unapplied account-level credit of one household, or of every
+   * household when `accountId` is omitted, asks the PURE `proposeAttribution`
+   * (server/lib/payment-attribution.ts) how it would split against that household's unpaid
+   * bookings. Read-only: it never calls `applyAttribution`, so nothing here ever moves money —
+   * only the sitter's own explicit "apply" action (a later task) does that.
+   *
+   * "Unapplied account-level credit" needs no extra query of its own: `Payments.AccountId` and
+   * `Payments.BookingRequestId` are mutually exclusive by `CHECK`, so every row
+   * `listPaymentsForAccount` returns for a household IS an unapplied credit — one already
+   * attributed to a booking would carry `BookingRequestId` instead and simply not be in that list.
+   *
+   * CANDIDATE BOOKINGS ARE RESTRICTED TO `outstanding > 0`, computed here from
+   * `getHouseholdDetail`'s own `expected`/`paidTotal` (the same figures the household balance is
+   * built from) rather than trusted from anywhere else. This is the fix a prior review asked for:
+   * `getHouseholdDetail` also lists `declined` bookings, whose `expected` is zeroed by
+   * `CREDITABLE_AMOUNT_SQL` but which can still carry a payment recorded before they were
+   * declined (`insertPayment` allows it while a booking is still pending) — leaving a NEGATIVE
+   * outstanding. Handing that straight to `proposeAttribution` would trip its own
+   * unreadable-amount guard and refuse the household's ENTIRE credit, not just skip the one
+   * booking nobody will ever bill (`insertPayment`'s payability predicate already refuses a
+   * declined booking, so a split onto one would settle a stay that can never be collected on).
+   * Filtering to `outstanding > 0` before the pure module ever sees the list is what keeps a
+   * stray declined-with-payment booking from poisoning an otherwise ordinary proposal.
+   *
+   * A HOUSEHOLD'S CREDITS ARE PROPOSED IN SEQUENCE (each against what earlier ones left), which is
+   * what stops three $40 credits from each claiming the same $40 booking. WHICH credit goes next is
+   * closest-pair, not oldest-paid: the credit whose nearest still-available stay is nearest goes
+   * first, with oldest `PaidDate` (then payment id) surviving only as the tie-break — see the loop
+   * itself for why the older ordering mis-attributed a whole client. Ranking alone only settles who
+   * gets the FIRST stay, so before a credit is proposed its candidate list also DROPS any stay a
+   * different, not-yet-proposed credit of the same household is strictly closer to — otherwise the
+   * round's winner spills onto a stay another credit was paid on the day of. The side effect is
+   * unchanged:
+   * a credit that comes second to a stay comes back
+   * `no-unpaid-bookings` — and left there, that is automatic-with-no-override, the guess
+   * `docs/superpowers/specs/2026-08-10-payment-attribution-design.md` explicitly rejects. So the
+   * `unresolved[].bookings` list is the override: a credit the sequencing skipped still NAMES the
+   * household's live-outstanding stays, so the sitter can untick the proposed one and place this
+   * one instead. A credit whose household has no unpaid stay at all names nothing, and that
+   * emptiness is the only signal the panel needs to tell an actionable refusal (offer an editor)
+   * from an inert one (772 of 821 on the live tenant — summarised, never interactive).
+   *
+   * AMOUNT CONGRUENCE IS COMPUTED HERE, ONCE PER HOUSEHOLD, AND ONLY HERE. `proposeAttribution` is
+   * pure and per-credit and must never read another credit, but "no OTHER unattributed credit of
+   * this household is for this amount" is exactly that knowledge. This loop already holds the
+   * household's live outstanding map and its full credit list, so it derives the one-to-one amounts
+   * (`distinctiveAmounts`) from arrays it is already carrying and hands the set to the proposer and
+   * to both cross-credit rankings alike. No query, no extra read, and the same tie-break everywhere
+   * — see the computation itself for why once-per-household rather than once-per-round.
+   *
+   * The server still decides everything: this route proposes nothing extra and writes nothing.
+   * Whatever the sitter picks goes through the ordinary apply route, which re-derives the source
+   * payment and re-reads live outstanding, and refuses an over-claim with its reason.
+   *
+   * `accountId` is resolved the way every other household read resolves it — by asking
+   * `getHouseholdDetail` for the CURRENT id, never by equality on whatever the caller happened to
+   * send — because a household's account id is its lexicographically-first pet and a newly added
+   * pet renames it (see `householdPetIds`). An id `getHouseholdDetail` cannot resolve for this
+   * tenant — another tenant's, or no household at all — is the same 404 every sibling household
+   * route gives.
+   *
+   * THE OMITTED-`accountId` PATH USES `getHouseholdsWithUnappliedCredits`, NOT A LOOP OF
+   * `getHouseholdDetail` PLUS `listPaymentsForAccount`, AND THIS IS A HARD CONSTRAINT RATHER THAN A
+   * PREFERENCE: the panel ALWAYS previews tenant-wide (`AttributionPanel.tsx` never sends an
+   * `accountId`), Cloudflare counts every D1 query against a per-invocation subrequest ceiling of
+   * 50 on the Workers Free plan, and any per-household read multiplies by the tenant's household
+   * count. A real 53-household account issued 216 of them and the feature simply did not run. The
+   * tenant-wide reader is a CONSTANT six queries for any tenant, whatever its size — see its own
+   * doc comment in `server/db/repo.ts`, and the prepare-counting test in
+   * `server/__tests__/payment-attribution-routes.test.ts` that fails if a per-household read ever
+   * comes back.
+   */
+  .post('/:slug/admin/payments/attribute/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ accountId?: unknown }>()
+      .catch(() => ({}) as { accountId?: unknown });
+    const requestedAccountId =
+      typeof body.accountId === 'string' && body.accountId !== '' ? body.accountId : undefined;
+
+    const targets: {
+      accountId: string;
+      detail: NonNullable<Awaited<ReturnType<typeof getHouseholdDetail>>>;
+      credits: Awaited<ReturnType<typeof listPaymentsForAccount>>;
+    }[] = [];
+    if (requestedAccountId !== undefined) {
+      const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, requestedAccountId);
+      if (!detail) return c.json({ error: 'Not found.' }, 404);
+      const credits = await listPaymentsForAccount(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        detail.accountId,
+      );
+      if (credits.length > 0) targets.push({ accountId: detail.accountId, detail, credits });
+    } else {
+      const candidates = await getHouseholdsWithUnappliedCredits(c.env.PAWSERVATION_DB, tenant.Id);
+      for (const { accountId, detail, credits } of candidates)
+        targets.push({ accountId, detail, credits });
+    }
+
+    const proposals: {
+      accountId: string;
+      paymentId: string;
+      amount: number;
+      paidDate: string;
+      splits: {
+        bookingId: string;
+        amount: number;
+        serviceType: string;
+        startDate: string;
+        // `null` means a single-day service (a walk); a range service (a stay) carries its own
+        // checkout date here. Declared, not merely emitted — same reasoning as `outstanding`
+        // below: a prior review found `outstanding` emitted but undeclared, so dropping this
+        // line would again be silent rather than a type error.
+        endDate: string | null;
+        status: string;
+        // Declared, not merely emitted: the panel's over-split guard reads this, so dropping it
+        // must be a type error rather than a silent `undefined` that quietly disables the guard.
+        outstanding: number;
+      }[];
+      remainder: number;
+    }[] = [];
+    const unresolved: {
+      accountId: string;
+      paymentId: string;
+      amount: number;
+      paidDate: string;
+      reason: string;
+      detail: string;
+      bookings: {
+        bookingId: string;
+        serviceType: string;
+        startDate: string;
+        // Same meaning as the split's `endDate` above: `null` for a single-day service.
+        endDate: string | null;
+        status: string;
+        outstanding: number;
+      }[];
+    }[] = [];
+
+    for (const { accountId, detail, credits } of targets) {
+      // outstanding > 0 only — see the doc comment above for why this must happen before
+      // proposeAttribution ever sees the list.
+      const candidates = detail.bookings.filter((b) => b.expected - b.paidTotal > 0);
+      const staticById = new Map(
+        candidates.map((b) => [
+          b.bookingId,
+          {
+            bookingId: b.bookingId,
+            serviceType: b.serviceType,
+            startDate: b.startDate,
+            endDate: b.endDate,
+            status: b.status,
+          },
+        ]),
+      );
+      // MUTABLE, and carried forward across this household's credits — a household's credits are
+      // NOT independent proposals against the same fixed list. Each one is proposed against
+      // whatever is still outstanding after every earlier credit's splits are subtracted, so a
+      // $40 booking with three $40 credits gets ONE proposal, not three each claiming the full
+      // $40. A booking that reaches 0 here simply stops appearing with positive outstanding, and
+      // `proposeAttribution` already treats "no candidate with outstanding > 0" as
+      // `no-unpaid-bookings` — the true answer for a later credit with nothing left to attach to.
+      const outstandingById = new Map(
+        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      );
+      // The booking's genuinely LIVE outstanding — never decremented as this loop works through
+      // the household's credits, unlike `outstandingById` above. `outstandingById` still has to
+      // drive `proposeAttribution` itself (it genuinely needs to know what an earlier credit in
+      // THIS batch already claimed, or it would double-propose the same dollar to two credits).
+      // But the figure sent to the CLIENT for display/capping must not be that sequenced number:
+      // it is true only if the sitter applies this exact batch, unedited, in this exact order,
+      // and presenting it as "outstanding" false-blocks a sitter who edits or reorders — e.g.
+      // excludes an earlier credit and raises a later one to settle the booking outright, which
+      // the server would accept (see task-5-report.md, round 2). So every `outstanding` field
+      // returned below — on a resolved split AND on an ambiguous credit's candidate bookings —
+      // reads this map instead, and so does the membership test deciding WHICH candidate
+      // bookings an ambiguous credit is offered.
+      //
+      // Accepted consequence: two credits proposed within the SAME household preview can each
+      // report the booking's full live outstanding, so a sitter could compose a batch that
+      // over-attributes across them (e.g. approve both credits above at full value). That's
+      // already caught server-side — `applyAttribution`'s loop is sequential and each call
+      // re-reads live state, so the second attribution in such a batch is refused with a reason
+      // this panel already surfaces (`AttributionPanel.tsx`'s skipped-reason rendering). Blocking
+      // it here too would be a nice-to-have; blocking a legal single settlement, which is what
+      // this fixes, is not acceptable.
+      const liveOutstandingById = new Map(
+        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      );
+
+      // AMOUNT CONGRUENCE'S HOUSEHOLD HALF, COMPUTED HERE BECAUSE ONLY HERE CAN IT BE — an amount
+      // is distinctive when exactly one unpaid stay owes it AND exactly one unattributed credit is
+      // for it, and that second clause is knowledge about OTHER CREDITS that `proposeAttribution`
+      // is deliberately blind to (it is pure and per-credit, and must stay that way — see its own
+      // doc comment). This loop already holds both lists, so the set costs no query and no extra
+      // object: two arrays it is already carrying, read once.
+      //
+      // ONCE PER HOUSEHOLD, NOT ONCE PER ROUND, and off the LIVE outstanding rather than the
+      // sequenced `outstandingById`. Distinctiveness is a statement about the household's data as
+      // the sitter sees it, not about what an earlier credit in this batch happens to have claimed
+      // — recomputing it each round would make "is $180 distinctive?" depend on the order the
+      // credits were proposed in, which is exactly the kind of order-dependence the rest of this
+      // loop is built to avoid.
+      //
+      // WHAT IT BUYS, AND HONESTLY: on the live tenant, nothing. Her pricing is uniform — 151
+      // credits of $40 against 39 stays owing $40 — so almost no amount is one-to-one, and the
+      // three that are sit outside the directional windows. That IS the design: exactness only
+      // speaks when the amount could not have belonged to anything else. See `distinctiveAmounts`.
+      const householdDistinctiveAmounts = distinctiveAmounts(
+        [...liveOutstandingById.values()],
+        credits.map((p) => p.Amount),
+      );
+
+      // The pool this household's credits are drawn from, in the order that decides every TIE:
+      // oldest PAID date first, then payment id, so a run over the same data always produces the
+      // same allocation. It is no longer the order they are PROPOSED in — see the loop below.
+      const remainingCredits = [...credits].sort((a, b) => {
+        if (a.PaidDate !== b.PaidDate) return a.PaidDate < b.PaidDate ? -1 : 1;
+        return a.Id < b.Id ? -1 : a.Id > b.Id ? 1 : 0;
+      });
+
+      while (remainingCredits.length > 0) {
+        // `endDate` comes along free: `getHouseholdDetail` / the bulk read already select it on
+        // the same statement they select the start date on, so the route's constant prepare count
+        // is untouched. It is what lets `proposeAttribution` and `nearestCandidateRank`
+        // measure to the whole stay — a payment made mid-house-sit is 0 days from it, not 20.
+        const unpaidBookings = candidates.map((b) => ({
+          bookingId: b.bookingId,
+          startDate: b.startDate,
+          endDate: b.endDate,
+          outstanding: outstandingById.get(b.bookingId)!,
+        }));
+
+        // CLOSEST PAIR FIRST, NOT OLDEST CREDIT FIRST — the ordering fix. Each round proposes the
+        // credit whose nearest still-available stay is nearest, rather than the credit that
+        // happened to be paid earliest.
+        //
+        // Oldest-first was a per-credit optimum with a queue: the first credit took its own
+        // nearest stay and consumed it, and nothing ever compared one credit's "0 days" against
+        // another's "28 days". On a client who pays on the day, that is every stay attributed to
+        // the wrong payment — a June credit 28 days out claimed the mid-July walk, and the credit
+        // paid ON that walk fell out as `no-recent-booking`. The comparison the sitter makes
+        // instantly (this payment is the same day as that walk) is exactly the one only a
+        // cross-credit ranking can make.
+        //
+        // O(credits²) over data ALREADY IN MEMORY. `nearestCandidateRank` reads the same
+        // `unpaidBookings` array `proposeAttribution` is about to be handed, decremented in place
+        // by earlier rounds — no query, no per-credit read, so the route's constant prepare count
+        // is untouched. A household holds ~100 credits at the top end; the loop is arithmetic.
+        //
+        // `null` (nothing left this credit could claim) never wins a round, so those credits fall
+        // out at the end in pool order — oldest paid first — and get their refusal from
+        // `proposeAttribution` exactly as before. Strict `<` keeps the pool's own order as the
+        // tie-break, which is what makes equal RANKS resolve oldest-paid-first, stably.
+        //
+        // RANKS, NOT RAW DAYS, and the distinction is the whole of `proximityRank`
+        // (server/lib/payment-attribution.ts): side first, then distance — the same key
+        // `proposeAttribution` orders its own candidates by. When this loop compared raw days
+        // instead, it disagreed with the proposer it feeds, and two failures followed: an
+        // opposite-side "tie" handed every stay to the PREPAYMENT via the oldest-paid tie-break,
+        // and a credit could win its round on a stay it then spent itself past. Neither this
+        // ranking nor the contention filter below may go back to a notion of closeness of its own.
+        //
+        // CONGRUENCE TRAVELS WITH THE KEY, HERE AND IN THE FILTER BELOW AND IN THE PROPOSER — all
+        // three read the same `householdDistinctiveAmounts` against the amount of whichever credit
+        // they are ranking. Handing it to one and not the others would recreate the very
+        // divergence `proximityRank` was extracted to kill, one term further down the key.
+        let pickedIndex = 0;
+        let bestRank: number | null = null;
+        for (let i = 0; i < remainingCredits.length; i++) {
+          const rank = nearestCandidateRank(remainingCredits[i].PaidDate, unpaidBookings, {
+            creditAmount: remainingCredits[i].Amount,
+            distinctiveAmounts: householdDistinctiveAmounts,
+          });
+          if (rank === null) continue;
+          if (bestRank === null || rank < bestRank) {
+            bestRank = rank;
+            pickedIndex = i;
+          }
+        }
+        const row = remainingCredits.splice(pickedIndex, 1)[0];
+
+        // A STAY SOME OTHER CREDIT IS BETTER PLACED ON IS NOT OFFERED TO THIS ONE — the half of
+        // closest-pair the ranking above cannot reach, and an in-memory filter over the arrays this
+        // loop already holds (no query, so the route's constant prepare count is untouched).
+        //
+        // The ranking decides which credit gets the FIRST stay. `proposeAttribution` is pure and
+        // per-credit by design, so once a credit wins a round it spills greedily onto every further
+        // stay inside `MAX_SPILL_DAYS` it can settle in full — and nothing inside it can ask whether
+        // a credit not yet proposed matches those stays more closely, because by construction it
+        // never sees them. Live shape: a boarding ending 07-20 and a walk on 07-29, with $280 paid
+        // 07-20 and $50 paid 07-29. The $280 ranked first at distance 0, took the boarding, then
+        // spilled nine days forward onto the walk — and the $50 paid ON that walk came back
+        // `no-unpaid-bookings`.
+        //
+        // BETTER PLACED IS `proximityRank`, THE SAME KEY AS EVERYWHERE ELSE — so a credit that
+        // SETTLES a stay outranks one that would be prepaying it, however many raw days each is
+        // away. A stay five days ahead of one credit and five days behind another is not contested
+        // ground: it belongs to the one it settles.
+        //
+        // STRICTLY better, never equal: on an equal rank the credit being proposed keeps the stay,
+        // so the ranking (and its oldest-paid-first tie-break) still decides and nothing here
+        // becomes order-dependent.
+        //
+        // APPLIED TO EVERY CANDIDATE, NOT ONLY SPILL TARGETS, deliberately — a uniform rule is
+        // easier to reason about and cannot change the primary match anyway: this credit won its
+        // round because its own best-ranked eligible stay is the best of all, so no remaining
+        // credit can be strictly better placed on that stay than it is. It is therefore never
+        // excluded, and a credit with anything to claim is never filtered down to nothing.
+        //
+        // NOT A RESERVATION AND NOT A BACKTRACK. A withheld stay is simply absent from THIS call;
+        // the closer credit meets it in a later round of the same loop, and if that credit turns out
+        // not to fund it the stay stays unpaid and is offered to whoever comes next — the sitter
+        // still sees it in `unresolved[].bookings` either way, which is why the list below is built
+        // from the unfiltered `unpaidBookings`.
+        //
+        // `candidateRank` is `null` for a stay this credit could not be placed on at all
+        // (unreadable dates, outside the directional windows). Those are KEPT: dropping them would
+        // silently swallow the very refusals — `invalid-date`, `no-recent-booking` — that
+        // `proposeAttribution` alone is allowed to make.
+        // CONGRUENCE ON BOTH SIDES OF THIS COMPARISON, THOUGH ONLY `theirs` CAN CHANGE ITS ANSWER
+        // — and the asymmetry is worth stating so nobody "simplifies" the wrong half back out.
+        // `theirs` matters: a stay this credit is tied with another credit on, where the OTHER one
+        // settles it exactly, is withheld here instead of being spilled onto. `mine` is provably
+        // inert: distances are whole days, so a rival that is strictly nearer is nearer by at
+        // least 1 and half a day cannot close that, and two credits can never both be congruent on
+        // one stay (distinctiveness allows only one credit per amount). It is passed anyway,
+        // because `mine` and `theirs` comparing DIFFERENT keys is precisely the shape of the bug
+        // `proximityRank` was extracted to kill — a rank is only safe to compare against another
+        // rank of the same kind, and "inert today" is not a property to leave load-bearing.
+        const offered = unpaidBookings.filter((b) => {
+          const mine = candidateRank(b, row.PaidDate, {
+            creditAmount: row.Amount,
+            distinctiveAmounts: householdDistinctiveAmounts,
+          });
+          if (mine === null) return true;
+          return !remainingCredits.some((other) => {
+            const theirs = candidateRank(b, other.PaidDate, {
+              creditAmount: other.Amount,
+              distinctiveAmounts: householdDistinctiveAmounts,
+            });
+            return theirs !== null && theirs < mine;
+          });
+        });
+
+        // THE SPILL WINDOW IS THE TENANT'S, AND IT TRAVELS THE SAME WAY THE DISTINCTIVE-AMOUNTS
+        // SET DOES — passed down from the caller that already holds the row, never read inside the
+        // pure proposer. `tenant` is the row this route loaded before the loop began, so this
+        // costs no query and the route's constant prepare count is untouched.
+        //
+        // A sitter's clients pay how her clients pay: 14 days is right for weekly payers and
+        // leaves three quarters of a monthly invoice unplaced for someone billed once a month.
+        // See `MAX_SPILL_DAYS` for why that number was never a general rule.
+        const proposal = proposeAttribution(
+          { paymentId: row.Id, amount: row.Amount, paidDate: row.PaidDate },
+          offered,
+          householdDistinctiveAmounts,
+          tenant.AttributionSpillDays,
+        );
+        if (proposal.ok) {
+          proposals.push({
+            accountId,
+            paymentId: proposal.paymentId,
+            amount: row.Amount,
+            paidDate: row.PaidDate,
+            splits: proposal.splits.map((s) => ({
+              amount: s.amount,
+              ...staticById.get(s.bookingId)!,
+              outstanding: liveOutstandingById.get(s.bookingId)!,
+            })),
+            remainder: proposal.remainder,
+          });
+          // Carry the decrement forward for the next credit in this household.
+          for (const s of proposal.splits)
+            outstandingById.set(s.bookingId, outstandingById.get(s.bookingId)! - s.amount);
+        } else {
+          // `bookings` MEANS ONE THING, ON EVERY REASON THAT CARRIES IT: the candidates this
+          // credit could still be placed on, each with its LIVE outstanding — i.e. exactly what
+          // a sitter may choose from. Three reasons can have any: `ambiguous` (a tie the proposer
+          // refused to break), `no-unpaid-bookings` (the sequencing below claimed everything for
+          // an earlier credit of the same household), and `no-recent-booking` (no stay falls
+          // inside the payment's proximity windows — `MAX_LATE_PAYMENT_DAYS` behind it,
+          // `MAX_PREPAYMENT_DAYS` ahead — so proximity has nothing to say). The last
+          // one is placeable for precisely the reason it exists: the floor takes away the
+          // automatic GUESS, never the sitter's ability to attribute — she may well know which
+          // stay an old payment settled, and refusing to name candidates would turn a refusal to
+          // guess into a refusal to record. The remaining reasons —
+          // `invalid-date`, `invalid-amount`, `duplicate-booking-id` — are faults in the credit's
+          // or the household's own data: the household may well still have unpaid stays, but
+          // this credit cannot be placed on any of them until the underlying record is fixed, so
+          // naming candidates beside it would offer a choice that has nowhere to go. They carry
+          // an empty list, which is what `AttributionUnresolved`'s type comment
+          // (app/shared-ui/api.ts) states and what the panel's actionable/inert split reads.
+          const placeable =
+            proposal.reason === 'ambiguous' ||
+            proposal.reason === 'no-unpaid-bookings' ||
+            proposal.reason === 'no-recent-booking';
+          // Membership is decided by the LIVE figure, not the sequenced one, for the same
+          // reason the reported figure is: a booking an earlier credit in this preview drove
+          // to zero is still a booking the sitter may legitimately choose here, once they
+          // untick that earlier credit. Filtering on the sequenced value removed the option
+          // altogether — the same false-block as the cap, one level up.
+          const bookings = placeable
+            ? unpaidBookings
+                .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
+                .map((b) => ({
+                  ...staticById.get(b.bookingId)!,
+                  outstanding: liveOutstandingById.get(b.bookingId)!,
+                }))
+            : [];
+          unresolved.push({
+            accountId,
+            paymentId: proposal.paymentId,
+            amount: row.Amount,
+            paidDate: row.PaidDate,
+            reason: proposal.reason,
+            // THE PURE PROPOSER'S SENTENCE IS REPLACED, NOT DECORATED, FOR THE ONE CASE IT CANNOT
+            // SEE. `proposeAttribution` is handed the SEQUENCED outstanding, so when an earlier
+            // credit of this household has already claimed every stay it truthfully reports "no
+            // unpaid bookings to attribute this against" — a sentence a non-empty `bookings`
+            // flatly contradicts, and one that reads as "this household is settled" when in fact
+            // the sitter is being invited to pick. The sequencing is a fact only this loop holds,
+            // so only this loop can say it. Every other reason keeps the proposer's own wording
+            // verbatim.
+            detail:
+              proposal.reason === 'no-unpaid-bookings' && bookings.length > 0
+                ? `Earlier credits from this household were proposed for every unpaid stay first, so nothing is left for payment ${proposal.paymentId} in this batch. If this is the credit that actually paid one of them, choose the booking yourself — and untick the earlier proposal, or it will be refused as an overpayment.`
+                : proposal.detail,
+            bookings,
+          });
+        }
+      }
+    }
+
+    return c.json({ proposals, unresolved });
+  })
+
+  /**
+   * APPLY THE ATTRIBUTIONS A SITTER APPROVED (Task 4 of payment attribution) — the only route in
+   * this feature that moves money. The browser supplies only WHICH payment goes on which bookings
+   * and in what amounts; everything else is re-derived from live state, because the browser's copy
+   * is a snapshot from whenever the preview ran and money moves in between.
+   *
+   * `applyAttribution` (server/db/repo.ts) does the re-derivation: it re-reads the source payment
+   * (its `Amount` is the only authority, never the caller's), re-checks conservation
+   * (`sum(splits) + remainder === Amount` exactly, whole dollars), re-reads EVERY TARGET BOOKING'S
+   * OWN LIVE OUTSTANDING (`getHouseholdDetail`'s `expected - paidTotal`) and refuses any split that
+   * would exceed it, resolves the household by pet-id MEMBERSHIP rather than `AccountId` equality
+   * (an account id is the household's lexicographically-first pet and moves when a pet is added —
+   * see its own doc comment), and writes the whole thing as one `db.batch` so a partially-applied
+   * attribution can never happen. This route does not re-implement any of that; it is a thin
+   * per-item loop around it.
+   *
+   * THE LOOP BELOW IS SEQUENTIAL — `await`ed one attribution at a time, deliberately not
+   * `Promise.all`'d — which is what makes the per-booking outstanding re-check above effective
+   * ACROSS a batch, not just within one attribution: two attributions in the same request that both
+   * land on the same booking (a hand-crafted body, or a stale preview reused after the sitter
+   * settled that booking some other way) commit one after the other, so the second one's re-read
+   * sees the first one's write already applied and refuses the overpay, rather than both reading a
+   * stale pre-batch snapshot and both succeeding.
+   *
+   * EACH ATTRIBUTION IS ITS OWN try/catch, so one failure — a booking since paid, a payment since
+   * attributed by an earlier request in this same array, a genuine fault — cannot abort the rest of
+   * a batch the sitter approved together. A payment `applyAttribution` can no longer find as a
+   * household-level payment of the given account (because an earlier call already attributed or
+   * deleted it) comes back as an ordinary refusal, not a throw — which is what makes a double-submit
+   * of the exact same body apply once: the second call's `applyAttribution` re-reads the row, finds
+   * it gone, and skips with a reason instead of duplicating the money.
+   *
+   * AN ATTRIBUTION MAY CARRY A `tip` — `{ bookingId, amount }`, naming one of its own splits'
+   * bookings. That is the one part of a payment that is not settlement: `applyAttribution` records
+   * it as a `BookingCharges` row on the stay instead of leaving it as an account-level credit that
+   * would tell the sitter she owes her client money she was thanked with. THE SPLIT IS SENT
+   * EXCLUSIVE OF IT and the server adds it, so conservation is `sum(splits) + tip + remainder ===
+   * the payment` — see `applyAttribution`'s own doc comment for why that framing rather than an
+   * inclusive split. Only the SHAPE is checked below; every rule about the figure and the booking
+   * is re-decided server-side against live state.
+   *
+   * BODY SHAPE IS VALIDATED IN FULL BEFORE ANYTHING IS APPLIED — a structurally malformed
+   * attribution (wrong types, missing fields) is a 400 for the WHOLE request with nothing written,
+   * the same posture the CSV-import route above takes toward a malformed `choices` list. That is a
+   * different failure than a well-formed attribution `applyAttribution` refuses on the merits (bad
+   * conservation, foreign booking, vanished payment, wrong tenant) — those are reported per-item in
+   * `skipped`, never as a 400, so one bad row in an otherwise-good batch doesn't block the rest.
+   */
+  .post('/:slug/admin/payments/attribute/apply', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ attributions?: unknown }>()
+      .catch(() => ({}) as { attributions?: unknown });
+    if (!Array.isArray(body.attributions) || body.attributions.length === 0)
+      return c.json({ error: 'Choose at least one attribution to apply.' }, 400);
+    // THE SERVER CAPS THE ARRAY TOO — a client is not trusted to chunk. `AttributionPanel.tsx`
+    // sends approved credits in chunks of exactly this size and continues by itself (the sitter
+    // clicks Apply once), but the ceiling this protects is the platform's, not the panel's: see
+    // MAX_ATTRIBUTIONS_PER_REQUEST's own doc comment for the subrequest arithmetic behind the
+    // number. Refused WHOLE rather than truncated to what fits — a partial apply nobody asked for
+    // is worse than a refusal, and the same posture the malformed-body checks below take.
+    if (body.attributions.length > MAX_ATTRIBUTIONS_PER_REQUEST)
+      return c.json(
+        {
+          error: `Apply at most ${MAX_ATTRIBUTIONS_PER_REQUEST} attributions in one request; nothing was written.`,
+        },
+        400,
+      );
+
+    const attributions: {
+      paymentId: string;
+      accountId: string;
+      splits: { bookingId: string; amount: number }[];
+      remainder: number;
+      tip?: { bookingId: string; amount: number };
+    }[] = [];
+    for (const raw of body.attributions) {
+      // `typeof null === 'object'`, so a `null` element must be turned away before the property
+      // reads below ever run on it — otherwise a malformed `[null]` body 500s instead of 400ing.
+      if (typeof raw !== 'object' || raw === null)
+        return c.json({ error: 'That list of attributions is malformed.' }, 400);
+      const a = raw as {
+        paymentId?: unknown;
+        accountId?: unknown;
+        splits?: unknown;
+        remainder?: unknown;
+        tip?: unknown;
+      };
+      if (
+        typeof a.paymentId !== 'string' ||
+        a.paymentId === '' ||
+        typeof a.accountId !== 'string' ||
+        a.accountId === '' ||
+        !Array.isArray(a.splits) ||
+        typeof a.remainder !== 'number'
+      )
+        return c.json({ error: 'That list of attributions is malformed.' }, 400);
+
+      const splits: { bookingId: string; amount: number }[] = [];
+      for (const rawSplit of a.splits) {
+        if (typeof rawSplit !== 'object' || rawSplit === null)
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        const s = rawSplit as { bookingId?: unknown; amount?: unknown };
+        if (typeof s.bookingId !== 'string' || s.bookingId === '' || typeof s.amount !== 'number')
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        splits.push({ bookingId: s.bookingId, amount: s.amount });
+      }
+
+      // THE OPTIONAL TIP — part of this payment the client meant as thanks, which
+      // `applyAttribution` records as a `BookingCharges` row on one of the bookings above rather
+      // than as an account-level credit that would read as a debt. SHAPE ONLY is checked here: that
+      // the amount is a whole positive dollar figure, that the booking is one of this attribution's
+      // own splits, and that it belongs to this payment's household are all decided by
+      // `applyAttribution` against LIVE state, and are refusals on the merits (per-item `skipped`)
+      // rather than malformed bodies. Absent is the ordinary case and stays `undefined`, so the
+      // repo function's own `tip === undefined` branch is what every existing caller keeps hitting.
+      let tip: { bookingId: string; amount: number } | undefined;
+      if (a.tip !== undefined) {
+        // `typeof null === 'object'`, so a null tip must be turned away before the property reads.
+        if (typeof a.tip !== 'object' || a.tip === null)
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        const t = a.tip as { bookingId?: unknown; amount?: unknown };
+        if (typeof t.bookingId !== 'string' || t.bookingId === '' || typeof t.amount !== 'number')
+          return c.json({ error: 'That list of attributions is malformed.' }, 400);
+        tip = { bookingId: t.bookingId, amount: t.amount };
+      }
+
+      attributions.push({
+        paymentId: a.paymentId,
+        accountId: a.accountId,
+        splits,
+        remainder: a.remainder,
+        tip,
+      });
+    }
+
+    let applied = 0;
+    const skipped: { paymentId: string; reason: string }[] = [];
+    for (const attribution of attributions) {
+      try {
+        const result = await applyAttribution(c.env.PAWSERVATION_DB, tenant.Id, attribution);
+        if (result.ok) applied++;
+        else skipped.push({ paymentId: attribution.paymentId, reason: result.reason });
+      } catch (err) {
+        // Genuine fault (not a refusal `applyAttribution` already turned into `{ ok: false }`) —
+        // skipped rather than allowed to abort the rest of a batch the sitter approved together,
+        // but logged so it's distinguishable from an ordinary refusal in the logs rather than
+        // collapsing into the same generic skip a sitter sees.
+        console.error('payment attribution apply failed', attribution.paymentId, err);
+        skipped.push({
+          paymentId: attribution.paymentId,
+          reason: `Payment ${attribution.paymentId} could not be applied due to an unexpected error; nothing was written for it.`,
+        });
+      }
+    }
+
+    return c.json({ applied, skipped });
+  })
+
+  /**
+   * Preview which calendar events would be adopted as bookings. Writes nothing — every event is
+   * read from Google and classified fresh (`classifyAll`), same as the Venmo preview above.
+   */
+  .post('/:slug/admin/calendar/backfill/preview', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ from?: unknown; to?: unknown }>()
+      .catch(() => ({}) as { from?: unknown; to?: unknown });
+    const from = typeof body.from === 'string' ? body.from : '';
+    const to = typeof body.to === 'string' ? body.to : '';
+    if (!isRealDate(from) || !isRealDate(to) || to <= from)
+      return c.json({ error: 'Choose a start date and a later end date.' }, 400);
+
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
+    if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
+      return c.json({ error: 'Connect your Google Calendar first.' }, 400);
+    const accessToken = await getCalendarAccessToken(c.env, tenant, conn);
+
+    const events = (
+      await listCalendarEvents(
+        accessToken,
+        conn.CalendarId ?? 'primary',
+        `${from}T00:00:00Z`,
+        `${to}T00:00:00Z`,
+      )
+    ).filter((e) => e.status !== 'cancelled');
+
+    // Classify at most MAX_BACKFILL_EVENTS per pass, oldest first, rather than refusing a range
+    // that holds more than that — the platform's subrequest/CPU budget is real (same reasoning as
+    // MAX_BACKFILL_EVENTS's own doc comment), but staying inside it is this route's job, not
+    // something to push back onto the sitter as "pick a shorter range". Sorted defensively —
+    // Google's own `orderBy: startTime` already returns events in this order, but nothing here
+    // should depend on that holding forever.
+    const sorted = [...events].sort((a, b) => a.start.localeCompare(b.start));
+    const capped = sorted.length > MAX_BACKFILL_EVENTS;
+    const slice = capped ? sorted.slice(0, MAX_BACKFILL_EVENTS) : sorted;
+    // Resume from the LAST CLASSIFIED EVENT'S OWN START DATE — never "the day after it". Two
+    // events can share a start date, and a sibling of the cut-off event can sort AFTER it within
+    // that same day; resuming from the day after would silently skip that sibling, and skipping
+    // is unrecoverable (the caller has no way to notice a gap it was never told about).
+    // Resuming from the same date instead means the next pass may RECLASSIFY a few events from
+    // that date — harmless, since this route writes nothing and the import route's own adoption
+    // is idempotent on GCalEventId — but it can never skip one. The one failure mode this leaves
+    // is more than MAX_BACKFILL_EVENTS events sharing a single start date, which would make
+    // nextFrom stop advancing; the caller is expected to give up after a bounded number of passes
+    // rather than loop forever chasing it.
+    const nextFrom = capped ? slice[slice.length - 1].start : null;
+    const remaining = sorted.length - slice.length;
+
+    const { classified, pets } = await classifyAll(c, tenant, slice);
+    // Display-only: the classifier's Classified type stays pure (petIds only). Names are resolved
+    // here, against the same pet list classifyAll already fetched, so the panel can offer a pet
+    // filter without guessing from the event title. Ordered as `petIds` is ordered so the two
+    // stay aligned.
+    const nameById = new Map(pets.map((p) => [p.id, p.name] as const));
+    const withPetNames = <T extends { petIds: string[] }>(r: T): T & { petNames: string[] } => ({
+      ...r,
+      // Every petId here was resolved by classifyAll's own classifyEvent against this SAME `pets`
+      // array (resolvePetsByName only ever returns ids it found in it), so a miss is a real bug,
+      // not a data gap — throw rather than emit '', which the panel's filter reads as "All pets".
+      petNames: r.petIds.map((id) => {
+        const name = nameById.get(id);
+        if (name === undefined) throw new Error(`Backfill preview: unresolved pet id ${id}`);
+        return name;
+      }),
+    });
+    return c.json({
+      adopt: classified
+        .filter((r): r is Extract<Classified, { kind: 'adopt' }> => r.kind === 'adopt')
+        .map(withPetNames),
+      needsPrice: classified
+        .filter((r): r is Extract<Classified, { kind: 'needs-price' }> => r.kind === 'needs-price')
+        .map(withPetNames),
+      flags: classified.filter((r) => r.kind === 'flag'),
+      // An array, not a count — unlike a count, a skip row carries its own eventId, so a caller
+      // resuming across passes can de-duplicate the boundary date's events by id exactly like
+      // adopt/needsPrice/flags, instead of a naive per-pass sum double-counting whatever landed
+      // on the shared resume date.
+      skipped: classified.filter(
+        (r): r is Extract<Classified, { kind: 'skip' }> => r.kind === 'skip',
+      ),
+      nextFrom,
+      remaining,
+    });
+  })
+
+  /**
+   * Adopt chosen calendar events as bookings. The security shape is copied from the Venmo
+   * importer, with one deliberate exception: every date, pet, household and service is
+   * RE-DERIVED server-side by `classifyAll` — the browser names event ids and, optionally,
+   * prices, and nothing else. An event the fresh classification no longer adopts is skipped
+   * with a reason, never adopted on the browser's say-so.
+   *
+   * The amount is the exception, because pricing a historical stay is the sitter's own decision,
+   * not a claim about their calendar (see the module doc on `insertBackfilledBooking` and the
+   * design doc). `estCost`, when supplied, must be a whole-dollar integer >= 1 or the WHOLE
+   * request is refused with 400 — never a silent coercion, and never a partial import.
+   */
+  .post('/:slug/admin/calendar/backfill/import', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ from?: unknown; to?: unknown; events?: unknown }>()
+      .catch(() => ({}) as { from?: unknown; to?: unknown; events?: unknown });
+    const from = typeof body.from === 'string' ? body.from : '';
+    const to = typeof body.to === 'string' ? body.to : '';
+    if (!isRealDate(from) || !isRealDate(to) || to <= from)
+      return c.json({ error: 'Choose a start date and a later end date.' }, 400);
+    if (!Array.isArray(body.events) || body.events.length === 0)
+      return c.json({ error: 'Choose at least one event to import.' }, 400);
+    if (body.events.length > MAX_BACKFILL_EVENTS)
+      return c.json({ error: `Import ${MAX_BACKFILL_EVENTS} events or fewer at a time.` }, 400);
+
+    // eventId -> the sitter's own price for it, when given. Whole dollars only, like every other
+    // amount in this codebase; a bad one fails the WHOLE request rather than being coerced or
+    // silently dropping just its own row.
+    const wanted = new Map<string, number | null>();
+    for (const raw of body.events) {
+      if (typeof raw !== 'object' || raw === null)
+        return c.json({ error: 'That list of events is malformed.' }, 400);
+      const entry = raw as { eventId?: unknown; estCost?: unknown };
+      if (typeof entry.eventId !== 'string' || entry.eventId === '')
+        return c.json({ error: 'That list of events is malformed.' }, 400);
+      if (entry.estCost !== undefined) {
+        if (
+          !Number.isInteger(entry.estCost) ||
+          (entry.estCost as number) < 1 ||
+          (entry.estCost as number) > MAX_BACKFILL_EST_COST
+        )
+          return c.json(
+            { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+            400,
+          );
+      }
+      wanted.set(entry.eventId, entry.estCost === undefined ? null : (entry.estCost as number));
+    }
+
+    const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
+    if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken)
+      return c.json({ error: 'Connect your Google Calendar first.' }, 400);
+    const accessToken = await getCalendarAccessToken(c.env, tenant, conn);
+
+    const events = (
+      await listCalendarEvents(
+        accessToken,
+        conn.CalendarId ?? 'primary',
+        `${from}T00:00:00Z`,
+        `${to}T00:00:00Z`,
+      )
+    ).filter((e) => e.status !== 'cancelled');
+
+    // RE-DERIVED from scratch — same classifier the preview used, so the two can never disagree.
+    // The browser named event ids and, optionally, prices; nothing else survives this call.
+    const { classified } = await classifyAll(c, tenant, events);
+    // Every classified row, by id — used only to tell an already-imported id apart from every
+    // other reason it might not be adoptable, below.
+    const classifiedById = new Map(classified.map((r) => [r.eventId, r] as const));
+    // Both kinds are adoptable: 'adopt' carries a rate-card price, 'needs-price' carries
+    // everything BUT the price and is adoptable only when the sitter supplies one.
+    const resolvable = new Map(
+      classified
+        .filter(
+          (r): r is Extract<Classified, { kind: 'adopt' | 'needs-price' }> =>
+            r.kind === 'adopt' || r.kind === 'needs-price',
+        )
+        .map((r) => [r.eventId, r] as const),
+    );
+
+    const skipped: { eventId: string; reason: string }[] = [];
+    let imported = 0;
+    for (const [eventId, suppliedCost] of wanted) {
+      const row = resolvable.get(eventId);
+      if (!row) {
+        // 'already-adopted' gets its own message — a sitter re-running an import over an
+        // overlapping range must read that as "already imported", not as data loss. Every other
+        // reason a fresh classification might refuse the id (absent from the calendar entirely,
+        // or classified as a flag) keeps the generic message.
+        const already = classifiedById.get(eventId);
+        const reason =
+          already?.kind === 'skip' && already.why === 'already-adopted'
+            ? 'Already imported'
+            : 'That event is no longer adoptable';
+        skipped.push({ eventId, reason });
+        continue;
+      }
+      // The sitter's figure wins when given; otherwise the rate card's, which only an 'adopt' row
+      // has. A 'needs-price' row with no supplied amount is never adopted at zero and never at a
+      // number this server invented.
+      const estCost = suppliedCost ?? (row.kind === 'adopt' ? row.estCost : null);
+      if (estCost === null) {
+        skipped.push({ eventId, reason: 'That event still needs a price' });
+        continue;
+      }
+      // Each row's write is isolated: one event's failure must never take down the response for
+      // every other event in the same request, turn a partial success into a bare 500, or — worse
+      // — go unreported and then be silently un-retryable because GCalEventId now looks adopted.
+      let bookingId: string | null = null; // hoisted above the try so the catch can clean it up
+      try {
+        bookingId = await insertBackfilledBooking(c.env.PAWSERVATION_DB, tenant.Id, {
+          endUserId: row.endUserId,
+          serviceType: row.serviceType,
+          startDate: row.startDate,
+          endDate: row.endDate,
+          optionKey: row.optionKey,
+          petCount: row.petIds.length,
+          estCost,
+          status: row.cancelled ? 'cancelled' : 'confirmed',
+          gcalEventId: row.eventId,
+        });
+        await addBookingPets(c.env.PAWSERVATION_DB, tenant.Id, bookingId, row.petIds);
+        imported++;
+      } catch (err) {
+        console.error('calendar backfill import failed for event', eventId, err);
+        // Remove the orphan, or the GCalEventId stamp makes this event permanently
+        // un-retryable: every later run would report "Already imported" for a booking that has
+        // no pets. Same pattern as booking-ops.ts's own optimistic-row cleanup — best-effort,
+        // and never lets a failed cleanup mask the real failure being reported below.
+        if (bookingId) {
+          await deleteBookingRequest(c.env.PAWSERVATION_DB, tenant.Id, bookingId).catch(() => {});
+        }
+        skipped.push({ eventId, reason: 'Could not import that event' });
+      }
+    }
+    return c.json({ imported, skipped });
+  })
+
+  /**
+   * Correct the price on a booking ADOPTED from the calendar. Restricted to
+   * `Source = 'calendar-backfill'` rows by `updateBackfilledBookingCost`'s own SQL, not by this
+   * route — their cost was invented from today's rate card for a stay that may predate it, and no
+   * client ever saw or agreed to that figure. A booking that came through pawservation carries a
+   * figure a client DID see; it is out of reach here by construction, and refuses with the same
+   * 404 as the 'blocked'/'external' sentinels and a foreign tenant's id, so the response never
+   * tells the caller which of those four reasons applied.
+   *
+   * The route itself never decides EstCost vs. CancellationFee — `updateBackfilledBookingCost`
+   * writes into whichever column the row's own Status says the balance reads, so a cancelled
+   * adoption's correction lands where `BASE_AMOUNT_SQL` actually looks for it.
+   */
+  .patch('/:slug/admin/bookings/:id/cost', async (c) => {
+    const tenant = c.get('tenant');
+    const body = await c.req
+      .json<{ estCost?: unknown }>()
+      .catch(() => ({}) as { estCost?: unknown });
+    const estCost = body.estCost;
+    // Whole dollars only — cents are unrepresentable codebase-wide. Same ceiling as the sitter's
+    // price on the same field at import time (Task 7); two bounds on one field would drift.
+    if (
+      typeof estCost !== 'number' ||
+      !Number.isInteger(estCost) ||
+      estCost < 1 ||
+      estCost > MAX_BACKFILL_EST_COST
+    )
+      return c.json(
+        { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+        400,
+      );
+
+    const ok = await updateBackfilledBookingCost(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+      estCost,
+    );
+    // One 404 for: another tenant's booking, an unknown id, a sentinel, and a booking a client
+    // agreed to. Same non-oracle posture as the other booking routes.
+    if (!ok) return c.json({ error: 'Not found.' }, 404);
+    return c.json({ estCost });
   });

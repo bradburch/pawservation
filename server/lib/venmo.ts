@@ -19,7 +19,22 @@
  *    only needed when the two differ.
  */
 import { parseCsvRows } from './csv';
+import {
+  normalizePayerName,
+  parseAmount,
+  resolveMatchClient,
+  sanitizeCell,
+  type MatchClient,
+} from './payment-import';
 import { isRealDate } from './validation';
+
+export {
+  sanitizeCell,
+  parseAmount,
+  resolveMatchClient,
+  normalizePayerName as normalizeVenmoName,
+  type MatchClient,
+} from './payment-import';
 
 /**
  * Each confirmed row costs a D1 write, and the preview holds the whole file in memory. Cap the
@@ -56,15 +71,6 @@ const INCOMING_TYPES = new Set(['Payment', 'Charge']);
  * else: this value becomes a stored dedupe key and a LIKE-free equality lookup, not free text. */
 const TXN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-// Built from character codes rather than a regex literal with an embedded control-character range
-// (e.g. /[\x00-\x1f]/), which trips ESLint's no-control-regex rule -- see server/lib/email.ts for
-// the same pattern. Matches every C0 control character plus DEL, flattened to a space (never
-// dropped mid-word).
-const CONTROL_CHARS = new RegExp(
-  '[' + String.fromCharCode(0) + '-' + String.fromCharCode(31) + String.fromCharCode(127) + ']',
-  'g',
-);
-
 export type VenmoTxn = {
   txnId: string;
   date: string; // 'YYYY-MM-DD', taken from Datetime
@@ -81,55 +87,10 @@ export type VenmoParseResult =
   | { ok: true; incoming: VenmoTxn[]; ignored: number; problems: VenmoProblem[] }
   | { ok: false; error: string };
 
-/**
- * Make a cell safe to echo to the sitter and to store. Two jobs:
- *  - flatten control characters and runs of whitespace (a note is free text a client typed);
- *  - defuse spreadsheet formulas: a cell starting `=`, `+`, `-` or `@` executes the moment the
- *    sitter pastes our output into Excel or Sheets, so it gets a leading apostrophe.
- *
- * ORDERING CONSTRAINT this creates: a Venmo amount is literally "+ $45.00", so amounts are parsed
- * from the RAW cell by `parseAmount` and sanitized only if they are shown back as display text.
- * Sanitizing first would turn every incoming amount into "'+ $45.00" and match nothing.
- */
-export function sanitizeCell(value: string): string {
-  const flat = value.replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
-  return /^[=+\-@]/.test(flat) ? `'${flat}` : flat;
-}
-
-/**
- * "+ $45.00" → { sign: '+', dollars: 45 }. Returns null for anything that is not a whole-dollar
- * amount of at least $1 — cents are deliberately unrepresentable in this codebase, so a $45.50 row
- * is REPORTED to the sitter rather than silently rounded into a wrong ledger entry.
- */
-export function parseAmount(raw: string): { sign: '+' | '-'; dollars: number } | null {
-  const m = /^\s*([+-])?\s*\$?\s*([\d,]+)(?:\.(\d{1,2}))?\s*$/.exec(
-    raw.replace(new RegExp(String.fromCharCode(160), 'g'), ' '),
-  );
-  if (!m) return null;
-  if (m[3] !== undefined && Number(m[3].padEnd(2, '0')) !== 0) return null;
-  const dollars = Number(m[2].replace(/,/g, ''));
-  if (!Number.isSafeInteger(dollars) || dollars < 1) return null;
-  return { sign: m[1] === '-' ? '-' : '+', dollars };
-}
-
 /** '2021-08-07T04:11:17' → '2021-08-07'. Null when there is no real date to be had. */
 export function parseVenmoDate(datetime: string): string | null {
   const m = /^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$/.exec(datetime.trim());
   return m && isRealDate(m[1]) ? m[1] : null;
-}
-
-/**
- * Fold a Venmo display name and a Venmo handle onto one key: lowercase, drop a leading '@', drop
- * every non-alphanumeric character. Deliberately lossy — it is what lets "Jess Demo" (the `From`
- * column) meet "@Jess-Demo" (the handle) with the sitter typing nothing. The cost is that two
- * clients CAN collide onto one key; the matcher refuses to guess between them (see matchVenmoTxns).
- */
-export function normalizeVenmoName(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^@+/, '')
-    .replace(/[^a-z0-9]/g, '');
 }
 
 export function isVenmoTxnId(value: unknown): value is string {
@@ -234,21 +195,6 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
   return { ok: true, incoming: deduped, ignored, problems };
 }
 
-/**
- * A client, reduced to what matching needs. `label` is what the sitter sees (name or email).
- * `accountId` is the household this client belongs to (`buildAccounts`'s account id, the
- * lexicographically-first pet of the component) — or `null` for a client who owns no live pet and
- * therefore belongs to no household at all, the one case a Venmo payment cannot be recorded against
- * without inventing a household for them.
- */
-export type MatchClient = {
-  endUserId: string;
-  label: string;
-  name: string | null;
-  venmoUsername: string | null;
-  accountId: string | null;
-};
-
 export type PreviewRow = {
   txnId: string;
   date: string;
@@ -273,20 +219,6 @@ export type VenmoPreview = {
   unmatched: UnmatchedRow[];
   alreadyImported: PreviewRow[];
 };
-
-/**
- * Resolve a Venmo `From` name to exactly one client. Returns `null` for an empty normalized key,
- * no matching client, or MORE THAN ONE matching client — a collision is refused, never guessed
- * at. This is the ONLY place that decision is made: `matchVenmoTxns` (preview) and the confirm
- * route in `routes/admin.ts` both call this, so a name that resolves ambiguously in one can never
- * silently resolve — to a different client, via last-writer-wins or otherwise — in the other.
- */
-export function resolveMatchClient(clients: MatchClient[], from: string): MatchClient | null {
-  const key = normalizeVenmoName(from);
-  if (key === '') return null;
-  const hits = clients.filter((c) => normalizeVenmoName(c.venmoUsername ?? c.name ?? '') === key);
-  return hits.length === 1 ? hits[0] : null;
-}
 
 /**
  * Sort every parsed transaction into one of three buckets. Writes nothing and knows nothing about
@@ -321,7 +253,7 @@ export function matchVenmoTxns(input: {
       preview.alreadyImported.push(row);
       continue;
     }
-    const key = normalizeVenmoName(txn.from);
+    const key = normalizePayerName(txn.from);
     if (key === '') {
       preview.unmatched.push({ ...row, reason: 'This transaction has no sender name to match on' });
       continue;
@@ -332,7 +264,7 @@ export function matchVenmoTxns(input: {
       // this was purely to phrase the sitter-facing reason; the pass/fail decision above is
       // already final and comes from the one shared resolver.
       const hits = clients.filter(
-        (c) => normalizeVenmoName(c.venmoUsername ?? c.name ?? '') === key,
+        (c) => normalizePayerName(c.venmoUsername ?? c.name ?? '') === key,
       );
       preview.unmatched.push({
         ...row,

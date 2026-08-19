@@ -13,6 +13,8 @@ export {
   isWeekend,
   nightsBetween,
   getPacificDateStr,
+  parseDateUtc,
+  MS_PER_DAY,
   DATE_RE,
   DEFAULT_TIMEZONE,
 } from './util/dates.js';
@@ -26,6 +28,7 @@ export {
 export {
   isDedicatedCalendarId,
   isPersonalCalendarTarget,
+  MAX_BACKFILL_EVENTS,
   SECONDARY_CALENDAR_SUFFIX,
 } from './util/calendar-target.js';
 export {
@@ -46,6 +49,11 @@ export {
 } from './booking/capacity.js';
 export { billableUnits } from './pricing/booking-cost.js';
 export { isValidRate, isPetRateMode, type PetRateMode } from './pricing/rate.js';
+export {
+  isCalendarCostBasis,
+  DEFAULT_CALENDAR_COST_BASIS,
+  type CalendarCostBasis,
+} from './pricing/calendar-cost-basis.js';
 export {
   buildGroupKey,
   buildMixKey,
@@ -83,6 +91,11 @@ export {
   type HouseholdBalances,
   type HouseholdBooking,
 } from './invoicing/balances.js';
+export {
+  balancedRemainder,
+  MAX_ATTRIBUTIONS_PER_REQUEST,
+  sitterPicksFirst,
+} from './invoicing/attribution-splits.js';
 export {
   cancellationFee,
   validateCancellationTiers,

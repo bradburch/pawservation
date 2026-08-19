@@ -37,7 +37,7 @@ const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeComp
 /** The row's primary label — pet names, not the owner (CLAUDE.md: "everything should be
  * categorized by the pets"). Falls back to the pet count for a pre-existing/edge-case row the
  * server couldn't resolve any names for, so the row never renders blank. */
-function petNamesText(b: AdminBooking): string {
+export function petNamesText(b: AdminBooking): string {
   if (b.petNames.length > 0) return b.petNames.join(', ');
   return `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`;
 }
@@ -105,6 +105,10 @@ function BookingList({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  // The inline correction for a backfilled booking's cost (see costDisplay below) — separate from
+  // `openId`'s Details toggle, so editing the estimate never requires opening the full row.
+  const [editingCostId, setEditingCostId] = useState<string | null>(null);
+  const [costInput, setCostInput] = useState('');
 
   const questionLabel = (type: string, qid: string): string => {
     const svc = services.find((s) => s.type === type);
@@ -177,6 +181,77 @@ function BookingList({
     }
   };
 
+  const startEditCost = (b: AdminBooking) => {
+    setEditingCostId(b.id);
+    setCostInput(b.estCost != null ? String(b.estCost) : '');
+  };
+
+  /** Correct a backfilled booking's estimated cost to the real historical figure — the PATCH the
+   *  calendar-backfill design doc adds specifically so the accepted "priced from today's rate
+   *  card" inaccuracy stays recoverable. Whole dollars only, same rule as every other amount here;
+   *  the Save button is disabled until the typed value passes, so a bad amount never reaches the
+   *  server (which would 400 it anyway). */
+  const saveCost = async (b: AdminBooking) => {
+    if (busyId) return;
+    const value = Number(costInput);
+    if (!Number.isInteger(value) || value < 1) return;
+    setBusyId(b.id);
+    try {
+      await adminApi.bookings.updateCost(session.slug, session.token, b.id, value);
+      setEditingCostId(null);
+      reloadBookings();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** The cost portion of a row: a plain "$X" for an ordinary booking, or — for one adopted from
+   *  the calendar (`isBackfilled`) — "$X (estimate)" with an inline Edit affordance, so the
+   *  estimate is never presented as if it were a price a client actually agreed to. */
+  const costDisplay = (b: AdminBooking) => {
+    if (b.estCost == null) return null;
+    if (editingCostId === b.id) {
+      const value = Number(costInput);
+      const valid = Number.isInteger(value) && value >= 1;
+      return (
+        <>
+          {' · '}
+          <label className="pb-inline">
+            $
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={costInput}
+              onChange={(e) => setCostInput(e.target.value)}
+              aria-label={`Correct the estimated cost for ${petNamesText(b)}`}
+            />
+          </label>
+          <button disabled={busyId === b.id || !valid} onClick={() => void saveCost(b)}>
+            Save
+          </button>
+          <button disabled={busyId === b.id} onClick={() => setEditingCostId(null)}>
+            Cancel
+          </button>
+        </>
+      );
+    }
+    return (
+      <>
+        {` · $${b.estCost}`}
+        {b.isBackfilled && (
+          <>
+            {' '}
+            <span className="pb-hint">(estimate)</span>{' '}
+            <button onClick={() => startEditCost(b)}>Edit</button>
+          </>
+        )}
+      </>
+    );
+  };
+
   const actionsFor = (b: AdminBooking) => (
     <span>
       {b.status === 'pending' && (
@@ -227,7 +302,7 @@ function BookingList({
           — {b.type}
           <br />
           {formatWhen(b)}
-          {b.estCost != null ? ` · $${b.estCost}` : ''}
+          {costDisplay(b)}
           {b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : ''}{' '}
           {/* Capitalized to match the client-status chips ("Active"/"Pending") in Clients. */}
           <span className={`pb-chip${chipClass(b.status)}`}>

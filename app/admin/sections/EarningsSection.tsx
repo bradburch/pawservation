@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { adminApi, type AnalyticsPayload, type HouseholdDetail } from '../../shared-ui/api.js';
 import { IconChartBar } from '../../shared-ui/icons';
+import { AttributionPanel } from '../AttributionPanel';
+import { CalendarBackfillPanel } from '../CalendarBackfillPanel';
+import { CsvImportPanel } from '../CsvImportPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
@@ -219,6 +222,14 @@ export function EarningsView({
     }
   };
 
+  // accountId -> display label, built once from the same household rows the balances list below
+  // already has — AttributionPanel never re-fetches or re-derives who a household is, it only
+  // asks this for a name to print next to a credit.
+  const householdLabels = useMemo(
+    () => new Map(data.households.map((h) => [h.accountId, householdName(h)])),
+    [data.households],
+  );
+
   const hasPayments = data.byService.length > 0;
   const maxService = Math.max(1, ...data.byService.map((s) => s.total));
   const maxQuarter = Math.max(1, ...data.quarterly.map((q) => q.total));
@@ -329,6 +340,44 @@ export function EarningsView({
         <VenmoImportPanel
           session={session}
           onImported={onChanged}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+
+      {/* The generic mapped-CSV importer, for a sitter whose bank or payment app doesn't export
+          Venmo's fixed shape — same "bring outside records into Earnings" job, one extra mapping
+          step up front. */}
+      {session && onChanged && handleError && clearError && (
+        <CsvImportPanel
+          session={session}
+          onImported={onChanged}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+
+      {/* Adopting a sitter's calendar history is the same "bring outside records into Earnings"
+          job the Venmo importer does for payments — same preview/tick/import shape, same reason
+          to live here rather than under Calendar (which shows the LIVE calendar, not history). */}
+      {session && onChanged && handleError && clearError && (
+        <CalendarBackfillPanel
+          session={session}
+          onImported={onChanged}
+          handleError={handleError}
+          clearError={clearError}
+        />
+      )}
+
+      {/* Credits an import left unattached to any one booking (Task 5 of payment attribution) —
+          same "bring outside records into a clean state" job as the three importers above, one
+          step later in the pipeline: this is for money already recorded, just not yet tied to a
+          stay. */}
+      {session && onChanged && handleError && clearError && (
+        <AttributionPanel
+          session={session}
+          households={householdLabels}
+          onApplied={onChanged}
           handleError={handleError}
           clearError={clearError}
         />

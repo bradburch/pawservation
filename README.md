@@ -245,16 +245,17 @@ npx wrangler secret put RESEND_FROM_BOOKING        # e.g. "Pawservation <booking
 # Optional — Google Calendar sync:
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
-npx wrangler secret put GOOGLE_OAUTH_REDIRECT_URI  # e.g. https://<your-worker>/oauth/google/callback — must match Google Cloud exactly
 ```
 
-The redirect URI's **host must be the host sitters open the dashboard on** (the custom domain, if
-you have one). The OAuth login-CSRF cookie is host-scoped, so connecting from `*.workers.dev` or a
-`wrangler versions upload` preview URL while the redirect points at the custom domain can never
-work; `/admin/providers/calendar/oauth/start` answers 409 naming the right host rather than
-starting a flow that is guaranteed to fail. Callback failures log one
-`google oauth callback failed { reason, … }` line — `npx wrangler tail` is the way to see which of
-its branches fired.
+There is no redirect-URI secret. The callback is derived per request from the origin the dashboard
+was opened on, so the OAuth login-CSRF cookie (which is host-scoped) and the callback always share
+a host. What that costs instead is Google Cloud Console setup: **register every host you serve the
+dashboard from as an Authorized redirect URI**, each exactly `https://<host>/oauth/google/callback`
+— typically your custom domain and the `*.workers.dev` host. A host that is not registered fails at
+Google's own authorize screen with `redirect_uri_mismatch`; that includes rotating
+`wrangler versions upload` preview URLs, which cannot be pre-registered and are not sitter-facing.
+Callback failures log one `google oauth callback failed { reason, … }` line — `npx wrangler tail`
+is the way to see which of its branches fired.
 
 Then:
 

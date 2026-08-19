@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { mintAdminToken } from '../lib/token';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 
 /**
  * Test env backed by a REAL in-memory SQLite (node:sqlite, built into Node 24) behind a
@@ -152,6 +153,47 @@ export function seedPets(
     insertOwner.run(tenantId, s.id, endUserId);
   }
   return specs.map((s) => s.id);
+}
+
+/**
+ * A date comfortably in the future that falls on a given weekday — `0` Sunday … `6` Saturday.
+ *
+ * A hard-coded "future" date stops being future. `2026-08-17` was written into two tests as
+ * "a Monday, future" and quietly became yesterday, at which point the booking route refused with
+ * `date_in_past` **before reaching the rule under test** — so the failure read as a broken
+ * validator rather than a stale fixture, and it turned `main` red on a day nobody changed any code.
+ * That is the second time this class of bug has done so (see `clearSeededBookings` below for the
+ * first, which was the mirror image: absolute-dated seed rows under a clock-relative window).
+ *
+ * Use this wherever a test needs a specific weekday rather than merely a future day; for any
+ * future day, `addDays(TODAY, n)` is enough and needs no helper.
+ */
+export function futureWeekday(weekday: number, minDaysAhead = 30): string {
+  let date = addDays(getPacificDateStr(new Date(), DEFAULT_TIMEZONE), minDaysAhead);
+  // At most seven steps: some day in any consecutive seven is the one asked for.
+  while (new Date(`${date}T00:00:00Z`).getUTCDay() !== weekday) date = addDays(date, 1);
+  return date;
+}
+
+/**
+ * Drop the base seed's bookings for a tenant, so a test whose OWN fixtures are relative to the
+ * real clock can assert over a date window and mean it.
+ *
+ * `sql/seed.sql` dates its bookings ABSOLUTELY — `seed_sp_pend2` is a 2026-08-20→23 pending
+ * boarding hold on Sunny Paws — while tests build windows like TODAY+5. Those two only stay apart
+ * by luck: as the real date advances the window slides across the fixture, and an assertion that
+ * a window is empty starts failing on a day nobody changed any code. (`sql/seed-demo.sql` uses
+ * `date('now', …)` and has no such problem; the test seed is the one pinned to absolute dates.)
+ *
+ * Call this in any test that asserts over ALL rows in a window rather than about one row it
+ * seeded itself.
+ */
+export async function clearSeededBookings(env: Env, tenantId = TENANT_A): Promise<void> {
+  await env.PAWSERVATION_DB.prepare(
+    "DELETE FROM BookingRequests WHERE TenantId = ? AND Id LIKE 'seed_%'",
+  )
+    .bind(tenantId)
+    .run();
 }
 
 /** A valid admin session token for a tenant — Authorization: `Bearer ${adminToken(...)}`. */

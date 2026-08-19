@@ -1,0 +1,418 @@
+/**
+ * Detects the shape of a sitter-uploaded payment CSV: its headers and a sample of real data rows,
+ * so the sitter can map their own columns against actual values rather than header names alone.
+ * This module never decides what a payment means — only what the file says.
+ *
+ * PURE. No D1, no env, no fetch.
+ */
+import { isPaymentMethod, type PaymentMethod } from '../../src/shared/index.js';
+import { parseCsvRows } from './csv';
+import {
+  normalizePayerName,
+  parseAmount,
+  resolveMatchClient,
+  sanitizeCell,
+  type MatchClient,
+} from './payment-import';
+import { isRealDate } from './validation';
+
+/** Each confirmed row costs a D1 write and the preview holds the file in memory. Mirrors
+ *  MAX_VENMO_ROWS, with its own constant because the two files share no other property. */
+export const MAX_CSV_ROWS = 500;
+
+/** How many data rows the sitter sees while mapping. Enough to recognise a column, few enough
+ *  to render beside a dropdown. */
+const SAMPLE_ROWS = 3;
+
+/** A note is free text a client typed; cap what we store and echo. Mirrors MAX_VENMO_NOTE. */
+const MAX_NOTE_LENGTH = 200;
+
+/**
+ * How long a mapped reference may be. It becomes `csv:<reference>` in `ExternalRef` and in that
+ * column's unique index, so an unbounded one bloats every row of the index and every comparison
+ * against it — and a mapped column holding hundreds of characters is a column that does not hold a
+ * reference at all. Generous next to Venmo's own 64-character transaction id, because a real bank
+ * reference can be long; an over-long one is REPORTED rather than truncated, since a truncated
+ * reference is a different reference and would key a different payment.
+ */
+export const MAX_CSV_REFERENCE = 128;
+
+/**
+ * A row whose amount is exactly nothing. `parseAmount` demands at least $1, so it refuses `$0` and
+ * `not a number` alike — but they are not the same thing to a sitter, and "Pawservation records
+ * whole dollars" is simply untrue of a well-formed `$0.00`. Recognised here purely to say something
+ * true about it. Matches what `parseAmount` accepts, narrowed to zero.
+ */
+const ZERO_AMOUNT = /^\s*[+-]?\s*\$?\s*0+(?:\.0{1,2})?\s*$/;
+
+export type CsvShape =
+  | { ok: true; headers: string[]; sample: string[][]; dataRowCount: number }
+  | { ok: false; error: string };
+
+export function detectCsvShape(text: string): CsvShape {
+  if (typeof text !== 'string' || text.trim() === '') {
+    return { ok: false, error: 'That file is empty.' };
+  }
+  const rows = parseCsvRows(text).filter((cells) => cells.some((c) => c.trim() !== ''));
+  if (rows.length === 0) return { ok: false, error: 'That file is empty.' };
+
+  const headers = rows[0].map(sanitizeCell);
+  const dataRows = rows.slice(1);
+  if (dataRows.length === 0) {
+    return { ok: false, error: 'That file has a header row and no payments under it.' };
+  }
+  if (dataRows.length > MAX_CSV_ROWS) {
+    return {
+      ok: false,
+      error:
+        `This file has ${dataRows.length} rows. Split it by date range and ` +
+        `import ${MAX_CSV_ROWS} or fewer at a time.`,
+    };
+  }
+  return {
+    ok: true,
+    headers,
+    sample: dataRows.slice(0, SAMPLE_ROWS).map((cells) => cells.map(sanitizeCell)),
+    dataRowCount: dataRows.length,
+  };
+}
+
+/** Which column (0-indexed, against the file's own header row) holds each field. `date`,
+ *  `amount` and `payer` are required to import anything at all; the rest are optional. */
+export type ColumnMapping = {
+  date: number;
+  amount: number;
+  payer: number;
+  method?: number;
+  reference?: number;
+  note?: number;
+};
+
+export type CsvPayment = {
+  row: number; // 1-indexed against the sitter's own file
+  date: string; // 'YYYY-MM-DD'
+  amount: number; // whole dollars, positive
+  payer: string;
+  method: PaymentMethod;
+  reference: string | null;
+  note: string;
+  dedupeKey: string;
+};
+
+export type CsvProblem = { row: number; reason: string };
+
+export type ApplyMappingResult =
+  { ok: true; payments: CsvPayment[]; problems: CsvProblem[] } | { ok: false; error: string };
+
+/**
+ * One FNV-1a lane, seeded from `seed` instead of the algorithm's usual fixed offset basis so two
+ * lanes over the same input diverge. Not a security boundary, just a fingerprint — but synchronous
+ * matters: `crypto.subtle` is async, which would force every caller of `applyMapping` (and
+ * everything upstream of it) to become async for no real benefit here.
+ */
+function fnv1aLane(input: string, seed: number): number {
+  let hash = seed;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * A 64-bit fingerprint of `parts`, built from two independent 32-bit FNV-1a lanes. A single 32-bit
+ * hash is NOT astronomically collision-safe at this scale: at ~2,000 payments imported for one
+ * tenant, the birthday bound puts the odds of some collision around 5e-4 — worth widening, not
+ * worth hand-waving away in a comment the next reader trusts. Two lanes push that to 64 bits.
+ *
+ * `JSON.stringify`, not a bare `|`-joined string: joining with a plain delimiter lets two different
+ * inputs build the identical string (tenant="t|a", payer="b" vs. tenant="t", payer="a|b"); JSON
+ * escaping keeps every part's boundary unambiguous.
+ */
+function contentHash(parts: unknown[]): string {
+  const input = JSON.stringify(parts);
+  const lane1 = fnv1aLane(input, 0x811c9dc5); // FNV-1a's own standard 32-bit offset basis
+  const lane2 = fnv1aLane(input, 0x9e3779b9); // 2^32/phi — a distinct seed, so the lanes diverge
+  return lane1.toString(16).padStart(8, '0') + lane2.toString(16).padStart(8, '0');
+}
+
+/**
+ * Turn a sitter-uploaded CSV plus their own column mapping into whole-dollar payments, exactly
+ * as `parseVenmoCsv` does for Venmo's fixed format — reusing the same amount/date/sanitize rules
+ * from `payment-import.ts` so the two importers can never quietly disagree about what a valid
+ * amount or a safe cell is.
+ *
+ * THE DEDUPE KEY (spec: "derived key including duplicate-rank"), stored in the same `ExternalRef`
+ * column — and the same unique index, `idx_Payments_Tenant_ExternalRef` — as a raw Venmo
+ * transaction id. Every key is namespaced `csv:...` so it can never collide with one of those.
+ *
+ * When `reference` is mapped and the cell is non-empty, the key is `csv:<reference>` — but a
+ * reference repeated within the same file is NOT re-used as a second key (see the in-file
+ * duplicate-reference check below): that would silently drop every repeat past the first, and a
+ * repeated reference more likely means the mapping points at the wrong column than that the same
+ * payment truly happened twice, so it's reported instead of guessed at. A reference over
+ * `MAX_CSV_REFERENCE` is reported for the same reason and never truncated: a shortened reference is
+ * a different reference, and would key a different payment.
+ *
+ * Otherwise the key is `csv:<hash>:<rank>`, where `<hash>` fingerprints
+ * `tenantId | date | amount | payer` and `<rank>` is how many identical rows preceded this one in
+ * THIS file (0, 1, 2, ...).
+ *
+ *  - re-uploading the same file produces the same ranks in the same order, so every key repeats
+ *    and the unique index on the way in refuses all of them — nothing is recorded twice;
+ *  - a client who genuinely paid the same amount twice in one day produces rank 0 and rank 1, two
+ *    different keys, so BOTH import. Collapsing them onto one key would silently drop a real
+ *    second payment — the worst failure this feature could have.
+ *
+ * THE NOTE IS DELIBERATELY NOT IN THE HASH, though it is stored on the payment. It is descriptive,
+ * not identifying — and unlike the other four parts, whether it is read AT ALL is a property of the
+ * sitter's MAPPING rather than of the file. A key that moved with the mapping would let the same
+ * export, re-uploaded with Note mapped differently or left unmapped, derive entirely new keys and
+ * record every row a second time with nothing said. That is not exotic: the panel resets the
+ * mapping on every upload, and overlapping monthly exports are this feature's expected case. Two
+ * rows differing only in their note are still kept apart by the rank above, so a genuine second
+ * payment is not lost by leaving it out.
+ */
+export function applyMapping(
+  text: string,
+  mapping: ColumnMapping,
+  defaultMethod: PaymentMethod,
+  tenantId: string,
+): ApplyMappingResult {
+  if (typeof text !== 'string' || text.trim() === '') {
+    return { ok: false, error: 'That file is empty.' };
+  }
+  const allRows = parseCsvRows(text);
+  // Same rule detectCsvShape uses: a blank line carries no header. Found by content, not assumed
+  // at index 0, so the two functions agree on which row is the header when a file opens with one.
+  const headerIndex = allRows.findIndex((cells) => cells.some((c) => c.trim() !== ''));
+  if (headerIndex === -1) return { ok: false, error: 'That file is empty.' };
+
+  const columnCount = allRows[headerIndex].length;
+  const mappedIndices = [
+    mapping.date,
+    mapping.amount,
+    mapping.payer,
+    mapping.method,
+    mapping.reference,
+    mapping.note,
+  ].filter((i): i is number => typeof i === 'number');
+  if (mappedIndices.some((i) => !Number.isInteger(i) || i < 0 || i >= columnCount)) {
+    return { ok: false, error: "That mapping points at a column this file doesn't have." };
+  }
+
+  const dataRows = allRows
+    .slice(headerIndex + 1)
+    .map((cells, i) => ({ row: headerIndex + i + 2, cells })) // 1-indexed against the sitter's file
+    .filter(({ cells }) => cells.some((c) => c.trim() !== ''));
+
+  if (dataRows.length > MAX_CSV_ROWS) {
+    return {
+      ok: false,
+      error:
+        `This file has ${dataRows.length} rows. Split it by date range and ` +
+        `import ${MAX_CSV_ROWS} or fewer at a time.`,
+    };
+  }
+
+  const payments: CsvPayment[] = [];
+  const problems: CsvProblem[] = [];
+  const rankByHash = new Map<string, number>();
+  const seenReferences = new Set<string>();
+
+  for (const { row, cells } of dataRows) {
+    const cell = (i: number) => cells[i] ?? '';
+
+    // Parsed from the RAW cell, never a sanitized one — see sanitizeCell's ordering comment.
+    const rawAmount = cell(mapping.amount);
+    const amount = parseAmount(rawAmount);
+    if (!amount) {
+      problems.push({
+        row,
+        reason: ZERO_AMOUNT.test(rawAmount)
+          ? `"${rawAmount.trim()}" is a zero-dollar row — there is no payment to record`
+          : `Couldn’t read the amount "${rawAmount.trim()}" — Pawservation records whole dollars`,
+      });
+      continue;
+    }
+    if (amount.sign === '-') {
+      // A negative amount is a refund, which this model cannot represent. Reported, never
+      // coerced positive.
+      problems.push({
+        row,
+        reason: `"${rawAmount.trim()}" is a refund (negative amount) — refunds can't be imported, record them manually`,
+      });
+      continue;
+    }
+
+    const rawDate = cell(mapping.date).trim();
+    if (!isRealDate(rawDate)) {
+      // Names the format instead of only refusing the value: a US bank or PayPal export writes
+      // 07/03/2026, which makes EVERY row a problem row, and a sitter told only "couldn't read it"
+      // has nothing to act on. Deliberately NOT auto-detected: 03/07/2026 is ambiguous between US
+      // and European order, and guessing would silently misdate money.
+      problems.push({
+        row,
+        reason: `Couldn’t read the date "${rawDate}" — dates must be written YYYY-MM-DD, like 2026-07-03`,
+      });
+      continue;
+    }
+
+    const payer = sanitizeCell(cell(mapping.payer));
+    if (payer === '') {
+      problems.push({ row, reason: 'This row has no payer name' });
+      continue;
+    }
+
+    let reference: string | null = null;
+    if (mapping.reference !== undefined) {
+      const rawReference = sanitizeCell(cell(mapping.reference));
+      if (rawReference.length > MAX_CSV_REFERENCE) {
+        problems.push({
+          row,
+          reason: `That reference is ${rawReference.length} characters — a reference must be ${MAX_CSV_REFERENCE} or fewer. Map a column holding a short unique id, or leave Reference unmapped.`,
+        });
+        continue;
+      }
+      if (rawReference !== '') reference = rawReference;
+    }
+    // A reference repeated within this file is refused rather than silently re-used as the same
+    // key twice: the shared unique index would insert the first occurrence and refuse every
+    // repeat, dropping real payments with nothing said. Reported instead — a repeated reference
+    // usually means the mapping points at the wrong column.
+    if (reference !== null) {
+      if (seenReferences.has(reference)) {
+        problems.push({
+          row,
+          reason: `Reference "${reference}" appears more than once in this file — check that the mapped column really holds a unique reference per payment`,
+        });
+        continue;
+      }
+      seenReferences.add(reference);
+    }
+
+    let method: PaymentMethod = defaultMethod;
+    if (mapping.method !== undefined) {
+      const rawMethod = cell(mapping.method).trim().toLowerCase();
+      // An unrecognised mapped method falls back to the sitter's own chosen default — never
+      // silently to 'other'.
+      if (isPaymentMethod(rawMethod)) method = rawMethod;
+    }
+
+    const note =
+      mapping.note !== undefined ? sanitizeCell(cell(mapping.note)).slice(0, MAX_NOTE_LENGTH) : '';
+
+    let dedupeKey: string;
+    if (reference !== null) {
+      dedupeKey = `csv:${reference}`;
+    } else {
+      const hash = contentHash([tenantId, rawDate, amount.dollars, payer]);
+      const rank = rankByHash.get(hash) ?? 0;
+      rankByHash.set(hash, rank + 1);
+      dedupeKey = `csv:${hash}:${rank}`;
+    }
+
+    payments.push({
+      row,
+      date: rawDate,
+      amount: amount.dollars,
+      payer,
+      method,
+      reference,
+      note,
+      dedupeKey,
+    });
+  }
+
+  return { ok: true, payments, problems };
+}
+
+/**
+ * Validate a sitter-submitted column mapping into `ColumnMapping`, or refuse it outright. `date`,
+ * `amount` and `payer` are required; `method`, `reference` and `note` are optional — but if present
+ * must be a real column index too. Never coerces a bad value into a guessed one: a missing or
+ * malformed field is a 400 from the route, not a silently-dropped mapping.
+ */
+export function parseCsvColumnMapping(raw: unknown): ColumnMapping | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const isIndex = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  const isOptionalIndex = (v: unknown): boolean => v === undefined || isIndex(v);
+  if (!isIndex(m.date) || !isIndex(m.amount) || !isIndex(m.payer)) return null;
+  if (!isOptionalIndex(m.method) || !isOptionalIndex(m.reference) || !isOptionalIndex(m.note))
+    return null;
+  return {
+    date: m.date,
+    amount: m.amount,
+    payer: m.payer,
+    ...(isIndex(m.method) ? { method: m.method } : {}),
+    ...(isIndex(m.reference) ? { reference: m.reference } : {}),
+    ...(isIndex(m.note) ? { note: m.note } : {}),
+  };
+}
+
+export type CsvMatchedRow = CsvPayment & {
+  endUserId: string;
+  clientLabel: string;
+  accountId: string;
+};
+export type CsvUnmatchedRow = CsvPayment & { reason: string };
+
+/**
+ * Sort every mapped payment into the SAME three buckets `matchVenmoTxns` uses, with
+ * `resolveMatchClient` — the ONE shared resolver — deciding every match. `payer` is never empty
+ * here: `applyMapping` already reports a blank-payer row as a `problem` rather than handing it back
+ * as a payment, so there is no "no sender name" case left to special-case the way the Venmo
+ * matcher does.
+ */
+export function matchCsvPayments(input: {
+  payments: CsvPayment[];
+  clients: MatchClient[];
+  alreadyImported: Set<string>;
+}): { matched: CsvMatchedRow[]; unmatched: CsvUnmatchedRow[]; alreadyImported: CsvPayment[] } {
+  const { payments, clients, alreadyImported } = input;
+  const matched: CsvMatchedRow[] = [];
+  const unmatched: CsvUnmatchedRow[] = [];
+  const already: CsvPayment[] = [];
+
+  for (const payment of payments) {
+    if (alreadyImported.has(payment.dedupeKey)) {
+      already.push(payment);
+      continue;
+    }
+    const client = resolveMatchClient(clients, payment.payer);
+    if (!client) {
+      // resolveMatchClient collapses "no hit" and "collision" into one null — recover which one
+      // this was purely to phrase the sitter-facing reason, exactly as matchVenmoTxns does.
+      const key = normalizePayerName(payment.payer);
+      const hits = clients.filter(
+        (c) => normalizePayerName(c.venmoUsername ?? c.name ?? '') === key,
+      );
+      unmatched.push({
+        ...payment,
+        reason:
+          hits.length === 0
+            ? `No client matches the name “${payment.payer}”. Add it to their row in Clients and check the file again.`
+            : `More than one client is set up under the name “${payment.payer}” (${hits
+                .map((h) => h.label)
+                .join(', ')}). Give them different Venmo usernames in Clients.`,
+      });
+      continue;
+    }
+    if (client.accountId === null) {
+      unmatched.push({
+        ...payment,
+        reason: `${client.label} has no pets on file, so there is no household to record this payment against.`,
+      });
+      continue;
+    }
+    matched.push({
+      ...payment,
+      endUserId: client.endUserId,
+      clientLabel: client.label,
+      accountId: client.accountId,
+    });
+  }
+  return { matched, unmatched, alreadyImported: already };
+}

@@ -8,6 +8,8 @@ import {
   getBookingWithCustomer,
   getEndUserById,
   getProviderConnection,
+  isAdoptedBooking,
+  listActiveAdoptedEventIds,
   listBlockedRowsWithEventsInWindow,
   listExternalEventRowsInWindow,
   listPetNamesForBooking,
@@ -167,6 +169,8 @@ async function persistEventIdOrCleanup(
  * duplicate event orphaned (see persistEventIdOrCleanup).
  */
 export async function syncBookingToCalendar(env: Env, tenant: Tenant, b: SyncInput): Promise<void> {
+  // Adoption is read-only against Google — never create, rewrite or delete. See isAdoptedBooking.
+  if (await isAdoptedBooking(env.PAWSERVATION_DB, tenant.Id, b.bookingId)) return;
   const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
@@ -212,6 +216,8 @@ export async function updateBookingCalendarEvent(
   gcalEventId: string,
   b: SyncInput,
 ): Promise<void> {
+  // Adoption is read-only against Google — never create, rewrite or delete. See isAdoptedBooking.
+  if (await isAdoptedBooking(env.PAWSERVATION_DB, tenant.Id, b.bookingId)) return;
   const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
 
@@ -422,6 +428,9 @@ export async function deleteBookingCalendarEvent(
   bookingId: string,
   expectedStatus?: BookingRow['Status'],
 ): Promise<void> {
+  // Adoption is read-only against Google — never create, rewrite or delete. See isAdoptedBooking.
+  // The most dangerous of the three: this event is the sitter's own, and a delete is not undoable.
+  if (await isAdoptedBooking(env.PAWSERVATION_DB, tenant.Id, bookingId)) return;
   const conn = await getProviderConnection(env.PAWSERVATION_DB, tenant.Id, 'calendar');
   if (!conn || conn.Status !== 'connected' || !conn.AccessToken || !conn.RefreshToken) return;
   const accessToken = await getCalendarAccessToken(env, tenant, conn);
@@ -470,7 +479,12 @@ const MATERIALIZE_BATCH_SIZE = 50;
 /** External-event span → [StartDate, EndDate-exclusive) row dates. All-day events carry Google's
  * exclusive end already; timed events occupy every calendar day they touch (a 14:00–15:00 visit
  * blocks that one day; a Fri 18:00 – Sun 09:00 sit blocks Fri/Sat/Sun). A timed event ending at
- * exactly midnight overcounts its final day by one — accepted: over-blocking is the safe error. */
+ * exactly midnight overcounts its final day by one — accepted: over-blocking is the safe error.
+ *
+ * THE source of truth for this rule. `spanEndExclusive` in server/lib/calendar-backfill.ts
+ * replicates it (that module is pure and cannot import from here) so that adopting an event
+ * covers exactly the days its `external` row covered — the adopted booking REPLACES that row.
+ * Change one and change the other. */
 function externalSpan(e: CalendarEvent): { startDate: string; endDateExclusive: string } {
   if (e.allDay) return { startDate: e.start, endDateExclusive: e.end };
   const lastDay = e.end >= e.start ? e.end : e.start;
@@ -556,6 +570,10 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   const live = events.filter((e) => e.status !== 'cancelled');
 
   // (a) Pawservation-originated events missing from Google → cancel + notify.
+  // Candidates come from listSyncedBookingIds, which excludes Source='calendar-backfill' rows —
+  // an adopted booking's GCalEventId was stamped by the backfill, not pushed to Google, so it can
+  // never appear in liveBookingIds (built from private.bookingId below) and would otherwise look
+  // "missing" and get cancelled + the customer emailed on the very next pass.
   const liveBookingIds = new Set(live.map((e) => e.private.bookingId).filter(Boolean));
   const candidates = await listSyncedBookingIds(
     env.PAWSERVATION_DB,
@@ -602,7 +620,18 @@ export async function reconcileBookingsWithCalendar(env: Env, tenant: Tenant): P
   }
 
   // (b) Foreign events → materialized external rows (upsert live, delete vanished — in-window only).
-  const foreign = live.filter((e) => !e.private.bookingId && e.id && e.start && e.end);
+  // An event this tenant has ADOPTED and not since cancelled is already a real booking
+  // (Source='calendar-backfill'). It carries no private.bookingId because adoption never writes to
+  // Google — deliberately, the backfill is read-only there — so the filter above would keep
+  // re-materializing an 'external' shadow for it on every pass. Two rows for one stay double-block
+  // the day (availability.ts counts 'external' as a blocker, and the adopted booking is one too).
+  // Uses the ACTIVE variant, not listAdoptedEventIds: a cancelled adoption must fall back to being
+  // an ordinary external blocker (see that function's docblock), or the day silently reads as
+  // available while the event still sits on the sitter's calendar.
+  const adoptedEventIds = await listActiveAdoptedEventIds(env.PAWSERVATION_DB, tenant.Id);
+  const foreign = live.filter(
+    (e) => !e.private.bookingId && e.id && !adoptedEventIds.has(e.id) && e.start && e.end,
+  );
   // `liveIds` covers EVERY foreign event Google reports, not just the ones materialized this pass
   // — deleteExternalEventsMissing must never be told an event is gone just because MATERIALIZE_LIMIT
   // deferred writing its row.

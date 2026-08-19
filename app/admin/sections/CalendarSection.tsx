@@ -12,7 +12,7 @@ import type { AdminBooking } from '../../shared-ui/api.js';
 import { IconCalendar, IconChevronLeft, IconChevronRight } from '../../shared-ui/icons';
 import type { Session, Settings } from '../shared.js';
 import { Hint } from '../Hint';
-import { PendingRequestsList } from './BookingsSection';
+import { PendingRequestsList, petNamesText } from './BookingsSection';
 
 /**
  * The sitter's month at a glance: time off as red-tinted bands, confirmed bookings as solid chips,
@@ -25,12 +25,6 @@ type DayEntry =
   | { kind: 'timeoff' }
   | { kind: 'booking'; booking: AdminBooking; label: string }
   | { kind: 'external'; label: string };
-
-/** Customer first name → email → 'Guest'. */
-function whoLabel(b: AdminBooking): string {
-  const first = b.customerName?.trim().split(/\s+/)[0];
-  return first || b.customerEmail || 'Guest';
-}
 
 function addEntry(map: Map<string, DayEntry[]>, date: string, entry: DayEntry): void {
   const list = map.get(date);
@@ -89,7 +83,7 @@ export function buildMonthEntries(
     paintDays(map, b.startDate, b.endDate, month, {
       kind: 'booking',
       booking: b,
-      label: `${whoLabel(b)} · ${labelFor(b.type)}`,
+      label: `${petNamesText(b)} · ${labelFor(b.type)}`,
     });
   }
   return map;

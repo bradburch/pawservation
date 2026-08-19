@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAuthUrl,
+  callbackUriFor,
   buildEventResource,
   buildUnavailableEventResource,
   CalendarAuthError,
@@ -17,14 +18,47 @@ import {
 const env = {
   GOOGLE_CLIENT_ID: 'cid',
   GOOGLE_CLIENT_SECRET: 'csecret',
-  GOOGLE_OAUTH_REDIRECT_URI: 'https://w/oauth/google/callback',
 } as unknown as Env;
+
+const REDIRECT = 'https://w/oauth/google/callback';
 
 describe('google-calendar', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  // The path literal exists in exactly one place so the authorize URL and the token exchange
+  // cannot drift; everything else about the URI comes from whichever host served the request.
+  it('callbackUriFor derives the callback from the request origin, ignoring path and query', () => {
+    expect(callbackUriFor('https://pawservation.com/api/x/admin/providers/calendar/oauth/start')) //
+      .toBe('https://pawservation.com/oauth/google/callback');
+    expect(callbackUriFor('http://localhost:8787/anything?a=b')).toBe(
+      'http://localhost:8787/oauth/google/callback',
+    );
+    expect(callbackUriFor('https://paws.example.workers.dev/')).toBe(
+      'https://paws.example.workers.dev/oauth/google/callback',
+    );
+  });
+
+  it('callbackUriFor canonicalizes a non-loopback host to https, even when reached over plain http', () => {
+    // Cloudflare's "Always Use HTTPS" is off by default and this worker sends no HSTS, so a
+    // dashboard CAN be reached over http://pawservation.com — and Google refuses an http redirect
+    // URI for any non-loopback host, so the scheme must be forced to https regardless of what the
+    // request actually arrived on.
+    expect(callbackUriFor('http://pawservation.com/admin/providers/calendar/oauth/start')).toBe(
+      'https://pawservation.com/oauth/google/callback',
+    );
+  });
+
+  it('callbackUriFor keeps http on loopback (both spellings), port included, so local dev still works', () => {
+    expect(callbackUriFor('http://localhost:8787/anything')).toBe(
+      'http://localhost:8787/oauth/google/callback',
+    );
+    expect(callbackUriFor('http://127.0.0.1:8787/anything')).toBe(
+      'http://127.0.0.1:8787/oauth/google/callback',
+    );
+  });
+
   it('buildAuthUrl carries scope, offline access, consent prompt, redirect + state', () => {
-    const url = new URL(buildAuthUrl(env, 'STATE123'));
+    const url = new URL(buildAuthUrl(env, 'STATE123', REDIRECT));
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
     const p = url.searchParams;
     expect(p.get('client_id')).toBe('cid');
@@ -50,11 +84,15 @@ describe('google-calendar', () => {
           { status: 200 },
         ),
       );
-    const set = await exchangeCode(env, 'auth-code');
+    const set = await exchangeCode(env, 'auth-code', REDIRECT);
     expect(set.accessToken).toBe('at');
     expect(set.refreshToken).toBe('rt');
     expect(new Date(set.expiresAt).getTime()).toBeGreaterThan(Date.now());
     expect(spy).toHaveBeenCalledWith('https://oauth2.googleapis.com/token', expect.anything());
+    // Google compares this against the authorize request's byte for byte, so it is passed in
+    // rather than read from config — the exchange must echo whatever the /start half sent.
+    const body = new URLSearchParams(String(spy.mock.calls[0][1]!.body));
+    expect(body.get('redirect_uri')).toBe(REDIRECT);
   });
 
   it('refreshAccessToken returns a new access token + expiry', async () => {
@@ -503,6 +541,7 @@ describe('google-calendar', () => {
       expect(events[0]).toEqual({
         id: 'evt_a',
         summary: 'Dog boarding',
+        description: '',
         start: '2030-06-01',
         end: '2030-06-04',
         allDay: true,
@@ -514,6 +553,7 @@ describe('google-calendar', () => {
       expect(events[1]).toEqual({
         id: 'evt_b',
         summary: 'Walk',
+        description: '',
         start: '2030-06-05',
         end: '2030-06-05',
         allDay: false,
@@ -533,7 +573,38 @@ describe('google-calendar', () => {
 
       const events = await listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z');
       expect(events[0].summary).toBe('');
+      expect(events[0].description).toBe('');
       expect(events[0].private).toEqual({});
+    });
+
+    it('carries a structured description through verbatim', async () => {
+      // The real shape a production sitter's events carry — see calendar-backfill.ts, which reads
+      // structured `Key: value` lines out of this field.
+      const description =
+        'Owner: Lauren Kotin, Ian Fisher\n' +
+        'Owner ID: aaefb00f-c993-4de1-8d44-b335ecc3adb4, 47da31e8-8cd4-4198-bebc-cddaf7cd01de\n' +
+        'Cost: 40\n' +
+        'Booking: walk\n' +
+        'v: 1';
+      const fakeBody = {
+        items: [
+          {
+            id: 'evt_desc',
+            summary: 'Sadie Walk',
+            description,
+            status: 'confirmed',
+            updated: '2030-05-01T00:00:00Z',
+            start: { date: '2030-06-01' },
+            end: { date: '2030-06-02' },
+          },
+        ],
+      };
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify(fakeBody), { status: 200 }),
+      );
+
+      const events = await listCalendarEvents('AT', 'primary', '2030-06-01Z', '2030-07-01Z');
+      expect(events[0].description).toBe(description);
     });
 
     it('sends the correct query parameters and Authorization header', async () => {

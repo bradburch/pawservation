@@ -1,7 +1,12 @@
 /** Tiny same-origin API client for the widget + admin pages. */
 
 export { PAYMENT_METHODS } from '../../src/shared/index.js';
-import type { ServiceConstraints, ServiceOption, ServiceQuestion } from '../../src/shared/index.js';
+import type {
+  PaymentMethod,
+  ServiceConstraints,
+  ServiceOption,
+  ServiceQuestion,
+} from '../../src/shared/index.js';
 
 // Re-exported as-is: the widget/admin config wire format is field-for-field the shared shape —
 // see src/shared/booking/service-rules.ts for the single definition.
@@ -33,6 +38,9 @@ export type TenantConfig = {
   petTypes: { slug: string; label: string }[]; // the FULL pet-type registry — serves as the label map; offered types derive per service
   services: ServiceConfig[];
   disabled: boolean;
+  // Published verbatim from `/config` (server/routes/public.ts) — presence/absence only. This
+  // repo interprets none of it beyond reading these fields; see ServicesSection's premium embed.
+  premium?: { assistant?: boolean; chat?: boolean; mcp?: boolean; origin?: string | null };
 };
 
 export type Pet = {
@@ -203,6 +211,11 @@ export type AdminBooking = {
   external: boolean;
   /** The Google event's title, for calendar display. Null unless external. */
   externalSummary: string | null;
+  /** True for a booking adopted from the sitter's own calendar (`Source = 'calendar-backfill'`).
+   *  Its `estCost` was priced from TODAY's rate card for a stay that may predate it — an estimate,
+   *  not a figure any client saw or agreed to — so the UI must label it as one and offer the
+   *  correction PATCH (`adminApi.bookings.updateCost`), which only these rows accept. */
+  isBackfilled: boolean;
   /** Intake answers keyed by question id; {} when the customer answered nothing. */
   answers: Record<string, string>;
   estCost: number | null;
@@ -254,6 +267,250 @@ export type VenmoImportResult = {
   imported: number;
   totalAmount: number;
   skipped: { txnId: string; reason: string }[];
+};
+
+/** The generic mapped-CSV importer's sibling of the Venmo types above — hand-mirrors
+ *  server/lib/payment-csv.ts, which owns every shape here. */
+export type CsvShape = { headers: string[]; sample: string[][]; dataRowCount: number };
+
+/** Which column (0-indexed, against the file's own header row) holds each field — matches
+ *  server/lib/payment-csv.ts's `ColumnMapping` field-for-field. */
+export type CsvColumnMapping = {
+  date: number;
+  amount: number;
+  payer: number;
+  method?: number;
+  reference?: number;
+  note?: number;
+};
+
+export type CsvPreviewRow = {
+  dedupeKey: string;
+  row: number;
+  date: string;
+  amount: number;
+  payer: string;
+  method: PaymentMethod;
+  reference: string | null;
+  note: string;
+};
+export type CsvPreview = {
+  matched: (CsvPreviewRow & {
+    endUserId: string;
+    clientLabel: string;
+    accountId: string;
+  })[];
+  unmatched: (CsvPreviewRow & { reason: string })[];
+  alreadyImported: CsvPreviewRow[];
+  problems: { row: number; reason: string }[];
+  /** Every household of this tenant a payment may be filed against, so the sitter can place a row
+   *  the matcher couldn't. The same list the import route validates their choice against. */
+  households: { accountId: string; label: string }[];
+};
+export type CsvImportResult = {
+  imported: number;
+  totalAmount: number;
+  skipped: { dedupeKey: string; reason: string }[];
+};
+
+/** Why one calendar event couldn't be adopted outright — hand-mirrors server/lib/calendar-
+ *  backfill.ts's `FlagReason`. `unpriced-set` is kept for type parity with the server's closed
+ *  union, but the classifier no longer produces it as a flag (an unpriced-but-otherwise-resolved
+ *  event is `needs-price` below instead); the panel still gives it a heading rather than assume. */
+export type BackfillFlagReason =
+  'no-pets' | 'ambiguous-pet' | 'multiple-households' | 'unknown-service' | 'unpriced-set';
+
+/** Fully resolved AND priced — everything `insertBackfilledBooking` needs, off today's rate card.
+ *  `estCost` is an ESTIMATE (see `AdminBooking.isBackfilled`), which is why the import route lets
+ *  the sitter override it with their own figure before adopting. */
+export type BackfillAdoptRow = {
+  kind: 'adopt';
+  eventId: string;
+  summary: string;
+  startDate: string;
+  endDate: string | null;
+  endUserId: string;
+  serviceType: string;
+  optionKey: string;
+  petIds: string[];
+  /** Aligned with `petIds` — resolved server-side, never guessed from `summary`. */
+  petNames: string[];
+  estCost: number;
+  cancelled: boolean;
+};
+
+/** Same as `BackfillAdoptRow` but for a rate the sitter's card has never priced — `priced: false`,
+ *  the free product's own "available but not priced" outcome (CLAUDE.md's unpriced-pet-set trap).
+ *  Deliberately carries NO cost field at all: never `estCost: null`, never a guessed `0`. Adoptable
+ *  the moment the sitter types a price on it. */
+export type BackfillNeedsPriceRow = {
+  kind: 'needs-price';
+  eventId: string;
+  summary: string;
+  startDate: string;
+  endDate: string | null;
+  endUserId: string;
+  serviceType: string;
+  optionKey: string;
+  petIds: string[];
+  /** Aligned with `petIds` — resolved server-side, never guessed from `summary`. */
+  petNames: string[];
+  cancelled: boolean;
+};
+
+export type BackfillFlagRow = {
+  kind: 'flag';
+  eventId: string;
+  summary: string;
+  startDate: string;
+  reason: BackfillFlagReason;
+  detail: string;
+};
+
+/** Already on Pawservation (`pawservation-own`) or adopted in an earlier import
+ *  (`already-adopted`) — carries its own eventId, like every other row kind, so a caller resuming
+ *  a preview across passes can de-duplicate the shared boundary date instead of a naive per-pass
+ *  count double-counting whatever landed on it. */
+export type BackfillSkipRow = {
+  kind: 'skip';
+  eventId: string;
+  why: 'pawservation-own' | 'already-adopted';
+};
+
+export type BackfillPreview = {
+  adopt: BackfillAdoptRow[];
+  needsPrice: BackfillNeedsPriceRow[];
+  flags: BackfillFlagRow[];
+  skipped: BackfillSkipRow[];
+  /** Date to resume from when this pass didn't cover the whole requested range (more events than
+   *  the server's per-pass cap) — null once the range is fully covered. Deliberately the LAST
+   *  classified event's own start date, not the day after it: see the route's own comment for why
+   *  that's the only boundary that can't skip an event. */
+  nextFrom: string | null;
+  /** How many events in the requested range this pass did not classify — 0 once nextFrom is null. */
+  remaining: number;
+};
+
+export type BackfillImportResult = {
+  imported: number;
+  skipped: { eventId: string; reason: string }[];
+};
+
+/** One booking a credit could land on — hand-mirrors the `splits`/`bookings` row shape both
+ *  `server/routes/admin.ts` attribution routes emit: static booking facts plus its OWN live
+ *  outstanding, computed at preview time (`server/lib/payment-attribution.ts`'s `UnpaidBooking`
+ *  under a different name). `outstanding` is a snapshot for display only — `apply` re-reads it
+ *  live and refuses a split that no longer fits.
+ *
+ *  Deliberately NOT decremented by any other credit proposed in the same preview response: a
+ *  household can have several unattached credits, and the preview route simulates applying them
+ *  in sequence to decide what to propose for each — but that sequenced figure is only true if the
+ *  sitter applies the whole batch exactly as proposed. This field is always the booking's true
+ *  current outstanding, so a sitter who edits or excludes a credit (e.g. raises a later split to
+ *  settle the booking outright) isn't capped against a number that was never really live. Two
+ *  splits on the same booking, from two different credits in the same preview, can therefore both
+ *  legitimately show the same `outstanding` — over-attributing across them is caught server-side
+ *  by `applyAttribution` re-reading live state per attribution, not prevented here. */
+export type AttributionCandidateBooking = {
+  bookingId: string;
+  serviceType: string;
+  startDate: string;
+  // `null` means a single-day service (a walk); a range service (a stay) carries its own
+  // checkout date here — the whole interval `proposeAttribution` measures proximity against.
+  endDate: string | null;
+  status: string;
+  outstanding: number;
+};
+
+/** A resolved split, as `preview` proposed it — `proposeAttribution`'s own `Split` plus the
+ *  static booking facts the route joins in for display. */
+export type AttributionProposalSplit = AttributionCandidateBooking & { amount: number };
+
+/** One credit `proposeAttribution` could place unambiguously against this household's unpaid
+ *  bookings. `remainder` is what's left of `amount` after every split — never negative, never
+ *  computed here (see `payment-attribution.ts`'s conservation invariant). */
+export type AttributionProposal = {
+  accountId: string;
+  paymentId: string;
+  amount: number;
+  paidDate: string;
+  splits: AttributionProposalSplit[];
+  remainder: number;
+};
+
+/** A credit `proposeAttribution` refused to place — `reason` is the closed union the pure
+ *  proposer returns (see `payment-attribution.ts`'s `Proposal`); `detail` is the sitter-facing
+ *  sentence, written to be shown verbatim (for a sequencing-skipped credit the route writes it
+ *  itself; see below).
+ *
+ *  `bookings` MEANS ONE THING on every reason that carries it: the candidates this credit could
+ *  still be placed on, each with its LIVE outstanding — never a sequenced figure. It is non-empty
+ *  for exactly two reasons:
+ *
+ *  - `'ambiguous'` — every live-outstanding stay of the household, NOT only the tied pair. The tie
+ *    is what the proposer refused to break, but the sitter may know the money belonged to a stay
+ *    that was never in the tie at all, so the whole set is offered.
+ *  - `'no-unpaid-bookings'` WHEN the household still has stays with live outstanding, i.e. the
+ *    preview's closest-pair sequencing handed them all to a nearer credit. Without the
+ *    list this credit would be unplaceable, which is automatic-with-no-override — the guess the
+ *    design rejects. With it, the sitter places this one; the panel sends her own picks ahead of
+ *    the pre-ticked proposals, so hers wins the stay and the earlier guess is the one refused.
+ *  - `'no-recent-booking'` — no stay falls inside the payment's proximity windows
+ *    (`MAX_LATE_PAYMENT_DAYS` behind it, the tighter `MAX_PREPAYMENT_DAYS` ahead of it;
+ *    server/lib/payment-attribution.ts), so date proximity has nothing to say about which stay it
+ *    paid for. The candidates are still offered for the same reason: the floor removes the
+ *    automatic guess, not the sitter's ability to attribute.
+ *
+ *  Empty for everything else, and the emptiness is load-bearing: `'no-unpaid-bookings'` with no
+ *  bookings is a household with genuinely nothing outstanding — inert, and summarised rather than
+ *  made interactive (772 of 821 credits on the live tenant). `'invalid-date'`, `'invalid-amount'`
+ *  and `'duplicate-booking-id'` are faults in the credit's or household's own data: the stay may
+ *  exist, but this credit cannot be placed on it until the record is fixed. */
+export type AttributionUnresolved = {
+  accountId: string;
+  paymentId: string;
+  amount: number;
+  paidDate: string;
+  reason:
+    | 'no-unpaid-bookings'
+    | 'no-recent-booking'
+    | 'ambiguous'
+    | 'invalid-date'
+    | 'invalid-amount'
+    | 'duplicate-booking-id';
+  detail: string;
+  bookings: AttributionCandidateBooking[];
+};
+
+export type AttributionPreview = {
+  proposals: AttributionProposal[];
+  unresolved: AttributionUnresolved[];
+};
+
+/** One attribution the sitter approved, as `apply` wants it — see the route's doc comment: every
+ *  figure here is re-derived and re-checked against LIVE state server-side, this is only what to
+ *  attempt. */
+export type AttributionInput = {
+  paymentId: string;
+  accountId: string;
+  splits: { bookingId: string; amount: number }[];
+  remainder: number;
+  /**
+   * Part of this payment the client meant as thanks rather than as settlement — recorded server-
+   * side as a `BookingCharges` row labelled "Tip" on the named booking, which must be one THIS
+   * attribution's own `splits` name. Without it the excess becomes `remainder`, an account-level
+   * credit, which says the sitter OWES the money back and then reappears in every future preview.
+   *
+   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is `sum(splits) + tip + remainder === amount`,
+   * and the server writes `split + tip` against the booking (`applyAttribution`, server/db/repo.ts).
+   * Sending an already-inclusive split fails conservation rather than paying the tip twice.
+   */
+  tip?: { bookingId: string; amount: number };
+};
+
+export type AttributionApplyResult = {
+  applied: number;
+  skipped: { paymentId: string; reason: string }[];
 };
 
 export type AnalyticsPayload = {
@@ -357,6 +614,8 @@ export type HouseholdDetail = {
     bookingId: string;
     serviceType: string;
     startDate: string;
+    /** Exclusive checkout for a range-shaped stay; NULL for a single-day service. */
+    endDate: string | null;
     status: string;
     cost: number;
     charges: { id: string; label: string; amount: number }[];
@@ -741,6 +1000,62 @@ export const adminApi = {
         headers: { ...jsonHeaders, ...authHeaders(token) },
         body: JSON.stringify({ csv, choices }),
       }),
+    csvColumns: (slug: string, token: string, csv: string) =>
+      request<CsvShape>(`/api/${slug}/admin/payments/csv/columns`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv }),
+      }),
+    csvPreview: (
+      slug: string,
+      token: string,
+      csv: string,
+      mapping: CsvColumnMapping,
+      defaultMethod: PaymentMethod,
+    ) =>
+      request<CsvPreview>(`/api/${slug}/admin/payments/csv/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, mapping, defaultMethod }),
+      }),
+    csvImport: (
+      slug: string,
+      token: string,
+      csv: string,
+      mapping: CsvColumnMapping,
+      defaultMethod: PaymentMethod,
+      choices: { dedupeKey: string; accountId: string }[],
+    ) =>
+      request<CsvImportResult>(`/api/${slug}/admin/payments/csv/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ csv, mapping, defaultMethod, choices }),
+      }),
+    /**
+     * Read-only: how every unapplied account-level credit of the tenant WOULD settle against its
+     * household's unpaid bookings, per `proposeAttribution`. Writes nothing — `accountId` is
+     * accepted for completeness (a single-household preview) but the panel always previews every
+     * household, matching the CSV/calendar importers' "show everything, let the sitter choose"
+     * shape.
+     */
+    attributePreview: (slug: string, token: string, accountId?: string) =>
+      request<AttributionPreview>(`/api/${slug}/admin/payments/attribute/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify(accountId === undefined ? {} : { accountId }),
+      }),
+    /**
+     * The write. The browser names only WHICH payment goes on which booking(s) and in what
+     * amounts — every figure is re-derived and re-checked against live state server-side (see the
+     * route's own doc comment in `server/routes/admin.ts`), and a per-item refusal comes back in
+     * `skipped`, never as a thrown error for the whole batch.
+     */
+    attributeApply: (slug: string, token: string, attributions: AttributionInput[]) =>
+      request<AttributionApplyResult>(`/api/${slug}/admin/payments/attribute/apply`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ attributions }),
+      }),
   },
   households: {
     /** The bookings, charges and payments behind one household balance (Story 2.4). */
@@ -810,6 +1125,44 @@ export const adminApi = {
           }),
         },
       ),
+    /**
+     * Correct the price on a booking ADOPTED from the calendar (`isBackfilled`) — its `estCost`
+     * was invented from today's rate card, never a figure any client agreed to. Whole dollars
+     * only; the server 404s for anything that isn't `Source = 'calendar-backfill'`.
+     */
+    updateCost: (slug: string, token: string, id: string, estCost: number) =>
+      request<{ estCost: number }>(`/api/${slug}/admin/bookings/${id}/cost`, {
+        method: 'PATCH',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ estCost }),
+      }),
+  },
+  /**
+   * Read-only adoption of a sitter's existing Google Calendar events as bookings
+   * (docs/superpowers/specs/2026-08-09-calendar-backfill-design.md). `preview` writes nothing —
+   * every event is re-read and classified fresh; `import` re-derives the same classification
+   * server-side and only ever trusts the browser for WHICH event ids to adopt and, optionally,
+   * the sitter's own price for each.
+   */
+  calendarBackfill: {
+    preview: (slug: string, token: string, from: string, to: string) =>
+      request<BackfillPreview>(`/api/${slug}/admin/calendar/backfill/preview`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ from, to }),
+      }),
+    import: (
+      slug: string,
+      token: string,
+      from: string,
+      to: string,
+      events: { eventId: string; estCost?: number }[],
+    ) =>
+      request<BackfillImportResult>(`/api/${slug}/admin/calendar/backfill/import`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ from, to, events }),
+      }),
   },
   calendar: {
     start: (slug: string, token: string) =>
