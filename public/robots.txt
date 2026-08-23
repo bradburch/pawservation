@@ -1,0 +1,11 @@
+# Everything under / is a marketing page and should be indexed.
+#
+# The app surfaces are kept out of search by a `<meta name="robots" content="noindex">` in their
+# own HTML (admin.html, setup.html) rather than by a Disallow here — a disallowed page is never
+# fetched, so its noindex is never read, and Google will still index a bare URL it finds linked
+# from the landing page. Only /api/ is disallowed, because JSON carries no meta tag to say it.
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://pawservation.com/sitemap.xml
