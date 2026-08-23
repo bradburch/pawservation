@@ -66,6 +66,51 @@ describe('SEO surface', () => {
     },
   );
 
+  it('never declares a large-image card without an image to fill it', async () => {
+    const { env } = createTestEnv();
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms']) {
+      const body = await (await app.request(path, {}, env)).text();
+      // The pair has to agree. `summary_large_image` crops to roughly 1.91:1, and the only
+      // candidate image this repo owns is a 932x1990 portrait screenshot — declaring it would
+      // unfurl every shared link as an unreadable sliver. Ship a real 1200x630 image and both
+      // tags change together; until then neither exists.
+      const large = body.includes('content="summary_large_image"');
+      expect(body.includes('og:image'), path).toBe(large);
+    }
+  });
+
+  it('keeps the transactional invite pages out of search', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/request-invite/thanks', {}, env)).text();
+    expect(body).toContain('<meta name="robots" content="noindex" />');
+    // GET /request-invite is a redirect into the homepage form, not a second copy of it.
+    const redirect = await app.request('/request-invite', {}, env);
+    expect(redirect.status).toBe(302);
+  });
+
+  it('titles each embed page with its own business, escaping the name', async () => {
+    const { env } = createTestEnv({
+      html: '<!doctype html><html><head><title>Book with us</title></head><body></body></html>',
+    });
+    const plain = await (await app.request('/embed/sunny-paws', {}, env)).text();
+    // The built page ships a generic "Book with us" for every tenant — the one string a crawler
+    // and a browser tab show, on the page that already carries LocalBusiness JSON-LD.
+    expect(plain).toContain('<title>Book with Sunny Paws</title>');
+    expect(plain).not.toContain('<title>Book with us</title>');
+
+    // A second env, because the first request cached the tenant row in KV — the rename has to be
+    // in place before anything resolves that slug.
+    const renamed = createTestEnv({
+      html: '<!doctype html><html><head><title>Book with us</title></head><body></body></html>',
+    });
+    renamed.raw.exec(
+      `UPDATE Tenants SET DisplayName='Paws <b>&amp; </b>Co' WHERE Slug='sunny-paws';`,
+    );
+    const nasty = await (await app.request('/embed/sunny-paws', {}, renamed.env)).text();
+    // Tenant-controlled: it may not open a tag or close the title early.
+    expect(nasty).toContain('<title>Book with Paws &lt;b&gt;&amp;amp; &lt;/b&gt;Co</title>');
+  });
+
   it('names the services people search for on the landing page itself', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();

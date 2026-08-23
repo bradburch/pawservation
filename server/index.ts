@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { listServiceOptions, listServices } from './db/repo';
 import { runCalendarSweep } from './lib/calendar-cron';
-import { BRAND_ORIGIN } from './lib/email';
+import { BRAND_ORIGIN, htmlEscape } from './lib/email';
 import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
 import { renderInviteForm } from './lib/invite-form';
 import { requestContext } from './lib/log';
@@ -116,8 +116,17 @@ app.get('/embed/:slug', async (c) => {
   if (!tenant || tenant.DisabledAt) return new Response(res.body, res);
   const html = await res.text();
   const ldScript = buildJsonLdScript(tenant, new URL(c.req.url).origin);
+  // The built embed.html ships the generic `Book with us`, so every tenant's page carried the same
+  // title — the one string a crawler or a browser tab shows, on the one page that already goes out
+  // of its way to be machine-readable (JSON-LD above, llms.txt beside it). DisplayName is
+  // tenant-controlled, so it is HTML-escaped; the replace is anchored on the exact built title, so
+  // a Vite build that changes it leaves the generic one standing rather than corrupting the head.
+  const titled = html.replace(
+    '<title>Book with us</title>',
+    () => `<title>Book with ${htmlEscape(tenant.DisplayName)}</title>`,
+  );
   return new Response(
-    html.replace('</head>', () => `${ldScript}</head>`),
+    titled.replace('</head>', () => `${ldScript}</head>`),
     res,
   );
 });
@@ -158,6 +167,14 @@ const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
  * Deliberately NO JSON-LD: these pages are script-free under LOCKED_CSP (a rule with its own test),
  * and SoftwareApplication markup earns no rich result to trade that for. The per-tenant embed page
  * is where structured data lives (server/lib/llms.ts).
+ *
+ * Deliberately NO `og:image` either, which is why the card is `summary` and not
+ * `summary_large_image`. The only images this repo owns are the landing screenshots, and the
+ * closest one (`widget-hero.webp`) is 932x1990 — a portrait strip. A large-image card crops to
+ * roughly 1.91:1, so declaring it would render every shared link as an unreadable sliver of a
+ * calendar, and WebP is not accepted by every unfurler in the first place. A text-only card is
+ * what an absent image degrades to, and it is not broken. Add a real 1200x630 PNG and both tags
+ * together, or neither: an og:image is worth nothing to search ranking on its own.
  */
 function pageHead(path: string, title: string, description: string): string {
   return `<title>${title}</title>
@@ -168,8 +185,7 @@ function pageHead(path: string, title: string, description: string): string {
     <meta property="og:title" content="${title}" />
     <meta property="og:description" content="${description}" />
     <meta property="og:url" content="${BRAND_ORIGIN}${path}" />
-    <meta property="og:image" content="${BRAND_ORIGIN}/img/landing/widget-hero.webp" />
-    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:card" content="summary" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />`;
