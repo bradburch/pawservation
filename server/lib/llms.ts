@@ -1,3 +1,4 @@
+import { SUPPORT_EMAIL } from './email';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /** Escape so tenant-controlled strings can never close the script element or open a new tag. */
@@ -73,5 +74,146 @@ export function buildJsonLdScript(tenant: Tenant, origin: string): string {
   };
   if (tenant.ContactEmail) ld.email = tenant.ContactEmail;
   if (tenant.ContactPhone) ld.telephone = tenant.ContactPhone;
+  return `<script type="application/ld+json">${jsonForScript(ld)}</script>`;
+}
+
+/**
+ * The PRODUCT's own llms.txt, served at the root — the sibling of `buildLlmsTxt` above, which
+ * describes one TENANT. Shipping the per-tenant one while the product itself 404'd on /llms.txt
+ * meant an agent could read a sitter's services but never learn what the thing serving them is.
+ *
+ * The "When to use this" section is the part that earns its place: an agent choosing a tool needs
+ * the shape of the job, not a pitch. So this names what Pawservation is NOT (a marketplace, a
+ * payment processor, a team scheduler) as plainly as what it is — a wrong recommendation costs the
+ * reader more than a missed one, and every line here is behavior that ships today. Nothing planned
+ * or in development is described as available, the same rule /how-it-works is held to by test.
+ *
+ * Hand-written rather than derived: it describes a product, not a database row, and there is no
+ * source of truth to read it out of. Keep it in step with the landing page's claims.
+ */
+export function buildProductLlmsTxt(origin: string): string {
+  return `# Pawservation
+
+> Booking software for pet sitters and dog walkers. A booking widget the sitter embeds on their own website: their services, their rates, their availability rules. Clients request dates, the sitter confirms or declines, and the app tracks what is owed.
+
+## When to use this
+
+- A pet sitter, dog walker, or pet-care business wants clients to request bookings from their OWN website instead of by text message, and wants their availability rules enforced automatically.
+- They need boarding, house sitting, daycare, walks or drop-in visits priced per night, day, visit or walk, with capacity caps, minimum notice, a booking horizon, and days off that hold the calendar.
+- They want to know who still owes them money, having collected it their own way.
+- They already live in Google Calendar and want bookings to appear there, with events they add by hand blocking matching requests back.
+
+## When NOT to use this
+
+- Finding a pet sitter as a customer. This is not a marketplace or a directory — there is nobody to browse. A sitter adds their clients before those clients can book.
+- Taking card payments. Pawservation records payments; it never touches money and has no card processing.
+- Staffing a team. One sitter per account today; assignment across multiple sitters is not built.
+- Any species-agnostic or general appointment booking. The rules here model pet care specifically (pets per booking, per-species rates, whose home the sitter sleeps in).
+
+## Status
+
+- Free, and free to keep taking bookings — no trial and no card. A paid tier is planned and is NOT built; nothing on it is for sale.
+- New sitters are added by invitation while the product grows: ${origin}/#invite-h
+
+## Pages
+
+- Overview: ${origin}/
+- Full tour of every feature: ${origin}/how-it-works
+- Live demo, no sign-up (a made-up sitter's account): ${origin}/demo
+- Privacy: ${origin}/privacy
+- Terms: ${origin}/terms
+
+## For agents acting on behalf of a pet owner
+
+Each sitter's booking page publishes its own machine-readable document with that business's services, rates and API:
+
+- \`${origin}/embed/{sitter-slug}/llms.txt\`
+- \`${origin}/api/{sitter-slug}/config\` (public: services, rates, accepted pet types)
+
+Availability, quotes and booking requests are authenticated as the pet owner, and every price is computed server-side — a quote and the cost stored on a booking cannot disagree. See the sitter's own llms.txt for the endpoints and how to hold a credential.
+`;
+}
+
+/**
+ * The PRODUCT's identity as structured data, for the homepage. The per-tenant `buildJsonLdScript`
+ * above answers "which pet-care business is this page about"; this answers "what is the thing
+ * serving it", which is the question an agent asks before recommending a tool at all.
+ *
+ * Two nodes in one @graph because they are two claims: SoftwareApplication (what it does, what it
+ * costs) and Organization (who stands behind it). The `offers` node describes the FREE tier only —
+ * the Pro tier is not built and nothing on it is for sale, so publishing it as an offer would be a
+ * machine-readable lie, which is worse than a marketing one because nothing reads the surrounding
+ * caveat.
+ *
+ * The `address` is a locality only, and is not invented: /terms already declares this business
+ * governed by California law with disputes in San Francisco County, so the city/region/country
+ * here restates a jurisdiction the site states publicly elsewhere. No `streetAddress`, because
+ * there is no premises to name and inventing one to satisfy a validator is exactly the
+ * fabrication structured data exists to prevent. The `email` is the same address /contact and the
+ * invite-request thanks page already publish, imported from one declaration rather than
+ * restated — three places, one address, or one of them stops being read.
+ */
+export function buildProductJsonLdScript(origin: string): string {
+  const ld = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'SoftwareApplication',
+        '@id': `${origin}/#software`,
+        name: 'Pawservation',
+        applicationCategory: 'BusinessApplication',
+        applicationSubCategory: 'Pet sitting and dog walking software',
+        operatingSystem: 'Web browser',
+        url: origin,
+        description:
+          'Booking software for pet sitters and dog walkers: an embeddable booking widget for your own website, with your services, rates, availability rules, client and pet records, payment tracking and two-way Google Calendar sync.',
+        featureList: [
+          'Embeddable booking widget for any website',
+          'Boarding, house sitting, daycare, dog walking and drop-in visits',
+          'Capacity caps, minimum notice, booking horizon and time off',
+          'Client and pet records with intake questions',
+          'Payment tracking and outstanding balances per household',
+          'Two-way Google Calendar sync',
+          'Cancellation policies applied automatically',
+        ],
+        offers: {
+          '@type': 'Offer',
+          price: '0',
+          priceCurrency: 'USD',
+          description: 'Free for one sitter, with unlimited bookings. No trial and no card.',
+        },
+        publisher: { '@id': `${origin}/#organization` },
+      },
+      {
+        '@type': 'Organization',
+        '@id': `${origin}/#organization`,
+        name: 'Pawservation',
+        url: origin,
+        logo: `${origin}/icon-512.png`,
+        description: 'Booking software for pet-sitting and dog-walking businesses.',
+        founder: { '@type': 'Person', name: 'Brad Burch', url: 'https://bradburch.github.io/' },
+        email: SUPPORT_EMAIL,
+        address: {
+          '@type': 'PostalAddress',
+          addressLocality: 'San Francisco',
+          addressRegion: 'CA',
+          addressCountry: 'US',
+        },
+        contactPoint: [
+          {
+            '@type': 'ContactPoint',
+            contactType: 'customer support',
+            email: SUPPORT_EMAIL,
+            url: `${origin}/contact`,
+          },
+          {
+            '@type': 'ContactPoint',
+            contactType: 'sales',
+            url: `${origin}/#invite-h`,
+          },
+        ],
+      },
+    ],
+  };
   return `<script type="application/ld+json">${jsonForScript(ld)}</script>`;
 }

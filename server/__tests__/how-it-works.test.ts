@@ -340,7 +340,12 @@ describe('the landing page claims only what ships', () => {
     const { env } = createTestEnv();
     const res = await app.request('/', {}, env);
     const body = await res.text();
-    expect(body).not.toContain('<script');
+    // The homepage's identity graph is an inert `application/ld+json` DATA block: `ld+json` is not
+    // a script type, so the browser never executes it and CSP never evaluates it — the same
+    // exemption the embed page's LocalBusiness block relies on. What LOCKED_CSP protects against is
+    // EXECUTABLE script, so pin that: every script tag on the page must be the data block, and the
+    // assertion fails the moment a real one appears.
+    expect(body.match(/<script[^>]*>/g)).toEqual(['<script type="application/ld+json">']);
     expect(body).toContain('&lt;script');
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
     expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");

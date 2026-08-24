@@ -38,6 +38,19 @@ export function htmlEscape(value: string): string {
 export const BRAND_ORIGIN = 'https://pawservation.com';
 
 /**
+ * The published contact address, declared beside BRAND_ORIGIN for the same reason it is: several
+ * modules state it (the /contact page, the homepage Organization graph, the invite-request thanks
+ * page's fallback link) and two different "contact us" addresses is how one of them stops being
+ * read. Deliberately a ROLE address rather than a person's: it is printed on a public page and in
+ * machine-readable structured data, so it must survive whoever happens to answer it.
+ *
+ * Distinct from OWNER_EMAILS, which is the owner-console AUTH allowlist. The two were briefly
+ * conflated here — the thanks page's fallback was a login identity being used as a public contact
+ * — and they answer different questions: who may sign in, versus where the public writes.
+ */
+export const SUPPORT_EMAIL = 'hello@pawservation.com';
+
+/**
  * The brand lockup — the calendar mark plus the Boogaloo wordmark, i.e. exactly what the site's
  * header renders (`server/index.ts`'s `.logo`) — as a PNG, served off the assets layer. Rendered
  * at 3x for retina inboxes from the site's own source of truth; regenerate it whenever the SVG

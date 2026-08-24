@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SUPPORT_EMAIL } from '../lib/email';
 import app from '../index';
 import { createTestEnv, OWNER_EMAIL } from './helpers';
 
@@ -374,7 +375,7 @@ describe('GET /request-invite/thanks', () => {
     env.OWNER_EMAILS = '';
     const res = await app.request('/request-invite/thanks?fallback=1', {}, env);
     const html = await res.text();
-    expect(html).toContain('href="mailto:bradburch@duck.com?subject=Pawservation%20invite"');
+    expect(html).toContain(`href="mailto:${SUPPORT_EMAIL}?subject=Pawservation%20invite"`);
   });
 });
 
