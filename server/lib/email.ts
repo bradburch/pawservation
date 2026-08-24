@@ -35,7 +35,7 @@ export function htmlEscape(value: string): string {
  * incoming URL the way `sendSitterInvite` does for its setup link. Declared once here and reused
  * for the logo and the how-it-works links so the two can never point at different hosts.
  */
-const BRAND_ORIGIN = 'https://pawservation.com';
+export const BRAND_ORIGIN = 'https://pawservation.com';
 
 /**
  * The brand lockup — the calendar mark plus the Boogaloo wordmark, i.e. exactly what the site's

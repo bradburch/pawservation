@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { listServiceOptions, listServices } from './db/repo';
 import { runCalendarSweep } from './lib/calendar-cron';
+import { BRAND_ORIGIN, htmlEscape } from './lib/email';
 import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
 import { renderInviteForm } from './lib/invite-form';
 import { requestContext } from './lib/log';
@@ -57,6 +58,15 @@ app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (c.req.path.startsWith('/api/')) {
+    // Keep raw JSON out of the search index — the same "noindex, never Disallow" rule
+    // public/robots.txt applies to the signed-in pages, reaching JSON the only way it can. A
+    // Disallow here would ALSO stop Googlebot fetching /api/:slug/config while rendering
+    // /embed/:slug, and that page is a client-rendered widget: app/embed/App.tsx returns
+    // `Loading…` until config arrives, so every tenant's booking page would index as that one
+    // word. The header suppresses the API's own URLs without touching the render.
+    c.header('X-Robots-Tag', 'noindex');
+  }
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', EMBEDDABLE_CSP);
   } else {
@@ -115,8 +125,24 @@ app.get('/embed/:slug', async (c) => {
   if (!tenant || tenant.DisabledAt) return new Response(res.body, res);
   const html = await res.text();
   const ldScript = buildJsonLdScript(tenant, new URL(c.req.url).origin);
+  // The built embed.html ships the generic `Book with us`, so every tenant's page carried the same
+  // title — the one string a crawler or a browser tab shows, on the one page that already goes out
+  // of its way to be machine-readable (JSON-LD above, llms.txt beside it). DisplayName is
+  // tenant-controlled, so it is HTML-escaped; the replace is anchored on the exact built title, so
+  // a Vite build that changes it leaves the generic one standing rather than corrupting the head.
+  const titled = html.replace(
+    '<title>Book with us</title>',
+    () => `<title>Book with ${htmlEscape(tenant.DisplayName)}</title>`,
+  );
+  // Same multi-host dedup `pageHead` explains, and this page needs it MORE than the marketing
+  // pages do: nothing disallows the workers.dev copy, so a crawler that finds one indexes a second
+  // copy of the tenant's page. Pinned to BRAND_ORIGIN, while the JSON-LD above deliberately keeps
+  // the REQUEST origin — the two answer different questions. Canonical says which copy to index;
+  // the JSON-LD `url` (like llms.txt's endpoints) is a live address an agent will actually call,
+  // and must keep working for whichever host it arrived on.
+  const canonical = `<link rel="canonical" href="${BRAND_ORIGIN}/embed/${encodeURIComponent(tenant.Slug)}" />`;
   return new Response(
-    html.replace('</head>', () => `${ldScript}</head>`),
+    titled.replace('</head>', () => `${canonical}${ldScript}</head>`),
     res,
   );
 });
@@ -139,6 +165,49 @@ app.get('/setup.html', page('setup.html'));
 const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
 
 /**
+ * The <head> tags every worker-served marketing page shares, so a page's own file carries only
+ * what differs: its title and its one-sentence description.
+ *
+ * `rel="canonical"` is ABSOLUTE and pinned to BRAND_ORIGIN on purpose. This worker answers on
+ * several hosts (the pawservation.com custom domain, workers.dev under `workers_dev: true`, and a
+ * fresh preview URL per `wrangler versions upload`), and without a canonical a crawler indexes the
+ * same page once per host and splits its ranking across the copies. Same reasoning as
+ * `callbackUriFor`'s, arriving at the opposite answer: OAuth needs the host the request actually
+ * came in on, search needs the one host the page should be found under.
+ *
+ * Title and description are the two strings a search result is BUILT from, so they carry the words
+ * a sitter actually types ("pet sitting software", "dog walking") rather than the in-house framing
+ * ("booking for pet-sitting businesses") the body copy used to carry alone. Both are literals here,
+ * never interpolated from anything a tenant controls — these pages have no tenant.
+ *
+ * Deliberately NO JSON-LD: these pages are script-free under LOCKED_CSP (a rule with its own test),
+ * and SoftwareApplication markup earns no rich result to trade that for. The per-tenant embed page
+ * is where structured data lives (server/lib/llms.ts).
+ *
+ * Deliberately NO `og:image` either, which is why the card is `summary` and not
+ * `summary_large_image`. The only images this repo owns are the landing screenshots, and the
+ * closest one (`widget-hero.webp`) is 932x1990 — a portrait strip. A large-image card crops to
+ * roughly 1.91:1, so declaring it would render every shared link as an unreadable sliver of a
+ * calendar, and WebP is not accepted by every unfurler in the first place. A text-only card is
+ * what an absent image degrades to, and it is not broken. Add a real 1200x630 PNG and both tags
+ * together, or neither: an og:image is worth nothing to search ranking on its own.
+ */
+function pageHead(path: string, title: string, description: string): string {
+  return `<title>${title}</title>
+    <meta name="description" content="${description}" />
+    <link rel="canonical" href="${BRAND_ORIGIN}${path}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pawservation" />
+    <meta property="og:title" content="${title}" />
+    <meta property="og:description" content="${description}" />
+    <meta property="og:url" content="${BRAND_ORIGIN}${path}" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />`;
+}
+
+/**
  * Root landing page: a marketing page for prospective pet sitters, built around real
  * screenshots of the seeded demo (public/img/landing/*.webp). Static and script-free (served
  * under LOCKED_CSP, so only inline styles and same-origin images are allowed — NO <script>,
@@ -152,10 +221,11 @@ const LANDING_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawservation — booking for pet sitters</title>
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    ${pageHead(
+      '/',
+      'Pet Sitting &amp; Dog Walking Software &mdash; Pawservation',
+      'Free booking software for pet sitters and dog walkers. Put a booking page on your own website: your services and rates, your availability rules, client and pet records, payments and what you&rsquo;re owed, and two-way Google Calendar sync.',
+    )}
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
@@ -185,11 +255,11 @@ const LANDING_HTML = `<!doctype html>
       <section class="hero">
         <div class="wrap hero-grid">
           <div class="hero-copy">
-            <p class="chip">Booking for pet-sitting businesses</p>
+            <p class="chip">Pet sitting &amp; dog walking software</p>
             <h1>Your booking page, on your own website.</h1>
             <p class="sub">
-              Pawservation is a booking widget that lives on your site, with your services
-              and your rates. Clients request the dates, you confirm or decline, and it
+              Pawservation is pet sitting and dog walking software: a booking widget that lives
+              on your own site, with your services and your rates. Clients request the dates, you confirm or decline, and it
               keeps track of what you&rsquo;re owed.
             </p>
             <div class="cta-row">
@@ -569,7 +639,7 @@ const LANDING_HTML = `<!doctype html>
               <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
-            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
           </div>
           <div>
             <h3>Product</h3>
@@ -622,14 +692,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>How it works &mdash; Pawservation</title>
-    <meta
-      name="description"
-      content="The full tour of Pawservation: the services you can offer, the rules that protect your calendar, how clients book, and how the money is tracked."
-    />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    ${pageHead(
+      '/how-it-works',
+      'How it works &mdash; Pawservation pet sitting &amp; dog walking software',
+      'The full tour of Pawservation, booking software for pet sitters and dog walkers: the services you can offer, the rules that protect your calendar, how clients book, and how the money is tracked.',
+    )}
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
@@ -1040,7 +1107,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
-            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
           </div>
           <div>
             <h3>Product</h3>
@@ -1081,11 +1148,11 @@ const PRIVACY_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Privacy Policy &mdash; Pawservation</title>
-    <meta name="description" content="What Pawservation collects, who it's shared with, and how long it's kept." />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    ${pageHead(
+      '/privacy',
+      'Privacy Policy &mdash; Pawservation',
+      "What Pawservation collects, who it's shared with, and how long it's kept.",
+    )}
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
@@ -1158,7 +1225,7 @@ const PRIVACY_HTML = `<!doctype html>
               <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
-            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
           </div>
           <div>
             <h3>Product</h3>
@@ -1198,11 +1265,11 @@ const TERMS_HTML = `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Terms &amp; Conditions &mdash; Pawservation</title>
-    <meta name="description" content="The terms that govern using Pawservation." />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    ${pageHead(
+      '/terms',
+      'Terms &amp; Conditions &mdash; Pawservation',
+      'The terms that govern using Pawservation: what the booking software does, what it deliberately does not do with your money, and what each side is responsible for.',
+    )}
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
@@ -1279,7 +1346,7 @@ const TERMS_HTML = `<!doctype html>
               <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
-            <p>Booking for pet-sitting businesses, embedded on your own website.</p>
+            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
           </div>
           <div>
             <h3>Product</h3>
