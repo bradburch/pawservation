@@ -2,7 +2,12 @@ import { Hono } from 'hono';
 import { listServiceOptions, listServices } from './db/repo';
 import { runCalendarSweep } from './lib/calendar-cron';
 import { BRAND_ORIGIN, htmlEscape } from './lib/email';
-import { buildJsonLdScript, buildLlmsTxt } from './lib/llms';
+import {
+  buildJsonLdScript,
+  buildLlmsTxt,
+  buildProductJsonLdScript,
+  buildProductLlmsTxt,
+} from './lib/llms';
 import { renderInviteForm } from './lib/invite-form';
 import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
@@ -180,9 +185,14 @@ const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
  * ("booking for pet-sitting businesses") the body copy used to carry alone. Both are literals here,
  * never interpolated from anything a tenant controls — these pages have no tenant.
  *
- * Deliberately NO JSON-LD: these pages are script-free under LOCKED_CSP (a rule with its own test),
- * and SoftwareApplication markup earns no rich result to trade that for. The per-tenant embed page
- * is where structured data lives (server/lib/llms.ts).
+ * NOT emitted here: the homepage's JSON-LD, which is spliced into LANDING_HTML alone. It answers
+ * "what is this product and who stands behind it", a question only the homepage is the answer to —
+ * repeating an identity graph on /privacy would give a crawler four competing candidates for one
+ * entity. It is an inert `application/ld+json` DATA block, which is why it survives LOCKED_CSP: the
+ * type is not a script type, so it never executes and CSP never evaluates it — the same exemption
+ * the embed page's LocalBusiness block already relies on. The marketing pages stay free of
+ * EXECUTABLE script, which is what that rule was always protecting; `landing.test.ts` pins the
+ * distinction rather than the substring.
  *
  * Deliberately NO `og:image` either, which is why the card is `summary` and not
  * `summary_large_image`. The only images this repo owns are the landing screenshots, and the
@@ -226,6 +236,7 @@ const LANDING_HTML = `<!doctype html>
       'Pet Sitting &amp; Dog Walking Software &mdash; Pawservation',
       'Free booking software for pet sitters and dog walkers. Put a booking page on your own website: your services and rates, your availability rules, client and pet records, payments and what you&rsquo;re owed, and two-way Google Calendar sync.',
     )}
+    ${buildProductJsonLdScript(BRAND_ORIGIN)}
     <style>${PAGE_STYLE}</style>
   </head>
   <body>
@@ -1376,7 +1387,34 @@ const TERMS_HTML = `<!doctype html>
 </html>
 `;
 
-app.get('/', (c) => c.html(LANDING_HTML));
+/**
+ * The product's own llms.txt, the sibling of the per-tenant one above. Request origin, not
+ * BRAND_ORIGIN, for the reason the tenant document uses it: every URL in there is an address the
+ * reader is expected to CALL, so it has to keep working on whichever host they arrived at.
+ */
+app.get('/llms.txt', (c) => c.text(buildProductLlmsTxt(new URL(c.req.url).origin)));
+
+/**
+ * The homepage, with a markdown representation for agents that ask for one (acceptmarkdown.com).
+ *
+ * The markdown is llms.txt — NOT a hand-maintained markdown twin of the landing page. A second
+ * copy of every claim on this site is precisely the drift this codebase is built to prevent: it
+ * would go stale the first time a price or a feature changed, and a stale machine-readable copy is
+ * read with more confidence than the stale HTML it contradicts. One document, two content types.
+ *
+ * `Vary: Accept` is set on BOTH branches, deliberately. Set on only the markdown one, a cache that
+ * stored the HTML first would keep serving HTML to every agent asking for markdown, because the
+ * stored response never said the request's Accept header mattered.
+ */
+app.get('/', (c) => {
+  c.header('Vary', 'Accept');
+  if ((c.req.header('Accept') ?? '').includes('text/markdown')) {
+    return c.body(buildProductLlmsTxt(new URL(c.req.url).origin), 200, {
+      'Content-Type': 'text/markdown; charset=utf-8',
+    });
+  }
+  return c.html(LANDING_HTML);
+});
 // Listed in wrangler.jsonc's run_worker_first as the BARE path "/how-it-works" — a glob does not
 // match it. Today nothing is emitted at that path, so it would reach the worker regardless (as
 // "/" does, which is not listed); the entry is defensive, so that if a build ever emits an asset
@@ -1388,6 +1426,32 @@ app.get('/terms', (c) => c.html(TERMS_HTML));
 // Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
 // through to Hono's plain-text default and break the { error } contract every client parses.
 // Internal detail is logged, never returned.
+/**
+ * A 404 an agent can recover from. Hono's default is the bare string `404 Not Found`, which tells
+ * a reader that this path is wrong and nothing about where the right one is.
+ *
+ * The requested path is deliberately NOT echoed back: reflecting it would let a crafted URL author
+ * markdown structure — headings, list items, a link — inside a document an agent is about to act
+ * on, and no line of this response needs it to be useful.
+ *
+ * /api keeps its JSON shape. Every other error on that prefix answers `{ error }`, and a client
+ * parsing JSON should get a parse-able 404, not prose about a sitemap it has no use for.
+ */
+app.notFound((c) => {
+  if (c.req.path.startsWith('/api/')) return c.json({ error: 'Not found' }, 404);
+  const origin = new URL(c.req.url).origin;
+  return c.body(
+    `# 404 — no such page\n\n` +
+      `That path does not exist on Pawservation. Where to look instead:\n\n` +
+      `- What this product is, and when to use it: ${origin}/llms.txt\n` +
+      `- Every public page: ${origin}/sitemap.xml\n` +
+      `- Overview: ${origin}/\n` +
+      `- A specific sitter's services and rates: ${origin}/embed/{sitter-slug}/llms.txt\n`,
+    404,
+    { 'Content-Type': 'text/markdown; charset=utf-8' },
+  );
+});
+
 app.onError((err, c) => {
   console.error('unhandled error', requestContext(c.req), err);
   return c.json({ error: 'Something went wrong.' }, 500);
