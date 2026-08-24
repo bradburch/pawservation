@@ -74,8 +74,11 @@ export type Settings = {
   contactPhone: string | null;
   /** Booking horizon in months for the whole business; null = no limit (0004). */
   maxAdvanceMonths: number | null;
-  /** How many days a house sit and a boarding may overlap, at the tail ends only (0006).
-   *  0 = never; 1 = the default; 2 = one at each end; null = no limit. */
+  /** How many days a house sit and a BOARDING may overlap, at the tail ends only (0006).
+   *  0 = never; 1 = the default; 2 = one at each end. Two HOUSE SITS are not on this scale: they
+   *  may never share a night on any numbered value, because a handover day is a night both stays
+   *  occupy (see `sameKindSpans` in src/shared/booking/capacity.ts). `null` switches the whole
+   *  whereabouts check off, same-kind included. */
   housesitBoardingOverlapDays: number | null;
   /** How the calendar backfill reads a description `Cost:` on a BOARDING or HOUSE SIT (0013):
    *  'total' = the whole charge for the stay; 'per-night' = a nightly rate x the stay's nights.

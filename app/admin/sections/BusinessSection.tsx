@@ -157,18 +157,39 @@ export function BusinessSection({
       </label>
       <label>
         <span className="pb-labelrow">
-          House sitting and boarding
-          <Hint label="House sitting and boarding">
-            You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
-            day. The numbered settings are the exception you allow for <em>handovers</em>: a
-            boarding that starts as a house sit wraps up, or the other way round. They only ever
-            cover a day one stay is leaving on as the other arrives, so a boarding can never sit in
-            the middle of a house sit. &ldquo;No limit&rdquo; is not a larger allowance. It turns
-            the check off, and the two stop being held apart at all.
+          How much a boarding may overlap a house sit
+          <Hint label="How much a boarding may overlap a house sit">
+            <strong>
+              A stay that starts on the day another one ends has not overlapped at all.
+            </strong>{' '}
+            You slept in the first house and then the second, so out of the Smiths on Friday morning
+            and into the Joneses that Friday evening is fine at every setting here, even though both
+            bookings show Friday on your calendar. This setting is only about stays that would share
+            a <em>night</em>.
+            <br />
+            <br />
+            You can only sleep in one house, so a night holds one house sit.{' '}
+            <strong>Two house sits never share a night</strong>, on any of the numbered settings:
+            there is nothing to hand over when both want the same night. A one-night house sit
+            therefore can&rsquo;t share its night with anything at all. That counts houses, not
+            animals, so a house sit for one cat fills the night as fully as a house sit for three
+            dogs and no cap makes room for another.
+            <br />
+            <br />
+            The number itself is what you allow between a house sit and a <em>boarding</em>:
+            nothing, one <em>handover</em> day, or one at each end of a stay. A handover only ever
+            covers a day one stay is leaving on as the other arrives, so nothing can sit in the
+            middle of a house sit. Both stays are judged, so the answer doesn&rsquo;t depend on
+            which was booked first.
+            <br />
+            <br />
+            The last option is not a larger allowance. It turns the whole check off, house sits
+            included, and nothing is held apart at all. Boarding on its own is untouched either way:
+            boarders are at your place, and how many at once is your boarding cap.
           </Hint>
         </span>
         <select
-          aria-label="How much house sitting and boarding may overlap"
+          aria-label="How much a boarding may overlap a house sit, or whether the check runs at all"
           value={settings.housesitBoardingOverlapDays ?? ''}
           onChange={(e) =>
             setSettings({
@@ -180,7 +201,7 @@ export function BusinessSection({
           <option value="0">May never overlap</option>
           <option value="1">May overlap by one handover day</option>
           <option value="2">May overlap by one handover day at each end of a stay</option>
-          <option value="">No limit — I&rsquo;ll sort out any clashes myself</option>
+          <option value="">Turn this check off: I&rsquo;ll sort out clashes myself</option>
         </select>
       </label>
       <label>

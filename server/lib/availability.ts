@@ -5,7 +5,6 @@ import {
   buildCapacity,
   buildGroupKey,
   buildMixKey,
-  crossKindDayBlocked,
   DEFAULT_TIMEZONE,
   dedupePets,
   getPacificDateStr,
@@ -16,6 +15,7 @@ import {
   rangeConflictReason,
   resolvePetSetRate,
   walkHasConflict,
+  whereaboutsDayBlocked,
   type CapacityEvent,
   type CapacityRequest,
   type DayCapacity,
@@ -407,10 +407,30 @@ function overlapAllowanceOf(tenant: Tenant): number | null {
 type SingleConflict = 'blocked_day' | 'slot_full' | 'slot_no_room';
 
 /**
- * Turn the engine's refusal into the customer's answer. The cross-kind overlap rule gets its own
- * sentence and its own `code` because "those dates are not available" is simply untrue of it — the
+ * Turn the engine's refusal into the customer's answer. The whereabouts overlap rule gets its own
+ * sentences and its own `code` because "those dates are not available" is simply untrue of it — the
  * dates have room; the SITTER does not, and a customer told the truth can move by one day instead
  * of giving up. Every other refusal keeps the pre-existing generic wording verbatim.
+ *
+ * `same_kind_overlap` (a house sit against another house sit) shares the WIRE code
+ * `overlap_not_allowed` with `cross_kind_overlap`, and only the sentence differs. The code names
+ * the RULE, and there is one rule with one allowance knob behind both; splitting it would ask
+ * every consumer to learn a distinction that changes nothing about what they can do next, which is
+ * move the dates. The sentence is where the difference actually matters, because telling a
+ * customer "your sitter has boarding on those dates" when the sitter is in fact in another
+ * client's home would be the code authoring a falsehood.
+ *
+ * Both sentences are read by every sitter's own clients, so neither names a GENDER (the string is
+ * printed under whoever's business embedded the widget) and neither names ANOTHER CLIENT — the
+ * month grid says only "Sitter is house-sitting", and a customer has no business being told who
+ * else has booked. What a customer does need is the way out, which is why the same-kind sentence
+ * says a stay may start on the day the other ends: back-to-back is the adjacency this rule leaves
+ * open, and a refusal that does not name it reads as "never, at all".
+ *
+ * The TAIL of the same-kind sentence is load-bearing and is pinned by test. It used to offer "the
+ * day one is ending as the other begins", which under the withheld same-kind concession IS the
+ * shared night and is refused at 0, 1 and 2 alike — so it sent the customer straight back into the
+ * same 409. The only date that works is the CHECKOUT day, and the sentence has to name that one.
  */
 function rangeRefusal(
   conflict: RangeConflict,
@@ -426,6 +446,14 @@ function rangeRefusal(
         kind === 'boarding'
           ? 'That exceeds our boarding capacity.'
           : 'That exceeds our house-sitting capacity.',
+    };
+  }
+  if (conflict === 'same_kind_overlap') {
+    return {
+      available: false,
+      reason:
+        'Your sitter is house-sitting on those dates, and two house sits can never share a night. The earliest a second one can start is the day the first one ends: the two may touch, but not overlap.',
+      code: 'overlap_not_allowed',
     };
   }
   if (conflict !== 'cross_kind_overlap') {
@@ -763,6 +791,13 @@ export async function confirmOverbookWarning(
 /** The sitter's wording for a range conflict — her calendar and her caps, not a customer's dates. */
 function rangeWarning(conflict: RangeConflict, service: TenantService, petCount: number): string {
   const overbooks = 'Confirming anyway will double-book you.';
+  if (conflict === 'same_kind_overlap') {
+    return (
+      'You are already house-sitting over those nights, and you can only sleep in one house. ' +
+      'Two house sits can never share a night, whatever your overlap setting says: the earliest a ' +
+      `second one can start is the day the first one ends. ${overbooks}`
+    );
+  }
   if (conflict === 'cross_kind_overlap') {
     return (
       (service.CapacityKind === 'housesit'
@@ -825,12 +860,14 @@ const REASON = {
    */
   noRoom: (petCount: number) => `Not enough room for ${petCount} pets`,
   /**
-   * The cross-kind handover rule (0006), named by where the SITTER is rather than by a full pool —
-   * the dates have room, she does not. Reads from the requesting service's point of view, so it is
-   * symmetric with `rangeRefusal`'s longer sentence for the quote.
+   * The whereabouts handover rule (0006), named by where the SITTER is rather than by a full pool —
+   * the dates have room, she does not. It names WHAT is on the day rather than what was asked for,
+   * because a house-sit request can now be turned away by boarding OR by another house sit and the
+   * two are different answers; `Sitter is house-sitting` covers the same-kind case exactly, so the
+   * vocabulary gains no sixth string. Symmetric with `rangeRefusal`'s longer sentences.
    */
-  crossKind: (kind: PoolKind) =>
-    kind === 'housesit' ? 'Sitter has boarders' : 'Sitter is house-sitting',
+  whereabouts: (day: DayCapacity) =>
+    day.housesit.spans.length > 0 ? 'Sitter is house-sitting' : 'Sitter has boarders',
 } as const;
 
 /** The month grid's response: the day states plus the booking window RESOLVED TO DATES. */
@@ -974,21 +1011,23 @@ export async function monthAvailability(
       // verbatim. `partial` still means "occupied but the set fits", so a cell showing 1/2 is now
       // true for the pets actually selected rather than for a hypothetical single pet.
       const noRoom = max != null && rawUsed + pets > max;
-      // The cross-kind handover rule (0006), asked of THIS DAY only. The engine owns the question
-      // (`crossKindDayBlocked`) and answers it conservatively: true only where NO request of this
-      // kind could arrive, depart or span, whatever its dates. The rest of the rule is a property
-      // of a range and stays deliberately unpainted — see CALENDAR_LOGIC.md §9 — so a day left open
-      // here can still be refused by the quote, but a day the quote and the POST always refuse can
-      // no longer paint `available`.
-      const crossKind = day !== undefined && crossKindDayBlocked(day, date, poolKind, overlapDays);
-      const unavailable = blocked || noRoom || crossKind;
+      // The whereabouts handover rule (0006), asked of THIS DAY only. The engine owns the question
+      // (`whereaboutsDayBlocked`) and answers it conservatively: true only where NO request of this
+      // kind could arrive, depart or span, whatever its dates. For a `housesit` request that now
+      // includes a day already carrying another house sit, on exactly the same three grounds. The
+      // rest of the rule is a property of a range and stays deliberately unpainted — see
+      // CALENDAR_LOGIC.md §9 — so a day left open here can still be refused by the quote, but a day
+      // the quote and the POST always refuse can no longer paint `available`.
+      const whereabouts =
+        day !== undefined && whereaboutsDayBlocked(day, date, poolKind, overlapDays);
+      const unavailable = blocked || noRoom || whereabouts;
       status = unavailable ? 'unavailable' : max != null && rawUsed > 0 ? 'partial' : 'available';
       used = max != null ? rawUsed : null;
       if (blocked) reason = REASON.blocked;
       // A pool at its cap is "Fully booked" however many pets you asked for; a pool with room
       // that still can't seat this set gets the specific answer instead of a misleading one.
       else if (noRoom) reason = max != null && rawUsed >= max ? REASON.full : REASON.noRoom(pets);
-      else if (crossKind) reason = REASON.crossKind(poolKind);
+      else if (whereabouts) reason = REASON.whereabouts(day!);
     } else {
       // Single-day unlimited service (walk / daycare / check-in): block-only, plus a per-slot
       // capacity check when the option has one. Customers never see raw counts — only status.
