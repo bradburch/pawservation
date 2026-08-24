@@ -149,7 +149,7 @@ function renderThanksPage(fallback: boolean, ownerEmail: string): string {
   </head>
   <body>
     <main class="wrap" style="padding:96px 0;text-align:center;">
-      <h1>Thanks &mdash; we&rsquo;ve got it</h1>
+      <h1>Thanks, we&rsquo;ve got it</h1>
       <p class="note" style="margin:0 auto 12px;font-size:1rem;">
         We&rsquo;ll be in touch by email to set up your services, rates, and booking page.
       </p>

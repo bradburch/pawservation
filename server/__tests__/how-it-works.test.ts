@@ -225,6 +225,13 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // provider books by invitation only." (server/routes/auth.ts:85) rather than an account.
     expect(body).toContain('Anyone can load the page, but only your clients can book it');
     expect(body).toContain('no services, no dates, no prices');
+    // …true of the rendered page, and NOT true of the tenant document beside it: buildLlmsTxt
+    // (server/lib/llms.ts) writes `$<Rate>/<RateUnit>` for every option of every enabled service,
+    // served unauthenticated from GET /embed/:slug/llms.txt. A sitter must not read the sentence
+    // above as "my rates are private".
+    expect(body).toContain(
+      'Your rates are public, though: the same booking address also publishes a plain-text summary of your services and prices that anyone can read without signing in.',
+    );
     expect(body).toContain('booking is invite-only');
     expect(body).toContain('rather than signed up');
   });
@@ -272,7 +279,7 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // the day is offered at all (checkSingle / monthAvailability vs TenantServiceOptions.Capacity),
     // so caps + notice + horizon alone was an incomplete list for half the businesses here.
     expect(body).toMatch(
-      /your own caps, your notice period, your booking horizon and &mdash; on a walk or a drop-in &mdash; how many pets you&rsquo;ll take in that time slot/,
+      /your own caps, your notice period, your booking horizon and, on a walk or a drop-in, how many pets you&rsquo;ll take in that time slot/,
     );
     // Shown, not guaranteed — and never mistakable for an auto-confirm.
     expect(body).toContain('not a promise');
@@ -312,7 +319,14 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // Pushes retry until they land (outbox + cron): an outage delays the mirror, never loses it.
     expect(body).toContain('the calendar is a mirror');
     expect(body).toContain('the booking still lands in Pawservation');
-    expect(body).toContain('keeps retrying until the event lands');
+    expect(body).toContain('retries every fifteen minutes until the event lands');
+    // VERIFIED against wrangler.jsonc `triggers.crons: ["*/15 * * * *"]` — the sweep interval is
+    // the real bound, so the page states it instead of claiming "a few minutes".
+    expect(body).toContain(
+      'the mirror lags for however long Google is unreachable, plus up to fifteen minutes for the next sweep after it recovers',
+    );
+    expect(body).not.toContain('never loses a frame');
+    expect(body).not.toContain('the mirror lags a few minutes');
   });
 
   it("distinguishes deleting a time-off block from deleting a booking's own event", async () => {
@@ -450,6 +464,13 @@ describe('the landing page claims only what ships', () => {
     expect(body).toContain('Can it double-book me?');
     expect(body).toMatch(/holds its space from the moment it arrives/i);
     expect(body).toMatch(/three dogs needs three spaces/i);
+    // The BOLD answer must not be a bare "No." — the body concedes four sentences later that two
+    // house sits on one night are held apart only by a pet cap, which IS being double-booked. A
+    // skimmer reads the bold word and stops, so the exception has to live in the headline.
+    expect(body).toContain(
+      '<strong>Not on your caps, your time off, or your Google Calendar. There is one exception, and if you house-sit you should read it now.</strong>',
+    );
+    expect(body).not.toContain('<strong>No.</strong> Your caps and your time off hold the day');
   });
 
   it('tells sitters their clients can reschedule and cancel without going through them', async () => {
@@ -487,7 +508,7 @@ describe('the landing page claims only what ships', () => {
     // The strongest absolute on the page, and two house sits on one night are the case it does not
     // cover (capacity.ts:426 reads only the opposite pool). A reader who house-sits called the
     // unqualified version "selling me a double-booking".
-    expect(body).toContain('One thing it doesn&rsquo;t do is keep you in one house at a time');
+    expect(body).toContain('The exception is that it does not keep you in one house at a time');
     expect(body).toContain('that cap counts pets rather than houses');
     expect(body).toContain('so is any client bringing two dogs');
     expect(body).toContain('There is no setting that does the first without the second');
@@ -499,6 +520,10 @@ describe('the landing page claims only what ships', () => {
     // whether the widget is safe on a public page. VERIFIED in app/embed/App.tsx:120-142.
     expect(body).toContain('Safe on a public page');
     expect(body).toContain('no services, no dates, no prices');
+    // Same qualification as the tour's embed section — see the llms.txt note there.
+    expect(body).toContain(
+      'Your rates are public, though: the same booking address also publishes a plain-text list of your services and prices that anyone can read without signing in, the way the prices on your own website already are.',
+    );
     expect(body).toContain('booking is invite-only');
   });
 
@@ -506,7 +531,7 @@ describe('the landing page claims only what ships', () => {
     const body = await landingBody();
     // The fifth item is "The dates question stops being a text." — the one thing that DOES change.
     expect(body).toContain(
-      'Four things that don&rsquo;t change on the day you start &mdash; and one that does.',
+      'Four things that don&rsquo;t change on the day you start, and one that does.',
     );
     expect(body).not.toContain('Five things that don&rsquo;t change');
   });

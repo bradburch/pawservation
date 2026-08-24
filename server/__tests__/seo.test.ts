@@ -314,6 +314,45 @@ describe('SEO surface', () => {
     }
   });
 
+  /**
+   * The em-dash budget. The owner's instruction was "remove em dashes and obvious AI writing", and
+   * a prospective sitter reading these pages cold said the same thing unprompted: "you use an em
+   * dash in nearly every paragraph, I noticed by the second section." The pages carried 152 of
+   * them. A count, rather than a style note in a doc, is what stops that coming back one
+   * convenient parenthetical at a time.
+   *
+   * The ONE allowed occurrence is the literal name of the Google calendar this product creates
+   * (`PET_CALENDAR_SUMMARY` in server/lib/google-calendar.ts). It is a product string, not
+   * punctuation: recasting it would leave the copy describing a calendar that does not exist under
+   * that name. Every other dash was recast into the punctuation the sentence actually needed —
+   * never swapped for an en dash or a hyphen, which is the same tic wearing a different glyph.
+   *
+   * `&ndash;` inside a date range ("Aug 20 &ndash; Aug 23", "weekdays 10&ndash;2") is a correct en
+   * dash and is deliberately not covered here.
+   */
+  it('keeps em dashes out of the marketing copy', async () => {
+    const { env } = createTestEnv();
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact']) {
+      const body = await (await app.request(path, {}, env)).text();
+      const allowed = (body.match(/Pawservation &mdash; Pet bookings/g) ?? []).length;
+      expect(
+        body.match(/&mdash;/g)?.length ?? 0,
+        `${path}: em dashes beyond the calendar name`,
+      ).toBe(allowed);
+      // The dash must not have been laundered into another dash. Hyphens inside words
+      // ("invite-only", "two-dog") are fine; a spaced hyphen or an en dash between words is the
+      // same punctuation habit under a different glyph. Date ranges keep their en dash.
+      expect(body, `${path}: spaced hyphen used as a dash`).not.toMatch(/\w - \w/);
+      expect(body, `${path}: en dash used as a dash between words`).not.toMatch(
+        /[a-z] &ndash; [a-z]/,
+      );
+    }
+    // The transactional thanks page is rendered elsewhere (server/routes/invite-request.ts) and is
+    // held to the same rule.
+    const thanks = await (await app.request('/request-invite/thanks', {}, env)).text();
+    expect(thanks).not.toContain('&mdash;');
+  });
+
   it('names the services people search for on the landing page itself', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
