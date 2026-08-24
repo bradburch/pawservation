@@ -176,6 +176,18 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toMatch(/never overlap/i);
     // The directional half of the rule: a shared day must be a genuine handover.
     expect(body).toMatch(/one thing ending as the other begins/i);
+    // …and that half holds only on the NUMBERED settings. VERIFIED in
+    // src/shared/booking/capacity.ts: all three cross-kind checks sit behind
+    // `overlapAllowance !== null` (:425, :479, :488) and crossKindDayBlocked returns false on a
+    // null allowance (:283), so "No limit" — a real one-click option in the admin dropdown that
+    // stores NULL (app/admin/sections/BusinessSection.tsx) — stops the rule running: a boarding
+    // in the middle of a house sit is then quoted, painted and accepted. The page used to say it
+    // was refused "however high you set the number", which is false for the one value that is
+    // not a number.
+    expect(body).toContain('On any of the numbered settings a shared day only ever counts as a');
+    expect(body).toContain('No limit works differently');
+    expect(body).toContain('It switches the check off');
+    expect(body).not.toContain('refused however high you set the number');
   });
 
   it('is honest that the whereabouts rule does NOT hold two house sits apart (same-kind non-goal)', async () => {
@@ -333,6 +345,11 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     const body = await howItWorksBody();
     expect(body).toContain('blocks those dates automatically');
     expect(body).toMatch(/deleting it in Google cancels the booking/i);
+    // …except for an ADOPTED stay, which listSyncedBookingIds excludes outright
+    // (server/db/repo.ts:3777, `Source IS NOT 'calendar-backfill'`), so reconcile's cancel pass
+    // can never see it. Same qualification as the landing page's move/delete answer.
+    expect(body).toContain('a stay you adopted from this calendar, whose event was always yours');
+    expect(body).toContain('you cancel the booking in your dashboard instead');
   });
 
   it('is truthful that the connected calendar is read back and blocks dates', async () => {
@@ -341,16 +358,33 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('blocks those dates automatically');
     expect(body).not.toContain('One way, on purpose');
     expect(body).not.toContain('unless you enter it as time off');
-    // The old stays-section workaround ("block those dates as time off instead") is retired.
-    expect(body).toContain('type an old booking in yourself'); // still true, still disclosed
+    // …but only inside the window reconcile actually reads. VERIFIED: reconcileWindow
+    // (server/lib/calendar-sync.ts:521) is [today-1, max(today+180d, horizon+1d)), and pass (b)
+    // materializes a foreign event only if it came back inside that window, so an unbounded
+    // "blocks those dates" promise is false for a sitter who cleared her horizon.
+    expect(body).toContain('It reads six months ahead');
+    expect(body).toContain('clearing the horizon doesn&rsquo;t extend it, so an event further');
   });
 
-  it('discloses the two things that are not built: repeats, and typing in an old stay', async () => {
+  it('describes adopting past stays from the calendar, which now ships', async () => {
     const body = await howItWorksBody();
-    // No recurring/series support anywhere in the repo, and no admin route creates a booking
-    // (server/routes/admin.ts only inserts 'blocked' sentinel rows).
+    // VERIFIED: server/lib/calendar-backfill.ts + POST /:slug/admin/calendar/backfill/{preview,
+    // import} (server/routes/admin.ts:3722, :3817) write real BookingRequests rows stamped
+    // Source = 'calendar-backfill' (repo.ts:731), surfaced by app/admin/CalendarBackfillPanel.tsx
+    // inside EarningsSection. The page used to answer this question with a flat "you can't type an
+    // old booking in yourself" and send the sitter to ask her client to rebook.
+    expect(body).toContain('Adopt past bookings from your calendar');
+    expect(body).toContain('prices each stay off today&rsquo;s rate card');
+    expect(body).toContain('nothing is recorded until you press the button');
+    // The half that is still true: nothing types a booking in from nothing.
+    expect(body).toContain('type an old booking in from nothing');
+    expect(body).not.toContain('you can&rsquo;t type an old booking in yourself');
+  });
+
+  it('discloses the one thing that is not built: repeating bookings', async () => {
+    const body = await howItWorksBody();
+    // No recurring/series support anywhere in the repo.
     expect(body).toContain('repeat weekly');
-    expect(body).toContain('type an old booking in yourself');
   });
 
   it('tells a sitter in the setup section how her data comes back out, and no more than that', async () => {
@@ -371,6 +405,11 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // The limits, stated where the reader is deciding: she presses the button, and nothing reads
     // one of these files back into her account.
     expect(body).toContain('It goes one way only');
+    // …and the same SCOPE the in-app panel states (app/admin/ExportPanel.tsx: "blocked days are
+    // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
+    // so time off is in no dataset. The panel said so and the marketing copy did not, which is
+    // the drift that lets a sitter export before she leaves and find her calendar missing.
+    expect(body).toContain('your time off, which is in none of the four files');
     for (const overclaim of [
       'automatic backup',
       'automatic export',
@@ -591,16 +630,27 @@ describe('the landing page claims only what ships', () => {
     expect(body).toContain('Moving doesn&rsquo;t move it');
     expect(body).toContain('the event is rewritten back to them');
     // The drag that DOES have an effect: outside reconcileWindow the event is simply absent from
-    // Google's response, which pass (a) reads as a hand-deletion. A5: the window is now NAMED,
-    // because "the months Pawservation checks" is not a number a sitter can act on. VERIFIED in
-    // reconcileWindow (server/lib/calendar-sync.ts:521): [today-1, max(today+180d, horizon+1d)),
-    // where the 180-day RECONCILE_MIN_HORIZON_DAYS floor holds even when MaxAdvanceMonths is NULL
-    // or shorter — so a sitter booking August in March is comfortably inside it.
+    // Google's response, which pass (a) reads as a hand-deletion. The window is NAMED, because
+    // "the months Pawservation checks" is not a number a sitter can act on. VERIFIED in
+    // reconcileWindow (server/lib/calendar-sync.ts:521): [today-1, max(today+180d, horizon+1d)).
+    // The horizon term is NULL when MaxAdvanceMonths is NULL, so a CLEARED horizon (which the
+    // page itself invites: "Clear it and there's no horizon at all") leaves the bound at exactly
+    // 180 days. The old sentence promised the opposite in precisely that case — it said the
+    // window stretched "if you let clients book beyond" six months, which is the one setting
+    // under which it does not stretch at all.
     expect(body).toContain('leaves the window Pawservation checks');
     expect(body).toContain('yesterday to six months out');
-    expect(body).toContain(
+    expect(body).toContain('stretches further only when your booking horizon is set further');
+    expect(body).toContain('clearing the horizon doesn&rsquo;t stretch it');
+    expect(body).not.toContain(
       'as far as your own booking horizon if you let clients book beyond that',
     );
+    // P1-1: the cancel-on-delete promise does NOT hold for an adopted stay. VERIFIED in
+    // listSyncedBookingIds (server/db/repo.ts:3777) — `Source IS NOT 'calendar-backfill'` keeps
+    // every adopted booking out of pass (a)'s candidate set, permanently, because its
+    // GCalEventId was stamped by the backfill and never carries private.bookingId.
+    expect(body).toContain('a stay you adopted from this calendar');
+    expect(body).toContain('the booking stays confirmed until you cancel it in your dashboard');
     // A6, VERIFIED: updateBookingStatus guards `Status NOT IN ('cancelled','declined')`
     // (repo.ts:1023) and no admin route writes a booking back to 'confirmed', so the dashboard
     // offers a cancelled row no lifecycle action at all. Warning about the action without saying
@@ -621,11 +671,29 @@ describe('the landing page claims only what ships', () => {
     // claim a client-facing view of it either.
     expect(body).toMatch(/one (payment|running balance) for (the |a )?(whole |entire )?household/i);
     expect(body).toContain('one running balance rather than a figure stuck to each booking');
+    // Scoped to the PAGE, not to the client: GET /:slug/account is live, end-user-authed and
+    // advertised in every tenant's llms.txt (server/lib/llms.ts:50), so the honest claim is that
+    // the booking page renders no total — not that the client can never reach one.
+    expect(body).toContain('your booking page still shows her only her own bookings');
+    expect(body).not.toContain('their own page still shows them their bookings rather than a');
     expect(body).not.toContain('send one bill');
     expect(body).not.toContain('one bill for a whole household');
     // The two words /how-it-works is banned from, banned here too: they name documents that exist
     // nowhere in this product.
     expect(body).not.toMatch(/invoice|statement/i);
+  });
+
+  it('says who is actually asked when a pet group has no rate', async () => {
+    const body = await howItWorksBody();
+    // VERIFIED: under PetRateMode 'exact' an unpriced set is refused (booking-ops.ts:747,
+    // code 'unpriced_pet_set') and app/embed/BookTab.tsx:725-757 renders the message to the
+    // CLIENT — "Ask about a rate for these N pets at <contact>", plus "book one pet at a time".
+    // Nothing emails the sitter and nothing lands in her dashboard, so the old "the widget asks
+    // you for a rate" put her at the wrong end of the conversation.
+    expect(body).toContain('it&rsquo;s your client who gets told');
+    expect(body).toContain('offers to book one pet at a time');
+    expect(body).toContain('Nothing about it reaches your dashboard');
+    expect(body).not.toContain('the widget asks you for a rate');
   });
 
   it('adds an MCP/assistant-booking bullet to the Pro card without changing its unbuilt framing', async () => {

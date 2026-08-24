@@ -99,6 +99,10 @@ describe('GET / — landing page', () => {
     // will find out otherwise: it runs when she presses the button, and nothing reads a file back.
     expect(body).toContain('no scheduled copy');
     expect(body).toContain('no way to load one of these files back in');
+    // …and the same SCOPE the in-app panel states (app/admin/ExportPanel.tsx: "blocked days are
+    // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
+    // so no dataset carries time off. The panel said so; this page did not.
+    expect(answer).toContain('your time off, which is in none of the four files');
     // Nothing buildExportCsv does not do may be claimed. There is no cron, no whole-account
     // archive, no key to issue, and no path that imports an exported file into Pawservation.
     for (const overclaim of [

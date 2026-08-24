@@ -160,10 +160,11 @@ export function BusinessSection({
           House sitting and boarding
           <Hint label="House sitting and boarding">
             You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
-            day. This is the exception you allow for <em>handovers</em> — a boarding that starts as
-            a house sit wraps up, or the other way round. It only ever covers a day one stay is
-            leaving on as the other arrives, so a boarding can never sit in the middle of a house
-            sit however high you set this.
+            day. The numbered settings are the exception you allow for <em>handovers</em>: a
+            boarding that starts as a house sit wraps up, or the other way round. They only ever
+            cover a day one stay is leaving on as the other arrives, so a boarding can never sit in
+            the middle of a house sit. &ldquo;No limit&rdquo; is not a larger allowance. It turns
+            the check off, and the two stop being held apart at all.
           </Hint>
         </span>
         <select

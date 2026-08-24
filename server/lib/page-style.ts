@@ -5,7 +5,7 @@
  * mounts those routes, so the routes module cannot import back from index.ts).
  */
 export const PAGE_STYLE = /* css */ `
-      /* Brand face for the nav wordmark only — a 1.3KB self-hosted subset ("Pawservation"
+      /* Brand face for the nav wordmark only: a 1.3KB self-hosted subset ("Pawservation"
          glyphs), so it can never slow the page or leak a request off-origin. */
       @font-face {
         font-family: 'Boogaloo';
@@ -110,7 +110,7 @@ export const PAGE_STYLE = /* css */ `
       @media (min-width: 780px) {
         .nav-links { display: flex; }
       }
-      /* Below 780px the header is only the wordmark, "Sign in", and "Try the demo" — and at
+      /* Below 780px the header is only the wordmark, "Sign in", and "Try the demo", and at
          360px those three plus a 28px gap and the wrap's own padding did not fit, so the whole
          page picked up ~13px of horizontal scroll: the nav is a no-wrap flex row, so it pushed
          the document wider rather than wrapping. Tighten the gaps and the wordmark instead of
@@ -204,7 +204,7 @@ export const PAGE_STYLE = /* css */ `
       }
 
       /* Signature: the real widget on a soft product panel, with a CSS-built
-         "new request" card floating over it — the confirm-or-decline promise, shown. */
+         "new request" card floating over it: the confirm-or-decline promise, shown. */
       .hero-visual { position: relative; }
       .visual-panel {
         position: relative;
@@ -493,7 +493,7 @@ export const PAGE_STYLE = /* css */ `
       .wf-step p { margin: 4px 0 0; font-size: 0.91rem; color: var(--body-c); }
       .wf-step p strong { color: var(--ink); }
       /* The time figure is arithmetic the reader can redo with their own numbers, not a
-         measured statistic — the multiplication is shown, in mono, so it reads as a
+         measured statistic; the multiplication is shown, in mono, so it reads as a
          worked example rather than a benchmark. */
       .wf-math {
         margin-top: 40px;
