@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import * as v from 'valibot';
 import { sendInviteRequest, type InviteRequestFields } from '../lib/email';
 import { renderInviteForm, type InviteFormValues } from '../lib/invite-form';
+import { SUPPORT_EMAIL } from '../lib/email';
 import { parseOwnerEmails } from '../lib/owners';
 import { PAGE_STYLE } from '../lib/page-style';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
@@ -35,7 +36,9 @@ const RATE_KEY = (ip: string) => `invite-request:rl:${ip}`;
 
 const THANKS_PATH = '/request-invite/thanks';
 const THANKS_FALLBACK_PATH = `${THANKS_PATH}?fallback=1`;
-const FALLBACK_OWNER_EMAIL = 'bradburch@duck.com';
+// Shown on the thanks page when OWNER_EMAILS is unset. The override stays deliberately: a fork
+// or self-hoster sets its own and must not be handed an address it does not own.
+const FALLBACK_OWNER_EMAIL = SUPPORT_EMAIL;
 
 /** The generic 400 line, shown when the body was unparsable and no per-field detail exists. */
 const INVALID_MESSAGE =

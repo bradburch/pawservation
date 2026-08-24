@@ -1,3 +1,4 @@
+import { SUPPORT_EMAIL } from './email';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /** Escape so tenant-controlled strings can never close the script element or open a new tag. */
@@ -149,8 +150,8 @@ Availability, quotes and booking requests are authenticated as the pet owner, an
  * here restates a jurisdiction the site states publicly elsewhere. No `streetAddress`, because
  * there is no premises to name and inventing one to satisfy a validator is exactly the
  * fabrication structured data exists to prevent. The `email` is the same address /contact and the
- * invite-request thanks page already publish — three places, one address, or one of them stops
- * being read.
+ * invite-request thanks page already publish, imported from one declaration rather than
+ * restated — three places, one address, or one of them stops being read.
  */
 export function buildProductJsonLdScript(origin: string): string {
   const ld = {
@@ -191,7 +192,7 @@ export function buildProductJsonLdScript(origin: string): string {
         logo: `${origin}/icon-512.png`,
         description: 'Booking software for pet-sitting and dog-walking businesses.',
         founder: { '@type': 'Person', name: 'Brad Burch', url: 'https://bradburch.github.io/' },
-        email: 'bradburch@duck.com',
+        email: SUPPORT_EMAIL,
         address: {
           '@type': 'PostalAddress',
           addressLocality: 'San Francisco',
@@ -202,7 +203,7 @@ export function buildProductJsonLdScript(origin: string): string {
           {
             '@type': 'ContactPoint',
             contactType: 'customer support',
-            email: 'bradburch@duck.com',
+            email: SUPPORT_EMAIL,
             url: `${origin}/contact`,
           },
           {

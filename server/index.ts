@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { listServiceOptions, listServices } from './db/repo';
 import { runCalendarSweep } from './lib/calendar-cron';
-import { BRAND_ORIGIN, htmlEscape } from './lib/email';
+import { BRAND_ORIGIN, htmlEscape, SUPPORT_EMAIL } from './lib/email';
 import {
   buildJsonLdScript,
   buildLlmsTxt,
@@ -168,14 +168,6 @@ app.get('/setup.html', page('setup.html'));
 // Every price figure on the landing page interpolates from here — never hardcode one in the
 // markup. The Free tier's "$0" is deliberately literal: free is the promise, not a price point.
 const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
-
-/**
- * The public contact address. Already published by the invite-request thanks page's fallback
- * (routes/invite-request.ts's FALLBACK_OWNER_EMAIL) — declared here rather than imported so a
- * page constant does not reach into a route module, and kept identical to it on purpose: two
- * different "contact us" addresses is how one of them stops being read.
- */
-const SUPPORT_EMAIL = 'bradburch@duck.com';
 
 /**
  * The shared page footer. Extracted when /about and /contact would have made it a SIXTH hand-kept
