@@ -77,6 +77,7 @@ import {
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
+import { buildExportCsv, isExportDataset } from '../lib/data-export';
 import { isUniqueViolation } from '../lib/db-errors';
 import {
   candidateRank,
@@ -3982,4 +3983,44 @@ export const adminRoutes = new Hono<AppEnv>()
     // agreed to. Same non-oracle posture as the other booking routes.
     if (!ok) return c.json({ error: 'Not found.' }, 404);
     return c.json({ estCost });
+  })
+
+  /**
+   * TAKE YOUR BOOK WITH YOU. One route family rather than four sibling routes: the four datasets
+   * differ only in which rows they name, so a `:dataset` param keeps the auth, the tenant scoping,
+   * the headers and the filename in ONE place — an export that forgot its Content-Disposition, or
+   * worse its tenant, could only ever be the fifth one somebody added beside the others.
+   *
+   * It sits under this app's single `.use('/:slug/admin/*', adminAuth)`, so an unauthenticated
+   * caller never reaches the handler, and every read `buildExportCsv` dispatches to carries
+   * `WHERE TenantId = ?` in its own SQL. An unknown dataset is a 404 with the same shape as every
+   * other not-found here.
+   *
+   * The CSV itself is built by `serializeCsvRows` (server/lib/csv.ts), which NEUTRALISES a field
+   * whose first character would make Excel or Sheets read it as a formula — client names and care
+   * notes are text other people typed, and this file's whole purpose is to be opened in a
+   * spreadsheet.
+   */
+  .get('/:slug/admin/export/:dataset', async (c) => {
+    const tenant = c.get('tenant');
+    const dataset = c.req.param('dataset');
+    if (!isExportDataset(dataset)) return c.json({ error: 'Not found.' }, 404);
+    const csv = await buildExportCsv(c.env.PAWSERVATION_DB, tenant.Id, dataset);
+    // Dated in the sitter's OWN timezone, like every other date this app prints for her: a file
+    // named for tomorrow (or yesterday) is a file she cannot line up with what she was looking at.
+    const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
+    // Every slug this app mints is already [a-z0-9-] (slugifyServiceLabel), but the filename lands
+    // inside a QUOTED header value, so it is narrowed here rather than trusted: a stray quote or
+    // newline in a stored slug would be header injection, and the cost of not finding out is a
+    // whole class of bug for one `replace`.
+    const safeSlug = tenant.Slug.replace(/[^a-zA-Z0-9-]+/g, '-');
+    return c.body(csv, 200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="pawservation-${safeSlug}-${dataset}-${today}.csv"`,
+      // Every other admin route answers JSON that nothing tries to store; this one is a file of
+      // client names, emails and phone numbers. `no-store` keeps it out of any shared cache and out
+      // of the browser's own back/forward cache, so the copy that persists is the one the sitter
+      // deliberately saved.
+      'Cache-Control': 'no-store',
+    });
   });
