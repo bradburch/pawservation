@@ -33,12 +33,12 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
-  crossKindDayBlocked,
   isWellFormedCapacityEvent,
   overlapReadWindow,
   rangeConflictReason,
   rangeHasConflict,
   walkHasConflict,
+  whereaboutsDayBlocked,
   type CapacityEvent,
   type CapacityRequest,
   type DayCapacity,

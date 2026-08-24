@@ -159,12 +159,16 @@ export function BusinessSection({
         <span className="pb-labelrow">
           House sitting and boarding
           <Hint label="House sitting and boarding">
-            You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
-            day. The numbered settings are the exception you allow for <em>handovers</em>: a
-            boarding that starts as a house sit wraps up, or the other way round. They only ever
-            cover a day one stay is leaving on as the other arrives, so a boarding can never sit in
-            the middle of a house sit. &ldquo;No limit&rdquo; is not a larger allowance. It turns
-            the check off, and the two stop being held apart at all.
+            You can only sleep in one house, so a night holds one house sit: a second house sit
+            normally can&rsquo;t share a day with it, and neither can a boarding. That counts
+            houses, not animals, so a house sit for one cat fills the night as fully as a house sit
+            for three dogs and no cap makes room for another. The numbered settings are the
+            exception you allow for <em>handovers</em>: one stay starting as the other wraps up.
+            They only ever cover a day one stay is leaving on as the other arrives, so nothing can
+            sit in the middle of a house sit. Both stays are judged, so the answer doesn&rsquo;t
+            depend on which was booked first. &ldquo;No limit&rdquo; is not a larger allowance. It
+            turns the check off, and nothing is held apart at all. Boarding on its own is untouched:
+            boarders are at your place, and how many at once is your boarding cap.
           </Hint>
         </span>
         <select

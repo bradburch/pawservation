@@ -5,6 +5,7 @@ import {
   isWellFormedCapacityEvent,
   rangeConflictReason,
   rangeHasConflict,
+  whereaboutsDayBlocked,
   type CapacityEvent,
   type CapacityRequest,
   type PoolKind,
@@ -73,21 +74,29 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
   });
 
   it('two housesit-kind services keep independent pools', () => {
+    // POOLS ONLY, so the whereabouts rule is switched off (`overlapAllowance: null`). With it ON,
+    // both of these are refused whatever the caps say — a night holds one house sit, and it is
+    // tenant-wide, so a second housesit-kind SERVICE is no escape either. That is the point of
+    // the `a night holds at most ONE house sit` suite below; here the question is the pool.
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04', 'housesitting')]);
     const sameService: CapacityRequest = {
       serviceType: 'housesitting',
       kind: 'housesit',
       cap: 1,
-      overlapAllowance: 1,
+      overlapAllowance: null,
     };
     const otherService: CapacityRequest = {
       serviceType: 'overnight-sit',
       kind: 'housesit',
       cap: 1,
-      overlapAllowance: 1,
+      overlapAllowance: null,
     };
     expect(rangeHasConflict('2028-09-02', '2028-09-03', sameService, cap)).toBe(true);
     expect(rangeHasConflict('2028-09-02', '2028-09-03', otherService, cap)).toBe(false);
+    // …and with the rule running, the pool answer stops mattering: both refuse.
+    expect(
+      rangeHasConflict('2028-09-02', '2028-09-03', { ...otherService, overlapAllowance: 1 }, cap),
+    ).toBe(true);
   });
 
   it('rejects more pets than the cap even on an EMPTY calendar (standalone over-cap guard)', () => {
@@ -210,22 +219,25 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     );
   });
 
-  it('house-sit cap counts only its own service; unlimited lets them stack', () => {
+  it('the house-sit POOL is per service, but no cap can stack two sits on one night', () => {
+    // This test used to assert that an UNLIMITED house-sit pool let two sits stack on one night.
+    // It did, and that was the defect: the pool counts PETS and the rule that matters counts
+    // HOUSES. With the whereabouts rule running, the cap stops being the deciding input entirely.
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04')]);
-    const oneSit: CapacityRequest = {
+    const sit = (over: Partial<CapacityRequest> = {}): CapacityRequest => ({
       serviceType: 'housesitting',
       kind: 'housesit',
       cap: 1,
       overlapAllowance: 1,
-    };
-    const noCap: CapacityRequest = {
-      serviceType: 'housesitting',
-      kind: 'housesit',
-      cap: null,
-      overlapAllowance: 1,
-    };
-    expect(rangeHasConflict('2028-09-02', '2028-09-03', oneSit, cap)).toBe(true);
-    expect(rangeHasConflict('2028-09-02', '2028-09-03', noCap, cap)).toBe(false);
+      ...over,
+    });
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', sit(), cap)).toBe(true);
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', sit({ cap: null }), cap)).toBe(true);
+    expect(rangeHasConflict('2028-09-02', '2028-09-03', sit({ cap: 99 }), cap)).toBe(true);
+    // Only switching the rule off restores the old stacking, which is what NULL means.
+    expect(
+      rangeHasConflict('2028-09-02', '2028-09-03', sit({ cap: null, overlapAllowance: null }), cap),
+    ).toBe(false);
   });
 
   it('the structural house-sit rule stays TENANT-WIDE: day.boarding.total from ANY boarding-kind service', () => {
@@ -247,13 +259,15 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
   });
 
   it('house-sit occupancy counts PETS: a 3-pet sit fills 3 units', () => {
+    // The POOL arithmetic, isolated: `overlapAllowance: null` so the whereabouts rule (which would
+    // refuse both of these on sight, pets be damned) does not decide the answer for it.
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-04', 'housesitting', 3)]);
     const sit = (over: Partial<CapacityRequest> = {}): CapacityRequest => ({
       serviceType: 'housesitting',
       kind: 'housesit',
       cap: null,
       petCount: 1,
-      overlapAllowance: 1,
+      overlapAllowance: null,
       ...over,
     });
     // cap 3 is exactly filled by the existing 3-pet sit → one more pet blocks.
@@ -267,6 +281,8 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
   });
 
   it('house-sit petCount null/0 still counts as 1', () => {
+    // Pool arithmetic again, so the whereabouts rule is off — otherwise it, not `unitsOf`, is what
+    // produced the `true`s below and the test would pass while proving nothing.
     const capNull = buildCapacity([
       houseSit('2028-09-01', '2028-09-04', 'housesitting', undefined),
     ]);
@@ -274,7 +290,7 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
       serviceType: 'housesitting',
       kind: 'housesit',
       cap: 1,
-      overlapAllowance: 1,
+      overlapAllowance: null,
     };
     // 1 existing pet (defaulted) fills cap 1 → a second 1-pet request blocks.
     expect(rangeHasConflict('2028-09-02', '2028-09-03', sit, capNull)).toBe(true);
@@ -291,9 +307,11 @@ describe('rangeHasConflict with per-service CapacityRequest', () => {
     expect(rangeHasConflict('2028-10-02', '2028-10-03', sit, capZero)).toBe(true);
   });
 
-  it('cross-kind rule ignores SAME-kind occupancy entirely (only the pool cap applies)', () => {
+  it('BOARDING never clashes with boarding: her own home, so only the pool cap applies', () => {
     // Two boardings on the same days is a pure capacity question — the whereabouts rule has
-    // nothing to say about it, at any allowance.
+    // nothing to say about it, at any allowance. This is the half of `kindsClash` that must NOT
+    // change when house sitting becomes exclusive: boarders are all at her own house, so several
+    // a night is ordinary and `MaxConcurrentPets` is the only thing bounding them.
     const cap = buildCapacity([boarding('2028-09-01', '2028-09-10', 'boarding', 1)]);
     for (const allowance of [0, 1, 2, null]) {
       expect(
@@ -545,6 +563,200 @@ describe('house-sit / boarding overlap allowance', () => {
 });
 
 /**
+ * A NIGHT HOLDS AT MOST ONE HOUSE SIT. The same whereabouts rule, turned on its own kind.
+ *
+ * House sitting happens at the CLIENT's home, so the sitter can sleep in exactly one of them a
+ * night whether it holds one cat or four dogs. Until this rule existed, `rangeConflictReason` read
+ * only the OPPOSITE pool for a house-sit request, so two sits at two clients were held apart by
+ * nothing but `MaxConcurrentPets` — which counts pets, and could only express "one house sit a
+ * night" by also refusing anyone who arrives with two dogs.
+ *
+ * The fix is NOT a second rule: `kindsClash` widens the set of spans a house-sit request is judged
+ * against to include other house sits, and all three conditions, the both-sides symmetry, the span
+ * identity and the widened read apply unchanged. Every verdict below is therefore the same shape as
+ * its cross-kind twin in the table above.
+ *
+ * BOARDING is deliberately untouched: boarders are all at her own house.
+ */
+describe('a night holds at most ONE house sit (same-kind whereabouts)', () => {
+  const hsReq = (overlapAllowance: number | null, over: Partial<CapacityRequest> = {}) => ({
+    serviceType: 'housesitting',
+    kind: 'housesit' as const,
+    cap: null,
+    petCount: 1,
+    overlapAllowance,
+    ...over,
+  });
+  const verdicts = (events: CapacityEvent[], start: string, end: string): boolean[] =>
+    [0, 1, 2, null].map((a) => rangeHasConflict(start, end, hsReq(a), buildCapacity(events)));
+
+  it('refuses a house sit laid across the middle of another house sit', () => {
+    // Sep 3 is interior to the existing sit: it neither arrives nor departs there, so nothing is
+    // handing over and the sitter would be in two homes for three nights.
+    expect(verdicts([houseSit('2028-09-01', '2028-09-10')], '2028-09-03', '2028-09-06')).toEqual([
+      true,
+      true,
+      true,
+      false, // NULL switches the whole rule off, here exactly as it does for boarding vs house sit
+    ]);
+  });
+
+  it('allows a genuine handover: the new sit arrives on the day the old one departs', () => {
+    // The existing sit occupies Sep 1–4 (Sep 5 is its checkout). The request arrives Sep 4, its
+    // last night, and keeps Sep 5 and Sep 6 to itself. One shared day, a real transition.
+    expect(verdicts([houseSit('2028-09-01', '2028-09-05')], '2028-09-04', '2028-09-07')).toEqual([
+      true, // allowance 0: no shared day at all, ever
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('a sit that STARTS on the other one’s checkout day never overlapped at all', () => {
+    // A checkout day carries no occupancy, so back-to-back house sits are legal even at 0.
+    expect(verdicts([houseSit('2028-09-01', '2028-09-05')], '2028-09-05', '2028-09-08')).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('two ONE-NIGHT house sits on the same night are refused at every allowance', () => {
+    // Each is its own arrival AND its own departure, so the directional handover test passes from
+    // either side and the count fits in 1. Only "the stay kept no day of its own" refuses it —
+    // which is condition 3, and is why this rule could not have been the count plus a handover.
+    expect(verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-05')).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it('a ONE-NIGHT existing sit can never be handed over, however long the request', () => {
+    // Rules 1 and 3 asked of the NEIGHBOUR: the request keeps Sep 5 and Sep 6, but the existing
+    // sit's only night is Sep 4 and sharing it leaves that stay with nothing of its own.
+    expect(verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-07')).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it('PET COUNT IS IRRELEVANT: one pet blocks one pet in a five-pet pool', () => {
+    // The whole point. `MaxConcurrentPets` has four spare places and the answer is still no,
+    // because the question is which HOUSE she sleeps in.
+    const cap = buildCapacity([houseSit('2028-09-01', '2028-09-10', 'housesitting', 1)]);
+    expect(
+      rangeHasConflict('2028-09-03', '2028-09-06', hsReq(1, { cap: 5, petCount: 1 }), cap),
+    ).toBe(true);
+    // …and the pool genuinely does have the room, which is what the old rule was reading.
+    expect(
+      rangeHasConflict('2028-09-03', '2028-09-06', hsReq(null, { cap: 5, petCount: 1 }), cap),
+    ).toBe(false);
+  });
+
+  it('is TENANT-WIDE: a house sit on ANOTHER housesit-kind service counts', () => {
+    // Same argument as the cross-kind rule: it models her whereabouts, not a pool, so a second
+    // house-sitting service is no escape hatch.
+    const cap = buildCapacity([houseSit('2028-09-01', '2028-09-10', 'overnight-sit')]);
+    expect(rangeHasConflict('2028-09-03', '2028-09-06', hsReq(1), cap)).toBe(true);
+  });
+
+  it('names the SAME-kind reason, so the sentence a customer reads is true', () => {
+    const sits = buildCapacity([houseSit('2028-09-01', '2028-09-10')]);
+    expect(rangeConflictReason('2028-09-03', '2028-09-06', hsReq(1), sits)).toBe(
+      'same_kind_overlap',
+    );
+    // The cross-kind reason is untouched and still reported for a boarding neighbour.
+    const beds = buildCapacity([boarding('2028-09-01', '2028-09-10')]);
+    expect(rangeConflictReason('2028-09-03', '2028-09-06', hsReq(1), beds)).toBe(
+      'cross_kind_overlap',
+    );
+    // A day carrying both: the same-kind fact is the more specific one and wins.
+    const both = buildCapacity([
+      boarding('2028-09-01', '2028-09-10'),
+      houseSit('2028-09-01', '2028-09-10'),
+    ]);
+    expect(rangeConflictReason('2028-09-03', '2028-09-06', hsReq(1), both)).toBe(
+      'same_kind_overlap',
+    );
+    // …and a BOARDING request over a full boarding pool is not an overlap of any kind.
+    const full = buildCapacity([boarding('2028-09-01', '2028-09-10', 'boarding', 2)]);
+    expect(
+      rangeConflictReason('2028-09-03', '2028-09-06', req({ cap: 2, overlapAllowance: 1 }), full),
+    ).toBe('blocked_or_full');
+  });
+
+  it('the neighbour test does not count a sit as its own clashing occupancy', () => {
+    // `neighborsViolated` asks what clashes with the NEIGHBOUR, and a house sit clashes with house
+    // sits — so without the `!== span` identity filter every day of every neighbour sit would look
+    // shared, `shared >= days` would always hold, and the plainest legal handover above would be
+    // refused. This is that handover, restated as the regression it guards.
+    expect(
+      rangeHasConflict(
+        '2028-09-04',
+        '2028-09-07',
+        hsReq(1),
+        buildCapacity([houseSit('2028-09-01', '2028-09-05')]),
+      ),
+    ).toBe(false);
+  });
+
+  it('boarding vs boarding is untouched: several stays a night, bounded only by the cap', () => {
+    // The asymmetry, pinned. Three separate boardings across one night, cap 3: fine. Cap 2: the
+    // POOL refuses it, and never the whereabouts rule.
+    const events = [
+      boarding('2028-09-01', '2028-09-10', 'boarding', 1),
+      boarding('2028-09-02', '2028-09-08', 'boarding', 1),
+    ];
+    for (const allowance of [0, 1, 2, null]) {
+      expect(
+        rangeHasConflict(
+          '2028-09-03',
+          '2028-09-06',
+          req({ cap: 3, overlapAllowance: allowance }),
+          buildCapacity(events),
+        ),
+      ).toBe(false);
+      expect(
+        rangeConflictReason(
+          '2028-09-03',
+          '2028-09-06',
+          req({ cap: 2, overlapAllowance: allowance }),
+          buildCapacity(events),
+        ),
+      ).toBe('blocked_or_full');
+    }
+  });
+
+  it('whereaboutsDayBlocked paints the same-kind day the grid must not call available', () => {
+    const cap = buildCapacity([houseSit('2028-09-01', '2028-09-05')]); // occupies Sep 1–4
+    const day = (d: string) => cap.get(d)!;
+    // Mid-stay: neither all-arriving nor all-departing, so no request of this kind can use it.
+    expect(whereaboutsDayBlocked(day('2028-09-02'), '2028-09-02', 'housesit', 1)).toBe(true);
+    // Its ARRIVAL day stays paintable: a request that DEPARTS on it is a legal handover, and the
+    // grid must not strike out a day some request of this kind could genuinely use.
+    expect(whereaboutsDayBlocked(day('2028-09-01'), '2028-09-01', 'housesit', 1)).toBe(false);
+    // Likewise its last occupied night, which a request could ARRIVE on.
+    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'housesit', 1)).toBe(false);
+    // Allowance 0 strikes out every occupied day; NULL switches the paint off with the rule.
+    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'housesit', 0)).toBe(true);
+    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'housesit', null)).toBe(false);
+    // A BOARDING request is untouched by a boarding day.
+    const beds = buildCapacity([boarding('2028-09-01', '2028-09-05')]);
+    expect(whereaboutsDayBlocked(beds.get('2028-09-02')!, '2028-09-02', 'boarding', 1)).toBe(false);
+  });
+
+  it('a ONE-NIGHT neighbour sit strikes out its day for the grid too', () => {
+    const cap = buildCapacity([houseSit('2028-09-04', '2028-09-05')]);
+    expect(whereaboutsDayBlocked(cap.get('2028-09-04')!, '2028-09-04', 'housesit', 2)).toBe(true);
+  });
+});
+
+/**
  * ORDER INDEPENDENCE. The overlap rule is a claim about a STATE of the calendar — the sitter is
  * either in two places on some night or she is not — so it must not matter which of two bookings
  * arrived first. It is easy to get wrong (and was: rules 1 and 3 originally looked only at the
@@ -552,7 +764,10 @@ describe('house-sit / boarding overlap allowance', () => {
  * same pair booked the other way round was refused), and a fixed-fixture test can never catch it,
  * because it only ever books in one order.
  *
- * So: sweep every cross-kind pair of stays in a small window and assert the two orderings agree.
+ * So: sweep every CLASHING pair of stays in a small window and assert the two orderings agree.
+ * "Clashing" is `kindsClash`: boarding against a house sit in either direction, and house sit
+ * against house sit. Boarding-on-boarding is the one pair the rule never judges, so it is skipped
+ * rather than asserted on — sweeping it would only be re-testing the pool cap.
  */
 describe('the overlap rule is order-independent', () => {
   const BASE = '2028-11-01';
@@ -597,7 +812,10 @@ describe('the overlap rule is order-independent', () => {
       let pairs = 0;
       for (const a of stays) {
         for (const b of stays) {
-          if (a.kind === b.kind) continue; // same kind: the rule never applies, in either order
+          // Boarding on boarding is the only pair the whereabouts rule never judges (her own home
+          // holds both). House sit on house sit IS judged, and is swept here for the same reason
+          // the cross-kind pairs are: the fix reused this machinery, so it inherited this hazard.
+          if (a.kind === 'boarding' && b.kind === 'boarding') continue;
           pairs += 1;
           const bAfterA = accepts(a, b, allowance);
           const aAfterB = accepts(b, a, allowance);

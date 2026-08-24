@@ -177,40 +177,47 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // The directional half of the rule: a shared day must be a genuine handover.
     expect(body).toMatch(/one thing ending as the other begins/i);
     // …and that half holds only on the NUMBERED settings. VERIFIED in
-    // src/shared/booking/capacity.ts: all three cross-kind checks sit behind
-    // `overlapAllowance !== null` (:425, :479, :488) and crossKindDayBlocked returns false on a
-    // null allowance (:283), so "No limit" — a real one-click option in the admin dropdown that
-    // stores NULL (app/admin/sections/BusinessSection.tsx) — stops the rule running: a boarding
-    // in the middle of a house sit is then quoted, painted and accepted. The page used to say it
-    // was refused "however high you set the number", which is false for the one value that is
-    // not a number.
+    // src/shared/booking/capacity.ts: all three whereabouts checks in `rangeConflictReason` sit
+    // behind `overlapAllowance !== null`, and `whereaboutsDayBlocked` returns false on a null
+    // allowance, so "No limit" — a real one-click option in the admin dropdown that stores NULL
+    // (app/admin/sections/BusinessSection.tsx) — stops the rule running: a boarding in the middle
+    // of a house sit, or a SECOND HOUSE SIT in the middle of one, is then quoted, painted and
+    // accepted. The page used to say it was refused "however high you set the number", which is
+    // false for the one value that is not a number.
     expect(body).toContain('On any of the numbered settings a shared day only ever counts as a');
     expect(body).toContain('No limit works differently');
     expect(body).toContain('It switches the check off');
     expect(body).not.toContain('refused however high you set the number');
   });
 
-  it('is honest that the whereabouts rule does NOT hold two house sits apart (same-kind non-goal)', async () => {
+  it('says the whereabouts rule DOES hold two house sits apart, and drops the pet-cap workaround', async () => {
     const body = await howItWorksBody();
-    // VERIFIED in src/shared/booking/capacity.ts:426 — the rule reads only the OPPOSITE pool
-    // (`request.kind === 'housesit' ? day.boarding : day.housesit`), so a house sit never sees
-    // another house sit. Two on one night are governed solely by MaxConcurrentPets, which counts
-    // PETS (capacity.ts:120 `unitsOf`, :215 `used + units > cap`). A house-sitting-heavy reader
-    // called the old rationale "selling me a double-booking".
-    expect(body).toContain(
+    // The rule now runs same-kind for house sits as well as across kinds: a night holds at most
+    // one house sit, judged on EXISTENCE rather than on pet count, through the same handover
+    // machinery that already governed a house sit against a boarding. So the page must say the
+    // limit is about houses, and must say the pet cap is not what enforces it — a sitter who
+    // reads "cap" here would set one and think she had bought the guarantee.
+    expect(body).toContain('a night holds one house sit');
+    expect(body).toContain('That is about houses, not animals');
+    expect(body).toMatch(/no cap you set makes room for a second/i);
+    // Both stays are judged, so the verdict cannot depend on booking order.
+    expect(body).toContain('Both stays are judged');
+    // The pet-count reading of the old rule must be gone in every form it was written in.
+    expect(body).not.toContain(
       'What the rule does not do is hold two house sits apart from each other',
     );
-    expect(body).toContain('counts pets, not houses');
-    // …and the only workaround must be stated WITH its cost, because the two cannot be separated:
-    // MaxConcurrentPets = 1 also refuses any single booking of two pets (capacity.ts:398
-    // `units > request.cap` → 'over_cap'), and the admin PUT refuses a pool below MaxPetCount
-    // (server/routes/admin.ts:1096), so there is no second knob.
-    expect(body).toContain('a house-sit cap of one pet');
-    expect(body).toContain('turns away every client arriving with two dogs');
-    expect(body).toContain('there is no setting that separates the two');
-    // The over-general rationale is gone: "you can't be in two places at once" promises a rule
-    // about two house sits that does not exist.
-    expect(body).not.toContain('two places at once');
+    expect(body).not.toContain('counts pets, not houses');
+    // The cap-of-one-pet workaround is now ACTIVELY BAD advice: it buys nothing the rule does not
+    // already give, and it costs the sitter every client arriving with two dogs (capacity.ts's
+    // `units > request.cap` → 'over_cap' refuses a two-pet booking outright). It must not appear
+    // anywhere on the page in any wording.
+    expect(body).not.toMatch(/cap of one pet/i);
+    expect(body).not.toContain('turns away every client arriving with two dogs');
+    expect(body).not.toContain('there is no setting that separates the two');
+    // Boarding is NOT swept up by this: boarders are at her own home, so several a night is
+    // normal and stays governed by MaxConcurrentPets alone. Saying otherwise would describe a
+    // refusal the engine never makes.
+    expect(body).toContain('Boarding is not affected by any of this');
   });
 
   it('says which Google calendar it syncs to, and that the default is her main one', async () => {
@@ -535,13 +542,12 @@ describe('the landing page claims only what ships', () => {
     expect(body).toContain('Can it double-book me?');
     expect(body).toMatch(/holds its space from the moment it arrives/i);
     expect(body).toMatch(/three dogs needs three spaces/i);
-    // The BOLD answer must not be a bare "No." — the body concedes four sentences later that two
-    // house sits on one night are held apart only by a pet cap, which IS being double-booked. A
-    // skimmer reads the bold word and stops, so the exception has to live in the headline.
-    expect(body).toContain(
-      '<strong>Not on your caps, your time off, or your Google Calendar. There is one exception, and if you house-sit you should read it now.</strong>',
-    );
-    expect(body).not.toContain('<strong>No.</strong> Your caps and your time off hold the day');
+    // The bold answer is a plain "No." again, and now earns it. It carried a headline exception
+    // for as long as two house sits on one night were held apart only by a pet cap, which IS
+    // being double-booked; the whereabouts rule covers that case itself now, so the warning would
+    // send a skimmer looking for a hole that is closed.
+    expect(body).toContain('<strong>No.</strong> Your caps and your time off hold the day');
+    expect(body).not.toContain('There is one exception, and if you house-sit you should read it');
   });
 
   it('tells sitters their clients can reschedule and cancel without going through them', async () => {
@@ -574,15 +580,22 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toMatch(/invoice|statement/i);
   });
 
-  it('qualifies the "can it double-book me? No." absolute with the same-kind limit', async () => {
+  it('states the whereabouts limit as part of the "No.", and names the one setting that lifts it', async () => {
     const body = await landingBody();
-    // The strongest absolute on the page, and two house sits on one night are the case it does not
-    // cover (capacity.ts:426 reads only the opposite pool). A reader who house-sits called the
-    // unqualified version "selling me a double-booking".
-    expect(body).toContain('The exception is that it does not keep you in one house at a time');
-    expect(body).toContain('that cap counts pets rather than houses');
-    expect(body).toContain('so is any client bringing two dogs');
-    expect(body).toContain('There is no setting that does the first without the second');
+    // The strongest absolute on the page. Two house sits on one night used to be the case it did
+    // not cover; the rule holds them apart now, on existence rather than on pet count, so the
+    // answer states that as a reason the "No." holds rather than as an exception to it.
+    expect(body).toContain('A night holds one house sit, whatever its pet count');
+    expect(body).toContain('you can only sleep in one house');
+    // "No limit" really does stop the check running, so an unqualified absolute would be false
+    // for any sitter who picked it. It is the one caveat left, and it is a choice she makes.
+    expect(body).toMatch(/switches that whereabouts check off/i);
+    expect(body).toContain('&ldquo;No limit&rdquo;');
+    // The retired pet-cap framing, in every wording it shipped in.
+    expect(body).not.toContain('The exception is that it does not keep you in one house at a time');
+    expect(body).not.toContain('that cap counts pets rather than houses');
+    expect(body).not.toContain('so is any client bringing two dogs');
+    expect(body).not.toContain('There is no setting that does the first without the second');
   });
 
   it('tells a sitter what the public sees before she pastes the embed on a live site', async () => {

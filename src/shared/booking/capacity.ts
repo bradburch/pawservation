@@ -7,10 +7,13 @@ import { addDays, DATE_RE } from '../util/dates.js';
 // (MaxConcurrentPets, for boarding-kind AND housesit-kind); a `null` cap is UNLIMITED (auto
 // pass-through) and is never compared. A booking with three pets consumes three units. Other
 // services' occupancy is invisible to a request's cap check. Admin-blocked dates always block.
-// The house-sit/boarding overlap rule stays TENANT-WIDE (all boarding-kind services) and is
-// SYMMETRIC: it models the sitter's physical whereabouts, not a pool — she cannot sleep at a
-// client's house and keep a boarder at her own — so it governs a boarding laid over a house sit
-// exactly as it governs a house sit laid over boarding. Its allowance arrives on the request
+// The WHEREABOUTS rule stays TENANT-WIDE (every service of the clashing kind) and is SYMMETRIC:
+// it models where the sitter physically IS, not a pool. She cannot sleep at a client's house and
+// keep a boarder at her own, so it governs a boarding laid over a house sit exactly as it governs
+// a house sit laid over boarding — and she cannot sleep at TWO clients' houses either, so a night
+// holds at most ONE house sit whatever its pet count. Boarding is not symmetric to that last part:
+// boarding happens at her own home, so several boarders a night is ordinary and is governed by the
+// pool cap alone. `kindsClash` is the whole of that asymmetry. The allowance arrives on the request
 // (`overlapAllowance`, from Tenants.HousesitBoardingOverlapDays); this module reads no config.
 // There is NO bookend/boundary concession on the pool cap: occupancy is counted over `[start, end)`,
 // so a day holds exactly the pets sleeping that night, and an over-full night is a double booking
@@ -44,7 +47,7 @@ export type EventSpan = { start: string; lastOccupied: string };
 
 /**
  * One pool KIND's footprint on one day, tenant-wide (every service of that kind summed). Feeds the
- * structural cross-kind overlap rule ONLY — per-service capacity is `byService`.
+ * structural whereabouts overlap rule ONLY — per-service capacity is `byService`.
  */
 export type KindOccupancy = {
   /** Pets of this kind occupying the day. */
@@ -60,9 +63,12 @@ export type KindOccupancy = {
 export type DayCapacity = {
   /** Occupancy per service, in PETS (boarding-kind and housesit-kind alike). */
   byService: Map<string, number>;
-  /** ALL boarding-kind pets on this day — drives the structural cross-kind rule only. */
+  /** ALL boarding-kind pets on this day — drives the structural whereabouts rule only. */
   boarding: KindOccupancy;
-  /** ALL housesit-kind pets on this day — the mirror of `boarding`, same rule, other direction. */
+  /**
+   * ALL housesit-kind pets on this day. Read by the whereabouts rule from BOTH sides: a boarding
+   * request clashes with it, and so does another HOUSE SIT (see `kindsClash`).
+   */
   housesit: KindOccupancy;
   blocked: number;
   /**
@@ -86,8 +92,9 @@ export type CapacityRequest = {
   /** Pets in this request; default 1. */
   petCount?: number;
   /**
-   * `Tenants.HousesitBoardingOverlapDays` — how many days this request may overlap OPPOSITE-kind
-   * occupancy, and only ever as a HANDOVER (see `rangeConflictReason`). 0 = never; 1 = the
+   * `Tenants.HousesitBoardingOverlapDays` — how many days this request may overlap CLASHING
+   * occupancy (`kindsClash`: boarding vs house sit in either direction, and house sit vs house
+   * sit), and only ever as a HANDOVER (see `rangeConflictReason`). 0 = never; 1 = the
    * product default; NULL = no limit, the rule stops running. REQUIRED on purpose: a defaulted
    * field is how the quote and the booking POST would silently disagree, so every construction
    * site must name the tenant's value.
@@ -209,8 +216,8 @@ export function buildCapacity(events: CapacityEvent[]): Map<string, DayCapacity>
 /**
  * Can a request NOT occupy this day in isolation? A block is always a hard stop. Otherwise the
  * request is governed only by its OWN service's cap over its OWN service's occupancy; a `null`
- * cap never blocks (auto pass-through). Cross-KIND interaction (the house-sit/boarding handover
- * rule) is enforced at the range level, not here — it is a property of a range, not of a day.
+ * cap never blocks (auto pass-through). The WHEREABOUTS interaction (the handover rule) is
+ * enforced at the range level, not here — it is a property of a range, not of a day.
  */
 export function dayBlocksRequest(day: DayCapacity, request: CapacityRequest): boolean {
   if (day.blocked >= 1) return true;
@@ -225,8 +232,15 @@ export function dayBlocksRequest(day: DayCapacity, request: CapacityRequest): bo
  * disagree with the caller that only asks yes/no.
  *
  * - `over_cap` — more pets than the request's own service cap could ever seat.
- * - `cross_kind_overlap` — the house-sit/boarding rule below.
+ * - `cross_kind_overlap` — the whereabouts rule below, boarding against a house sit.
+ * - `same_kind_overlap` — the same rule, house sit against another house sit.
  * - `blocked_or_full` — an admin block, or the service's own pool with no room.
+ *
+ * The two overlap reasons are ONE rule with one allowance knob, split only because the sentence a
+ * caller prints differs: "your sitter has boarding on those dates" and "your sitter is already
+ * house-sitting for someone else" are different facts, and telling a customer the first when the
+ * second is true is a lie the code would be authoring. Reusing `cross_kind_overlap` for a
+ * house-sit-on-house-sit clash would have made the name itself false.
  */
 /** See the comment in `rangeConflictReason`: null passes through, a number passes through, and
  * anything else (only reachable from an untyped caller) reads as 0 — never as "no limit". */
@@ -235,7 +249,38 @@ function normalizeAllowance(value: number | null): number | null {
   return Number.isFinite(value) ? value : 0;
 }
 
-export type RangeConflict = 'over_cap' | 'cross_kind_overlap' | 'blocked_or_full';
+export type RangeConflict =
+  'over_cap' | 'cross_kind_overlap' | 'same_kind_overlap' | 'blocked_or_full';
+
+/**
+ * Do a stay of `kind` and a stay of `otherKind` claim the SAME PLACE on a night they share? This
+ * one predicate is the whole of the whereabouts rule's asymmetry, and it is asymmetric because the
+ * two kinds are:
+ *
+ *  - BOARDING happens at the sitter's OWN home. Two boardings on one night are not a clash at all —
+ *    they are one house holding two dogs, which is a pool question and `MaxConcurrentPets` answers
+ *    it. Nothing here may refuse them.
+ *  - HOUSE SITTING happens at the CLIENT's home. She can sleep in exactly one of those a night,
+ *    whether it holds one cat or four dogs, so a house sit clashes with boarding AND with every
+ *    other house sit. Counting PETS is the wrong question for it: a pet cap can only express "one
+ *    house sit a night" by also turning away anyone arriving with two dogs.
+ *
+ * So: a pair clashes as soon as EITHER side is a house sit.
+ */
+const kindsClash = (kind: PoolKind, otherKind: PoolKind): boolean =>
+  kind === 'housesit' || otherKind === 'housesit';
+
+/**
+ * The spans occupying `day` that a stay of `kind` cannot share it with. For a boarding request
+ * that is the day's house sits; for a house-sit request it is the day's house sits AND its
+ * boardings. Order is stable (boarding first) but no rule depends on it.
+ */
+function clashingSpans(day: DayCapacity, kind: PoolKind): EventSpan[] {
+  const spans: EventSpan[] = [];
+  if (kindsClash(kind, 'boarding')) spans.push(...day.boarding.spans);
+  if (kindsClash(kind, 'housesit')) spans.push(...day.housesit.spans);
+  return spans;
+}
 
 /** Every one of these bookings has `date` as its LAST occupied day — they are all leaving. */
 const allDepartOn = (spans: EventSpan[], date: string): boolean =>
@@ -246,7 +291,7 @@ const allArriveOn = (spans: EventSpan[], date: string): boolean =>
   spans.every((span) => span.start === date);
 
 /**
- * The SOUNDLY PAINTABLE half of the cross-kind handover rule: is this day unusable by EVERY range
+ * The SOUNDLY PAINTABLE half of the whereabouts handover rule: is this day unusable by EVERY range
  * request of `kind`, whatever its dates?
  *
  * The rule itself is a property of a RANGE — really of a PAIR of ranges — so a per-day grid can
@@ -257,15 +302,19 @@ const allArriveOn = (spans: EventSpan[], date: string): boolean =>
  *
  * Three grounds, each one a rule the range walk would apply to any request touching this day:
  *
- *  1. `allowance` 0 — the two kinds may never share a day at all, so any opposite-kind occupancy is
+ *  1. `allowance` 0 — a clashing stay may never share a day at all, so any clashing occupancy is
  *     final. (`null` switches the whole rule off; nothing is paintable.)
  *  2. The DIRECTIONAL half of rule 2. A request's only three options for a day are to arrive on it,
- *     depart on it, or span it, and spanning is never a handover — so if the day's opposite-kind
+ *     depart on it, or span it, and spanning is never a handover — so if the day's clashing
  *     bookings are neither all departing nor all arriving, no request can use it.
  *  3. A ONE-NIGHT neighbour. Its single occupied day is both its arrival and its departure, so it
  *     passes the directional test from either side — but any handover doubles the only night it
  *     has, so `neighborsViolated` refuses every request that touches it (rule 3, seen from the
  *     other stay).
+ *
+ * `clashingSpans` is what makes this cover a house sit against ANOTHER house sit as well as against
+ * boarding: for a `housesit` request a day already carrying a house sit is unusable on exactly the
+ * same three grounds, so the grid strikes it out instead of painting a day the quote would refuse.
  *
  * Deliberately NOT decided here, because none of it is a property of one day: rule 3 for the
  * REQUEST (needs the request's length), the allowance BUDGET across a multi-day request, and a
@@ -273,7 +322,7 @@ const allArriveOn = (spans: EventSpan[], date: string): boolean =>
  * map, and a one-month read cannot promise it). Those stay with the range walk, which is why a span
  * of days this predicate leaves open can still be refused.
  */
-export function crossKindDayBlocked(
+export function whereaboutsDayBlocked(
   day: DayCapacity,
   date: string,
   kind: PoolKind,
@@ -281,34 +330,44 @@ export function crossKindDayBlocked(
 ): boolean {
   const normalized = normalizeAllowance(allowance);
   if (normalized === null) return false;
-  const opposite = kind === 'housesit' ? day.boarding : day.housesit;
-  if (opposite.spans.length === 0) return false;
+  const clashing = clashingSpans(day, kind);
+  if (clashing.length === 0) return false;
   if (normalized < 1) return true;
-  if (opposite.spans.some((span) => span.start === span.lastOccupied)) return true;
-  return !(allDepartOn(opposite.spans, date) || allArriveOn(opposite.spans, date));
+  if (clashing.some((span) => span.start === span.lastOccupied)) return true;
+  return !(allDepartOn(clashing, date) || allArriveOn(clashing, date));
 }
 
-/** The opposite-kind bookings the request's own days touch, de-duplicated by span identity (the
- *  same object sits on every day its event occupies, which is what makes identity meaningful). */
+/**
+ * A booking the request's days touch, carrying the KIND it was found under. The kind is recovered
+ * from which occupancy list held it rather than stored on the span, so the two can never drift; it
+ * is needed because `neighborsViolated` must ask what clashes with the NEIGHBOUR, and a neighbour
+ * house sit clashes with other house sits while a neighbour boarding does not clash with boardings.
+ */
+type TouchedSpan = { span: EventSpan; kind: PoolKind };
+
+/** The clashing bookings the request's own days touch, de-duplicated by span identity (the same
+ *  object sits on every day its event occupies, which is what makes identity meaningful). */
 function touchedSpans(
   startDate: string,
   endDateExclusive: string,
   kind: PoolKind,
   capacityByDate: Map<string, DayCapacity>,
-): EventSpan[] {
-  const seen = new Set<EventSpan>();
+): TouchedSpan[] {
+  const seen = new Map<EventSpan, PoolKind>();
   for (let date = startDate; date < endDateExclusive; date = addDays(date, 1)) {
     const day = capacityByDate.get(date);
     if (!day) continue;
-    for (const span of kind === 'housesit' ? day.boarding.spans : day.housesit.spans)
-      seen.add(span);
+    for (const other of ['boarding', 'housesit'] as const) {
+      if (!kindsClash(kind, other)) continue;
+      for (const span of day[other].spans) seen.set(span, other);
+    }
   }
-  return [...seen];
+  return [...seen].map(([span, spanKind]) => ({ span, kind: spanKind }));
 }
 
 /**
  * The calendar window a correct verdict needs: the union of the request's own span with every
- * opposite-kind booking it touches. Those neighbours routinely reach OUTSIDE the request's dates —
+ * clashing booking it touches. Those neighbours routinely reach OUTSIDE the request's dates —
  * a house sit departing on our arrival day started days earlier — and `neighborsViolated` has to
  * see their whole span to know whether they keep a day of their own. `null` when nothing is
  * touched, which is the common case and the reason a caller can skip the widened read entirely.
@@ -319,11 +378,11 @@ export function overlapReadWindow(
   kind: PoolKind,
   capacityByDate: Map<string, DayCapacity>,
 ): { from: string; toExclusive: string } | null {
-  const spans = touchedSpans(startDate, endDateExclusive, kind, capacityByDate);
-  if (spans.length === 0) return null;
+  const touched = touchedSpans(startDate, endDateExclusive, kind, capacityByDate);
+  if (touched.length === 0) return null;
   let from = startDate;
   let last = addDays(endDateExclusive, -1);
-  for (const span of spans) {
+  for (const { span } of touched) {
     if (span.start < from) from = span.start;
     if (span.lastOccupied > last) last = span.lastOccupied;
   }
@@ -348,21 +407,25 @@ function neighborsViolated(
   kind: PoolKind,
   capacityByDate: Map<string, DayCapacity>,
   allowance: number,
-): boolean {
-  for (const span of touchedSpans(startDate, endDateExclusive, kind, capacityByDate)) {
+): TouchedSpan | null {
+  for (const touched of touchedSpans(startDate, endDateExclusive, kind, capacityByDate)) {
+    const { span } = touched;
     let shared = 0;
     let days = 0;
     for (let date = span.start; date <= span.lastOccupied; date = addDays(date, 1)) {
       days += 1;
       const inRequest = date >= startDate && date < endDateExclusive;
       const day = capacityByDate.get(date);
-      const mine =
-        day && (kind === 'housesit' ? day.housesit.spans : day.boarding.spans).length > 0;
+      // What clashes with the NEIGHBOUR, not with the request — the two differ now that a house
+      // sit clashes with its own kind. `!== span` is what keeps a neighbour house sit from
+      // counting ITSELF as occupancy on every one of its own days (which would make `shared`
+      // trivially equal `days` and refuse everything).
+      const mine = day !== undefined && clashingSpans(day, touched.kind).some((s) => s !== span);
       if (inRequest || mine) shared += 1;
     }
-    if (shared > allowance || shared >= days) return true;
+    if (shared > allowance || shared >= days) return touched;
   }
-  return false;
+  return null;
 }
 
 export function rangeHasConflict(
@@ -384,6 +447,10 @@ export function rangeConflictReason(
   const units = unitsOf(request.petCount);
   let overlapDays = 0;
   let requestDays = 0;
+  // Did any day the request shares carry a stay of its OWN kind (only ever house sit on house
+  // sit)? It selects the wording of the two post-walk refusals below, which are decided after the
+  // walk and so no longer have a day in hand to look at.
+  let sawSameKind = false;
 
   // Defensive normalization of the tenant's allowance: only a number or an explicit null mean
   // anything. Anything else — a caller built against the older CapacityRequest shape, or a tenant
@@ -402,18 +469,21 @@ export function rangeConflictReason(
     const day = capacityByDate.get(date);
     if (!day) continue;
 
-    // Structural rule (TENANT-WIDE, SYMMETRIC): a house sit and boarding may share a day only as a
-    // HANDOVER, because the sitter cannot be in two places — this models her whereabouts, not a
-    // pool, so it reads occupancy from ANY service of the opposite kind, and governs a boarding
-    // laid over a house sit exactly as it governs the reverse.
+    // Structural WHEREABOUTS rule (TENANT-WIDE, SYMMETRIC): two stays that claim different places
+    // may share a day only as a HANDOVER, because the sitter cannot be in two places. This models
+    // where she IS, not a pool, so it reads occupancy from ANY service of a clashing kind, and
+    // governs a boarding laid over a house sit exactly as it governs the reverse — and, since a
+    // house sit happens at the CLIENT's home, a house sit laid over ANOTHER house sit too
+    // (`kindsClash`). A night therefore holds at most one house sit however few pets it has, which
+    // is the question `MaxConcurrentPets` cannot ask: it counts pets, not houses.
     //
     // A shared day is legal only when ALL THREE hold, and each is checked for BOTH stays — the
     // incoming request here in the walk, the bookings it touches in `neighborsViolated` below:
     //   1. the count of shared days is within `overlapAllowance`;
-    //   2. the day is a handover — either we ARRIVE on it and every opposite-kind booking there
+    //   2. the day is a handover — either we ARRIVE on it and every clashing booking there
     //      DEPARTS on it, or we DEPART on it and every one of them ARRIVES on it;
-    //   3. the stay is not shared END TO END — at least one of its own days is free of the
-    //      opposite kind.
+    //   3. the stay is not shared END TO END — at least one of its own days is free of clashing
+    //      occupancy.
     //
     // Rule 2 is directional on purpose. "At the tail ends" is not "at either end of the request":
     // both ends of a two-night request are its endpoints, so an endpoint-only test would let a
@@ -423,12 +493,21 @@ export function rangeConflictReason(
     // single-day stay is trivially "at its own endpoint", so nothing else would). `every one of
     // them`: if two bookings occupy the day and only one is leaving, the other is still there.
     if (overlapAllowance !== null) {
-      const opposite = request.kind === 'housesit' ? day.boarding : day.housesit;
-      if (opposite.spans.length > 0) {
+      const clashing = clashingSpans(day, request.kind);
+      if (clashing.length > 0) {
         overlapDays += 1;
-        const weArrive = date === startDate && allDepartOn(opposite.spans, date);
-        const weDepart = date === requestEnd && allArriveOn(opposite.spans, date);
-        if (overlapDays > overlapAllowance || !(weArrive || weDepart)) return 'cross_kind_overlap';
+        // `kindsClash` first: a boarding day routinely holds other boardings, and they are not a
+        // clash at all — without the guard every full boarding day would report the wrong reason.
+        const sameKind =
+          kindsClash(request.kind, request.kind) && day[request.kind].spans.length > 0;
+        if (sameKind) sawSameKind = true;
+        const weArrive = date === startDate && allDepartOn(clashing, date);
+        const weDepart = date === requestEnd && allArriveOn(clashing, date);
+        if (overlapDays > overlapAllowance || !(weArrive || weDepart))
+          // A day may carry both a boarding and another house sit; naming the same-kind one is the
+          // more specific truth and the one a customer can act on ("she is already sitting for
+          // someone else"), so it wins.
+          return sameKind ? 'same_kind_overlap' : 'cross_kind_overlap';
       }
     }
 
@@ -475,21 +554,32 @@ export function rangeConflictReason(
   // no such day is not one she is there for at all — the dog is at her house every night she is
   // sleeping at a client's. Rule 2 cannot see this: a one-night stay is its own arrival AND
   // departure, so a chain of one-nighters (or a request exactly as long as the allowance)
-  // satisfies the handover test on every single day and doubles the whole stay.
+  // satisfies the handover test on every single day and doubles the whole stay. This is also what
+  // refuses TWO ONE-NIGHT HOUSE SITS on the same night: each is its own arrival and its own
+  // departure, so rule 2 waves the day through and only "the stay kept no day of its own" is left.
   if (overlapAllowance !== null && overlapDays > 0 && overlapDays >= requestDays) {
-    return 'cross_kind_overlap';
+    return sawSameKind ? 'same_kind_overlap' : 'cross_kind_overlap';
   }
 
   // …and rules 1 and 3 again, from the OTHER stay's point of view. Without this the verdict
   // depends on the order the two bookings arrive in: a one-night boarding on Sep 4, then a house
   // sit Sep 1→5, is accepted (the sit has three free nights and one handover) even though booking
   // the same pair the other way round is refused — and the dog spends its only night alone while
-  // the sitter sleeps at a client's. The physical claim is symmetric, so the test has to be.
+  // the sitter sleeps at a client's. The physical claim is symmetric, so the test has to be. The
+  // same argument holds house-sit against house-sit: whichever of the two clients booked first,
+  // she can still only sleep in one of their homes.
   if (overlapAllowance !== null && overlapDays > 0) {
-    if (
-      neighborsViolated(startDate, endDateExclusive, request.kind, capacityByDate, overlapAllowance)
-    )
-      return 'cross_kind_overlap';
+    const offender = neighborsViolated(
+      startDate,
+      endDateExclusive,
+      request.kind,
+      capacityByDate,
+      overlapAllowance,
+    );
+    // The offending NEIGHBOUR names the wording here — it is the stay being wronged, so its kind
+    // is the accurate one, and it is known exactly rather than inferred from the walk.
+    if (offender !== null)
+      return offender.kind === request.kind ? 'same_kind_overlap' : 'cross_kind_overlap';
   }
 
   return null;
