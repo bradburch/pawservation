@@ -152,29 +152,60 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('the sum comes out somewhere else');
     // The strongest sentence in the block was buried third; it now leads the walker's pair.
     expect(body).toContain('a cancelled Wednesday, a swapped Thursday, an extra dog on Friday');
-    // The pull-quote is gone: two hours a month set in display type is a small number in big
-    // letters, which reads as an argument against the product. The multiplication survives only
-    // demoted into prose, and the "these are illustrative" honesty device stays SCOPED to the
-    // boarding shape it applies to.
+    // The pull-quote went in round 2; round 3 took the arithmetic itself. Five of seven readers
+    // objected to it — "two hours a month is not why anyone changes software", "eight requests a
+    // month tells me who you think your customer is, I run thirty" — and the "these are
+    // illustrative" disclaimer only ever existed to prop the number up, so it goes with it. What
+    // survives is the felt cost of ONE request, which is the part a reader recognises.
+    expect(body).toContain('a quarter of an hour of your attention, in pieces, for every request');
     expect(body).not.toContain('class="wf-sum"');
     expect(body).not.toContain('do the sum yourself');
-    expect(body).toContain('illustrative numbers rather than a measured finding');
+    expect(body).not.toContain('illustrative numbers rather than a measured finding');
+    for (const sum of ['At eight requests a month', 'a couple of hours back'])
+      expect(body, sum).not.toContain(sum);
   });
 
-  it('says what actually reaches the sitter when a client changes a booking', async () => {
+  it('separates what a cancellation does from what a change does, and both from silence', async () => {
     const body = await landingBody();
-    // VERIFIED: editBooking (server/lib/booking-ops.ts) sends NO email — the cancel path calls
-    // sendCancellationNoticeToSitter, the edit path only re-stamps Status='pending' and
-    // SyncPending=1 and pushes the moved/retitled event. Round 1's "they wait to be read between
-    // walks" implied a notification that does not exist.
-    expect(body).toContain('Nothing pings you');
-    expect(body).toContain('goes back to pending and waits in your dashboard');
+    // VERIFIED: cancelBooking fires sendCancellationNoticeToSitter (server/lib/booking-ops.ts:1000)
+    // — the only send*() call in that whole file — while editBooking's only side effects are the
+    // saved-answer write and the calendar push. So a cancellation DOES email her and a change does
+    // not, and round 2's blanket "Nothing pings you" sat directly under a list that opens with "a
+    // cancelled Wednesday". They must be described apart.
+    expect(body).toContain('A cancellation emails you');
     expect(body).toContain('A change doesn&rsquo;t email you');
+    expect(body).not.toContain('Nothing pings you');
     // The old ambiguous clause read as "a change or a cancellation emails you"; only the second
     // one does, and only that one may be claimed.
     expect(body).not.toContain('and emails you either way');
     for (const lie of ['emails you when they change', 'notifies you of the change'])
       expect(body, lie).not.toContain(lie);
+  });
+
+  it('says a change has ALREADY taken effect when she reads it — approval is retroactive', async () => {
+    const body = await landingBody();
+    // VERIFIED in updateBookingForEdit (server/db/repo.ts:1134): ONE statement writes the new
+    // StartDate/EndDate/StartTime/DepartureTime/PetCount/EstCost/Answers together with
+    // Status='pending' and SyncPending=1, and editBooking calls it BEFORE the capacity re-check
+    // (booking-ops.ts:1249, "apply optimistically") and then moves + retitles the Google event.
+    // From that moment the new dates are the ones listCapacityRows counts. Nothing waits for the
+    // sitter, so round 2's "you re-approve it rather than discovering it" was exactly backwards:
+    // discovering it is precisely what she does. Two of the three places that said so are on this
+    // page (the walks pair and the FAQ), and they must agree with the tour.
+    expect(body).toContain('A change takes effect straight away');
+    expect(body).toContain('it takes effect the moment they save it');
+    expect(body).toContain('your approval comes after the change, not before it');
+    // She can still decline — but a decline writes only Status (repo.ts:1016), so it does NOT
+    // restore the old dates. The page may therefore offer declining, never reverting.
+    expect(body).toContain('can decline it');
+    for (const backwards of [
+      're-approve it rather than discovering it',
+      'comes back to you as pending, so you re-approve',
+      'waiting for your approval',
+      'waits for your approval',
+      'before it takes effect',
+    ])
+      expect(body, backwards).not.toContain(backwards);
   });
 
   it('answers the weekly-regular question in the FAQ, where a decider will hit it', async () => {
@@ -184,12 +215,15 @@ describe('GET / — landing page', () => {
     // where that gets read.
     expect(body).toContain('Do you handle weekly regulars?');
     expect(body).toContain('no repeating booking yet, so each Tuesday is its own request');
-    // Said once at full length (the FAQ) and once in a trimmed clause (the workflow block) — the
-    // repetition of a full statement is what round 1 was pulled up on.
+    // Round 3: "once in the FAQ and once in the tour is candour; four times is anxiety." The
+    // trimmed restatement in the workflow block is gone, so the landing page says it exactly once.
     expect(
       body.match(/no repeating booking yet, so each Tuesday is its own request/g) ?? [],
     ).toHaveLength(1);
-    expect(body).toContain('a weekly Tuesday is booked one Tuesday at a time');
+    expect(body).not.toContain('a weekly Tuesday is booked one Tuesday at a time');
+    // The whole caveat now lives inside that one FAQ answer — the workflow block above says
+    // nothing about repeats at all.
+    expect(body.indexOf('repeating booking')).toBeGreaterThan(body.indexOf('id="faq"'));
     // Nothing on the page may offer the thing the caveat says isn't built.
     for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
       expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);

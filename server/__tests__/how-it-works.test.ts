@@ -136,7 +136,15 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // PUT /:slug/bookings/:id — dates, pets, arrival time, answers; never the service.
     expect(body).toContain('cannot change is which service it is');
     // A confirmed booking returns to pending for re-approval, and no fee is assessed.
-    expect(body).toMatch(/comes straight back to you as pending/i);
+    // A2, VERIFIED: updateBookingForEdit (server/db/repo.ts:1134) writes the new dates, pet count
+    // and estimate together with Status='pending' in ONE statement, applied before the capacity
+    // re-check, and editBooking then moves + retitles the Google event. So the change is already in
+    // force when she sees it; her approval is retroactive. "Comes straight back to you as pending"
+    // read as though it waited for her.
+    expect(body).toMatch(/drops it straight back to pending/i);
+    expect(body).toContain('the change itself is already in effect');
+    expect(body).toContain('Your approval comes after the change rather than before it');
+    expect(body).not.toMatch(/comes straight back to you as pending/i);
     expect(body).toMatch(/[Rr]escheduling is not cancelling/);
     // Every create-time rule is re-run on the edit (booking-ops.ts editBooking).
     expect(body).toMatch(/can&rsquo;t squeeze past a cap/i);
@@ -168,6 +176,64 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toMatch(/never overlap/i);
     // The directional half of the rule: a shared day must be a genuine handover.
     expect(body).toMatch(/one thing ending as the other begins/i);
+  });
+
+  it('is honest that the whereabouts rule does NOT hold two house sits apart (same-kind non-goal)', async () => {
+    const body = await howItWorksBody();
+    // VERIFIED in src/shared/booking/capacity.ts:426 — the rule reads only the OPPOSITE pool
+    // (`request.kind === 'housesit' ? day.boarding : day.housesit`), so a house sit never sees
+    // another house sit. Two on one night are governed solely by MaxConcurrentPets, which counts
+    // PETS (capacity.ts:120 `unitsOf`, :215 `used + units > cap`). A house-sitting-heavy reader
+    // called the old rationale "selling me a double-booking".
+    expect(body).toContain(
+      'What the rule does not do is hold two house sits apart from each other',
+    );
+    expect(body).toContain('counts pets, not houses');
+    // …and the only workaround must be stated WITH its cost, because the two cannot be separated:
+    // MaxConcurrentPets = 1 also refuses any single booking of two pets (capacity.ts:398
+    // `units > request.cap` → 'over_cap'), and the admin PUT refuses a pool below MaxPetCount
+    // (server/routes/admin.ts:1096), so there is no second knob.
+    expect(body).toContain('a house-sit cap of one pet');
+    expect(body).toContain('turns away every client arriving with two dogs');
+    expect(body).toContain('there is no setting that separates the two');
+    // The over-general rationale is gone: "you can't be in two places at once" promises a rule
+    // about two house sits that does not exist.
+    expect(body).not.toContain('two places at once');
+  });
+
+  it('says which Google calendar it syncs to, and that the default is her main one', async () => {
+    const body = await howItWorksBody();
+    // VERIFIED: the OAuth callback stores CalendarId: 'primary' (server/routes/oauth.ts:117), and
+    // every read treats NULL and 'primary' alike (calendar-sync.ts:566). Because the connected
+    // calendar is also READ, the default means her dentist appointment blocks bookings — which the
+    // admin UI already warns about (AppsSection.tsx:69) but the marketing pages did not. Moving off
+    // it is an affirmative second step: POST .../create-calendar (admin.ts:1667) makes
+    // "Pawservation — Pet bookings" (google-calendar.ts:24), or she pastes an existing id
+    // (admin.ts:1719). There is no picker of existing calendars.
+    expect(body).toContain('Connecting starts you on your main calendar');
+    expect(body).toContain('Pawservation &mdash; Pet bookings');
+    expect(body).toContain('paste in the id of one you already made');
+    // The claim that survives unchanged, and is still true: only the connected calendar is touched.
+    expect(body).toContain('every other calendar in your account is never read and never touched');
+  });
+
+  it('says what a NON-CLIENT sees at the embedded widget', async () => {
+    const body = await howItWorksBody();
+    // VERIFIED in app/embed/App.tsx:120-142 — the `!authed` branch returns before BookTab is
+    // mounted (:168), so a stranger gets a greeting, a three-step explainer, the email box and an
+    // invite-only note; no services, no calendar, no prices. An unknown address gets 403 "This
+    // provider books by invitation only." (server/routes/auth.ts:85) rather than an account.
+    expect(body).toContain('Anyone can load the page, but only your clients can book it');
+    expect(body).toContain('no services, no dates, no prices');
+    expect(body).toContain('booking is invite-only');
+    expect(body).toContain('rather than signed up');
+  });
+
+  it('runs the walk case in the sentence that names the per-slot walk limit', async () => {
+    const body = await howItWorksBody();
+    // The sentence names "how many pets you'll take in that time slot" and then illustrated it with
+    // a boarding date RANGE. It has to run both shapes or it argues past the walker it just named.
+    expect(body).toContain('can you do Tuesday at ten?');
   });
 
   it('covers the booking window: per-service notice and the business-wide horizon (0004)', async () => {
@@ -390,8 +456,59 @@ describe('the landing page claims only what ships', () => {
     const body = await landingBody();
     expect(body).toContain('Can a client change or cancel a booking themselves?');
     // The two facts that make it safe for the sitter: re-approval, and a fee she never negotiates.
-    expect(body).toMatch(/comes back to you as pending/i);
+    expect(body).toContain('A change takes effect straight away');
+    expect(body).toContain('your approval comes after the change, not before it');
+    expect(body).not.toMatch(/comes back to you as pending, so you re-approve/i);
     expect(body).toMatch(/not typed in by them/i);
+  });
+
+  it('gives the monthly-payer household balance its own FAQ item, not a tail on card payments', async () => {
+    const body = await landingBody();
+    // It is the fix for a real problem — a client who settles a month at a time — and nobody
+    // scanning for billing looks under "Do customers pay by card here?".
+    expect(body).toContain('My clients pay me monthly, not per booking');
+    expect(body).toMatch(/one (payment|running balance) for (the |a )?(whole |entire )?household/i);
+    expect(body).toContain('one running balance rather than a figure stuck to each booking');
+    // The card answer keeps only the card answer.
+    const cardAnswer = body.slice(
+      body.indexOf('Do customers pay by card here?'),
+      body.indexOf('My clients pay me monthly'),
+    );
+    expect(cardAnswer).not.toContain('household');
+    // VERIFIED (unchanged from round 2): GET /:slug/account exists, but app/embed/App.tsx mounts
+    // only BookTab and MineTab, so there is no client-facing balance screen and no email carrying
+    // one. The page may claim the sitter's side only.
+    expect(body).toContain('nothing about it is emailed to your client');
+    expect(body).not.toMatch(/invoice|statement/i);
+  });
+
+  it('qualifies the "can it double-book me? No." absolute with the same-kind limit', async () => {
+    const body = await landingBody();
+    // The strongest absolute on the page, and two house sits on one night are the case it does not
+    // cover (capacity.ts:426 reads only the opposite pool). A reader who house-sits called the
+    // unqualified version "selling me a double-booking".
+    expect(body).toContain('One thing it doesn&rsquo;t do is keep you in one house at a time');
+    expect(body).toContain('that cap counts pets rather than houses');
+    expect(body).toContain('so is any client bringing two dogs');
+    expect(body).toContain('There is no setting that does the first without the second');
+  });
+
+  it('tells a sitter what the public sees before she pastes the embed on a live site', async () => {
+    const body = await landingBody();
+    // Half a sitter's traffic is referrals not yet on her list; without this she cannot judge
+    // whether the widget is safe on a public page. VERIFIED in app/embed/App.tsx:120-142.
+    expect(body).toContain('Safe on a public page');
+    expect(body).toContain('no services, no dates, no prices');
+    expect(body).toContain('booking is invite-only');
+  });
+
+  it('does not label the workflow column five unchanging things when one of them changes', async () => {
+    const body = await landingBody();
+    // The fifth item is "The dates question stops being a text." — the one thing that DOES change.
+    expect(body).toContain(
+      'Four things that don&rsquo;t change on the day you start &mdash; and one that does.',
+    );
+    expect(body).not.toContain('Five things that don&rsquo;t change');
   });
 
   it('still shows Pro as unbuilt, and never badges it available', async () => {
@@ -417,8 +534,22 @@ describe('the landing page claims only what ships', () => {
     expect(body).toContain('Moving doesn&rsquo;t move it');
     expect(body).toContain('the event is rewritten back to them');
     // The drag that DOES have an effect: outside reconcileWindow the event is simply absent from
-    // Google's response, which pass (a) reads as a hand-deletion.
-    expect(body).toContain('leaves the months Pawservation checks');
+    // Google's response, which pass (a) reads as a hand-deletion. A5: the window is now NAMED,
+    // because "the months Pawservation checks" is not a number a sitter can act on. VERIFIED in
+    // reconcileWindow (server/lib/calendar-sync.ts:521): [today-1, max(today+180d, horizon+1d)),
+    // where the 180-day RECONCILE_MIN_HORIZON_DAYS floor holds even when MaxAdvanceMonths is NULL
+    // or shorter — so a sitter booking August in March is comfortably inside it.
+    expect(body).toContain('leaves the window Pawservation checks');
+    expect(body).toContain('yesterday to six months out');
+    expect(body).toContain(
+      'as far as your own booking horizon if you let clients book beyond that',
+    );
+    // A6, VERIFIED: updateBookingStatus guards `Status NOT IN ('cancelled','declined')`
+    // (repo.ts:1023) and no admin route writes a booking back to 'confirmed', so the dashboard
+    // offers a cancelled row no lifecycle action at all. Warning about the action without saying
+    // it cannot be undone left the sitter to find that out at the worst moment.
+    expect(body).toContain('A cancellation is final');
+    expect(body).toContain('there is no un-cancel in your dashboard');
     // …and it must never claim the move is honoured.
     for (const lie of ['the booking follows', 'the dates update', 'moves the booking'])
       expect(body, lie).not.toContain(lie);
