@@ -353,6 +353,38 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('type an old booking in yourself');
   });
 
+  it('tells a sitter in the setup section how her data comes back out, and no more than that', async () => {
+    const body = await howItWorksBody();
+    // The setup section is where a sitter decides whether to put eleven years of client records
+    // into this, so it is where the way back out belongs — beside the other "before you start"
+    // answer (the stays she has already agreed to) rather than in the under-the-hood section,
+    // which is explicitly about software her clients might use.
+    expect(body).toContain('What if you want to take your book elsewhere?');
+    expect(body.indexOf('take your book elsewhere')).toBeGreaterThan(body.indexOf('id="setup"'));
+    expect(body.indexOf('take your book elsewhere')).toBeLessThan(body.indexOf('id="next"'));
+    // The four datasets of EXPORT_DATASETS, and the file format buildExportCsv actually writes.
+    expect(body).toContain('Export your data gives you four downloads');
+    expect(body).toContain('ordinary CSVs');
+    // Every claim about what is IN them is a column data-export.ts really emits, including the
+    // rows a tidier export would have dropped.
+    expect(body).toContain('Cancelled bookings, declined requests and pets who have died');
+    // The limits, stated where the reader is deciding: she presses the button, and nothing reads
+    // one of these files back into her account.
+    expect(body).toContain('It goes one way only');
+    for (const overclaim of [
+      'automatic backup',
+      'automatic export',
+      'scheduled export',
+      'nightly',
+      'api key',
+      'full account backup',
+      'download everything as a zip',
+      'import it back',
+      'back into pawservation',
+    ])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
+  });
+
   it('offers the demo without jargon or a signup scare, everywhere it offers it', async () => {
     const body = await howItWorksBody();
     expect(body.match(/nothing to sign up for/g)?.length ?? 0).toBeGreaterThanOrEqual(2);

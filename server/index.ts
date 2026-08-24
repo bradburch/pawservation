@@ -759,6 +759,10 @@ const LANDING_HTML = `<!doctype html>
               <p><strong>Just your clients.</strong> You add each client, and their pets, before they can book. A client record always starts with at least one pet, so every request says exactly which animal is coming. Add them one at a time or import a CSV, and choose which animal types you accept.</p>
             </div>
             <div class="qa-item">
+              <h3>Can I get my data out?</h3>
+              <p><strong>Yes, any time you like.</strong> Under Business in your dashboard there&rsquo;s an Export your data panel with four downloads: clients, with their contact details and the pets on each account; pets, with their type, their owners and your care notes; bookings, with the dates, the pets, the status, the cost and what your client answered on the form; and payments, with the amount, the date, the method and what each one settled. They&rsquo;re ordinary CSVs, so they open in Excel, Numbers or Google Sheets and go wherever you go next. Cancelled bookings, declined requests and pets who have died are all in there with their status in a column, because they&rsquo;re part of your record. Downloading changes nothing, and you can do it as often as you want. It only runs when you press the button, though: there&rsquo;s no scheduled copy, and no way to load one of these files back in.</p>
+            </div>
+            <div class="qa-item">
               <h3>Can my whole team use it?</h3>
               <p><strong>Not yet.</strong> Pawservation runs one sitter per account today. Extra sitters, with assignment, are part of the Pro plan, which isn&rsquo;t built yet.</p>
             </div>
@@ -1170,6 +1174,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h3 class="wf-h">What about the stays you&rsquo;ve already agreed to?</h3>
             <p>Straight answer: you can&rsquo;t type an old booking in yourself. But if the stay is already on the calendar you connected, you&rsquo;re done: Pawservation reads that calendar and blocks those dates automatically, so nothing can be double-booked over it.</p>
             <p>Want the stay tracked properly, with caps, records and what you&rsquo;re owed? Have the client send the request through your booking page. It takes them a minute, and then your calendar and your books match reality.</p>
+          </div>
+          <div class="wf-math">
+            <h3 class="wf-h">What if you want to take your book elsewhere?</h3>
+            <p>Under Business in your dashboard, Export your data gives you four downloads. Clients come with contact details and the pets on each account; pets with their type, their owners and your care notes; bookings with the dates, the pets, the status, the cost and what your client answered on the form; payments with the amount, the date, the method and what each one settled. Cancelled bookings, declined requests and pets who have died are all there with their status in a column, because they are part of what happened.</p>
+            <p>They are ordinary CSVs, so they open in Excel, Numbers or Google Sheets, and they are yours to keep or hand to whatever you use next. Take a copy as often as you like; downloading changes nothing in your account. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
           </div>
         </div>
       </section>

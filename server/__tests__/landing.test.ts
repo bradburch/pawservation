@@ -43,7 +43,8 @@ describe('GET / — landing page', () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
     expect(body).toContain('Upload the CSV from Venmo');
-    // Still no data-export claim: this is about importing a file INTO Pawservation.
+    // This card is about reading a file INTO Pawservation; taking data back OUT is its own FAQ
+    // item further down, and the two must not be blurred into one claim here.
     expect(body).not.toContain('export button');
   });
 
@@ -81,10 +82,37 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('multi-pet pricing is on the way');
   });
 
-  it('no longer advertises data export (no export route exists; the FAQ item is gone)', async () => {
+  it('says a sitter can take her book out, and claims no more than the export does', async () => {
     const body = await landingBody();
-    expect(body).not.toContain('Can I get my data out?');
-    expect(body).not.toContain('export button');
+    // This pin used to run the other way: the FAQ item was REMOVED because the page advertised an
+    // export nothing implemented, and the test froze that removal. GET /api/:slug/admin/export/
+    // :dataset shipped, so the copy is allowed back and the protection turns around with it —
+    // from "must not say this" to "must say this, and must not say more than this".
+    expect(body).toContain('Can I get my data out?');
+    // The four datasets of EXPORT_DATASETS, named inside this answer rather than anywhere on the
+    // page, plus where the panel actually lives (Settings → Business).
+    const answer = body.slice(body.indexOf('Can I get my data out?'), body.indexOf('team use it?'));
+    expect(answer).toContain('Export your data panel with four downloads');
+    for (const dataset of ['clients', 'pets', 'bookings', 'payments'])
+      expect(answer, dataset).toContain(dataset);
+    // …and the two limits stated out loud, because a reader deciding on lock-in is the one who
+    // will find out otherwise: it runs when she presses the button, and nothing reads a file back.
+    expect(body).toContain('no scheduled copy');
+    expect(body).toContain('no way to load one of these files back in');
+    // Nothing buildExportCsv does not do may be claimed. There is no cron, no whole-account
+    // archive, no key to issue, and no path that imports an exported file into Pawservation.
+    for (const overclaim of [
+      'automatic backup',
+      'automatic export',
+      'scheduled export',
+      'nightly',
+      'api key',
+      'full account backup',
+      'download everything as a zip',
+      'import it back',
+      'back into pawservation',
+    ])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
   it('tells the client-AND-pet truth and drops the CSV row cap from copy', async () => {
