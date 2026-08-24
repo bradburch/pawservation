@@ -59,6 +59,11 @@
     // does NOT match the bare "/x", and un-listed paths bypass the worker entirely (served
     // straight off the assets layer with no CSP / X-Frame-Options at all). See server/index.ts.
     "run_worker_first": [
+      // The landing page. It reaches the worker today only because no asset happens to match "/"
+      // — a build that ever emitted dist/index.html would shadow it silently, and the homepage
+      // would lose its CSP, X-Frame-Options and the Accept: text/markdown negotiation with no
+      // error anywhere. Same defensive footing as "/oauth/google/callback" below.
+      "/",
       "/api/*",
       "/embed/*",
       "/admin",

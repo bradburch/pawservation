@@ -27,6 +27,20 @@ describe('SEO surface', () => {
     }
   });
 
+  it('routes every sitemap page through the worker, not the assets layer', () => {
+    // Derived from the sitemap rather than restated: a new public page gets added there (the test
+    // above proves it resolves), and this fails until it is also listed in run_worker_first.
+    // An unlisted path is served straight off the assets layer whenever an asset matches it —
+    // no CSP, no X-Frame-Options, no content negotiation, and no error to notice. "/" was
+    // missing and worked only because nothing happened to be emitted at that name.
+    const wrangler = readFileSync(join(PUBLIC_DIR, '..', 'wrangler.jsonc'), 'utf8');
+    const first = wrangler.slice(wrangler.indexOf('"run_worker_first"'));
+    for (const loc of sitemapLocs()) {
+      const path = new URL(loc).pathname;
+      expect(first.includes(`"${path}"`), `${path} missing from run_worker_first`).toBe(true);
+    }
+  });
+
   it('points robots.txt at the sitemap and disallows nothing', () => {
     const robots = readPublic('robots.txt');
     expect(robots).toContain(`Sitemap: ${BRAND_ORIGIN}/sitemap.xml`);
