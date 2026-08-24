@@ -27,14 +27,15 @@ describe('SEO surface', () => {
     }
   });
 
-  it('points robots.txt at that sitemap and keeps only the JSON API out', () => {
+  it('points robots.txt at the sitemap and disallows nothing', () => {
     const robots = readPublic('robots.txt');
     expect(robots).toContain(`Sitemap: ${BRAND_ORIGIN}/sitemap.xml`);
-    expect(robots).toContain('Disallow: /api/');
-    // The app surfaces are de-indexed by their own meta tag, which a crawler can only read if it
-    // is allowed to fetch the page. Disallowing them here would silently undo that.
-    expect(robots).not.toContain('Disallow: /admin');
-    expect(robots).not.toContain('Disallow: /setup');
+    // Every exclusion on this site is a noindex the crawler has to FETCH the resource to read —
+    // a meta tag for the app pages, an X-Robots-Tag header for the API. A Disallow directive
+    // (matched here as a directive line, not as the word in the prose above it) would stop that
+    // fetch and so defeat the very tag it looks like it is reinforcing.
+    expect(robots).not.toMatch(/^\s*Disallow:\s*\S/m);
+    expect(robots).toMatch(/^User-agent: \*$/m);
   });
 
   it('keeps the signed-in-only pages out of search with a noindex they can actually read', () => {
@@ -75,7 +76,7 @@ describe('SEO surface', () => {
       // unfurl every shared link as an unreadable sliver. Ship a real 1200x630 image and both
       // tags change together; until then neither exists.
       const large = body.includes('content="summary_large_image"');
-      expect(body.includes('og:image'), path).toBe(large);
+      expect(body.includes('<meta property="og:image"'), path).toBe(large);
     }
   });
 
@@ -86,6 +87,28 @@ describe('SEO surface', () => {
     // GET /request-invite is a redirect into the homepage form, not a second copy of it.
     const redirect = await app.request('/request-invite', {}, env);
     expect(redirect.status).toBe(302);
+  });
+
+  it('pins the built embed title the per-tenant rewrite is anchored on', () => {
+    // The rewrite below matches this exact string. If a Vite-side edit changes it the rewrite
+    // silently stops firing and every tenant page reverts to the shared generic title — with a
+    // green suite, because the rewrite test feeds its own stub HTML. This is the only assertion
+    // that reads the real file.
+    const embed = readFileSync(join(PUBLIC_DIR, '..', 'embed.html'), 'utf8');
+    expect(embed).toContain('<title>Book with us</title>');
+  });
+
+  it('gives the demo page the same card the worker-rendered pages get', () => {
+    // /demo is in the sitemap and is the landing page's primary CTA, but it is a Vite-built static
+    // file that cannot call pageHead — so its head is hand-written and drifts silently.
+    const demo = readFileSync(join(PUBLIC_DIR, '..', 'demo.html'), 'utf8');
+    expect(demo).toContain('<link rel="canonical" href="https://pawservation.com/demo" />');
+    expect(demo).toContain('<meta property="og:url" content="https://pawservation.com/demo" />');
+    expect(demo).toContain('og:title');
+    expect(demo).toContain('og:description');
+    expect(demo.includes('<meta property="og:image"')).toBe(
+      demo.includes('content="summary_large_image"'),
+    );
   });
 
   it('titles each embed page with its own business, escaping the name', async () => {
@@ -109,6 +132,30 @@ describe('SEO surface', () => {
     const nasty = await (await app.request('/embed/sunny-paws', {}, renamed.env)).text();
     // Tenant-controlled: it may not open a tag or close the title early.
     expect(nasty).toContain('<title>Book with Paws &lt;b&gt;&amp;amp; &lt;/b&gt;Co</title>');
+  });
+
+  it('leaves the API crawlable but unindexable, so the embed widget can still render', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request('/api/sunny-paws/config', {}, env);
+    expect(res.headers.get('X-Robots-Tag')).toBe('noindex');
+    // A Disallow instead would stop Googlebot fetching this while rendering /embed/:slug, and
+    // app/embed/App.tsx draws `Loading…` until it arrives — so every tenant page would index as
+    // that one word. The header must therefore be the ONLY thing keeping the API out of search.
+    expect(readPublic('robots.txt')).not.toMatch(/^\s*Disallow:\s*\S/m);
+    // A page still gets no such header — that is what makes the distinction load-bearing.
+    const page = await app.request('/', {}, env);
+    expect(page.headers.get('X-Robots-Tag')).toBeNull();
+  });
+
+  it('canonicalises each embed page to the one host it should be found under', async () => {
+    const { env } = createTestEnv({
+      html: '<!doctype html><html><head><title>Book with us</title></head><body></body></html>',
+    });
+    const html = await (await app.request('/embed/sunny-paws', {}, env)).text();
+    expect(html).toContain(`<link rel="canonical" href="${BRAND_ORIGIN}/embed/sunny-paws" />`);
+    // The JSON-LD keeps the REQUEST origin on purpose: it is an address an agent will call, not a
+    // statement about which copy to index. The two must not be collapsed into one.
+    expect(html).toContain('"url":"http://localhost/embed/sunny-paws"');
   });
 
   it('names the services people search for on the landing page itself', async () => {

@@ -58,6 +58,15 @@ app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (c.req.path.startsWith('/api/')) {
+    // Keep raw JSON out of the search index — the same "noindex, never Disallow" rule
+    // public/robots.txt applies to the signed-in pages, reaching JSON the only way it can. A
+    // Disallow here would ALSO stop Googlebot fetching /api/:slug/config while rendering
+    // /embed/:slug, and that page is a client-rendered widget: app/embed/App.tsx returns
+    // `Loading…` until config arrives, so every tenant's booking page would index as that one
+    // word. The header suppresses the API's own URLs without touching the render.
+    c.header('X-Robots-Tag', 'noindex');
+  }
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', EMBEDDABLE_CSP);
   } else {
@@ -125,8 +134,15 @@ app.get('/embed/:slug', async (c) => {
     '<title>Book with us</title>',
     () => `<title>Book with ${htmlEscape(tenant.DisplayName)}</title>`,
   );
+  // Same multi-host dedup `pageHead` explains, and this page needs it MORE than the marketing
+  // pages do: nothing disallows the workers.dev copy, so a crawler that finds one indexes a second
+  // copy of the tenant's page. Pinned to BRAND_ORIGIN, while the JSON-LD above deliberately keeps
+  // the REQUEST origin — the two answer different questions. Canonical says which copy to index;
+  // the JSON-LD `url` (like llms.txt's endpoints) is a live address an agent will actually call,
+  // and must keep working for whichever host it arrived on.
+  const canonical = `<link rel="canonical" href="${BRAND_ORIGIN}/embed/${encodeURIComponent(tenant.Slug)}" />`;
   return new Response(
-    titled.replace('</head>', () => `${ldScript}</head>`),
+    titled.replace('</head>', () => `${canonical}${ldScript}</head>`),
     res,
   );
 });

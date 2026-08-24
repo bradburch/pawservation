@@ -2,7 +2,7 @@
 <!--
   Every page a stranger should be able to land on. Deliberately no <lastmod>/<priority>: Google
   ignores priority outright, and a hand-maintained lastmod rots into a lie the first time someone
-  edits a page without touching this file. server/__tests__/landing.test.ts asserts every <loc>
+  edits a page without touching this file. server/__tests__/seo.test.ts asserts every <loc>
   below is a live route on this worker.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

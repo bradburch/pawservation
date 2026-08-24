@@ -1,11 +1,13 @@
 # Everything under / is a marketing page and should be indexed.
 #
-# The app surfaces are kept out of search by a `<meta name="robots" content="noindex">` in their
-# own HTML (admin.html, setup.html) rather than by a Disallow here — a disallowed page is never
-# fetched, so its noindex is never read, and Google will still index a bare URL it finds linked
-# from the landing page. Only /api/ is disallowed, because JSON carries no meta tag to say it.
+# Nothing is disallowed here, deliberately. The signed-in surfaces are kept out of search by a
+# `<meta name="robots" content="noindex">` in their own HTML (admin.html, setup.html) and the API
+# by an `X-Robots-Tag: noindex` response header (server/index.ts) — because a disallowed URL is
+# never fetched, so neither of those is ever read, and Google will still index a bare URL it finds
+# linked. Disallowing /api/ would cost more than that: /embed/:slug is a client-rendered widget
+# that fetches /api/:slug/config before it draws anything, so blocking it would index every
+# tenant's booking page as the word "Loading".
 User-agent: *
 Allow: /
-Disallow: /api/
 
 Sitemap: https://pawservation.com/sitemap.xml

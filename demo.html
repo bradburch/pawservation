@@ -12,6 +12,19 @@
       content="Try Pawservation free, with no sign-up: a working booking widget for a made-up pet sitting and dog walking business — pick a service, pick dates, see the quote."
     />
     <link rel="canonical" href="https://pawservation.com/demo" />
+    <!-- Hand-written twins of what `pageHead` (server/index.ts) emits for the worker-rendered
+         pages: this one is a Vite-built static file, so it cannot call that helper. `summary`
+         with no og:image, for the reason spelled out there. server/__tests__/seo.test.ts pins
+         the two in step. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pawservation" />
+    <meta property="og:title" content="Try the demo — Pawservation" />
+    <meta
+      property="og:description"
+      content="Try Pawservation free, with no sign-up: a working booking widget for a made-up pet sitting and dog walking business — pick a service, pick dates, see the quote."
+    />
+    <meta property="og:url" content="https://pawservation.com/demo" />
+    <meta name="twitter:card" content="summary" />
     <style>
       :root {
         /* Same tokens as the landing page (server/index.ts) — the Pawservation bar below
