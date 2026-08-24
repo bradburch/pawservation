@@ -726,7 +726,7 @@ export const PAGE_STYLE = /* css */ `
       }
       .foot-bottom p { margin: 0; }
       @media (min-width: 700px) {
-        .foot-grid { grid-template-columns: 1.4fr 1fr 1fr; }
+        .foot-grid { grid-template-columns: 1.4fr 1fr 1fr 1fr; }
       }
 
       :focus-visible {

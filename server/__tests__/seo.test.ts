@@ -77,6 +77,11 @@ describe('SEO surface', () => {
       // tags change together; until then neither exists.
       const large = body.includes('content="summary_large_image"');
       expect(body.includes('<meta property="og:image"'), path).toBe(large);
+      // Now that a purpose-built card exists, the pair must be PRESENT on every page — the
+      // earlier state (neither tag) and the broken state (a portrait screenshot under a
+      // large-image card) both fail here.
+      expect(large, path).toBe(true);
+      expect(body, path).toContain(`${BRAND_ORIGIN}/img/og-card.png`);
     }
   });
 
@@ -227,12 +232,71 @@ describe('SEO surface', () => {
     const app_ = graph[0] as { offers: { price: string } };
     expect(app_.offers.price).toBe('0');
     expect(JSON.stringify(graph)).not.toContain('29');
-    // No invented address: this product has no postal address, and fabricating one to satisfy a
-    // validator is what structured data exists to prevent.
-    expect(JSON.stringify(graph)).not.toContain('PostalAddress');
+    // The address is a LOCALITY only. /terms already declares this business governed by
+    // California law with disputes in San Francisco County, so city/region/country restate a
+    // jurisdiction the site states publicly elsewhere — but there is no premises to name, and
+    // inventing a streetAddress to satisfy a validator is what structured data exists to prevent.
+    const org = graph[1] as { address: Record<string, string>; email: string };
+    expect(org.address.addressLocality).toBe('San Francisco');
+    expect(org.address).not.toHaveProperty('streetAddress');
+    // One published contact address across /contact, the invite thanks page and this graph — two
+    // different "contact us" addresses is how one of them stops being read.
+    const contact = await (await app.request('/contact', {}, env)).text();
+    expect(contact).toContain(org.email);
     // One entity, one page. Repeating the graph on /privacy would give a crawler four candidates.
     for (const path of ['/how-it-works', '/privacy', '/terms']) {
       expect(await (await app.request(path, {}, env)).text(), path).not.toContain('ld+json');
+    }
+  });
+
+  it('ships a social card at the aspect ratio the tags declare', () => {
+    const png = readFileSync(join(PUBLIC_DIR, 'img', 'og-card.png'));
+    // PNG header: width and height are big-endian uint32 at byte 16 and 20. The declared
+    // og:image:width/height are a promise about the bytes, and a card cropped by an unfurler to a
+    // ratio it was not built for is the exact defect this asset replaced.
+    expect(png.readUInt32BE(16)).toBe(1200);
+    expect(png.readUInt32BE(20)).toBe(630);
+    // Never loaded by the page itself — only fetched by an unfurler — so it sits outside the
+    // landing page's per-image weight budget, but not outside all judgement.
+    expect(png.byteLength).toBeLessThan(400 * 1024);
+  });
+
+  it.each([
+    ['/about', 'Booking software that stays out of the way'],
+    ['/contact', 'Talk to a person'],
+  ])('serves %s as a real trust-anchor page', async (path, heading) => {
+    const { env } = createTestEnv();
+    const res = await app.request(path, {}, env);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain(heading);
+    // These are the pages an agent reads to decide a business is real, so thin is the one thing
+    // they may not be.
+    const text = body.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ');
+    expect(text.length).toBeGreaterThan(500);
+    // Script-free under LOCKED_CSP like every other worker-rendered page; the identity graph is
+    // the homepage's alone.
+    expect(body).not.toContain('<script');
+    expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+  });
+
+  it('tells a pet owner on /contact to go to their sitter, not to us', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/contact', {}, env)).text();
+    // The most common reason someone reaches a pet-care product's contact page is that they want
+    // their SITTER. Saying so first is worth more than a form nobody can answer.
+    expect(body).toContain('contact your sitter directly');
+  });
+
+  it('links every page to the trust anchors through one shared footer', async () => {
+    const { env } = createTestEnv();
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact']) {
+      const body = await (await app.request(path, {}, env)).text();
+      expect(body, path).toContain('href="/about"');
+      expect(body, path).toContain('href="/contact"');
+      // One footer, so the drift that had already split four copies into two variants cannot
+      // resume as a fifth and sixth.
+      expect(body.match(/<footer class="foot">/g)?.length, path).toBe(1);
     }
   });
 

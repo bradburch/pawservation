@@ -170,6 +170,65 @@ app.get('/setup.html', page('setup.html'));
 const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
 
 /**
+ * The public contact address. Already published by the invite-request thanks page's fallback
+ * (routes/invite-request.ts's FALLBACK_OWNER_EMAIL) — declared here rather than imported so a
+ * page constant does not reach into a route module, and kept identical to it on purpose: two
+ * different "contact us" addresses is how one of them stops being read.
+ */
+const SUPPORT_EMAIL = 'bradburch@duck.com';
+
+/**
+ * The shared page footer. Extracted when /about and /contact would have made it a SIXTH hand-kept
+ * copy of the same markup — the four that existed had already drifted into two variants that
+ * differed only in one link's label and one anchor's href, which is the drift a fifth and sixth
+ * copy guarantees rather than risks. Every link here is absolute (`/#faq`, not `#faq`) so one
+ * version serves every page: from the landing itself an absolute same-page hash still just scrolls.
+ */
+function pageFooter(): string {
+  return `<footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <a class="logo" href="/">
+              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+              Pawservation
+            </a>
+            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
+          </div>
+          <div>
+            <h3>Product</h3>
+            <ul>
+              <li><a href="/demo">Try the demo</a></li>
+              <li><a href="/admin">Sitter sign in</a></li>
+              <li><a href="/how-it-works">Full tour</a></li>
+              <li><a href="/#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Company</h3>
+            <ul>
+              <li><a href="/about">About</a></li>
+              <li><a href="/contact">Contact</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="/privacy">Privacy</a></li>
+              <li><a href="/terms">Terms</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <p>
+            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
+          </p>
+        </div>
+      </div>
+    </footer>`;
+}
+
+/**
  * The <head> tags every worker-served marketing page shares, so a page's own file carries only
  * what differs: its title and its one-sentence description.
  *
@@ -194,13 +253,14 @@ const PRICING = { proMonthly: 29, proAnnual: 290 } as const;
  * EXECUTABLE script, which is what that rule was always protecting; `landing.test.ts` pins the
  * distinction rather than the substring.
  *
- * Deliberately NO `og:image` either, which is why the card is `summary` and not
- * `summary_large_image`. The only images this repo owns are the landing screenshots, and the
- * closest one (`widget-hero.webp`) is 932x1990 — a portrait strip. A large-image card crops to
- * roughly 1.91:1, so declaring it would render every shared link as an unreadable sliver of a
- * calendar, and WebP is not accepted by every unfurler in the first place. A text-only card is
- * what an absent image degrades to, and it is not broken. Add a real 1200x630 PNG and both tags
- * together, or neither: an og:image is worth nothing to search ranking on its own.
+ * `og:image` is a PURPOSE-BUILT 1200x630 PNG (`public/img/og-card.png`), not a screenshot. The
+ * branch that added these tags first pointed at `widget-hero.webp` — 932x1990, a portrait strip —
+ * under `summary_large_image`, which crops to roughly 1.91:1 and would have unfurled every shared
+ * link as an unreadable sliver of a calendar. The image and the card type move TOGETHER or not at
+ * all, which a test pins: a large-image card with no image, or this image under a `summary` card,
+ * are both wrong. PNG rather than WebP because not every unfurler accepts WebP, and the file is
+ * never loaded by the page itself — only fetched by an unfurler — so it sits outside the landing
+ * page's weight budget. Regenerate it with the recipe in `docs/og-card.md`.
  */
 function pageHead(path: string, title: string, description: string): string {
   return `<title>${title}</title>
@@ -211,7 +271,11 @@ function pageHead(path: string, title: string, description: string): string {
     <meta property="og:title" content="${title}" />
     <meta property="og:description" content="${description}" />
     <meta property="og:url" content="${BRAND_ORIGIN}${path}" />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="${BRAND_ORIGIN}/img/og-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Pawservation — pet sitting and dog walking software" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />`;
@@ -642,40 +706,7 @@ const LANDING_HTML = `<!doctype html>
       </section>
     </main>
 
-    <footer class="foot">
-      <div class="wrap">
-        <div class="foot-grid">
-          <div class="foot-brand">
-            <a class="logo" href="/">
-              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
-              Pawservation
-            </a>
-            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
-          </div>
-          <div>
-            <h3>Product</h3>
-            <ul>
-              <li><a href="/demo">Try the demo</a></li>
-              <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="/how-it-works">Full tour</a></li>
-              <li><a href="#faq">FAQ</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Legal</h3>
-            <ul>
-              <li><a href="/privacy">Privacy</a></li>
-              <li><a href="/terms">Terms</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="foot-bottom">
-          <p>
-            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
-          </p>
-        </div>
-      </div>
-    </footer>
+    ${pageFooter()}
   </body>
 </html>
 `;
@@ -1110,40 +1141,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
       </section>
     </main>
 
-    <footer class="foot">
-      <div class="wrap">
-        <div class="foot-grid">
-          <div class="foot-brand">
-            <a class="logo" href="/">
-              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
-              Pawservation
-            </a>
-            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
-          </div>
-          <div>
-            <h3>Product</h3>
-            <ul>
-              <li><a href="/demo">Try the demo</a></li>
-              <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="/">Overview</a></li>
-              <li><a href="/#faq">FAQ</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Legal</h3>
-            <ul>
-              <li><a href="/privacy">Privacy</a></li>
-              <li><a href="/terms">Terms</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="foot-bottom">
-          <p>
-            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
-          </p>
-        </div>
-      </div>
-    </footer>
+    ${pageFooter()}
   </body>
 </html>
 `;
@@ -1228,40 +1226,7 @@ const PRIVACY_HTML = `<!doctype html>
       </section>
     </main>
 
-    <footer class="foot">
-      <div class="wrap">
-        <div class="foot-grid">
-          <div class="foot-brand">
-            <a class="logo" href="/">
-              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
-              Pawservation
-            </a>
-            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
-          </div>
-          <div>
-            <h3>Product</h3>
-            <ul>
-              <li><a href="/demo">Try the demo</a></li>
-              <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="/">Overview</a></li>
-              <li><a href="/#faq">FAQ</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Legal</h3>
-            <ul>
-              <li><a href="/privacy">Privacy</a></li>
-              <li><a href="/terms">Terms</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="foot-bottom">
-          <p>
-            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
-          </p>
-        </div>
-      </div>
-    </footer>
+    ${pageFooter()}
   </body>
 </html>
 `;
@@ -1349,40 +1314,7 @@ const TERMS_HTML = `<!doctype html>
       </section>
     </main>
 
-    <footer class="foot">
-      <div class="wrap">
-        <div class="foot-grid">
-          <div class="foot-brand">
-            <a class="logo" href="/">
-              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
-              Pawservation
-            </a>
-            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
-          </div>
-          <div>
-            <h3>Product</h3>
-            <ul>
-              <li><a href="/demo">Try the demo</a></li>
-              <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="/">Overview</a></li>
-              <li><a href="/#faq">FAQ</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Legal</h3>
-            <ul>
-              <li><a href="/privacy">Privacy</a></li>
-              <li><a href="/terms">Terms</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="foot-bottom">
-          <p>
-            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
-          </p>
-        </div>
-      </div>
-    </footer>
+    ${pageFooter()}
   </body>
 </html>
 `;
@@ -1392,6 +1324,161 @@ const TERMS_HTML = `<!doctype html>
  * BRAND_ORIGIN, for the reason the tenant document uses it: every URL in there is an address the
  * reader is expected to CALL, so it has to keep working on whichever host they arrived at.
  */
+/**
+ * /about — one of the two "trust anchor" pages a person (or an agent vetting a tool) looks for
+ * before trusting a business. Every claim here is either behaviour this codebase enforces or a
+ * status the landing page already states; nothing about headcount, funding, founding date or
+ * customer numbers, because none of that is knowable from this repo and a fabricated detail on the
+ * page whose whole job is legitimacy is worse than an absent one.
+ */
+const ABOUT_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    ${pageHead(
+      '/about',
+      'About &mdash; Pawservation',
+      'Who makes Pawservation, why it exists, and the four rules the software will not break: nothing books itself, it never touches your money, your clients stay yours, and no price is charged that you did not type.',
+    )}
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+          Pawservation
+        </a>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">About</p>
+          <h1>Booking software that stays out of the way.</h1>
+          <p class="sub">
+            Pawservation is booking software for pet sitters and dog walkers. It puts a booking
+            page on the website you already have &mdash; your services, your rates, your rules
+            &mdash; so the question &ldquo;are you free the 12th to the 15th?&rdquo; answers itself.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap legal">
+          <div class="feature">
+            <h3>Why it exists</h3>
+            <p>Every booking a small pet-care business takes starts the same way: a text message asking whether you&rsquo;re free. Answering it means checking a calendar, remembering your own rules, quoting a price from memory, and doing it again four messages later. That thread is the job before the job, and it happens while you have a dog on a lead. Pawservation answers it from the caps, notice periods and days off you set once &mdash; and then gets out of the way. Everything else about how you work stays exactly as it is: the same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
+          </div>
+          <div class="feature">
+            <h3>Four rules the software will not break</h3>
+            <p><strong>Nothing books itself.</strong> Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
+            <p><strong>It never touches your money.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. It does not process cards, hold funds, or take a cut of anything. You collect the way you already collect &mdash; cash, Venmo, Zelle, a check on the counter.</p>
+            <p><strong>Your clients stay your clients.</strong> This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
+            <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one &mdash; because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
+          </div>
+          <div class="feature">
+            <h3>Where it is today</h3>
+            <p>Taking bookings is free and stays free: the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync cost nothing, with no trial and no card to enter. New sitters are added by invitation while the product grows, which is a deliberate limit on how fast it takes on people rather than a waiting list for its own sake. It runs one sitter per account today &mdash; a team, with assignment between sitters, is not built. A paid tier is planned and is not built either; nothing on it is for sale, and the free tier is not a trial of it.</p>
+          </div>
+          <div class="feature">
+            <h3>Who makes it</h3>
+            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product rather than a venture-backed platform, which is why the invite list is short, the roadmap is honest about what isn&rsquo;t built, and there is no sales team to get past &mdash; questions go to a person.</p>
+          </div>
+          <div class="feature">
+            <h3>See it before you believe any of this</h3>
+            <p>The <a href="/demo">demo</a> is a made-up sitter&rsquo;s account with real data behind it: pick a service, pick dates, watch it refuse the days that are full. Nothing to sign up for, no details asked for, nothing you can break. The <a href="/how-it-works">full tour</a> is the long version, and it says out loud where something isn&rsquo;t built.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    ${pageFooter()}
+  </body>
+</html>
+`;
+
+/**
+ * /contact — the other trust anchor. Its most useful job is the redirect in the second block: most
+ * people who reach a pet-care booking product's contact page are looking for their SITTER, not for
+ * the software, and sending them to the right place beats an unanswered form.
+ */
+const CONTACT_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    ${pageHead(
+      '/contact',
+      'Contact &mdash; Pawservation',
+      'How to reach Pawservation: ask for an invite, get help with an account you already have, or find out where to go if you are a pet owner looking for your own sitter.',
+    )}
+    <style>${PAGE_STYLE}</style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="logo" href="/">
+          <img src="/brand/calendar.svg" width="30" height="28" alt="" />
+          Pawservation
+        </a>
+        <div class="nav-right">
+          <a class="signin" href="/admin">Sign in</a>
+          <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <p class="chip">Contact</p>
+          <h1>Talk to a person.</h1>
+          <p class="sub">
+            There is no support desk and no sales team &mdash; Pawservation is small enough that
+            messages reach the person who builds it. Here is the quickest route for each reason
+            you might be writing.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap legal">
+          <div class="feature">
+            <h3>You&rsquo;re a pet owner looking for your sitter</h3>
+            <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we genuinely can&rsquo;t help: Pawservation is the software your sitter uses, not the sitter. We can&rsquo;t see, change, or cancel your booking, and we can&rsquo;t pass a message on. Your sitter&rsquo;s own booking page &mdash; the one you booked on &mdash; is where a booking can be changed or cancelled, and every email you&rsquo;ve had about a booking came from your sitter&rsquo;s business, with their address on it.</p>
+          </div>
+          <div class="feature">
+            <h3>You run a pet-care business and want an account</h3>
+            <p>Use the <a href="/#invite-h">invite form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
+          </div>
+          <div class="feature">
+            <h3>You already have an account and something is wrong</h3>
+            <p>Email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}?subject=Pawservation%20support">${htmlEscape(SUPPORT_EMAIL)}</a> and say which business you run &mdash; that&rsquo;s enough to find your account. Include what you expected to happen and what happened instead; if it involves a specific booking, the dates and the client&rsquo;s first name are enough to locate it. Your dashboard is at <a href="/admin">the sign-in page</a> if you just need to get back in; it will email you a reset link.</p>
+          </div>
+          <div class="feature">
+            <h3>Press, partnerships, or anything else</h3>
+            <p>Same address: <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>. A person reads these and there is no ticket system behind it, so a plain description of what you want beats a formal one.</p>
+          </div>
+          <div class="feature">
+            <h3>Security</h3>
+            <p>If you believe you&rsquo;ve found a vulnerability, write to the same address with &ldquo;security&rdquo; in the subject and please give us a chance to fix it before publishing. See our <a href="/privacy">Privacy Policy</a> for what data exists to be at risk in the first place.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    ${pageFooter()}
+  </body>
+</html>
+`;
+
 app.get('/llms.txt', (c) => c.text(buildProductLlmsTxt(new URL(c.req.url).origin)));
 
 /**
@@ -1420,6 +1507,8 @@ app.get('/', (c) => {
 // "/" does, which is not listed); the entry is defensive, so that if a build ever emits an asset
 // there it can never shadow this route.
 app.get('/how-it-works', (c) => c.html(HOW_IT_WORKS_HTML));
+app.get('/about', (c) => c.html(ABOUT_HTML));
+app.get('/contact', (c) => c.html(CONTACT_HTML));
 app.get('/privacy', (c) => c.html(PRIVACY_HTML));
 app.get('/terms', (c) => c.html(TERMS_HTML));
 

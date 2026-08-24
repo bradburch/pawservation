@@ -144,9 +144,13 @@ Availability, quotes and booking requests are authenticated as the pet owner, an
  * machine-readable lie, which is worse than a marketing one because nothing reads the surrounding
  * caveat.
  *
- * Deliberately no `address` and no `email`: this product has no postal address to give, and
- * inventing a PostalAddress to satisfy a validator is exactly the fabrication structured data
- * exists to prevent. Contact is the invite form, which is the real front door.
+ * The `address` is a locality only, and is not invented: /terms already declares this business
+ * governed by California law with disputes in San Francisco County, so the city/region/country
+ * here restates a jurisdiction the site states publicly elsewhere. No `streetAddress`, because
+ * there is no premises to name and inventing one to satisfy a validator is exactly the
+ * fabrication structured data exists to prevent. The `email` is the same address /contact and the
+ * invite-request thanks page already publish — three places, one address, or one of them stops
+ * being read.
  */
 export function buildProductJsonLdScript(origin: string): string {
   const ld = {
@@ -187,11 +191,26 @@ export function buildProductJsonLdScript(origin: string): string {
         logo: `${origin}/icon-512.png`,
         description: 'Booking software for pet-sitting and dog-walking businesses.',
         founder: { '@type': 'Person', name: 'Brad Burch', url: 'https://bradburch.github.io/' },
-        contactPoint: {
-          '@type': 'ContactPoint',
-          contactType: 'customer support',
-          url: `${origin}/#invite-h`,
+        email: 'bradburch@duck.com',
+        address: {
+          '@type': 'PostalAddress',
+          addressLocality: 'San Francisco',
+          addressRegion: 'CA',
+          addressCountry: 'US',
         },
+        contactPoint: [
+          {
+            '@type': 'ContactPoint',
+            contactType: 'customer support',
+            email: 'bradburch@duck.com',
+            url: `${origin}/contact`,
+          },
+          {
+            '@type': 'ContactPoint',
+            contactType: 'sales',
+            url: `${origin}/#invite-h`,
+          },
+        ],
       },
     ],
   };
