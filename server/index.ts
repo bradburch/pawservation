@@ -26,7 +26,7 @@ import { passwordResetRoutes } from './routes/password-reset';
 import { publicRoutes } from './routes/public';
 import { signupRoutes } from './routes/signup';
 import { tokenRoutes } from './routes/tokens';
-import type { AppEnv } from './types';
+import type { AppEnv, Tenant } from './types';
 
 /**
  * Embed routes must be framable by ANY host page (Wix/Squarespace/etc.), so they omit
@@ -120,6 +120,54 @@ app.get('/embed/:slug/llms.txt', async (c) => {
   return c.text(buildLlmsTxt(tenant, services, options, new URL(c.req.url).origin));
 });
 
+/**
+ * The link-preview card for ONE sitter's booking page.
+ *
+ * A sitter texts her clients this URL, and until this existed the page declared no card tags at
+ * all: iMessage, Slack and WhatsApp fell back to the site favicon and no title, so the single most
+ * shared link this product has unfurled as a bare icon. The marketing pages get theirs from
+ * `pageHead`; this page cannot use it, because its head is a Vite-built file spliced at request
+ * time and because two of its four strings are per-tenant.
+ *
+ * The AUDIENCE is what separates this from `pageHead`'s card, and it is why the image is a second
+ * file rather than a reuse of `og-card.png`: the reader here is a pet owner who has been handed her
+ * own sitter's booking link, not a sitter being recruited, so "Pet sitting & dog walking software"
+ * and "Free for one sitter" are the wrong words on the wrong screen. `public/img/og-booking.png` is
+ * the brand lockup and one owner-facing line, nothing else. Same rule as `pageHead`'s: the image
+ * and `summary_large_image` move together or not at all.
+ *
+ * `og:description` is a LITERAL, deliberately generic over every tenant: a sitter's own service
+ * list is right there on the page, and a card that named boarding to a dog walker's clients would
+ * advertise something she does not sell. `og:title` interpolates `DisplayName`, which is
+ * tenant-controlled text landing inside an attribute value, so it goes through the same
+ * `htmlEscape` the `<title>` splice above uses.
+ *
+ * ORIGINS. `og:image` is absolute and pinned to `BRAND_ORIGIN` because an unfurler is a third
+ * party with no page context to resolve a relative path against, and because the card is ONE asset
+ * on ONE host regardless of which host served the page. `og:url` is pinned there too, for exactly
+ * the reason the canonical beside it is: og:url is the canonical URL of the *shared object*, so a
+ * link forwarded from the workers.dev copy and one from the custom domain must unfurl as the same
+ * object rather than two. That is the opposite answer from the JSON-LD below, and deliberately so:
+ * its `url` is a live address an agent will call, and must keep working for whichever host the
+ * request arrived on.
+ */
+function embedCardTags(tenant: Tenant): string {
+  const name = htmlEscape(tenant.DisplayName);
+  const url = `${BRAND_ORIGIN}/embed/${encodeURIComponent(tenant.Slug)}`;
+  const description =
+    'Check your sitter&rsquo;s availability, pick your dates and your pets, and send a booking request.';
+  return `<meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pawservation" />
+    <meta property="og:title" content="Book with ${name}" />
+    <meta property="og:description" content="${description}" />
+    <meta property="og:url" content="${url}" />
+    <meta property="og:image" content="${BRAND_ORIGIN}/img/og-booking.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Pawservation: your sitter&rsquo;s booking page" />
+    <meta name="twitter:card" content="summary_large_image" />`;
+}
+
 // Wraps the built embed.html with per-tenant LocalBusiness JSON-LD for crawlers/agents. Buffers
 // the (few-KB) HTML and does a plain string replace rather than HTMLRewriter: HTMLRewriter is a
 // Workers-runtime global that doesn't exist in the Node-based Vitest harness. Unknown/disabled
@@ -147,7 +195,7 @@ app.get('/embed/:slug', async (c) => {
   // and must keep working for whichever host it arrived on.
   const canonical = `<link rel="canonical" href="${BRAND_ORIGIN}/embed/${encodeURIComponent(tenant.Slug)}" />`;
   return new Response(
-    titled.replace('</head>', () => `${canonical}${ldScript}</head>`),
+    titled.replace('</head>', () => `${canonical}${embedCardTags(tenant)}${ldScript}</head>`),
     res,
   );
 });
@@ -253,6 +301,10 @@ function pageFooter(): string {
  * are both wrong. PNG rather than WebP because not every unfurler accepts WebP, and the file is
  * never loaded by the page itself — only fetched by an unfurler — so it sits outside the landing
  * page's weight budget. Regenerate it with the recipe in `docs/og-card.md`.
+ *
+ * It is the card for THESE pages only. `/embed/:slug` carries its own (`embedCardTags`, above)
+ * against `public/img/og-booking.png`, because a pet owner handed her sitter's booking link is not
+ * a sitter being recruited, and this card's words are addressed to the sitter.
  */
 function pageHead(path: string, title: string, description: string): string {
   return `<title>${title}</title>

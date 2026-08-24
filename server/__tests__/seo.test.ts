@@ -153,6 +153,75 @@ describe('SEO surface', () => {
     expect(nasty).toContain('<title>Book with Paws &lt;b&gt;&amp;amp; &lt;/b&gt;Co</title>');
   });
 
+  it('gives each embed page a link-preview card addressed to the pet OWNER', async () => {
+    const stub =
+      '<!doctype html><html><head><title>Book with us</title></head><body></body></html>';
+    const { env } = createTestEnv({ html: stub });
+    const html = await (await app.request('/embed/sunny-paws', {}, env)).text();
+
+    // The pair moves together or not at all, exactly as pageHead's docblock requires: a
+    // large-image card with no image unfurls as an empty box, and this image under a `summary`
+    // card is cropped to a square it was not built for.
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+    expect(html).toContain(
+      `<meta property="og:image" content="${BRAND_ORIGIN}/img/og-booking.png" />`,
+    );
+    // A SECOND card, not a reuse of the marketing one: the reader here has been handed her own
+    // sitter's booking link, so the recruiting copy on og-card.png is the wrong words entirely.
+    expect(html).not.toContain('og-card.png');
+    expect(html).not.toContain('Free for one sitter');
+
+    expect(html).toContain('<meta property="og:title" content="Book with Sunny Paws" />');
+    // Generic over every tenant on purpose: naming boarding to a dog walker's clients would
+    // advertise a service she does not sell. Her own list is on the page itself.
+    const description = html.match(/<meta property="og:description" content="([^"]+)"/)?.[1] ?? '';
+    expect(description.length).toBeGreaterThan(50);
+    for (const service of ['boarding', 'walking', 'daycare', 'check-in', 'house sitting']) {
+      expect(description.toLowerCase(), service).not.toContain(service);
+    }
+    // Absolute and pinned, for the two different reasons the docblock gives: an unfurler has no
+    // page context to resolve a relative image against, and a link forwarded from the workers.dev
+    // copy must unfurl as the SAME object as one from the custom domain.
+    expect(html).toContain(`<meta property="og:url" content="${BRAND_ORIGIN}/embed/sunny-paws" />`);
+    // Unchanged neighbours: the title splice, the canonical, and the JSON-LD that still keeps the
+    // REQUEST origin.
+    expect(html).toContain('<title>Book with Sunny Paws</title>');
+    expect(html).toContain(`<link rel="canonical" href="${BRAND_ORIGIN}/embed/sunny-paws" />`);
+    expect(html).toContain('"url":"http://localhost/embed/sunny-paws"');
+  });
+
+  it('escapes a tenant name that tries to break out of the card attributes', async () => {
+    const stub =
+      '<!doctype html><html><head><title>Book with us</title></head><body></body></html>';
+    const { env, raw } = createTestEnv({ html: stub });
+    raw.exec(
+      `UPDATE Tenants SET DisplayName='Paws " onload="x" <b>&amp;</b> Co' WHERE Slug='sunny-paws';`,
+    );
+    const html = await (await app.request('/embed/sunny-paws', {}, env)).text();
+    const escaped = 'Paws &quot; onload=&quot;x&quot; &lt;b&gt;&amp;amp;&lt;/b&gt; Co';
+    expect(html).toContain(`<meta property="og:title" content="Book with ${escaped}" />`);
+    expect(html).toContain(`<title>Book with ${escaped}</title>`);
+    // The raw quote is what would close the attribute and let `onload=` land as real markup on a
+    // page every one of that sitter's clients opens.
+    expect(html).not.toContain('onload="x"');
+  });
+
+  it('leaks no card tags for a tenant that does not resolve', async () => {
+    const stub =
+      '<!doctype html><html><head><title>Book with us</title></head><body></body></html>';
+    const { env, raw } = createTestEnv({ html: stub });
+    raw.exec(`UPDATE Tenants SET DisabledAt='2026-07-24 00:00:00' WHERE Slug='sunny-paws';`);
+    for (const slug of ['sunny-paws', 'no-such-sitter']) {
+      const html = await (await app.request(`/embed/${slug}`, {}, env)).text();
+      // Same behaviour as before this existed: the built page, untouched. A disabled business
+      // must not unfurl as an invitation to book with it.
+      expect(html, slug).toBe(stub);
+      // The dedicated machine-readable route is the one that 404s, and still does.
+      const llms = await app.request(`/embed/${slug}/llms.txt`, {}, env);
+      expect(llms.status, slug).toBe(404);
+    }
+  });
+
   it('leaves the API crawlable but unindexable, so the embed widget can still render', async () => {
     const { env } = createTestEnv();
     const res = await app.request('/api/sunny-paws/config', {}, env);
@@ -263,8 +332,11 @@ describe('SEO surface', () => {
     }
   });
 
-  it('ships a social card at the aspect ratio the tags declare', () => {
-    const png = readFileSync(join(PUBLIC_DIR, 'img', 'og-card.png'));
+  it.each([
+    ['og-card.png', 'the marketing pages'],
+    ['og-booking.png', 'a sitter&rsquo;s booking page'],
+  ])('ships %s at the aspect ratio the tags declare', (file) => {
+    const png = readFileSync(join(PUBLIC_DIR, 'img', file));
     // PNG header: width and height are big-endian uint32 at byte 16 and 20. The declared
     // og:image:width/height are a promise about the bytes, and a card cropped by an unfurler to a
     // ratio it was not built for is the exact defect this asset replaced.
