@@ -1468,12 +1468,20 @@ export async function listPaymentsForAccount(
 
 /**
  * A payment plus the human labels the sitter needs to recognise it — the booking it settles (its
- * dates, its service, whose it was) or, for a household payment, the pet its account id names.
+ * dates, its service, whose it was) or, for a household payment, the pet its account id names and
+ * one of that pet's owners.
  *
  * `AccountId` is a PET id (0011), so this join is how "which household" becomes a word rather than
  * an opaque id. It resolves by equality on that one pet deliberately, not by household membership:
  * this is a record of what was FILED, and a household whose account id has since been renamed by a
  * newer pet must still export under the anchor the row actually carries.
+ *
+ * `CustomerName`/`CustomerEmail` name the PERSON the payment came from, whichever ledger it sits
+ * on: reached through the booking for a booking payment, and through the account pet's owners for a
+ * household one. Reaching them only through `BookingRequests` was the defect review found — every
+ * household payment exported with a blank client, which is money in the file with nobody's name on
+ * it. A `COALESCE` is unambiguous here because `Payments`' own `CHECK` makes the two sides mutually
+ * exclusive: at most one of them can ever be non-NULL.
  */
 export type TenantPaymentRow = PaymentRow & {
   BookingServiceType: string | null;
@@ -1492,6 +1500,15 @@ export type TenantPaymentRow = PaymentRow & {
  *
  * `ExternalRef` is deliberately absent, as it is from `PaymentRow` and every wire payload: it is the
  * Venmo importer's idempotency key, written by that module and read only in aggregate.
+ *
+ * The household side reaches a person through a SUBQUERY that picks one owner, never a plain join
+ * through `PetOwners`: a pet may be co-owned, and a join would emit that payment once per owner —
+ * one sum of money appearing twice in her file. The owner chosen is the lowest `Email`, which
+ * `UNIQUE (TenantId, Email)` makes a total order, so the pick is deterministic across exports
+ * rather than whatever SQLite happened to visit first. Naming ONE co-owner is the honest simple
+ * answer here: the household is the thing that paid, and the column exists so she recognises the
+ * row, not so it assigns responsibility. The co-owner she does not see is one row away in the pets
+ * export, which lists every owner of that pet.
  */
 export async function listPaymentsForTenant(
   db: D1Database,
@@ -1503,12 +1520,19 @@ export async function listPaymentsForTenant(
               p.Note, p.CreatedAt,
               b.ServiceType AS BookingServiceType, b.StartDate AS BookingStartDate,
               b.EndDate AS BookingEndDate,
-              eu.Email AS CustomerEmail, eu.Name AS CustomerName,
+              COALESCE(eu.Email, aeu.Email) AS CustomerEmail,
+              COALESCE(eu.Name, aeu.Name) AS CustomerName,
               pet.Name AS AccountPetName
        FROM Payments p
        LEFT JOIN BookingRequests b ON b.Id = p.BookingRequestId AND b.TenantId = p.TenantId
        LEFT JOIN EndUsers eu ON eu.Id = b.EndUserId AND eu.TenantId = p.TenantId
        LEFT JOIN EndUserPets pet ON pet.Id = p.AccountId AND pet.TenantId = p.TenantId
+       LEFT JOIN EndUsers aeu ON aeu.TenantId = p.TenantId AND aeu.Id = (
+         SELECT po.EndUserId FROM PetOwners po
+         JOIN EndUsers cand ON cand.Id = po.EndUserId AND cand.TenantId = po.TenantId
+         WHERE po.TenantId = p.TenantId AND po.PetId = p.AccountId
+         ORDER BY cand.Email LIMIT 1
+       )
        WHERE p.TenantId = ?
        ORDER BY p.PaidDate DESC, p.CreatedAt DESC`,
     )

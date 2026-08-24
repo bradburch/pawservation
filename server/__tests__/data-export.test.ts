@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import {
   insertAccountPayment,
+  insertBookingRequest,
   insertPayment,
   setPetDeceased,
   updateBookingStatus,
@@ -25,7 +28,13 @@ const get = async (env: Env, dataset: string, tenantId = TENANT_A, slug = 'sunny
     env,
   );
 
-/** The CSV body, parsed back with this codebase's own parser — the round trip that matters. */
+/**
+ * The CSV body, parsed back with this codebase's own parser — the round trip that matters.
+ *
+ * No BOM handling needed: the route prepends one (see its own test below), but `Response.text()`
+ * runs a UTF-8 decode, which strips a leading BOM by specification. Reading the bytes is the only
+ * way to see it, which is exactly what that test does.
+ */
 const rowsOf = async (res: Response): Promise<string[][]> => parseCsvRows(await res.text());
 
 /** Every cell of every data row, flattened — enough to ask "does this file mention X at all". */
@@ -43,10 +52,17 @@ describe('CSV serializer', () => {
   });
 
   it('neutralises every formula lead character, and no number', () => {
-    for (const lead of ['=', '+', '-', '@', '\t', '\r']) {
+    // Space and LF belong here for the same reason tab and CR do: an importer that trims leading
+    // whitespace before judging the first character hands ` =1+1` and `\n=1+1` to its formula
+    // parser as `=1+1`. Review found both of them getting through — the space one un-neutralised
+    // AND unquoted, which is the worst version.
+    for (const lead of ['=', '+', '-', '@', '\t', '\r', ' ', '\n']) {
       const [[cell]] = parseCsvRows(serializeCsvRows([[`${lead}SUM(A1)`]]));
       expect(cell).toBe(`'${lead}SUM(A1)`);
     }
+    // The apostrophe must be the FIRST byte the importer sees, which is what the quoting is for.
+    expect(serializeCsvRows([[' =1+1']])).toBe(`"' =1+1"`);
+    expect(serializeCsvRows([['\n=1+1']])).toBe(`"'\n=1+1"`);
     // A negative amount is a number, not a formula: neutralising it would corrupt real money.
     expect(serializeCsvRows([[-45]])).toBe('-45');
   });
@@ -247,5 +263,243 @@ describe('admin data export route', () => {
     expect(answers).toContain('Vet phone: 555-0100');
     // A question deleted since the booking keeps its answer under its raw id rather than vanishing.
     expect(answers).toContain('q9: orphaned');
+  });
+
+  it('refuses one tenant\u2019s admin token on another tenant\u2019s export URL', async () => {
+    const { env } = createTestEnv();
+    // The whole risk of this route is cross-tenant, and `adminAuth` is the only thing standing
+    // between a valid token and somebody else's client list.
+    const res = await app.request(
+      '/api/happy-tails/admin/export/clients',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('still downloads when the stored timezone is not a real IANA name', async () => {
+    const { env } = createTestEnv();
+    await env.PAWSERVATION_DB.prepare('UPDATE Tenants SET Timezone = ? WHERE Id = ?')
+      .bind('Pacific/Nowhere', TENANT_A)
+      .run();
+
+    // `Intl` throws a RangeError on a name it does not know, and only the FILENAME reads this
+    // value. This is the route whose whole promise is "you can always get your data out", so a
+    // bad string in one settings column must cost her a filename, never the download.
+    const res = await get(env, 'clients');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Disposition')).toMatch(
+      /^attachment; filename="pawservation-sunny-paws-clients-\d{4}-\d{2}-\d{2}\.csv"$/,
+    );
+    expect((await rowsOf(res)).length).toBeGreaterThan(1);
+  });
+
+  it('marks every export no-store', async () => {
+    const { env } = createTestEnv();
+    // Unlike every other admin response this one is a file of names, emails and phone numbers:
+    // it must stay out of shared caches and out of the browser's back/forward cache.
+    for (const dataset of DATASETS) {
+      expect((await get(env, dataset)).headers.get('Cache-Control')).toBe('no-store');
+    }
+  });
+
+  it('leads with a UTF-8 BOM, and the rows after it still parse', async () => {
+    const { env } = createTestEnv();
+    await env.PAWSERVATION_DB.prepare(
+      "INSERT INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES (?, ?, ?, ?, 'active')",
+    )
+      .bind('eu_sp_jose', TENANT_A, 'jose@example.com', 'Jos\u00e9 M\u00fcller')
+      .run();
+
+    // Read as BYTES: `Response.text()` runs a UTF-8 decode, which strips a leading BOM by
+    // specification, so a string comparison here would pass with or without the fix.
+    const bytes = new Uint8Array(await (await get(env, 'clients')).arrayBuffer());
+    // Excel on Windows ignores the HTTP charset once the file is opened from disk and falls back
+    // to the system codepage, so without these three bytes 'Jos\u00e9' arrives as mojibake.
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+
+    const rows = parseCsvRows(new TextDecoder().decode(bytes.slice(3)));
+    // Exactly one BOM, and the header immediately after it is the real first column.
+    expect(rows[0][0]).toBe('Name');
+    expect(rows.find((r) => r[1] === 'jose@example.com')![0]).toBe('Jos\u00e9 M\u00fcller');
+  });
+
+  it('never exports a payment\u2019s Venmo transaction id', async () => {
+    const { env } = createTestEnv();
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
+      bookingRequestId: 'seed_sp_board1',
+      amount: 41,
+      method: 'venmo',
+      paidDate: '2028-06-19',
+      note: null,
+      externalRef: 'venmo-txn-9f3c1',
+    });
+
+    const rows = await rowsOf(await get(env, 'payments'));
+    // ExternalRef is the importer's idempotency key, absent from PaymentRow and every wire
+    // payload; the export is one more surface it must not leak through.
+    expect(rows.flat().some((cell) => cell.includes('venmo-txn-9f3c1'))).toBe(false);
+    expect(rows[0].some((h) => /external|ref/i.test(h))).toBe(false);
+    // Not vacuous: the payment itself really is in the file.
+    expect(rows.slice(1).some((r) => r[rows[0].indexOf('Amount')] === '41')).toBe(true);
+  });
+
+  it('answers a tenant with nothing in it with a header row and no more', async () => {
+    const { env } = createTestEnv();
+    await env.PAWSERVATION_DB.prepare(
+      'INSERT INTO Tenants (Id, Slug, DisplayName) VALUES (?, ?, ?)',
+    )
+      .bind('tnt_empty', 'empty-paws', 'Empty Paws')
+      .run();
+
+    // A sitter on her first day must get a file with column headings, not a 500 and not a blank.
+    for (const dataset of DATASETS) {
+      const res = await app.request(
+        `/api/empty-paws/admin/export/${dataset}`,
+        { headers: await adminHeaders('tnt_empty') },
+        env,
+      );
+      expect(res.status).toBe(200);
+      const rows = await rowsOf(res);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].length).toBeGreaterThan(1);
+      expect(rows[0].every((h) => h !== '')).toBe(true);
+    }
+  });
+
+  it('exports a booking that names no pets', async () => {
+    const { env } = createTestEnv();
+    // BookingRequestPets is a join table with no NOT NULL edge forcing a row, and the calendar
+    // backfill creates exactly this shape: a booking with a pet count and no named pets.
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess',
+      serviceType: 'boarding',
+      startDate: '2028-09-01',
+      endDate: '2028-09-03',
+      optionKey: null,
+      petCount: 1,
+      estCost: 120,
+      status: 'pending',
+    });
+
+    const rows = await rowsOf(await get(env, 'bookings'));
+    const row = rows.slice(1).find((r) => r[0] === id);
+    expect(row).toBeDefined();
+    expect(row![rows[0].indexOf('Pets')]).toBe('');
+  });
+
+  it('names the person behind a household payment, once, even when the pet is co-owned', async () => {
+    const { env } = createTestEnv();
+    // A second owner on Bella. A plain join through PetOwners would emit this payment once per
+    // owner — one sum of money appearing twice in her own file.
+    await env.PAWSERVATION_DB.prepare(
+      "INSERT INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES (?, ?, ?, ?, 'active')",
+    )
+      .bind('eu_sp_alex', TENANT_A, 'alex@example.com', 'Alex Co-owner')
+      .run();
+    await env.PAWSERVATION_DB.prepare(
+      'INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)',
+    )
+      .bind(TENANT_A, 'pet_sp_bella', 'eu_sp_alex')
+      .run();
+    await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
+      accountId: 'pet_sp_bella',
+      amount: 60,
+      method: 'cash',
+      paidDate: '2028-07-01',
+      note: 'monthly',
+      externalRef: null,
+    });
+
+    const rows = await rowsOf(await get(env, 'payments'));
+    const idx = (name: string) => rows[0].indexOf(name);
+    const household = rows.slice(1).filter((r) => r[idx('Settles')] === 'household');
+    expect(household).toHaveLength(1);
+    // Reached through the account pet's owners, not through a booking it does not have — that
+    // route left every household payment with a blank client.
+    expect(household[0][idx('Client')]).toBe('Alex Co-owner');
+    // The pick is the lowest email, which UNIQUE (TenantId, Email) makes a total order, so it is
+    // the same owner on every export rather than whatever SQLite visited first.
+    expect(household[0][idx('Client email')]).toBe('alex@example.com');
+    expect(household[0][idx('Household')]).toBe('Bella');
+  });
+
+  it('keeps a household payment traceable after its anchor pet is deleted', async () => {
+    const { env } = createTestEnv();
+    // Its own client and pet, so deleting them cannot disturb anything the fixture asserts on.
+    await env.PAWSERVATION_DB.prepare(
+      "INSERT INTO EndUsers (Id, TenantId, Email, Name, Status) VALUES (?, ?, ?, ?, 'active')",
+    )
+      .bind('eu_sp_gone', TENANT_A, 'gone@example.com', 'Gone Client')
+      .run();
+    await env.PAWSERVATION_DB.prepare(
+      'INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES (?, ?, ?, ?, ?)',
+    )
+      .bind('pet_sp_gone', TENANT_A, 'eu_sp_gone', 'Rufus', 'dog')
+      .run();
+    await env.PAWSERVATION_DB.prepare(
+      'INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES (?, ?, ?)',
+    )
+      .bind(TENANT_A, 'pet_sp_gone', 'eu_sp_gone')
+      .run();
+    const paymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
+      accountId: 'pet_sp_gone',
+      amount: 77,
+      method: 'zelle',
+      paidDate: '2028-07-02',
+      note: null,
+      externalRef: null,
+    });
+    expect(paymentId).not.toBeNull();
+
+    // The detached case CLAUDE.md names `unattachedPaymentAccountIds`: Payments.AccountId carries
+    // no foreign key, so the anchor pet can go while the money stays.
+    await env.PAWSERVATION_DB.prepare('DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ?')
+      .bind(TENANT_A, 'pet_sp_gone')
+      .run();
+    await env.PAWSERVATION_DB.prepare('DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ?')
+      .bind(TENANT_A, 'pet_sp_gone')
+      .run();
+
+    const rows = await rowsOf(await get(env, 'payments'));
+    const idx = (name: string) => rows[0].indexOf(name);
+    const row = rows.slice(1).find((r) => r[idx('Amount')] === '77')!;
+    expect(row).toBeDefined();
+    // No pet name and no booking left to name it, so the raw account id is the last thread back to
+    // what this money was filed against. A blank here is money with no attribution at all.
+    expect(row[idx('Household')]).toBe('pet_sp_gone');
+    expect(row[idx('Booking ID')]).toBe('');
+  });
+});
+
+/**
+ * WHAT THE PANEL PROMISES MUST BE WHAT THE FILES HOLD. The first version of this copy said
+ * "Everything you have put into Pawservation \u2026 Nothing is left out", and the export has never
+ * carried her time off, her services, her rates, her cancellation tiers, her intake question
+ * definitions, or her charges line by line. Over-claiming here is worse than a missing feature: she
+ * finds out from a file that turned out not to have what she needed.
+ *
+ * Asserted against the component's own source, the way `seo.test.ts` asserts against the files it
+ * guards — there is no DOM harness for the admin bundle in this suite, and the copy is plain JSX
+ * text, so the source IS the string a reader sees. Whitespace is collapsed first so a Prettier
+ * re-wrap cannot break the guard.
+ */
+describe('export panel copy', () => {
+  const SOURCE = readFileSync(
+    join(import.meta.dirname, '..', '..', 'app', 'admin', 'ExportPanel.tsx'),
+    'utf8',
+  )
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+  it('claims no completeness the export does not have', () => {
+    for (const phrase of ['everything', 'nothing is left out', 'complete backup', 'full backup']) {
+      expect(SOURCE).not.toContain(phrase);
+    }
+  });
+
+  it('names the omission a sitter would most notice: her time off', () => {
+    expect(SOURCE).toContain('time off');
+    expect(SOURCE).toContain('blocked days are in none of these files');
   });
 });

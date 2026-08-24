@@ -12,9 +12,18 @@ import { serializeCsvRows, type CsvValue } from './csv';
 /**
  * A SITTER MAY TAKE HER BOOK WITH HER. She can already import a client list; until this there was
  * no way back out, which is a reason not to put a client list in at all. Four files, each one the
- * plain contents of a table she already sees on screen — no summarising, no filtering, no
- * "archived" rows quietly left behind: deceased pets, cancelled bookings and declined requests are
- * all present, with their status in a column, because it is her record of what happened.
+ * plain contents of a table she already sees on screen: deceased pets, cancelled bookings and
+ * declined requests are all present, with their status in a column, because it is her record of
+ * what happened.
+ *
+ * It is her RECORDS, not a backup of her account, and the panel says so in those words. What is
+ * deliberately absent: her time off (`listBookingsForTenant` excludes `ServiceType = 'blocked'`,
+ * and a blocked day is her own note to herself rather than a thing that happened with a client),
+ * her services, rates, cancellation tiers and intake question DEFINITIONS (settings, which an
+ * import would have to be able to re-apply to mean anything), and the individual `BookingCharges`
+ * rows, which arrive as one `Charges total` column. Widening any of that is a decision about what
+ * the four files are; quietly widening the COPY that describes them is how a promise gets made
+ * that the code does not keep, which is the defect review found here.
  *
  * Every read here goes through `server/db/repo.ts` and is therefore tenant-scoped in its own SQL;
  * this module never sees the D1 binding except to hand it on.
@@ -218,7 +227,11 @@ async function paymentsCsv(db: D1Database, tenantId: string): Promise<CsvValue[]
       p.BookingRequestId,
       p.BookingServiceType,
       dateRange(p.BookingStartDate, p.BookingEndDate),
-      p.AccountPetName,
+      // The pet the household is filed under, falling back to the RAW account id when that pet has
+      // since been deleted (`unattachedPaymentAccountIds`). Without the fallback such a row exports
+      // with a blank client, a blank booking AND a blank household — money with no attribution at
+      // all — and the id is the only thread left that leads back to what it was filed against.
+      p.AccountPetName ?? p.AccountId,
       p.CreatedAt,
     ]),
   ];

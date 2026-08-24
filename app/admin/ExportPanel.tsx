@@ -72,11 +72,10 @@ export function ExportPanel({ session }: { session: Session }) {
       <h3>
         Export your data
         <Hint label="Export your data">
-          Everything you have put into Pawservation, as spreadsheets you can open in Excel, Numbers
-          or Google Sheets — or hand to another tool. Nothing is left out: pets who have died and
-          bookings that were cancelled or declined are all there, with their status in a column,
-          because they are part of your record. Downloading changes nothing; take a copy whenever
-          you like.
+          Four spreadsheets you can open in Excel, Numbers or Google Sheets, or hand to whatever you
+          use next. Pets who have died and bookings that were cancelled or declined are in them with
+          their status in a column, because they are part of your record. Downloading changes
+          nothing, so take a copy whenever you like.
         </Hint>
       </h3>
       <ul>
@@ -94,6 +93,15 @@ export function ExportPanel({ session }: { session: Session }) {
         ))}
       </ul>
       {error && <p className="pb-error">{error}</p>}
+      {/* The scope sits in the panel rather than inside the toggletip on purpose: it is the
+          caveat, and a caveat a sitter has to hover to find is one she learns about from a file
+          that turned out not to have what she needed. */}
+      <p className="pb-hint">
+        These are your records, not a copy of your whole account. Your services, rates, cancellation
+        policies and booking questions are settings and stay here, and so does your time off:
+        blocked days are in none of these files. Extras you added to a booking come through as one
+        charges total rather than a line each.
+      </p>
     </>
   );
 }

@@ -62,13 +62,21 @@ export type CsvValue = string | number | null | undefined;
  * The characters that make a spreadsheet read a cell as a FORMULA rather than as text. A client
  * name, a care note or a payment note is text the sitter's clients typed, and it lands in Excel or
  * Sheets: a note beginning `=HYPERLINK(...)` or `+cmd|...` is executed on open, which is CSV
- * injection (OWASP). Tab and CR are here for the same reason — both are stripped by some importers
- * before the leading character is judged, so `\t=1+1` can arrive at the formula parser as `=1+1`.
+ * injection (OWASP).
+ *
+ * ALL leading whitespace is in the set, not just tab and CR: importers routinely trim a field's
+ * leading whitespace before judging its first character, so `\t=1+1`, ` =1+1` and `\n=1+1` can each
+ * arrive at the formula parser as `=1+1`. Space and LF are the same hazard as the tab and CR this
+ * guard already covered, and singling out two of the four was the gap review found — `" =1+1"` was
+ * exported unquoted and un-neutralised, which Excel trims and then runs. The `\s` class is
+ * deliberately blunt: a cell whose leading whitespace is innocent (a name typed with a stray space)
+ * costs one apostrophe, and a rule that first has to decide which whitespace is innocent is a rule
+ * that can be wrong.
  *
  * `-` costs us nothing to include: every genuinely numeric field this codebase exports (an amount,
  * a count) is handed over as a `number`, and numbers are never neutralised.
  */
-const FORMULA_LEAD = /^[=+\-@\t\r]/;
+const FORMULA_LEAD = /^[\s=+\-@]/;
 
 /**
  * One cell, RFC 4180: wrapped in double quotes when it contains a comma, a double quote, a CR or an
