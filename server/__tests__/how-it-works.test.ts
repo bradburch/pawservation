@@ -184,10 +184,44 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // of a house sit, or a SECOND HOUSE SIT in the middle of one, is then quoted, painted and
     // accepted. The page used to say it was refused "however high you set the number", which is
     // false for the one value that is not a number.
-    expect(body).toContain('On any of the numbered settings a shared day only ever counts as a');
+    expect(body).toContain('A shared day there only ever counts as a');
     expect(body).toContain('No limit works differently');
-    expect(body).toContain('It switches the check off');
+    expect(body).toContain('it switches the check off');
     expect(body).not.toContain('refused however high you set the number');
+    // …and the number is now described as governing the CROSS-KIND pair only. Same-kind is not on
+    // the scale at all, so the page must not offer the number as the thing that permits or refuses
+    // a second house sit.
+    expect(body).toContain('The number is what you allow between a house sit and a boarding');
+  });
+
+  it('says a stay starting the day another ends has not overlapped at all', async () => {
+    const body = await howItWorksBody();
+    // THE LOAD-BEARING SENTENCE. Back-to-back is the only same-kind adjacency left, and it is a
+    // sitter's normal working pattern. VERIFIED in src/shared/booking/capacity.ts: `EventSpan`
+    // records `lastOccupied = end_date - 1`, so the first stay's last night is the day BEFORE the
+    // second's first, they share no day of occupancy, and the rule never runs on them (pinned in
+    // capacity.test.ts, 'BACK-TO-BACK is not an overlap at all, at every allowance including 0').
+    // Both bookings show that Friday on her calendar, so without this sentence she reads the
+    // strict same-kind rule as killing her business.
+    expect(body).toContain(
+      '<strong>A stay that starts on the day another one ends has not overlapped at all.</strong>',
+    );
+    expect(body).toMatch(/out of the Smiths on Friday morning and into the/i);
+    expect(body).toMatch(/at every setting on this page/i);
+  });
+
+  it('says two house sits never share a night, on ANY numbered setting', async () => {
+    const body = await howItWorksBody();
+    // VERIFIED: `sameKindSpans` withholds the handover concession from a same-kind pair, so
+    // `rangeConflictReason` returns 'same_kind_overlap' on any shared day at allowance 0, 1 or 2.
+    // The old copy offered the numbered settings as buying a house-sit handover, which they never
+    // should have and no longer do.
+    expect(body).toContain('<strong>Two house sits never share a night</strong>');
+    expect(body).toMatch(/on any of the numbered settings/i);
+    expect(body).not.toMatch(/so is a second house sit dropped into the middle of the first/i);
+    // A one-night stay can never share its night with anything: she takes single overnights
+    // constantly and would otherwise hit refusals the page gave her no way to predict.
+    expect(body).toMatch(/a one-night house sit can never share its night with anything/i);
   });
 
   it('says the whereabouts rule DOES hold two house sits apart, and drops the pet-cap workaround', async () => {
@@ -217,7 +251,7 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     // Boarding is NOT swept up by this: boarders are at her own home, so several a night is
     // normal and stays governed by MaxConcurrentPets alone. Saying otherwise would describe a
     // refusal the engine never makes.
-    expect(body).toContain('Boarding is not affected by any of this');
+    expect(body).toContain('Boarding on its own is not affected by any of this');
   });
 
   it('says which Google calendar it syncs to, and that the default is her main one', async () => {
@@ -546,8 +580,30 @@ describe('the landing page claims only what ships', () => {
     // for as long as two house sits on one night were held apart only by a pet cap, which IS
     // being double-booked; the whereabouts rule covers that case itself now, so the warning would
     // send a skimmer looking for a hole that is closed.
-    expect(body).toContain('<strong>No.</strong> Your caps and your time off hold the day');
+    // The bold answer names the one setting that lifts it IN THE OPENING rather than in the last
+    // line: a skimmer takes the promise and leaves the condition behind, and "No limit" really
+    // does switch the whereabouts check off (`normalizeAllowance` returns null and every
+    // whereabouts branch sits behind `overlapAllowance !== null`).
+    expect(body).toContain('<strong>Mostly no, and never by accident.</strong>');
+    expect(body).not.toContain('<strong>No.</strong> Your caps and your time off hold the day');
     expect(body).not.toContain('There is one exception, and if you house-sit you should read it');
+    // The caveat comes before the guarantees it qualifies.
+    const answer = body.slice(body.indexOf('Can it double-book me?'));
+    expect(answer.indexOf('No limit')).toBeLessThan(answer.indexOf('Caps count animals'));
+  });
+
+  it('scopes the double-booking answer to NIGHTS, and says what holds daytime visits apart', async () => {
+    const body = await landingBody();
+    // VERIFIED: `walkHasConflict` refuses a single-day request only on a BLOCKED day, and the
+    // per-option slot cap (`countSlotBookings` in server/lib/availability.ts) is the only other
+    // thing bounding a walk or a drop-in. Nothing anywhere models travel time, and a single-day
+    // service draws no whereabouts pool at all, so a 9am walk and a 9am drop-in across town are
+    // both bookable, as is either of them during a house sit. A sitter who does daytime visits
+    // must not read the "No." as covering that.
+    const answer = body.slice(body.indexOf('Can it double-book me?'));
+    expect(answer).toMatch(/All of that is about NIGHTS/);
+    expect(answer).toMatch(/held apart by each slot&rsquo;s own limit rather than by travel time/i);
+    expect(answer).toMatch(/9am walk across town/i);
   });
 
   it('tells sitters their clients can reschedule and cancel without going through them', async () => {
@@ -589,8 +645,13 @@ describe('the landing page claims only what ships', () => {
     expect(body).toContain('you can only sleep in one house');
     // "No limit" really does stop the check running, so an unqualified absolute would be false
     // for any sitter who picked it. It is the one caveat left, and it is a choice she makes.
-    expect(body).toMatch(/switches that whereabouts check off/i);
+    expect(body).toMatch(/turns the whereabouts check off/i);
     expect(body).toContain('&ldquo;No limit&rdquo;');
+    // Back-to-back, on the landing page too: it is the sentence that keeps the strict same-kind
+    // rule from reading as "you cannot work two houses in a week".
+    expect(body).toMatch(
+      /A stay that starts on the day another one ends has not overlapped at all/i,
+    );
     // The retired pet-cap framing, in every wording it shipped in.
     expect(body).not.toContain('The exception is that it does not keep you in one house at a time');
     expect(body).not.toContain('that cap counts pets rather than houses');

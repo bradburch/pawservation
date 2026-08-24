@@ -417,8 +417,20 @@ type SingleConflict = 'blocked_day' | 'slot_full' | 'slot_no_room';
  * the RULE, and there is one rule with one allowance knob behind both; splitting it would ask
  * every consumer to learn a distinction that changes nothing about what they can do next, which is
  * move the dates. The sentence is where the difference actually matters, because telling a
- * customer "your sitter has boarding on those dates" when she is in fact sitting another client's
- * home would be the code authoring a falsehood.
+ * customer "your sitter has boarding on those dates" when the sitter is in fact in another
+ * client's home would be the code authoring a falsehood.
+ *
+ * Both sentences are read by every sitter's own clients, so neither names a GENDER (the string is
+ * printed under whoever's business embedded the widget) and neither names ANOTHER CLIENT — the
+ * month grid says only "Sitter is house-sitting", and a customer has no business being told who
+ * else has booked. What a customer does need is the way out, which is why the same-kind sentence
+ * says a stay may start on the day the other ends: back-to-back is the adjacency this rule leaves
+ * open, and a refusal that does not name it reads as "never, at all".
+ *
+ * The TAIL of the same-kind sentence is load-bearing and is pinned by test. It used to offer "the
+ * day one is ending as the other begins", which under the withheld same-kind concession IS the
+ * shared night and is refused at 0, 1 and 2 alike — so it sent the customer straight back into the
+ * same 409. The only date that works is the CHECKOUT day, and the sentence has to name that one.
  */
 function rangeRefusal(
   conflict: RangeConflict,
@@ -440,7 +452,7 @@ function rangeRefusal(
     return {
       available: false,
       reason:
-        'Your sitter is already house-sitting for another client on those dates — she can only stay in one home a night, so a second house sit can meet it on the day one is ending as the other begins, never for the whole stay.',
+        'Your sitter is house-sitting on those dates, and two house sits can never share a night. The earliest a second one can start is the day the first one ends: the two may touch, but not overlap.',
       code: 'overlap_not_allowed',
     };
   }
@@ -781,8 +793,9 @@ function rangeWarning(conflict: RangeConflict, service: TenantService, petCount:
   const overbooks = 'Confirming anyway will double-book you.';
   if (conflict === 'same_kind_overlap') {
     return (
-      'You are already house-sitting for another client over those nights, and you can only stay in one home a night. ' +
-      `Two house sits can meet on a handover day, not across the whole stay. ${overbooks}`
+      'You are already house-sitting over those nights, and you can only sleep in one house. ' +
+      'Two house sits can never share a night, whatever your overlap setting says: the earliest a ' +
+      `second one can start is the day the first one ends. ${overbooks}`
     );
   }
   if (conflict === 'cross_kind_overlap') {

@@ -19,8 +19,13 @@ import { adminHeaders, createTestEnv, endUserToken, TENANT_A } from './helpers';
  * is the whereabouts rule and could not be anything else.
  *
  * It is the SAME rule that already governed boarding against house sitting (0006), widened by one
- * predicate (`kindsClash`), so the allowance knob, the handover condition, the both-sides symmetry
- * and the `null` = "rule off" escape hatch all carry over unchanged.
+ * predicate (`kindsClash`) and with the HANDOVER CONCESSION WITHHELD for a same-kind pair: a
+ * "handover day" is a night both stays occupy (`EventSpan.lastOccupied` is the last night slept,
+ * not the checkout morning), which is a tolerance against a boarding and the double booking itself
+ * against another house sit. So two house sits may never share a night at 0, 1 or 2.
+ *
+ * BACK-TO-BACK stays share no night at all and are untouched, at every allowance. `null` ("No
+ * limit") still switches the whole rule off.
  */
 
 const SLUG = 'sunny-paws';
@@ -111,8 +116,22 @@ describe('house-sit exclusivity — the availability quote', () => {
     expect(body.code).toBe('overlap_not_allowed');
     // The customer is told the TRUE fact. Telling them "your sitter has boarding on those dates"
     // would be the wire code's older sentence applied to a case it does not describe.
-    expect(body.reason).toContain('already house-sitting for another client');
+    expect(body.reason).toContain('house-sitting on those dates');
     expect(body.reason).not.toContain('boarding');
+    // Every sitter's own clients read this string, so it names no GENDER and no OTHER CLIENT (the
+    // month grid says only "Sitter is house-sitting", and who else booked is not a customer's
+    // business). It does name the way out, which is the back-to-back adjacency.
+    expect(body.reason).not.toMatch(/\b(she|her|his|he)\b/i);
+    expect(body.reason).not.toMatch(/another client/i);
+    // THE TAIL, pinned. It used to offer "the day one is ending as the other begins", which under
+    // the withheld same-kind concession IS the shared night and is refused at 0, 1 and 2 alike —
+    // an escape route straight back into the same 409. Only the CHECKOUT day works.
+    expect(body.reason).toContain(
+      'The earliest a second one can start is the day the first one ends',
+    );
+    expect(body.reason).toMatch(/may touch, but not overlap/i);
+    expect(body.reason).not.toMatch(/one is ending as the other begins/i);
+    expect(body.reason).not.toMatch(/handover/i);
   });
 
   it('THE POINT: pet count is irrelevant — one pet blocks one pet, no cap involved', async () => {
@@ -132,18 +151,50 @@ describe('house-sit exclusivity — the availability quote', () => {
     expect(body.code).toBe('overlap_not_allowed');
   });
 
-  it('still allows a genuine handover, and a plain back-to-back', async () => {
+  it('refuses the SHARED NIGHT that a cross-kind pair would be allowed to hand over', async () => {
     const { env } = createTestEnv();
     await seedHouseSit(env, '2028-09-01', '2028-09-05'); // occupies Sep 1-4
 
-    // Arrives on the existing sit's last night, keeps Sep 5 and Sep 6 of its own.
-    expect(
-      ((await (await quote(env, '2028-09-04', '2028-09-07')).json()) as QuoteBody).available,
-    ).toBe(true);
-    // Starts on its checkout day: no shared night at all.
-    expect(
-      ((await (await quote(env, '2028-09-05', '2028-09-08')).json()) as QuoteBody).available,
-    ).toBe(true);
+    // The Smiths/Joneses shape: the request arrives on the existing sit's last NIGHT. Against a
+    // boarding this is the canonical handover; against a house sit it is two homes on one night.
+    const body = (await (await quote(env, '2028-09-04', '2028-09-07')).json()) as QuoteBody;
+    expect(body.available).toBe(false);
+    expect(body.code).toBe('overlap_not_allowed');
+  });
+
+  it('BACK-TO-BACK is allowed at every allowance, which is her normal working week', async () => {
+    // Out of the first house on Friday morning, into the second that evening. The first sit's last
+    // night is Sep 4 and the second's first night is Sep 5: no shared night, nothing to allow.
+    for (const allowance of [0, 1, 2]) {
+      const { env } = createTestEnv();
+      await seedHouseSit(env, '2028-09-01', '2028-09-05');
+      await setAllowance(env, allowance);
+      expect(
+        ((await (await quote(env, '2028-09-05', '2028-09-08')).json()) as QuoteBody).available,
+      ).toBe(true);
+    }
+  });
+
+  it('CROSS-KIND handovers are unchanged: a house sit may still meet a boarding', async () => {
+    // The pin that stops the same-kind rule tightening the boarding side. A boarding occupies
+    // Sep 1-4; the house sit arrives on Sep 4, its last night, and keeps Sep 5 and Sep 6.
+    for (const allowance of [1, 2]) {
+      const { env } = createTestEnv();
+      await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+        endUserId: null,
+        serviceType: 'boarding',
+        startDate: '2028-09-01',
+        endDate: '2028-09-05',
+        optionKey: 'standard',
+        petCount: 1,
+        estCost: null,
+        status: 'confirmed',
+      });
+      await setAllowance(env, allowance);
+      expect(
+        ((await (await quote(env, '2028-09-04', '2028-09-07')).json()) as QuoteBody).available,
+      ).toBe(true);
+    }
   });
 
   it('"No limit" switches this off too, exactly as it already does for boarding', async () => {
@@ -155,13 +206,15 @@ describe('house-sit exclusivity — the availability quote', () => {
     ).toBe(true);
   });
 
-  it('allowance 0 refuses even the handover', async () => {
-    const { env } = createTestEnv();
-    await seedHouseSit(env, '2028-09-01', '2028-09-05');
-    await setAllowance(env, 0);
-    expect(
-      ((await (await quote(env, '2028-09-04', '2028-09-07')).json()) as QuoteBody).available,
-    ).toBe(false);
+  it('the shared night is refused at 0, 1 and 2 alike — the allowance does not buy it', async () => {
+    for (const allowance of [0, 1, 2]) {
+      const { env } = createTestEnv();
+      await seedHouseSit(env, '2028-09-01', '2028-09-05');
+      await setAllowance(env, allowance);
+      expect(
+        ((await (await quote(env, '2028-09-04', '2028-09-07')).json()) as QuoteBody).available,
+      ).toBe(false);
+    }
   });
 
   it('BOARDING is untouched: several stays a night, bounded only by the pool cap', async () => {
@@ -200,7 +253,7 @@ describe('house-sit exclusivity — the booking POST', () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string; code: string };
     expect(body.code).toBe('overlap_not_allowed');
-    expect(body.error).toContain('already house-sitting for another client');
+    expect(body.error).toContain('house-sitting on those dates');
 
     const rows = raw
       .prepare(
@@ -241,16 +294,21 @@ describe('house-sit exclusivity — the booking POST', () => {
     expect((await book(second.env, '2028-09-04', '2028-09-08')).status).toBe(409);
   });
 
-  it('accepts the handover and stores it', async () => {
+  it('409s on the shared night, and accepts the BACK-TO-BACK stay right beside it', async () => {
     const { env, raw } = createTestEnv();
-    await seedHouseSit(env, '2028-09-01', '2028-09-05');
-    const res = await book(env, '2028-09-04', '2028-09-07');
+    await seedHouseSit(env, '2028-09-01', '2028-09-05'); // occupies Sep 1-4
+
+    // Sharing the night of Sep 4 is refused…
+    expect((await book(env, '2028-09-04', '2028-09-07')).status).toBe(409);
+
+    // …and moving in by one day, so the stays merely touch, is accepted and stored.
+    const res = await book(env, '2028-09-05', '2028-09-08');
     expect(res.status).toBe(201);
     const id = ((await res.json()) as { id: string }).id;
     const row = raw
       .prepare('SELECT StartDate, EndDate FROM BookingRequests WHERE Id = ?')
       .get(id) as { StartDate: string; EndDate: string };
-    expect(row).toEqual({ StartDate: '2028-09-04', EndDate: '2028-09-07' });
+    expect(row).toEqual({ StartDate: '2028-09-05', EndDate: '2028-09-08' });
   });
 });
 
@@ -270,24 +328,44 @@ describe('house-sit exclusivity — the month grid', () => {
     return (await res.json()) as MonthBody;
   };
 
-  it('strikes out the days no house sit could arrive on, depart on, or span', async () => {
+  it('strikes out EVERY night of the sit, and leaves its checkout day open', async () => {
     const { env } = createTestEnv();
     await seedHouseSit(env, '2028-09-01', '2028-09-05'); // occupies Sep 1-4
     const byDate = new Map((await grid(env, '2028-09')).days.map((d) => [d.date, d]));
 
-    // Interior nights: unusable by ANY house-sit request, so the grid may not paint them open.
-    for (const date of ['2028-09-02', '2028-09-03']) {
+    // Same-kind has no handover to concede, so the paint is EXACT here: a night a sit occupies is
+    // unusable by every house-sit request, its own arrival night and last night included.
+    for (const date of ['2028-09-01', '2028-09-02', '2028-09-03', '2028-09-04']) {
       expect(byDate.get(date)).toMatchObject({
         status: 'unavailable',
         reason: 'Sitter is house-sitting',
       });
     }
-    // The sit's own arrival and departure days stay open: a request may hand over on either, and
-    // the grid must not strike out a day a real request could use (CALENDAR_LOGIC.md §9).
+    // The checkout day carries no occupancy at all, which is what makes back-to-back bookable.
+    expect(byDate.get('2028-09-05')!.status).toBe('available');
+  });
+
+  it('a BOARDING day still leaves its handover nights open to a house sit', async () => {
+    // Cross-kind paint, pinned so the same-kind rule cannot tighten it. The boarding occupies
+    // Sep 1-4; its first and last nights are both legal handover days for a house sit.
+    const { env } = createTestEnv();
+    await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: '2028-09-01',
+      endDate: '2028-09-05',
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    const byDate = new Map((await grid(env, '2028-09')).days.map((d) => [d.date, d]));
     expect(byDate.get('2028-09-01')!.status).not.toBe('unavailable');
     expect(byDate.get('2028-09-04')!.status).not.toBe('unavailable');
-    // The checkout day carries no occupancy at all.
-    expect(byDate.get('2028-09-05')!.status).toBe('available');
+    expect(byDate.get('2028-09-02')).toMatchObject({
+      status: 'unavailable',
+      reason: 'Sitter has boarders',
+    });
   });
 
   it('the grid and the quote agree on the day the quote refuses', async () => {
@@ -343,6 +421,24 @@ describe('house-sit exclusivity — the month grid', () => {
   });
 });
 
+describe('house-sit exclusivity — the widened capacity read', () => {
+  it('sees a neighbour sit that starts well BEFORE the requested window', async () => {
+    // `overlapReadWindow` widens `checkRange`'s capacity read to the union of the touched spans,
+    // and only a real D1 round trip exercises it: the engine tests hand the whole map in at once.
+    // The neighbour runs Aug 20 to Sep 3, so its span reaches back a month before the request and
+    // out of any month the first read would have covered.
+    const { env } = createTestEnv();
+    await seedHouseSit(env, '2028-08-20', '2028-09-03'); // occupies Aug 20 - Sep 2
+    const body = (await (await quote(env, '2028-09-02', '2028-09-06')).json()) as QuoteBody;
+    expect(body.available).toBe(false);
+    expect(body.code).toBe('overlap_not_allowed');
+    // …and one day later, on the neighbour's checkout day, is a clean back-to-back.
+    expect(
+      ((await (await quote(env, '2028-09-03', '2028-09-06')).json()) as QuoteBody).available,
+    ).toBe(true);
+  });
+});
+
 describe('house-sit exclusivity — the sitter’s confirm', () => {
   it('warns on the SECOND confirm, and she can still override', async () => {
     const { env } = createTestEnv();
@@ -375,7 +471,15 @@ describe('house-sit exclusivity — the sitter’s confirm', () => {
     };
     expect(body.code).toBe('capacity_conflict');
     expect(body.requiresOverride).toBe(true);
-    expect(body.error).toContain('already house-sitting for another client');
+    // The SITTER's wording, which may say "you" and does not have to be shy about the reason.
+    expect(body.error).toContain('You are already house-sitting over those nights');
+    expect(body.error).toContain('Two house sits can never share a night');
+    // She reads this at the moment she decides whether to override, so the remedy it names has to
+    // be one that actually works. "Two house sits can meet on a handover day" was flatly false.
+    expect(body.error).toContain(
+      'the earliest a second one can start is the day the first one ends',
+    );
+    expect(body.error).not.toMatch(/handover day/i);
     expect(body.error).toContain('Confirming anyway will double-book you.');
 
     // She is the authority over her own calendar: told, never refused.
@@ -435,6 +539,37 @@ describe('house-sit exclusivity — a stay must not collide with itself', () => 
     );
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe('overlap_not_allowed');
+  });
+
+  it('an edit changing ONLY the pets is not refused by its own row', async () => {
+    // The dates stay put, so every night of the stay carries this booking's own house-sit span.
+    // Without `excludeBookingId` reaching the same-kind span set, the stay clashes with itself and
+    // a customer who simply swapped which animal is coming can never save. One pet swapped for
+    // one pet, deliberately: a two-pet set on the base fixture is refused for a different reason
+    // entirely (`unpriced_pet_set`, PetRateMode 'exact'), which would prove nothing about capacity.
+    const { env, raw } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const created = await book(env, '2028-09-10', '2028-09-14');
+    const id = ((await created.json()) as { id: string }).id;
+
+    const res = await app.request(
+      `/api/${SLUG}/bookings/${id}`,
+      {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: '2028-09-10',
+          endDate: '2028-09-14',
+          petIds: [MOCHI],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const pets = raw
+      .prepare('SELECT PetId FROM BookingRequestPets WHERE BookingRequestId = ?')
+      .all(id) as { PetId: string }[];
+    expect(pets.map((p) => p.PetId)).toEqual([MOCHI]);
   });
 
   it('the month grid excludes the booking being edited from its own days', async () => {

@@ -33,6 +33,8 @@ export {
 } from './util/calendar-target.js';
 export {
   buildCapacity,
+  // Deprecated alias of `whereaboutsDayBlocked`; see the comment beside it. Out-of-tree only.
+  crossKindDayBlocked,
   isWellFormedCapacityEvent,
   overlapReadWindow,
   rangeConflictReason,

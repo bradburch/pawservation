@@ -563,7 +563,8 @@ describe('house-sit / boarding overlap allowance', () => {
 });
 
 /**
- * A NIGHT HOLDS AT MOST ONE HOUSE SIT. The same whereabouts rule, turned on its own kind.
+ * A NIGHT HOLDS AT MOST ONE HOUSE SIT. The same whereabouts rule, turned on its own kind, and with
+ * the HANDOVER CONCESSION WITHHELD.
  *
  * House sitting happens at the CLIENT's home, so the sitter can sleep in exactly one of them a
  * night whether it holds one cat or four dogs. Until this rule existed, `rangeConflictReason` read
@@ -571,12 +572,19 @@ describe('house-sit / boarding overlap allowance', () => {
  * nothing but `MaxConcurrentPets` — which counts pets, and could only express "one house sit a
  * night" by also refusing anyone who arrives with two dogs.
  *
- * The fix is NOT a second rule: `kindsClash` widens the set of spans a house-sit request is judged
- * against to include other house sits, and all three conditions, the both-sides symmetry, the span
- * identity and the widened read apply unchanged. Every verdict below is therefore the same shape as
- * its cross-kind twin in the table above.
+ * Widening the clashing set was not enough on its own, and the reason is the occupancy model:
+ * `EventSpan.lastOccupied` is `end_date - 1`, the last NIGHT slept, not the checkout morning. So a
+ * "handover day" is a night BOTH stays occupy. Against a boarding that is a real tolerance (the
+ * boarder is collected that evening and the sitter still sleeps in one place); against another
+ * house sit it IS the double booking. The Smiths Mon→Fri plus the Joneses Thu→Sun is the shape,
+ * and on Thursday night she is booked to sleep in two homes.
  *
- * BOARDING is deliberately untouched: boarders are all at her own house.
+ * So the concession is CROSS-KIND ONLY: two house sits may never share a night on ANY numbered
+ * allowance. `null` ("No limit") still switches the whole rule off, same-kind included.
+ *
+ * What this does NOT touch: back-to-back sits, which share no night at all (the first one's
+ * `lastOccupied` is the Thursday, the second one's `start` is the Friday) and were legal at
+ * allowance 0 before any of this. And BOARDING, which is all at her own house.
  */
 describe('a night holds at most ONE house sit (same-kind whereabouts)', () => {
   const hsReq = (overlapAllowance: number | null, over: Partial<CapacityRequest> = {}) => ({
@@ -601,31 +609,72 @@ describe('a night holds at most ONE house sit (same-kind whereabouts)', () => {
     ]);
   });
 
-  it('allows a genuine handover: the new sit arrives on the day the old one departs', () => {
-    // The existing sit occupies Sep 1–4 (Sep 5 is its checkout). The request arrives Sep 4, its
-    // last night, and keeps Sep 5 and Sep 6 to itself. One shared day, a real transition.
+  it('THE SMITHS AND THE JONESES: a shared night is refused at EVERY numbered allowance', () => {
+    // The existing sit occupies Sep 1–4 (Sep 5 is its checkout). The request arrives Sep 4, which
+    // is that sit's LAST NIGHT — so both stays occupy the night of Sep 4 and she is booked to
+    // sleep in two homes. Cross-kind this is the canonical legal handover (see the table above);
+    // same-kind there is nothing to hand over, so it is refused at 0, 1 and 2 alike.
     expect(verdicts([houseSit('2028-09-01', '2028-09-05')], '2028-09-04', '2028-09-07')).toEqual([
-      true, // allowance 0: no shared day at all, ever
-      false,
-      false,
+      true,
+      true,
+      true,
+      false, // NULL is the one escape hatch, and it switches the whole rule off
+    ]);
+  });
+
+  it('…and in the OPPOSITE ORDER, which is the same night from the other side', () => {
+    // Order independence for the new refusal specifically: whichever of the pair reaches the
+    // calendar first, the night of Sep 4 is claimed twice.
+    expect(verdicts([houseSit('2028-09-04', '2028-09-07')], '2028-09-01', '2028-09-05')).toEqual([
+      true,
+      true,
+      true,
       false,
     ]);
   });
 
-  it('a sit that STARTS on the other one’s checkout day never overlapped at all', () => {
-    // A checkout day carries no occupancy, so back-to-back house sits are legal even at 0.
+  it('refuses the shared night even when it is the only night either stay shares', () => {
+    // Nothing about the LENGTH of the stays rescues it: a ten-night sit and a three-night sit
+    // touching on exactly one night are still two homes on that night.
+    expect(verdicts([houseSit('2028-09-01', '2028-09-11')], '2028-09-10', '2028-09-13')).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it('BACK-TO-BACK is not an overlap at all, at every allowance including 0', () => {
+    // THE SENTENCE THE WHOLE RULE RESTS ON. A checkout day carries no occupancy: the first sit's
+    // last night is Sep 4 and the second's first night is Sep 5, so out of one house in the
+    // morning and into the next that evening shares NO night. This was legal at allowance 0 before
+    // the allowance existed, and withholding the handover concession cannot touch it — which is
+    // why "two house sits may never share a night" does not cost a sitter her normal working week.
     expect(verdicts([houseSit('2028-09-01', '2028-09-05')], '2028-09-05', '2028-09-08')).toEqual([
       false,
       false,
       false,
       false,
     ]);
+    // …and the mirror, arriving BEFORE rather than after.
+    expect(verdicts([houseSit('2028-09-05', '2028-09-08')], '2028-09-01', '2028-09-05')).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+    // A whole chain of them, which is a working week.
+    const chain = [
+      houseSit('2028-09-01', '2028-09-04'),
+      houseSit('2028-09-04', '2028-09-06'),
+      houseSit('2028-09-08', '2028-09-11'),
+    ];
+    expect(verdicts(chain, '2028-09-06', '2028-09-08')).toEqual([false, false, false, false]);
   });
 
   it('two ONE-NIGHT house sits on the same night are refused at every allowance', () => {
-    // Each is its own arrival AND its own departure, so the directional handover test passes from
-    // either side and the count fits in 1. Only "the stay kept no day of its own" refuses it —
-    // which is condition 3, and is why this rule could not have been the count plus a handover.
+    // One night, claimed twice. Condition 3 ("the stay kept no day of its own") already refused
+    // this before the concession was withheld; now the shared night alone is enough.
     expect(verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-05')).toEqual([
       true,
       true,
@@ -634,9 +683,9 @@ describe('a night holds at most ONE house sit (same-kind whereabouts)', () => {
     ]);
   });
 
-  it('a ONE-NIGHT existing sit can never be handed over, however long the request', () => {
-    // Rules 1 and 3 asked of the NEIGHBOUR: the request keeps Sep 5 and Sep 6, but the existing
-    // sit's only night is Sep 4 and sharing it leaves that stay with nothing of its own.
+  it('a ONE-NIGHT existing sit can never be shared, however long the request', () => {
+    // A one-night sit has exactly one night and any touch claims it. Stated separately because a
+    // sitter takes single overnights constantly and the copy promises her this outcome.
     expect(verdicts([houseSit('2028-09-04', '2028-09-05')], '2028-09-04', '2028-09-07')).toEqual([
       true,
       true,
@@ -692,16 +741,72 @@ describe('a night holds at most ONE house sit (same-kind whereabouts)', () => {
 
   it('the neighbour test does not count a sit as its own clashing occupancy', () => {
     // `neighborsViolated` asks what clashes with the NEIGHBOUR, and a house sit clashes with house
-    // sits — so without the `!== span` identity filter every day of every neighbour sit would look
-    // shared, `shared >= days` would always hold, and the plainest legal handover above would be
-    // refused. This is that handover, restated as the regression it guards.
+    // sits — so without the `!== span` identity filter every day of a neighbour sit would look
+    // shared, `shared >= days` would always hold, and the plainest legal CROSS-KIND handover would
+    // be refused. A boarding arriving on a house sit's last night is that handover.
     expect(
       rangeHasConflict(
         '2028-09-04',
         '2028-09-07',
-        hsReq(1),
+        req({ cap: null, overlapAllowance: 1 }),
         buildCapacity([houseSit('2028-09-01', '2028-09-05')]),
       ),
+    ).toBe(false);
+  });
+
+  it('CROSS-KIND handovers are untouched by the same-kind rule, in both directions', () => {
+    // The pin that stops this change tightening the boarding side by accident. Each pair shares
+    // exactly the night of Sep 4: one stay's last night, the other's first. Legal at 1 and 2.
+    for (const allowance of [1, 2]) {
+      // A house sit arriving on a boarding's last night.
+      expect(
+        rangeHasConflict(
+          '2028-09-04',
+          '2028-09-07',
+          hsReq(allowance),
+          buildCapacity([boarding('2028-09-01', '2028-09-05')]),
+        ),
+      ).toBe(false);
+      // A boarding arriving on a house sit's last night.
+      expect(
+        rangeHasConflict(
+          '2028-09-04',
+          '2028-09-07',
+          req({ cap: null, overlapAllowance: allowance }),
+          buildCapacity([houseSit('2028-09-01', '2028-09-05')]),
+        ),
+      ).toBe(false);
+      // …and a house sit DEPARTING on the day a boarding arrives, the other direction of the
+      // directional handover test.
+      expect(
+        rangeHasConflict(
+          '2028-09-01',
+          '2028-09-05',
+          hsReq(allowance),
+          buildCapacity([boarding('2028-09-04', '2028-09-08')]),
+        ),
+      ).toBe(false);
+    }
+    // Allowance 0 still refuses all three, unchanged.
+    expect(
+      rangeHasConflict(
+        '2028-09-04',
+        '2028-09-07',
+        hsReq(0),
+        buildCapacity([boarding('2028-09-01', '2028-09-05')]),
+      ),
+    ).toBe(true);
+  });
+
+  it('a boarding may still hand over with a house sit that is BACK-TO-BACK with another sit', () => {
+    // The two rules meeting: a chain of back-to-back sits shares no night with itself, so a
+    // boarding handing over into the first of them is judged exactly as it was before.
+    const cap = buildCapacity([
+      houseSit('2028-09-05', '2028-09-08'),
+      houseSit('2028-09-08', '2028-09-11'),
+    ]);
+    expect(
+      rangeHasConflict('2028-09-01', '2028-09-06', req({ cap: null, overlapAllowance: 1 }), cap),
     ).toBe(false);
   });
 
@@ -732,21 +837,36 @@ describe('a night holds at most ONE house sit (same-kind whereabouts)', () => {
     }
   });
 
-  it('whereaboutsDayBlocked paints the same-kind day the grid must not call available', () => {
+  it('whereaboutsDayBlocked strikes out EVERY night of a sit for a house-sit request', () => {
     const cap = buildCapacity([houseSit('2028-09-01', '2028-09-05')]); // occupies Sep 1–4
     const day = (d: string) => cap.get(d)!;
-    // Mid-stay: neither all-arriving nor all-departing, so no request of this kind can use it.
-    expect(whereaboutsDayBlocked(day('2028-09-02'), '2028-09-02', 'housesit', 1)).toBe(true);
-    // Its ARRIVAL day stays paintable: a request that DEPARTS on it is a legal handover, and the
-    // grid must not strike out a day some request of this kind could genuinely use.
-    expect(whereaboutsDayBlocked(day('2028-09-01'), '2028-09-01', 'housesit', 1)).toBe(false);
-    // Likewise its last occupied night, which a request could ARRIVE on.
-    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'housesit', 1)).toBe(false);
-    // Allowance 0 strikes out every occupied day; NULL switches the paint off with the rule.
-    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'housesit', 0)).toBe(true);
+    // Same-kind has no handover to concede, so the day-level paint is exact here rather than
+    // conservative: every occupied night is unusable by every house-sit request, at 0, 1 and 2.
+    for (const allowance of [0, 1, 2]) {
+      for (const date of ['2028-09-01', '2028-09-02', '2028-09-03', '2028-09-04']) {
+        expect(whereaboutsDayBlocked(day(date), date, 'housesit', allowance)).toBe(true);
+      }
+    }
+    // NULL switches the paint off with the rule.
     expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'housesit', null)).toBe(false);
-    // A BOARDING request is untouched by a boarding day.
+    // The CHECKOUT day carries no occupancy at all (it is only in the map to record a boundary),
+    // so it is never struck out and a back-to-back sit may start on it, at every allowance.
+    expect(day('2028-09-05').housesit.spans).toEqual([]);
+    for (const allowance of [0, 1, 2]) {
+      expect(whereaboutsDayBlocked(day('2028-09-05'), '2028-09-05', 'housesit', allowance)).toBe(
+        false,
+      );
+    }
+    // CROSS-KIND paint is unchanged: a BOARDING request may still hand over on this sit's arrival
+    // day (it departs on it) and on its last night (it arrives on it), so neither is struck out.
+    expect(whereaboutsDayBlocked(day('2028-09-01'), '2028-09-01', 'boarding', 1)).toBe(false);
+    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'boarding', 1)).toBe(false);
+    expect(whereaboutsDayBlocked(day('2028-09-02'), '2028-09-02', 'boarding', 1)).toBe(true);
+    expect(whereaboutsDayBlocked(day('2028-09-04'), '2028-09-04', 'boarding', 0)).toBe(true);
+    // …and a house-sit request may still hand over with a BOARDING day, unchanged.
     const beds = buildCapacity([boarding('2028-09-01', '2028-09-05')]);
+    expect(whereaboutsDayBlocked(beds.get('2028-09-04')!, '2028-09-04', 'housesit', 1)).toBe(false);
+    // A BOARDING request is untouched by a boarding day.
     expect(whereaboutsDayBlocked(beds.get('2028-09-02')!, '2028-09-02', 'boarding', 1)).toBe(false);
   });
 
