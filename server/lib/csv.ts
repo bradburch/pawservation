@@ -54,3 +54,62 @@ export function parseCsvRows(text: string): string[][] {
   rows.push(cells);
   return rows;
 }
+
+/** One cell as a caller hands it over. `null`/`undefined` are written as an empty cell. */
+export type CsvValue = string | number | null | undefined;
+
+/**
+ * The characters that make a spreadsheet read a cell as a FORMULA rather than as text. A client
+ * name, a care note or a payment note is text the sitter's clients typed, and it lands in Excel or
+ * Sheets: a note beginning `=HYPERLINK(...)` or `+cmd|...` is executed on open, which is CSV
+ * injection (OWASP).
+ *
+ * ALL leading whitespace is in the set, not just tab and CR: importers routinely trim a field's
+ * leading whitespace before judging its first character, so `\t=1+1`, ` =1+1` and `\n=1+1` can each
+ * arrive at the formula parser as `=1+1`. Space and LF are the same hazard as the tab and CR this
+ * guard already covered, and singling out two of the four was the gap review found — `" =1+1"` was
+ * exported unquoted and un-neutralised, which Excel trims and then runs. The `\s` class is
+ * deliberately blunt: a cell whose leading whitespace is innocent (a name typed with a stray space)
+ * costs one apostrophe, and a rule that first has to decide which whitespace is innocent is a rule
+ * that can be wrong.
+ *
+ * `-` costs us nothing to include: every genuinely numeric field this codebase exports (an amount,
+ * a count) is handed over as a `number`, and numbers are never neutralised.
+ */
+const FORMULA_LEAD = /^[\s=+\-@]/;
+
+/**
+ * One cell, RFC 4180: wrapped in double quotes when it contains a comma, a double quote, a CR or an
+ * LF, with each embedded quote doubled.
+ *
+ * A cell that had to be neutralised is ALWAYS quoted, even though the apostrophe needs no escaping —
+ * the guard is only worth anything if the spreadsheet sees the apostrophe as the cell's first
+ * character, and quoting is what guarantees that whatever the importer does with surrounding
+ * whitespace.
+ */
+function encodeCsvCell(value: CsvValue): string {
+  if (value == null) return '';
+  // A number is never a formula, so it is never neutralised — that is what keeps a negative amount
+  // reading as -45 rather than as the literal text '-45.
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  const neutralised = FORMULA_LEAD.test(value) ? `'${value}` : value;
+  return neutralised !== value || /[",\r\n]/.test(neutralised)
+    ? `"${neutralised.replaceAll('"', '""')}"`
+    : neutralised;
+}
+
+/**
+ * Rows (the first is the header, by convention of every caller) to one CSV string, CRLF-separated
+ * per RFC 4180.
+ *
+ * Deliberately NO trailing newline: `parseCsvRows` above reads one as a final empty row, and these
+ * two functions being exact inverses is what lets a test prove a comma-and-quote-bearing name
+ * survives the round trip. Excel and Sheets are indifferent either way.
+ *
+ * ponytail: builds the whole file in memory. One sitter's book is thousands of rows at the outside,
+ * so this is a few hundred KB; if a tenant ever outgrows that, the upgrade path is a streamed
+ * `ReadableStream` body writing row by row — not a library.
+ */
+export function serializeCsvRows(rows: CsvValue[][]): string {
+  return rows.map((row) => row.map(encodeCsvCell).join(',')).join('\r\n');
+}

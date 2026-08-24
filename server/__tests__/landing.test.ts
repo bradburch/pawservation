@@ -43,7 +43,8 @@ describe('GET / — landing page', () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
     expect(body).toContain('Upload the CSV from Venmo');
-    // Still no data-export claim: this is about importing a file INTO Pawservation.
+    // This card is about reading a file INTO Pawservation; taking data back OUT is its own FAQ
+    // item further down, and the two must not be blurred into one claim here.
     expect(body).not.toContain('export button');
   });
 
@@ -81,10 +82,41 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('multi-pet pricing is on the way');
   });
 
-  it('no longer advertises data export (no export route exists; the FAQ item is gone)', async () => {
+  it('says a sitter can take her book out, and claims no more than the export does', async () => {
     const body = await landingBody();
-    expect(body).not.toContain('Can I get my data out?');
-    expect(body).not.toContain('export button');
+    // This pin used to run the other way: the FAQ item was REMOVED because the page advertised an
+    // export nothing implemented, and the test froze that removal. GET /api/:slug/admin/export/
+    // :dataset shipped, so the copy is allowed back and the protection turns around with it —
+    // from "must not say this" to "must say this, and must not say more than this".
+    expect(body).toContain('Can I get my data out?');
+    // The four datasets of EXPORT_DATASETS, named inside this answer rather than anywhere on the
+    // page, plus where the panel actually lives (Settings → Business).
+    const answer = body.slice(body.indexOf('Can I get my data out?'), body.indexOf('team use it?'));
+    expect(answer).toContain('Export your data panel with four downloads');
+    for (const dataset of ['clients', 'pets', 'bookings', 'payments'])
+      expect(answer, dataset).toContain(dataset);
+    // …and the two limits stated out loud, because a reader deciding on lock-in is the one who
+    // will find out otherwise: it runs when she presses the button, and nothing reads a file back.
+    expect(body).toContain('no scheduled copy');
+    expect(body).toContain('no way to load one of these files back in');
+    // …and the same SCOPE the in-app panel states (app/admin/ExportPanel.tsx: "blocked days are
+    // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
+    // so no dataset carries time off. The panel said so; this page did not.
+    expect(answer).toContain('your time off, which is in none of the four files');
+    // Nothing buildExportCsv does not do may be claimed. There is no cron, no whole-account
+    // archive, no key to issue, and no path that imports an exported file into Pawservation.
+    for (const overclaim of [
+      'automatic backup',
+      'automatic export',
+      'scheduled export',
+      'nightly',
+      'api key',
+      'full account backup',
+      'download everything as a zip',
+      'import it back',
+      'back into pawservation',
+    ])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
   it('tells the client-AND-pet truth and drops the CSV row cap from copy', async () => {
@@ -105,6 +137,160 @@ describe('GET / — landing page', () => {
   it('tells visitors the demo costs them nothing to try', async () => {
     const body = await landingBody();
     expect(body).toContain('nothing to sign up for');
+  });
+
+  it('states the free tier in the hero, above the fold', async () => {
+    const body = await landingBody();
+    // Shoppers in this category arrive holding an incumbent's monthly figure, and the page used to
+    // let them hold it until the pricing section. The chip is the first thing read and it spent
+    // itself restating the product category, which the h1 and the sub both also say, so the price
+    // took it over. Pinned to the exact wording: the chip is the ONE place the hero states this,
+    // and a second copy in the sub would be the same idea twice on one screen.
+    expect(body).toContain('<p class="chip">Free for one sitter. No trial, no card.</p>');
+    // Above the fold means the safe zone: before the h1, and well before the demo/invite note,
+    // which is borderline on a phone.
+    const chip = body.indexOf('<p class="chip">');
+    expect(chip).toBeGreaterThan(-1);
+    expect(chip).toBeLessThan(body.indexOf('<h1>'));
+    expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
+    // The hero says what the pricing section says. "for one sitter" is the price card's own
+    // qualifier, so the hero cannot promise a tier section five then walks back.
+    expect(body).toContain('Taking bookings is free, and stays free');
+    expect(body).toContain('<span class="price-per">for one sitter</span>');
+    // Free here is a standing price, not an offer with a clock on it.
+    for (const offer of ['free trial', 'limited time', '% off', 'was $']) {
+      expect(body.toLowerCase(), `hero must not read as a discount: ${offer}`).not.toContain(offer);
+    }
+  });
+
+  it('carries the relationship framing: care conversations for the sitter, an immediate answer for the owner', async () => {
+    const body = await landingBody();
+    // The workflow "texts" pair leads with the win, and the win is LATENCY, not an absolute about
+    // what is left on the thread. Round 1 wrote "The only texts left are about the pets.", which
+    // three readers called an overclaim: there is no messaging, no photo and no visit report in
+    // this product, so every care conversation still happens on her phone — the thread loses the
+    // booking part, it does not become about care.
+    expect(body).toContain('The dates question stops being a text.');
+    expect(body).not.toContain('The only texts left are about the pets.');
+    // …and the page must NAME the category feature it doesn't have. Time To Pet's headline is the
+    // visit report; a page arguing that software improves the client relationship, which never
+    // mentions the one incumbent feature actually about the animal, argues against itself.
+    expect(body).toContain('doesn&rsquo;t do visit reports or photos');
+    // The sharpest sentence on the page, promoted out of the sum box (which a skimmer never
+    // reaches) into the pair a skimmer actually reads.
+    expect(body).toContain('They were about dates and prices, not about the dog.');
+    // What's left is stated as a tendency, not an absolute: gate codes and "running late" still
+    // arrive by text, so "what reaches you is a care question" was falsifiable in week one.
+    expect(body).toContain('more of what&rsquo;s left is about the animal');
+    expect(body).not.toContain('a care question');
+    // The owner's half survives exactly once — restating it was the third pass at one idea.
+    expect(body.match(/which dates you can take/g) ?? []).toHaveLength(1);
+    expect(body).toContain('waiting on a text back');
+    // The examples belong to the workflow pair; repeating them a screen later cheapened them.
+    expect(body.match(/pills at six/g) ?? []).toHaveLength(1);
+    // …and it must never read as instant confirmation. The sitter's yes is still the gate, and
+    // the client's OWN screen says so too, so nobody tells their spouse it's booked at 11pm.
+    expect(body).toContain('still pending until you say yes');
+    expect(body).toContain('their own screen says awaiting confirmation until then');
+    expect(body).toContain('goes out when you confirm, not when they press send');
+    for (const lie of ['confirmed instantly', 'instant confirmation', 'confirms automatically'])
+      expect(body, lie).not.toContain(lie);
+  });
+
+  it('sets the two business shapes side by side instead of correcting one with the other', async () => {
+    const body = await landingBody();
+    // Round 1 led the block with a boarding time-audit and made the walk/drop-in case its
+    // CORRECTION ("the sum comes out somewhere else") — so a walker was invited to do arithmetic
+    // that argues against the product and only then told it was the wrong arithmetic. The two
+    // shapes are now peers, each in its own wf-pair.
+    expect(body).toContain('Boarding and house sitting: a few long threads.');
+    expect(body).toContain('Walks and drop-ins: a lot of short ones.');
+    expect(body).not.toContain('the sum comes out somewhere else');
+    // The strongest sentence in the block was buried third; it now leads the walker's pair.
+    expect(body).toContain('a cancelled Wednesday, a swapped Thursday, an extra dog on Friday');
+    // The pull-quote went in round 2; round 3 took the arithmetic itself. Five of seven readers
+    // objected to it — "two hours a month is not why anyone changes software", "eight requests a
+    // month tells me who you think your customer is, I run thirty" — and the "these are
+    // illustrative" disclaimer only ever existed to prop the number up, so it goes with it. What
+    // survives is the felt cost of ONE request, which is the part a reader recognises.
+    expect(body).toContain('a quarter of an hour of your attention, in pieces, for every request');
+    expect(body).not.toContain('class="wf-sum"');
+    expect(body).not.toContain('do the sum yourself');
+    expect(body).not.toContain('illustrative numbers rather than a measured finding');
+    for (const sum of ['At eight requests a month', 'a couple of hours back'])
+      expect(body, sum).not.toContain(sum);
+  });
+
+  it('separates what a cancellation does from what a change does, and both from silence', async () => {
+    const body = await landingBody();
+    // VERIFIED: cancelBooking fires sendCancellationNoticeToSitter (server/lib/booking-ops.ts:1000)
+    // — the only send*() call in that whole file — while editBooking's only side effects are the
+    // saved-answer write and the calendar push. So a cancellation DOES email her and a change does
+    // not, and round 2's blanket "Nothing pings you" sat directly under a list that opens with "a
+    // cancelled Wednesday". They must be described apart.
+    expect(body).toContain('A cancellation emails you');
+    expect(body).toContain('A change doesn&rsquo;t email you');
+    expect(body).not.toContain('Nothing pings you');
+    // The old ambiguous clause read as "a change or a cancellation emails you"; only the second
+    // one does, and only that one may be claimed.
+    expect(body).not.toContain('and emails you either way');
+    for (const lie of ['emails you when they change', 'notifies you of the change'])
+      expect(body, lie).not.toContain(lie);
+  });
+
+  it('says a change has ALREADY taken effect when she reads it — approval is retroactive', async () => {
+    const body = await landingBody();
+    // VERIFIED in updateBookingForEdit (server/db/repo.ts:1134): ONE statement writes the new
+    // StartDate/EndDate/StartTime/DepartureTime/PetCount/EstCost/Answers together with
+    // Status='pending' and SyncPending=1, and editBooking calls it BEFORE the capacity re-check
+    // (booking-ops.ts:1249, "apply optimistically") and then moves + retitles the Google event.
+    // From that moment the new dates are the ones listCapacityRows counts. Nothing waits for the
+    // sitter, so round 2's "you re-approve it rather than discovering it" was exactly backwards:
+    // discovering it is precisely what she does. Two of the three places that said so are on this
+    // page (the walks pair and the FAQ), and they must agree with the tour.
+    expect(body).toContain('A change takes effect straight away');
+    expect(body).toContain('it takes effect the moment they save it');
+    expect(body).toContain('your approval comes after the change, not before it');
+    // She can still decline — but a decline writes only Status (repo.ts:1016), so it does NOT
+    // restore the old dates. The page may therefore offer declining, never reverting.
+    expect(body).toContain('can decline it');
+    for (const backwards of [
+      're-approve it rather than discovering it',
+      'comes back to you as pending, so you re-approve',
+      'waiting for your approval',
+      'waits for your approval',
+      'before it takes effect',
+    ])
+      expect(body, backwards).not.toContain(backwards);
+  });
+
+  it('answers the weekly-regular question in the FAQ, where a decider will hit it', async () => {
+    const body = await landingBody();
+    // Two round-2 readers said half their book is standing weekly work, and that this decides
+    // whether they can use the product at all — a caveat buried in the time-saved box is not
+    // where that gets read.
+    expect(body).toContain('Do you handle weekly regulars?');
+    expect(body).toContain('no repeating booking yet, so each Tuesday is its own request');
+    // Round 3: "once in the FAQ and once in the tour is candour; four times is anxiety." The
+    // trimmed restatement in the workflow block is gone, so the landing page says it exactly once.
+    expect(
+      body.match(/no repeating booking yet, so each Tuesday is its own request/g) ?? [],
+    ).toHaveLength(1);
+    expect(body).not.toContain('a weekly Tuesday is booked one Tuesday at a time');
+    // The whole caveat now lives inside that one FAQ answer — the workflow block above says
+    // nothing about repeats at all.
+    expect(body.indexOf('repeating booking')).toBeGreaterThan(body.indexOf('id="faq"'));
+    // Nothing on the page may offer the thing the caveat says isn't built.
+    for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
+      expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+  });
+
+  it('discloses that time off is whole days, where the landing page claims time off', async () => {
+    const body = await landingBody();
+    // For a timed-walk book this is a bigger gap than repeats: a 10am dentist appointment costs
+    // the whole Thursday. It was admitted only on /how-it-works; the wording tracks that page.
+    expect(body).toContain('Time off is whole days only');
+    expect(body).toContain('no way to close just the 10am walk');
   });
 
   it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {

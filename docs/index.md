@@ -36,7 +36,7 @@ guardrails (tests, CI, security review, design specs) that a shipped product nee
   book are easy to test in isolation and can't be broken by a transitive dependency update.
 - **Two real auth flows** — passwordless email-code sessions for customers and password +
   JWT sessions for tenant admins, including invite-only customer lists.
-- **Tested like it matters** — 124 test files backed by in-memory SQLite (`node:sqlite`),
+- **Tested like it matters** — 164 test files backed by in-memory SQLite (`node:sqlite`),
   gating a CI pipeline that runs typecheck, lint, format, test, and build on every PR
   before an automatic deploy to Cloudflare on merge to `main`.
 - **Security-conscious by habit** — a documented [`SECURITY.md`](../SECURITY.md) policy,

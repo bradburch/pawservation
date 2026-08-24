@@ -1,6 +1,7 @@
 import { DEFAULT_TIMEZONE } from '../../../src/shared/index.js';
 import { IconStore } from '../../shared-ui/icons';
-import type { SettingsSectionProps } from '../shared.js';
+import type { Session, SettingsSectionProps } from '../shared.js';
+import { ExportPanel } from '../ExportPanel';
 import { Hint } from '../Hint';
 import { TIMEZONES } from '../timezones.js';
 import { blockNegativeNumberKeys, clampNullableNumber } from './fields.js';
@@ -38,12 +39,15 @@ function reachBackChoices(current: number): number[] {
 }
 
 export function BusinessSection({
+  session,
   settings,
   setSettings,
   dirty,
   saveBlocked,
   onSave,
 }: SettingsSectionProps & {
+  /** Needed only by the data export, which fetches CSV bytes with the admin bearer token. */
+  session: Session;
   /** True while the staged settings draft differs from the last save. */
   dirty: boolean;
   /** True while an unpriced option elsewhere blocks the settings save. */
@@ -156,10 +160,11 @@ export function BusinessSection({
           House sitting and boarding
           <Hint label="House sitting and boarding">
             You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
-            day. This is the exception you allow for <em>handovers</em> — a boarding that starts as
-            a house sit wraps up, or the other way round. It only ever covers a day one stay is
-            leaving on as the other arrives, so a boarding can never sit in the middle of a house
-            sit however high you set this.
+            day. The numbered settings are the exception you allow for <em>handovers</em>: a
+            boarding that starts as a house sit wraps up, or the other way round. They only ever
+            cover a day one stay is leaving on as the other arrives, so a boarding can never sit in
+            the middle of a house sit. &ldquo;No limit&rdquo; is not a larger allowance. It turns
+            the check off, and the two stop being held apart at all.
           </Hint>
         </span>
         <select
@@ -248,6 +253,12 @@ export function BusinessSection({
         </button>
         {!dirty && <span className="pb-hint">All changes saved</span>}
       </div>
+      {/* Below the save bar, and deliberately in THIS section rather than beside the client
+          importer in Clients: the export spans clients, pets, bookings and payments, so it belongs
+          to the account rather than to any one list — and Business is where the sitter already
+          comes for things that are true of her business as a whole. It saves nothing, so it sits
+          past the save control rather than inside the staged-settings form. */}
+      <ExportPanel session={session} />
     </>
   );
 }
