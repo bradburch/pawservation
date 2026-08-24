@@ -258,7 +258,11 @@ describe('personal access tokens — authenticating', () => {
     // in a single character at either end shares nothing with it and is refused outright. There
     // is no prefix any attacker can walk towards a match.
     expect(await attempt(token.slice(0, -1) + (token.endsWith('A') ? 'B' : 'A'))).toBe(401);
-    expect(await attempt('pawsv_x' + token.slice(7))).toBe(401);
+    // token[6] is the first char after PAT_PREFIX; the substitute must actually differ from it,
+    // not just avoid the literal 'x' — the same hazard as the line above, which conditionally
+    // avoids re-matching token's own last character. base64url has 64 symbols, so a literal 'x'
+    // here recreates the live token (and passes) on roughly 1 run in 64.
+    expect(await attempt('pawsv_' + (token[6] === 'x' ? 'y' : 'x') + token.slice(7))).toBe(401);
   });
 
   it('cannot be used to manage tokens — a leaked token cannot mint its replacement', async () => {
