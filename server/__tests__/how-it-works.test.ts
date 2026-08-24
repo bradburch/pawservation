@@ -197,12 +197,21 @@ describe('GET /how-it-works — the in-depth tour page', () => {
 
   it('tells the client side of the booking section: a real answer straight away, still pending on the sitter', async () => {
     const body = await howItWorksBody();
-    expect(body).toContain('Your client gets an answer without waiting on you.');
+    // "an answer" scanned as "a yes", which the paragraph then had to take back two sentences
+    // later. Every other wf-keep line on this page is self-limiting; so is this one now.
+    expect(body).toContain('Your client sees your open dates without waiting on you.');
+    expect(body).not.toContain('Your client gets an answer without waiting on you.');
     // The answer is computed from the sitter's OWN rules — named, so the claim stays checkable.
-    expect(body).toMatch(/your own caps, your notice period and your booking horizon/);
+    // The per-option slot cap is named too: for a walk or a drop-in it is what decides whether
+    // the day is offered at all (checkSingle / monthAvailability vs TenantServiceOptions.Capacity),
+    // so caps + notice + horizon alone was an incomplete list for half the businesses here.
+    expect(body).toMatch(
+      /your own caps, your notice period, your booking horizon and &mdash; on a walk or a drop-in &mdash; how many pets you&rsquo;ll take in that time slot/,
+    );
     // Shown, not guaranteed — and never mistakable for an auto-confirm.
     expect(body).toContain('not a promise');
     expect(body).toContain('the request is still pending until you confirm it');
+    expect(body).toContain('What it removes is the wait for a text back.');
     for (const lie of [
       'confirmed instantly',
       'instant confirmation',

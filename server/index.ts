@@ -535,8 +535,8 @@ const LANDING_HTML = `<!doctype html>
                 <p>You add each one before they can book, and there&rsquo;s a CSV import for the list you already have. No marketplace, no directory, nobody browsing for a sitter.</p>
               </div>
               <div class="wf-pair">
-                <p class="wf-keep">You keep taking texts &mdash; about the pets.</p>
-                <p>The widget answers the repetitive question &mdash; what you offer, when you&rsquo;re free, what it costs. That was never the part of the thread that was about the animals. What&rsquo;s left is: the pills at six, the reactive shepherd on the corner, how the old cat did last week. Every other conversation stays where it was, and it&rsquo;s the one worth having.</p>
+                <p class="wf-keep">The only texts left are about the pets.</p>
+                <p>The widget answers the repetitive questions &mdash; what you offer, when you&rsquo;re free, what it costs. They were about dates and prices, not about the dog. Take those off the thread and more of what&rsquo;s left is about the animal: the pills at six, the reactive shepherd on the corner, how the old cat did last week. Every other conversation stays where it was.</p>
               </div>
             </div>
             <div>
@@ -566,8 +566,9 @@ const LANDING_HTML = `<!doctype html>
             <h3 class="wf-h">How much time that is &mdash; do the sum yourself</h3>
             <p>An &ldquo;are you free the 12th to the 15th?&rdquo; thread is usually four or five messages spread across an afternoon. Call it a quarter of an hour of your attention, in pieces. The widget answers that from your own caps and your own time off, so the thread never starts:</p>
             <p class="wf-sum">8 requests a month &times; 15 min &asymp; 2 hours a month</p>
-            <p>Those are illustrative numbers, not a measured finding &mdash; put your own request count, and your own idea of what one back-and-forth costs you, into the same multiplication. Two smaller ones work the same way: the questions you set per service arrive already answered with the request instead of being asked over text, and &ldquo;who still owes me?&rdquo; is a number on the Earnings page instead of a memory exercise.</p>
-            <p>What those messages were about matters as much as how many of them there were. They were about dates and prices, not about the dog. Take them off the thread and what reaches you from a client is a care question. Your client gets the other half of that: they open the page at eleven at night and see which of their dates you can take, instead of waiting on a reply from you. What they still wait for is your yes &mdash; every request stays pending until you confirm it.</p>
+            <p>Those are illustrative numbers, not a measured finding &mdash; put your own request count, and your own idea of what one back-and-forth costs you, into the same multiplication.</p>
+            <p>If you walk dogs or do drop-ins, the sum comes out somewhere else. Your threads are short &mdash; &ldquo;can you do Tuesday?&rdquo;, &ldquo;yep&rdquo; &mdash; but there are a lot of them, and the part that really costs you isn&rsquo;t the booking, it&rsquo;s the changes: a cancelled Wednesday, a swapped Thursday, an extra dog on Friday. Those arrive while you&rsquo;re out with someone else&rsquo;s dog. On the page they wait to be read between walks instead of answered during one.</p>
+            <p>One caveat if your clients are weekly regulars: there is no repeating booking yet, so each Tuesday is its own request. The widget earns its keep on the dates that aren&rsquo;t the routine &mdash; and on the changes to the ones that are.</p>
           </div>
         </div>
       </section>
@@ -678,7 +679,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Does this put something between me and my clients?</h3>
-              <p><strong>Only the scheduling part.</strong> &ldquo;Are you free the 12th?&rdquo; gets answered on the page, from your own caps, your notice period and your time off, so your client sees which dates you can take the moment they look instead of waiting on a text back. Everything else &mdash; how the old cat is doing, the pills at six, where the key is &mdash; still comes straight to you. And every request is still pending until you say yes.</p>
+              <p><strong>Only the scheduling part.</strong> &ldquo;Are you free the 12th?&rdquo; gets answered on the page, from your own caps, your notice period and your time off, so your client sees which dates you can take the moment they look instead of waiting on a text back. Everything else still comes straight to you. And every request is still pending until you say yes &mdash; their own screen says awaiting confirmation until then, and the email telling them it&rsquo;s booked goes out when you confirm, not when they press send.</p>
             </div>
             <div class="qa-item">
               <h3>Can anyone book, or just my clients?</h3>
@@ -937,8 +938,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
             </ol>
             <div class="wf-pair">
-              <p class="wf-keep">Your client gets an answer without waiting on you.</p>
-              <p>The calendar they see is worked out from your own caps, your notice period and your booking horizon, so &ldquo;can you take the 12th to the 15th?&rdquo; is answered on the page at whatever hour they thought to ask it &mdash; rather than sitting on your phone until you get to it. What it shows is the dates you can take, not a promise: the request is still pending until you confirm it, and you can still decline. What it removes is the wait, which was the part of booking a sitter that had nothing to do with their pet.</p>
+              <p class="wf-keep">Your client sees your open dates without waiting on you.</p>
+              <p>The calendar they see is worked out from your own caps, your notice period, your booking horizon and &mdash; on a walk or a drop-in &mdash; how many pets you&rsquo;ll take in that time slot, so &ldquo;can you take the 12th to the 15th?&rdquo; is answered on the page at whatever hour they thought to ask it, rather than sitting on your phone until you get to it. What it shows is the dates you can take, not a promise: the request is still pending until you confirm it, and you can still decline. What it removes is the wait for a text back.</p>
             </div>
           </div>
         </div>

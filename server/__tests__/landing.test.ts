@@ -109,17 +109,43 @@ describe('GET / — landing page', () => {
 
   it('carries the relationship framing: care conversations for the sitter, an immediate answer for the owner', async () => {
     const body = await landingBody();
-    // The workflow "you keep taking texts" pair now says WHAT is left on the thread once the
-    // scheduling question comes off it.
-    expect(body).toContain('You keep taking texts &mdash; about the pets.');
-    expect(body).toContain('a care question');
-    // The owner's half: an answer the moment they look, rather than a wait for a reply.
-    expect(body).toMatch(/instead of waiting on a reply|waiting on a text back/);
-    // …and it must never read as instant confirmation. The sitter's yes is still the gate.
-    expect(body).toContain('every request stays pending until you confirm it');
+    // The workflow "texts" pair leads with the win. The qualifier used to sit after an em dash,
+    // where a skimming eye stops — reading as "nothing changes, you're still on your phone".
+    expect(body).toContain('The only texts left are about the pets.');
+    // The sharpest sentence on the page, promoted out of the sum box (which a skimmer never
+    // reaches) into the pair a skimmer actually reads.
+    expect(body).toContain('They were about dates and prices, not about the dog.');
+    // What's left is stated as a tendency, not an absolute: gate codes and "running late" still
+    // arrive by text, so "what reaches you is a care question" was falsifiable in week one.
+    expect(body).toContain('more of what&rsquo;s left is about the animal');
+    expect(body).not.toContain('a care question');
+    // The owner's half survives exactly once — restating it was the third pass at one idea.
+    expect(body.match(/which dates you can take/g) ?? []).toHaveLength(1);
+    expect(body).toContain('waiting on a text back');
+    // The examples belong to the workflow pair; repeating them a screen later cheapened them.
+    expect(body.match(/pills at six/g) ?? []).toHaveLength(1);
+    // …and it must never read as instant confirmation. The sitter's yes is still the gate, and
+    // the client's OWN screen says so too, so nobody tells their spouse it's booked at 11pm.
     expect(body).toContain('still pending until you say yes');
+    expect(body).toContain('their own screen says awaiting confirmation until then');
+    expect(body).toContain('goes out when you confirm, not when they press send');
     for (const lie of ['confirmed instantly', 'instant confirmation', 'confirms automatically'])
       expect(body, lie).not.toContain(lie);
+  });
+
+  it('does the sum for a walk/drop-in business too, and discloses that there are no repeats', async () => {
+    const body = await landingBody();
+    // The 15-min × 8-requests sum argues AGAINST the product for a walker: her threads are
+    // seconds long. The other shape of the business gets a qualitative version, not a second
+    // statistic.
+    expect(body).toContain('If you walk dogs or do drop-ins, the sum comes out somewhere else.');
+    expect(body).toContain('a cancelled Wednesday, a swapped Thursday, an extra dog on Friday');
+    // The caveat the walker personas said they must not learn later, on a different page, in a
+    // sub-bullet — it goes beside the claim it limits. Wording tracks the /how-it-works bullet.
+    expect(body).toContain('there is no repeating booking yet, so each Tuesday is its own request');
+    // Nothing on the page may offer the thing the caveat says isn't built.
+    for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
+      expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
   });
 
   it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {
