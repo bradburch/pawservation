@@ -195,6 +195,23 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     }
   });
 
+  it('tells the client side of the booking section: a real answer straight away, still pending on the sitter', async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('Your client gets an answer without waiting on you.');
+    // The answer is computed from the sitter's OWN rules — named, so the claim stays checkable.
+    expect(body).toMatch(/your own caps, your notice period and your booking horizon/);
+    // Shown, not guaranteed — and never mistakable for an auto-confirm.
+    expect(body).toContain('not a promise');
+    expect(body).toContain('the request is still pending until you confirm it');
+    for (const lie of [
+      'confirmed instantly',
+      'instant confirmation',
+      'confirms automatically',
+      'guaranteed',
+    ])
+      expect(body, lie).not.toContain(lie);
+  });
+
   it('links back to the landing page, the demo, and pricing', async () => {
     const body = await howItWorksBody();
     expect(body).toContain('href="/#pricing"');

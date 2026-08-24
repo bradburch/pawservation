@@ -107,6 +107,21 @@ describe('GET / — landing page', () => {
     expect(body).toContain('nothing to sign up for');
   });
 
+  it('carries the relationship framing: care conversations for the sitter, an immediate answer for the owner', async () => {
+    const body = await landingBody();
+    // The workflow "you keep taking texts" pair now says WHAT is left on the thread once the
+    // scheduling question comes off it.
+    expect(body).toContain('You keep taking texts &mdash; about the pets.');
+    expect(body).toContain('a care question');
+    // The owner's half: an answer the moment they look, rather than a wait for a reply.
+    expect(body).toMatch(/instead of waiting on a reply|waiting on a text back/);
+    // …and it must never read as instant confirmation. The sitter's yes is still the gate.
+    expect(body).toContain('every request stays pending until you confirm it');
+    expect(body).toContain('still pending until you say yes');
+    for (const lie of ['confirmed instantly', 'instant confirmation', 'confirms automatically'])
+      expect(body, lie).not.toContain(lie);
+  });
+
   it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {
     const body = await landingBody();
     const imgTags = body.match(/<img\b[^>]*>/g) ?? [];

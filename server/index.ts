@@ -535,8 +535,8 @@ const LANDING_HTML = `<!doctype html>
                 <p>You add each one before they can book, and there&rsquo;s a CSV import for the list you already have. No marketplace, no directory, nobody browsing for a sitter.</p>
               </div>
               <div class="wf-pair">
-                <p class="wf-keep">You keep taking texts.</p>
-                <p>The widget answers the repetitive question &mdash; what you offer, when you&rsquo;re free, what it costs. Every other conversation stays where it was.</p>
+                <p class="wf-keep">You keep taking texts &mdash; about the pets.</p>
+                <p>The widget answers the repetitive question &mdash; what you offer, when you&rsquo;re free, what it costs. That was never the part of the thread that was about the animals. What&rsquo;s left is: the pills at six, the reactive shepherd on the corner, how the old cat did last week. Every other conversation stays where it was, and it&rsquo;s the one worth having.</p>
               </div>
             </div>
             <div>
@@ -567,6 +567,7 @@ const LANDING_HTML = `<!doctype html>
             <p>An &ldquo;are you free the 12th to the 15th?&rdquo; thread is usually four or five messages spread across an afternoon. Call it a quarter of an hour of your attention, in pieces. The widget answers that from your own caps and your own time off, so the thread never starts:</p>
             <p class="wf-sum">8 requests a month &times; 15 min &asymp; 2 hours a month</p>
             <p>Those are illustrative numbers, not a measured finding &mdash; put your own request count, and your own idea of what one back-and-forth costs you, into the same multiplication. Two smaller ones work the same way: the questions you set per service arrive already answered with the request instead of being asked over text, and &ldquo;who still owes me?&rdquo; is a number on the Earnings page instead of a memory exercise.</p>
+            <p>What those messages were about matters as much as how many of them there were. They were about dates and prices, not about the dog. Take them off the thread and what reaches you from a client is a care question. Your client gets the other half of that: they open the page at eleven at night and see which of their dates you can take, instead of waiting on a reply from you. What they still wait for is your yes &mdash; every request stays pending until you confirm it.</p>
           </div>
         </div>
       </section>
@@ -674,6 +675,10 @@ const LANDING_HTML = `<!doctype html>
             <div class="qa-item">
               <h3>Can a client change or cancel a booking themselves?</h3>
               <p><strong>Yes &mdash; that&rsquo;s the point.</strong> They can move the dates, swap the pets, or cancel, from the same page they booked on. A change comes back to you as pending, so you re-approve it rather than discovering it. A cancellation applies the fee your own policy says &mdash; worked out here, not typed in by them &mdash; and emails you either way.</p>
+            </div>
+            <div class="qa-item">
+              <h3>Does this put something between me and my clients?</h3>
+              <p><strong>Only the scheduling part.</strong> &ldquo;Are you free the 12th?&rdquo; gets answered on the page, from your own caps, your notice period and your time off, so your client sees which dates you can take the moment they look instead of waiting on a text back. Everything else &mdash; how the old cat is doing, the pills at six, where the key is &mdash; still comes straight to you. And every request is still pending until you say yes.</p>
             </div>
             <div class="qa-item">
               <h3>Can anyone book, or just my clients?</h3>
@@ -931,6 +936,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
                 <p><strong>A cancellation reaches you as an email, with the number already worked out.</strong> They cancel, your policy decides the fee, and you get a message saying which it was and whether anything is owed. Nothing is deleted: the booking stays on the record as cancelled, and a fee that&rsquo;s owed shows up in what&rsquo;s outstanding like any other money. Even a stay already under way can be cancelled &mdash; refusing would only push the conversation back onto your phone.</p>
               </li>
             </ol>
+            <div class="wf-pair">
+              <p class="wf-keep">Your client gets an answer without waiting on you.</p>
+              <p>The calendar they see is worked out from your own caps, your notice period and your booking horizon, so &ldquo;can you take the 12th to the 15th?&rdquo; is answered on the page at whatever hour they thought to ask it &mdash; rather than sitting on your phone until you get to it. What it shows is the dates you can take, not a promise: the request is still pending until you confirm it, and you can still decline. What it removes is the wait, which was the part of booking a sitter that had nothing to do with their pet.</p>
+            </div>
           </div>
         </div>
       </section>
