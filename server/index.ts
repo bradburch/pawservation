@@ -374,7 +374,11 @@ const LANDING_HTML = `<!doctype html>
       <section class="hero">
         <div class="wrap hero-grid">
           <div class="hero-copy">
-            <p class="chip">Pet sitting &amp; dog walking software</p>
+            <!-- The chip is the price, not the category: the h1 and the sub below already say
+                 what this is, and a shopper arrives holding an incumbent's monthly figure. The
+                 words are the pricing section's own ("$0 for one sitter", "no trial and no card")
+                 so the hero and section five cannot drift apart. -->
+            <p class="chip">Free for one sitter. No trial, no card.</p>
             <h1>Your booking page, on your own website.</h1>
             <p class="sub">
               Pawservation is pet sitting and dog walking software: a booking widget that lives

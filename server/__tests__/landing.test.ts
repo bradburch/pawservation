@@ -107,6 +107,30 @@ describe('GET / — landing page', () => {
     expect(body).toContain('nothing to sign up for');
   });
 
+  it('states the free tier in the hero, above the fold', async () => {
+    const body = await landingBody();
+    // Shoppers in this category arrive holding an incumbent's monthly figure, and the page used to
+    // let them hold it until the pricing section. The chip is the first thing read and it spent
+    // itself restating the product category, which the h1 and the sub both also say, so the price
+    // took it over. Pinned to the exact wording: the chip is the ONE place the hero states this,
+    // and a second copy in the sub would be the same idea twice on one screen.
+    expect(body).toContain('<p class="chip">Free for one sitter. No trial, no card.</p>');
+    // Above the fold means the safe zone: before the h1, and well before the demo/invite note,
+    // which is borderline on a phone.
+    const chip = body.indexOf('<p class="chip">');
+    expect(chip).toBeGreaterThan(-1);
+    expect(chip).toBeLessThan(body.indexOf('<h1>'));
+    expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
+    // The hero says what the pricing section says. "for one sitter" is the price card's own
+    // qualifier, so the hero cannot promise a tier section five then walks back.
+    expect(body).toContain('Taking bookings is free, and stays free');
+    expect(body).toContain('<span class="price-per">for one sitter</span>');
+    // Free here is a standing price, not an offer with a clock on it.
+    for (const offer of ['free trial', 'limited time', '% off', 'was $']) {
+      expect(body.toLowerCase(), `hero must not read as a discount: ${offer}`).not.toContain(offer);
+    }
+  });
+
   it('carries the relationship framing: care conversations for the sitter, an immediate answer for the owner', async () => {
     const body = await landingBody();
     // The workflow "texts" pair leads with the win, and the win is LATENCY, not an absolute about
