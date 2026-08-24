@@ -535,8 +535,8 @@ const LANDING_HTML = `<!doctype html>
                 <p>You add each one before they can book, and there&rsquo;s a CSV import for the list you already have. No marketplace, no directory, nobody browsing for a sitter.</p>
               </div>
               <div class="wf-pair">
-                <p class="wf-keep">The only texts left are about the pets.</p>
-                <p>The widget answers the repetitive questions &mdash; what you offer, when you&rsquo;re free, what it costs. They were about dates and prices, not about the dog. Take those off the thread and more of what&rsquo;s left is about the animal: the pills at six, the reactive shepherd on the corner, how the old cat did last week. Every other conversation stays where it was.</p>
+                <p class="wf-keep">The dates question stops being a text.</p>
+                <p>The widget answers the repetitive questions &mdash; what you offer, when you&rsquo;re free, what it costs. They were about dates and prices, not about the dog. Take those off the thread and more of what&rsquo;s left is about the animal: the pills at six, the reactive shepherd on the corner, how the old cat did last week. Pawservation doesn&rsquo;t do visit reports or photos &mdash; that side is still you and your phone. What comes off the thread is the dates and the price; every other conversation stays where it was.</p>
               </div>
             </div>
             <div>
@@ -549,7 +549,7 @@ const LANDING_HTML = `<!doctype html>
                 </li>
                 <li class="wf-step">
                   <span class="step-no">02</span>
-                  <p><strong>Enter your services, rates, and caps once.</strong> What you call each service, what it costs, how much you&rsquo;ll take at a time, the longest stay you&rsquo;ll do &mdash; and the days you&rsquo;re off.</p>
+                  <p><strong>Enter your services, rates, and caps once.</strong> What you call each service, what it costs, how much you&rsquo;ll take at a time, the longest stay you&rsquo;ll do &mdash; and the days you&rsquo;re off. Time off is whole days only: there is no way to close just the 10am walk and keep the rest of that day open.</p>
                 </li>
                 <li class="wf-step">
                   <span class="step-no">03</span>
@@ -563,12 +563,16 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="wf-math">
-            <h3 class="wf-h">How much time that is &mdash; do the sum yourself</h3>
-            <p>An &ldquo;are you free the 12th to the 15th?&rdquo; thread is usually four or five messages spread across an afternoon. Call it a quarter of an hour of your attention, in pieces. The widget answers that from your own caps and your own time off, so the thread never starts:</p>
-            <p class="wf-sum">8 requests a month &times; 15 min &asymp; 2 hours a month</p>
-            <p>Those are illustrative numbers, not a measured finding &mdash; put your own request count, and your own idea of what one back-and-forth costs you, into the same multiplication.</p>
-            <p>If you walk dogs or do drop-ins, the sum comes out somewhere else. Your threads are short &mdash; &ldquo;can you do Tuesday?&rdquo;, &ldquo;yep&rdquo; &mdash; but there are a lot of them, and the part that really costs you isn&rsquo;t the booking, it&rsquo;s the changes: a cancelled Wednesday, a swapped Thursday, an extra dog on Friday. Those arrive while you&rsquo;re out with someone else&rsquo;s dog. On the page they wait to be read between walks instead of answered during one.</p>
-            <p>One caveat if your clients are weekly regulars: there is no repeating booking yet, so each Tuesday is its own request. The widget earns its keep on the dates that aren&rsquo;t the routine &mdash; and on the changes to the ones that are.</p>
+            <h3 class="wf-h">Where the time actually goes</h3>
+            <p>The part that costs you isn&rsquo;t really the first message. It&rsquo;s the checking, and then the change to something you had already agreed &mdash; which arrives when your hands are full. Both shapes of this business pay that, in different places.</p>
+            <div class="wf-pair">
+              <p class="wf-keep">Boarding and house sitting: a few long threads.</p>
+              <p>&ldquo;Are you free the 12th to the 15th?&rdquo; is four or five messages spread across an afternoon &mdash; call it a quarter of an hour of your attention, in pieces, for every request. The widget answers that from your own caps and your own time off, so the thread never starts. At eight requests a month that&rsquo;s a couple of hours back. Those are illustrative numbers rather than a measured finding, so put your own request count, and your own idea of what one back-and-forth costs you, in their place.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Walks and drop-ins: a lot of short ones.</p>
+              <p>Your threads are seconds long &mdash; &ldquo;can you do Tuesday?&rdquo;, &ldquo;yep&rdquo; &mdash; so minutes saved is the wrong measure here. The changes are what costs you: a cancelled Wednesday, a swapped Thursday, an extra dog on Friday, arriving while you&rsquo;re out with someone else&rsquo;s dog. Your client makes those on the page instead of on your phone. Nothing pings you &mdash; a changed booking goes back to pending and waits in your dashboard with the new requests, and its calendar event moves to the new dates and reads <code>[REQUEST]</code> again until you approve it. You read it between walks instead of answering during one. There is no repeating booking yet, though, so a weekly Tuesday is booked one Tuesday at a time.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -598,7 +602,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Booking widget on your own site, unlimited bookings</li>
                 <li>Availability, capacity caps, and conflict rules</li>
                 <li>Minimum notice and a booking horizon</li>
-                <li>Rates, logged payments, and outstanding balances &mdash; one bill for a whole household</li>
+                <li>Rates, logged payments, and outstanding balances &mdash; one running balance per household</li>
                 <li>Cancellation policies, applied for you</li>
                 <li>Clients reschedule and cancel their own bookings</li>
                 <li>Client accounts and pet profiles</li>
@@ -667,15 +671,23 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Do customers pay by card here?</h3>
-              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate. Two clients sharing a pet are one household on your books, so you can send one bill for the whole household instead of chasing separate payments per booking.</p>
+              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate. Two clients sharing a pet are one household on your books, and what a household owes is one running balance rather than a figure stuck to each booking &mdash; so a client who settles up once a month is one payment for the household, recorded once, instead of a split you have to invent across four bookings.</p>
             </div>
             <div class="qa-item">
               <h3>Can it double-book me?</h3>
-              <p><strong>No.</strong> Your caps and your time off hold the day, and a request holds its space from the moment it arrives &mdash; not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways, which also means deleting a booking&rsquo;s event in Google cancels that booking and emails your client.</p>
+              <p><strong>No.</strong> Your caps and your time off hold the day, and a request holds its space from the moment it arrives &mdash; not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; the sync runs both ways.</p>
+            </div>
+            <div class="qa-item">
+              <h3>What if I move or delete a booking&rsquo;s event in Google Calendar?</h3>
+              <p><strong>Deleting cancels it. Moving doesn&rsquo;t move it.</strong> Deleting a booking&rsquo;s event in Google cancels that booking and emails your client &mdash; a booking you took off your own calendar is one you&rsquo;re not doing. Dragging that same event to different dates is not a change Pawservation reads: the booking keeps the dates your client booked, those stay the dates holding your capacity, and the next time anything happens to that booking the event is rewritten back to them. Drag it far enough out that it leaves the months Pawservation checks and it counts as deleted, cancellation email included. Move a booking by changing the booking, not the event.</p>
+            </div>
+            <div class="qa-item">
+              <h3>Do you handle weekly regulars?</h3>
+              <p><strong>Not as a repeating booking.</strong> There is no repeating booking yet, so each Tuesday is its own request &mdash; a client who walks every Tuesday picks each Tuesday, and there is nothing to set that makes it repeat, for you or for them. If most of your book is standing weekly work, weigh that before you start. What does come off your phone for those clients is the rest of it: their pets and your notes in one place, what they owe as one household balance, and the changes to the routine &mdash; a cancelled Wednesday, an extra dog on Friday &mdash; made on the page and waiting for your approval.</p>
             </div>
             <div class="qa-item">
               <h3>Can a client change or cancel a booking themselves?</h3>
-              <p><strong>Yes &mdash; that&rsquo;s the point.</strong> They can move the dates, swap the pets, or cancel, from the same page they booked on. A change comes back to you as pending, so you re-approve it rather than discovering it. A cancellation applies the fee your own policy says &mdash; worked out here, not typed in by them &mdash; and emails you either way.</p>
+              <p><strong>Yes &mdash; that&rsquo;s the point.</strong> They can move the dates, swap the pets, or cancel, from the same page they booked on. A change comes back to you as pending, so you re-approve it rather than discovering it. A cancellation applies the fee your own policy says &mdash; worked out here, not typed in by them &mdash; and emails you whether there was a fee or not. A change doesn&rsquo;t email you: it goes back to pending and waits in your dashboard, and its calendar event moves itself to the new dates.</p>
             </div>
             <div class="qa-item">
               <h3>Does this put something between me and my clients?</h3>

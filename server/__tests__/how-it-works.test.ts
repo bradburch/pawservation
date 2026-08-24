@@ -404,14 +404,40 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
   });
 
-  it('discloses that deleting a booking event in Google cancels the booking', async () => {
+  it('gives moving AND deleting a booking event in Google its own answer', async () => {
     const body = await landingBody();
+    // It used to be a throwaway clause inside "Can it double-book me? No." — read by a sitter who
+    // lives in her calendar and drags things. VERIFIED in server/lib/calendar-sync.ts: reconcile
+    // has no pass that reads a moved (but still present) event's dates back onto its booking —
+    // pass (a) only asks whether the id is still live, and pass (b) skips anything carrying a
+    // bookingId — and the outbox only pushes SyncPending=1 rows, rebuilding the whole event from
+    // the DB row when it eventually does.
+    expect(body).toContain('What if I move or delete a booking&rsquo;s event in Google Calendar?');
     expect(body).toMatch(/deleting a booking&rsquo;s event in Google cancels/i);
+    expect(body).toContain('Moving doesn&rsquo;t move it');
+    expect(body).toContain('the event is rewritten back to them');
+    // The drag that DOES have an effect: outside reconcileWindow the event is simply absent from
+    // Google's response, which pass (a) reads as a hand-deletion.
+    expect(body).toContain('leaves the months Pawservation checks');
+    // …and it must never claim the move is honoured.
+    for (const lie of ['the booking follows', 'the dates update', 'moves the booking'])
+      expect(body, lie).not.toContain(lie);
   });
 
-  it('mentions paying once for a whole household instead of per booking', async () => {
+  it('describes a household as one balance, never as a bill that gets sent', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/one (bill|payment) for (the |a )?(whole |entire )?household/i);
+    // VERIFIED: nothing is ever sent to a client showing a household balance — every template in
+    // server/lib/email.ts is a login code, a booking status, an invite, or the sitter-facing
+    // cancellation notice. GET /:slug/account exists, but the embed widget renders no balance
+    // screen (app/embed has only BookTab and MineTab, both per-booking), so the page may not
+    // claim a client-facing view of it either.
+    expect(body).toMatch(/one (payment|running balance) for (the |a )?(whole |entire )?household/i);
+    expect(body).toContain('one running balance rather than a figure stuck to each booking');
+    expect(body).not.toContain('send one bill');
+    expect(body).not.toContain('one bill for a whole household');
+    // The two words /how-it-works is banned from, banned here too: they name documents that exist
+    // nowhere in this product.
+    expect(body).not.toMatch(/invoice|statement/i);
   });
 
   it('adds an MCP/assistant-booking bullet to the Pro card without changing its unbuilt framing', async () => {

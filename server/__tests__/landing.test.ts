@@ -109,9 +109,17 @@ describe('GET / — landing page', () => {
 
   it('carries the relationship framing: care conversations for the sitter, an immediate answer for the owner', async () => {
     const body = await landingBody();
-    // The workflow "texts" pair leads with the win. The qualifier used to sit after an em dash,
-    // where a skimming eye stops — reading as "nothing changes, you're still on your phone".
-    expect(body).toContain('The only texts left are about the pets.');
+    // The workflow "texts" pair leads with the win, and the win is LATENCY, not an absolute about
+    // what is left on the thread. Round 1 wrote "The only texts left are about the pets.", which
+    // three readers called an overclaim: there is no messaging, no photo and no visit report in
+    // this product, so every care conversation still happens on her phone — the thread loses the
+    // booking part, it does not become about care.
+    expect(body).toContain('The dates question stops being a text.');
+    expect(body).not.toContain('The only texts left are about the pets.');
+    // …and the page must NAME the category feature it doesn't have. Time To Pet's headline is the
+    // visit report; a page arguing that software improves the client relationship, which never
+    // mentions the one incumbent feature actually about the animal, argues against itself.
+    expect(body).toContain('doesn&rsquo;t do visit reports or photos');
     // The sharpest sentence on the page, promoted out of the sum box (which a skimmer never
     // reaches) into the pair a skimmer actually reads.
     expect(body).toContain('They were about dates and prices, not about the dog.');
@@ -133,19 +141,66 @@ describe('GET / — landing page', () => {
       expect(body, lie).not.toContain(lie);
   });
 
-  it('does the sum for a walk/drop-in business too, and discloses that there are no repeats', async () => {
+  it('sets the two business shapes side by side instead of correcting one with the other', async () => {
     const body = await landingBody();
-    // The 15-min × 8-requests sum argues AGAINST the product for a walker: her threads are
-    // seconds long. The other shape of the business gets a qualitative version, not a second
-    // statistic.
-    expect(body).toContain('If you walk dogs or do drop-ins, the sum comes out somewhere else.');
+    // Round 1 led the block with a boarding time-audit and made the walk/drop-in case its
+    // CORRECTION ("the sum comes out somewhere else") — so a walker was invited to do arithmetic
+    // that argues against the product and only then told it was the wrong arithmetic. The two
+    // shapes are now peers, each in its own wf-pair.
+    expect(body).toContain('Boarding and house sitting: a few long threads.');
+    expect(body).toContain('Walks and drop-ins: a lot of short ones.');
+    expect(body).not.toContain('the sum comes out somewhere else');
+    // The strongest sentence in the block was buried third; it now leads the walker's pair.
     expect(body).toContain('a cancelled Wednesday, a swapped Thursday, an extra dog on Friday');
-    // The caveat the walker personas said they must not learn later, on a different page, in a
-    // sub-bullet — it goes beside the claim it limits. Wording tracks the /how-it-works bullet.
-    expect(body).toContain('there is no repeating booking yet, so each Tuesday is its own request');
+    // The pull-quote is gone: two hours a month set in display type is a small number in big
+    // letters, which reads as an argument against the product. The multiplication survives only
+    // demoted into prose, and the "these are illustrative" honesty device stays SCOPED to the
+    // boarding shape it applies to.
+    expect(body).not.toContain('class="wf-sum"');
+    expect(body).not.toContain('do the sum yourself');
+    expect(body).toContain('illustrative numbers rather than a measured finding');
+  });
+
+  it('says what actually reaches the sitter when a client changes a booking', async () => {
+    const body = await landingBody();
+    // VERIFIED: editBooking (server/lib/booking-ops.ts) sends NO email — the cancel path calls
+    // sendCancellationNoticeToSitter, the edit path only re-stamps Status='pending' and
+    // SyncPending=1 and pushes the moved/retitled event. Round 1's "they wait to be read between
+    // walks" implied a notification that does not exist.
+    expect(body).toContain('Nothing pings you');
+    expect(body).toContain('goes back to pending and waits in your dashboard');
+    expect(body).toContain('A change doesn&rsquo;t email you');
+    // The old ambiguous clause read as "a change or a cancellation emails you"; only the second
+    // one does, and only that one may be claimed.
+    expect(body).not.toContain('and emails you either way');
+    for (const lie of ['emails you when they change', 'notifies you of the change'])
+      expect(body, lie).not.toContain(lie);
+  });
+
+  it('answers the weekly-regular question in the FAQ, where a decider will hit it', async () => {
+    const body = await landingBody();
+    // Two round-2 readers said half their book is standing weekly work, and that this decides
+    // whether they can use the product at all — a caveat buried in the time-saved box is not
+    // where that gets read.
+    expect(body).toContain('Do you handle weekly regulars?');
+    expect(body).toContain('no repeating booking yet, so each Tuesday is its own request');
+    // Said once at full length (the FAQ) and once in a trimmed clause (the workflow block) — the
+    // repetition of a full statement is what round 1 was pulled up on.
+    expect(
+      body.match(/no repeating booking yet, so each Tuesday is its own request/g) ?? [],
+    ).toHaveLength(1);
+    expect(body).toContain('a weekly Tuesday is booked one Tuesday at a time');
     // Nothing on the page may offer the thing the caveat says isn't built.
     for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
       expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+  });
+
+  it('discloses that time off is whole days, where the landing page claims time off', async () => {
+    const body = await landingBody();
+    // For a timed-walk book this is a bigger gap than repeats: a 10am dentist appointment costs
+    // the whole Thursday. It was admitted only on /how-it-works; the wording tracks that page.
+    expect(body).toContain('Time off is whole days only');
+    expect(body).toContain('no way to close just the 10am walk');
   });
 
   it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {
