@@ -26,7 +26,7 @@ import { passwordResetRoutes } from './routes/password-reset';
 import { publicRoutes } from './routes/public';
 import { signupRoutes } from './routes/signup';
 import { tokenRoutes } from './routes/tokens';
-import type { AppEnv } from './types';
+import type { AppEnv, Tenant } from './types';
 
 /**
  * Embed routes must be framable by ANY host page (Wix/Squarespace/etc.), so they omit
@@ -120,6 +120,54 @@ app.get('/embed/:slug/llms.txt', async (c) => {
   return c.text(buildLlmsTxt(tenant, services, options, new URL(c.req.url).origin));
 });
 
+/**
+ * The link-preview card for ONE sitter's booking page.
+ *
+ * A sitter texts her clients this URL, and until this existed the page declared no card tags at
+ * all: iMessage, Slack and WhatsApp fell back to the site favicon and no title, so the single most
+ * shared link this product has unfurled as a bare icon. The marketing pages get theirs from
+ * `pageHead`; this page cannot use it, because its head is a Vite-built file spliced at request
+ * time and because two of its four strings are per-tenant.
+ *
+ * The AUDIENCE is what separates this from `pageHead`'s card, and it is why the image is a second
+ * file rather than a reuse of `og-card.png`: the reader here is a pet owner who has been handed her
+ * own sitter's booking link, not a sitter being recruited, so "Pet sitting & dog walking software"
+ * and "Free for one sitter" are the wrong words on the wrong screen. `public/img/og-booking.png` is
+ * the brand lockup and one owner-facing line, nothing else. Same rule as `pageHead`'s: the image
+ * and `summary_large_image` move together or not at all.
+ *
+ * `og:description` is a LITERAL, deliberately generic over every tenant: a sitter's own service
+ * list is right there on the page, and a card that named boarding to a dog walker's clients would
+ * advertise something she does not sell. `og:title` interpolates `DisplayName`, which is
+ * tenant-controlled text landing inside an attribute value, so it goes through the same
+ * `htmlEscape` the `<title>` splice above uses.
+ *
+ * ORIGINS. `og:image` is absolute and pinned to `BRAND_ORIGIN` because an unfurler is a third
+ * party with no page context to resolve a relative path against, and because the card is ONE asset
+ * on ONE host regardless of which host served the page. `og:url` is pinned there too, for exactly
+ * the reason the canonical beside it is: og:url is the canonical URL of the *shared object*, so a
+ * link forwarded from the workers.dev copy and one from the custom domain must unfurl as the same
+ * object rather than two. That is the opposite answer from the JSON-LD below, and deliberately so:
+ * its `url` is a live address an agent will call, and must keep working for whichever host the
+ * request arrived on.
+ */
+function embedCardTags(tenant: Tenant): string {
+  const name = htmlEscape(tenant.DisplayName);
+  const url = `${BRAND_ORIGIN}/embed/${encodeURIComponent(tenant.Slug)}`;
+  const description =
+    'Check your sitter&rsquo;s availability, pick your dates and your pets, and send a booking request.';
+  return `<meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pawservation" />
+    <meta property="og:title" content="Book with ${name}" />
+    <meta property="og:description" content="${description}" />
+    <meta property="og:url" content="${url}" />
+    <meta property="og:image" content="${BRAND_ORIGIN}/img/og-booking.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Pawservation: your sitter&rsquo;s booking page" />
+    <meta name="twitter:card" content="summary_large_image" />`;
+}
+
 // Wraps the built embed.html with per-tenant LocalBusiness JSON-LD for crawlers/agents. Buffers
 // the (few-KB) HTML and does a plain string replace rather than HTMLRewriter: HTMLRewriter is a
 // Workers-runtime global that doesn't exist in the Node-based Vitest harness. Unknown/disabled
@@ -147,7 +195,7 @@ app.get('/embed/:slug', async (c) => {
   // and must keep working for whichever host it arrived on.
   const canonical = `<link rel="canonical" href="${BRAND_ORIGIN}/embed/${encodeURIComponent(tenant.Slug)}" />`;
   return new Response(
-    titled.replace('</head>', () => `${canonical}${ldScript}</head>`),
+    titled.replace('</head>', () => `${canonical}${embedCardTags(tenant)}${ldScript}</head>`),
     res,
   );
 });
@@ -253,6 +301,10 @@ function pageFooter(): string {
  * are both wrong. PNG rather than WebP because not every unfurler accepts WebP, and the file is
  * never loaded by the page itself — only fetched by an unfurler — so it sits outside the landing
  * page's weight budget. Regenerate it with the recipe in `docs/og-card.md`.
+ *
+ * It is the card for THESE pages only. `/embed/:slug` carries its own (`embedCardTags`, above)
+ * against `public/img/og-booking.png`, because a pet owner handed her sitter's booking link is not
+ * a sitter being recruited, and this card's words are addressed to the sitter.
  */
 function pageHead(path: string, title: string, description: string): string {
   return `<title>${title}</title>
@@ -266,7 +318,7 @@ function pageHead(path: string, title: string, description: string): string {
     <meta property="og:image" content="${BRAND_ORIGIN}/img/og-card.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Pawservation — pet sitting and dog walking software" />
+    <meta property="og:image:alt" content="Pawservation: pet sitting and dog walking software" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -289,7 +341,7 @@ const LANDING_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     ${pageHead(
       '/',
-      'Pet Sitting &amp; Dog Walking Software &mdash; Pawservation',
+      'Pet Sitting &amp; Dog Walking Software | Pawservation',
       'Free booking software for pet sitters and dog walkers. Put a booking page on your own website: your services and rates, your availability rules, client and pet records, payments and what you&rsquo;re owed, and two-way Google Calendar sync.',
     )}
     ${buildProductJsonLdScript(BRAND_ORIGIN)}
@@ -322,7 +374,11 @@ const LANDING_HTML = `<!doctype html>
       <section class="hero">
         <div class="wrap hero-grid">
           <div class="hero-copy">
-            <p class="chip">Pet sitting &amp; dog walking software</p>
+            <!-- The chip is the price, not the category: the h1 and the sub below already say
+                 what this is, and a shopper arrives holding an incumbent's monthly figure. The
+                 words are the pricing section's own ("$0 for one sitter", "no trial and no card")
+                 so the hero and section five cannot drift apart. -->
+            <p class="chip">Free for one sitter. No trial, no card.</p>
             <h1>Your booking page, on your own website.</h1>
             <p class="sub">
               Pawservation is pet sitting and dog walking software: a booking widget that lives
@@ -334,9 +390,9 @@ const LANDING_HTML = `<!doctype html>
               <a class="btn btn-ghost" href="#invite-h">Ask for an invite</a>
             </div>
             <p class="note">
-              The demo is a made-up sitter&rsquo;s account &mdash; nothing to sign up for, none of
+              The demo is a made-up sitter&rsquo;s account: nothing to sign up for, none of
               your own details asked for, nothing you can break. Pawservation itself is
-              invite-only while it grows &mdash; <a href="/admin">sign in</a> if you already have
+              invite-only while it grows. <a href="/admin">Sign in</a> if you already have
               an account.
             </p>
           </div>
@@ -384,7 +440,7 @@ const LANDING_HTML = `<!doctype html>
               <div class="step-body">
                 <span class="step-no">01</span>
                 <h3>They pick a service</h3>
-                <p>Your services, under your names and your prices &mdash; boarding, daycare, walks, or anything you invent.</p>
+                <p>Your services, under your names and your prices: boarding, daycare, walks, or anything you invent.</p>
               </div>
             </li>
             <li class="step-card">
@@ -409,7 +465,7 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <div class="step-body">
                 <span class="step-no">03</span>
-                <h3>They send the request &mdash; you confirm it</h3>
+                <h3>They send the request, you confirm it</h3>
                 <p>A request arrives with dates, pets, and an estimated cost. Nothing is booked until you say so.</p>
               </div>
             </li>
@@ -439,7 +495,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="mock-row">
               <div class="mock-info">
-                <div class="mock-who">Jess D. &mdash; Boarding</div>
+                <div class="mock-who">Jess D. &middot; Boarding</div>
                 <div class="mock-meta">Aug 20 &ndash; Aug 23 &middot; 1 pet &middot; $150</div>
               </div>
               <span class="state state-pend">Pending</span>
@@ -450,7 +506,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="mock-row">
               <div class="mock-info">
-                <div class="mock-who">Priya S. &mdash; Morning walk</div>
+                <div class="mock-who">Priya S. &middot; Morning walk</div>
                 <div class="mock-meta">Aug 10, 9:00 AM &middot; 1 pet &middot; $20</div>
               </div>
               <span class="state state-pend">Pending</span>
@@ -461,7 +517,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="mock-row">
               <div class="mock-info">
-                <div class="mock-who">Marco T. &mdash; Daycare</div>
+                <div class="mock-who">Marco T. &middot; Daycare</div>
                 <div class="mock-meta">Aug 8 &middot; 2 pets &middot; $70 &middot; paid in full</div>
               </div>
               <span class="state state-ok">Confirmed</span>
@@ -473,7 +529,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Rates &amp; services</h3>
-              <p>Boarding, house sitting, daycare, walks, check-ins, or your own custom service &mdash; each with its own price.</p>
+              <p>Boarding, house sitting, daycare, walks, check-ins, or your own custom service, each with its own price.</p>
             </div>
             <div class="feature">
               <h3>Caps &amp; time off</h3>
@@ -485,11 +541,11 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Payments</h3>
-              <p>Cash, Venmo, Zelle, PayPal, check &mdash; log deposits and partials, see what&rsquo;s outstanding. Upload the CSV from Venmo and match a month of payments to clients in one pass.</p>
+              <p>Cash, Venmo, Zelle, PayPal, check: log deposits and partials, see what&rsquo;s outstanding. Upload the CSV from Venmo and match a month of payments to clients in one pass.</p>
             </div>
             <div class="feature">
               <h3>Earnings</h3>
-              <p>This month against last, what&rsquo;s still owed, and a year of revenue at a glance.</p>
+              <p>This month against last, what&rsquo;s still owed, and a year of revenue.</p>
             </div>
             <div class="feature">
               <h3>Google Calendar</h3>
@@ -497,7 +553,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Clients change their own bookings</h3>
-              <p>New dates, a different pet, a cancellation &mdash; they do it themselves instead of texting you. A change comes back for your approval; a cancellation applies whatever fee your policy says and emails you.</p>
+              <p>New dates, a different pet, a cancellation: they do it themselves instead of texting you. A change takes effect at once and drops the booking back to pending for you to see, and decline if you want; a cancellation applies whatever fee your policy says and emails you.</p>
             </div>
           </div>
         </div>
@@ -517,14 +573,14 @@ const LANDING_HTML = `<!doctype html>
           <div class="wf-grid">
             <div>
               <h3 class="wf-h">What stays exactly as it is</h3>
-              <p class="note">Five things that don&rsquo;t change on the day you start.</p>
+              <p class="note">Four things that don&rsquo;t change on the day you start, and one that does.</p>
               <div class="wf-pair">
                 <p class="wf-keep">You keep collecting money your own way.</p>
-                <p>Cash, Venmo, Zelle, a check on the counter &mdash; you take it and you keep it. Pawservation records what came in and shows what&rsquo;s still outstanding. It never touches the money.</p>
+                <p>Cash, Venmo, Zelle, a check on the counter: you take it and you keep it. Pawservation records what came in and shows what&rsquo;s still outstanding. It never touches the money.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep living in Google Calendar.</p>
-                <p>Connect it once and bookings appear there, updating when you confirm. The sync runs both ways &mdash; it writes your bookings out, and something you add to that calendar by hand blocks matching requests here too. Every other calendar in your account is left alone.</p>
+                <p>Connect it once and bookings appear there, updating when you confirm. The sync runs both ways: it writes your bookings out, and something you add to that calendar by hand blocks matching requests here too, for the next six months or as far as your booking horizon when that&rsquo;s longer. It starts on your main calendar, so the dentist and the school run block requests as well; one button makes you a separate &ldquo;Pawservation &mdash; Pet bookings&rdquo; calendar and moves the sync onto it, and if you&rsquo;d rather keep your own tidy that&rsquo;s the button to press. Either way, every other calendar in your account is left alone.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep the website you already have.</p>
@@ -535,8 +591,8 @@ const LANDING_HTML = `<!doctype html>
                 <p>You add each one before they can book, and there&rsquo;s a CSV import for the list you already have. No marketplace, no directory, nobody browsing for a sitter.</p>
               </div>
               <div class="wf-pair">
-                <p class="wf-keep">You keep taking texts.</p>
-                <p>The widget answers the repetitive question &mdash; what you offer, when you&rsquo;re free, what it costs. Every other conversation stays where it was.</p>
+                <p class="wf-keep">The dates question stops being a text.</p>
+                <p>The widget answers the repetitive questions: what you offer, when you&rsquo;re free, what it costs. They were about dates and prices, not about the dog. Take those off the thread and more of what&rsquo;s left is about the animal: the pills at six, the reactive shepherd on the corner, how the old cat did last week. Pawservation doesn&rsquo;t do visit reports or photos; that side is still you and your phone.</p>
               </div>
             </div>
             <div>
@@ -549,11 +605,11 @@ const LANDING_HTML = `<!doctype html>
                 </li>
                 <li class="wf-step">
                   <span class="step-no">02</span>
-                  <p><strong>Enter your services, rates, and caps once.</strong> What you call each service, what it costs, how much you&rsquo;ll take at a time, the longest stay you&rsquo;ll do &mdash; and the days you&rsquo;re off.</p>
+                  <p><strong>Enter your services, rates, and caps once.</strong> What you call each service, what it costs, how much you&rsquo;ll take at a time, the longest stay you&rsquo;ll do, and the days you&rsquo;re off. Time off is whole days only: there is no way to close just the 10am walk and keep the rest of that day open.</p>
                 </li>
                 <li class="wf-step">
                   <span class="step-no">03</span>
-                  <p><strong>Add your clients.</strong> Type in the emails you already have, or upload a CSV &mdash; there&rsquo;s an example file to copy the columns from. Pets and care notes sit on their profiles.</p>
+                  <p><strong>Add your clients.</strong> Type in the emails you already have, or upload a CSV, with an example file to copy the columns from. Pets and care notes sit on their profiles.</p>
                 </li>
                 <li class="wf-step">
                   <span class="step-no">04</span>
@@ -563,10 +619,16 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="wf-math">
-            <h3 class="wf-h">How much time that is &mdash; do the sum yourself</h3>
-            <p>An &ldquo;are you free the 12th to the 15th?&rdquo; thread is usually four or five messages spread across an afternoon. Call it a quarter of an hour of your attention, in pieces. The widget answers that from your own caps and your own time off, so the thread never starts:</p>
-            <p class="wf-sum">8 requests a month &times; 15 min &asymp; 2 hours a month</p>
-            <p>Those are illustrative numbers, not a measured finding &mdash; put your own request count, and your own idea of what one back-and-forth costs you, into the same multiplication. Two smaller ones work the same way: the questions you set per service arrive already answered with the request instead of being asked over text, and &ldquo;who still owes me?&rdquo; is a number on the Earnings page instead of a memory exercise.</p>
+            <h3 class="wf-h">Where the time actually goes</h3>
+            <p>The part that costs you isn&rsquo;t really the first message. It&rsquo;s the checking, and then the change to something you had already agreed, which arrives when your hands are full. Both shapes of this business pay that, in different places.</p>
+            <div class="wf-pair">
+              <p class="wf-keep">Boarding and house sitting: a few long threads.</p>
+              <p>&ldquo;Are you free the 12th to the 15th?&rdquo; is four or five messages spread across an afternoon: call it a quarter of an hour of your attention, in pieces, for every request. The widget answers that from your own caps and your own time off, so the thread never starts.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Walks and drop-ins: a lot of short ones.</p>
+              <p>Your threads are seconds long (&ldquo;can you do Tuesday?&rdquo;, &ldquo;yep&rdquo;), so minutes saved is the wrong measure here. The changes are what costs you: a cancelled Wednesday, a swapped Thursday, an extra dog on Friday, arriving while you&rsquo;re out with someone else&rsquo;s dog. Your client makes those on the page instead of on your phone. A cancellation emails you, with your own fee already worked out. A change doesn&rsquo;t email you: it takes effect the moment they save it. The new dates are the ones holding your space, the calendar event moves to them and reads <code>[REQUEST]</code> again, and the booking drops back to pending in your dashboard, so you see what changed and can decline it. You read that between walks instead of answering during one.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -578,7 +640,7 @@ const LANDING_HTML = `<!doctype html>
             <h2 id="pricing-h">Taking bookings is free, and stays free</h2>
             <p>
               Your booking page, your availability, and keeping track of what you&rsquo;re owed
-              cost nothing &mdash; there is no trial and no card to enter. A paid tier is planned
+              cost nothing. There is no trial and no card to enter. A paid tier is planned
               for the extras on top, and it isn&rsquo;t built yet.
             </p>
           </div>
@@ -596,14 +658,14 @@ const LANDING_HTML = `<!doctype html>
                 <li>Booking widget on your own site, unlimited bookings</li>
                 <li>Availability, capacity caps, and conflict rules</li>
                 <li>Minimum notice and a booking horizon</li>
-                <li>Rates, logged payments, and outstanding balances &mdash; one bill for a whole household</li>
+                <li>Rates, logged payments, and outstanding balances: one running balance per household</li>
                 <li>Cancellation policies, applied for you</li>
                 <li>Clients reschedule and cancel their own bookings</li>
                 <li>Client accounts and pet profiles</li>
                 <li>Google Calendar sync, both directions</li>
               </ul>
               <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
-              <p class="note">New sitters are added by hand for now &mdash; ask, and we&rsquo;ll email you a sign-up link.</p>
+              <p class="note">New sitters are added by hand for now. Ask, and we&rsquo;ll email you a sign-up link.</p>
             </div>
             <div class="price-card price-card-soon">
               <div class="price-head">
@@ -616,14 +678,14 @@ const LANDING_HTML = `<!doctype html>
               </p>
               <ul class="price-list">
                 <li>Everything in Free</li>
-                <li>AI concierge &mdash; clients check availability and book by chat</li>
-                <li>Connect an AI assistant (like Claude) to check availability and book on your behalf &mdash; less back-and-forth, less time in your inbox</li>
-                <li>Back-office assistant &mdash; ask who owes you, what your week looks like, and which pet combinations your clients can&rsquo;t book yet because they have no price</li>
-                <li>Card payments &mdash; deposits, saved cards, auto-charge</li>
+                <li>AI concierge: clients check availability and book by chat</li>
+                <li>Connect an AI assistant (like Claude) to check availability and book on your behalf, for less back-and-forth and less time in your inbox</li>
+                <li>Back-office assistant: ask who owes you, what your week looks like, and which pet combinations your clients can&rsquo;t book yet because they have no price</li>
+                <li>Card payments: deposits, saved cards, auto-charge</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
-              <p class="price-unavail">Not available yet &mdash; nothing here is built or for sale.</p>
-              <p class="note">Planned at $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year &mdash; $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
+              <p class="price-unavail">Not available yet. Nothing here is built or for sale.</p>
+              <p class="note">Planned at $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, which is $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
             </div>
           </div>
         </div>
@@ -634,9 +696,10 @@ const LANDING_HTML = `<!doctype html>
           <div class="install-copy">
             <span class="label">Install</span>
             <h2 id="install-h">One line on any website</h2>
-            <p>Paste it into Squarespace, Wix, or any page, change the slug &mdash; the short name in your booking page&rsquo;s web address &mdash; to yours, and save. The widget sizes itself to fit.</p>
-            <p>If your host strips scripts, paste the plain-iframe version instead &mdash; same widget, no JavaScript needed.</p>
-            <p>Not the person who edits your website? Forward this box to whoever is &mdash; it&rsquo;s one line, and it&rsquo;ll take them under a minute.</p>
+            <p>Paste it into Squarespace, Wix, or any page, change the slug (the short name in your booking page&rsquo;s web address) to yours, and save. The widget sizes itself to fit.</p>
+            <p>If your host strips scripts, paste the plain-iframe version instead: same widget, no JavaScript needed.</p>
+            <p>Safe on a public page: a visitor who isn&rsquo;t one of your clients sees a welcome under your name and a sign-in box, with no services, no dates, no prices on it, and a line saying booking is invite-only and to get in touch with you, with your phone and email if you&rsquo;ve set them. A referral who lands there messages you, which is where they were headed anyway. Your rates are public, though: the same booking address also publishes a plain-text list of your services and prices that anyone can read without signing in, the way the prices on your own website already are.</p>
+            <p>Not the person who edits your website? Forward this box to whoever is. It&rsquo;s one line, and it&rsquo;ll take them under a minute.</p>
           </div>
           <div class="codecard">
             <div class="codecard-cap">
@@ -665,23 +728,43 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="qa-item">
               <h3>Do customers pay by card here?</h3>
-              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate. Two clients sharing a pet are one household on your books, so you can send one bill for the whole household instead of chasing separate payments per booking.</p>
+              <p><strong>No.</strong> Pawservation tracks money but doesn&rsquo;t take it. A booking arrives with an estimated cost; you collect it yourself (cash, Venmo, Zelle, check) and log the payment so your earnings stay accurate.</p>
+            </div>
+            <div class="qa-item">
+              <h3>My clients pay me monthly, not per booking</h3>
+              <p><strong>Then record it monthly.</strong> Two clients sharing a pet are one household on your books, and what a household owes is one running balance rather than a figure stuck to each booking, so a client who settles up once a month is one payment for the household, recorded once, instead of a split you have to invent across four bookings. The balance sits on your Earnings page, where it goes up as they book and down as they pay; nothing about it is emailed to your client, and your booking page still shows her only her own bookings, never a total.</p>
             </div>
             <div class="qa-item">
               <h3>Can it double-book me?</h3>
-              <p><strong>No.</strong> Your caps and your time off hold the day, and a request holds its space from the moment it arrives &mdash; not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too &mdash; sync runs both ways, which also means deleting a booking&rsquo;s event in Google cancels that booking and emails your client.</p>
+              <p><strong>Mostly no, and never by accident.</strong> There is one setting that lets it happen, and only because you asked: choosing &ldquo;No limit&rdquo; for boarding and house sitting turns the whereabouts check off, for sitters who would rather sort clashes out themselves. On every other setting, here is what holds. Your caps and your time off hold the day, and a request holds its space from the moment it arrives, not from when you confirm it. Caps count animals, so a booking for three dogs needs three spaces free; a day that can&rsquo;t fit them isn&rsquo;t offered. A night holds one house sit, whatever its pet count, because you can only sleep in one house, and a boarding at your own place is held apart from a house sit too. A stay that starts on the day another one ends has not overlapped at all, so a back-to-back week books normally. All of that is about NIGHTS. Daytime visits are held apart by each slot&rsquo;s own limit rather than by travel time, so nothing stops a 9am walk across town landing beside a 9am drop-in, or either of them landing in the middle of a house sit; set the limit on each slot to the number you can actually get to. If you&rsquo;ve connected Google Calendar, an event you keep there blocks matching requests too, because the sync runs both ways; it reads six months ahead, or as far as your booking horizon when you set one longer.</p>
+            </div>
+            <div class="qa-item">
+              <h3>What if I move or delete a booking&rsquo;s event in Google Calendar?</h3>
+              <p><strong>Deleting cancels it. Moving doesn&rsquo;t move it.</strong> Deleting a booking&rsquo;s event in Google cancels that booking and emails your client. A booking you took off your own calendar is one you&rsquo;re not doing. One exception: a stay you adopted from this calendar keeps an event that was always yours, so deleting that one changes nothing here and the booking stays confirmed until you cancel it in your dashboard. Dragging an event to different dates is not a change Pawservation reads: the booking keeps the dates your client booked, those stay the dates holding your capacity, and the next time anything happens to that booking the event is rewritten back to them. Drag it far enough out that it leaves the window Pawservation checks and it counts as deleted, cancellation email included. That window runs from yesterday to six months out, and stretches further only when your booking horizon is set further; clearing the horizon doesn&rsquo;t stretch it, so six months stays the furthest it reaches. A cancellation is final: there is no un-cancel in your dashboard, so putting that booking back means your client sending the request again and you confirming it again. Move a booking by changing the booking, not the event.</p>
+            </div>
+            <div class="qa-item">
+              <h3>Do you handle weekly regulars?</h3>
+              <p><strong>Not as a repeating booking.</strong> There is no repeating booking yet, so each Tuesday is its own request. A client who walks every Tuesday picks each Tuesday, and there is nothing to set that makes it repeat, for you or for them. If most of your book is standing weekly work, weigh that before you start. What does come off your phone for those clients is the rest of it: their pets and your notes in one place, what they owe as one household balance, and the changes to the routine (a cancelled Wednesday, an extra dog on Friday) made on the page and waiting in your dashboard rather than on your phone.</p>
             </div>
             <div class="qa-item">
               <h3>Can a client change or cancel a booking themselves?</h3>
-              <p><strong>Yes &mdash; that&rsquo;s the point.</strong> They can move the dates, swap the pets, or cancel, from the same page they booked on. A change comes back to you as pending, so you re-approve it rather than discovering it. A cancellation applies the fee your own policy says &mdash; worked out here, not typed in by them &mdash; and emails you either way.</p>
+              <p><strong>Yes.</strong> They can move the dates, swap the pets, or cancel, from the same page they booked on. A change takes effect straight away: the new dates are the ones holding your space, the calendar event moves to them, and the booking drops back to pending so you see what changed and can decline it; your approval comes after the change, not before it. A cancellation applies the fee your own policy says (worked out here, not typed in by them) and emails you whether there was a fee or not. A change doesn&rsquo;t email you; it waits in your dashboard with the new requests.</p>
+            </div>
+            <div class="qa-item">
+              <h3>Does this put something between me and my clients?</h3>
+              <p><strong>Only the scheduling part.</strong> &ldquo;Are you free the 12th?&rdquo; gets answered on the page, from your own caps, your notice period and your time off, so your client sees which dates you can take the moment they look instead of waiting on a text back. Everything else still comes straight to you. And every request is still pending until you say yes: their own screen says awaiting confirmation until then, and the email telling them it&rsquo;s booked goes out when you confirm, not when they press send.</p>
             </div>
             <div class="qa-item">
               <h3>Can anyone book, or just my clients?</h3>
-              <p><strong>Just your clients.</strong> You add each client &mdash; and their pets &mdash; before they can book. A client record always starts with at least one pet, so every request says exactly which animal is coming. Add them one at a time or import a CSV, and choose which animal types you accept.</p>
+              <p><strong>Just your clients.</strong> You add each client, and their pets, before they can book. A client record always starts with at least one pet, so every request says exactly which animal is coming. Add them one at a time or import a CSV, and choose which animal types you accept.</p>
+            </div>
+            <div class="qa-item">
+              <h3>Can I get my data out?</h3>
+              <p><strong>Yes, any time you like.</strong> Under Business in your dashboard there&rsquo;s an Export your data panel with four downloads: clients, with their contact details and the pets on each account; pets, with their type, their owners and your care notes; bookings, with the dates, the pets, the status, the cost and what your client answered on the form; and payments, with the amount, the date, the method and what each one settled. They&rsquo;re ordinary CSVs, so they open in Excel, Numbers or Google Sheets and go wherever you go next. Cancelled bookings, declined requests and pets who have died are all in there with their status in a column, because they&rsquo;re part of your record. These are your records rather than a copy of your whole account: your services, rates, cancellation policies and booking questions are settings and stay here, and so does your time off, which is in none of the four files. Downloading changes nothing, and you can do it as often as you want. It only runs when you press the button, though: there&rsquo;s no scheduled copy, and no way to load one of these files back in.</p>
             </div>
             <div class="qa-item">
               <h3>Can my whole team use it?</h3>
-              <p><strong>Not yet.</strong> Pawservation runs one sitter per account today. Extra sitters, with assignment, are part of the Pro plan &mdash; which isn&rsquo;t built yet.</p>
+              <p><strong>Not yet.</strong> Pawservation runs one sitter per account today. Extra sitters, with assignment, are part of the Pro plan, which isn&rsquo;t built yet.</p>
             </div>
           </div>
         </div>
@@ -728,7 +811,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     ${pageHead(
       '/how-it-works',
-      'How it works &mdash; Pawservation pet sitting &amp; dog walking software',
+      'How it works | Pawservation pet sitting &amp; dog walking software',
       'The full tour of Pawservation, booking software for pet sitters and dog walkers: the services you can offer, the rules that protect your calendar, how clients book, and how the money is tracked.',
     )}
     <style>${PAGE_STYLE}</style>
@@ -764,7 +847,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <p class="sub">
             Pawservation is a booking page that lives on your own website, showing your
             services, your rates, and only the dates your rules allow. You stay in control of
-            all of it &mdash; every request arrives as a request, and waits for you.
+            all of it: every request arrives as a request, and waits for you.
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="/demo">Try the demo</a>
@@ -772,7 +855,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           </div>
           <p class="note">
             Everything below is built and working today. Where something isn&rsquo;t, it says so.
-            The demo is a made-up sitter&rsquo;s account &mdash; nothing to sign up for, none of your
+            The demo is a made-up sitter&rsquo;s account: nothing to sign up for, none of your
             own details asked for, nothing you can break.
           </p>
         </div>
@@ -785,8 +868,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="services-h">Five kinds of service, each with its own rules</h2>
             <p>
               Every service you offer starts from one of five templates. The template decides how
-              dates are chosen and how the price is counted; everything else &mdash; the name, the
-              rate, the limits &mdash; is yours.
+              dates are chosen and how the price is counted. The name, the rate and the limits are
+              yours.
             </p>
           </div>
           <div class="features">
@@ -796,7 +879,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>House sitting &middot; per night</h3>
-              <p>You stay at the client&rsquo;s home, again over a range of dates, under its own cap. And because you can&rsquo;t be in two places at once, house sitting and boarding are held apart &mdash; by however much you say (see below).</p>
+              <p>You stay at the client&rsquo;s home, again over a range of dates, under its own cap. And because you can only sleep in one house, a night holds one house sit. A stay that starts on the day another one ends has not overlapped at all, so a back-to-back week is fine; what a second house sit cannot do is share a night with the first. A boarding at your own place is held apart from a house sit by however much you say (see below).</p>
             </div>
             <div class="feature">
               <h3>Daycare &middot; per day</h3>
@@ -804,11 +887,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Walk &middot; per walk</h3>
-              <p>Priced per walk, with options that carry their own length and time window &mdash; a &ldquo;Morning 30&rdquo; and an &ldquo;Evening 30&rdquo; can sit side by side at different prices.</p>
+              <p>Priced per walk, with options that carry their own length and time window, so a &ldquo;Morning 30&rdquo; and an &ldquo;Evening 30&rdquo; can sit side by side at different prices.</p>
             </div>
             <div class="feature">
               <h3>Check-in &middot; per visit</h3>
-              <p>Drop-in visits &mdash; feed, let out, top up the water &mdash; with the same per-option lengths and windows as walks.</p>
+              <p>Drop-in visits (feed, let out, top up the water) with the same per-option lengths and windows as walks.</p>
             </div>
             <div class="feature">
               <h3>Anything you call your own</h3>
@@ -827,7 +910,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">A per-day limit on each option.</p>
-              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk &mdash; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date, and it counts animals rather than bookings: with one place left, a household bringing two dogs isn&rsquo;t offered that day either.</p>
+              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date, and it counts animals rather than bookings: with one place left, a household bringing two dogs isn&rsquo;t offered that day either.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Weekdays only, where that&rsquo;s the truth.</p>
@@ -839,11 +922,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">How much notice you need.</p>
-              <p>Set the days of notice a service needs and everything sooner than that is struck out. Two days on boarding means the earliest a client can ask for is the day after tomorrow &mdash; so &ldquo;can you take him tonight?&rdquo; stops being a question you have to answer. Leave it blank and same-day is fine.</p>
+              <p>Set the days of notice a service needs and everything sooner than that is struck out. Two days on boarding means the earliest a client can ask for is the day after tomorrow, so &ldquo;can you take him tonight?&rdquo; stops being a question you have to answer. Leave it blank and same-day is fine.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">One thing that isn&rsquo;t here yet: a repeating schedule.</p>
-              <p>Every visit is its own request today &mdash; a client who wants a walk every Tuesday picks each Tuesday. There is no &ldquo;repeat weekly&rdquo; to set, for you or for them.</p>
+              <p>Every visit is its own request today: a client who wants a walk every Tuesday picks each Tuesday. There is no &ldquo;repeat weekly&rdquo; to set, for you or for them.</p>
             </div>
           </div>
         </div>
@@ -863,31 +946,31 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h3 class="wf-h">The dials you get</h3>
             <div class="wf-pair">
               <p class="wf-keep">Caps count pets, not bookings.</p>
-              <p>If you&rsquo;ll take three at a time, one booking for three dogs fills the day by itself &mdash; three pets, three slots &mdash; and the calendar strikes that day out for everyone else. That is the whole point of counting animals rather than requests.</p>
+              <p>If you&rsquo;ll take three at a time, one booking for three dogs fills the day by itself, three pets in three slots, and the calendar strikes that day out for everyone else.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Only the animals you actually take.</p>
-              <p>Accepted pet types are set per service, so you can board dogs and do check-ins for cats without accidentally agreeing to board the cat. Each new service starts from the likely answer rather than from nothing &mdash; walks and daycare start dogs-only, check-ins start cats-only, boarding and house sitting start open to everything &mdash; and you re-tick the boxes if your business is different.</p>
+              <p>Accepted pet types are set per service, so you can board dogs and do check-ins for cats without accidentally agreeing to board the cat. Each new service starts from the likely answer rather than from nothing: walks and daycare start dogs-only, check-ins start cats-only, boarding and house sitting start open to everything. Re-tick the boxes if your business is different.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Where you physically are, when boarding meets a house sit.</p>
-              <p>You can&rsquo;t sleep at a client&rsquo;s house and keep a boarder at your own, so the two are held apart, and you say by how much: never overlap, one handover day (the default), one handover day at each end of a stay, or no limit if you&rsquo;d rather sort clashes out yourself. A shared day only ever counts as a genuine handover &mdash; one thing ending as the other begins. A boarding dropped into the middle of a house sit is refused however high you set the number, because no number makes that possible.</p>
+              <p class="wf-keep">Where you physically are, when one stay meets another.</p>
+              <p><strong>A stay that starts on the day another one ends has not overlapped at all.</strong> You slept in the first house, then in the second: out of the Smiths on Friday morning and into the Joneses that Friday evening is two bookings and no shared night, at every setting on this page. Both of them show Friday on your calendar, which is why it looks like an overlap and isn&rsquo;t. Everything below is about stays that would share a NIGHT.</p><p>You can&rsquo;t sleep at a client&rsquo;s house and keep a boarder at your own, and you can&rsquo;t sleep at two clients&rsquo; houses either, so a night holds one house sit and holds it apart from any boarding. That is about houses, not animals: a house sit for one cat fills the night as completely as a house sit for three dogs, and no cap you set makes room for a second.</p><p><strong>Two house sits never share a night</strong>, on any of the numbered settings. There is nothing to hand over when both stays want the same night: you are asleep in one house or the other. So a second house sit that runs into the first is refused whatever number you pick, and a one-night house sit can never share its night with anything at all, because its only night is the whole stay.</p><p>The number is what you allow between a house sit and a boarding: never overlap, one handover day (the default), or one handover day at each end of a stay. A shared day there only ever counts as a handover, one thing ending as the other begins, so a boarding dropped into the middle of a house sit is refused whether you allow one shared day or two. Both stays are judged, so the answer is the same whichever of them was booked first.</p><p>No limit works differently. It isn&rsquo;t a bigger allowance, it switches the check off: nothing is held apart at all, and a boarding or another house sit can land anywhere inside a house sit. Choose it only if you&rsquo;d rather sort clashes out yourself. Boarding on its own is not affected by any of this: boarders are at your own home, so several at once is normal, and how many at once is what your cap is for.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">How far ahead anyone can book.</p>
-              <p>One setting for the whole business: months out, and beyond it the calendar simply stops. New accounts start at twelve months, so nobody books your Christmas two Christmases early. Clear it and there&rsquo;s no horizon at all.</p>
+              <p>One setting for the whole business: months out, and beyond it the calendar simply stops. New accounts start at twelve months, so nobody books your Christmas two Christmases early. Clear it and there&rsquo;s no horizon at all, though a Google Calendar event more than six months out then won&rsquo;t block requests until it comes closer.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Your questions, asked at booking time.</p>
-              <p>Write your own intake questions &mdash; medications, the gate code, which vet, anything you always end up asking &mdash; and they arrive answered, with the request, instead of over six texts on the day. A regular&rsquo;s answers come back already filled in the next time they book that service, so nobody retypes the gate code every month; reword the question and the stale answer is dropped rather than pre-filled.</p>
+              <p>Write your own intake questions (medications, the gate code, which vet, anything you always end up asking) and they arrive answered, with the request, instead of over six texts on the day. A regular&rsquo;s answers come back already filled in the next time they book that service, so nobody retypes the gate code every month; reword the question and the stale answer is dropped rather than pre-filled.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Time off, in whole days.</p>
-              <p>Mark a day &mdash; or a run of days &mdash; as time off and it simply stops being offered, struck out for every service, walks and check-ins included. Away next Tuesday? Block Tuesday and nothing else changes. Time off is whole days only: there is no way to close just the 10am walk and keep the rest of that day open.</p>
+              <p>Mark a day, or a run of days, as time off and it stops being offered, struck out for every service, walks and check-ins included. Away next Tuesday? Block Tuesday and nothing else changes. Time off is whole days only: there is no way to close just the 10am walk and keep the rest of that day open.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Cancellation fees in your own windows.</p>
-              <p>Set up to five windows, each a percentage of the estimated cost. When a client cancels, the tightest window that applies is the one that wins. Leave it blank and there&rsquo;s no fee at all &mdash; the policy is only what you wrote. The client cancels from the booking page and the fee is worked out here, from your stored policy, and recorded as owed &mdash; they never get to name the figure, and you never have to do the arithmetic in a difficult conversation. A request you hadn&rsquo;t confirmed yet is always free to withdraw.</p>
+              <p>Set up to five windows, each a percentage of the estimated cost. When a client cancels, the tightest window that applies is the one that wins. Leave it blank and there&rsquo;s no fee at all; the policy is only what you wrote. The client cancels from the booking page and the fee is worked out here, from your stored policy, and recorded as owed. They never get to name the figure, and you never have to do the arithmetic in a difficult conversation. A request you hadn&rsquo;t confirmed yet is always free to withdraw.</p>
             </div>
           </div>
         </div>
@@ -908,7 +991,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <ol class="wf-steps">
               <li class="wf-step">
                 <span class="step-no">01</span>
-                <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add clients one at a time, or import a CSV &mdash; an example file shows the columns to copy.</p>
+                <p><strong>You add the client first.</strong> Nobody who isn&rsquo;t on your list can book. Add clients one at a time, or import a CSV, with an example file showing the columns to copy.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">02</span>
@@ -916,7 +999,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
               <li class="wf-step">
                 <span class="step-no">03</span>
-                <p><strong>They pick a service, then dates.</strong> The widget offers only what you&rsquo;ve set up, only where your rules allow it, and it knows which animals they&rsquo;re bringing while they choose &mdash; a day with one space left is struck out for a two-dog household rather than accepted and then refused. The nights and the price sit next to the button before they press it. That price is worked out by Pawservation itself, so the page can never show one number and charge another &mdash; the figure your client is shown is the figure the booking is stamped with.</p>
+                <p><strong>They pick a service, then dates.</strong> The widget offers only what you&rsquo;ve set up, only where your rules allow it, and it knows which animals they&rsquo;re bringing while they choose: a day with one space left is struck out for a two-dog household rather than accepted and then refused. The nights and the price sit next to the button before they press it. That price is worked out by Pawservation itself, so the figure your client is shown is the figure the booking is stamped with.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">04</span>
@@ -924,13 +1007,17 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
               <li class="wf-step">
                 <span class="step-no">05</span>
-                <p><strong>They change it or cancel it themselves &mdash; without texting you.</strong> New dates, a different pet, a different arrival time, a corrected answer: they edit their own booking on the same page they made it on. What they cannot change is which service it is &mdash; a boarding does not quietly become a house sit. Because you agreed to specific dates for specific animals, an edit to a confirmed booking comes straight back to you as pending, and you re-approve it or decline it like any other request. Rescheduling is not cancelling, so an edit never charges a fee. Every rule that applied when they booked applies again to the change, so an edit can&rsquo;t squeeze past a cap the original request respected.</p>
+                <p><strong>They change it or cancel it themselves, without texting you.</strong> New dates, a different pet, a different arrival time, a corrected answer: they edit their own booking on the same page they made it on. What they cannot change is which service it is: a boarding does not quietly become a house sit. Because you agreed to specific dates for specific animals, an edit to a confirmed booking drops it straight back to pending. But the change itself is already in effect: the new dates are the ones holding your space, and the calendar event has moved to them. Your approval comes after the change rather than before it, and you can still decline. Rescheduling is not cancelling, so an edit never charges a fee. Every rule that applied when they booked applies again to the change, so an edit can&rsquo;t squeeze past a cap the original request respected.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">06</span>
-                <p><strong>A cancellation reaches you as an email, with the number already worked out.</strong> They cancel, your policy decides the fee, and you get a message saying which it was and whether anything is owed. Nothing is deleted: the booking stays on the record as cancelled, and a fee that&rsquo;s owed shows up in what&rsquo;s outstanding like any other money. Even a stay already under way can be cancelled &mdash; refusing would only push the conversation back onto your phone.</p>
+                <p><strong>A cancellation reaches you as an email, with the number already worked out.</strong> They cancel, your policy decides the fee, and you get a message saying which it was and whether anything is owed. Nothing is deleted: the booking stays on the record as cancelled, and a fee that&rsquo;s owed shows up in what&rsquo;s outstanding like any other money. Even a stay already under way can be cancelled; refusing would only push the conversation back onto your phone.</p>
               </li>
             </ol>
+            <div class="wf-pair">
+              <p class="wf-keep">Your client sees your open dates without waiting on you.</p>
+              <p>The calendar they see is worked out from your own caps, your notice period, your booking horizon and, on a walk or a drop-in, how many pets you&rsquo;ll take in that time slot. So &ldquo;can you take the 12th to the 15th?&rdquo;, or &ldquo;can you do Tuesday at ten?&rdquo;, is answered on the page at whatever hour they thought to ask it, rather than sitting on your phone until you get to it. What it shows is the dates you can take, not a promise: the request is still pending until you confirm it, and you can still decline. What it removes is the wait for a text back.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -939,10 +1026,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         <div class="wrap">
           <div class="section-head">
             <span class="label">Money</span>
-            <h2 id="money-h">You collect it your way &mdash; Pawservation keeps the count</h2>
+            <h2 id="money-h">You collect it your way. Pawservation keeps the count.</h2>
             <p>
               The arithmetic is deliberately boring: your rate, times the nights, days, walks, or
-              visits booked &mdash; and, on the setting you pick, times the number of pets. Nothing
+              visits booked. On the setting you pick, it is also times the number of pets. Nothing
               enters the sum that you did not choose.
             </p>
           </div>
@@ -950,27 +1037,27 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h3 class="wf-h">How the counting works</h3>
             <div class="wf-pair">
               <p class="wf-keep">You choose what a second pet does to the bill.</p>
-              <p>Every service carries one setting, in plain English. Either two dogs cost twice your one-dog rate, or only the combinations you have priced can be booked together. A service you add starts on the first, so a two-dog household can book the moment you type one price; switch it to the second and a pair you have not priced is refused rather than guessed at. Whichever you pick, a second pet also uses a second slot of your capacity, and the figure a client sees traces back to a choice you made &mdash; there is no third behaviour we picked for you.</p>
+              <p>Every service carries one setting, in plain English. Either two dogs cost twice your one-dog rate, or only the combinations you have priced can be booked together. A service you add starts on the first, so a two-dog household can book the moment you type one price; switch it to the second and a pair you have not priced is refused rather than guessed at. Whichever you pick, a second pet also uses a second slot of your capacity, and the figure a client sees traces back to a choice you made. There is no third behaviour we picked for you.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Record payments as they land.</p>
-              <p>Cash, Venmo, Zelle, PayPal, check, card, or something else entirely. Log as many part-payments against one booking as it takes &mdash; a deposit now and the rest later &mdash; each with its own date and note.</p>
+              <p>Cash, Venmo, Zelle, PayPal, check, card, or something else entirely. Log as many part-payments against one booking as it takes (a deposit now and the rest later), each with its own date and note.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Paid on Venmo? Upload the CSV.</p>
-              <p>Download the CSV Venmo gives you for a month and drop it into Earnings. Pawservation reads the payments that came in, lines each one up with the client who sent it by their Venmo name, and shows you every match before anything is recorded &mdash; you approve what&rsquo;s right and fix what isn&rsquo;t. The file is read in memory and never stored, and uploading the same one twice records nothing twice.</p>
+              <p>Download the CSV Venmo gives you for a month and drop it into Earnings. Pawservation reads the payments that came in, lines each one up with the client who sent it by their Venmo name, and shows you every match before anything is recorded, so you approve what&rsquo;s right and fix what isn&rsquo;t. The file is read in memory and never stored, and uploading the same one twice records nothing twice.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Pawservation records payments. It never processes them.</p>
               <p>The money goes from your client to you by whatever means you already use. Nothing routes through us, so there is no cut taken and no fee on your earnings. An earnings view totals up what you&rsquo;ve recorded.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Two dogs can cost more than one &mdash; and you decide how much more.</p>
-              <p>Price a combination and that combination has that price, whichever setting the service is on. On your walk, one dog might be $40 and two dogs $60 &mdash; two numbers you typed, and they beat the doubling every time. Set them once per service and they apply to every client. A group with no rate of its own falls to the setting you picked: either your rate for each pet, or the widget asks you for a rate before it will book them. There is no third answer invented in between.</p>
+              <p class="wf-keep">Two dogs can cost more than one, and you decide how much more.</p>
+              <p>Price a combination and that combination has that price, whichever setting the service is on. On your walk, one dog might be $40 and two dogs $60: two numbers you typed, and they beat the doubling every time. Set them once per service and they apply to every client. A group with no rate of its own falls to the setting you picked: either your rate for each pet, or no booking at all until you&rsquo;ve priced that group. On the second setting it&rsquo;s your client who gets told: the widget says you haven&rsquo;t priced this group yet, points her at whatever contact details you&rsquo;ve published, and offers to book one pet at a time. Nothing about it reaches your dashboard, so you hear it from her.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">One client can keep an old price.</p>
-              <p>Tina and Rob have walked Fido with you since before you raised your rates, and you&rsquo;d rather not raise theirs. Put a $20 walk on Fido&rsquo;s account and Fido&rsquo;s walks stay $20 while everyone else&rsquo;s are $40. A rate on a specific animal wins over a rate for &ldquo;two dogs&rdquo;, which wins over your ordinary rate for the service &mdash; so the narrower promise is always the one that holds.</p>
+              <p>Tina and Rob have walked Fido with you since before you raised your rates, and you&rsquo;d rather not raise theirs. Put a $20 walk on Fido&rsquo;s account and Fido&rsquo;s walks stay $20 while everyone else&rsquo;s are $40. A rate on a specific animal wins over a rate for &ldquo;two dogs&rdquo;, which wins over your ordinary rate for the service.</p>
             </div>
           </div>
         </div>
@@ -989,19 +1076,19 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>Pending and confirmed, both</h3>
-              <p>A request becomes an event the moment it arrives, not only once you&rsquo;ve said yes &mdash; so a busy week looks busy before you&rsquo;ve made up your mind.</p>
+              <p>A request becomes an event the moment it arrives, not only once you&rsquo;ve said yes, so a busy week looks busy before you&rsquo;ve made up your mind.</p>
             </div>
             <div class="feature">
               <h3>The whole booking, in the event</h3>
-              <p>Service, dates, times, the pets by name, the estimated cost, and the client&rsquo;s email address &mdash; enough to answer from your phone without opening anything else.</p>
+              <p>Service, dates, times, the pets by name, the estimated cost, and the client&rsquo;s email address: enough to answer from your phone without opening anything else.</p>
             </div>
             <div class="feature">
               <h3>Nothing dead looks alive</h3>
-              <p>Decline a request, or cancel with nothing owed, and the event is removed. A cancellation that carries a fee keeps its event and retitles it <code>[CANCELLED]</code> instead &mdash; the dates are free again, but money you&rsquo;re still owed doesn&rsquo;t vanish out of your week.</p>
+              <p>Decline a request, or cancel with nothing owed, and the event is removed. A cancellation that carries a fee keeps its event and retitles it <code>[CANCELLED]</code> instead: the dates are free again, but money you&rsquo;re still owed doesn&rsquo;t vanish out of your week.</p>
             </div>
             <div class="feature">
               <h3>Optional, and skippable</h3>
-              <p>Skip it during setup and everything else works exactly the same. Connect months in and everything still upcoming is added to your calendar then &mdash; nothing you booked before connecting goes missing.</p>
+              <p>Skip it during setup and everything else works exactly the same. Connect months in and everything still upcoming is added to your calendar then; nothing you booked before connecting goes missing.</p>
             </div>
             <div class="feature">
               <h3>Your Google connection is stored encrypted</h3>
@@ -1009,11 +1096,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>It reads your calendar, too</h3>
-              <p>Bookings flow out to the connected calendar &mdash; and busy events you keep there flow back. Add a stay by hand in Google and Pawservation blocks those dates automatically; move or delete it and the block follows. That&rsquo;s time off you entered yourself &mdash; a real booking is different: deleting it in Google cancels the booking in Pawservation too, and your client gets an email. Every other calendar in your account is never read and never touched.</p>
+              <p>Bookings flow out to the connected calendar, and busy events you keep there flow back. Add a stay by hand in Google and Pawservation blocks those dates automatically; move or delete it and the block follows. That&rsquo;s time off you entered yourself. It reads six months ahead, or as far as your booking horizon when you set one longer; clearing the horizon doesn&rsquo;t extend it, so an event further out than that blocks nothing until it comes closer. A real booking is different: deleting it in Google cancels the booking in Pawservation too, and your client gets an email. The exception is a stay you adopted from this calendar, whose event was always yours: deleting that one changes nothing here, and you cancel the booking in your dashboard instead. Connecting starts you on your main calendar, so everything already there, the dentist and the school run included, blocks requests for those dates; one button under Connected apps makes a separate &ldquo;Pawservation &mdash; Pet bookings&rdquo; calendar and syncs to that instead, and you can paste in the id of one you already made. Whichever it is, every other calendar in your account is never read and never touched.</p>
             </div>
             <div class="feature">
               <h3>If Google is down</h3>
-              <p>Your dashboard is the record; the calendar is a mirror of it. If Google can&rsquo;t be reached, the booking still lands in Pawservation, and a background sweep keeps retrying until the event lands in Google too. Worst case, the mirror lags a few minutes &mdash; it never loses a frame.</p>
+              <p>Your dashboard is the record; the calendar is a mirror of it. If Google can&rsquo;t be reached, the booking still lands in Pawservation, and a background sweep retries every fifteen minutes until the event lands in Google too. So the mirror lags for however long Google is unreachable, plus up to fifteen minutes for the next sweep after it recovers. Nothing is dropped while it waits.</p>
             </div>
           </div>
         </div>
@@ -1024,9 +1111,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="install-copy">
             <span class="label">On your website</span>
             <h2 id="embed-h">One line, on the site you already have</h2>
-            <p>Paste the script line into a page on Squarespace, Wix, or plain HTML, swap in your slug &mdash; the short name in your booking page&rsquo;s web address &mdash; and save. The widget measures itself and tells the page how tall to be, so it never sits in a box that&rsquo;s too short.</p>
-            <p>If your host strips scripts &mdash; Wix&rsquo;s &ldquo;Embed a site&rdquo; is the usual culprit &mdash; use the iframe version underneath instead. Same widget, fixed height, no JavaScript on your side.</p>
-            <p>Not the person who edits your website? Forward this box to whoever is &mdash; it&rsquo;s one line, and it&rsquo;ll take them under a minute.</p>
+            <p>Paste the script line into a page on Squarespace, Wix, or plain HTML, swap in your slug (the short name in your booking page&rsquo;s web address) and save. The widget measures itself and tells the page how tall to be, so it never sits in a box that&rsquo;s too short.</p>
+            <p>If your host strips scripts (Wix&rsquo;s &ldquo;Embed a site&rdquo; is the usual culprit), use the iframe version underneath instead. Same widget, fixed height, no JavaScript on your side.</p>
+            <p>Anyone can load the page, but only your clients can book it. A visitor who isn&rsquo;t on your list sees a welcome under your name and a box asking for the email you have on file, with no services, no dates, no prices on it, and a line telling them booking is invite-only and to get in touch with you, plus your phone and email if you&rsquo;ve set them. An address you haven&rsquo;t added is told the same thing rather than signed up. Your rates are public, though: the same booking address also publishes a plain-text summary of your services and prices that anyone can read without signing in.</p>
+            <p>Not the person who edits your website? Forward this box to whoever is. It&rsquo;s one line, and it&rsquo;ll take them under a minute.</p>
           </div>
           <div class="codecard">
             <div class="codecard-cap">
@@ -1058,7 +1146,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="setup-h">Four steps, none of them destructive</h2>
             <p>
               The wizard gets you from an empty account to a working booking page in one sitting,
-              and it only ever adds &mdash; run it again and it won&rsquo;t undo what you set.
+              and it only ever adds: run it again and it won&rsquo;t undo what you set.
             </p>
           </div>
           <div class="wf-math">
@@ -1070,7 +1158,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
               <li class="wf-step">
                 <span class="step-no">02</span>
-                <p><strong>What you offer.</strong> Six one-tap presets, each a whole service already shaped &mdash; &ldquo;Group walks &middot; weekdays 10&ndash;2 &middot; up to 8 pets&rdquo; is one tap, windows and limits included. Tap the ones that describe you.</p>
+                <p><strong>What you offer.</strong> Six one-tap presets, each a whole service already shaped: &ldquo;Group walks &middot; weekdays 10&ndash;2 &middot; up to 8 pets&rdquo; is one tap, windows and limits included. Tap the ones that describe you.</p>
               </li>
               <li class="wf-step">
                 <span class="step-no">03</span>
@@ -1078,14 +1166,19 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               </li>
               <li class="wf-step">
                 <span class="step-no">04</span>
-                <p><strong>Your calendar, if you want it.</strong> Connect Google Calendar, or skip it &mdash; skipping costs you nothing else, and you can connect from Connected apps whenever.</p>
+                <p><strong>Your calendar, if you want it.</strong> Connect Google Calendar, or skip it. Skipping costs you nothing else, and you can connect from Connected apps whenever.</p>
               </li>
             </ol>
           </div>
           <div class="wf-math">
             <h3 class="wf-h">What about the stays you&rsquo;ve already agreed to?</h3>
-            <p>Straight answer: you can&rsquo;t type an old booking in yourself. But if the stay is already on the calendar you connected, you&rsquo;re done &mdash; Pawservation reads that calendar and blocks those dates automatically, so nothing can be double-booked over it.</p>
-            <p>Want the stay tracked properly &mdash; caps, records, what you&rsquo;re owed? Have the client send the request through your booking page. It takes them a minute, and then your calendar and your books match reality.</p>
+            <p>Straight answer: if the stay is on the calendar you connected, you can bring it across. Under Earnings, <em>Adopt past bookings from your calendar</em> reads the range you pick and shows you what it found: it matches the pets named in each event title against your own client list, prices each stay off today&rsquo;s rate card, and lets you correct any price before you press Adopt. Events it can&rsquo;t read are listed with the reason. Your calendar is only read, never changed, and nothing is recorded until you press the button.</p>
+            <p>What there&rsquo;s still no way to do is type an old booking in from nothing. If the stay was never on a calendar you connected, have the client send the request through your booking page. It takes them a minute, and then your calendar and your books match reality.</p>
+          </div>
+          <div class="wf-math">
+            <h3 class="wf-h">What if you want to take your book elsewhere?</h3>
+            <p>Under Business in your dashboard, Export your data gives you four downloads. Clients come with contact details and the pets on each account; pets with their type, their owners and your care notes; bookings with the dates, the pets, the status, the cost and what your client answered on the form; payments with the amount, the date, the method and what each one settled. Cancelled bookings, declined requests and pets who have died are all there with their status in a column, because they are part of what happened. These are your records rather than a copy of your whole account: your services, rates, cancellation policies and booking questions are settings and stay here, and so does your time off, which is in none of the four files.</p>
+            <p>They are ordinary CSVs, so they open in Excel, Numbers or Google Sheets, and they are yours to keep or hand to whatever you use next. Take a copy as often as you like; downloading changes nothing in your account. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
           </div>
         </div>
       </section>
@@ -1096,7 +1189,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <span class="label">Under the hood</span>
             <h2 id="next-h">The plumbing for what comes next is already in</h2>
             <p>
-              You can skip this section &mdash; it&rsquo;s for the software your clients might use,
+              You can skip this section: it&rsquo;s for the software your clients might use,
               not for you. It&rsquo;s groundwork, laid early because retrofitting it later is how
               booking systems end up double-booking people.
             </p>
@@ -1104,11 +1197,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="features">
             <div class="feature">
               <h3>A &ldquo;no&rdquo; that says why</h3>
-              <p>A refused booking answers with a fixed code as well as a sentence, so other software can understand a &ldquo;no&rdquo; and say why &mdash; &ldquo;those dates are full&rdquo; and &ldquo;that stay is too long&rdquo; are told apart without guessing at the wording.</p>
+              <p>A refused booking answers with a fixed code as well as a sentence, so other software can understand a &ldquo;no&rdquo; and say why: &ldquo;those dates are full&rdquo; and &ldquo;that stay is too long&rdquo; are told apart without guessing at the wording.</p>
             </div>
             <div class="feature">
               <h3>Sent twice, booked once</h3>
-              <p>A request can be tagged by whatever sent it. If a shaky connection sends the same request twice, only one booking is created &mdash; the second attempt gets the first booking back rather than making a second.</p>
+              <p>A request can be tagged by whatever sent it. If a shaky connection sends the same request twice, only one booking is created; the second attempt gets the first booking back rather than making a second.</p>
             </div>
             <div class="feature">
               <h3>Your services, written out plainly</h3>
@@ -1122,7 +1215,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         <div class="wrap">
           <div class="cta-panel">
             <h2 id="tour-cta-h">That&rsquo;s the whole thing. Want in?</h2>
-            <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page &mdash; taking bookings is free, and stays free. Or just poke at the demo first: it&rsquo;s a made-up sitter&rsquo;s account, nothing to sign up for, none of your own details asked for, nothing you can break.</p>
+            <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page. Taking bookings is free, and stays free. Or just poke at the demo first: it&rsquo;s a made-up sitter&rsquo;s account, nothing to sign up for, none of your own details asked for, nothing you can break.</p>
             <div class="cta-row">
               <a class="btn btn-inverse" href="/#invite-h">Ask for an invite</a>
               <a class="signin-inverse" href="/demo">Try the demo</a>
@@ -1151,7 +1244,7 @@ const PRIVACY_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     ${pageHead(
       '/privacy',
-      'Privacy Policy &mdash; Pawservation',
+      'Privacy Policy | Pawservation',
       "What Pawservation collects, who it's shared with, and how long it's kept.",
     )}
     <style>${PAGE_STYLE}</style>
@@ -1175,7 +1268,7 @@ const PRIVACY_HTML = `<!doctype html>
         <div class="wrap">
           <p class="chip">Legal</p>
           <h1>Privacy Policy</h1>
-          <p class="sub">What we collect, who we share it with, and how long we keep it &mdash; written to match what the product actually does.</p>
+          <p class="sub">What we collect, who we share it with, and how long we keep it, written to match what the product does.</p>
           <p class="note">Last updated: August 4, 2026</p>
         </div>
       </section>
@@ -1184,15 +1277,15 @@ const PRIVACY_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>What we collect</h3>
-            <p>From customers: name, email, phone, your pets&rsquo; names and any care notes you give your sitter, and the answers you give to your sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password &mdash; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
+            <p>From customers: name, email, phone, your pets&rsquo; names and any care notes you give your sitter, and the answers you give to your sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
           </div>
           <div class="feature">
             <h3>Who we share it with</h3>
-            <p><strong>Resend</strong> sends our transactional email &mdash; login codes, booking confirmations, password-reset links &mdash; and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider &mdash; everything above lives on Cloudflare&rsquo;s infrastructure.</p>
+            <p><strong>Resend</strong> sends our transactional email (login codes, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider: everything above lives on Cloudflare&rsquo;s infrastructure.</p>
           </div>
           <div class="feature">
             <h3>Cookies</h3>
-            <p>We set exactly one cookie, for ten minutes, only while a sitter is connecting Google Calendar &mdash; it exists purely to stop a cross-site request forgery attack during that one step. There are no cookies for signing in or for tracking you. Every login &mdash; customer, sitter, or platform owner &mdash; works without one.</p>
+            <p>We set exactly one cookie, for ten minutes, only while a sitter is connecting Google Calendar, to stop a cross-site request forgery attack during that one step. There are no cookies for signing in or for tracking you. Customers, sitters and the platform owner all sign in without one.</p>
           </div>
           <div class="feature">
             <h3>How long we keep it</h3>
@@ -1204,7 +1297,7 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>No tracking</h3>
-            <p>We run no analytics, no ad pixels, and no fingerprinting &mdash; on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
+            <p>We run no analytics, no ad pixels, and no fingerprinting, on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
           </div>
           <div class="feature">
             <h3>Where your data lives</h3>
@@ -1235,7 +1328,7 @@ const TERMS_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     ${pageHead(
       '/terms',
-      'Terms &amp; Conditions &mdash; Pawservation',
+      'Terms &amp; Conditions | Pawservation',
       'The terms that govern using Pawservation: what the booking software does, what it deliberately does not do with your money, and what each side is responsible for.',
     )}
     <style>${PAGE_STYLE}</style>
@@ -1330,7 +1423,7 @@ const ABOUT_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     ${pageHead(
       '/about',
-      'About &mdash; Pawservation',
+      'About | Pawservation',
       'Who makes Pawservation, why it exists, and the four rules the software will not break: nothing books itself, it never touches your money, your clients stay yours, and no price is charged that you did not type.',
     )}
     <style>${PAGE_STYLE}</style>
@@ -1356,8 +1449,8 @@ const ABOUT_HTML = `<!doctype html>
           <h1>Booking software that stays out of the way.</h1>
           <p class="sub">
             Pawservation is booking software for pet sitters and dog walkers. It puts a booking
-            page on the website you already have &mdash; your services, your rates, your rules
-            &mdash; so the question &ldquo;are you free the 12th to the 15th?&rdquo; answers itself.
+            page on the website you already have, with your services, your rates and your
+            rules, so the question &ldquo;are you free the 12th to the 15th?&rdquo; answers itself.
           </p>
         </div>
       </section>
@@ -1366,22 +1459,22 @@ const ABOUT_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>Why it exists</h3>
-            <p>Every booking a small pet-care business takes starts the same way: a text message asking whether you&rsquo;re free. Answering it means checking a calendar, remembering your own rules, quoting a price from memory, and doing it again four messages later. That thread is the job before the job, and it happens while you have a dog on a lead. Pawservation answers it from the caps, notice periods and days off you set once &mdash; and then gets out of the way. Everything else about how you work stays exactly as it is: the same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
+            <p>Every booking a small pet-care business takes starts the same way: a text message asking whether you&rsquo;re free. Answering it means checking a calendar, remembering your own rules, quoting a price from memory, and doing it again four messages later. That thread is the job before the job, and it happens while you have a dog on a lead. Pawservation answers it from the caps, notice periods and days off you set once, and then gets out of the way. Everything else about how you work stays exactly as it is: the same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
           </div>
           <div class="feature">
             <h3>Four rules the software will not break</h3>
             <p><strong>Nothing books itself.</strong> Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
-            <p><strong>It never touches your money.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. It does not process cards, hold funds, or take a cut of anything. You collect the way you already collect &mdash; cash, Venmo, Zelle, a check on the counter.</p>
+            <p><strong>It never touches your money.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. It does not process cards, hold funds, or take a cut of anything. You collect the way you already collect: cash, Venmo, Zelle, a check on the counter.</p>
             <p><strong>Your clients stay your clients.</strong> This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
-            <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one &mdash; because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
+            <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
           </div>
           <div class="feature">
             <h3>Where it is today</h3>
-            <p>Taking bookings is free and stays free: the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync cost nothing, with no trial and no card to enter. New sitters are added by invitation while the product grows, which is a deliberate limit on how fast it takes on people rather than a waiting list for its own sake. It runs one sitter per account today &mdash; a team, with assignment between sitters, is not built. A paid tier is planned and is not built either; nothing on it is for sale, and the free tier is not a trial of it.</p>
+            <p>Taking bookings is free and stays free: the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync cost nothing, with no trial and no card to enter. New sitters are added by invitation while the product grows, which is a deliberate limit on how fast it takes on people rather than a waiting list for its own sake. It runs one sitter per account today; a team, with assignment between sitters, is not built. A paid tier is planned and is not built either; nothing on it is for sale, and the free tier is not a trial of it.</p>
           </div>
           <div class="feature">
             <h3>Who makes it</h3>
-            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product rather than a venture-backed platform, which is why the invite list is short, the roadmap is honest about what isn&rsquo;t built, and there is no sales team to get past &mdash; questions go to a person.</p>
+            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product rather than a venture-backed platform, which is why the invite list is short, the roadmap is honest about what isn&rsquo;t built, and there is no sales team to get past. Questions go to a person.</p>
           </div>
           <div class="feature">
             <h3>See it before you believe any of this</h3>
@@ -1408,7 +1501,7 @@ const CONTACT_HTML = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     ${pageHead(
       '/contact',
-      'Contact &mdash; Pawservation',
+      'Contact | Pawservation',
       'How to reach Pawservation: ask for an invite, get help with an account you already have, or find out where to go if you are a pet owner looking for your own sitter.',
     )}
     <style>${PAGE_STYLE}</style>
@@ -1433,7 +1526,7 @@ const CONTACT_HTML = `<!doctype html>
           <p class="chip">Contact</p>
           <h1>Talk to a person.</h1>
           <p class="sub">
-            There is no support desk and no sales team &mdash; Pawservation is small enough that
+            There is no support desk and no sales team. Pawservation is small enough that
             messages reach the person who builds it. Here is the quickest route for each reason
             you might be writing.
           </p>
@@ -1444,7 +1537,7 @@ const CONTACT_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>You&rsquo;re a pet owner looking for your sitter</h3>
-            <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we genuinely can&rsquo;t help: Pawservation is the software your sitter uses, not the sitter. We can&rsquo;t see, change, or cancel your booking, and we can&rsquo;t pass a message on. Your sitter&rsquo;s own booking page &mdash; the one you booked on &mdash; is where a booking can be changed or cancelled, and every email you&rsquo;ve had about a booking came from your sitter&rsquo;s business, with their address on it.</p>
+            <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we can&rsquo;t help: Pawservation is the software your sitter uses, not the sitter. We can&rsquo;t see, change, or cancel your booking, and we can&rsquo;t pass a message on. Your sitter&rsquo;s own booking page, the one you booked on, is where a booking can be changed or cancelled, and every email you&rsquo;ve had about a booking came from your sitter&rsquo;s business, with their address on it.</p>
           </div>
           <div class="feature">
             <h3>You run a pet-care business and want an account</h3>
@@ -1452,7 +1545,7 @@ const CONTACT_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>You already have an account and something is wrong</h3>
-            <p>Email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}?subject=Pawservation%20support">${htmlEscape(SUPPORT_EMAIL)}</a> and say which business you run &mdash; that&rsquo;s enough to find your account. Include what you expected to happen and what happened instead; if it involves a specific booking, the dates and the client&rsquo;s first name are enough to locate it. Your dashboard is at <a href="/admin">the sign-in page</a> if you just need to get back in; it will email you a reset link.</p>
+            <p>Email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}?subject=Pawservation%20support">${htmlEscape(SUPPORT_EMAIL)}</a> and say which business you run; that&rsquo;s enough to find your account. Include what you expected to happen and what happened instead; if it involves a specific booking, the dates and the client&rsquo;s first name are enough to locate it. Your dashboard is at <a href="/admin">the sign-in page</a> if you just need to get back in; it will email you a reset link.</p>
           </div>
           <div class="feature">
             <h3>Press, partnerships, or anything else</h3>

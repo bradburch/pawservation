@@ -83,7 +83,10 @@ describe('SEO surface', () => {
 
   it('never declares a large-image card without an image to fill it', async () => {
     const { env } = createTestEnv();
-    for (const path of ['/', '/how-it-works', '/privacy', '/terms']) {
+    // Every page pageHead builds, not the four that existed when it was written: /about and
+    // /contact are the two an agent vetting this product reads, so an empty box on their unfurl
+    // is the worst place to have one.
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact']) {
       const body = await (await app.request(path, {}, env)).text();
       // The pair has to agree. `summary_large_image` crops to roughly 1.91:1, and the only
       // candidate image this repo owns is a 932x1990 portrait screenshot — declaring it would
@@ -151,6 +154,75 @@ describe('SEO surface', () => {
     const nasty = await (await app.request('/embed/sunny-paws', {}, renamed.env)).text();
     // Tenant-controlled: it may not open a tag or close the title early.
     expect(nasty).toContain('<title>Book with Paws &lt;b&gt;&amp;amp; &lt;/b&gt;Co</title>');
+  });
+
+  it('gives each embed page a link-preview card addressed to the pet OWNER', async () => {
+    const stub =
+      '<!doctype html><html><head><title>Book with us</title></head><body></body></html>';
+    const { env } = createTestEnv({ html: stub });
+    const html = await (await app.request('/embed/sunny-paws', {}, env)).text();
+
+    // The pair moves together or not at all, exactly as pageHead's docblock requires: a
+    // large-image card with no image unfurls as an empty box, and this image under a `summary`
+    // card is cropped to a square it was not built for.
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+    expect(html).toContain(
+      `<meta property="og:image" content="${BRAND_ORIGIN}/img/og-booking.png" />`,
+    );
+    // A SECOND card, not a reuse of the marketing one: the reader here has been handed her own
+    // sitter's booking link, so the recruiting copy on og-card.png is the wrong words entirely.
+    expect(html).not.toContain('og-card.png');
+    expect(html).not.toContain('Free for one sitter');
+
+    expect(html).toContain('<meta property="og:title" content="Book with Sunny Paws" />');
+    // Generic over every tenant on purpose: naming boarding to a dog walker's clients would
+    // advertise a service she does not sell. Her own list is on the page itself.
+    const description = html.match(/<meta property="og:description" content="([^"]+)"/)?.[1] ?? '';
+    expect(description.length).toBeGreaterThan(50);
+    for (const service of ['boarding', 'walking', 'daycare', 'check-in', 'house sitting']) {
+      expect(description.toLowerCase(), service).not.toContain(service);
+    }
+    // Absolute and pinned, for the two different reasons the docblock gives: an unfurler has no
+    // page context to resolve a relative image against, and a link forwarded from the workers.dev
+    // copy must unfurl as the SAME object as one from the custom domain.
+    expect(html).toContain(`<meta property="og:url" content="${BRAND_ORIGIN}/embed/sunny-paws" />`);
+    // Unchanged neighbours: the title splice, the canonical, and the JSON-LD that still keeps the
+    // REQUEST origin.
+    expect(html).toContain('<title>Book with Sunny Paws</title>');
+    expect(html).toContain(`<link rel="canonical" href="${BRAND_ORIGIN}/embed/sunny-paws" />`);
+    expect(html).toContain('"url":"http://localhost/embed/sunny-paws"');
+  });
+
+  it('escapes a tenant name that tries to break out of the card attributes', async () => {
+    const stub =
+      '<!doctype html><html><head><title>Book with us</title></head><body></body></html>';
+    const { env, raw } = createTestEnv({ html: stub });
+    raw.exec(
+      `UPDATE Tenants SET DisplayName='Paws " onload="x" <b>&amp;</b> Co' WHERE Slug='sunny-paws';`,
+    );
+    const html = await (await app.request('/embed/sunny-paws', {}, env)).text();
+    const escaped = 'Paws &quot; onload=&quot;x&quot; &lt;b&gt;&amp;amp;&lt;/b&gt; Co';
+    expect(html).toContain(`<meta property="og:title" content="Book with ${escaped}" />`);
+    expect(html).toContain(`<title>Book with ${escaped}</title>`);
+    // The raw quote is what would close the attribute and let `onload=` land as real markup on a
+    // page every one of that sitter's clients opens.
+    expect(html).not.toContain('onload="x"');
+  });
+
+  it('leaks no card tags for a tenant that does not resolve', async () => {
+    const stub =
+      '<!doctype html><html><head><title>Book with us</title></head><body></body></html>';
+    const { env, raw } = createTestEnv({ html: stub });
+    raw.exec(`UPDATE Tenants SET DisabledAt='2026-07-24 00:00:00' WHERE Slug='sunny-paws';`);
+    for (const slug of ['sunny-paws', 'no-such-sitter']) {
+      const html = await (await app.request(`/embed/${slug}`, {}, env)).text();
+      // Same behaviour as before this existed: the built page, untouched. A disabled business
+      // must not unfurl as an invitation to book with it.
+      expect(html, slug).toBe(stub);
+      // The dedicated machine-readable route is the one that 404s, and still does.
+      const llms = await app.request(`/embed/${slug}/llms.txt`, {}, env);
+      expect(llms.status, slug).toBe(404);
+    }
   });
 
   it('leaves the API crawlable but unindexable, so the embed widget can still render', async () => {
@@ -263,8 +335,11 @@ describe('SEO surface', () => {
     }
   });
 
-  it('ships a social card at the aspect ratio the tags declare', () => {
-    const png = readFileSync(join(PUBLIC_DIR, 'img', 'og-card.png'));
+  it.each([
+    ['og-card.png', 'the marketing pages'],
+    ['og-booking.png', 'a sitter&rsquo;s booking page'],
+  ])('ships %s at the aspect ratio the tags declare', (file) => {
+    const png = readFileSync(join(PUBLIC_DIR, 'img', file));
     // PNG header: width and height are big-endian uint32 at byte 16 and 20. The declared
     // og:image:width/height are a promise about the bytes, and a card cropped by an unfurler to a
     // ratio it was not built for is the exact defect this asset replaced.
@@ -311,6 +386,67 @@ describe('SEO surface', () => {
       // One footer, so the drift that had already split four copies into two variants cannot
       // resume as a fifth and sixth.
       expect(body.match(/<footer class="foot">/g)?.length, path).toBe(1);
+    }
+  });
+
+  /**
+   * The em-dash budget. The owner's instruction was "remove em dashes and obvious AI writing", and
+   * a prospective sitter reading these pages cold said the same thing unprompted: "you use an em
+   * dash in nearly every paragraph, I noticed by the second section." The pages carried 152 of
+   * them. A count, rather than a style note in a doc, is what stops that coming back one
+   * convenient parenthetical at a time.
+   *
+   * The ONE allowed occurrence is the literal name of the Google calendar this product creates
+   * (`PET_CALENDAR_SUMMARY` in server/lib/google-calendar.ts). It is a product string, not
+   * punctuation: recasting it would leave the copy describing a calendar that does not exist under
+   * that name. Every other dash was recast into the punctuation the sentence actually needed —
+   * never swapped for an en dash or a hyphen, which is the same tic wearing a different glyph.
+   *
+   * `&ndash;` inside a date range ("Aug 20 &ndash; Aug 23", "weekdays 10&ndash;2") is a correct en
+   * dash and is deliberately not covered here.
+   */
+  it('keeps em dashes out of the marketing copy', async () => {
+    const { env } = createTestEnv();
+    // Matching `&mdash;` alone was blind to the character itself, and 36 raw U+2014s were
+    // shipping under it: four on every page that inlines PAGE_STYLE (its CSS comments are served
+    // verbatim inside <style>), plus the invite-request pages, two of which carried one inside a
+    // <title> a visitor reads in her browser tab. Both numeric entity forms are covered for the
+    // same reason: a browser renders `&#8212;` as the identical glyph.
+    const EM_DASH = /\u2014|&mdash;|&#8212;|&#x2014;/gi;
+    const pages: { label: string; body: string }[] = [];
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact'])
+      pages.push({ label: path, body: await (await app.request(path, {}, env)).text() });
+    // The two transactional pages render from server/routes/invite-request.ts rather than from
+    // pageHead, so they were outside this loop: the thanks page was spot-checked for `&mdash;`
+    // only and the 400 re-render was checked nowhere at all. Both inline PAGE_STYLE.
+    pages.push({
+      label: '/request-invite/thanks',
+      body: await (await app.request('/request-invite/thanks', {}, env)).text(),
+    });
+    const rerender = await app.request(
+      '/request-invite',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'name=&email=&about=',
+      },
+      env,
+    );
+    expect(rerender.status).toBe(400);
+    pages.push({ label: '/request-invite (400 re-render)', body: await rerender.text() });
+
+    for (const { label, body } of pages) {
+      const allowed = (body.match(/Pawservation &mdash; Pet bookings/g) ?? []).length;
+      expect(body.match(EM_DASH)?.length ?? 0, `${label}: em dashes beyond the calendar name`).toBe(
+        allowed,
+      );
+      // The dash must not have been laundered into another dash. Hyphens inside words
+      // ("invite-only", "two-dog") are fine; a spaced hyphen or an en dash between words is the
+      // same punctuation habit under a different glyph. Date ranges keep their en dash.
+      expect(body, `${label}: spaced hyphen used as a dash`).not.toMatch(/\w - \w/);
+      expect(body, `${label}: en dash used as a dash between words`).not.toMatch(
+        /[a-z] &ndash; [a-z]/,
+      );
     }
   });
 

@@ -1,6 +1,7 @@
 import { DEFAULT_TIMEZONE } from '../../../src/shared/index.js';
 import { IconStore } from '../../shared-ui/icons';
-import type { SettingsSectionProps } from '../shared.js';
+import type { Session, SettingsSectionProps } from '../shared.js';
+import { ExportPanel } from '../ExportPanel';
 import { Hint } from '../Hint';
 import { TIMEZONES } from '../timezones.js';
 import { blockNegativeNumberKeys, clampNullableNumber } from './fields.js';
@@ -38,12 +39,15 @@ function reachBackChoices(current: number): number[] {
 }
 
 export function BusinessSection({
+  session,
   settings,
   setSettings,
   dirty,
   saveBlocked,
   onSave,
 }: SettingsSectionProps & {
+  /** Needed only by the data export, which fetches CSV bytes with the admin bearer token. */
+  session: Session;
   /** True while the staged settings draft differs from the last save. */
   dirty: boolean;
   /** True while an unpriced option elsewhere blocks the settings save. */
@@ -153,17 +157,39 @@ export function BusinessSection({
       </label>
       <label>
         <span className="pb-labelrow">
-          House sitting and boarding
-          <Hint label="House sitting and boarding">
-            You can only be in one place, so a house sit and a boarding normally can&rsquo;t share a
-            day. This is the exception you allow for <em>handovers</em> — a boarding that starts as
-            a house sit wraps up, or the other way round. It only ever covers a day one stay is
-            leaving on as the other arrives, so a boarding can never sit in the middle of a house
-            sit however high you set this.
+          How much a boarding may overlap a house sit
+          <Hint label="How much a boarding may overlap a house sit">
+            <strong>
+              A stay that starts on the day another one ends has not overlapped at all.
+            </strong>{' '}
+            You slept in the first house and then the second, so out of the Smiths on Friday morning
+            and into the Joneses that Friday evening is fine at every setting here, even though both
+            bookings show Friday on your calendar. This setting is only about stays that would share
+            a <em>night</em>.
+            <br />
+            <br />
+            You can only sleep in one house, so a night holds one house sit.{' '}
+            <strong>Two house sits never share a night</strong>, on any of the numbered settings:
+            there is nothing to hand over when both want the same night. A one-night house sit
+            therefore can&rsquo;t share its night with anything at all. That counts houses, not
+            animals, so a house sit for one cat fills the night as fully as a house sit for three
+            dogs and no cap makes room for another.
+            <br />
+            <br />
+            The number itself is what you allow between a house sit and a <em>boarding</em>:
+            nothing, one <em>handover</em> day, or one at each end of a stay. A handover only ever
+            covers a day one stay is leaving on as the other arrives, so nothing can sit in the
+            middle of a house sit. Both stays are judged, so the answer doesn&rsquo;t depend on
+            which was booked first.
+            <br />
+            <br />
+            The last option is not a larger allowance. It turns the whole check off, house sits
+            included, and nothing is held apart at all. Boarding on its own is untouched either way:
+            boarders are at your place, and how many at once is your boarding cap.
           </Hint>
         </span>
         <select
-          aria-label="How much house sitting and boarding may overlap"
+          aria-label="How much a boarding may overlap a house sit, or whether the check runs at all"
           value={settings.housesitBoardingOverlapDays ?? ''}
           onChange={(e) =>
             setSettings({
@@ -175,7 +201,7 @@ export function BusinessSection({
           <option value="0">May never overlap</option>
           <option value="1">May overlap by one handover day</option>
           <option value="2">May overlap by one handover day at each end of a stay</option>
-          <option value="">No limit — I&rsquo;ll sort out any clashes myself</option>
+          <option value="">Turn this check off: I&rsquo;ll sort out clashes myself</option>
         </select>
       </label>
       <label>
@@ -248,6 +274,12 @@ export function BusinessSection({
         </button>
         {!dirty && <span className="pb-hint">All changes saved</span>}
       </div>
+      {/* Below the save bar, and deliberately in THIS section rather than beside the client
+          importer in Clients: the export spans clients, pets, bookings and payments, so it belongs
+          to the account rather than to any one list — and Business is where the sitter already
+          comes for things that are true of her business as a whole. It saves nothing, so it sits
+          past the save control rather than inside the staged-settings form. */}
+      <ExportPanel session={session} />
     </>
   );
 }

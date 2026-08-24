@@ -113,6 +113,11 @@ the availability/conflict math.
   find over owner↔pet links), so a shared client sees one balance, not one per owner.
 - **Venmo CSV import** — upload a Venmo export to preview matched transactions against
   outstanding bookings, then confirm to record payments; idempotent by transaction id.
+- **Data export** — `GET /api/:slug/admin/export/:dataset` serves four CSVs (clients, pets,
+  bookings, payments) from the Business tab: a sitter's records, not a backup of her account.
+  Time off, service/rate settings and per-charge detail are deliberately outside the files, and
+  the in-app copy is pinned to that scope by a test. Formula-injection-safe, BOM-prefixed for
+  Excel, one-way (nothing reads a file back in).
 - **Holiday pricing & one-off charges** — a service can carry a separate stored rate for
   booked nights that land on a US holiday, and sitters can add one-off extra charges to a
   booking on top of its base estimate.

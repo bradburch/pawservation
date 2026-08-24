@@ -1187,6 +1187,34 @@ export const adminApi = {
         body: JSON.stringify({ calendarId }),
       }),
   },
+  /**
+   * DOWNLOAD ONE DATASET AS CSV. Cannot go through `request` — that helper parses the body as JSON,
+   * and cannot be a plain `<a href>` either, because the admin session is a JWT in localStorage and
+   * an anchor carries no Authorization header. So: fetch with the header, take the bytes, and let
+   * the caller hand the browser a Blob.
+   *
+   * The failure path still speaks the app's own error language: a non-2xx response is JSON like
+   * every other admin route's, so it is re-thrown as the same `ApiError` every caller already
+   * handles, rather than as a download that silently produces a file full of `{"error":...}`.
+   */
+  exportCsv: async (
+    slug: string,
+    token: string,
+    dataset: 'clients' | 'pets' | 'bookings' | 'payments',
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(`/api/${slug}/admin/export/${dataset}`, {
+      headers: authHeaders(token),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+      throw new ApiError(res.status, body.error ?? 'Export failed — try again.', body.code);
+    }
+    // The server names the file (it knows the tenant's timezone); this only reads that name back,
+    // falling back to a sane one if a proxy ever strips the header.
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const match = /filename="([^"]+)"/.exec(disposition);
+    return { blob: await res.blob(), filename: match?.[1] ?? `pawservation-${dataset}.csv` };
+  },
   // Explicit prices for a specific set of pets (PetGroupPricing) — upsert/delete-ONE, mirroring
   // server/routes/admin.ts's routes 1:1. Consumed by the account-card rate editor.
   petGroupRates: {

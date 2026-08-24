@@ -862,6 +862,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     ),
     business: (
       <BusinessSection
+        session={session}
         settings={settings}
         setSettings={setSettings}
         dirty={dirty}

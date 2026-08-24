@@ -77,6 +77,7 @@ import {
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
+import { buildExportCsv, isExportDataset } from '../lib/data-export';
 import { isUniqueViolation } from '../lib/db-errors';
 import {
   candidateRank,
@@ -3982,4 +3983,63 @@ export const adminRoutes = new Hono<AppEnv>()
     // agreed to. Same non-oracle posture as the other booking routes.
     if (!ok) return c.json({ error: 'Not found.' }, 404);
     return c.json({ estCost });
+  })
+
+  /**
+   * TAKE YOUR BOOK WITH YOU. One route family rather than four sibling routes: the four datasets
+   * differ only in which rows they name, so a `:dataset` param keeps the auth, the tenant scoping,
+   * the headers and the filename in ONE place — an export that forgot its Content-Disposition, or
+   * worse its tenant, could only ever be the fifth one somebody added beside the others.
+   *
+   * It sits under this app's single `.use('/:slug/admin/*', adminAuth)`, so an unauthenticated
+   * caller never reaches the handler, and every read `buildExportCsv` dispatches to carries
+   * `WHERE TenantId = ?` in its own SQL. An unknown dataset is a 404 with the same shape as every
+   * other not-found here.
+   *
+   * The CSV itself is built by `serializeCsvRows` (server/lib/csv.ts), which NEUTRALISES a field
+   * whose first character would make Excel or Sheets read it as a formula — client names and care
+   * notes are text other people typed, and this file's whole purpose is to be opened in a
+   * spreadsheet.
+   */
+  .get('/:slug/admin/export/:dataset', async (c) => {
+    const tenant = c.get('tenant');
+    const dataset = c.req.param('dataset');
+    if (!isExportDataset(dataset)) return c.json({ error: 'Not found.' }, 404);
+    const csv = await buildExportCsv(c.env.PAWSERVATION_DB, tenant.Id, dataset);
+    // Dated in the sitter's OWN timezone, like every other date this app prints for her: a file
+    // named for tomorrow (or yesterday) is a file she cannot line up with what she was looking at.
+    //
+    // Guarded because `Intl` throws a RangeError on an IANA name it does not recognise, and a
+    // stored Timezone can be one — this is the route whose entire promise is "you can always get
+    // your data out", so a bad string in one settings column must cost her a filename, never the
+    // download. The fallback is the instance default; nothing but the filename reads this value.
+    let today: string;
+    try {
+      today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
+    } catch {
+      today = getPacificDateStr();
+    }
+    // Every slug this app mints is already [a-z0-9-] (slugifyServiceLabel), but the filename lands
+    // inside a QUOTED header value, so it is narrowed here rather than trusted: a stray quote or
+    // newline in a stored slug would be header injection, and the cost of not finding out is a
+    // whole class of bug for one `replace`.
+    const safeSlug = tenant.Slug.replace(/[^a-zA-Z0-9-]+/g, '-');
+    // The BOM is prepended HERE and never inside `serializeCsvRows`: that function and
+    // `parseCsvRows` are exact inverses, which is what makes the round-trip test meaningful, and a
+    // serializer that emitted a byte its own parser reads as part of the first header cell would
+    // quietly break that. It belongs to the DELIVERY of the file, not to the format.
+    //
+    // It is here at all because the panel promises the file "opens in Excel". Excel on Windows
+    // ignores the HTTP charset once the file has been saved and opened from disk, falling back to
+    // the system codepage, so a client named José or Müller arrives as mojibake without it. Every
+    // other reader (Numbers, Sheets, a parser) treats a leading BOM as the UTF-8 signature it is.
+    return c.body(`\uFEFF${csv}`, 200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="pawservation-${safeSlug}-${dataset}-${today}.csv"`,
+      // Every other admin route answers JSON that nothing tries to store; this one is a file of
+      // client names, emails and phone numbers. `no-store` keeps it out of any shared cache and out
+      // of the browser's own back/forward cache, so the copy that persists is the one the sitter
+      // deliberately saved.
+      'Cache-Control': 'no-store',
+    });
   });

@@ -1467,6 +1467,81 @@ export async function listPaymentsForAccount(
 }
 
 /**
+ * A payment plus the human labels the sitter needs to recognise it — the booking it settles (its
+ * dates, its service, whose it was) or, for a household payment, the pet its account id names and
+ * one of that pet's owners.
+ *
+ * `AccountId` is a PET id (0011), so this join is how "which household" becomes a word rather than
+ * an opaque id. It resolves by equality on that one pet deliberately, not by household membership:
+ * this is a record of what was FILED, and a household whose account id has since been renamed by a
+ * newer pet must still export under the anchor the row actually carries.
+ *
+ * `CustomerName`/`CustomerEmail` name the PERSON the payment came from, whichever ledger it sits
+ * on: reached through the booking for a booking payment, and through the account pet's owners for a
+ * household one. Reaching them only through `BookingRequests` was the defect review found — every
+ * household payment exported with a blank client, which is money in the file with nobody's name on
+ * it. A `COALESCE` is unambiguous here because `Payments`' own `CHECK` makes the two sides mutually
+ * exclusive: at most one of them can ever be non-NULL.
+ */
+export type TenantPaymentRow = PaymentRow & {
+  BookingServiceType: string | null;
+  BookingStartDate: string | null;
+  BookingEndDate: string | null;
+  CustomerEmail: string | null;
+  CustomerName: string | null;
+  AccountPetName: string | null;
+};
+
+/**
+ * EVERY payment this tenant has recorded, both ledgers at once — the booking-settling rows and the
+ * household ones — newest paid-date first (`listPaymentsForBooking`'s order). The only reader is
+ * the sitter's own data export, which wants her whole book in one file and must therefore not ask
+ * which side a row sits on; the `CHECK` on `Payments` guarantees it is exactly one of the two.
+ *
+ * `ExternalRef` is deliberately absent, as it is from `PaymentRow` and every wire payload: it is the
+ * Venmo importer's idempotency key, written by that module and read only in aggregate.
+ *
+ * The household side reaches a person through a SUBQUERY that picks one owner, never a plain join
+ * through `PetOwners`: a pet may be co-owned, and a join would emit that payment once per owner —
+ * one sum of money appearing twice in her file. The owner chosen is the lowest `Email`, which
+ * `UNIQUE (TenantId, Email)` makes a total order, so the pick is deterministic across exports
+ * rather than whatever SQLite happened to visit first. Naming ONE co-owner is the honest simple
+ * answer here: the household is the thing that paid, and the column exists so she recognises the
+ * row, not so it assigns responsibility. The co-owner she does not see is one row away in the pets
+ * export, which lists every owner of that pet.
+ */
+export async function listPaymentsForTenant(
+  db: D1Database,
+  tenantId: string,
+): Promise<TenantPaymentRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT p.Id, p.TenantId, p.BookingRequestId, p.AccountId, p.Amount, p.Method, p.PaidDate,
+              p.Note, p.CreatedAt,
+              b.ServiceType AS BookingServiceType, b.StartDate AS BookingStartDate,
+              b.EndDate AS BookingEndDate,
+              COALESCE(eu.Email, aeu.Email) AS CustomerEmail,
+              COALESCE(eu.Name, aeu.Name) AS CustomerName,
+              pet.Name AS AccountPetName
+       FROM Payments p
+       LEFT JOIN BookingRequests b ON b.Id = p.BookingRequestId AND b.TenantId = p.TenantId
+       LEFT JOIN EndUsers eu ON eu.Id = b.EndUserId AND eu.TenantId = p.TenantId
+       LEFT JOIN EndUserPets pet ON pet.Id = p.AccountId AND pet.TenantId = p.TenantId
+       LEFT JOIN EndUsers aeu ON aeu.TenantId = p.TenantId AND aeu.Id = (
+         SELECT po.EndUserId FROM PetOwners po
+         JOIN EndUsers cand ON cand.Id = po.EndUserId AND cand.TenantId = po.TenantId
+         WHERE po.TenantId = p.TenantId AND po.PetId = p.AccountId
+         ORDER BY cand.Email LIMIT 1
+       )
+       WHERE p.TenantId = ?
+       ORDER BY p.PaidDate DESC, p.CreatedAt DESC`,
+    )
+    .bind(tenantId)
+    .all<TenantPaymentRow>();
+  return results;
+}
+
+/**
  * Delete one household payment. Carries the account id for the same reason `deletePayment` carries
  * the booking id: a payment id paired with the wrong household in the URL must report false (the
  * route 404s) rather than silently deleting someone else's money. Deleting is the only correction
@@ -4448,15 +4523,24 @@ export async function ensureDemoCustomer(
   };
 }
 
-export async function listCustomers(db: D1Database, tenantId: string): Promise<EndUser[]> {
+/**
+ * `CreatedAt` is selected HERE rather than added to `ENDUSER_COLS`: exactly one reader wants it —
+ * the sitter's data export, which owes her the date she added a client — and the shared projection
+ * backs the several functions that RETURN a freshly-built EndUser without re-reading it, which
+ * would then have to invent a value the database wrote itself.
+ */
+export async function listCustomers(
+  db: D1Database,
+  tenantId: string,
+): Promise<(EndUser & { CreatedAt: string })[]> {
   // The reserved demo identity (lib/demo.ts) is a real row but never a client the sitter
   // manages — its email is uncreatable via admin routes, so this filter can't hide real data.
   const { results } = await db
     .prepare(
-      `SELECT ${ENDUSER_COLS} FROM EndUsers WHERE TenantId = ? AND Email <> ? ORDER BY Email`,
+      `SELECT ${ENDUSER_COLS}, CreatedAt FROM EndUsers WHERE TenantId = ? AND Email <> ? ORDER BY Email`,
     )
     .bind(tenantId, DEMO_EMAIL)
-    .all<EndUser>();
+    .all<EndUser & { CreatedAt: string }>();
   return results;
 }
 

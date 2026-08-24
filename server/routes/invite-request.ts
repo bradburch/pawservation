@@ -106,10 +106,10 @@ function renderErrorPage(values: InviteFormValues): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawservation — invite request</title>
+    <title>Pawservation: invite request</title>
     <!-- Transactional, not a landing target: a "request sent" confirmation (and the 400 re-render
          of a form the homepage already carries) is thin duplicate content, and a searcher who
-         lands on either has arrived at a dead end. Kept crawlable so this tag is actually read —
+         lands on either has arrived at a dead end. Kept crawlable so this tag is actually read;
          see public/robots.txt for why a Disallow would defeat it. -->
     <meta name="robots" content="noindex" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
@@ -136,10 +136,10 @@ function renderThanksPage(fallback: boolean, ownerEmail: string): string {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pawservation — request sent</title>
+    <title>Pawservation: request sent</title>
     <!-- Transactional, not a landing target: a "request sent" confirmation (and the 400 re-render
          of a form the homepage already carries) is thin duplicate content, and a searcher who
-         lands on either has arrived at a dead end. Kept crawlable so this tag is actually read —
+         lands on either has arrived at a dead end. Kept crawlable so this tag is actually read;
          see public/robots.txt for why a Disallow would defeat it. -->
     <meta name="robots" content="noindex" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
@@ -149,7 +149,7 @@ function renderThanksPage(fallback: boolean, ownerEmail: string): string {
   </head>
   <body>
     <main class="wrap" style="padding:96px 0;text-align:center;">
-      <h1>Thanks &mdash; we&rsquo;ve got it</h1>
+      <h1>Thanks, we&rsquo;ve got it</h1>
       <p class="note" style="margin:0 auto 12px;font-size:1rem;">
         We&rsquo;ll be in touch by email to set up your services, rates, and booking page.
       </p>
