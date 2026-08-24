@@ -5,6 +5,19 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Two toolchain majors are held back deliberately. Grouped updates bundle patches with
+    # majors, so "9 dev updates" quietly carried ESLint 9→10 and TypeScript 6→7 together (PR
+    # #143) — one blocked at install by a peer conflict, the other a change to the compiler this
+    # repo's CI gates on. A major of either deserves its own PR whose failures can be read, not a
+    # line in a group that is otherwise safe to wave through. Minors and patches still flow.
+    ignore:
+      - dependency-name: eslint
+        update-types: ['version-update:semver-major']
+      # Versioned in lockstep with eslint itself; letting it move alone splits the pair.
+      - dependency-name: '@eslint/js'
+        update-types: ['version-update:semver-major']
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
     groups:
       dev-dependencies:
         dependency-type: development
