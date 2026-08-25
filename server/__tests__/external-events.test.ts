@@ -8,6 +8,7 @@ import {
   listSyncedBookingIds,
   listUnsyncedFutureBookings,
   updateBookingStatus,
+  upsertExternalEventStatement,
 } from '../db/repo';
 import { rowsToCapacityEvents } from '../lib/availability';
 import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
@@ -175,6 +176,46 @@ function spyOnDeleteBindCounts(env: Env): number[] {
   });
   return bindCounts;
 }
+
+describe('upsertExternalEventStatement — change-guarded re-upsert (D1 write-cap fix)', () => {
+  it('writes zero rows when re-upserted with identical values', async () => {
+    const { env } = createTestEnv();
+    const gcalEventId = 'gev_unchanged';
+    const id = await seedExternal(env, { gcalEventId });
+    const row = await env.PAWSERVATION_DB.prepare(
+      'SELECT StartDate, EndDate, ExternalSummary FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ StartDate: string; EndDate: string; ExternalSummary: string }>();
+    const result = await upsertExternalEventStatement(env.PAWSERVATION_DB, TENANT_A, {
+      gcalEventId,
+      summary: row!.ExternalSummary,
+      startDate: row!.StartDate,
+      endDateExclusive: row!.EndDate,
+    }).run();
+    expect((result.meta as { changes?: number }).changes ?? 0).toBe(0);
+  });
+
+  it('writes the row when a value actually changed', async () => {
+    const { env } = createTestEnv();
+    const gcalEventId = 'gev_moved';
+    const id = await seedExternal(env, { gcalEventId });
+    const movedStart = addDays(EXT_START, 1);
+    const result = await upsertExternalEventStatement(env.PAWSERVATION_DB, TENANT_A, {
+      gcalEventId,
+      summary: 'Neighbor stay — Rex',
+      startDate: movedStart,
+      endDateExclusive: EXT_END,
+    }).run();
+    expect((result.meta as { changes?: number }).changes ?? 0).toBeGreaterThan(0);
+    const row = await env.PAWSERVATION_DB.prepare(
+      'SELECT StartDate FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ StartDate: string }>();
+    expect(row?.StartDate).toBe(movedStart);
+  });
+});
 
 describe('deleteExternalEventsMissing — D1 100-bound-parameter cap', () => {
   afterEach(() => vi.restoreAllMocks());
