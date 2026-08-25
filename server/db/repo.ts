@@ -4046,9 +4046,10 @@ const DELETE_CHUNK_SIZE = 90;
  * ServiceType = 'external'. These rows are read-only mirrors: EndUserId NULL, EstCost NULL, never
  * priced, never payable, counted by listCapacityRows as blocked-like. Tenant-scoped. The DO
  * UPDATE's own WHERE clause skips the write entirely when nothing changed — this runs every 15
- * minutes against a calendar that rarely does, and SQLite rewrites both indexed columns'
- * entries on every UPDATE whether or not the value moved, so an unguarded upsert here is what
- * blew the D1 free-tier write cap. `IS NOT`, not `!=`: ExternalSummary is nullable. */
+ * minutes against a calendar that rarely does, and SQLite rewrites StartDate's indexed entries
+ * (it's in both idx_BookingRequests_Tenant_Dates and idx_BookingRequests_Slot) on every UPDATE
+ * whether or not the value moved, so an unguarded upsert here is what blew the D1 free-tier
+ * write cap. `IS NOT`, not `!=`: ExternalSummary is nullable. */
 export function upsertExternalEventStatement(
   db: D1Database,
   tenantId: string,

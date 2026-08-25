@@ -193,7 +193,7 @@ describe('upsertExternalEventStatement — change-guarded re-upsert (D1 write-ca
       startDate: row!.StartDate,
       endDateExclusive: row!.EndDate,
     }).run();
-    expect((result.meta as { changes?: number }).changes ?? 0).toBe(0);
+    expect(result.meta.changes ?? 0).toBe(0);
   });
 
   it('writes the row when a value actually changed', async () => {
@@ -207,7 +207,7 @@ describe('upsertExternalEventStatement — change-guarded re-upsert (D1 write-ca
       startDate: movedStart,
       endDateExclusive: EXT_END,
     }).run();
-    expect((result.meta as { changes?: number }).changes ?? 0).toBeGreaterThan(0);
+    expect(result.meta.changes ?? 0).toBeGreaterThan(0);
     const row = await env.PAWSERVATION_DB.prepare(
       'SELECT StartDate FROM BookingRequests WHERE Id = ?',
     )
