@@ -389,8 +389,8 @@ const LANDING_HTML = `<!doctype html>
               request from your phone. It also keeps track of what every client owes you.
             </p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="/demo">Try the demo</a>
-              <a class="btn btn-ghost" href="#invite-h">Ask for an invite</a>
+              <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+              <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
               The demo is a made-up sitter&rsquo;s account, so there is nothing to sign up for and
@@ -455,14 +455,14 @@ const LANDING_HTML = `<!doctype html>
               <div class="step-body">
                 <span class="step-no">02</span>
                 <h3>They pick the dates</h3>
-                <p>The calendar only shows the days you can take, counting the pets they picked.</p>
+                <p>The calendar shows the days you can take, counting the pets they picked, or a visit time for walks and drop-ins.</p>
               </div>
             </li>
             <li class="step-card">
               <div class="frame">
                 <img
                   src="/img/landing/step-request.webp"
-                  alt="Booking summary showing the selected dates, an estimated cost of $150, and a Send request button"
+                  alt="Booking summary showing the selected dates, an estimated cost of $150, and a Request Booking button"
                 />
               </div>
               <div class="step-body">
@@ -517,7 +517,7 @@ const LANDING_HTML = `<!doctype html>
               <h3 class="wf-h">What you do</h3>
               <div class="wf-pair">
                 <p class="wf-keep">You confirm it or you decline it.</p>
-                <p>The request carries the dates, the pets, your questions answered and a price, so you can settle it in one tap between walks.</p>
+                <p>The request carries the dates, the pets, your questions answered and a price, so you can settle it in one tap from your phone. A new request waits in your dashboard, and on your Google Calendar if you&rsquo;ve connected it.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You never quote the same job twice.</p>
@@ -602,15 +602,15 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Clients and pets</h3>
-              <p>Invite clients by email or import the list you already have, with care notes on every animal.</p>
+              <p>Invite clients by email or import the list you already have, and keep care notes on each animal.</p>
             </div>
             <div class="feature">
               <h3>Payments and what you&rsquo;re owed</h3>
-              <p>Log cash, Venmo, Zelle, PayPal or a check against one running balance per household. Upload the CSV from Venmo to match a month in one pass.</p>
+              <p>Log cash, Venmo, Zelle, PayPal or a check, and each client&rsquo;s balance updates itself. Upload the CSV from Venmo and a month of payments matches up at once.</p>
             </div>
             <div class="feature">
               <h3>Google Calendar</h3>
-              <p>Connect it once and your bookings turn up on the calendar you already keep.</p>
+              <p>Connect it once and your bookings turn up on the calendar you already keep, or skip it and everything else works the same.</p>
             </div>
           </div>
           <div class="cta-row mid-cta">
@@ -636,19 +636,15 @@ const LANDING_HTML = `<!doctype html>
               <p class="note">Nothing about how you work has to change.</p>
               <div class="wf-pair">
                 <p class="wf-keep">You keep collecting money your own way.</p>
-                <p>Cash, Venmo, Zelle or a check on the counter, and Solo never touches the money.</p>
+                <p>Cash, Venmo, Zelle or a check on the counter. Pawservation never touches the money.</p>
               </div>
               <div class="wf-pair">
-                <p class="wf-keep">You keep living in Google Calendar.</p>
-                <p>Your bookings appear on the calendar you already keep, and what you put there by hand blocks requests.</p>
+                <p class="wf-keep">You keep your calendar.</p>
+                <p>Bookings appear on the Google Calendar you already keep, and what you put there by hand blocks requests. If you don&rsquo;t use it, nothing changes.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You keep the website you already have.</p>
-                <p>One line of HTML goes on a page you already publish.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">Your clients stay your clients.</p>
-                <p>You add each one yourself, and there is no marketplace for anybody to browse.</p>
+                <p>One line goes on a page you already publish.</p>
               </div>
             </div>
             <div>
@@ -662,19 +658,15 @@ const LANDING_HTML = `<!doctype html>
                 <p class="wf-keep">Walks and drop-ins: a lot of short ones.</p>
                 <p>The changes are what cost you, and a cancelled Wednesday, a swapped Thursday, an extra dog on Friday all arrive while you are out with someone else&rsquo;s dog. Your clients make those on the page.</p>
               </div>
-              <div class="wf-pair">
-                <p class="wf-keep">The rules you would otherwise repeat in every reply.</p>
-                <p>How much notice you need, how far ahead you take bookings, how many pets you can hold at once. You set them once and the calendar stops offering the days you cannot take.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">Working out who still owes you.</p>
-                <p>Log a payment as it arrives and it lands on one running balance per household, so the answer is on a screen rather than in your head.</p>
-              </div>
             </div>
           </div>
           <p class="note wf-more">
             <a href="/how-it-works">The full tour</a> walks through every rule and setting in detail.
           </p>
+          <div class="cta-row mid-cta">
+            <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+            <a class="btn btn-ghost" href="/demo">Try the demo</a>
+          </div>
         </div>
       </section>
 
@@ -698,13 +690,13 @@ const LANDING_HTML = `<!doctype html>
                 <span class="price-per">for one sitter</span>
               </p>
               <ul class="price-list">
-                <li>Booking widget on your own site, unlimited bookings</li>
+                <li>Booking page on your own site, unlimited bookings</li>
                 <li>Your availability rules, applied for you</li>
                 <li>How much notice you need, and how far ahead people can book</li>
                 <li>Rates, payments and one running balance per household</li>
                 <li>Cancellation policies, applied for you</li>
                 <li>Clients reschedule and cancel their own bookings</li>
-                <li>Client accounts and pet profiles</li>
+                <li>Client accounts and pet records</li>
                 <li>Google Calendar sync, both directions</li>
               </ul>
               <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
@@ -731,7 +723,6 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <p class="note wf-more">
-            Pawservation is invite-only while it grows.
             <a href="#invite-h">Ask for an invite</a> and we&rsquo;ll get you started.
           </p>
         </div>
@@ -742,7 +733,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="install-copy">
             <span class="label">Install</span>
             <h2 id="install-h">One line on any website</h2>
-            <p>Paste it into Squarespace, Wix or whatever you already use, change the slug to your own, and save. The widget sizes itself to fit.</p>
+            <p>Paste it into Squarespace, Wix or whatever you already use, swap in your business&rsquo;s short name, and save. It sizes itself to fit the page.</p>
             <p>It is safe on a public page, because only your clients can book. Anyone else gets a welcome under your name and a sign-in box.</p>
             <p>Forward this box to whoever edits your site.</p>
           </div>
@@ -760,6 +751,20 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
+      <section class="cta-band" aria-labelledby="invite-h">
+        <div class="wrap">
+          <div class="cta-panel">
+            <h2 id="invite-h">Ask for an invite</h2>
+            <p>Pawservation is invite-only while it grows. Tell us about your business and we&rsquo;ll set up your services, rates, and booking page.</p>
+            ${renderInviteForm()}
+          </div>
+        </div>
+      </section>
+
+      <!-- The FAQ sits AFTER the invite band on purpose: these three answers are limits (who can
+           book, whole-day time off, what the export leaves out), and the last thing a reader met
+           before the ask used to be a list of what the product does not do. The band keeps its
+           own id, so the footer's /#faq link and the tour's still land here. -->
       <section class="section band" id="faq" aria-labelledby="faq-h">
         <div class="wrap">
           <div class="section-head">
@@ -779,16 +784,6 @@ const LANDING_HTML = `<!doctype html>
               <h3>Can I get my data out?</h3>
               <p><strong>Yes.</strong> Your dashboard has an Export your data panel with four downloads: clients, pets, bookings and payments. Your settings stay here, and so does your time off, which is in none of the four files. There is no scheduled copy, and no way to load one of these files back in.</p>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="cta-band" aria-labelledby="invite-h">
-        <div class="wrap">
-          <div class="cta-panel">
-            <h2 id="invite-h">Want in?</h2>
-            <p>Pawservation is invite-only while it grows. Tell us about your business and we&rsquo;ll set up your services, rates, and booking page.</p>
-            ${renderInviteForm()}
           </div>
         </div>
       </section>
@@ -1065,8 +1060,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>Download the CSV Venmo gives you for a month and drop it into Earnings. Pawservation reads the payments that came in, lines each one up with the client who sent it by their Venmo name, and shows you every match before anything is recorded, so you approve what&rsquo;s right and fix what isn&rsquo;t. The file is read in memory and never stored, and uploading the same one twice records nothing twice.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Pawservation records payments. It never processes them.</p>
-              <p>The money goes from your client to you by whatever means you already use. Nothing routes through us, so there is no cut taken and no fee on your earnings. An earnings view totals up what you&rsquo;ve recorded.</p>
+              <p class="wf-keep">Pawservation records payments. On Solo it never processes them.</p>
+              <p>The money goes from your client to you by whatever means you already use. Nothing routes through Pawservation on Solo, so there is no cut taken and no fee on your earnings. Card payments are part of Pro. An earnings view totals up what you&rsquo;ve recorded.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Two dogs can cost more than one, and you decide how much more.</p>
@@ -1100,7 +1095,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>Service, dates, times, the pets by name, the estimated cost, and the client&rsquo;s email address: enough to answer from your phone without opening anything else.</p>
             </div>
             <div class="feature">
-              <h3>Nothing dead looks alive</h3>
+              <h3>A cancelled booking doesn&rsquo;t sit on your calendar</h3>
               <p>Decline a request, or cancel with nothing owed, and the event is removed. A cancellation that carries a fee keeps its event and retitles it <code>[CANCELLED]</code> instead: the dates are free again, but money you&rsquo;re still owed doesn&rsquo;t vanish out of your week.</p>
             </div>
             <div class="feature">
@@ -1193,7 +1188,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           </div>
           <div class="wf-math">
             <h3 class="wf-h">What about the stays you&rsquo;ve already agreed to?</h3>
-            <p>Straight answer: if the stay is on the calendar you connected, you can bring it across. Under Earnings, <em>Adopt past bookings from your calendar</em> reads the range you pick and shows you what it found: it matches the pets named in each event title against your own client list, prices each stay off today&rsquo;s rate card, and lets you correct any price before you press Adopt. Events it can&rsquo;t read are listed with the reason. Your calendar is only read, never changed, and nothing is recorded until you press the button.</p>
+            <p>If the stay is on the calendar you connected, you can bring it across. Under Earnings, <em>Adopt past bookings from your calendar</em> reads the range you pick and shows you what it found: it matches the pets named in each event title against your own client list, prices each stay off today&rsquo;s rate card, and lets you correct any price before you press Adopt. Events it can&rsquo;t read are listed with the reason. Your calendar is only read, never changed, and nothing is recorded until you press the button.</p>
             <p>What there&rsquo;s still no way to do is type an old booking in from nothing. If the stay was never on a calendar you connected, have the client send the request through your booking page. It takes them a minute, and then your calendar and your books match reality.</p>
           </div>
           <div class="wf-math">
@@ -1210,9 +1205,9 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <span class="label">Under the hood</span>
             <h2 id="next-h">The plumbing for what comes next is already in</h2>
             <p>
-              You can skip this section: it&rsquo;s for the software your clients might use,
-              not for you. It&rsquo;s groundwork, laid early because retrofitting it later is how
-              booking systems end up double-booking people.
+              This section is for software your clients might use. You can skip it. It is
+              groundwork, laid early because retrofitting it later is how booking systems end up
+              double-booking people.
             </p>
           </div>
           <div class="features">
@@ -1235,7 +1230,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
       <section class="cta-band" aria-labelledby="tour-cta-h">
         <div class="wrap">
           <div class="cta-panel">
-            <h2 id="tour-cta-h">That&rsquo;s the whole thing. Want in?</h2>
+            <h2 id="tour-cta-h">That is the whole tour. Ask for an invite when you&rsquo;re ready.</h2>
             <p>Pawservation is invite-only while it grows. Ask, and we&rsquo;ll set up your services, rates, and booking page. Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Or just poke at the demo first: it&rsquo;s a made-up sitter&rsquo;s account, nothing to sign up for, none of your own details asked for, nothing you can break.</p>
             <div class="cta-row">
               <a class="btn btn-inverse" href="/#invite-h">Ask for an invite</a>
@@ -1298,11 +1293,11 @@ const PRIVACY_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>What we collect</h3>
-            <p>From customers: name, email, phone, your pets&rsquo; names and any care notes you give your sitter, and the answers you give to your sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check).</p>
+            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>On Solo we never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check). Card payments are part of Pro.</p>
           </div>
           <div class="feature">
             <h3>Who we share it with</h3>
-            <p><strong>Resend</strong> sends our transactional email (login codes, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, and cost. <strong>Cloudflare</strong> is our hosting and database provider: everything above lives on Cloudflare&rsquo;s infrastructure.</p>
+            <p><strong>Resend</strong> sends our transactional email (login codes, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and your client&rsquo;s email address. <strong>Cloudflare</strong> is our hosting and database provider: everything above lives on Cloudflare&rsquo;s infrastructure.</p>
           </div>
           <div class="feature">
             <h3>Cookies</h3>
@@ -1326,7 +1321,7 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>Questions</h3>
-            <p>Reach us at <a href="mailto:brad@pawservation.com">brad@pawservation.com</a>.</p>
+            <p>Reach us at <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>.</p>
           </div>
         </div>
       </section>
@@ -1350,7 +1345,7 @@ const TERMS_HTML = `<!doctype html>
     ${pageHead(
       '/terms',
       'Terms &amp; Conditions | Pawservation',
-      'The terms that govern using Pawservation: what the booking software does, what it deliberately does not do with your money, and what each side is responsible for.',
+      'The terms that govern using Pawservation: what the booking software does, what it deliberately does not do with your money on Solo, and what each side is responsible for.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1382,7 +1377,7 @@ const TERMS_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>What Pawservation is</h3>
-            <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and her customer.</p>
+            <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and their customer.</p>
           </div>
           <div class="feature">
             <h3>Accounts</h3>
@@ -1390,7 +1385,7 @@ const TERMS_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>Payments</h3>
-            <p>Pawservation is not a payment processor. A sitter collects payment herself, outside Pawservation, and logs the amount here so her records stay accurate. We never process, store, or guarantee any payment, and any payment dispute is between the sitter and her customer.</p>
+            <p>On Solo, Pawservation is not a payment processor. A sitter collects payment themselves, outside Pawservation, and logs the amount here so their records stay accurate. On Solo we never process, store, or guarantee any payment. Card payments are part of Pro. Any payment dispute is between the sitter and their customer.</p>
           </div>
           <div class="feature">
             <h3>Acceptable use</h3>
@@ -1398,7 +1393,7 @@ const TERMS_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>Your data</h3>
-            <p>A sitter owns her business&rsquo;s client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
+            <p>A sitter owns their business&rsquo;s client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
           </div>
           <div class="feature">
             <h3>Availability</h3>
@@ -1445,7 +1440,7 @@ const ABOUT_HTML = `<!doctype html>
     ${pageHead(
       '/about',
       'About | Pawservation',
-      'Who makes Pawservation, why it exists, and the four rules the software will not break: nothing books itself, Solo never touches your money, your clients stay yours, and no price is charged that you did not type.',
+      'Who makes Pawservation, why it exists, and the four rules the software will not break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1485,21 +1480,21 @@ const ABOUT_HTML = `<!doctype html>
           <div class="feature">
             <h3>Four rules the software will not break</h3>
             <p><strong>Nothing books itself.</strong> Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
-            <p><strong>Solo never touches your money.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. Solo does not process cards, hold funds, or take a cut. Card payments are part of Pro. You collect the way you already collect: cash, Venmo, Zelle, a check on the counter.</p>
+            <p><strong>Your money is yours.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. On Solo it does not process cards, hold funds, or take a cut. Card payments are part of Pro. You collect the way you already collect: cash, Venmo, Zelle, a check on the counter.</p>
             <p><strong>Your clients stay your clients.</strong> This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
             <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
           </div>
           <div class="feature">
             <h3>Where it is today</h3>
-            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. New sitters are added by invitation while the product grows, which is a deliberate limit on how fast it takes on people rather than a waiting list for its own sake. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
+            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. New sitters are added by invitation while the product grows. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
           </div>
           <div class="feature">
             <h3>Who makes it</h3>
-            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product rather than a venture-backed platform, which is why the invite list is short, the roadmap is honest about what isn&rsquo;t built, and there is no sales team to get past. Questions go to a person.</p>
+            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person.</p>
           </div>
           <div class="feature">
-            <h3>See it before you believe any of this</h3>
-            <p>The <a href="/demo">demo</a> is a made-up sitter&rsquo;s account with real data behind it: pick a service, pick dates, watch it refuse the days that are full. Nothing to sign up for, no details asked for, nothing you can break. The <a href="/how-it-works">full tour</a> is the long version, and it says out loud where something isn&rsquo;t built.</p>
+            <h3>Try it yourself</h3>
+            <p>The <a href="/demo">demo</a> is a made-up sitter&rsquo;s account with real data behind it: pick a service, pick dates, watch it refuse the days that are full. Nothing to sign up for, no details asked for, nothing you can break. The <a href="/how-it-works">full tour</a> is the long version, and it says plainly what the software does and doesn&rsquo;t do.</p>
           </div>
         </div>
       </section>
@@ -1558,7 +1553,7 @@ const CONTACT_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>You&rsquo;re a pet owner looking for your sitter</h3>
-            <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we can&rsquo;t help: Pawservation is the software your sitter uses, not the sitter. We can&rsquo;t see, change, or cancel your booking, and we can&rsquo;t pass a message on. Your sitter&rsquo;s own booking page, the one you booked on, is where a booking can be changed or cancelled, and every email you&rsquo;ve had about a booking came from your sitter&rsquo;s business, with their address on it.</p>
+            <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we can&rsquo;t reach your sitter for you. Pawservation is the software your sitter uses, so we can&rsquo;t see, change, or cancel your booking. Your sitter&rsquo;s own booking page, the one you booked on, is where a booking can be changed or cancelled. Every email you&rsquo;ve had about a booking was sent by Pawservation on your sitter&rsquo;s behalf and names their business, and replying to it does not reach them. Contact your sitter the way you normally do.</p>
           </div>
           <div class="feature">
             <h3>You run a pet-care business and want an account</h3>
