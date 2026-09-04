@@ -305,21 +305,16 @@ describe('GET / — landing page', () => {
     expect(tour).toContain('repeat weekly');
   });
 
-  it('leaves the whole-days time-off limit on the tour, and claims nothing finer here', async () => {
+  it('claims nothing finer than whole-day time off here', async () => {
     const body = await landingBody();
     // The owner removed the landing FAQ on 2026-09-04, and with it the only place this page
-    // claimed time off at all. The disclosure lives on /how-it-works, beside the rest of the
-    // time-off rules. For a timed-walk book this is a bigger gap than repeats: a 10am dentist
-    // appointment costs the whole Thursday.
+    // claimed time off at all. VERIFIED unchanged: time off is a whole-day 'blocked'
+    // BookingRequests row and nothing anywhere closes part of a day, so no finer control may be
+    // offered here under any name.
     expect(body).not.toContain('Can I take a Tuesday off?');
-    // VERIFIED unchanged: time off is a whole-day 'blocked' BookingRequests row and nothing
-    // anywhere closes part of a day, so no finer control may be offered here under any name.
+    // owner removed the whole-days item from the tour, 2026-09-04
     for (const overclaim of ['by the hour', 'part of a day', 'block a single walk', 'hourly'])
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
-    const { env } = createTestEnv();
-    const tour = await (await app.request('/how-it-works', {}, env)).text();
-    expect(tour).toContain('Time off is whole days only');
-    expect(tour).toContain('no way to close just the 10am walk');
   });
 
   it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {

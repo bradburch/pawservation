@@ -325,13 +325,12 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain('No repeating bookings yet.');
   });
 
-  it('states the whole-day limit on time off, and the one-sitter limit on Solo', async () => {
+  it('states the one-sitter limit on Solo, and never claims partial-day time off', async () => {
     const body = await howItWorksBody();
-    // Both are pinned from landing.test.ts too: time off is a whole-day 'blocked' row and nothing
-    // anywhere closes part of a day, and Solo is one sitter per account.
-    expect(body).toContain('Time off is whole days only');
-    expect(body).toContain('no way to close just the 10am walk');
+    // Solo is one sitter per account, pinned from landing.test.ts too.
     expect(body).toContain('Solo runs one sitter per account');
+    // owner removed the whole-days item from the tour, 2026-09-04
+    expect(body).not.toMatch(/block (an|a single) hour|hourly time off|part of a day/i);
   });
 
   it('tells a sitter how her data comes back out, and no more than that', async () => {

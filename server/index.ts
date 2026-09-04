@@ -1076,10 +1076,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>A client who wants a walk every Tuesday picks each Tuesday, and there is no &ldquo;repeat weekly&rdquo; to set.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Time off is whole days only.</p>
-              <p>There is no way to close just the 10am walk and keep the rest of that day open.</p>
-            </div>
-            <div class="wf-pair">
               <p class="wf-keep">Solo runs one sitter per account.</p>
               <p>Extra sitters, with assignment between them, are part of Pro.</p>
             </div>
