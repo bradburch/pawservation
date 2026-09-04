@@ -91,7 +91,10 @@ describe('GET / — landing page', () => {
     expect(body).toContain('Can I get my data out?');
     // The four datasets of EXPORT_DATASETS, named inside this answer rather than anywhere on the
     // page, plus where the panel actually lives (Settings → Business).
-    const answer = body.slice(body.indexOf('Can I get my data out?'), body.indexOf('team use it?'));
+    // Bounded by the FAQ section's own end rather than by the question that used to follow it:
+    // the team question was removed from the landing page and the export answer is now last.
+    const askedAt = body.indexOf('Can I get my data out?');
+    const answer = body.slice(askedAt, body.indexOf('</section>', askedAt));
     expect(answer).toContain('Export your data panel with four downloads');
     for (const dataset of ['clients', 'pets', 'bookings', 'payments'])
       expect(answer, dataset).toContain(dataset);
@@ -127,11 +130,23 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('up to 500');
   });
 
-  it('is honest that an account is one sitter today, with teams behind the unbuilt Pro tier', async () => {
+  it('never implies Solo runs a team, and keeps the limit stated on the tour', async () => {
+    // The owner removed "Can my whole team use it?" from the landing page: it is a question a
+    // sitter asks once she is interested, and the page's job is to get her to ask for an invite.
+    // The limit itself did not go anywhere — /how-it-works now states it beside the other thing
+    // that isn't built (the repeating schedule), which is where the honesty pages live. What the
+    // landing page must still never do is claim the thing it can't do.
     const body = await landingBody();
-    expect(body).toContain('Can my whole team use it?');
-    expect(body).toContain('one sitter per account today');
-    expect(body).toContain('which isn&rsquo;t built yet');
+    expect(body).not.toContain('Can my whole team use it?');
+    for (const unbuilt of ['your team can', 'add your sitters', 'invite your team', 'per seat'])
+      expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+    // The owner repriced on 2026-09-04: Pro is sold, so the unbuilt framing is gone from the card.
+    expect(body).not.toContain('Not available yet');
+    expect(body).not.toContain('it isn&rsquo;t built yet');
+    // …and the tour still names the tier the one-sitter limit belongs to.
+    const { env } = createTestEnv();
+    const tour = await (await app.request('/how-it-works', {}, env)).text();
+    expect(tour).toContain('Solo runs one sitter per account');
   });
 
   it('tells visitors the demo costs them nothing to try', async () => {
@@ -139,14 +154,15 @@ describe('GET / — landing page', () => {
     expect(body).toContain('nothing to sign up for');
   });
 
-  it('states the free tier in the hero, above the fold', async () => {
+  it('states the Solo price in the hero, above the fold', async () => {
     const body = await landingBody();
     // Shoppers in this category arrive holding an incumbent's monthly figure, and the page used to
     // let them hold it until the pricing section. The chip is the first thing read and it spent
     // itself restating the product category, which the h1 and the sub both also say, so the price
     // took it over. Pinned to the exact wording: the chip is the ONE place the hero states this,
     // and a second copy in the sub would be the same idea twice on one screen.
-    expect(body).toContain('<p class="chip">Free for one sitter. No trial, no card.</p>');
+    // Owner repriced on 2026-09-04: the chip is $15 with a 30-day trial, interpolated from PRICING.
+    expect(body).toContain('<p class="chip">$15 a month for one sitter. 30-day free trial.</p>');
     // Above the fold means the safe zone: before the h1, and well before the demo/invite note,
     // which is borderline on a phone.
     const chip = body.indexOf('<p class="chip">');
@@ -155,10 +171,11 @@ describe('GET / — landing page', () => {
     expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
     // The hero says what the pricing section says. "for one sitter" is the price card's own
     // qualifier, so the hero cannot promise a tier section five then walks back.
-    expect(body).toContain('Taking bookings is free, and stays free');
+    expect(body).toContain('<h2 id="pricing-h">$15 a month for one sitter</h2>');
     expect(body).toContain('<span class="price-per">for one sitter</span>');
-    // Free here is a standing price, not an offer with a clock on it.
-    for (const offer of ['free trial', 'limited time', '% off', 'was $']) {
+    // $15 is a standing price, not a discount with a clock on it. The 30-day trial the owner added
+    // on 2026-09-04 is a trial, not an offer, so 'free trial' left this list and the rest stayed.
+    for (const offer of ['limited time', '% off', 'was $']) {
       expect(body.toLowerCase(), `hero must not read as a discount: ${offer}`).not.toContain(offer);
     }
   });
@@ -264,25 +281,28 @@ describe('GET / — landing page', () => {
       expect(body, backwards).not.toContain(backwards);
   });
 
-  it('answers the weekly-regular question in the FAQ, where a decider will hit it', async () => {
+  it('never offers a repeating booking, and keeps that disclosure on the tour', async () => {
+    // "Do you handle weekly regulars?" was removed from the landing page by the owner along with
+    // the team question: both are things a sitter asks after she is interested, and this page is
+    // asking her to request an invite rather than talking her out of it. The disclosure is NOT
+    // dropped — /how-it-works has carried it all along ("One thing that isn't here yet: a
+    // repeating schedule"), which is the page the tests hold to full candour.
     const body = await landingBody();
-    // Two round-2 readers said half their book is standing weekly work, and that this decides
-    // whether they can use the product at all — a caveat buried in the time-saved box is not
-    // where that gets read.
-    expect(body).toContain('Do you handle weekly regulars?');
-    expect(body).toContain('no repeating booking yet, so each Tuesday is its own request');
-    // Round 3: "once in the FAQ and once in the tour is candour; four times is anxiety." The
-    // trimmed restatement in the workflow block is gone, so the landing page says it exactly once.
-    expect(
-      body.match(/no repeating booking yet, so each Tuesday is its own request/g) ?? [],
-    ).toHaveLength(1);
+    expect(body).not.toContain('Do you handle weekly regulars?');
     expect(body).not.toContain('a weekly Tuesday is booked one Tuesday at a time');
-    // The whole caveat now lives inside that one FAQ answer — the workflow block above says
-    // nothing about repeats at all.
-    expect(body.indexOf('repeating booking')).toBeGreaterThan(body.indexOf('id="faq"'));
-    // Nothing on the page may offer the thing the caveat says isn't built.
-    for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
+    // The ban is what must survive the removal: no repeating support exists anywhere in the
+    // repo, so nothing on this page may offer one under any name.
+    for (const unbuilt of [
+      'repeat weekly',
+      'recurring booking',
+      'standing booking',
+      'repeating booking',
+      'every tuesday',
+    ])
       expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+    const { env } = createTestEnv();
+    const tour = await (await app.request('/how-it-works', {}, env)).text();
+    expect(tour).toContain('repeat weekly');
   });
 
   it('discloses that time off is whole days, where the landing page claims time off', async () => {

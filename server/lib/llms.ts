@@ -1,4 +1,5 @@
 import { SUPPORT_EMAIL } from './email';
+import { PRICING } from './plan-pricing';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /** Escape so tenant-controlled strings can never close the script element or open a new tag. */
@@ -85,11 +86,13 @@ export function buildJsonLdScript(tenant: Tenant, origin: string): string {
  * The "When to use this" section is the part that earns its place: an agent choosing a tool needs
  * the shape of the job, not a pitch. So this names what Pawservation is NOT (a marketplace, a
  * payment processor, a team scheduler) as plainly as what it is — a wrong recommendation costs the
- * reader more than a missed one, and every line here is behavior that ships today. Nothing planned
- * or in development is described as available, the same rule /how-it-works is held to by test.
+ * reader more than a missed one. The "When NOT to use this" bullets are scoped to the tier they
+ * describe: card processing and multiple sitters are Solo's limits, not the product's, and a bullet
+ * that dropped the tier would contradict the Pro card on the landing page.
  *
  * Hand-written rather than derived: it describes a product, not a database row, and there is no
- * source of truth to read it out of. Keep it in step with the landing page's claims.
+ * source of truth to read it out of. Keep it in step with the landing page's claims, and take every
+ * figure from PRICING so the two surfaces cannot state different prices.
  */
 export function buildProductLlmsTxt(origin: string): string {
   return `# Pawservation
@@ -106,13 +109,13 @@ export function buildProductLlmsTxt(origin: string): string {
 ## When NOT to use this
 
 - Finding a pet sitter as a customer. This is not a marketplace or a directory — there is nobody to browse. A sitter adds their clients before those clients can book.
-- Taking card payments. Pawservation records payments; it never touches money and has no card processing.
-- Staffing a team. One sitter per account today; assignment across multiple sitters is not built.
+- Taking card payments on Solo. Solo records payments; it never touches money and has no card processing. Card payments are part of Pro.
+- Staffing a team on Solo. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.
 - Any species-agnostic or general appointment booking. The rules here model pet care specifically (pets per booking, per-species rates, whose home the sitter sleeps in).
 
 ## Status
 
-- Free, and free to keep taking bookings — no trial and no card. A paid tier is planned and is NOT built; nothing on it is for sale.
+- Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year.
 - New sitters are added by invitation while the product grows: ${origin}/#invite-h
 
 ## Pages
@@ -140,10 +143,14 @@ Availability, quotes and booking requests are authenticated as the pet owner, an
  * serving it", which is the question an agent asks before recommending a tool at all.
  *
  * Two nodes in one @graph because they are two claims: SoftwareApplication (what it does, what it
- * costs) and Organization (who stands behind it). The `offers` node describes the FREE tier only —
- * the Pro tier is not built and nothing on it is for sale, so publishing it as an offer would be a
- * machine-readable lie, which is worse than a marketing one because nothing reads the surrounding
- * caveat.
+ * costs) and Organization (who stands behind it). `offers` is an ARRAY carrying both tiers, priced
+ * per month in USD, because both are sold: a graph publishing one price while the page prints two
+ * is a machine-readable claim nothing reads the surrounding caveat for. The figures come from
+ * PRICING, the same constant the landing page interpolates. Each offer also carries a
+ * `priceSpecification` naming the unit the figure is per: `price` alone is a number with no
+ * period attached, so a reader comparing it against a yearly figure elsewhere has nothing in the
+ * data telling it these are months. `unitCode: 'MON'` is UN/CEFACT for a month, which is the
+ * vocabulary schema.org's `referenceQuantity` expects.
  *
  * The `address` is a locality only, and is not invented: /terms already declares this business
  * governed by California law with disputes in San Francisco County, so the city/region/country
@@ -176,12 +183,34 @@ export function buildProductJsonLdScript(origin: string): string {
           'Two-way Google Calendar sync',
           'Cancellation policies applied automatically',
         ],
-        offers: {
-          '@type': 'Offer',
-          price: '0',
-          priceCurrency: 'USD',
-          description: 'Free for one sitter, with unlimited bookings. No trial and no card.',
-        },
+        offers: [
+          {
+            '@type': 'Offer',
+            name: 'Solo',
+            price: String(PRICING.soloMonthly),
+            priceCurrency: 'USD',
+            priceSpecification: {
+              '@type': 'UnitPriceSpecification',
+              price: String(PRICING.soloMonthly),
+              priceCurrency: 'USD',
+              referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
+            },
+            description: `One sitter, unlimited bookings, $${PRICING.soloMonthly} per month. Starts with a ${PRICING.trialDays}-day free trial.`,
+          },
+          {
+            '@type': 'Offer',
+            name: 'Pro',
+            price: String(PRICING.proMonthly),
+            priceCurrency: 'USD',
+            priceSpecification: {
+              '@type': 'UnitPriceSpecification',
+              price: String(PRICING.proMonthly),
+              priceCurrency: 'USD',
+              referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
+            },
+            description: `Everything in Solo plus card payments, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
+          },
+        ],
         publisher: { '@id': `${origin}/#organization` },
       },
       {

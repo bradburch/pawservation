@@ -66,8 +66,12 @@ export const PAGE_STYLE = /* css */ `
       .nav-inner {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
+        row-gap: 10px;
         gap: 28px;
-        height: 64px;
+        min-height: 64px;
+        padding-top: 8px;
+        padding-bottom: 8px;
       }
       .logo {
         display: flex;
@@ -110,16 +114,38 @@ export const PAGE_STYLE = /* css */ `
       @media (min-width: 780px) {
         .nav-links { display: flex; }
       }
-      /* Below 780px the header is only the wordmark, "Sign in", and "Try the demo", and at
-         360px those three plus a 28px gap and the wrap's own padding did not fit, so the whole
-         page picked up ~13px of horizontal scroll: the nav is a no-wrap flex row, so it pushed
-         the document wider rather than wrapping. Tighten the gaps and the wordmark instead of
-         hiding anything: those two links are the page's only calls to action. */
-      @media (max-width: 430px) {
+      /* The landing header carries "Full tour" twice in the markup and shows exactly one of
+         them: the .nav-links copy above 780px, this one below it, where that row is hidden. */
+      .nav-tour { display: inline; }
+      @media (min-width: 780px) { .nav-tour { display: none; } }
+      /* What this breakpoint guarantees: below 780px the header holds exactly three items, the
+         wordmark, "Full tour" and the invite button. The two plain links leave at the same width
+         as the .nav-links row rather than at some narrower width of their own, because a fourth
+         item in this row is what scrolled the whole page sideways at 431px to 474px. Nothing is
+         lost at those widths: sign-in is in the hero note and the footer, and the demo is the
+         hero's own second button and the second link on both mid-page invitations. */
+      @media (max-width: 779px) { .nav-right .signin:not(.nav-tour) { display: none; } }
+      /* Sign in comes back later than the other plain link, at the width where the whole row
+         genuinely fits: with the .nav-links row back from 780px, seven items already fill the
+         header, and letting sign-in return before there was room for it made the row wrap again
+         further up, so the header went from one line to two and back as the window widened. It is
+         the one item here a visitor can reach from somewhere else on the same screen: the hero
+         note links it, and so does the footer. */
+      @media (max-width: 939px) { .nav-right .nav-signin { display: none; } }
+      /* The gaps, the wordmark and the button tighten below 560px, which is what keeps the header
+         to one row on most phones. Where they are not enough the row WRAPS: .nav-inner is
+         flex-wrap: wrap at every width (above), and that is what actually guarantees the page
+         never scrolls sideways, whatever a future button is called. Three items with a
+         17-character button do not fit across a 320px phone at any type size worth reading, and
+         this row is the widest thing on the page, so a no-wrap header pushed the DOCUMENT wider
+         than the viewport rather than pushing itself. That was the 320px to 365px scroll. */
+      @media (max-width: 560px) {
         .nav-inner { gap: 10px; }
-        .nav-right { gap: 12px; }
-        .nav-right .btn-sm { padding: 8px 12px; }
-        .logo { font-size: 1.15rem; gap: 7px; }
+        .nav-right { gap: 10px; }
+        .nav-right .btn-sm { padding: 8px 12px; font-size: 0.86rem; }
+        .nav-tour { font-size: 0.84rem; }
+        .nav-inner .logo { font-size: 1.02rem; gap: 6px; }
+        .nav-inner .logo img { width: 26px; height: auto; }
       }
 
       /* ── Buttons ────────────────────────────────────────────────── */
@@ -295,6 +321,10 @@ export const PAGE_STYLE = /* css */ `
         margin: 0 0 12px;
       }
       .section-head p { margin: 0; color: var(--body-c); max-width: 52ch; }
+      /* Section headings and the column headings inside them are two or three words past one
+         line at most widths, and the default break leaves the last word alone under a full line.
+         Balance splits the lines evenly instead. Unsupported browsers wrap as before. */
+      .section-head h2, .wf-h { text-wrap: balance; }
       .band { background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 
       /* ── How it works ───────────────────────────────────────────── */
@@ -452,6 +482,9 @@ export const PAGE_STYLE = /* css */ `
       .feature p { margin: 0; font-size: 0.9rem; color: var(--body-c); }
       @media (min-width: 640px) { .features { grid-template-columns: 1fr 1fr; } }
       @media (min-width: 960px) { .features { grid-template-columns: 1fr 1fr 1fr; } }
+      /* Four short cards read as one row or not at all: in the three-column default the
+         fourth sits alone on a second row with three empty columns beside it. */
+      @media (min-width: 960px) { .features-4 { grid-template-columns: repeat(4, 1fr); } }
       /* Single-column legal prose (Privacy/Terms): .feature blocks sit directly in .wrap with
          no .features grid wrapper (that grid goes multi-column at wider viewports, which is
          wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
@@ -515,6 +548,13 @@ export const PAGE_STYLE = /* css */ `
       @media (min-width: 780px) {
         .wf-grid { grid-template-columns: 1fr 1fr; gap: 56px; }
       }
+      /* The closing line under a section's columns, used twice: the link out to the long-form
+         tour under the workflow columns, and the invite line under the two price cards. */
+      .wf-more { margin-top: 24px; }
+      /* Two mid-page invitations, under the client section and under the dashboard: the page
+         exists to get a sitter to ask for an invite, and the hero and the closing panel were the
+         only two places she could. */
+      .mid-cta { margin-top: 28px; margin-bottom: 0; }
 
       /* ── Install ────────────────────────────────────────────────── */
       .install-grid {
@@ -561,7 +601,7 @@ export const PAGE_STYLE = /* css */ `
       .price-grid {
         display: grid;
         gap: 24px;
-        /* Cards size to their own content: Pro lists fewer lines than Free, and
+        /* Cards size to their own content: Pro lists fewer lines than Solo, and
            stretching it to match left a dead gap at the bottom. */
         align-items: start;
       }
@@ -571,9 +611,6 @@ export const PAGE_STYLE = /* css */ `
         border-radius: 12px;
         padding: 26px 26px 28px;
       }
-      /* The unbuilt tier is marked three ways that aren't colour: a dashed edge,
-         a worded badge, and plain text where the other card has a button. */
-      .price-card-soon { border-style: dashed; border-color: var(--soft); }
       .price-head {
         display: flex;
         flex-wrap: wrap;
@@ -587,9 +624,6 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 700;
         letter-spacing: -0.01em;
       }
-      /* Shape comes from .state (the pill the mock dashboard already uses); these add colour only. */
-      .price-tag-live { background: var(--panel); color: var(--green); border: 1px solid var(--line); }
-      .price-tag-soon { background: var(--panel); color: var(--body-c); border: 1px dashed var(--soft); }
       .price-amt {
         display: flex;
         flex-wrap: wrap;
@@ -629,22 +663,6 @@ export const PAGE_STYLE = /* css */ `
         border-bottom: 2px solid var(--green);
         transform: rotate(-45deg);
       }
-      /* Pro's marker is a plain dash, not a greyed tick: printed or read in
-         greyscale, a checkmark reads as "you get this today", and none of it exists. */
-      .price-card-soon .price-list li::before {
-        top: 21px;
-        width: 10px;
-        height: 0;
-        border-left: 0;
-        border-bottom: 2px solid var(--soft);
-        transform: none;
-      }
-      .price-unavail {
-        margin: 0;
-        font-size: 0.92rem;
-        font-weight: 600;
-        color: var(--body-c);
-      }
       .price-card .note { margin-top: 10px; }
       @media (min-width: 780px) {
         .price-grid { grid-template-columns: 1fr 1fr; }
@@ -662,6 +680,14 @@ export const PAGE_STYLE = /* css */ `
       .qa-item p { margin: 0; font-size: 0.92rem; color: var(--body-c); max-width: 46ch; }
       .qa-item p strong { color: var(--ink); }
       @media (min-width: 700px) { .qa { grid-template-columns: 1fr 1fr; } }
+      /* A short list of answers reads as one column rather than as a two-column grid with a
+         hole in it: the landing page asks for one column and a comfortable measure. */
+      @media (min-width: 700px) {
+        .qa-list { grid-template-columns: minmax(0, 640px); }
+        /* The answers set their own 46ch measure for the two-column grid; in one column that
+           left every hairline rule running 200px past the text it was ruling. */
+        .qa-list .qa-item p { max-width: none; }
+      }
 
       /* ── CTA band ───────────────────────────────────────────────── */
       .cta-band { padding: 40px 0 96px; }

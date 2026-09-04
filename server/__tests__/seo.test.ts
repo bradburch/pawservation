@@ -260,8 +260,11 @@ describe('SEO surface', () => {
     expect(body).toContain('## When to use this');
     expect(body).toContain('## When NOT to use this');
     expect(body).toContain('not a marketplace');
-    // Nothing unbuilt may be described as available — the rule /how-it-works is held to.
-    expect(body).toContain('is NOT built');
+    // The owner repriced on 2026-09-04: the Status section states both tiers, and the two limits
+    // above are scoped to Solo rather than to the product.
+    expect(body).toContain('Solo is $15 per sitter per month and starts with a 30-day free trial');
+    expect(body).toContain('Pro is $29 per sitter per month, or $290 per sitter per year');
+    expect(body).toContain('Staffing a team on Solo');
     // Live addresses, so the origin is the one the reader arrived at.
     expect(body).toContain('http://localhost/embed/{sitter-slug}/llms.txt');
   });
@@ -304,20 +307,40 @@ describe('SEO surface', () => {
   it('publishes the product identity graph on the homepage, and only there', async () => {
     const { env } = createTestEnv();
     const home = await (await app.request('/', {}, env)).text();
-    // Parse the block rather than substring-matching the page: the visible pricing card prints the
-    // planned Pro price as ordinary copy, and only the machine-readable claim is under test here.
+    // Parse the block rather than substring-matching the page: the visible pricing card prints both
+    // prices as ordinary copy, and only the machine-readable claim is under test here.
     const raw = home.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)?.[1];
     expect(raw).toBeDefined();
     const graph = JSON.parse(raw as string)['@graph'] as Array<Record<string, unknown>>;
     const types = graph.map((n) => n['@type']);
     expect(types).toEqual(['SoftwareApplication', 'Organization']);
 
-    // The free tier is real and available; the Pro tier is not built, so it is not an offer. A
-    // machine-readable price for something nobody can buy is worse than a marketing one — nothing
-    // reads the caveat printed around it.
-    const app_ = graph[0] as { offers: { price: string } };
-    expect(app_.offers.price).toBe('0');
-    expect(JSON.stringify(graph)).not.toContain('29');
+    // The owner repriced on 2026-09-04: both tiers are sold, so both are offers. A graph that
+    // published one price while the page printed two would be a machine-readable claim nothing
+    // reads the surrounding copy for.
+    const app_ = graph[0] as {
+      offers: Array<{
+        name: string;
+        price: string;
+        priceCurrency: string;
+        priceSpecification: { price: string; referenceQuantity: Record<string, unknown> };
+      }>;
+    };
+    expect(app_.offers.map((o) => [o.name, o.price, o.priceCurrency])).toEqual([
+      ['Solo', '15', 'USD'],
+      ['Pro', '29', 'USD'],
+    ]);
+    // …and each price says what period it is FOR. A bare `price` is a number with no unit, so a
+    // reader comparing $29 against a yearly figure elsewhere has nothing in the data to tell it
+    // these are months. 'MON' is UN/CEFACT for a month, the vocabulary referenceQuantity expects.
+    for (const offer of app_.offers) {
+      expect(offer.priceSpecification.referenceQuantity).toEqual({
+        '@type': 'QuantitativeValue',
+        value: 1,
+        unitCode: 'MON',
+      });
+      expect(offer.priceSpecification.price).toBe(offer.price);
+    }
     // The address is a LOCALITY only. /terms already declares this business governed by
     // California law with disputes in San Francisco County, so city/region/country restate a
     // jurisdiction the site states publicly elsewhere — but there is no premises to name, and

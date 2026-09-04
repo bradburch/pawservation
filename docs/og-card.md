@@ -19,12 +19,12 @@ LinkedIn, Facebook), so they sit outside the landing page's per-image weight bud
 
 ## Why there are two cards
 
-`og-card.png` sells the product: "Pet sitting & dog walking software", "Free for one sitter". Those
-are the right words for a link to `pawservation.com` and the wrong words on the one link this
-product gets shared most: a sitter texting a client her own booking page. That reader is not
-choosing software. She is booking her dog in. So `/embed/:slug` gets `og-booking.png`, which is the
-brand lockup, one owner-facing line, and nothing else, with the per-tenant text carried by the tags
-instead (`og:title` is "Book with <her business>").
+`og-card.png` sells the product: "Pet sitting & dog walking software", "$15 a month for one
+sitter". Those are the right words for a link to `pawservation.com` and the wrong words on the
+one link this product gets shared most: a sitter texting a client her own booking page. That
+reader is not choosing software. She is booking her dog in. So `/embed/:slug` gets
+`og-booking.png`, which is the brand lockup, one owner-facing line, and nothing else, with the
+per-tenant text carried by the tags instead (`og:title` is "Book with <her business>").
 
 ## Shared recipe for both cards
 
@@ -165,7 +165,7 @@ from 230 KB to 338 KB.
         border-radius: 999px;
         padding: 11px 22px;
       }
-      .chip-free {
+      .chip-price {
         background: #8fd4a4;
         border-color: #8fd4a4;
         color: #12291b;
@@ -190,7 +190,7 @@ from 230 KB to 338 KB.
         </p>
       </div>
       <div class="foot">
-        <span class="chip chip-free">Free for one sitter</span>
+        <span class="chip chip-price">$15 a month for one sitter</span>
         <span class="chip">Boarding &middot; Walks &middot; Daycare &middot; Check-ins</span>
         <span class="host">pawservation.com</span>
       </div>
