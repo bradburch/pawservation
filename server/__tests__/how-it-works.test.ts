@@ -91,11 +91,14 @@ describe('GET /how-it-works — the tour page', () => {
     // (server/routes/admin.ts), so the sitter does not have to send the "you're booked" message.
     expect(body).toContain('your client is emailed the moment you do');
     // There is no billing code in this repo, and on Solo the money never touches it: the sitter
-    // is paid directly. The page states that as the positive claim a sitter cares about ("the
-    // money goes straight to you"), so the pin that used to hold the words "never processes" is
-    // now the claim plus a ban on the opposite, which is the half that could ever mislead.
-    expect(body).toContain('The money goes straight to you.');
-    expect(body).toContain('nothing is taken out of your earnings');
+    // is paid directly. The page states that as the positive claim a sitter cares about, so the
+    // pin that used to hold the words "never processes" is now the claim plus a ban on the
+    // opposite, which is the half that could ever mislead.
+    // 2026-09-04: the owner demoted the money section to a quiet optional aside at the end of
+    // Services, so "The money goes straight to you." and "nothing is taken out of your earnings"
+    // are gone with the band they lived in. The claim they carried is re-pinned on the new line.
+    expect(body).toContain('Payment stays between you and your client.');
+    expect(body).toContain('Card payments are part of Pro.');
     expect(body).not.toMatch(/we (take|process|handle|collect) (your |the )?payments?/i);
     expect(body).not.toMatch(/payments? (are|is) processed/i);
   });
@@ -275,7 +278,9 @@ describe('GET /how-it-works — the tour page', () => {
     const body = await howItWorksBody();
     // A reader who came here for the tour should be able to move around the tour; an early nav
     // sent every click back to "/", abandoning the page they had just chosen.
-    for (const id of ['booking', 'confirm', 'calendar', 'services', 'money', 'setup']) {
+    // 2026-09-04: 'money' left this list when the owner demoted that section into an optional
+    // aside inside Services, which is not a nav destination.
+    for (const id of ['booking', 'confirm', 'calendar', 'services', 'setup']) {
       expect(body, id).toContain(`href="#${id}"`);
       expect(body, id).toContain(`id="${id}"`);
     }
@@ -377,10 +382,15 @@ describe('GET /how-it-works — the tour page', () => {
     }
   });
 
-  it('tells sitters they can import the CSV Venmo gives them, and that the file is not kept', async () => {
+  it('keeps the optional payment tracking quiet, and truthful about what it is', async () => {
     const body = await howItWorksBody();
-    expect(body).toContain('Paid on Venmo? Upload the CSV.');
-    expect(body).toContain('read in memory and never stored');
+    // 2026-09-04: the owner demoted the money section. The four wf-pair rows and their headline
+    // ("You collect the money. Pawservation keeps the count.") are gone, and with them the pins
+    // on 'Paid on Venmo? Upload the CSV.', the part-payments line and 'read in memory and never
+    // stored'. What is pinned now is what the short block still claims.
+    expect(body).toContain('Optional: keep track of payments');
+    expect(body).toContain('a running balance per household');
+    expect(body).toContain('Upload the CSV Venmo gives you');
     // The banned-words test above covers this paragraph too: it may not say "statement" (so not
     // "Venmo statement") and may not say "invoice".
     expect(body).not.toMatch(/statement/i);

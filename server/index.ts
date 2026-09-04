@@ -810,7 +810,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <a href="#confirm">Confirming</a>
           <a href="#calendar">Calendar</a>
           <a href="#services">Services</a>
-          <a href="#money">Money</a>
           <a href="#setup">Setup</a>
         </nav>
         <div class="nav-right">
@@ -1021,41 +1020,15 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p class="wf-keep">Up to five intake questions your clients answer when they book.</p>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="section band" id="money" aria-labelledby="money-h">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="label">Money</span>
-            <h2 id="money-h">You collect the money. Pawservation keeps the count.</h2>
-            <p>
-              Payment goes from your client to you by whatever means you already use. Log what
-              arrived and the balance moves.
-            </p>
-          </div>
-          <div class="wf-math">
-            <div class="wf-pair">
-              <p class="wf-keep">Cash, Venmo, Zelle, PayPal, check or card.</p>
-              <p>Record part payments too, a deposit now and the rest later.</p>
-            </div>
-            <div class="wf-pair">
-              <p class="wf-keep">One running balance per household.</p>
-              <p>Two people who share a dog share one balance.</p>
-            </div>
-            <div class="wf-pair">
-              <p class="wf-keep">Paid on Venmo? Upload the CSV.</p>
-              <p>Drop in the file Venmo gives you for the month and see every match before anything is recorded. It is read in memory and never stored.</p>
-            </div>
-            <div class="wf-pair">
-              <p class="wf-keep">The money goes straight to you.</p>
-              <p>Payment is between you and your client, so nothing is taken out of your earnings. Card payments are part of Pro.</p>
-            </div>
+          <div class="wf-aside">
+            <h3 class="wf-h">Optional: keep track of payments</h3>
+            <p>If you want to, log what each client has paid, by cash, Venmo, Zelle, PayPal, check or card, and Pawservation keeps a running balance per household. Upload the CSV Venmo gives you and a month of payments matches up at once.</p>
+            <p>Payment stays between you and your client. Card payments are part of Pro.</p>
           </div>
         </div>
       </section>
 
-      <section class="section" id="setup" aria-labelledby="setup-h">
+      <section class="section band" id="setup" aria-labelledby="setup-h">
         <div class="wrap install-grid">
           <div class="install-copy">
             <span class="label">Getting started</span>
@@ -1091,7 +1064,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
       <!-- The honesty section. Each line is a plain limit a sitter would otherwise meet after
            paying, and several of them are pinned from landing.test.ts as well as this page's own
            test, because the landing page dropped its FAQ and these are where those answers went. -->
-      <section class="section band" id="limits" aria-labelledby="limits-h">
+      <section class="section" id="limits" aria-labelledby="limits-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Good to know</span>

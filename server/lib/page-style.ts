@@ -538,6 +538,12 @@ export const PAGE_STYLE = /* css */ `
       .wf-math p { margin: 0 0 10px; font-size: 0.91rem; max-width: 68ch; }
       .wf-math .wf-h { margin-bottom: 12px; }
       .wf-math p:last-child { margin-bottom: 0; }
+      /* A quiet aside at the end of a section: an option a sitter may take, not a pillar of
+         the product. Ruled off rather than carded, so it reads below the cards above it. */
+      .wf-aside { margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--line); }
+      .wf-aside .wf-h { font-size: 0.95rem; color: var(--body-c); margin-bottom: 6px; }
+      .wf-aside p { margin: 0 0 8px; font-size: 0.88rem; color: var(--soft); max-width: 62ch; }
+      .wf-aside p:last-child { margin-bottom: 0; }
       .wf-math .wf-sum {
         margin: 14px 0 16px;
         font-family: var(--mono);
