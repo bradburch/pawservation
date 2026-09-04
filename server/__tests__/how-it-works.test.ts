@@ -108,10 +108,11 @@ describe('GET /how-it-works — the in-depth tour page', () => {
       expect(body).not.toContain(lie);
   });
 
-  it('teaches capacity with a worked example and cites two real refusal reasons', async () => {
+  it('cites two real refusal reasons', async () => {
     const body = await howItWorksBody();
-    // The per-option capacity example walks a concrete Tuesday, not an abstract listing.
-    expect(body).toContain('the solo walk still shows');
+    // The pack-walk/solo-walk worked example went on 2026-09-04, when the owner asked for "What
+    // you set on each one" to be a plain list of settings; the per-option limit is still stated
+    // there ("counted in animals rather than bookings") and explained under Your rules.
     // Both refusal examples correspond to real stable codes on POST /bookings:
     // "those dates are full" -> capacity_conflict, "that stay is too long" -> service_constraint.
     expect(body).toContain('those dates are full');
@@ -350,7 +351,8 @@ describe('GET /how-it-works — the in-depth tour page', () => {
   it('links back to the landing page, the demo, and pricing', async () => {
     const body = await howItWorksBody();
     expect(body).toContain('href="/#pricing"');
-    expect(body).toContain('href="/#faq"');
+    // The owner removed the landing FAQ on 2026-09-04, so the shared footer no longer carries a
+    // /#faq link; those answers now live on this page (time off under Rules, the export under Money).
     expect(body).toContain('href="/demo"');
     expect(body).toContain('href="/admin"');
   });
@@ -587,7 +589,7 @@ describe('the footer links to the legal pages', () => {
 
 /**
  * The landing page makes fewer claims than the tour, but the ones it does make are absolutes
- * ("No.", "Just your clients."), which is exactly why they want pinning: an absolute is either
+ * ("Only your clients can book."), which is exactly why they want pinning: an absolute is either
  * true or it is a lie, with no middle reading a reader could charitably take.
  */
 describe('the landing page claims only what ships', () => {

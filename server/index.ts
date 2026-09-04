@@ -218,8 +218,9 @@ app.get('/setup.html', page('setup.html'));
  * The shared page footer. Extracted when /about and /contact would have made it a SIXTH hand-kept
  * copy of the same markup — the four that existed had already drifted into two variants that
  * differed only in one link's label and one anchor's href, which is the drift a fifth and sixth
- * copy guarantees rather than risks. Every link here is absolute (`/#faq`, not `#faq`) so one
- * version serves every page: from the landing itself an absolute same-page hash still just scrolls.
+ * copy guarantees rather than risks. Every link here is absolute (`/#pricing`, not `#pricing`) so
+ * one version serves every page: from the landing itself an absolute same-page hash still just
+ * scrolls.
  */
 function pageFooter(): string {
   return `<footer class="foot">
@@ -239,7 +240,6 @@ function pageFooter(): string {
               <li><a href="/admin">Sitter sign in</a></li>
               <li><a href="/how-it-works">Full tour</a></li>
               <li><a href="/#pricing">Pricing</a></li>
-              <li><a href="/#faq">FAQ</a></li>
             </ul>
           </div>
           <div>
@@ -489,8 +489,7 @@ const LANDING_HTML = `<!doctype html>
               The dates question stops being a text.
               Those messages were most of what your clients sent you.
               They were about dates and prices, not about the dog.
-              Take those off the thread and more of what&rsquo;s left is about the animal, like the pills at six and the reactive shepherd on the corner.
-              Pawservation doesn&rsquo;t do visit reports or photos, so that side is still you and your phone.
+              Pawservation doesn&rsquo;t do visit reports or photos, so that relationship is still yours to maintain.
             </p>
           </div>
           <div class="wf-grid">
@@ -516,12 +515,12 @@ const LANDING_HTML = `<!doctype html>
             <div>
               <h3 class="wf-h">What you do</h3>
               <div class="wf-pair">
-                <p class="wf-keep">You confirm it or you decline it.</p>
-                <p>The request carries the dates, the pets, your questions answered and a price, so you can settle it in one tap from your phone. A new request waits in your dashboard, and on your Google Calendar if you&rsquo;ve connected it.</p>
+                <p class="wf-keep">Only your clients can book.</p>
+                <p>You add each client, and their pets, before they can book, one at a time or from the list you already have.</p>
               </div>
               <div class="wf-pair">
-                <p class="wf-keep">You never quote the same job twice.</p>
-                <p>The price on the request that reaches you is the price your client already saw, worked out on the page from the rates you stored.</p>
+                <p class="wf-keep">You confirm it or you decline it.</p>
+                <p>The request carries the dates, the pets, your questions answered and a price, so you can settle it in one tap from your phone. A new request waits in your dashboard, and on your Google Calendar if you&rsquo;ve connected it.</p>
               </div>
               <div class="wf-pair">
                 <p class="wf-keep">You see a change after it happens.</p>
@@ -760,33 +759,6 @@ const LANDING_HTML = `<!doctype html>
           </div>
         </div>
       </section>
-
-      <!-- The FAQ sits AFTER the invite band on purpose: these three answers are limits (who can
-           book, whole-day time off, what the export leaves out), and the last thing a reader met
-           before the ask used to be a list of what the product does not do. The band keeps its
-           own id, so the footer's /#faq link and the tour's still land here. -->
-      <section class="section band" id="faq" aria-labelledby="faq-h">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="label">FAQ</span>
-            <h2 id="faq-h">Common questions</h2>
-          </div>
-          <div class="qa qa-list">
-            <div class="qa-item">
-              <h3>Can anyone book, or just my clients?</h3>
-              <p><strong>Just your clients.</strong> You add each client, and their pets, before they can book, one at a time or from the list you already have.</p>
-            </div>
-            <div class="qa-item">
-              <h3>Can I take a Tuesday off?</h3>
-              <p><strong>Yes.</strong> Mark a day, or a run of days, and it stops being offered. Time off is whole days only, and there is no way to close just the 10am walk and keep the rest of that day open.</p>
-            </div>
-            <div class="qa-item">
-              <h3>Can I get my data out?</h3>
-              <p><strong>Yes.</strong> Your dashboard has an Export your data panel with four downloads: clients, pets, bookings and payments. Your settings stay here, and so does your time off, which is in none of the four files. There is no scheduled copy, and no way to load one of these files back in.</p>
-            </div>
-          </div>
-        </div>
-      </section>
     </main>
 
     ${pageFooter()}
@@ -906,39 +878,43 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>A custom service clones one of the five, so a &ldquo;Morning walk&rdquo; behaves exactly like Walk under your name and your price. New services can&rsquo;t invent behavior the calendar doesn&rsquo;t understand.</p>
             </div>
           </div>
+          <!-- A plain list of the settings, one line each. The worked examples that used to sit
+               under every item (the pack walk, the 6am booking, the day-after-tomorrow notice)
+               moved out on the owner's instruction on 2026-09-04: this section answers "what can I
+               set", and the sections below it are where each rule is explained in full. The last
+               two lines are the disclosures, kept because a settings list that omits what it
+               cannot do is the discovery-by-missing-setting failure. -->
           <div class="wf-math">
             <h3 class="wf-h">What you set on each one</h3>
             <div class="wf-pair">
-              <p class="wf-keep">A rate in whole dollars, in a unit you can&rsquo;t get wrong.</p>
-              <p>The unit belongs to the service, not to the price box: boarding is per night whether you charge forty or ninety-five. The number and the word printed beside it come from the same place, so they can never drift apart.</p>
+              <p class="wf-keep">A rate, per night, day, visit or walk.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Options, each with a length and a fixed window.</p>
-              <p>A thirty-minute walk between 10 and 2 is one option; the same walk between 4 and 6 is another. Clients pick the option, not an arbitrary time, so you&rsquo;re never booked at 6am by accident.</p>
+              <p class="wf-keep">Options with a length and a time window, such as a 30-minute walk between 10 and 2.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">A per-day limit on each option.</p>
-              <p>Say your morning pack walk takes eight dogs and your solo walk takes one. Book eight dogs onto Tuesday&rsquo;s pack walk and Tuesday stops being offered for the pack walk; the solo walk still shows until its one spot goes. Each option fills up on its own, date by date, and it counts animals rather than bookings: with one place left, a household bringing two dogs isn&rsquo;t offered that day either.</p>
+              <p class="wf-keep">A per-day limit on each option, counted in animals rather than bookings.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Weekdays only, where that&rsquo;s the truth.</p>
-              <p>Mark an option weekdays-only and its weekends are struck out in the calendar rather than quietly accepted and then declined.</p>
+              <p class="wf-keep">Weekdays only, if that&rsquo;s how you work.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">The longest stay you&rsquo;ll do.</p>
-              <p>For the per-night services, set a maximum number of nights and a request longer than that never gets as far as your queue. There is deliberately no minimum: a stay is at least one night by its nature, so there was nothing honest for that box to do.</p>
+              <p class="wf-keep">A maximum stay length for the per-night services, with no minimum.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">How much notice you need.</p>
-              <p>Set the days of notice a service needs and everything sooner than that is struck out. Two days on boarding means the earliest a client can ask for is the day after tomorrow, so &ldquo;can you take him tonight?&rdquo; stops being a question you have to answer. Leave it blank and same-day is fine.</p>
+              <p class="wf-keep">The days of notice you need before a booking.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">One thing that isn&rsquo;t here yet: a repeating schedule.</p>
-              <p>Every visit is its own request today: a client who wants a walk every Tuesday picks each Tuesday. There is no &ldquo;repeat weekly&rdquo; to set, for you or for them.</p>
+              <p class="wf-keep">Which pet types the service accepts.</p>
             </div>
             <div class="wf-pair">
-              <p class="wf-keep">Extra sitters come with Pro.</p>
-              <p>Solo runs one sitter per account, so there is no second login to add and no way to hand a walk to somebody else. Extra sitters, with assignment between them, are part of Pro.</p>
+              <p class="wf-keep">Up to five intake questions your clients answer when they book.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">No repeating schedule yet: a client who wants a walk every Tuesday picks each Tuesday, and there is no &ldquo;repeat weekly&rdquo; to set.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Solo runs one sitter per account. Extra sitters, with assignment between them, are part of Pro.</p>
             </div>
           </div>
         </div>

@@ -668,27 +668,6 @@ export const PAGE_STYLE = /* css */ `
         .price-grid { grid-template-columns: 1fr 1fr; }
       }
 
-      /* ── FAQ ────────────────────────────────────────────────────── */
-      .qa { display: grid; gap: 8px 48px; }
-      .qa-item { padding: 20px 0; border-top: 1px solid var(--line); }
-      .qa-item h3 {
-        margin: 0 0 7px;
-        font-size: 1rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-      }
-      .qa-item p { margin: 0; font-size: 0.92rem; color: var(--body-c); max-width: 46ch; }
-      .qa-item p strong { color: var(--ink); }
-      @media (min-width: 700px) { .qa { grid-template-columns: 1fr 1fr; } }
-      /* A short list of answers reads as one column rather than as a two-column grid with a
-         hole in it: the landing page asks for one column and a comfortable measure. */
-      @media (min-width: 700px) {
-        .qa-list { grid-template-columns: minmax(0, 640px); }
-        /* The answers set their own 46ch measure for the two-column grid; in one column that
-           left every hairline rule running 200px past the text it was ruling. */
-        .qa-list .qa-item p { max-width: none; }
-      }
-
       /* ── CTA band ───────────────────────────────────────────────── */
       .cta-band { padding: 40px 0 96px; }
       .cta-panel {
