@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
+import { SUPPORT_EMAIL } from '../lib/email';
 import { createTestEnv } from './helpers';
 
 describe('GET /privacy', () => {
@@ -28,6 +29,8 @@ describe('GET /privacy', () => {
     expect(body).not.toMatch(/we use cookies to (track|personalize)/i);
     expect(body).toMatch(/not directed at children/i);
     expect(body).toMatch(/no (analytics|tracking|ad pixels|fingerprinting)/i);
-    expect(body).toContain('brad@pawservation.com');
+    // The published address is SUPPORT_EMAIL, the one constant /contact and the Organization
+    // graph already state; the page no longer hardcodes a second copy of it.
+    expect(body).toContain(SUPPORT_EMAIL);
   });
 });

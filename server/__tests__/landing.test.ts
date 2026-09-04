@@ -43,8 +43,8 @@ describe('GET / — landing page', () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
     expect(body).toContain('Upload the CSV from Venmo');
-    // This card is about reading a file INTO Pawservation; taking data back OUT is its own FAQ
-    // item further down, and the two must not be blurred into one claim here.
+    // This card is about reading a file INTO Pawservation; taking data back OUT is answered on
+    // /how-it-works, and the two must not be blurred into one claim here.
     expect(body).not.toContain('export button');
   });
 
@@ -76,33 +76,17 @@ describe('GET / — landing page', () => {
     expect(body).toContain('name="fax"'); // honeypot field
   });
 
-  it('makes no multi-pet pricing claim (the FAQ item is gone; rates ship with pet-mix-rates)', async () => {
+  it('makes no multi-pet pricing claim (rates ship with pet-mix-rates)', async () => {
     const body = await landingBody();
     expect(body).not.toContain('Can I charge more for a second dog?');
     expect(body).not.toContain('multi-pet pricing is on the way');
   });
 
-  it('says a sitter can take her book out, and claims no more than the export does', async () => {
+  it('leaves the data-export answer on the tour, and claims no more than the export does', async () => {
     const body = await landingBody();
-    // This pin used to run the other way: the FAQ item was REMOVED because the page advertised an
-    // export nothing implemented, and the test froze that removal. GET /api/:slug/admin/export/
-    // :dataset shipped, so the copy is allowed back and the protection turns around with it —
-    // from "must not say this" to "must say this, and must not say more than this".
-    expect(body).toContain('Can I get my data out?');
-    // The four datasets of EXPORT_DATASETS, named inside this answer rather than anywhere on the
-    // page, plus where the panel actually lives (Settings → Business).
-    const answer = body.slice(body.indexOf('Can I get my data out?'), body.indexOf('team use it?'));
-    expect(answer).toContain('Export your data panel with four downloads');
-    for (const dataset of ['clients', 'pets', 'bookings', 'payments'])
-      expect(answer, dataset).toContain(dataset);
-    // …and the two limits stated out loud, because a reader deciding on lock-in is the one who
-    // will find out otherwise: it runs when she presses the button, and nothing reads a file back.
-    expect(body).toContain('no scheduled copy');
-    expect(body).toContain('no way to load one of these files back in');
-    // …and the same SCOPE the in-app panel states (app/admin/ExportPanel.tsx: "blocked days are
-    // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
-    // so no dataset carries time off. The panel said so; this page did not.
-    expect(answer).toContain('your time off, which is in none of the four files');
+    // The owner removed the landing FAQ on 2026-09-04; the answer now lives on /how-it-works,
+    // under "What if you want to take your book elsewhere?".
+    expect(body).not.toContain('Can I get my data out?');
     // Nothing buildExportCsv does not do may be claimed. There is no cron, no whole-account
     // archive, no key to issue, and no path that imports an exported file into Pawservation.
     for (const overclaim of [
@@ -117,21 +101,53 @@ describe('GET / — landing page', () => {
       'back into pawservation',
     ])
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
+    // The guarantee moved rather than went: the tour still names the four datasets of
+    // EXPORT_DATASETS, says where the panel lives, and states the two limits a reader deciding on
+    // lock-in would otherwise find out the hard way.
+    const { env } = createTestEnv();
+    const tour = await (await app.request('/how-it-works', {}, env)).text();
+    const askedAt = tour.indexOf('What if you want to take your book elsewhere?');
+    expect(askedAt).toBeGreaterThan(-1);
+    const answer = tour.slice(askedAt, tour.indexOf('</section>', askedAt)).toLowerCase();
+    expect(answer).toContain('export your data gives you four downloads');
+    for (const dataset of ['clients', 'pets', 'bookings', 'payments'])
+      expect(answer, dataset).toContain(dataset);
+    // …and the same SCOPE the in-app panel states (app/admin/ExportPanel.tsx: "blocked days are
+    // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
+    // so no dataset carries time off.
+    expect(answer).toContain('your time off, which is in none of the four files');
+    // …and the two limits out loud: it runs when she presses the button, nothing reads a file back.
+    expect(answer).toContain('nothing scheduled to set up');
+    expect(answer).toContain('no way to load one of these files back in');
   });
 
   it('tells the client-AND-pet truth and drops the CSV row cap from copy', async () => {
     const body = await landingBody();
-    // Post-#73 a client is a client-and-pet record; the FAQ must say pets are added too.
+    // Post-#73 a client is a client-and-pet record; the page must say pets are added too. The
+    // owner removed the landing FAQ on 2026-09-04 and this line moved into the "What you do"
+    // column of "You and your clients", which is where it is now pinned from.
     expect(body).toContain('and their pets');
     // MAX_IMPORT_ROWS=500 stays in code (server/routes/admin.ts); marketing stops quoting it.
     expect(body).not.toContain('up to 500');
   });
 
-  it('is honest that an account is one sitter today, with teams behind the unbuilt Pro tier', async () => {
+  it('never implies Solo runs a team, and keeps the limit stated on the tour', async () => {
+    // The owner removed "Can my whole team use it?" from the landing page: it is a question a
+    // sitter asks once she is interested, and the page's job is to get her to ask for an invite.
+    // The limit itself did not go anywhere — /how-it-works now states it beside the other thing
+    // that isn't built (the repeating schedule), which is where the honesty pages live. What the
+    // landing page must still never do is claim the thing it can't do.
     const body = await landingBody();
-    expect(body).toContain('Can my whole team use it?');
-    expect(body).toContain('one sitter per account today');
-    expect(body).toContain('which isn&rsquo;t built yet');
+    expect(body).not.toContain('Can my whole team use it?');
+    for (const unbuilt of ['your team can', 'add your sitters', 'invite your team', 'per seat'])
+      expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+    // The owner repriced on 2026-09-04: Pro is sold, so the unbuilt framing is gone from the card.
+    expect(body).not.toContain('Not available yet');
+    expect(body).not.toContain('it isn&rsquo;t built yet');
+    // …and the tour still names the tier the one-sitter limit belongs to.
+    const { env } = createTestEnv();
+    const tour = await (await app.request('/how-it-works', {}, env)).text();
+    expect(tour).toContain('Solo runs one sitter per account');
   });
 
   it('tells visitors the demo costs them nothing to try', async () => {
@@ -139,14 +155,15 @@ describe('GET / — landing page', () => {
     expect(body).toContain('nothing to sign up for');
   });
 
-  it('states the free tier in the hero, above the fold', async () => {
+  it('states the Solo price in the hero, above the fold', async () => {
     const body = await landingBody();
     // Shoppers in this category arrive holding an incumbent's monthly figure, and the page used to
     // let them hold it until the pricing section. The chip is the first thing read and it spent
     // itself restating the product category, which the h1 and the sub both also say, so the price
     // took it over. Pinned to the exact wording: the chip is the ONE place the hero states this,
     // and a second copy in the sub would be the same idea twice on one screen.
-    expect(body).toContain('<p class="chip">Free for one sitter. No trial, no card.</p>');
+    // Owner repriced on 2026-09-04: the chip is $15 with a 30-day trial, interpolated from PRICING.
+    expect(body).toContain('<p class="chip">$15 a month for one sitter. 30-day free trial.</p>');
     // Above the fold means the safe zone: before the h1, and well before the demo/invite note,
     // which is borderline on a phone.
     const chip = body.indexOf('<p class="chip">');
@@ -155,10 +172,11 @@ describe('GET / — landing page', () => {
     expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
     // The hero says what the pricing section says. "for one sitter" is the price card's own
     // qualifier, so the hero cannot promise a tier section five then walks back.
-    expect(body).toContain('Taking bookings is free, and stays free');
+    expect(body).toContain('<h2 id="pricing-h">$15 a month for one sitter</h2>');
     expect(body).toContain('<span class="price-per">for one sitter</span>');
-    // Free here is a standing price, not an offer with a clock on it.
-    for (const offer of ['free trial', 'limited time', '% off', 'was $']) {
+    // $15 is a standing price, not a discount with a clock on it. The 30-day trial the owner added
+    // on 2026-09-04 is a trial, not an offer, so 'free trial' left this list and the rest stayed.
+    for (const offer of ['limited time', '% off', 'was $']) {
       expect(body.toLowerCase(), `hero must not read as a discount: ${offer}`).not.toContain(offer);
     }
   });
@@ -179,15 +197,14 @@ describe('GET / — landing page', () => {
     // The sharpest sentence on the page, promoted out of the sum box (which a skimmer never
     // reaches) into the pair a skimmer actually reads.
     expect(body).toContain('They were about dates and prices, not about the dog.');
-    // What's left is stated as a tendency, not an absolute: gate codes and "running late" still
-    // arrive by text, so "what reaches you is a care question" was falsifiable in week one.
-    expect(body).toContain('more of what&rsquo;s left is about the animal');
+    // The owner removed the "more of what's left is about the animal" sentence on 2026-09-04, so
+    // its pin goes with it; the ban it protected stays, because gate codes and "running late"
+    // still arrive by text and "what reaches you is a care question" was falsifiable in week one.
     expect(body).not.toContain('a care question');
     // The owner's half survives exactly once — restating it was the third pass at one idea.
     expect(body.match(/which dates you can take/g) ?? []).toHaveLength(1);
     expect(body).toContain('waiting on a text back');
-    // The examples belong to the workflow pair; repeating them a screen later cheapened them.
-    expect(body.match(/pills at six/g) ?? []).toHaveLength(1);
+    // The "pills at six" examples went with that sentence on 2026-09-04 (owner's edit).
     // …and it must never read as instant confirmation. The sitter's yes is still the gate, and
     // the client's OWN screen says so too, so nobody tells their spouse it's booked at 11pm.
     expect(body).toContain('still pending until you say yes');
@@ -264,33 +281,40 @@ describe('GET / — landing page', () => {
       expect(body, backwards).not.toContain(backwards);
   });
 
-  it('answers the weekly-regular question in the FAQ, where a decider will hit it', async () => {
+  it('never offers a repeating booking, and keeps that disclosure on the tour', async () => {
+    // "Do you handle weekly regulars?" was removed from the landing page by the owner along with
+    // the team question: both are things a sitter asks after she is interested, and this page is
+    // asking her to request an invite rather than talking her out of it. The disclosure is NOT
+    // dropped — /how-it-works has carried it all along ("One thing that isn't here yet: a
+    // repeating schedule"), which is the page the tests hold to full candour.
     const body = await landingBody();
-    // Two round-2 readers said half their book is standing weekly work, and that this decides
-    // whether they can use the product at all — a caveat buried in the time-saved box is not
-    // where that gets read.
-    expect(body).toContain('Do you handle weekly regulars?');
-    expect(body).toContain('no repeating booking yet, so each Tuesday is its own request');
-    // Round 3: "once in the FAQ and once in the tour is candour; four times is anxiety." The
-    // trimmed restatement in the workflow block is gone, so the landing page says it exactly once.
-    expect(
-      body.match(/no repeating booking yet, so each Tuesday is its own request/g) ?? [],
-    ).toHaveLength(1);
+    expect(body).not.toContain('Do you handle weekly regulars?');
     expect(body).not.toContain('a weekly Tuesday is booked one Tuesday at a time');
-    // The whole caveat now lives inside that one FAQ answer — the workflow block above says
-    // nothing about repeats at all.
-    expect(body.indexOf('repeating booking')).toBeGreaterThan(body.indexOf('id="faq"'));
-    // Nothing on the page may offer the thing the caveat says isn't built.
-    for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
+    // The ban is what must survive the removal: no repeating support exists anywhere in the
+    // repo, so nothing on this page may offer one under any name.
+    for (const unbuilt of [
+      'repeat weekly',
+      'recurring booking',
+      'standing booking',
+      'repeating booking',
+      'every tuesday',
+    ])
       expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+    const { env } = createTestEnv();
+    const tour = await (await app.request('/how-it-works', {}, env)).text();
+    expect(tour).toContain('repeat weekly');
   });
 
-  it('discloses that time off is whole days, where the landing page claims time off', async () => {
+  it('claims nothing finer than whole-day time off here', async () => {
     const body = await landingBody();
-    // For a timed-walk book this is a bigger gap than repeats: a 10am dentist appointment costs
-    // the whole Thursday. It was admitted only on /how-it-works; the wording tracks that page.
-    expect(body).toContain('Time off is whole days only');
-    expect(body).toContain('no way to close just the 10am walk');
+    // The owner removed the landing FAQ on 2026-09-04, and with it the only place this page
+    // claimed time off at all. VERIFIED unchanged: time off is a whole-day 'blocked'
+    // BookingRequests row and nothing anywhere closes part of a day, so no finer control may be
+    // offered here under any name.
+    expect(body).not.toContain('Can I take a Tuesday off?');
+    // owner removed the whole-days item from the tour, 2026-09-04
+    for (const overclaim of ['by the hour', 'part of a day', 'block a single walk', 'hourly'])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
   it('every image is a same-origin landing screenshot with informative alt text (brand mark excepted)', async () => {

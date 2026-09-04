@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { createTestEnv, endUserToken, TENANT_A } from './helpers';
 import { addEndUserPet } from '../db/repo';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+
+const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
 
 const req = (env: Env, path: string, init: RequestInit) => app.request(path, init, env);
 
@@ -30,8 +33,8 @@ describe('booking by petIds', () => {
       body: JSON.stringify({
         type: 'boarding',
         optionKey: 'standard',
-        startDate: '2026-09-01',
-        endDate: '2026-09-03',
+        startDate: addDays(TODAY, 30),
+        endDate: addDays(TODAY, 32),
         petIds: ['pet_sp_bella', 'pet_sp_mochi'],
       }),
     });
@@ -57,8 +60,8 @@ describe('booking by petIds', () => {
       body: JSON.stringify({
         type: 'boarding',
         optionKey: 'standard',
-        startDate: '2026-09-01',
-        endDate: '2026-09-03',
+        startDate: addDays(TODAY, 30),
+        endDate: addDays(TODAY, 32),
         petIds: ['pet_sp_bella', 'pet_sp_bella'],
       }),
     });
@@ -84,8 +87,8 @@ describe('booking by petIds', () => {
       body: JSON.stringify({
         type: 'boarding',
         optionKey: 'standard',
-        startDate: '2026-09-01',
-        endDate: '2026-09-03',
+        startDate: addDays(TODAY, 30),
+        endDate: addDays(TODAY, 32),
         petIds: ['pet_ht_otis'],
       }),
     });
@@ -109,8 +112,8 @@ describe('booking by petIds', () => {
       body: JSON.stringify({
         type: 'boarding',
         optionKey: 'standard',
-        startDate: '2026-09-01',
-        endDate: '2026-09-03',
+        startDate: addDays(TODAY, 30),
+        endDate: addDays(TODAY, 32),
         petIds: [cat.Id],
       }),
     });

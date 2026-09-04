@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import app from '../index';
+import { PRICING } from '../lib/plan-pricing';
 import { createTestEnv } from './helpers';
 
 async function howItWorksBody(): Promise<string> {
@@ -10,14 +11,37 @@ async function howItWorksBody(): Promise<string> {
   return res.text();
 }
 
-describe('GET /how-it-works — the in-depth tour page', () => {
+/**
+ * >>> 2026-09-04 MARKETING REWRITE. The tour was a 4,100-word specification, and this file pinned
+ * most of it sentence by sentence. The owner rewrote the page as marketing copy: the three things
+ * a sitter is deciding about (her clients request on her own website, she confirms or declines,
+ * she blocks her own time off) come first, and the mechanics that used to be spelled out here
+ * (the whereabouts rule, reconcile windows, event titles, saved intake answers, adopting past
+ * stays, the agent-facing plumbing) came off the page.
+ *
+ * So every pin on prose that no longer exists was DELETED, and nothing was weakened on the way
+ * out. What survives, in full:
+ *
+ *  - every BAN. A sentence that was false when it was retired is still false, whether or not the
+ *    paragraph it lived in is still here, and the cheapest way for a retired claim to come back
+ *    is a rewrite that no longer remembers why it went. The retired pricing absolutes, the
+ *    pet-cap framing of the whereabouts rule, "Cancelled means gone", the Google-drag claims, the
+ *    export over-claims and the unbuilt-capability nouns are all still refused.
+ *  - every STRUCTURAL pin: script-free under the locked CSP, the escaped embed snippet, the
+ *    canonical/footer/section navigation, the images, the invite call to action.
+ *  - the pins that guard a TRUTH the new copy still states: only clients she added can book, the
+ *    client is emailed when she confirms, the fee comes from her stored policy, the connected
+ *    calendar is read back, her rates are public, and the four Good-to-know limits (which
+ *    landing.test.ts also reaches across for, since the landing page dropped its FAQ).
+ */
+describe('GET /how-it-works — the tour page', () => {
   it('serves an HTML page', async () => {
     const { env } = createTestEnv();
     const res = await app.request('/how-it-works', {}, env);
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toContain('text/html');
     const body = await res.text();
-    expect(body).toContain('How it works');
+    expect(body).toContain('How Pawservation works');
     expect(body).toContain('Pawservation');
     // Case-sensitive: the pre-rebrand name must not reappear on a new marketing page.
     expect(body).not.toContain('Pawbook');
@@ -51,18 +75,38 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     }
   });
 
-  it('states the confirm-first promise and server-computed pricing', async () => {
+  it('leads on the three things the page is for: request, confirm or decline, time off', async () => {
     const body = await howItWorksBody();
-    expect(body).toContain('pending until you confirm');
-    expect(body).toContain('never processes');
+    // The owner's brief, pinned as three claims rather than as three headings, so the copy can be
+    // rewritten again without the page quietly losing what it is about.
+    expect(body).toContain('Your clients request on your website');
+    expect(body).toContain('You confirm or decline');
+    expect(body).toMatch(/Block a day, or a run of days/);
   });
 
-  it('is truthful that a pending request DOES reach the calendar', async () => {
+  it('states the confirm-first promise, and that the client hears about it from us', async () => {
     const body = await howItWorksBody();
-    // Pending bookings sync immediately as "[REQUEST] …" events (server/lib/google-calendar.ts),
-    // so what the confirm step protects is confirmation, not calendar absence. Saying otherwise
-    // would contradict the calendar section further down the same page.
-    expect(body).toContain('[REQUEST]');
+    expect(body).toContain('pending until you confirm');
+    // sendBookingStatusEmail fires on confirm/decline/cancel from the admin status route
+    // (server/routes/admin.ts), so the sitter does not have to send the "you're booked" message.
+    expect(body).toContain('your client is emailed the moment you do');
+    // There is no billing code in this repo, and on Solo the money never touches it: the sitter
+    // is paid directly. The page states that as the positive claim a sitter cares about, so the
+    // pin that used to hold the words "never processes" is now the claim plus a ban on the
+    // opposite, which is the half that could ever mislead.
+    // 2026-09-04: the owner demoted the money section to a quiet optional aside at the end of
+    // Services, so "The money goes straight to you." and "nothing is taken out of your earnings"
+    // are gone with the band they lived in. The claim they carried is re-pinned on the new line.
+    expect(body).toContain('Payment stays between you and your client.');
+    expect(body).toContain('Card payments are part of Pro.');
+    expect(body).not.toMatch(/we (take|process|handle|collect) (your |the )?payments?/i);
+    expect(body).not.toMatch(/payments? (are|is) processed/i);
+  });
+
+  it('never claims a request stays off the calendar until it is confirmed', async () => {
+    const body = await howItWorksBody();
+    // Pending bookings sync immediately as "[REQUEST] …" events (server/lib/google-calendar.ts).
+    // The page no longer walks through event titles, but it must never claim the opposite.
     expect(body).not.toContain('nothing reaches your calendar');
   });
 
@@ -70,33 +114,21 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     const body = await howItWorksBody();
     expect(body).not.toMatch(/href="mailto:/);
     expect(body).toContain('href="/#invite-h"');
+    expect(body).toContain('invite-only');
   });
 
-  it("describes multi-pet pricing as SHIPPED, and as the sitter's own CHOICE", async () => {
+  it('never re-acquires a pricing absolute that PetRateMode retired', async () => {
     const body = await howItWorksBody();
-    // >>> This pin has now been rewritten TWICE, and the history is the point. Pre-PR-3 it read
-    // `toContain('being built')` + `toContain('never auto-multiplied')`. PR 3 shipped enforcement
-    // and re-pinned the second as behaviour: "nothing is multiplied, ever". 0005 shipped
-    // `PetRateMode`, and that absolute became a LIE the moment any service sat on 'linear' — a
-    // page telling a sitter nothing is ever multiplied while her own services double the bill for
-    // a second dog is the worst failure this file exists to prevent. So the absolute is retired
-    // and something stronger replaces it: the page must say the sitter CHOOSES, name both
-    // choices, and never re-acquire the absolute.
-    expect(body).not.toContain('being built');
-    // The two rate kinds a sitter can actually set:
+    // >>> The positive half of this pin has now been rewritten THREE times, and the history is
+    // why the negative half is what stayed. Pre-PR-3 the page said multi-pet pricing was "being
+    // built"; PR 3 shipped it and the page said "nothing is multiplied, ever"; 0005 shipped
+    // PetRateMode and that absolute became a LIE for any service sitting on 'linear'. The
+    // 2026-09-04 rewrite took the whole pricing-mode explanation off the page, so there is no
+    // positive claim left to pin — the page now says only that a combination of pets can carry a
+    // rate of its own, which is true under both modes. What must never come back is any of the
+    // sentences that were retired as false.
     expect(body).toContain('two dogs');
-    expect(body).toContain('Fido');
-    // Both halves of the choice are named, in the sitter's own money language.
-    expect(body).toMatch(/twice your one-dog rate|times the number of pets/i);
-    expect(body).toMatch(/only the combinations you have priced/i);
-    // …and the choice is attributed to the sitter, not to us.
-    expect(body).toMatch(/you choose|you decide/i);
-    // The refusal survives, but as one BRANCH of the choice rather than as the only behaviour.
-    expect(body).toMatch(/asks? you for a rate|won&rsquo;t quote|no price/i);
-    // A stored combination beats the multiplier — the promise that keeps "a rate you typed" true.
-    expect(body).toMatch(/beat the doubling|beats the doubling|wins over/i);
-    // >>> THE REGRESSION GUARD: the retired absolutes must never come back. Each of these
-    // sentences shipped on this page and is now false for any service on 'linear'.
+    expect(body).not.toContain('being built');
     for (const lie of [
       'nothing is multiplied',
       'never from a multiplier',
@@ -105,195 +137,98 @@ describe('GET /how-it-works — the in-depth tour page', () => {
       'not because we multiplied',
       'Nothing else multiplies it',
     ])
-      expect(body).not.toContain(lie);
-  });
-
-  it('teaches capacity with a worked example and cites two real refusal reasons', async () => {
-    const body = await howItWorksBody();
-    // The per-option capacity example walks a concrete Tuesday, not an abstract listing.
-    expect(body).toContain('the solo walk still shows');
-    // Both refusal examples correspond to real stable codes on POST /bookings:
-    // "those dates are full" -> capacity_conflict, "that stay is too long" -> service_constraint.
-    expect(body).toContain('those dates are full');
-    expect(body).toContain('that stay is too long');
-    expect(body).not.toContain('that pet isn&rsquo;t yours');
-    // MAX_IMPORT_ROWS stays in code; the tour stops quoting it.
-    expect(body).not.toContain('up to 500');
+      expect(body, lie).not.toContain(lie);
   });
 
   it('describes customer self-cancellation accurately, fee and all', async () => {
     const body = await howItWorksBody();
-    // POST /:slug/bookings/:id/cancel: server-priced from the stored tiers, row kept, sitter mailed.
-    expect(body).toMatch(/the fee is worked out here/i);
-    expect(body).toContain('always free to withdraw');
-    expect(body).toContain('stays on the record as cancelled');
-    // isCustomerCancellable allows an in-progress stay on purpose (booking-ops.ts).
-    expect(body).toMatch(/already under way can be cancelled/i);
+    // POST /:slug/bookings/:id/cancel reads NO request body: the fee is priced server-side from
+    // the stored tiers (feeToCancelToday), so the client can never name a figure.
+    expect(body).toMatch(/worked out here from the windows you wrote/i);
+    expect(body).toContain('free to withdraw');
+    for (const lie of ['they enter the fee', 'they choose the fee', 'agree a fee'])
+      expect(body.toLowerCase(), lie).not.toContain(lie);
   });
 
-  it('describes customer self-editing accurately, including what an edit may NOT change', async () => {
+  it('describes a customer edit as already in force, with the sitter approving afterwards', async () => {
     const body = await howItWorksBody();
-    // PUT /:slug/bookings/:id — dates, pets, arrival time, answers; never the service.
-    expect(body).toContain('cannot change is which service it is');
-    // A confirmed booking returns to pending for re-approval, and no fee is assessed.
-    // A2, VERIFIED: updateBookingForEdit (server/db/repo.ts:1134) writes the new dates, pet count
-    // and estimate together with Status='pending' in ONE statement, applied before the capacity
-    // re-check, and editBooking then moves + retitles the Google event. So the change is already in
-    // force when she sees it; her approval is retroactive. "Comes straight back to you as pending"
-    // read as though it waited for her.
-    expect(body).toMatch(/drops it straight back to pending/i);
-    expect(body).toContain('the change itself is already in effect');
-    expect(body).toContain('Your approval comes after the change rather than before it');
+    // VERIFIED: updateBookingForEdit (server/db/repo.ts) writes the new dates, pet count and
+    // estimate together with Status='pending' in ONE statement, and editBooking then moves the
+    // Google event. So the change is in force when she sees it; her approval is retroactive.
+    // "Comes straight back to you as pending" read as though it waited for her.
+    expect(body).toContain('The change takes effect straight away');
+    expect(body).toContain('drops the booking back to pending');
     expect(body).not.toMatch(/comes straight back to you as pending/i);
-    expect(body).toMatch(/[Rr]escheduling is not cancelling/);
     // Every create-time rule is re-run on the edit (booking-ops.ts editBooking).
-    expect(body).toMatch(/can&rsquo;t squeeze past a cap/i);
+    expect(body).toContain('Every rule that applied when they booked applies again');
   });
 
-  it('is truthful that a fee-bearing cancellation KEEPS its calendar event', async () => {
+  it('never claims a cancellation always clears its calendar event', async () => {
     const body = await howItWorksBody();
-    // keepsCalendarEventOnCancel (server/lib/calendar-sync.ts): fee > 0 retitles, fee 0 deletes.
-    expect(body).toContain('[CANCELLED]');
-    // The old absolute claimed every cancellation removed the event, which fee-bearing ones do not.
+    // keepsCalendarEventOnCancel (server/lib/calendar-sync.ts): a fee > 0 retitles the event
+    // "[CANCELLED] …" and keeps it; only a fee-free cancel or a decline deletes it. The page no
+    // longer walks through that, and must not claim the absolute it used to.
     expect(body).not.toContain('Cancelled means gone');
     expect(body).not.toContain('Cancel or decline in Pawservation and the event is removed');
   });
 
-  it('claims no MINIMUM stay, because there is no MinNights column to set one with', async () => {
+  it('offers no dial the settings PUT would reject', async () => {
     const body = await howItWorksBody();
     // sql/schema.sql: "There is deliberately NO MinNights and NO MinPetCount". Both retired
-    // sentences promised a dial the settings PUT would reject.
+    // sentences promised a minimum a sitter cannot set, and the settings PUT rejects one.
     expect(body).not.toContain('shortest and longest stay');
     expect(body).not.toContain('set a minimum and a maximum number of nights');
-    expect(body).toMatch(/no minimum/i);
+    expect(body).toContain('The longest stay you will take.');
   });
 
-  it('describes the house-sit/boarding handover as the sitter&rsquo;s own setting (0006)', async () => {
+  it('keeps the retired framings of the whereabouts rule off the page', async () => {
     const body = await howItWorksBody();
-    // Tenants.HousesitBoardingOverlapDays: 0 / 1 (default) / 2 / NULL, not a hardcoded one day.
-    expect(body).not.toContain('won&rsquo;t overlap an occupied boarding stay by more than a day');
-    expect(body).toContain('one handover day (the default)');
-    expect(body).toMatch(/never overlap/i);
-    // The directional half of the rule: a shared day must be a genuine handover.
-    expect(body).toMatch(/one thing ending as the other begins/i);
-    // …and that half holds only on the NUMBERED settings. VERIFIED in
-    // src/shared/booking/capacity.ts: all three whereabouts checks in `rangeConflictReason` sit
-    // behind `overlapAllowance !== null`, and `whereaboutsDayBlocked` returns false on a null
-    // allowance, so "No limit" — a real one-click option in the admin dropdown that stores NULL
-    // (app/admin/sections/BusinessSection.tsx) — stops the rule running: a boarding in the middle
-    // of a house sit, or a SECOND HOUSE SIT in the middle of one, is then quoted, painted and
-    // accepted. The page used to say it was refused "however high you set the number", which is
-    // false for the one value that is not a number.
-    expect(body).toContain('A shared day there only ever counts as a');
-    expect(body).toContain('No limit works differently');
-    expect(body).toContain('it switches the check off');
-    expect(body).not.toContain('refused however high you set the number');
-    // …and the number is now described as governing the CROSS-KIND pair only. Same-kind is not on
-    // the scale at all, so the page must not offer the number as the thing that permits or refuses
-    // a second house sit.
-    expect(body).toContain('The number is what you allow between a house sit and a boarding');
-  });
-
-  it('says a stay starting the day another ends has not overlapped at all', async () => {
-    const body = await howItWorksBody();
-    // THE LOAD-BEARING SENTENCE. Back-to-back is the only same-kind adjacency left, and it is a
-    // sitter's normal working pattern. VERIFIED in src/shared/booking/capacity.ts: `EventSpan`
-    // records `lastOccupied = end_date - 1`, so the first stay's last night is the day BEFORE the
-    // second's first, they share no day of occupancy, and the rule never runs on them (pinned in
-    // capacity.test.ts, 'BACK-TO-BACK is not an overlap at all, at every allowance including 0').
-    // Both bookings show that Friday on her calendar, so without this sentence she reads the
-    // strict same-kind rule as killing her business.
-    expect(body).toContain(
-      '<strong>A stay that starts on the day another one ends has not overlapped at all.</strong>',
-    );
-    expect(body).toMatch(/out of the Smiths on Friday morning and into the/i);
-    expect(body).toMatch(/at every setting on this page/i);
-  });
-
-  it('says two house sits never share a night, on ANY numbered setting', async () => {
-    const body = await howItWorksBody();
-    // VERIFIED: `sameKindSpans` withholds the handover concession from a same-kind pair, so
-    // `rangeConflictReason` returns 'same_kind_overlap' on any shared day at allowance 0, 1 or 2.
-    // The old copy offered the numbered settings as buying a house-sit handover, which they never
-    // should have and no longer do.
-    expect(body).toContain('<strong>Two house sits never share a night</strong>');
-    expect(body).toMatch(/on any of the numbered settings/i);
-    expect(body).not.toMatch(/so is a second house sit dropped into the middle of the first/i);
-    // A one-night stay can never share its night with anything: she takes single overnights
-    // constantly and would otherwise hit refusals the page gave her no way to predict.
-    expect(body).toMatch(/a one-night house sit can never share its night with anything/i);
-  });
-
-  it('says the whereabouts rule DOES hold two house sits apart, and drops the pet-cap workaround', async () => {
-    const body = await howItWorksBody();
-    // The rule now runs same-kind for house sits as well as across kinds: a night holds at most
-    // one house sit, judged on EXISTENCE rather than on pet count, through the same handover
-    // machinery that already governed a house sit against a boarding. So the page must say the
-    // limit is about houses, and must say the pet cap is not what enforces it — a sitter who
-    // reads "cap" here would set one and think she had bought the guarantee.
-    expect(body).toContain('a night holds one house sit');
-    expect(body).toContain('That is about houses, not animals');
-    expect(body).toMatch(/no cap you set makes room for a second/i);
-    // Both stays are judged, so the verdict cannot depend on booking order.
-    expect(body).toContain('Both stays are judged');
-    // The pet-count reading of the old rule must be gone in every form it was written in.
-    expect(body).not.toContain(
-      'What the rule does not do is hold two house sits apart from each other',
-    );
-    expect(body).not.toContain('counts pets, not houses');
-    // The cap-of-one-pet workaround is now ACTIVELY BAD advice: it buys nothing the rule does not
-    // already give, and it costs the sitter every client arriving with two dogs (capacity.ts's
-    // `units > request.cap` → 'over_cap' refuses a two-pet booking outright). It must not appear
-    // anywhere on the page in any wording.
+    // The house-sit/boarding mechanics came off the page in the 2026-09-04 rewrite: they are a
+    // rule the engine enforces, and a marketing page that walks through them was the owner's
+    // main complaint. The BANS survive them, because each of these sentences was retired as
+    // FALSE, not as long. VERIFIED unchanged in src/shared/booking/capacity.ts: the rule judges
+    // houses rather than pets, so a pet cap buys none of it — a sitter who read the retired
+    // framing would set a cap of one and turn away every client arriving with two dogs.
     expect(body).not.toMatch(/cap of one pet/i);
-    expect(body).not.toContain('turns away every client arriving with two dogs');
-    expect(body).not.toContain('there is no setting that separates the two');
-    // Boarding is NOT swept up by this: boarders are at her own home, so several a night is
-    // normal and stays governed by MaxConcurrentPets alone. Saying otherwise would describe a
-    // refusal the engine never makes.
-    expect(body).toContain('Boarding on its own is not affected by any of this');
+    expect(body).not.toMatch(/so is a second house sit dropped into the middle of the first/i);
+    // The overlap allowance is a SETTING (Tenants.HousesitBoardingOverlapDays), never a hardcoded
+    // day, so the sentence that promised one stays refused too.
+    expect(body).not.toContain('won&rsquo;t overlap an occupied boarding stay by more than a day');
+    for (const retired of [
+      'counts pets, not houses',
+      'refused however high you set the number',
+      'What the rule does not do is hold two house sits apart from each other',
+      'turns away every client arriving with two dogs',
+      'there is no setting that separates the two',
+    ])
+      expect(body, retired).not.toContain(retired);
   });
 
-  it('says which Google calendar it syncs to, and that the default is her main one', async () => {
+  it('says what a NON-CLIENT sees, and never implies her rates are private', async () => {
     const body = await howItWorksBody();
-    // VERIFIED: the OAuth callback stores CalendarId: 'primary' (server/routes/oauth.ts:117), and
-    // every read treats NULL and 'primary' alike (calendar-sync.ts:566). Because the connected
-    // calendar is also READ, the default means her dentist appointment blocks bookings — which the
-    // admin UI already warns about (AppsSection.tsx:69) but the marketing pages did not. Moving off
-    // it is an affirmative second step: POST .../create-calendar (admin.ts:1667) makes
-    // "Pawservation — Pet bookings" (google-calendar.ts:24), or she pastes an existing id
-    // (admin.ts:1719). There is no picker of existing calendars.
-    expect(body).toContain('Connecting starts you on your main calendar');
-    expect(body).toContain('Pawservation &mdash; Pet bookings');
-    expect(body).toContain('paste in the id of one you already made');
-    // The claim that survives unchanged, and is still true: only the connected calendar is touched.
-    expect(body).toContain('every other calendar in your account is never read and never touched');
-  });
-
-  it('says what a NON-CLIENT sees at the embedded widget', async () => {
-    const body = await howItWorksBody();
-    // VERIFIED in app/embed/App.tsx:120-142 — the `!authed` branch returns before BookTab is
-    // mounted (:168), so a stranger gets a greeting, a three-step explainer, the email box and an
-    // invite-only note; no services, no calendar, no prices. An unknown address gets 403 "This
-    // provider books by invitation only." (server/routes/auth.ts:85) rather than an account.
-    expect(body).toContain('Anyone can load the page, but only your clients can book it');
-    expect(body).toContain('no services, no dates, no prices');
+    // VERIFIED in app/embed/App.tsx — the `!authed` branch returns before BookTab is mounted, so
+    // a stranger gets a greeting and the email box; an unknown address gets 403 "This provider
+    // books by invitation only." (server/routes/auth.ts) rather than an account.
+    expect(body).toContain('Only clients you have added can book');
+    expect(body).toContain('Anyone else sees your name and a sign-in box');
     // …true of the rendered page, and NOT true of the tenant document beside it: buildLlmsTxt
     // (server/lib/llms.ts) writes `$<Rate>/<RateUnit>` for every option of every enabled service,
     // served unauthenticated from GET /embed/:slug/llms.txt. A sitter must not read the sentence
-    // above as "my rates are private".
+    // above as "my rates are private", which is why the countervailing fact is on the page.
+    expect(body).toContain('Your rates are public.');
     expect(body).toContain(
-      'Your rates are public, though: the same booking address also publishes a plain-text summary of your services and prices that anyone can read without signing in.',
+      'publishes a plain-text summary of your services and prices that anyone can read without signing in',
     );
-    expect(body).toContain('booking is invite-only');
-    expect(body).toContain('rather than signed up');
+    for (const overclaim of ['nobody else sees', 'your rates stay private', 'nothing is visible'])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
-  it('runs the walk case in the sentence that names the per-slot walk limit', async () => {
+  it('answers for a walk book as well as a boarding book', async () => {
     const body = await howItWorksBody();
-    // The sentence names "how many pets you'll take in that time slot" and then illustrated it with
-    // a boarding date RANGE. It has to run both shapes or it argues past the walker it just named.
+    // The sentence that promises an answer on the page has to run both shapes, or it argues past
+    // half the businesses this product is sold to.
     expect(body).toContain('can you do Tuesday at ten?');
+    expect(body).toContain('Can you take the 12th to the 15th?');
   });
 
   it('covers the booking window: per-service notice and the business-wide horizon (0004)', async () => {
@@ -303,41 +238,26 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body).toContain('twelve months');
   });
 
-  it('covers saved intake answers and per-service species defaults', async () => {
-    const body = await howItWorksBody();
-    // SavedAnswers (0007): pre-fill only, and a reworded question drops its stale answer.
-    expect(body).toMatch(/already filled in the next time/i);
-    expect(body).toMatch(/stale answer is dropped/i);
-    // SERVICE_TEMPLATES.defaultAcceptedPetTypes — a create-time default, not a rule.
-    expect(body).toContain('walks and daycare start dogs-only');
-    expect(body).toContain('check-ins start cats-only');
-  });
-
   it('never claims an unbuilt capability as available', async () => {
     const body = await howItWorksBody();
     // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features.
     for (const banned of [/\bAI\b/, /invoice/i, /statement/i, /\bSMS\b/, /text message/i]) {
       expect(body, String(banned)).not.toMatch(banned);
     }
+    // …nor a refusal reason the API does not give, nor a limit marketing stopped quoting.
+    expect(body).not.toContain('that pet isn&rsquo;t yours');
+    expect(body).not.toContain('up to 500');
+    // The adopt-from-calendar flow ships (server/lib/calendar-backfill.ts), so the flat denial
+    // that predated it must not come back with a rewrite.
+    expect(body).not.toContain('you can&rsquo;t type an old booking in yourself');
   });
 
-  it('tells the client side of the booking section: a real answer straight away, still pending on the sitter', async () => {
+  it('promises an answer on the page without promising a booking', async () => {
     const body = await howItWorksBody();
+    expect(body).toContain('The request is still pending until you confirm it.');
     // "an answer" scanned as "a yes", which the paragraph then had to take back two sentences
-    // later. Every other wf-keep line on this page is self-limiting; so is this one now.
-    expect(body).toContain('Your client sees your open dates without waiting on you.');
+    // later. The line that shipped that reading stays refused.
     expect(body).not.toContain('Your client gets an answer without waiting on you.');
-    // The answer is computed from the sitter's OWN rules — named, so the claim stays checkable.
-    // The per-option slot cap is named too: for a walk or a drop-in it is what decides whether
-    // the day is offered at all (checkSingle / monthAvailability vs TenantServiceOptions.Capacity),
-    // so caps + notice + horizon alone was an incomplete list for half the businesses here.
-    expect(body).toMatch(
-      /your own caps, your notice period, your booking horizon and, on a walk or a drop-in, how many pets you&rsquo;ll take in that time slot/,
-    );
-    // Shown, not guaranteed — and never mistakable for an auto-confirm.
-    expect(body).toContain('not a promise');
-    expect(body).toContain('the request is still pending until you confirm it');
-    expect(body).toContain('What it removes is the wait for a text back.');
     for (const lie of [
       'confirmed instantly',
       'instant confirmation',
@@ -350,93 +270,76 @@ describe('GET /how-it-works — the in-depth tour page', () => {
   it('links back to the landing page, the demo, and pricing', async () => {
     const body = await howItWorksBody();
     expect(body).toContain('href="/#pricing"');
-    expect(body).toContain('href="/#faq"');
     expect(body).toContain('href="/demo"');
     expect(body).toContain('href="/admin"');
   });
 
   it('navigates its own sections instead of bouncing back to the landing page', async () => {
     const body = await howItWorksBody();
-    // A reader who came here for the tour should be able to move around the tour; the old nav
+    // A reader who came here for the tour should be able to move around the tour; an early nav
     // sent every click back to "/", abandoning the page they had just chosen.
-    for (const id of ['services', 'rules', 'booking', 'money', 'calendar', 'embed', 'setup']) {
+    // 2026-09-04: 'money' left this list when the owner demoted that section into an optional
+    // aside inside Services, which is not a nav destination.
+    for (const id of ['booking', 'confirm', 'calendar', 'services', 'setup']) {
       expect(body, id).toContain(`href="#${id}"`);
       expect(body, id).toContain(`id="${id}"`);
     }
+    // The honesty section is reachable by reading rather than by the nav, but it must exist.
+    expect(body).toContain('id="limits"');
     expect(body).not.toContain('href="/#how"');
     expect(body).not.toContain('href="/#dashboard"');
   });
 
-  it('is honest that Google Calendar is a mirror, not the record', async () => {
+  it('is truthful that the connected calendar is read back and blocks dates', async () => {
     const body = await howItWorksBody();
-    // Pushes retry until they land (outbox + cron): an outage delays the mirror, never loses it.
-    expect(body).toContain('the calendar is a mirror');
-    expect(body).toContain('the booking still lands in Pawservation');
-    expect(body).toContain('retries every fifteen minutes until the event lands');
-    // VERIFIED against wrangler.jsonc `triggers.crons: ["*/15 * * * *"]` — the sweep interval is
-    // the real bound, so the page states it instead of claiming "a few minutes".
-    expect(body).toContain(
-      'the mirror lags for however long Google is unreachable, plus up to fifteen minutes for the next sweep after it recovers',
-    );
+    // Reconcile materializes foreign events on the connected calendar as capacity-blocking rows.
+    expect(body).toContain('blocks those dates too');
+    expect(body).not.toContain('One way, on purpose');
+    expect(body).not.toContain('unless you enter it as time off');
+    // …but only inside the window reconcile actually reads. VERIFIED: reconcileWindow
+    // (server/lib/calendar-sync.ts) is [today-1, max(today+180d, horizon+1d)), so an unbounded
+    // "blocks those dates" promise is false for a sitter who cleared her horizon. The page states
+    // the floor and the horizon term together instead of explaining the window.
+    expect(body).toContain('for six months ahead or as far as your booking horizon');
+  });
+
+  it('never claims a Google drag moves the booking, or that the mirror is perfect', async () => {
+    const body = await howItWorksBody();
+    // VERIFIED in server/lib/calendar-sync.ts: reconcile has no pass that reads a moved (but
+    // still present) event's dates back onto its booking, and the outbox rebuilds the event from
+    // the DB row. The page no longer discusses dragging; these claims stay refused anyway.
+    for (const lie of ['the booking follows', 'the dates update', 'moves the booking'])
+      expect(body, lie).not.toContain(lie);
+    // VERIFIED against wrangler.jsonc `triggers.crons: ["*/15 * * * *"]`: an outage delays the
+    // mirror by however long Google is unreachable plus up to fifteen minutes, so neither a
+    // perfect mirror nor a few-minute one may be claimed.
     expect(body).not.toContain('never loses a frame');
     expect(body).not.toContain('the mirror lags a few minutes');
   });
 
-  it("distinguishes deleting a time-off block from deleting a booking's own event", async () => {
-    const body = await howItWorksBody();
-    expect(body).toContain('blocks those dates automatically');
-    expect(body).toMatch(/deleting it in Google cancels the booking/i);
-    // …except for an ADOPTED stay, which listSyncedBookingIds excludes outright
-    // (server/db/repo.ts:3777, `Source IS NOT 'calendar-backfill'`), so reconcile's cancel pass
-    // can never see it. Same qualification as the landing page's move/delete answer.
-    expect(body).toContain('a stay you adopted from this calendar, whose event was always yours');
-    expect(body).toContain('you cancel the booking in your dashboard instead');
-  });
-
-  it('is truthful that the connected calendar is read back and blocks dates', async () => {
-    const body = await howItWorksBody();
-    // WS-G: external events on the connected calendar are materialized and block capacity.
-    expect(body).toContain('blocks those dates automatically');
-    expect(body).not.toContain('One way, on purpose');
-    expect(body).not.toContain('unless you enter it as time off');
-    // …but only inside the window reconcile actually reads. VERIFIED: reconcileWindow
-    // (server/lib/calendar-sync.ts:521) is [today-1, max(today+180d, horizon+1d)), and pass (b)
-    // materializes a foreign event only if it came back inside that window, so an unbounded
-    // "blocks those dates" promise is false for a sitter who cleared her horizon.
-    expect(body).toContain('It reads six months ahead');
-    expect(body).toContain('clearing the horizon doesn&rsquo;t extend it, so an event further');
-  });
-
-  it('describes adopting past stays from the calendar, which now ships', async () => {
-    const body = await howItWorksBody();
-    // VERIFIED: server/lib/calendar-backfill.ts + POST /:slug/admin/calendar/backfill/{preview,
-    // import} (server/routes/admin.ts:3722, :3817) write real BookingRequests rows stamped
-    // Source = 'calendar-backfill' (repo.ts:731), surfaced by app/admin/CalendarBackfillPanel.tsx
-    // inside EarningsSection. The page used to answer this question with a flat "you can't type an
-    // old booking in yourself" and send the sitter to ask her client to rebook.
-    expect(body).toContain('Adopt past bookings from your calendar');
-    expect(body).toContain('prices each stay off today&rsquo;s rate card');
-    expect(body).toContain('nothing is recorded until you press the button');
-    // The half that is still true: nothing types a booking in from nothing.
-    expect(body).toContain('type an old booking in from nothing');
-    expect(body).not.toContain('you can&rsquo;t type an old booking in yourself');
-  });
-
   it('discloses the one thing that is not built: repeating bookings', async () => {
     const body = await howItWorksBody();
-    // No recurring/series support anywhere in the repo.
+    // No recurring/series support anywhere in the repo. landing.test.ts reaches across for this
+    // same substring, since the landing page's FAQ went and this is where the answer lives.
     expect(body).toContain('repeat weekly');
+    expect(body).toContain('No repeating bookings yet.');
   });
 
-  it('tells a sitter in the setup section how her data comes back out, and no more than that', async () => {
+  it('states the one-sitter limit on Solo, and never claims partial-day time off', async () => {
     const body = await howItWorksBody();
-    // The setup section is where a sitter decides whether to put eleven years of client records
-    // into this, so it is where the way back out belongs — beside the other "before you start"
-    // answer (the stays she has already agreed to) rather than in the under-the-hood section,
-    // which is explicitly about software her clients might use.
+    // Solo is one sitter per account, pinned from landing.test.ts too.
+    expect(body).toContain('Solo runs one sitter per account');
+    // owner removed the whole-days item from the tour, 2026-09-04
+    expect(body).not.toMatch(/block (an|a single) hour|hourly time off|part of a day/i);
+  });
+
+  it('tells a sitter how her data comes back out, and no more than that', async () => {
+    const body = await howItWorksBody();
+    // The Good-to-know section is where a sitter decides whether to put eleven years of client
+    // records into this, so it is where the way back out belongs.
     expect(body).toContain('What if you want to take your book elsewhere?');
     expect(body.indexOf('take your book elsewhere')).toBeGreaterThan(body.indexOf('id="setup"'));
-    expect(body.indexOf('take your book elsewhere')).toBeLessThan(body.indexOf('id="next"'));
+    expect(body.indexOf('take your book elsewhere')).toBeGreaterThan(body.indexOf('id="limits"'));
     // The four datasets of EXPORT_DATASETS, and the file format buildExportCsv actually writes.
     expect(body).toContain('Export your data gives you four downloads');
     expect(body).toContain('ordinary CSVs');
@@ -470,7 +373,7 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     expect(body.match(/nothing to sign up for/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
-  it('keeps the under-the-hood section in sitter language', async () => {
+  it('keeps developer nouns out of the copy', async () => {
     const body = await howItWorksBody();
     // The concepts stay; the developer nouns do not. This page is read by pet sitters.
     for (const jargon of [/idempotenc/i, /machine-readable/i, /llms\.txt/i]) {
@@ -478,22 +381,52 @@ describe('GET /how-it-works — the in-depth tour page', () => {
     }
   });
 
-  it('tells sitters they can import the CSV Venmo gives them, and that the file is not kept', async () => {
+  it('keeps the optional payment tracking quiet, and truthful about what it is', async () => {
     const body = await howItWorksBody();
-    expect(body).toContain('Paid on Venmo? Upload the CSV.');
-    expect(body).toContain('read in memory and never stored');
+    // 2026-09-04: the owner demoted the money section. The four wf-pair rows and their headline
+    // ("You collect the money. Pawservation keeps the count.") are gone, and with them the pins
+    // on 'Paid on Venmo? Upload the CSV.', the part-payments line and 'read in memory and never
+    // stored'. What is pinned now is what the short block still claims.
+    expect(body).toContain('Optional: keep track of payments');
+    expect(body).toContain('a running balance per household');
+    expect(body).toContain('Upload the CSV Venmo gives you');
     // The banned-words test above covers this paragraph too: it may not say "statement" (so not
     // "Venmo statement") and may not say "invoice".
     expect(body).not.toMatch(/statement/i);
   });
 
-  it('carries no images beyond the brand calendar mark (no new weight budget to police)', async () => {
+  it('states the plan prices from PRICING, and offers no checkout for them', async () => {
+    const body = await howItWorksBody();
+    // Five surfaces state these numbers and any two disagreeing is a pricing lie, so the page
+    // interpolates rather than hardcodes. There is no billing code in this repo, so the trial is
+    // a fact the page states and never a flow it offers.
+    expect(body).toContain(`$${PRICING.soloMonthly} per sitter per month`);
+    expect(body).toContain(`${PRICING.trialDays}-day free trial`);
+    expect(body).toContain(`$${PRICING.proMonthly} per sitter per month`);
+    expect(body).toContain(`$${PRICING.proAnnual} a year`);
+    expect(body).not.toMatch(
+      /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
+    );
+  });
+
+  it('reuses the landing screenshots, with alt text a screen reader can use', async () => {
     const body = await howItWorksBody();
     const imgTags = body.match(/<img\b[^>]*>/g) ?? [];
-    // The single decorative brand mark in the nav is the one allowed image; screenshots and
-    // other weight stay banned.
+    // Three step shots plus the brand mark twice (nav and shared footer). The shots are the
+    // landing page's own files, so they are inside its weight budget and add no new bytes here.
+    expect(imgTags.length).toBe(5);
     for (const tag of imgTags) {
-      expect(tag).toContain('src="/brand/calendar.svg"');
+      const src = /src="([^"]+)"/.exec(tag)?.[1];
+      const alt = /alt="([^"]*)"/.exec(tag)?.[1];
+      if (src === '/brand/calendar.svg') {
+        // Decorative next to the visible "Pawservation" text: empty alt, so the name is not
+        // announced twice.
+        expect(alt, tag).toBe('');
+        continue;
+      }
+      expect(src, tag).toMatch(/^\/img\/landing\/step-[a-z]+\.webp$/);
+      expect(alt, tag).toBeTruthy();
+      expect(alt!.length, tag).toBeGreaterThan(20);
     }
   });
 
@@ -543,7 +476,7 @@ describe('the footer links to the legal pages', () => {
 
 /**
  * The landing page makes fewer claims than the tour, but the ones it does make are absolutes
- * ("No.", "Just your clients."), which is exactly why they want pinning: an absolute is either
+ * ("Only your clients can book."), which is exactly why they want pinning: an absolute is either
  * true or it is a lie, with no middle reading a reader could charitably take.
  */
 describe('the landing page claims only what ships', () => {
@@ -569,90 +502,74 @@ describe('the landing page claims only what ships', () => {
     expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
   });
 
-  it('backs the "can it double-book me? No." answer with what actually holds a day', async () => {
+  // The 251-word "Can it double-book me?" answer left the landing page in the September 2026
+  // trim. It was whereabouts-rule, pool-cap, per-slot-cap and reconcile-window mechanics on a
+  // page whose job is the relationship between a sitter and her clients, and /how-it-works
+  // carries every one of those claims already, pinned by the four tour tests above
+  // ('describes the house-sit/boarding handover…' through 'runs the walk case in the sentence
+  // that names the per-slot walk limit'). What is pinned HERE is what the landing page may never
+  // say in its place: the mechanics went, the retired framings must not come back with them, and
+  // an unqualified promise is worse than the long answer it replaced. VERIFIED unchanged:
+  // `walkHasConflict` refuses a single-day request only on a BLOCKED day, nothing anywhere models
+  // travel time, and a single-day service draws no whereabouts pool at all, so a landing page
+  // claiming daytime visits are held apart would be false on the day it shipped.
+  it('leaves the double-booking mechanics to the tour, and makes no bare promise instead', async () => {
     const body = await landingBody();
-    // A pending request occupies capacity (repo.ts's capacity reads include 'pending'), and both
-    // the pool path and the per-option slot path now ask whether the whole SET fits.
-    expect(body).toContain('Can it double-book me?');
-    expect(body).toMatch(/holds its space from the moment it arrives/i);
-    expect(body).toMatch(/three dogs needs three spaces/i);
-    // The bold answer is a plain "No." again, and now earns it. It carried a headline exception
-    // for as long as two house sits on one night were held apart only by a pet cap, which IS
-    // being double-booked; the whereabouts rule covers that case itself now, so the warning would
-    // send a skimmer looking for a hole that is closed.
-    // The bold answer names the one setting that lifts it IN THE OPENING rather than in the last
-    // line: a skimmer takes the promise and leaves the condition behind, and "No limit" really
-    // does switch the whereabouts check off (`normalizeAllowance` returns null and every
-    // whereabouts branch sits behind `overlapAllowance !== null`).
-    expect(body).toContain('<strong>Mostly no, and never by accident.</strong>');
+    expect(body).not.toContain('Can it double-book me?');
     expect(body).not.toContain('<strong>No.</strong> Your caps and your time off hold the day');
     expect(body).not.toContain('There is one exception, and if you house-sit you should read it');
-    // The caveat comes before the guarantees it qualifies.
-    const answer = body.slice(body.indexOf('Can it double-book me?'));
-    expect(answer.indexOf('No limit')).toBeLessThan(answer.indexOf('Caps count animals'));
-  });
-
-  it('scopes the double-booking answer to NIGHTS, and says what holds daytime visits apart', async () => {
-    const body = await landingBody();
-    // VERIFIED: `walkHasConflict` refuses a single-day request only on a BLOCKED day, and the
-    // per-option slot cap (`countSlotBookings` in server/lib/availability.ts) is the only other
-    // thing bounding a walk or a drop-in. Nothing anywhere models travel time, and a single-day
-    // service draws no whereabouts pool at all, so a 9am walk and a 9am drop-in across town are
-    // both bookable, as is either of them during a house sit. A sitter who does daytime visits
-    // must not read the "No." as covering that.
-    const answer = body.slice(body.indexOf('Can it double-book me?'));
-    expect(answer).toMatch(/All of that is about NIGHTS/);
-    expect(answer).toMatch(/held apart by each slot&rsquo;s own limit rather than by travel time/i);
-    expect(answer).toMatch(/9am walk across town/i);
+    for (const overclaim of ['never double-book', 'travel time', 'no clashes'])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
   it('tells sitters their clients can reschedule and cancel without going through them', async () => {
     const body = await landingBody();
-    expect(body).toContain('Can a client change or cancel a booking themselves?');
+    // The FAQ item this used to open on is gone: the September 2026 trim moved the whole
+    // change-and-cancel rule into the "You and your clients" section, which is where a reader
+    // looking for "what is this like for my clients" actually looks, and made that the ONE place
+    // on the page it is stated (it had been in a feature card, the workflow block and this FAQ
+    // answer at once). The promise itself is unchanged and still pinned, word for word.
     // The two facts that make it safe for the sitter: re-approval, and a fee she never negotiates.
     expect(body).toContain('A change takes effect straight away');
     expect(body).toContain('your approval comes after the change, not before it');
     expect(body).not.toMatch(/comes back to you as pending, so you re-approve/i);
-    expect(body).toMatch(/not typed in by them/i);
+    // The fee is the sitter's stored policy applied server-side (feeToCancelToday), and the
+    // cancel route reads NO request body at all, so the client cannot name a figure. The page
+    // said that as "worked out here and not typed in by them"; the copy pass replaced the
+    // negative half with the positive claim, which asserts the same fact about the same code.
+    // What must never appear is the opposite: a client choosing or proposing what she owes.
+    expect(body).toMatch(/the fee your own policy sets/i);
+    for (const lie of ['they enter the fee', 'they choose the fee', 'agree a fee'])
+      expect(body.toLowerCase(), lie).not.toContain(lie);
   });
 
-  it('gives the monthly-payer household balance its own FAQ item, not a tail on card payments', async () => {
+  it('keeps the household claim to one line, and still never turns it into a bill', async () => {
     const body = await landingBody();
-    // It is the fix for a real problem — a client who settles a month at a time — and nobody
-    // scanning for billing looks under "Do customers pay by card here?".
-    expect(body).toContain('My clients pay me monthly, not per booking');
-    expect(body).toMatch(/one (payment|running balance) for (the |a )?(whole |entire )?household/i);
-    expect(body).toContain('one running balance rather than a figure stuck to each booking');
-    // The card answer keeps only the card answer.
-    const cardAnswer = body.slice(
-      body.indexOf('Do customers pay by card here?'),
-      body.indexOf('My clients pay me monthly'),
-    );
-    expect(cardAnswer).not.toContain('household');
-    // VERIFIED (unchanged from round 2): GET /:slug/account exists, but app/embed/App.tsx mounts
-    // only BookTab and MineTab, so there is no client-facing balance screen and no email carrying
-    // one. The page may claim the sitter's side only.
-    expect(body).toContain('nothing about it is emailed to your client');
+    // The 109-word household-semantics answer went in the September 2026 trim: union-find over
+    // co-owned pets is not what a sitter is deciding on at the landing page, and the fact she
+    // needs from it survives as a clause on the Payments card and in the Solo tier's own bullet.
+    expect(body).toContain('one running balance per household');
+    // What the long answer was PROTECTING her from is what stays pinned. VERIFIED (unchanged):
+    // nothing is ever sent to a client showing a household balance — every template in
+    // server/lib/email.ts is a login code, a booking status, an invite, or the sitter-facing
+    // cancellation notice, and app/embed mounts only BookTab and MineTab, so there is no
+    // client-facing balance screen. A landing page that said otherwise would be selling a
+    // billing product this one is not.
+    expect(body).not.toContain('send one bill');
+    expect(body).not.toContain('one bill for a whole household');
+    // The two words /how-it-works is banned from, banned here too: they name documents that exist
+    // nowhere in this product.
     expect(body).not.toMatch(/invoice|statement/i);
   });
 
-  it('states the whereabouts limit as part of the "No.", and names the one setting that lifts it', async () => {
+  it('keeps the retired pet-cap framing of the whereabouts rule off the landing page', async () => {
     const body = await landingBody();
-    // The strongest absolute on the page. Two house sits on one night used to be the case it did
-    // not cover; the rule holds them apart now, on existence rather than on pet count, so the
-    // answer states that as a reason the "No." holds rather than as an exception to it.
-    expect(body).toContain('A night holds one house sit, whatever its pet count');
-    expect(body).toContain('you can only sleep in one house');
-    // "No limit" really does stop the check running, so an unqualified absolute would be false
-    // for any sitter who picked it. It is the one caveat left, and it is a choice she makes.
-    expect(body).toMatch(/turns the whereabouts check off/i);
-    expect(body).toContain('&ldquo;No limit&rdquo;');
-    // Back-to-back, on the landing page too: it is the sentence that keeps the strict same-kind
-    // rule from reading as "you cannot work two houses in a week".
-    expect(body).toMatch(
-      /A stay that starts on the day another one ends has not overlapped at all/i,
-    );
-    // The retired pet-cap framing, in every wording it shipped in.
+    // The whereabouts rule went to the tour with the rest of the double-booking answer (see the
+    // note above), where it is pinned in full — including the "No limit" caveat and the
+    // back-to-back sentence — by 'says the whereabouts rule DOES hold two house sits apart'.
+    // What must never come back to the landing page is the framing that rule REPLACED: it read
+    // as a guarantee a pet cap does not give, and a sitter who believed it would set a cap of one
+    // and turn away every client arriving with two dogs.
     expect(body).not.toContain('The exception is that it does not keep you in one house at a time');
     expect(body).not.toContain('that cap counts pets rather than houses');
     expect(body).not.toContain('so is any client bringing two dogs');
@@ -663,130 +580,82 @@ describe('the landing page claims only what ships', () => {
     const body = await landingBody();
     // Half a sitter's traffic is referrals not yet on her list; without this she cannot judge
     // whether the widget is safe on a public page. VERIFIED in app/embed/App.tsx:120-142.
-    expect(body).toContain('Safe on a public page');
-    expect(body).toContain('no services, no dates, no prices');
-    // Same qualification as the tour's embed section — see the llms.txt note there.
-    expect(body).toContain(
-      'Your rates are public, though: the same booking address also publishes a plain-text list of your services and prices that anyone can read without signing in, the way the prices on your own website already are.',
-    );
-    expect(body).toContain('booking is invite-only');
+    expect(body).toContain('safe on a public page, because only your clients can book');
+    // The paragraph that itemised what a stranger sees, and the countervailing fact that her
+    // RATES are published unauthenticated at the same address (buildLlmsTxt), moved to the tour
+    // in the September 2026 trim, where 'says what a NON-CLIENT sees at the embedded widget'
+    // pins both. The short line that stays behind must therefore not make the privacy claim the
+    // long one had to qualify: it says who can BOOK, and nothing about what is visible.
+    expect(body).not.toContain('no services, no dates, no prices');
+    for (const overclaim of ['nobody else sees', 'your rates stay private', 'nothing is visible'])
+      expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
   it('does not label the workflow column five unchanging things when one of them changes', async () => {
     const body = await landingBody();
-    // The fifth item is "The dates question stops being a text." — the one thing that DOES change.
-    expect(body).toContain(
-      'Four things that don&rsquo;t change on the day you start, and one that does.',
-    );
+    // The fifth item WAS "The dates question stops being a text." — the one thing that does
+    // change — which is why the label had to carry "and one that does". In the September 2026
+    // trim that item was promoted out of the column into the "You and your clients" section it
+    // had always been the argument for, so the column holds only things that genuinely stay put
+    // and the label stopped counting them at all. The miscount it existed to prevent is what
+    // stays pinned: a label that counts must never count an item the column no longer holds.
+    expect(body).toContain('Nothing about how you work has to change.');
     expect(body).not.toContain('Five things that don&rsquo;t change');
+    expect(body).not.toContain('Four things that don&rsquo;t change');
+    // …and the promoted line is still on the page, once, where landing.test.ts pins it.
+    expect(body).toContain('The dates question stops being a text.');
   });
 
-  it('still shows Pro as unbuilt, and never badges it available', async () => {
+  it('presents both tiers as products, and neither as a checkout', async () => {
     const body = await landingBody();
-    // The Pro tier does not exist. Nothing about it may read as purchasable.
-    expect(body).toContain('In development');
-    expect(body).toContain('Not available yet');
-    expect(body.match(/Available now/g)!.length).toBe(1); // the Free card, and only the Free card
-    expect(body).not.toMatch(/start (your |a )?free trial/i);
-    expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
-  });
-
-  it('gives moving AND deleting a booking event in Google its own answer', async () => {
-    const body = await landingBody();
-    // It used to be a throwaway clause inside "Can it double-book me? No." — read by a sitter who
-    // lives in her calendar and drags things. VERIFIED in server/lib/calendar-sync.ts: reconcile
-    // has no pass that reads a moved (but still present) event's dates back onto its booking —
-    // pass (a) only asks whether the id is still live, and pass (b) skips anything carrying a
-    // bookingId — and the outbox only pushes SyncPending=1 rows, rebuilding the whole event from
-    // the DB row when it eventually does.
-    expect(body).toContain('What if I move or delete a booking&rsquo;s event in Google Calendar?');
-    expect(body).toMatch(/deleting a booking&rsquo;s event in Google cancels/i);
-    expect(body).toContain('Moving doesn&rsquo;t move it');
-    expect(body).toContain('the event is rewritten back to them');
-    // The drag that DOES have an effect: outside reconcileWindow the event is simply absent from
-    // Google's response, which pass (a) reads as a hand-deletion. The window is NAMED, because
-    // "the months Pawservation checks" is not a number a sitter can act on. VERIFIED in
-    // reconcileWindow (server/lib/calendar-sync.ts:521): [today-1, max(today+180d, horizon+1d)).
-    // The horizon term is NULL when MaxAdvanceMonths is NULL, so a CLEARED horizon (which the
-    // page itself invites: "Clear it and there's no horizon at all") leaves the bound at exactly
-    // 180 days. The old sentence promised the opposite in precisely that case — it said the
-    // window stretched "if you let clients book beyond" six months, which is the one setting
-    // under which it does not stretch at all.
-    expect(body).toContain('leaves the window Pawservation checks');
-    expect(body).toContain('yesterday to six months out');
-    expect(body).toContain('stretches further only when your booking horizon is set further');
-    expect(body).toContain('clearing the horizon doesn&rsquo;t stretch it');
-    expect(body).not.toContain(
-      'as far as your own booking horizon if you let clients book beyond that',
+    // Owner repriced on 2026-09-04: Solo replaced the free tier and Pro is sold, so the unbuilt
+    // framing went from the Pro card and the "Available now" badge went from both. A badge that
+    // says the same thing on every card carries no information.
+    expect(body).not.toContain('In development');
+    expect(body).not.toContain('Not available yet');
+    expect(body).not.toContain('Available now');
+    expect(body).toContain('<h3>Solo</h3>');
+    expect(body).toContain('<h3>Pro</h3>');
+    // There is no billing code in this repo. The invite form is the only call to action either
+    // card offers, so nothing here may read as a purchase the visitor can complete. The trial is
+    // stated as a fact and never offered as a flow, for the same reason: "start your free trial"
+    // and "no credit card required" are both promises about a checkout that does not exist, and
+    // the second one describes a card step nothing in this repo could ask for or skip.
+    expect(body).not.toMatch(
+      /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
     );
-    // P1-1: the cancel-on-delete promise does NOT hold for an adopted stay. VERIFIED in
-    // listSyncedBookingIds (server/db/repo.ts:3777) — `Source IS NOT 'calendar-backfill'` keeps
-    // every adopted booking out of pass (a)'s candidate set, permanently, because its
-    // GCalEventId was stamped by the backfill and never carries private.bookingId.
-    expect(body).toContain('a stay you adopted from this calendar');
-    expect(body).toContain('the booking stays confirmed until you cancel it in your dashboard');
-    // A6, VERIFIED: updateBookingStatus guards `Status NOT IN ('cancelled','declined')`
-    // (repo.ts:1023) and no admin route writes a booking back to 'confirmed', so the dashboard
-    // offers a cancelled row no lifecycle action at all. Warning about the action without saying
-    // it cannot be undone left the sitter to find that out at the worst moment.
-    expect(body).toContain('A cancellation is final');
-    expect(body).toContain('there is no un-cancel in your dashboard');
-    // …and it must never claim the move is honoured.
-    for (const lie of ['the booking follows', 'the dates update', 'moves the booking'])
-      expect(body, lie).not.toContain(lie);
   });
 
-  it('describes a household as one balance, never as a bill that gets sent', async () => {
-    const body = await landingBody();
-    // VERIFIED: nothing is ever sent to a client showing a household balance — every template in
-    // server/lib/email.ts is a login code, a booking status, an invite, or the sitter-facing
-    // cancellation notice. GET /:slug/account exists, but the embed widget renders no balance
-    // screen (app/embed has only BookTab and MineTab, both per-booking), so the page may not
-    // claim a client-facing view of it either.
-    expect(body).toMatch(/one (payment|running balance) for (the |a )?(whole |entire )?household/i);
-    expect(body).toContain('one running balance rather than a figure stuck to each booking');
-    // Scoped to the PAGE, not to the client: GET /:slug/account is live, end-user-authed and
-    // advertised in every tenant's llms.txt (server/lib/llms.ts:50), so the honest claim is that
-    // the booking page renders no total — not that the client can never reach one.
-    expect(body).toContain('your booking page still shows her only her own bookings');
-    expect(body).not.toContain('their own page still shows them their bookings rather than a');
-    expect(body).not.toContain('send one bill');
-    expect(body).not.toContain('one bill for a whole household');
-    // The two words /how-it-works is banned from, banned here too: they name documents that exist
-    // nowhere in this product.
-    expect(body).not.toMatch(/invoice|statement/i);
-  });
-
-  it('says who is actually asked when a pet group has no rate', async () => {
+  it('never puts the sitter at the wrong end of the unpriced-pet-group conversation', async () => {
     const body = await howItWorksBody();
     // VERIFIED: under PetRateMode 'exact' an unpriced set is refused (booking-ops.ts:747,
     // code 'unpriced_pet_set') and app/embed/BookTab.tsx:725-757 renders the message to the
     // CLIENT — "Ask about a rate for these N pets at <contact>", plus "book one pet at a time".
-    // Nothing emails the sitter and nothing lands in her dashboard, so the old "the widget asks
-    // you for a rate" put her at the wrong end of the conversation.
-    expect(body).toContain('it&rsquo;s your client who gets told');
-    expect(body).toContain('offers to book one pet at a time');
-    expect(body).toContain('Nothing about it reaches your dashboard');
+    // Nothing emails the sitter and nothing lands in her dashboard, so "the widget asks you for
+    // a rate" put her at the wrong end of the conversation.
+    //
+    // The 2026-09-04 marketing rewrite took the pricing-mode explanation off the tour, so the
+    // three sentences that used to be pinned here have no page to sit on. The BAN is what the
+    // test was protecting and it stays: no page may put the sitter at the wrong end of that
+    // conversation, whether or not it explains the modes at all.
     expect(body).not.toContain('the widget asks you for a rate');
+    expect(body).not.toMatch(/we (will )?ask you for a rate/i);
   });
 
-  it('adds an MCP/assistant-booking bullet to the Pro card without changing its unbuilt framing', async () => {
+  it('keeps the MCP/assistant-booking bullet on the Pro card', async () => {
     const body = await landingBody();
     expect(body).toMatch(/connect an ai assistant.*check availability and book/i);
-    // Still exactly one live badge (Free card only) and the Pro card is still unpurchasable.
-    expect(body.match(/Available now/g)!.length).toBe(1);
-    expect(body).toContain('Not available yet');
-    expect(body).not.toMatch(/start (your |a )?free trial/i);
-    expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
+    // Owner repriced on 2026-09-04: the bullet's card is a product now, and the only thing the
+    // page still may not do is offer a checkout it has no code for.
+    expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
   });
 
-  it('adds a back-office assistant bullet to the Pro card without changing its unbuilt framing', async () => {
+  it('keeps the back-office assistant bullet on the Pro card', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/back-office assistant.*pet combinations.*no price/i);
-    // Still exactly one live badge (Free card only) and the Pro card is still unpurchasable.
-    expect(body.match(/Available now/g)!.length).toBe(1);
-    expect(body).toContain('Not available yet');
-    expect(body).not.toMatch(/start (your |a )?free trial/i);
-    expect(body).not.toMatch(/upgrade now|buy now|subscribe/i);
+    // The "which pet combinations have no price" clause went with the September 2026 landing
+    // trim: it is codebase vocabulary on a pricing card. The bullet itself is what stays pinned.
+    expect(body).toMatch(/back-office assistant.*who owes you.*your week/i);
+    // Owner repriced on 2026-09-04: same rule as the sibling test above, no checkout on the page.
+    expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
   });
 });
