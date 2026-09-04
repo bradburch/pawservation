@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { addPetOwner, insertInvitedCustomer, setPetDeceased } from '../db/repo';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+
+const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
 
 const me = async (env: Env, token: string) =>
   (await (
@@ -17,8 +20,8 @@ const book = (env: Env, token: string, petIds: string[]) =>
       body: JSON.stringify({
         type: 'boarding',
         optionKey: 'standard',
-        startDate: '2026-09-01',
-        endDate: '2026-09-03',
+        startDate: addDays(TODAY, 30),
+        endDate: addDays(TODAY, 32),
         petIds,
       }),
     },

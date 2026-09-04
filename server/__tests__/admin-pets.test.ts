@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { adminToken, createTestEnv, endUserToken } from './helpers';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+
+const TODAY = getPacificDateStr(new Date(), DEFAULT_TIMEZONE);
 
 describe('admin customer pets', () => {
   it('lists customers with their pets', async () => {
@@ -29,8 +32,8 @@ describe('admin customer pets', () => {
         body: JSON.stringify({
           type: 'boarding',
           optionKey: 'standard',
-          startDate: '2026-09-01',
-          endDate: '2026-09-03',
+          startDate: addDays(TODAY, 30),
+          endDate: addDays(TODAY, 32),
           petIds: ['pet_sp_bella'],
         }),
       },
