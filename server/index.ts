@@ -947,7 +947,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">How far ahead people can book.</p>
-              <p>New accounts start at twelve months, so nobody books your Christmas two Christmases early.</p>
+              <p>New accounts start at twelve months.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Google Calendar, if you want it.</p>
