@@ -4053,11 +4053,23 @@ export const adminRoutes = new Hono<AppEnv>()
       .json<{ estCostCents?: unknown }>()
       .catch(() => ({}) as { estCostCents?: unknown });
     const estCostCents = body.estCostCents;
-    // The BODY is CENTS (0015), like the column. The ceiling is the sitter's own whole-dollar
-    // bound from import time, scaled once here so the two routes cannot drift about the figure
-    // she is allowed to type.
-    if (!isValidCents(estCostCents) || estCostCents > dollarsToCents(MAX_BACKFILL_EST_COST))
-      return c.json({ error: `Enter an amount between $1 and $${MAX_BACKFILL_EST_COST}.` }, 400);
+    // The BODY is CENTS (0015), like the column — but a WHOLE NUMBER OF DOLLARS expressed in them,
+    // which is stricter than `isValidCents` alone. This is the one historical price a sitter types
+    // by hand, in a whole-dollar box, at import time and again here; accepting 4050 would let the
+    // admin list's Edit affordance round it to 41 on open and silently save 4100 back. The
+    // ceiling is her own whole-dollar bound from import time, scaled once so the two routes cannot
+    // drift about the figure she is allowed to type.
+    if (
+      !isValidCents(estCostCents) ||
+      estCostCents % 100 !== 0 ||
+      estCostCents > dollarsToCents(MAX_BACKFILL_EST_COST)
+    )
+      return c.json(
+        {
+          error: `Enter a whole-dollar amount in cents, between 100 and ${dollarsToCents(MAX_BACKFILL_EST_COST)}.`,
+        },
+        400,
+      );
 
     const ok = await updateBackfilledBookingCost(
       c.env.PAWSERVATION_DB,

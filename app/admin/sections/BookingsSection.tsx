@@ -5,6 +5,7 @@ import { ChargesPanel } from '../ChargesPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { totalDueCents, type ServiceForm, type Session } from '../shared.js';
 import {
+  centsToWholeDollars,
   dollarsToCents,
   formatCents,
   formatFriendlyDate,
@@ -38,6 +39,16 @@ function formatWhen(b: AdminBooking): string {
 }
 
 const byStartDate = (a: AdminBooking, b: AdminBooking) => a.startDate.localeCompare(b.startDate);
+
+/** Mirrors MAX_BACKFILL_EST_COST in server/routes/admin.ts — UX only; the PATCH validates
+ *  independently. It is here as well as there because `isValidRate` admits any integer, including
+ *  ones `dollarsToCents` refuses to scale: without the ceiling, a typo with 300 digits in it would
+ *  surface a converter's RangeError to the sitter instead of the route's own sentence. */
+const MAX_EST_COST = 1_000_000;
+
+/** The whole-dollar rule for the backfilled-cost box: what `isValidRate` says, inside the bound
+ *  the route enforces. Every value that passes is safe to hand to `dollarsToCents`. */
+const isValidEstCostDollars = (value: number) => isValidRate(value) && value <= MAX_EST_COST;
 
 /** The row's primary label — pet names, not the owner (CLAUDE.md: "everything should be
  * categorized by the pets"). Falls back to the pet count for a pre-existing/edge-case row the
@@ -201,9 +212,10 @@ function BookingList({
   const startEditCost = (b: AdminBooking) => {
     setEditingCostId(b.id);
     // The field is WHOLE DOLLARS — a historical stay price the sitter types, the same figure and
-    // the same `isValidRate` rule as the backfill import she typed it in first. Only a whole-dollar
-    // estimate can be in the box, so dividing the stored cents back is exact.
-    setCostInput(b.estCostCents != null ? String(Math.round(b.estCostCents / 100)) : '');
+    // the same `isValidRate` rule as the backfill import she typed it in first. Both routes that
+    // write this column refuse a fractional dollar, so `centsToWholeDollars` cannot throw here and
+    // the figure she opens is exactly the figure that was stored.
+    setCostInput(b.estCostCents != null ? String(centsToWholeDollars(b.estCostCents)) : '');
   };
 
   /** Correct a backfilled booking's estimated cost to the real historical figure — the PATCH the
@@ -215,7 +227,7 @@ function BookingList({
   const saveCost = async (b: AdminBooking) => {
     if (busyId) return;
     const value = Number(costInput);
-    if (!isValidRate(value)) return;
+    if (!isValidEstCostDollars(value)) return;
     setBusyId(b.id);
     try {
       await adminApi.bookings.updateCost(session.slug, session.token, b.id, dollarsToCents(value));
@@ -234,7 +246,7 @@ function BookingList({
   const costDisplay = (b: AdminBooking) => {
     if (b.estCostCents == null) return null;
     if (editingCostId === b.id) {
-      const valid = isValidRate(Number(costInput));
+      const valid = isValidEstCostDollars(Number(costInput));
       return (
         <>
           {' · '}

@@ -237,6 +237,22 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     expect(readEstCost(raw, bookingId)).toBe(2500);
   });
 
+  /** The box the sitter types this into is a WHOLE-DOLLAR field, and the admin list prefills it by
+   *  dividing the stored cents back. A fractional-dollar row would open showing $41 and save $41.00
+   *  over the $40.50 that was there, so the route refuses the fraction rather than letting the UI
+   *  round it. */
+  it('refuses a fractional DOLLAR, even as a valid number of cents', async () => {
+    const { env, raw } = createTestEnv();
+    const bookingId = await makeBackfilledBooking(env, raw, TENANT_A, 'centsfrac');
+
+    const res = await patchCost(env, bookingId, { estCostCents: 4050 });
+    expect(res.status).toBe(400);
+    expect(readEstCost(raw, bookingId)).toBe(2500); // the column is untouched
+    // …and the whole-dollar neighbour of the same figure is fine.
+    expect((await patchCost(env, bookingId, { estCostCents: 4100 })).status).toBe(200);
+    expect(readEstCost(raw, bookingId)).toBe(4100);
+  });
+
   it('refuses zero and negative amounts', async () => {
     const { env, raw } = createTestEnv();
     const bookingId = await makeBackfilledBooking(env, raw, TENANT_A, 'zeroneg');
