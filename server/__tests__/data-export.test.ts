@@ -70,6 +70,21 @@ describe('CSV serializer', () => {
   it('writes null and undefined as empty cells', () => {
     expect(serializeCsvRows([[null, undefined, '']])).toBe(',,');
   });
+
+  it('a formatted money cell is a STRING, unquoted and un-neutralised only because it is never negative', () => {
+    // Exactly what `formatCentsPlain` hands `bookingsCsv`/`paymentsCsv`: a decimal STRING, not a
+    // `number` — so it takes the generic string branch of `encodeCsvCell`, not the `typeof value
+    // === 'number'` one. It survives unquoted only because it doesn't start with a `FORMULA_LEAD`
+    // character, which every money cell in this codebase is guaranteed today (Payments.Amount
+    // CHECK > 0, BookingCharges.Amount CHECK >= 1, EstCost/CancellationFee never negative).
+    expect(serializeCsvRows([['45.50']])).toBe('45.50');
+    // The fragility that guarantee is standing on: a negative amount, formatted as a string, DOES
+    // get neutralised — `'-'` is a FORMULA_LEAD character and this is no longer the `number`
+    // branch `csv.ts`'s docblock carves the exception out for. If a refund ever threads a negative
+    // figure through `formatCentsPlain` into one of these cells, THIS is the line that fails —
+    // the sign must be threaded through as a real `number` instead.
+    expect(serializeCsvRows([['-12.00']])).toBe(`"'-12.00"`);
+  });
 });
 
 describe('admin data export route', () => {

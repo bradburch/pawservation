@@ -186,6 +186,8 @@ async function bookingsCsv(db: D1Database, tenantId: string): Promise<CsvValue[]
       b.PetCount,
       // Stored cents (0015) → decimal dollars (`formatCentsPlain`: `41.00`, `45.50`) — the export
       // prints exactly what is owed, not a value rounded to the nearest whole dollar.
+      // These four are STRING cells, not `number` — see the `-` note on `FORMULA_LEAD` in
+      // ./csv.ts for why that's only safe while every one of them is non-negative.
       b.EstCost === null ? null : formatCentsPlain(b.EstCost),
       formatCentsPlain(chargesTotalByBooking.get(b.Id) ?? 0),
       b.CancellationFee === null ? null : formatCentsPlain(b.CancellationFee),
@@ -219,6 +221,7 @@ async function paymentsCsv(db: D1Database, tenantId: string): Promise<CsvValue[]
     ],
     ...payments.map((p) => [
       p.PaidDate,
+      // A STRING cell, not `number` — see the `-` note on `FORMULA_LEAD` in ./csv.ts.
       formatCentsPlain(p.Amount),
       p.Method,
       p.Note,
