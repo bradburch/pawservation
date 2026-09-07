@@ -104,9 +104,10 @@ describe('admin data export route', () => {
 
   it('exports only this tenant, never the other one', async () => {
     const { env } = createTestEnv();
+    // Repo seeds, so CENTS (0015). The CSV cells asserted below are still whole dollars.
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
-      amount: 100,
+      amount: 10000,
       method: 'venmo',
       paidDate: '2028-06-19',
       note: 'Sunny Paws deposit',
@@ -114,7 +115,7 @@ describe('admin data export route', () => {
     });
     await insertPayment(env.PAWSERVATION_DB, TENANT_B, {
       bookingRequestId: 'seed_ht_board1',
-      amount: 200,
+      amount: 20000,
       method: 'cash',
       paidDate: '2028-06-19',
       note: 'Happy Tails deposit',
@@ -151,7 +152,8 @@ describe('admin data export route', () => {
   it('includes deceased pets and cancelled bookings, with their status in a column', async () => {
     const { env } = createTestEnv();
     await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi', true);
-    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, 'seed_sp_board1', 'cancelled', 75);
+    // Repo call, so the fee is CENTS (0015); the CSV cell asserted below still reads "75".
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, 'seed_sp_board1', 'cancelled', 7500);
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, 'seed_sp_pend1', 'declined');
 
     const petRows = await rowsOf(await get(env, 'pets'));
@@ -177,7 +179,7 @@ describe('admin data export route', () => {
     const { env } = createTestEnv();
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
-      amount: 100,
+      amount: 10000,
       method: 'venmo',
       paidDate: '2028-06-19',
       note: null,
@@ -186,7 +188,7 @@ describe('admin data export route', () => {
     // Bella sorts before Mochi, so she is this household's account id.
     const accountPaymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: 'pet_sp_bella',
-      amount: 60,
+      amount: 6000,
       method: 'cash',
       paidDate: '2028-07-01',
       note: 'monthly',
@@ -328,7 +330,7 @@ describe('admin data export route', () => {
     const { env } = createTestEnv();
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
-      amount: 41,
+      amount: 4100,
       method: 'venmo',
       paidDate: '2028-06-19',
       note: null,
@@ -378,7 +380,7 @@ describe('admin data export route', () => {
       endDate: '2028-09-03',
       optionKey: null,
       petCount: 1,
-      estCost: 120,
+      estCost: 12000,
       status: 'pending',
     });
 
@@ -404,7 +406,7 @@ describe('admin data export route', () => {
       .run();
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: 'pet_sp_bella',
-      amount: 60,
+      amount: 6000,
       method: 'cash',
       paidDate: '2028-07-01',
       note: 'monthly',
@@ -444,7 +446,7 @@ describe('admin data export route', () => {
       .run();
     const paymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: 'pet_sp_gone',
-      amount: 77,
+      amount: 7700,
       method: 'zelle',
       paidDate: '2028-07-02',
       note: null,

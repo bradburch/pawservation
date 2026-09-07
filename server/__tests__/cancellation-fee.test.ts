@@ -8,35 +8,35 @@ const TIERS = [
 
 describe('cancellationFee', () => {
   it('tightest tier wins at the boundary', () => {
-    expect(cancellationFee(TIERS, 200, '2028-10-10', '2028-10-08')).toBe(200); // 2 days out
-    expect(cancellationFee(TIERS, 200, '2028-10-10', '2028-10-03')).toBe(100); // 7 days out
-    expect(cancellationFee(TIERS, 200, '2028-10-10', '2028-10-02')).toBe(0); // 8 days out
+    expect(cancellationFee(TIERS, 20000, '2028-10-10', '2028-10-08')).toBe(20000); // 2 days out
+    expect(cancellationFee(TIERS, 20000, '2028-10-10', '2028-10-03')).toBe(10000); // 7 days out
+    expect(cancellationFee(TIERS, 20000, '2028-10-10', '2028-10-02')).toBe(0); // 8 days out
   });
   it('same-day and past-start count as 0 days out', () => {
-    expect(cancellationFee(TIERS, 200, '2028-10-10', '2028-10-10')).toBe(200);
-    expect(cancellationFee(TIERS, 200, '2028-10-10', '2028-10-12')).toBe(200);
+    expect(cancellationFee(TIERS, 20000, '2028-10-10', '2028-10-10')).toBe(20000);
+    expect(cancellationFee(TIERS, 20000, '2028-10-10', '2028-10-12')).toBe(20000);
   });
   it('rounds to whole dollars', () => {
-    expect(cancellationFee([{ withinDays: 7, percent: 50 }], 75, '2028-10-10', '2028-10-05')).toBe(
-      38,
-    );
+    expect(
+      cancellationFee([{ withinDays: 7, percent: 50 }], 7500, '2028-10-10', '2028-10-05'),
+    ).toBe(3800);
   });
   it('empty tiers → 0', () => {
-    expect(cancellationFee([], 200, '2028-10-10', '2028-10-10')).toBe(0);
+    expect(cancellationFee([], 20000, '2028-10-10', '2028-10-10')).toBe(0);
   });
-  it('pins the whole-dollar rounding before the unit moves to cents', () => {
+  it('pins the whole-dollar rounding now that the unit is cents', () => {
     // $10 at 15% is $1.50, which the sitter's policy has always rounded to $2.
-    expect(cancellationFee([{ withinDays: 7, percent: 15 }], 10, '2026-10-10', '2026-10-08')).toBe(
-      2,
-    );
+    expect(
+      cancellationFee([{ withinDays: 7, percent: 15 }], 1000, '2026-10-10', '2026-10-08'),
+    ).toBe(200);
     // $350 at 25% is $87.50, which rounds to $88.
-    expect(cancellationFee([{ withinDays: 7, percent: 25 }], 350, '2026-10-10', '2026-10-08')).toBe(
-      88,
-    );
+    expect(
+      cancellationFee([{ withinDays: 7, percent: 25 }], 35000, '2026-10-10', '2026-10-08'),
+    ).toBe(8800);
     // Cancelling outside every tier owes nothing.
-    expect(cancellationFee([{ withinDays: 7, percent: 15 }], 10, '2026-10-10', '2026-01-01')).toBe(
-      0,
-    );
+    expect(
+      cancellationFee([{ withinDays: 7, percent: 15 }], 1000, '2026-10-10', '2026-01-01'),
+    ).toBe(0);
   });
 });
 

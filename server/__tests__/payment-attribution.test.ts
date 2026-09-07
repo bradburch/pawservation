@@ -12,6 +12,14 @@ import {
 import type { UnpaidBooking } from '../lib/payment-attribution';
 import { addDays } from '../../src/shared/index.js';
 
+/**
+ * MONEY HERE IS UNIT-AGNOSTIC INTEGERS, and deliberately left as it was when 0015 moved storage to
+ * cents. `proposeAttribution` is pure: it never touches a column, it does no scaling, and every
+ * rule it enforces — integers only, conservation to the cent, no rounding anywhere — is true of
+ * whatever unit its caller works in. The figures below therefore prove exactly what they always
+ * proved. The route and repo suites (`payment-attribution-routes`, `payment-attribution-repo`) are
+ * where the unit is real, and they say cents.
+ */
 const credit = (amount: number, paidDate = '2026-07-10') => ({ paymentId: 'p1', amount, paidDate });
 /** A SINGLE-DAY service — `BookingRequests.EndDate` is NULL, the shape a walk or drop-in has.
  *  Every test written before proximity became an interval uses this, and none of their numbers

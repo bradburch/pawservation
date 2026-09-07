@@ -206,7 +206,8 @@ describe('the Google event', () => {
     durationMinutes: null,
     petCount: 1,
     petNames: ['Bella'],
-    estCost: 150,
+    estCost: 15000, // CENTS (0015); the description line still reads "$150"
+
     customerEmail: 'jess@example.com',
     status: 'confirmed',
     timezone: 'America/Los_Angeles',

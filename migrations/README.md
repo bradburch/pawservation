@@ -247,6 +247,23 @@ COLUMN`, the same shape as 0013's `CalendarCostBasis`), and the DEFAULT stamps e
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0014_attribution_spill_days.sql`.
   Like every bare `ADD COLUMN` above, it must not be run twice.
 
+- **`0015_money_in_cents.sql`** (`feat/payments-in-cents`) — moves every stored cost, fee, charge
+  and payment from whole dollars to integer cents: four `UPDATE … * 100` statements over
+  `BookingRequests.EstCost`, `BookingRequests.CancellationFee`, `BookingCharges.Amount` and
+  `Payments.Amount`. **No schema shape change** — no `ALTER TABLE`, no rebuild, no index touched,
+  and `Payments`' `CHECK (Amount > 0)` still says exactly what it said (a positive amount is
+  positive in either unit). Rates a sitter types stay whole dollars, so no `TenantServices`,
+  `TenantServiceOptions` or pet-set rate column is scaled; `estimateCost` is the single place a
+  rate becomes a cost and the single ×100 in the price path. Every existing value is a whole
+  dollar, so ×100 is exact and no balance moves by a cent. No `Tenants` column changes, so the KV
+  tenant-config cache key needs **no** bump. It contains no `BEGIN`/`COMMIT`/`SAVEPOINT` (D1
+  rejects them — see 0011). **NOT YET APPLIED to the remote DB — it MUST be hand-applied before
+  this branch merges**, because the deployed code reads these four columns as cents and would
+  report every stored figure at a hundredth of its value until it runs:
+  `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0015_money_in_cents.sql`.
+  Like every bare `ADD COLUMN` above it must not be run twice — a second run multiplies every
+  balance by 100 again, and unlike a duplicate column that failure is SILENT.
+
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,
 `0002_holiday_and_charges.sql`, `0003_gcal_sync.sql`, `0004_booking_window.sql`,

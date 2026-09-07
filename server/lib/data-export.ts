@@ -8,6 +8,7 @@ import {
   listServices,
 } from '../db/repo';
 import { serializeCsvRows, type CsvValue } from './csv';
+import { centsToWholeDollars } from '../../src/shared/index.js';
 
 /**
  * A SITTER MAY TAKE HER BOOK WITH HER. She can already import a client list; until this there was
@@ -183,10 +184,13 @@ async function bookingsCsv(db: D1Database, tenantId: string): Promise<CsvValue[]
       b.OptionKey,
       joinNames(petsByBooking.get(b.Id) ?? []),
       b.PetCount,
-      b.EstCost,
-      chargesTotalByBooking.get(b.Id) ?? 0,
-      b.CancellationFee,
-      b.PaidTotal ?? 0,
+      // Stored cents (0015) → the whole-dollar figures this export has always carried. A CSV a
+      // sitter opens in a spreadsheet is a wire like any other; `centsToWholeDollars` throws
+      // rather than rounds, so a missed conversion fails the export instead of misstating money.
+      b.EstCost === null ? null : centsToWholeDollars(b.EstCost),
+      centsToWholeDollars(chargesTotalByBooking.get(b.Id) ?? 0),
+      b.CancellationFee === null ? null : centsToWholeDollars(b.CancellationFee),
+      centsToWholeDollars(b.PaidTotal ?? 0),
       formatAnswers(b.Answers, labelsByService.get(b.ServiceType)),
       // Only ever set on a 'external' row — a foreign Google event this worker materialized so it
       // blocks capacity. It carries no client and no price, so without its title the row would be
@@ -216,7 +220,7 @@ async function paymentsCsv(db: D1Database, tenantId: string): Promise<CsvValue[]
     ],
     ...payments.map((p) => [
       p.PaidDate,
-      p.Amount,
+      centsToWholeDollars(p.Amount),
       p.Method,
       p.Note,
       // Exactly one of the two, guaranteed by the CHECK on Payments (0011) rather than by this

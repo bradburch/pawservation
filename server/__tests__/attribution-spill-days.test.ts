@@ -17,6 +17,7 @@ import {
   type UnpaidBooking,
 } from '../lib/payment-attribution';
 import { adminHeaders, createTestEnv, seedPets, TENANT_A } from './helpers';
+import { dollarsToCents } from '../../src/shared/index.js';
 
 /**
  * `Tenants.AttributionSpillDays` (migration 0014) — how far back ONE payment may reach to cover
@@ -299,14 +300,16 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
         endDate: null,
         optionKey: 'standard',
         petCount: 1,
-        estCost: 40,
+        // The DB half seeds CENTS (0015); the pure half above is unit-agnostic integers, and the
+        // preview response below is still whole dollars.
+        estCost: dollarsToCents(40),
         status: 'confirmed',
       });
       await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, petIds);
     }
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: petIds[0],
-      amount: MONTHLY_TOTAL,
+      amount: dollarsToCents(MONTHLY_TOTAL),
       method: 'venmo',
       paidDate: MONTHLY_PAID,
       note: null,

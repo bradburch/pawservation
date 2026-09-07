@@ -101,7 +101,8 @@ export type TenantService = {
   /** Tiered cancel policy; null = no fee (0016). */
   CancellationTiers: CancellationTier[] | null;
   /** Explicit whole-dollar rate for units landing on a listed US holiday; null = no holiday
-   *  pricing. Same unit as RateUnit. Never a multiplier — see server/lib/holiday-cost.ts. */
+   *  pricing. Same unit as RateUnit. A RATE the sitter typed, so 0015 left it in DOLLARS —
+   *  `estimateCost` is where it becomes cents. Never a multiplier — see server/lib/holiday-cost.ts. */
   HolidayRate: number | null;
   /** How a pet set with no stored pet-set rate is priced (0005): 'exact' refuses it, 'linear'
    *  charges the option rate × the number of distinct pets. Defaults to 'exact'; a stored pet-set
@@ -112,7 +113,8 @@ export type TenantService = {
    * fee — NULL anywhere = the feature is off, the `HolidayRate` convention. The two fees are FLAT
    * whole dollars charged at most once PER STAY, never per hour and never per day, and never part of
    * `EstCost`: the fee is a `BookingCharges` row, so `estimateCost` stays "units of time × a stored
-   * rate". See `server/lib/booking-times.ts`.
+   * rate". They are RATES the sitter typed, so 0015 left them in DOLLARS; `extraTimeSurcharges`
+   * converts to cents on its way to `BookingCharges.Amount`. See `server/lib/booking-times.ts`.
    */
   StandardArrivalTime: string | null;
   StandardDepartureTime: string | null;
@@ -202,8 +204,10 @@ export type BookingRow = {
    *  server/lib/booking-times.ts, and note the ordering rule is single-day only. */
   DepartureTime: string | null;
   GCalEventId: string | null;
+  /** The stay's quoted price in CENTS (0015); null = never priced. */
   EstCost: number | null;
-  /** Fee assessed at cancel time, whole dollars; null = none assessed (0016). */
+  /** Fee assessed at cancel time, in CENTS (0015) — still always a whole number of dollars'
+   *  worth of them, because `cancellationFee` rounds to the dollar; null = none assessed (0016). */
   CancellationFee: number | null;
   Status: 'pending' | 'confirmed' | 'cancelled' | 'declined';
   /** Attribution channel stamped at insert ('mcp', 'voice', …); null = embed widget. Write-only
@@ -223,6 +227,7 @@ export type PaymentRow = {
   TenantId: string;
   BookingRequestId: string | null;
   AccountId: string | null;
+  /** CENTS (0015). `CHECK (Amount > 0)` in the schema, unchanged by the unit move. */
   Amount: number;
   Method: PaymentMethod;
   PaidDate: string;
@@ -242,7 +247,7 @@ export type PaymentRow = {
 export const EXTRA_TIME_ORIGINS = ['extra_time_early', 'extra_time_late'] as const;
 export type ExtraTimeOrigin = (typeof EXTRA_TIME_ORIGINS)[number];
 
-/** One extra charge on a booking (vet visit, haircut). Amount is whole dollars >= 1. */
+/** One extra charge on a booking (vet visit, haircut). `Amount` is CENTS >= 1 (0015). */
 export type BookingChargeRow = {
   Id: string;
   TenantId: string;
@@ -259,6 +264,8 @@ export type BookingChargeRow = {
  * Exception: `ytd`/`quarterly` are already in payload (camelCase) shape — the helper emits them
  * that way and the route forwards them unmapped, so do NOT "correct" them to PascalCase. */
 export type AnalyticsData = {
+  /** EVERY money field on this type is CENTS (0015) — the raw SQL sums, unscaled.
+   *  `serializeAnalytics` is the one place they become whole dollars for the wire. */
   monthly: { Month: string; Total: number }[];
   ytd: number;
   quarterly: { q: number; total: number }[];
@@ -322,7 +329,7 @@ export type AnalyticsData = {
  * One household's statement, as `getHouseholdBalances` computes it and the dashboard renders it.
  * `accountId` is the account id `buildAccounts` produces (the lexicographically-first pet of the
  * component), the same identity invoice numbering keys off. `balance` is negative when the
- * household is in CREDIT.
+ * household is in CREDIT. `expectedTotal`/`paidTotal`/`balance` are CENTS (0015).
  */
 export type HouseholdBalanceRow = {
   accountId: string;
@@ -345,6 +352,10 @@ export type HouseholdBalanceRow = {
  * `server/db/repo.ts`. `expectedTotal`/`paidTotal`/`balance` are `getHouseholdBalances`'s own
  * numbers for this household, passed through rather than recomputed, so the detail can never
  * disagree with the balance it sits beneath.
+ *
+ * EVERY MONEY FIELD ON THIS TYPE IS CENTS (0015) — it is what the repo returns, and it is read by
+ * the payment-attribution proposer as well as by the two routes that serve it. Those routes divide
+ * back to whole dollars on the wire; nothing else may.
  */
 export type HouseholdDetailRow = {
   accountId: string;

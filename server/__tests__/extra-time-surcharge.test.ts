@@ -11,7 +11,12 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import type { DatabaseSync } from 'node:sqlite';
-import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
+import {
+  addDays,
+  centsToWholeDollars,
+  DEFAULT_TIMEZONE,
+  getPacificDateStr,
+} from '../../src/shared/index.js';
 import {
   adminHeaders,
   createTestEnv,
@@ -138,11 +143,16 @@ describe('the previewed surcharge and the stamped one are the same number', () =
     expect(res.status).toBe(201);
     const { id, estCost } = (await res.json()) as { id: string; estCost: number };
 
-    // THE PARITY LOCK: the stamped rows carry exactly the previewed labels and amounts.
+    // THE PARITY LOCK: the stamped rows carry exactly the previewed labels and amounts. The
+    // COLUMN is cents (0015) and the QUOTE is still whole dollars, so the comparison converts —
+    // it is the same fee either way, which is the whole point of the lock.
     const stamped = await charges(env, id);
-    expect(stamped.map(({ Label, Amount }) => ({ label: Label, amount: Amount }))).toEqual(
-      previewed.body.extraTimeFees,
-    );
+    expect(
+      stamped.map(({ Label, Amount }) => ({
+        label: Label,
+        amount: centsToWholeDollars(Amount),
+      })),
+    ).toEqual(previewed.body.extraTimeFees);
     // EstCost is the stay, never the surcharge — total due is EstCost + chargesTotal.
     expect(estCost).toBe(150);
     const row = await mine(env, id);
@@ -243,7 +253,7 @@ describe('flat, per stay, and never scaled', () => {
     });
     const { id } = (await long.json()) as { id: string };
     expect(await charges(env, id)).toEqual([
-      { Label: 'Early arrival (07:00)', Amount: 20, Origin: 'extra_time_early' },
+      { Label: 'Early arrival (07:00)', Amount: 2000, Origin: 'extra_time_early' },
     ]);
   });
 
@@ -266,8 +276,8 @@ describe('flat, per stay, and never scaled', () => {
     // pricing invariant exists to prevent, and it is exactly what placing this inside
     // `estimateCost` would have produced.
     expect(await charges(env, id)).toEqual([
-      { Label: 'Early arrival (07:00)', Amount: 20, Origin: 'extra_time_early' },
-      { Label: 'Late departure (13:00)', Amount: 15, Origin: 'extra_time_late' },
+      { Label: 'Early arrival (07:00)', Amount: 2000, Origin: 'extra_time_early' },
+      { Label: 'Late departure (13:00)', Amount: 1500, Origin: 'extra_time_late' },
     ]);
   });
 });
@@ -286,7 +296,7 @@ describe('daycare, whose clock the owner also sets, gets the same surcharge', ()
     expect(res.status).toBe(201);
     const { id } = (await res.json()) as { id: string };
     expect(await charges(env, id)).toEqual([
-      { Label: 'Early arrival (06:30)', Amount: 10, Origin: 'extra_time_early' },
+      { Label: 'Early arrival (06:30)', Amount: 1000, Origin: 'extra_time_early' },
     ]);
   });
 });
@@ -350,8 +360,8 @@ describe('an edit re-derives the surcharge only when the TIMES moved', () => {
     });
     expect(res.status).toBe(200);
     expect(await charges(env, id)).toEqual([
-      { Label: 'Early arrival (07:00)', Amount: 20, Origin: 'extra_time_early' },
-      { Label: 'Late departure (13:00)', Amount: 15, Origin: 'extra_time_late' },
+      { Label: 'Early arrival (07:00)', Amount: 2000, Origin: 'extra_time_early' },
+      { Label: 'Late departure (13:00)', Amount: 1500, Origin: 'extra_time_late' },
     ]);
   });
 
@@ -397,7 +407,7 @@ describe('an edit re-derives the surcharge only when the TIMES moved', () => {
       startTime: '10:00', // inside standard hours now — the AUTO fee goes
     });
     expect(res.status).toBe(200);
-    expect(await charges(env, id)).toEqual([{ Label: 'Vet visit', Amount: 45, Origin: null }]);
+    expect(await charges(env, id)).toEqual([{ Label: 'Vet visit', Amount: 4500, Origin: null }]);
   });
 });
 

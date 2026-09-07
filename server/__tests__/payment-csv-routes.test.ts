@@ -238,7 +238,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     expect(row).toMatchObject({
       BookingRequestId: null,
       AccountId: 'pet_sp_bella',
-      Amount: 45,
+      Amount: 4500, // the COLUMN, which is cents (0015); `totalAmount` above is the dollar wire
       Method: 'cash',
       PaidDate: '2026-07-01',
       ExternalRef: 'csv:REF1',
@@ -283,7 +283,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       raw.prepare('SELECT AccountId, Amount, PaidDate, ExternalRef FROM Payments').get(),
     ).toMatchObject({
       AccountId: 'pet_sp_bella',
-      Amount: 20,
+      Amount: 2000, // cents in the column
       PaidDate: '2026-07-02',
       ExternalRef: 'csv:REF2',
     });
@@ -308,7 +308,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     expect(await res.json()).toMatchObject({ imported: 1, totalAmount: 45, skipped: [] });
     expect(raw.prepare('SELECT AccountId, Amount FROM Payments').get()).toMatchObject({
       AccountId: otherPet,
-      Amount: 45,
+      Amount: 4500, // cents in the column
     });
   });
 
@@ -416,7 +416,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     });
     expect(await res.json()).toMatchObject({ imported: 1, totalAmount: 45, skipped: [] });
     const row = raw.prepare('SELECT Amount FROM Payments').get();
-    expect(row).toMatchObject({ Amount: 45 });
+    expect(row).toMatchObject({ Amount: 4500 }); // cents in the column
   });
 
   it('400s a malformed choices array, writing nothing', async () => {

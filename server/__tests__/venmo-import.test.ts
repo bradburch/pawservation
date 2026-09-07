@@ -231,7 +231,7 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     expect(row).toMatchObject({
       BookingRequestId: null,
       AccountId: 'pet_sp_bella',
-      Amount: 250,
+      Amount: 25000, // the COLUMN, which is cents (0015); the route body above is dollars
       Method: 'venmo',
       PaidDate: '2026-07-03',
       ExternalRef: '4139874112233445566',
@@ -284,7 +284,7 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
       choices: [{ ...choices[0], amount: 999999, paidDate: '1999-01-01', method: 'cash' }],
     });
     expect(raw.prepare('SELECT Amount, Method, PaidDate FROM Payments').get()).toMatchObject({
-      Amount: 250,
+      Amount: 25000, // the column, in cents
       Method: 'venmo',
       PaidDate: '2026-07-03',
     });

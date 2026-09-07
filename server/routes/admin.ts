@@ -182,6 +182,8 @@ import {
   buildGroupKey,
   buildMixKey,
   cancellationFee,
+  centsToWholeDollars,
+  dollarsToCents,
   getPacificDateStr,
   isDedicatedCalendarId,
   MAX_ATTRIBUTIONS_PER_REQUEST,
@@ -276,8 +278,44 @@ export { MAX_BACKFILL_EVENTS };
 
 /** Same sanity ceiling as every other explicit-bounds field in this file (advance months, lead
  *  days, overlap days, pet count) — a sitter-typed historical price is real money, but a figure
- *  with 15 digits behind it is a typo, not a stay anyone actually charged. */
+ *  with 15 digits behind it is a typo, not a stay anyone actually charged.
+ *
+ *  WHOLE DOLLARS, and deliberately NOT scaled by 0015: it bounds the number a sitter TYPES, and
+ *  the two routes that enforce it still take a whole-dollar body. They convert with
+ *  `dollarsToCents` at the write, so the ceiling and the message the sitter reads are unchanged. */
 export const MAX_BACKFILL_EST_COST = 1_000_000;
+
+/**
+ * An importer preview's three buckets, cents → whole dollars. Both importers' previews carry the
+ * same `{ amount }`-bearing row shape, and both are read by a panel that has always been shown
+ * dollars — 0015 moved storage, not the wire, so the divide happens here rather than leaving the
+ * two previews to drift about it. `centsToWholeDollars` throws on a fractional figure, which
+ * cannot occur while `parseAmount` refuses one.
+ */
+/**
+ * A whole-dollar figure off the attribution wire, as CENTS for the ledger — and anything that is
+ * not a whole non-negative dollar amount PASSED THROUGH UNCHANGED. The pass-through is the point:
+ * `applyAttribution` refuses a fractional, negative or unreadable figure per item, naming the
+ * booking, and scaling (or throwing on) it here would either hide the fault or convert one bad row
+ * in an approved batch into a 500 for the whole request. `dollarsToCents` is not used for exactly
+ * that reason — it throws.
+ */
+function toStoredCents(dollars: number): number {
+  return Number.isSafeInteger(dollars) && dollars >= 0 ? dollars * 100 : dollars;
+}
+
+function previewInDollars<
+  R extends { amount: number },
+  P extends { matched: R[]; unmatched: R[]; alreadyImported: R[] },
+>(preview: P): P {
+  const rows = (list: R[]) => list.map((r) => ({ ...r, amount: centsToWholeDollars(r.amount) }));
+  return {
+    ...preview,
+    matched: rows(preview.matched),
+    unmatched: rows(preview.unmatched),
+    alreadyImported: rows(preview.alreadyImported),
+  };
+}
 
 /**
  * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
@@ -2529,19 +2567,25 @@ export const adminRoutes = new Hono<AppEnv>()
         // design.md) — the same restriction the PATCH .../cost route enforces server-side.
         isBackfilled: r.Source === 'calendar-backfill',
         answers: r.Answers,
-        estCost: r.EstCost,
-        paidTotal: r.PaidTotal ?? 0,
+        // Storage is cents (0015); this payload still speaks whole dollars. Each total is summed
+        // in CENTS and divided once, never as a sum of already-divided terms.
+        estCost: r.EstCost === null ? null : centsToWholeDollars(r.EstCost),
+        paidTotal: centsToWholeDollars(r.PaidTotal ?? 0),
         charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
           id: ch.Id,
           label: ch.Label,
-          amount: ch.Amount,
+          amount: centsToWholeDollars(ch.Amount),
         })),
-        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.Amount, 0),
+        chargesTotal: centsToWholeDollars(
+          (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.Amount, 0),
+        ),
         status: r.Status,
-        cancellationFee: r.CancellationFee,
+        cancellationFee: r.CancellationFee === null ? null : centsToWholeDollars(r.CancellationFee),
         feeIfCancelledToday:
           r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
-            ? cancellationFee(tiersByType.get(r.ServiceType)!, r.EstCost, r.StartDate, today)
+            ? centsToWholeDollars(
+                cancellationFee(tiersByType.get(r.ServiceType)!, r.EstCost, r.StartDate, today),
+              )
             : null,
         createdAt: r.CreatedAt,
       })),
@@ -2606,6 +2650,7 @@ export const adminRoutes = new Hono<AppEnv>()
       if (!svc?.CancellationTiers)
         return c.json({ error: 'This service has no cancellation policy.' }, 400);
       const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+      // Cents in, cents out (0015) — stored as cents, and divided only in the response below.
       const computed = cancellationFee(svc.CancellationTiers, bk.EstCost, bk.StartDate, today);
       if (computed > 0) fee = computed; // $0 stores NULL per spec
     }
@@ -2685,7 +2730,11 @@ export const adminRoutes = new Hono<AppEnv>()
         /* status change stands; the dashboard reports the client was not emailed */
       }
     }
-    return c.json({ status, notified, cancellationFee: fee ?? null });
+    return c.json({
+      status,
+      notified,
+      cancellationFee: fee === undefined ? null : centsToWholeDollars(fee),
+    });
   })
 
   .post('/:slug/admin/bookings/:id/payments', async (c) => {
@@ -2694,6 +2743,8 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req
       .json<{ amount?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
       .catch(() => ({}) as Record<string, never>);
+    // THE BODY IS STILL WHOLE DOLLARS. 0015 moved storage to cents, not the wire, so the
+    // whole-dollar predicate stands and `dollarsToCents` converts on the way into the ledger.
     if (!isValidRate(body.amount))
       return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
     if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
@@ -2702,7 +2753,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
     const paymentId = await insertPayment(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
-      amount: body.amount,
+      amount: dollarsToCents(body.amount),
       method: body.method,
       paidDate: body.paidDate,
       note,
@@ -2718,12 +2769,12 @@ export const adminRoutes = new Hono<AppEnv>()
       {
         payment: {
           id: created.Id,
-          amount: created.Amount,
+          amount: centsToWholeDollars(created.Amount),
           method: created.Method,
           paidDate: created.PaidDate,
           note: created.Note,
         },
-        paidTotal: payments.reduce((sum, p) => sum + p.Amount, 0),
+        paidTotal: centsToWholeDollars(payments.reduce((sum, p) => sum + p.Amount, 0)),
       },
       201,
     );
@@ -2741,7 +2792,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const result = await keepBookingCredit(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('id'));
     switch (result.outcome) {
       case 'kept':
-        return c.json({ kept: result.amount });
+        return c.json({ kept: centsToWholeDollars(result.amount) });
       case 'not-found':
         return c.json({ error: 'Not found.' }, 404);
       case 'declined':
@@ -2774,7 +2825,7 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       payments: rows.map((p) => ({
         id: p.Id,
-        amount: p.Amount,
+        amount: centsToWholeDollars(p.Amount),
         method: p.Method,
         paidDate: p.PaidDate,
         note: p.Note,
@@ -2804,13 +2855,14 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!label) return c.json({ error: 'Give the charge a name.' }, 400);
     if (label.length > MAX_CHARGE_LABEL)
       return c.json({ error: `Name must be ${MAX_CHARGE_LABEL} characters or fewer.` }, 400);
-    // Same predicate as a payment amount and a rate: whole dollars >= 1.
+    // Same predicate as a payment amount and a rate: whole dollars >= 1 on the wire, stored as
+    // cents (0015).
     if (!isValidRate(body.amount))
       return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
     const chargeId = await insertBookingCharge(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
       label,
-      amount: body.amount,
+      amount: dollarsToCents(body.amount),
     });
     // Guard refused: foreign booking or the 'blocked' sentinel.
     if (!chargeId) return c.json({ error: 'Not found.' }, 404);
@@ -2819,8 +2871,12 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!created) return c.json({ error: 'Not found.' }, 404);
     return c.json(
       {
-        charge: { id: created.Id, label: created.Label, amount: created.Amount },
-        chargesTotal: charges.reduce((sum, ch) => sum + ch.Amount, 0),
+        charge: {
+          id: created.Id,
+          label: created.Label,
+          amount: centsToWholeDollars(created.Amount),
+        },
+        chargesTotal: centsToWholeDollars(charges.reduce((sum, ch) => sum + ch.Amount, 0)),
       },
       201,
     );
@@ -2834,7 +2890,11 @@ export const adminRoutes = new Hono<AppEnv>()
     if (!booking || booking.ServiceType === 'blocked') return c.json({ error: 'Not found.' }, 404);
     const rows = await listChargesForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     return c.json({
-      charges: rows.map((ch) => ({ id: ch.Id, label: ch.Label, amount: ch.Amount })),
+      charges: rows.map((ch) => ({
+        id: ch.Id,
+        label: ch.Label,
+        amount: centsToWholeDollars(ch.Amount),
+      })),
     });
   })
 
@@ -2872,7 +2932,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
-    const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
+    const preview = previewInDollars(matchVenmoTxns({ txns: parsed.incoming, ...inputs }));
     return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
   })
 
@@ -2948,7 +3008,7 @@ export const adminRoutes = new Hono<AppEnv>()
           continue;
         }
         imported++;
-        totalAmount += txn.amount;
+        totalAmount += txn.amount; // cents; divided once in the response below
       } catch (err) {
         // The partial unique index caught a replay that slipped past the pre-read (a concurrent
         // import of the same file). Idempotency is the index's job, and it did it.
@@ -2956,7 +3016,7 @@ export const adminRoutes = new Hono<AppEnv>()
         else throw err;
       }
     }
-    return c.json({ imported, totalAmount, skipped });
+    return c.json({ imported, totalAmount: centsToWholeDollars(totalAmount), skipped });
   })
 
   /**
@@ -2999,11 +3059,13 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
-    const preview = matchCsvPayments({
-      payments: parsed.payments,
-      clients: inputs.clients,
-      alreadyImported: inputs.alreadyImported,
-    });
+    const preview = previewInDollars(
+      matchCsvPayments({
+        payments: parsed.payments,
+        clients: inputs.clients,
+        alreadyImported: inputs.alreadyImported,
+      }),
+    );
     // `households` rides along so the panel can offer a client for a row the matcher couldn't
     // place — the sitter assigning it is the design's own answer to an unmatched row.
     return c.json({ ...preview, households: inputs.households, problems: parsed.problems });
@@ -3105,7 +3167,7 @@ export const adminRoutes = new Hono<AppEnv>()
           continue;
         }
         imported++;
-        totalAmount += payment.amount;
+        totalAmount += payment.amount; // cents; divided once in the response below
       } catch (err) {
         // The partial unique index caught a replay that slipped past the pre-read (a concurrent
         // import of the same file). Idempotency is the index's job, and it did it.
@@ -3113,7 +3175,7 @@ export const adminRoutes = new Hono<AppEnv>()
         else throw err;
       }
     }
-    return c.json({ imported, totalAmount, skipped });
+    return c.json({ imported, totalAmount: centsToWholeDollars(totalAmount), skipped });
   })
 
   /**
@@ -3479,17 +3541,21 @@ export const adminRoutes = new Hono<AppEnv>()
           tenant.AttributionSpillDays,
         );
         if (proposal.ok) {
+          // EVERY FIGURE ABOVE THIS POINT IS CENTS (0015) — the proposer, the outstanding maps and
+          // the distinctive-amounts set all work in one unit. The PANEL still speaks whole
+          // dollars, and the apply route below still accepts them, so the divide happens here, at
+          // the edge, and nowhere earlier.
           proposals.push({
             accountId,
             paymentId: proposal.paymentId,
-            amount: row.Amount,
+            amount: centsToWholeDollars(row.Amount),
             paidDate: row.PaidDate,
             splits: proposal.splits.map((s) => ({
-              amount: s.amount,
+              amount: centsToWholeDollars(s.amount),
               ...staticById.get(s.bookingId)!,
-              outstanding: liveOutstandingById.get(s.bookingId)!,
+              outstanding: centsToWholeDollars(liveOutstandingById.get(s.bookingId)!),
             })),
-            remainder: proposal.remainder,
+            remainder: centsToWholeDollars(proposal.remainder),
           });
           // Carry the decrement forward for the next credit in this household.
           for (const s of proposal.splits)
@@ -3526,13 +3592,13 @@ export const adminRoutes = new Hono<AppEnv>()
                 .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
                 .map((b) => ({
                   ...staticById.get(b.bookingId)!,
-                  outstanding: liveOutstandingById.get(b.bookingId)!,
+                  outstanding: centsToWholeDollars(liveOutstandingById.get(b.bookingId)!),
                 }))
             : [];
           unresolved.push({
             accountId,
             paymentId: proposal.paymentId,
-            amount: row.Amount,
+            amount: centsToWholeDollars(row.Amount),
             paidDate: row.PaidDate,
             reason: proposal.reason,
             // THE PURE PROPOSER'S SENTENCE IS REPLACED, NOT DECORATED, FOR THE ONE CASE IT CANNOT
@@ -3562,9 +3628,16 @@ export const adminRoutes = new Hono<AppEnv>()
    * and in what amounts; everything else is re-derived from live state, because the browser's copy
    * is a snapshot from whenever the preview ran and money moves in between.
    *
+   * THE BODY IS WHOLE DOLLARS, THE LEDGER IS CENTS (0015). The panel is handed dollars by the
+   * preview above, so it sends dollars back, and `toStoredCents` below is the one place they are
+   * converted. It converts ONLY a safe non-negative integer and passes anything else through
+   * untouched, deliberately: a fractional or negative figure has to reach `applyAttribution`'s own
+   * guards, which refuse it PER ITEM with a sentence naming the booking — throwing here would turn
+   * one bad row in an approved batch into a 500 for the whole request.
+   *
    * `applyAttribution` (server/db/repo.ts) does the re-derivation: it re-reads the source payment
    * (its `Amount` is the only authority, never the caller's), re-checks conservation
-   * (`sum(splits) + remainder === Amount` exactly, whole dollars), re-reads EVERY TARGET BOOKING'S
+   * (`sum(splits) + remainder === Amount` exactly, in cents), re-reads EVERY TARGET BOOKING'S
    * OWN LIVE OUTSTANDING (`getHouseholdDetail`'s `expected - paidTotal`) and refuses any split that
    * would exceed it, resolves the household by pet-id MEMBERSHIP rather than `AccountId` equality
    * (an account id is the household's lexicographically-first pet and moves when a pet is added —
@@ -3661,7 +3734,7 @@ export const adminRoutes = new Hono<AppEnv>()
         const s = rawSplit as { bookingId?: unknown; amount?: unknown };
         if (typeof s.bookingId !== 'string' || s.bookingId === '' || typeof s.amount !== 'number')
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
-        splits.push({ bookingId: s.bookingId, amount: s.amount });
+        splits.push({ bookingId: s.bookingId, amount: toStoredCents(s.amount) });
       }
 
       // THE OPTIONAL TIP — part of this payment the client meant as thanks, which
@@ -3680,14 +3753,14 @@ export const adminRoutes = new Hono<AppEnv>()
         const t = a.tip as { bookingId?: unknown; amount?: unknown };
         if (typeof t.bookingId !== 'string' || t.bookingId === '' || typeof t.amount !== 'number')
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
-        tip = { bookingId: t.bookingId, amount: t.amount };
+        tip = { bookingId: t.bookingId, amount: toStoredCents(t.amount) };
       }
 
       attributions.push({
         paymentId: a.paymentId,
         accountId: a.accountId,
         splits,
-        remainder: a.remainder,
+        remainder: toStoredCents(a.remainder),
         tip,
       });
     }
@@ -3785,7 +3858,9 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       adopt: classified
         .filter((r): r is Extract<Classified, { kind: 'adopt' }> => r.kind === 'adopt')
-        .map(withPetNames),
+        // `estCost` is cents off the classifier (0015); the panel reads — and sends back to the
+        // import route — the whole dollars the sitter typed in her own calendar.
+        .map((r) => withPetNames({ ...r, estCost: centsToWholeDollars(r.estCost) })),
       needsPrice: classified
         .filter((r): r is Extract<Classified, { kind: 'needs-price' }> => r.kind === 'needs-price')
         .map(withPetNames),
@@ -3828,8 +3903,8 @@ export const adminRoutes = new Hono<AppEnv>()
     if (body.events.length > MAX_BACKFILL_EVENTS)
       return c.json({ error: `Import ${MAX_BACKFILL_EVENTS} events or fewer at a time.` }, 400);
 
-    // eventId -> the sitter's own price for it, when given. Whole dollars only, like every other
-    // amount in this codebase; a bad one fails the WHOLE request rather than being coerced or
+    // eventId -> the sitter's own price for it, when given, in WHOLE DOLLARS as typed (converted
+    // to cents at the stamp below); a bad one fails the WHOLE request rather than being coerced or
     // silently dropping just its own row.
     const wanted = new Map<string, number | null>();
     for (const raw of body.events) {
@@ -3902,8 +3977,16 @@ export const adminRoutes = new Hono<AppEnv>()
       }
       // The sitter's figure wins when given; otherwise the rate card's, which only an 'adopt' row
       // has. A 'needs-price' row with no supplied amount is never adopted at zero and never at a
-      // number this server invented.
-      const estCost = suppliedCost ?? (row.kind === 'adopt' ? row.estCost : null);
+      // number this server invented. `suppliedCost` is the sitter's typed WHOLE DOLLARS and is
+      // converted here; `row.estCost` is already cents (the classifier converted it). The two
+      // arms are converted separately on purpose — one `?? ` over mixed units is exactly the
+      // hundred-fold error 0015 makes possible.
+      const estCost =
+        suppliedCost !== null
+          ? dollarsToCents(suppliedCost)
+          : row.kind === 'adopt'
+            ? row.estCost
+            : null;
       if (estCost === null) {
         skipped.push({ eventId, reason: 'That event still needs a price' });
         continue;
@@ -3960,7 +4043,7 @@ export const adminRoutes = new Hono<AppEnv>()
       .json<{ estCost?: unknown }>()
       .catch(() => ({}) as { estCost?: unknown });
     const estCost = body.estCost;
-    // Whole dollars only — cents are unrepresentable codebase-wide. Same ceiling as the sitter's
+    // The BODY is whole dollars (0015 moved storage, not the wire). Same ceiling as the sitter's
     // price on the same field at import time (Task 7); two bounds on one field would drift.
     if (
       typeof estCost !== 'number' ||
@@ -3977,7 +4060,7 @@ export const adminRoutes = new Hono<AppEnv>()
       c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('id'),
-      estCost,
+      dollarsToCents(estCost),
     );
     // One 404 for: another tenant's booking, an unknown id, a sentinel, and a booking a client
     // agreed to. Same non-oracle posture as the other booking routes.

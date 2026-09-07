@@ -78,7 +78,7 @@ export type VenmoTxn = {
   status: string;
   note: string;
   from: string; // the payer's Venmo display name, sanitized
-  amount: number; // whole dollars, always positive (incoming only)
+  amount: number; // CENTS (0015), always positive (incoming only)
 };
 
 export type VenmoProblem = { row: number; reason: string };
@@ -185,7 +185,8 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
       status,
       note: sanitizeCell(cell(idx.note)).slice(0, MAX_VENMO_NOTE),
       from: sanitizeCell(cell(idx.from)),
-      amount: amount.dollars,
+      // Cents, straight from `parseAmount` — the unit `insertAccountPayment` stores (0015).
+      amount: amount.cents,
     });
   }
 

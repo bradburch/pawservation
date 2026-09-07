@@ -28,6 +28,7 @@ async function household(env: Env, raw: Parameters<typeof seedPets>[0]) {
   return { jen, accountId: rex };
 }
 
+/** `estCost` is CENTS (0015) — it goes straight into the column. */
 async function book(env: Env, endUserId: string, petIds: string[], estCost: number) {
   const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
     endUserId,
@@ -43,6 +44,7 @@ async function book(env: Env, endUserId: string, petIds: string[], estCost: numb
   return id;
 }
 
+/** `amount` is CENTS (0015), like every other figure crossing the repo. */
 const accountPayment = (env: Env, tenantId: string, accountId: string, amount: number) =>
   insertAccountPayment(env.PAWSERVATION_DB, tenantId, {
     accountId,
@@ -58,39 +60,39 @@ describe('account payments (repo)', () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
     const bookings = [];
-    for (let i = 0; i < 8; i++) bookings.push(await book(env, jen.Id, [accountId], 50));
+    for (let i = 0; i < 8; i++) bookings.push(await book(env, jen.Id, [accountId], 5000));
 
-    const paymentId = await accountPayment(env, TENANT_C, accountId, 400);
+    const paymentId = await accountPayment(env, TENANT_C, accountId, 40000);
     expect(paymentId).not.toBeNull();
 
     // ONE row — no split across the eight bookings, and none of them acquired a payment of its own.
     const rows = await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, accountId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 400, BookingRequestId: null });
+    expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 40000, BookingRequestId: null });
     for (const bookingId of bookings) {
       expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, bookingId)).toEqual([]);
     }
 
     // The household balance reflects the $400 exactly once: 8 × $50 owed, $400 received.
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(balance).toMatchObject({ expectedTotal: 400, paidTotal: 400, balance: 0 });
+    expect(balance).toMatchObject({ expectedTotal: 40000, paidTotal: 40000, balance: 0 });
   });
 
   it('adds to whatever was already paid per booking, never replacing it', async () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
-    const bookingId = await book(env, jen.Id, [accountId], 300);
+    const bookingId = await book(env, jen.Id, [accountId], 30000);
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
-      amount: 100,
+      amount: 10000,
       method: 'cash',
       paidDate: '2026-06-01',
       note: null,
       externalRef: null,
     });
-    await accountPayment(env, TENANT_C, accountId, 150);
+    await accountPayment(env, TENANT_C, accountId, 15000);
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(balance).toMatchObject({ expectedTotal: 300, paidTotal: 250, balance: 50 });
+    expect(balance).toMatchObject({ expectedTotal: 30000, paidTotal: 25000, balance: 5000 });
   });
 
   it('lands on the household even when the account id names a co-owned pet', async () => {
@@ -103,29 +105,29 @@ describe('account payments (repo)', () => {
       'Sam',
     );
     await addPetOwner(env.PAWSERVATION_DB, TENANT_C, accountId, sam.Id);
-    await book(env, jen.Id, [accountId], 100);
-    await accountPayment(env, TENANT_C, accountId, 60);
+    await book(env, jen.Id, [accountId], 10000);
+    await accountPayment(env, TENANT_C, accountId, 6000);
     const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(households).toHaveLength(1); // still one household, one balance
-    expect(households[0]).toMatchObject({ paidTotal: 60, balance: 40 });
+    expect(households[0]).toMatchObject({ paidTotal: 6000, balance: 4000 });
   });
 
   it('leaves a household that has only prepaid in credit, with no booking yet', async () => {
     const { env, raw } = createTestEnv();
     const { accountId } = await household(env, raw);
-    await accountPayment(env, TENANT_C, accountId, 200);
+    await accountPayment(env, TENANT_C, accountId, 20000);
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(balance).toMatchObject({ expectedTotal: 0, paidTotal: 200, balance: -200 });
+    expect(balance).toMatchObject({ expectedTotal: 0, paidTotal: 20000, balance: -20000 });
   });
 
   it('refuses an account id belonging to another tenant, and stays invisible to it', async () => {
     const { env, raw } = createTestEnv();
     const { accountId } = await household(env, raw);
     // TENANT_A cannot pay into TENANT_C's household…
-    expect(await accountPayment(env, TENANT_A, accountId, 100)).toBeNull();
+    expect(await accountPayment(env, TENANT_A, accountId, 10000)).toBeNull();
     // …nor can an id that is no pet at all.
-    expect(await accountPayment(env, TENANT_C, 'p_nonexistent', 100)).toBeNull();
-    await accountPayment(env, TENANT_C, accountId, 100);
+    expect(await accountPayment(env, TENANT_C, 'p_nonexistent', 10000)).toBeNull();
+    await accountPayment(env, TENANT_C, accountId, 10000);
     expect(await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_A, accountId)).toEqual([]);
     // TENANT_B has households of its own (seed.sql), and not a dollar of C's money is in them.
     const otherTenant = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_B);
@@ -175,7 +177,7 @@ describe('account payments (admin routes)', () => {
   it('records one payment against the household and reports the new balance', async () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
-    await book(env, jen.Id, [accountId], 250);
+    await book(env, jen.Id, [accountId], 25000); // repo seed: cents. The body below is dollars.
     const res = await post(env, TENANT_C, accountId, { ...valid, amount: 100, note: 'July' });
     expect(res.status).toBe(201);
     const body = (await res.json()) as {

@@ -51,7 +51,8 @@ describe('parseVenmoCsv', () => {
         status: 'Complete',
         note: 'Boarding for Bella',
         from: 'Jess Demo',
-        amount: 250,
+        // CENTS (0015) — `parseVenmoCsv` hands `insertAccountPayment` the ledger's own unit.
+        amount: 25000,
       },
       {
         txnId: '4139874112233445567',
@@ -60,7 +61,7 @@ describe('parseVenmoCsv', () => {
         status: 'Complete',
         note: 'walks',
         from: 'Tina Alvarez',
-        amount: 40,
+        amount: 4000,
       },
     ]);
     // The outgoing transfer and the pending payment are counted, never guessed at; the balance
@@ -133,14 +134,16 @@ describe('sanitizeCell', () => {
   it('is applied to display text only — an amount cell is parsed raw', () => {
     // "+ $45.00" starts with '+', so sanitizing BEFORE parsing would break every incoming row.
     expect(sanitizeCell('+ $45.00')).toBe("'+ $45.00");
-    expect(parseAmount('+ $45.00')).toEqual({ sign: '+', dollars: 45 });
+    expect(parseAmount('+ $45.00')).toEqual({ sign: '+', cents: 4500 });
   });
 });
 
 describe('parseAmount', () => {
+  // Whole dollars in, CENTS out (0015): the ledger's unit. A fractional cell is still refused —
+  // the storage unit moved, the importer's contract with the sitter did not.
   it('reads whole dollars with either sign and refuses everything else', () => {
-    expect(parseAmount('- $885.00')).toEqual({ sign: '-', dollars: 885 });
-    expect(parseAmount('$1,250.00')).toEqual({ sign: '+', dollars: 1250 });
+    expect(parseAmount('- $885.00')).toEqual({ sign: '-', cents: 88500 });
+    expect(parseAmount('$1,250.00')).toEqual({ sign: '+', cents: 125000 });
     expect(parseAmount('+ $250.50')).toBeNull();
     expect(parseAmount('$0.00')).toBeNull();
     expect(parseAmount('')).toBeNull();

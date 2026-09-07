@@ -1,10 +1,21 @@
+import { centsToWholeDollars } from '../../src/shared/index.js';
 import type { AnalyticsData } from '../types';
 
 /**
  * Shapes a raw `getAnalytics` result into the JSON payload the admin analytics dashboard (and
  * the owner sitter-detail view) render. Pure — no I/O. Extracted from the inline mapping that
  * used to live in the `/:slug/admin/analytics` route handler so both routes stay in lockstep.
+ *
+ * THIS IS THE ONE PLACE THE ANALYTICS PAYLOAD'S MONEY CHANGES UNIT. `AnalyticsData` is cents
+ * throughout (0015); every arithmetic expression below — `EstCost + ChargesTotal - PaidTotal`, the
+ * credit, both tile sums — is therefore single-unit integer arithmetic in CENTS, and
+ * `centsToWholeDollars` is applied only at the last step, on its way out. It THROWS on a figure
+ * that is not a whole number of dollars, which in this commit is the loud failure of a missed
+ * conversion upstream rather than a case to round away. (Task 6 makes the wire cents and deletes
+ * every `d()` below.)
  */
+const d = centsToWholeDollars;
+
 export function serializeAnalytics(data: AnalyticsData) {
   const outstanding = data.outstanding.map((o) => ({
     bookingId: o.BookingId,
@@ -12,11 +23,12 @@ export function serializeAnalytics(data: AnalyticsData) {
     email: o.Email,
     serviceType: o.ServiceType,
     startDate: o.StartDate,
-    estCost: o.EstCost,
-    chargesTotal: o.ChargesTotal,
-    paidTotal: o.PaidTotal,
+    estCost: d(o.EstCost),
+    chargesTotal: d(o.ChargesTotal),
+    paidTotal: d(o.PaidTotal),
     // Total due is the stay price (or fee) PLUS extra charges; EstCost stays the quoted price.
-    balance: o.EstCost + o.ChargesTotal - o.PaidTotal,
+    // Summed in CENTS and divided once, never as three divided terms added back together.
+    balance: d(o.EstCost + o.ChargesTotal - o.PaidTotal),
     // The subquery's EstCost is aliased from CancellationFee on a cancelled row, so the UI
     // needs this flag to label the amount as a fee rather than a live booking balance. Status
     // alone is NOT enough: a fee-FREE cancellation can still be outstanding purely for its extra
@@ -41,9 +53,9 @@ export function serializeAnalytics(data: AnalyticsData) {
     serviceType: c.ServiceType,
     startDate: c.StartDate,
     status: c.Status,
-    keepable: c.Keepable,
-    paidTotal: c.PaidTotal,
-    credit: c.PaidTotal - c.Keepable,
+    keepable: d(c.Keepable),
+    paidTotal: d(c.PaidTotal),
+    credit: d(c.PaidTotal - c.Keepable),
     /**
      * Can this credit be closed by KEEPING it (`POST /credit/keep` logs it as a charge), or only by
      * refunding it? A `'declined'` request may keep nothing at all — `CREDITABLE_AMOUNT_SQL` is 0
@@ -56,33 +68,35 @@ export function serializeAnalytics(data: AnalyticsData) {
   }));
   return {
     tiles: {
-      thisMonth: data.monthly.at(-1)?.Total ?? 0,
-      lastMonth: data.monthly.at(-2)?.Total ?? 0,
-      outstandingTotal: outstanding.reduce((sum, o) => sum + o.balance, 0),
+      thisMonth: d(data.monthly.at(-1)?.Total ?? 0),
+      lastMonth: d(data.monthly.at(-2)?.Total ?? 0),
+      outstandingTotal: d(
+        data.outstanding.reduce((sum, o) => sum + o.EstCost + o.ChargesTotal - o.PaidTotal, 0),
+      ),
       outstandingCount: outstanding.length,
       // Never netted against `outstandingTotal`: one client owing $100 and another being owed $100
       // is not a settled book, and showing $0 would say it was.
-      creditTotal: credits.reduce((sum, c) => sum + c.credit, 0),
+      creditTotal: d(data.credits.reduce((sum, c) => sum + c.PaidTotal - c.Keepable, 0)),
     },
-    monthly: data.monthly.map((m) => ({ month: m.Month, total: m.Total })),
-    ytd: data.ytd,
-    quarterly: data.quarterly,
+    monthly: data.monthly.map((m) => ({ month: m.Month, total: d(m.Total) })),
+    ytd: d(data.ytd),
+    quarterly: data.quarterly.map((q) => ({ q: q.q, total: d(q.total) })),
     byService: data.byService.map((s) => ({
       serviceType: s.ServiceType,
       label: s.Label,
-      total: s.Total,
+      total: d(s.Total),
     })),
     topClients: data.topClients.map((t) => ({
       endUserId: t.EndUserId,
       name: t.Name,
       email: t.Email,
-      total: t.Total,
+      total: d(t.Total),
       bookings: t.Bookings,
     })),
     outstanding,
     credits,
     /**
-     * HOUSEHOLD BALANCES, passed through verbatim. Every figure is already computed — by
+     * HOUSEHOLD BALANCES, passed through apart from the unit. Every figure is already computed — by
      * `getHouseholdBalances`, over the same `CREDITABLE_AMOUNT_SQL` the two lists above are built
      * from — so there is deliberately nothing to map here: a balance is money, money is server-side,
      * and a client that re-added the numbers could disagree with the page it is printed on.
@@ -91,7 +105,12 @@ export function serializeAnalytics(data: AnalyticsData) {
      * per-booking and stay un-netted: netting a debt against a credit is right WITHIN one household
      * (that is what a statement is) and wrong across two, and the tiles speak for the whole book.
      */
-    households: data.households,
+    households: data.households.map((h) => ({
+      ...h,
+      expectedTotal: d(h.expectedTotal),
+      paidTotal: d(h.paidTotal),
+      balance: d(h.balance),
+    })),
     /**
      * MONEY THAT BELONGS TO NO HOUSEHOLD — a household payment whose account-id pet was deleted
      * along with its owner edges (`deleteCustomer`), leaving nothing in the database able to say
@@ -101,6 +120,9 @@ export function serializeAnalytics(data: AnalyticsData) {
      * the truth. Naming an orphan out loud is the only honest option; guessing it a household is
      * the one thing worse than losing it.
      */
-    orphanedPayments: data.orphanedPayments,
+    orphanedPayments: data.orphanedPayments.map((o) => ({
+      accountId: o.accountId,
+      total: d(o.total),
+    })),
   };
 }

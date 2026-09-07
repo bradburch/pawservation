@@ -176,7 +176,7 @@ describe('admin booking lifecycle', () => {
       endDate: '2030-06-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000, // repo seed: cents (0015)
       status: 'confirmed',
     });
     const spy = vi.spyOn(globalThis, 'fetch');
@@ -330,7 +330,7 @@ describe('admin booking lifecycle', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: charged.id,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500, // repo seed: cents (0015). The route payload below stays whole dollars.
     });
     const res = await app.request(
       '/api/sunny-paws/admin/bookings',
@@ -361,7 +361,7 @@ describe('admin booking lifecycle', () => {
       endDate: '2029-03-03',
       optionKey: 'standard',
       petCount: 2,
-      estCost: 200,
+      estCost: 20000, // repo seed: cents (0015)
       status: 'pending',
     });
     await addBookingPets(env.PAWSERVATION_DB, TENANT_A, multiPetId, [
@@ -407,7 +407,7 @@ describe('admin booking lifecycle', () => {
       endDate: null,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 25,
+      estCost: 2500, // repo seed: cents
       status: 'confirmed',
       gcalEventId: 'evt_isbackfilled_test',
     });

@@ -19,7 +19,9 @@ const notice = (over: Partial<CancellationNotice> = {}): CancellationNotice => (
   serviceLabel: 'Boarding',
   whenText: '2030-03-01 – 2030-03-04',
   wasConfirmed: true,
-  cancellationFee: 100,
+  // CENTS (0015) — `CancellationNotice.cancellationFee` is the STORED figure; the template
+  // prints it as whole dollars, which is what a cancellation fee always is.
+  cancellationFee: 10000,
   ...over,
 });
 
@@ -179,7 +181,7 @@ async function seedBooking(
     endDate: addDays(start, 2),
     optionKey: 'standard',
     petCount: 1,
-    estCost: 200,
+    estCost: 20000, // repo seed: cents
     status: over.status ?? 'confirmed',
   });
 }
@@ -284,7 +286,7 @@ describe('the cancel route notifies the sitter', () => {
     )
       .bind(id)
       .first()) as { Status: string; CancellationFee: number };
-    expect(row).toMatchObject({ Status: 'cancelled', CancellationFee: 100 });
+    expect(row).toMatchObject({ Status: 'cancelled', CancellationFee: 10000 }); // the column
   });
 
   it('a Resend 500 does not fail the cancellation either', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { createTestEnv, endUserToken, seedPets, TENANT_A, TENANT_B } from './helpers';
+import { dollarsToCents } from '../../src/shared/index.js';
 
 async function book(env: Env, slug: string, body: unknown, email = 'jess@example.com') {
   const token = await endUserToken(env, slug, email);
@@ -114,7 +115,8 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
     const stored = raw.prepare(`SELECT EstCost FROM BookingRequests WHERE Id=?`).get(booked.id) as {
       EstCost: number;
     };
-    expect(stored.EstCost).toBe(40);
+    // The COLUMN is cents (0015); the create RESPONSE above is still whole dollars.
+    expect(stored.EstCost).toBe(dollarsToCents(40));
   });
 
   it('the quote and the POST AGREE for the same set — parity holds in the new mode too', async () => {
@@ -213,7 +215,7 @@ describe('quote/stamp parity', () => {
     const stored = raw.prepare(`SELECT EstCost FROM BookingRequests WHERE Id=?`).get(booked.id) as {
       EstCost: number;
     };
-    expect(stored.EstCost).toBe(q.estCost);
+    expect(stored.EstCost).toBe(dollarsToCents(q.estCost));
   });
 
   it('a pet-ID group rate beats the species rate at BOTH the quote and the stamp', async () => {

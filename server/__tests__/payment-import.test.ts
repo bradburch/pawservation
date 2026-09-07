@@ -7,11 +7,12 @@ import {
 } from '../lib/payment-import';
 
 describe('payment-import shared helpers', () => {
-  it('parses a whole-dollar amount and refuses cents', () => {
-    expect(parseAmount('+ $45.00')).toEqual({ sign: '+', dollars: 45 });
-    expect(parseAmount('1,250')).toEqual({ sign: '+', dollars: 1250 });
-    expect(parseAmount('- $885.00')).toEqual({ sign: '-', dollars: 885 });
-    // Cents are unrepresentable — reported, never rounded into a wrong ledger entry.
+  it('parses a whole-dollar amount INTO CENTS and still refuses a fractional one', () => {
+    expect(parseAmount('+ $45.00')).toEqual({ sign: '+', cents: 4500 });
+    expect(parseAmount('1,250')).toEqual({ sign: '+', cents: 125000 });
+    expect(parseAmount('- $885.00')).toEqual({ sign: '-', cents: 88500 });
+    // 0015 made the STORAGE unit cents; the importer's contract with the sitter is unchanged, so a
+    // fractional row is still reported rather than recorded. See parseAmount's own note.
     expect(parseAmount('$45.50')).toBeNull();
     expect(parseAmount('$0')).toBeNull();
     expect(parseAmount('not money')).toBeNull();

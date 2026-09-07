@@ -478,7 +478,7 @@ describe('Payments.ExternalRef', () => {
     const { env } = createTestEnv();
     const first = await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
-      amount: 100,
+      amount: 10000, // cents (0015)
       method: 'venmo',
       paidDate: '2026-07-03',
       note: 'Venmo import',
@@ -492,7 +492,7 @@ describe('Payments.ExternalRef', () => {
     await expect(
       insertPayment(env.PAWSERVATION_DB, TENANT_A, {
         bookingRequestId: 'seed_sp_board1',
-        amount: 100,
+        amount: 10000, // cents (0015)
         method: 'venmo',
         paidDate: '2026-07-03',
         note: 'Venmo import',
@@ -503,7 +503,7 @@ describe('Payments.ExternalRef', () => {
     expect(
       await insertPayment(env.PAWSERVATION_DB, TENANT_B, {
         bookingRequestId: 'seed_ht_board1',
-        amount: 100,
+        amount: 10000, // cents (0015)
         method: 'venmo',
         paidDate: '2026-07-03',
         note: 'Venmo import',

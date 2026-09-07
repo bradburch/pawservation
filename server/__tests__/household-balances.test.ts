@@ -32,8 +32,8 @@ describe('buildHouseholdBalances (pure)', () => {
     const { households } = buildHouseholdBalances({
       links,
       bookings: [
-        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 100, paid: 40 },
-        { bookingId: 'b2', ownerId: 'o_jen', petIds: ['p_rex'], expected: 250, paid: 0 },
+        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 10000, paid: 4000 },
+        { bookingId: 'b2', ownerId: 'o_jen', petIds: ['p_rex'], expected: 25000, paid: 0 },
       ],
     });
     expect(households).toHaveLength(1);
@@ -41,9 +41,9 @@ describe('buildHouseholdBalances (pure)', () => {
       accountId: 'p_rex',
       ownerIds: ['o_jen', 'o_sam'],
       bookingIds: ['b1', 'b2'],
-      expectedTotal: 350,
-      paidTotal: 40,
-      balance: 310,
+      expectedTotal: 35000,
+      paidTotal: 4000,
+      balance: 31000,
     });
   });
 
@@ -52,25 +52,25 @@ describe('buildHouseholdBalances (pure)', () => {
     const { households } = buildHouseholdBalances({
       links,
       bookings: [
-        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 100, paid: 0 },
-        { bookingId: 'b2', ownerId: 'o_sam', petIds: ['p_rex'], expected: 60, paid: 10 },
+        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 10000, paid: 0 },
+        { bookingId: 'b2', ownerId: 'o_sam', petIds: ['p_rex'], expected: 6000, paid: 1000 },
       ],
     });
     expect(households.map((h) => h.accountId)).toEqual(['p_rex']);
-    expect(households[0].balance).toBe(150);
+    expect(households[0].balance).toBe(15000);
   });
 
   it('never nets one household against another', () => {
     const { households } = buildHouseholdBalances({
       links,
       bookings: [
-        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 100, paid: 0 },
-        { bookingId: 'b2', ownerId: 'o_ana', petIds: ['p_mia'], expected: 0, paid: 100 },
+        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 10000, paid: 0 },
+        { bookingId: 'b2', ownerId: 'o_ana', petIds: ['p_mia'], expected: 0, paid: 10000 },
       ],
     });
     expect(households.map((h) => [h.accountId, h.balance])).toEqual([
-      ['p_mia', -100],
-      ['p_rex', 100],
+      ['p_mia', -10000],
+      ['p_rex', 10000],
     ]);
   });
 
@@ -183,7 +183,8 @@ async function book(
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: Math.max(1, over.petIds?.length ?? 1),
-    estCost: over.estCost !== undefined ? over.estCost : 100,
+    // CENTS (0015): a $100 stay is 10000 in the column.
+    estCost: over.estCost !== undefined ? over.estCost : 10000,
     status: over.status ?? 'confirmed',
   });
   if (over.petIds?.length) await addBookingPets(env.PAWSERVATION_DB, tenantId, id, over.petIds);
@@ -224,16 +225,16 @@ describe('getHouseholdBalances (repo)', () => {
 
     // Jen books $100 and pays $40; Sam books $60 against the pet they share and pays nothing.
     const jensBooking = await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] });
-    await pay(env, TENANT_C, jensBooking, 40);
-    await book(env, TENANT_C, { endUserId: sam.Id, petIds: [rex], estCost: 60 });
+    await pay(env, TENANT_C, jensBooking, 4000);
+    await book(env, TENANT_C, { endUserId: sam.Id, petIds: [rex], estCost: 6000 });
 
     const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(households).toHaveLength(1);
     expect(households[0]).toMatchObject({
       accountId: rex,
-      expectedTotal: 160,
-      paidTotal: 40,
-      balance: 120,
+      expectedTotal: 16000,
+      paidTotal: 4000,
+      balance: 12000,
     });
     expect(households[0].owners.map((o) => o.email).sort()).toEqual([
       'jen@example.com',
@@ -254,11 +255,11 @@ describe('getHouseholdBalances (repo)', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
-    await pay(env, TENANT_C, bookingId, 200);
+    await pay(env, TENANT_C, bookingId, 20000);
     const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(household).toMatchObject({ expectedTotal: 145, paidTotal: 200, balance: -55 });
+    expect(household).toMatchObject({ expectedTotal: 14500, paidTotal: 20000, balance: -5500 });
   });
 
   it('bills a cancelled booking for its assessed fee, and a declined one for nothing', async () => {
@@ -272,21 +273,47 @@ describe('getHouseholdBalances (repo)', () => {
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const cancelled = await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
     await env.PAWSERVATION_DB.prepare(
-      "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 30 WHERE TenantId = ? AND Id = ?",
+      "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 3000 WHERE TenantId = ? AND Id = ?",
     )
       .bind(TENANT_C, cancelled)
       .run();
     const declined = await book(env, TENANT_C, {
       endUserId: ana.Id,
       petIds: [mia],
-      estCost: 500,
+      estCost: 50000,
       status: 'pending',
     });
-    await pay(env, TENANT_C, declined, 25); // a deposit, taken before she said no
+    await pay(env, TENANT_C, declined, 2500); // a deposit, taken before she said no
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined');
     const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    // 30 owed on the cancellation, nothing owed on the declined request, 25 of her money held.
-    expect(household).toMatchObject({ expectedTotal: 30, paidTotal: 25, balance: 5 });
+    // $30 owed on the cancellation, nothing owed on the declined request, $25 of her money held.
+    expect(household).toMatchObject({ expectedTotal: 3000, paidTotal: 2500, balance: 500 });
+  });
+
+  it('holds a balance that is not a whole number of dollars — the point of the unit', async () => {
+    // THE FIRST NON-WHOLE-DOLLAR FIGURE THIS LEDGER HAS EVER HELD. Before 0015 a $87.50 payment
+    // was unrepresentable: `Payments.Amount` was whole dollars, so the sitter had to round it and
+    // the household's balance was wrong by the difference, permanently. $250 owed less $87.50 paid
+    // is $162.50 — 16250 cents, exactly, with no rounding anywhere in the expression.
+    //
+    // Seeded through the repo rather than through the payment route on purpose: the WIRE is still
+    // whole dollars in this commit, so the route could not carry 87.50 yet. The ledger can.
+    const { env, raw } = createTestEnv();
+    const ana = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'ana@example.com',
+      'Ana',
+    );
+    const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
+    const bookingId = await book(env, TENANT_C, {
+      endUserId: ana.Id,
+      petIds: [mia],
+      estCost: 25000,
+    });
+    await pay(env, TENANT_C, bookingId, 8750);
+    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    expect(household).toMatchObject({ expectedTotal: 25000, paidTotal: 8750, balance: 16250 });
   });
 
   it('is tenant-isolated', async () => {
@@ -325,7 +352,7 @@ describe('household balances on the earnings payload', () => {
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] }); // owes 100
     const anas = await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
-    await pay(env, TENANT_C, anas, 200); // 100 in credit
+    await pay(env, TENANT_C, anas, 20000); // $100 in credit
 
     const payload = serializeAnalytics(
       await getAnalytics(env.PAWSERVATION_DB, TENANT_C, '2026-07-15'),
@@ -349,7 +376,7 @@ describe('household balances on the earnings payload', () => {
     );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] });
-    await pay(env, TENANT_C, bookingId, 25);
+    await pay(env, TENANT_C, bookingId, 2500);
     const res = await app.request(
       `/api/${SLUG_C}/admin/analytics`,
       { headers: await adminHeaders(TENANT_C) },

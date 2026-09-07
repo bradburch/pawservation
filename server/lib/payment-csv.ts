@@ -15,6 +15,7 @@ import {
   type MatchClient,
 } from './payment-import';
 import { isRealDate } from './validation';
+import { formatCentsForKey } from '../../src/shared/index.js';
 
 /** Each confirmed row costs a D1 write and the preview holds the file in memory. Mirrors
  *  MAX_VENMO_ROWS, with its own constant because the two files share no other property. */
@@ -38,7 +39,8 @@ const MAX_NOTE_LENGTH = 200;
 export const MAX_CSV_REFERENCE = 128;
 
 /**
- * A row whose amount is exactly nothing. `parseAmount` demands at least $1, so it refuses `$0` and
+ * A row whose amount is exactly nothing. `parseAmount` demands at least $1 (10000 cents… no: 100
+ * cents, one dollar — see its own note on why fractions are still refused), so it refuses `$0` and
  * `not a number` alike — but they are not the same thing to a sitter, and "Pawservation records
  * whole dollars" is simply untrue of a well-formed `$0.00`. Recognised here purely to say something
  * true about it. Matches what `parseAmount` accepts, narrowed to zero.
@@ -91,7 +93,7 @@ export type ColumnMapping = {
 export type CsvPayment = {
   row: number; // 1-indexed against the sitter's own file
   date: string; // 'YYYY-MM-DD'
-  amount: number; // whole dollars, positive
+  amount: number; // CENTS (0015), positive
   payer: string;
   method: PaymentMethod;
   reference: string | null;
@@ -137,7 +139,8 @@ function contentHash(parts: unknown[]): string {
 }
 
 /**
- * Turn a sitter-uploaded CSV plus their own column mapping into whole-dollar payments, exactly
+ * Turn a sitter-uploaded CSV plus their own column mapping into payments (amounts in CENTS, still
+ * whole-dollar values — `parseAmount` refuses a fraction), exactly
  * as `parseVenmoCsv` does for Venmo's fixed format — reusing the same amount/date/sanitize rules
  * from `payment-import.ts` so the two importers can never quietly disagree about what a valid
  * amount or a safe cell is.
@@ -306,7 +309,13 @@ export function applyMapping(
     if (reference !== null) {
       dedupeKey = `csv:${reference}`;
     } else {
-      const hash = contentHash([tenantId, rawDate, amount.dollars, payer]);
+      // THE HASH INPUT IS THE AMOUNT AS THE SITTER WROTE IT, not the stored integer. 0015 moved
+      // the ledger to cents, and hashing 4000 where 40 used to be hashed would give every
+      // whole-dollar row a NEW key — so a sitter re-uploading an overlapping export would import
+      // every payment a second time, silently, which is the one failure this key exists to
+      // prevent. `formatCentsForKey` renders 4000 as "40" and 4050 as "40.50"; `Number` puts it
+      // back as the numeric JSON token `contentHash` has always hashed.
+      const hash = contentHash([tenantId, rawDate, Number(formatCentsForKey(amount.cents)), payer]);
       const rank = rankByHash.get(hash) ?? 0;
       rankByHash.set(hash, rank + 1);
       dedupeKey = `csv:${hash}:${rank}`;
@@ -315,7 +324,8 @@ export function applyMapping(
     payments.push({
       row,
       date: rawDate,
-      amount: amount.dollars,
+      // Cents (0015) — the unit `insertAccountPayment` stores.
+      amount: amount.cents,
       payer,
       method,
       reference,

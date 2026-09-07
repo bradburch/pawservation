@@ -25,6 +25,7 @@ const book = (
   tenantId: string,
   endUserId: string,
   petIds: string[],
+  /** CENTS (0015) — a repo seed writes the column directly. The ROUTE below answers in dollars. */
   estCost: number,
   status: 'pending' | 'confirmed' = 'confirmed',
 ) =>
@@ -58,10 +59,10 @@ describe('GET /:slug/account', () => {
       'Jen',
     );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_acct', petType: 'dog' }]);
-    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 100);
+    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 10000);
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 25,
+      amount: 2500,
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,
@@ -96,7 +97,7 @@ describe('GET /:slug/account', () => {
     const [mia] = seedPets(raw, TENANT_A, ana.Id, [{ id: 'p_mia_acct', petType: 'dog' }]);
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: mia,
-      amount: 300,
+      amount: 30000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,

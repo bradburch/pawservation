@@ -14,6 +14,8 @@ const noRates = { groupRates: [], mixRates: [] };
 
 /** Unwraps a `priced: true` result's cost, failing loudly if a test accidentally hits the
  *  refusal arm — every case in this file is a single pet, which is never refused. */
+/** The priced total in CENTS (0015) — `estimateCost` is the single ×100 of the price path, so a
+ *  $230 stay reads 23000 here. The stored `HolidayRate`/`Rate` operands above it stay dollars. */
 function costOf(result: PriceResult): number {
   if (!result.priced) throw new Error(`expected a priced result, got a refusal: ${result.reason}`);
   return result.cost;
@@ -86,7 +88,7 @@ describe('estimateCost — holiday units priced at the stored HolidayRate', () =
           noRates,
         ),
       ),
-    ).toBe(160);
+    ).toBe(16000);
   });
 
   it('prices only the holiday nights at the holiday rate', () => {
@@ -94,32 +96,32 @@ describe('estimateCost — holiday units priced at the stored HolidayRate', () =
     // Nights begin Dec 23, 24, 25, 26 -> two holidays: 2 x $40 + 2 x $75 = $230.
     expect(
       costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-27', onePet, noRates)),
-    ).toBe(230);
+    ).toBe(23000);
   });
 
   it('names a night by its CHECK-IN date, so Dec 24 -> Dec 25 is ONE holiday night', () => {
     const s = svc('boarding', { HolidayRate: 75 });
     expect(
       costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-24', '2026-12-25', onePet, noRates)),
-    ).toBe(75);
+    ).toBe(7500);
     // The mirror: checking in ON Christmas Day and out on the 26th is also one holiday night.
     expect(
       costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-25', '2026-12-26', onePet, noRates)),
-    ).toBe(75);
+    ).toBe(7500);
     // …and checking out ON a holiday does NOT make the last night a holiday night.
     expect(
       costOf(estimateCost(s, opt({ Rate: 40 }), '2026-12-23', '2026-12-24', onePet, noRates)),
-    ).toBe(40);
+    ).toBe(4000);
   });
 
   it('prices a single-day service by the date itself', () => {
     const s = svc('walk', { HolidayRate: 40 });
     expect(
       costOf(estimateCost(s, opt({ Rate: 20 }), '2026-07-04', '2026-07-04', onePet, noRates)),
-    ).toBe(40);
+    ).toBe(4000);
     expect(
       costOf(estimateCost(s, opt({ Rate: 20 }), '2026-07-05', '2026-07-05', onePet, noRates)),
-    ).toBe(20);
+    ).toBe(2000);
   });
 
   it('includes the departure day for a DAY-billed range service', () => {
@@ -128,7 +130,7 @@ describe('estimateCost — holiday units priced at the stored HolidayRate', () =
     expect(unitSplitFor(s, '2026-07-03', '2026-07-04')).toEqual({ units: 2, holidayUnits: 1 });
     expect(
       costOf(estimateCost(s, opt({ Rate: 30 }), '2026-07-03', '2026-07-04', onePet, noRates)),
-    ).toBe(90);
+    ).toBe(9000);
   });
 
   it('accepts a holiday rate BELOW the base rate', () => {
@@ -136,7 +138,7 @@ describe('estimateCost — holiday units priced at the stored HolidayRate', () =
     // 40 + 25
     expect(
       costOf(estimateCost(s, opt({ Rate: 40 }), '2026-07-03', '2026-07-05', onePet, noRates)),
-    ).toBe(65);
+    ).toBe(6500);
   });
 });
 

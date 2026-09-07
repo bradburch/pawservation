@@ -135,6 +135,10 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- The fee is NOT part of EstCost: it lands as a BookingCharges row (see BookingCharges.Origin
   -- below and server/lib/booking-times.ts), so estimateCost stays "units of time x a stored rate"
   -- and total due stays EstCost + SUM(charges).
+  --
+  -- BOTH FEES ARE WHOLE DOLLARS and stay that way (0015). They are RATES the sitter typed, like
+  -- every *Rate column here; server/lib/booking-times.ts multiplies by 100 on the way into
+  -- BookingCharges.Amount, which is cents.
   StandardArrivalTime TEXT,
   StandardDepartureTime TEXT,
   EarlyArrivalFee INTEGER CHECK (EarlyArrivalFee IS NULL OR EarlyArrivalFee >= 1),
@@ -338,8 +342,13 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- External rows are Google-owned mirrors (EndUserId NULL, Status 'confirmed', EstCost NULL,
   -- GCalEventId = the Google id): they block capacity like blocked days and are read-only here.
   ExternalSummary TEXT,
+  -- The quoted price of the stay, in INTEGER CENTS (0015). NULL = never priced. server/lib/
+  -- availability.ts's estimateCost is the ONE place a whole-dollar rate becomes this figure and
+  -- the ONE multiplication by 100 in the price path.
   EstCost INTEGER,
-  -- Fee assessed at cancel time, whole dollars, matches EstCost (added by 0016). NULL = none assessed.
+  -- Fee assessed at cancel time, in INTEGER CENTS like EstCost (added by 0016; unit moved by
+  -- 0015). Still always a whole number of dollars' worth of cents — cancellationFee rounds to the
+  -- dollar. NULL = none assessed.
   CancellationFee INTEGER,
   Answers TEXT NOT NULL DEFAULT '{}', -- JSON {questionId: answer}; questions defined on TenantServices
   -- 'declined' is the sitter's "no" to a still-pending request; a confirmed booking is
@@ -395,8 +404,8 @@ CREATE TABLE IF NOT EXISTS PetOwners (
 );
 CREATE INDEX IF NOT EXISTS idx_PetOwners_Tenant_User ON PetOwners (TenantId, EndUserId);
 
--- Recorded payments (earnings analytics). Multiple rows per booking (deposits/partials); whole
--- dollars matching EstCost/Rate. PaidDate is sitter-entered.
+-- Recorded payments (earnings analytics). Multiple rows per booking (deposits/partials); INTEGER
+-- CENTS matching EstCost/CancellationFee/BookingCharges.Amount (0015). PaidDate is sitter-entered.
 --
 -- A payment settles EITHER one booking OR one household — never both, never neither (0011). The
 -- household form exists because that is how clients actually pay: one cheque a month covering eight
@@ -418,7 +427,9 @@ CREATE TABLE IF NOT EXISTS Payments (
   -- stable across that renaming. Tenancy is enforced by the writer (`insertAccountPayment` inserts
   -- through a tenant-scoped SELECT over EndUserPets), like every other guarded write here.
   AccountId TEXT,
-  Amount INTEGER NOT NULL CHECK (Amount > 0), -- whole dollars, matching EstCost/Rate
+  -- INTEGER CENTS (0015). The CHECK is unchanged and says exactly what it always said: a payment
+  -- is a positive amount of money, which is true in either unit.
+  Amount INTEGER NOT NULL CHECK (Amount > 0),
   Method TEXT NOT NULL CHECK (Method IN ('cash', 'venmo', 'zelle', 'paypal', 'check', 'card', 'other')),
   PaidDate TEXT NOT NULL, -- 'YYYY-MM-DD', sitter-entered (defaults to today in the UI)
   Note TEXT,
@@ -448,7 +459,7 @@ CREATE TABLE IF NOT EXISTS BookingCharges (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
   Label TEXT NOT NULL,
-  Amount INTEGER NOT NULL CHECK (Amount >= 1), -- whole dollars, matching EstCost/Rate/Payments
+  Amount INTEGER NOT NULL CHECK (Amount >= 1), -- INTEGER CENTS (0015), matching EstCost/Payments
   -- PROVENANCE (0009). NULL = the sitter typed this charge herself, which is every row that
   -- existed before this column and every row the admin Charges panel writes. The two
   -- 'extra_time_*' values mark a charge DERIVED from the booking's own times, which is what lets a

@@ -81,6 +81,7 @@ import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
 import { isUniqueViolation } from './db-errors';
 import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
+import { householdDetailToDollars } from './wire-dollars';
 import {
   isValidPetCount,
   validateBoardingRange,
@@ -90,6 +91,7 @@ import {
 import {
   addDays,
   cancellationFee,
+  centsToWholeDollars,
   DEFAULT_TIMEZONE,
   getPacificDateStr,
   isWeekend,
@@ -178,7 +180,8 @@ export function isCustomerEditable(
 }
 
 /**
- * What this customer would owe to cancel TODAY, in whole dollars. Computed here and nowhere else:
+ * What this customer would owe to cancel TODAY, in CENTS (0015) — `cancellationFee` takes cents
+ * and returns cents, still rounded to a whole dollar's worth. Computed here and nowhere else:
  * `/bookings/mine` sends it so the confirm step can state a figure, and the cancel route stamps
  * the same rule onto the row — the widget never computes money and never sends one.
  *
@@ -189,13 +192,13 @@ export function isCustomerEditable(
  */
 export function feeToCancelToday(
   status: BookingRow['Status'],
-  estCost: number | null,
+  estCostCents: number | null,
   startDate: string,
   tiers: CancellationTier[] | null,
   today: string,
 ): number {
-  if (status !== 'confirmed' || estCost == null || !tiers) return 0;
-  return cancellationFee(tiers, estCost, startDate, today);
+  if (status !== 'confirmed' || estCostCents == null || !tiers) return 0;
+  return cancellationFee(tiers, estCostCents, startDate, today);
 }
 
 /**
@@ -233,10 +236,15 @@ function withExtraTimePreview(
   if (!(result.available && result.priced)) return result;
   const fees = extraTimeSurcharges(service, times);
   if (fees.length === 0) return result;
+  // `extraTimeSurcharges` returns cents (0015, it writes `BookingCharges.Amount`); the QUOTE is
+  // still whole dollars, so the total is summed in cents and divided once on its way out.
   return {
     ...result,
-    extraTimeFees: fees.map(({ label, amount }) => ({ label, amount })),
-    extraTimeTotal: fees.reduce((sum, fee) => sum + fee.amount, 0),
+    extraTimeFees: fees.map(({ label, amountCents }) => ({
+      label,
+      amount: centsToWholeDollars(amountCents),
+    })),
+    extraTimeTotal: centsToWholeDollars(fees.reduce((sum, fee) => sum + fee.amountCents, 0)),
   };
 }
 
@@ -626,7 +634,16 @@ export async function createBooking(
       endUserId,
       idemKey,
     );
-    if (prior) return ok({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
+    if (prior)
+      return ok(
+        {
+          id: prior.Id,
+          // Stored cents (0015) back to the whole dollars the wire still speaks.
+          estCost: prior.EstCost === null ? null : centsToWholeDollars(prior.EstCost),
+          status: prior.Status,
+        },
+        201,
+      );
   }
 
   const services = await listServices(env.PAWSERVATION_DB, tenant.Id);
@@ -747,7 +764,7 @@ export async function createBooking(
       'unpriced_pet_set',
     );
   }
-  const estCost = price.cost;
+  const estCostCents = price.cost;
 
   if (isDemo) {
     // Zero-pollution demo: the FULL validation pipeline above already ran; now check capacity
@@ -770,7 +787,7 @@ export async function createBooking(
     return ok(
       {
         id: `demo_${crypto.randomUUID()}`,
-        estCost,
+        estCost: centsToWholeDollars(estCostCents),
         status: 'pending',
         demo: true as const,
         note: 'This was a demo — no booking was created.',
@@ -794,7 +811,7 @@ export async function createBooking(
       petCount: pets,
       startTime: bookingStartTime,
       departureTime: bookingDepartureTime,
-      estCost,
+      estCost: estCostCents,
       status: 'pending',
       answers,
       idempotencyKey: idemKey,
@@ -807,7 +824,16 @@ export async function createBooking(
         endUserId,
         idemKey,
       );
-      if (prior) return ok({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
+      if (prior)
+        return ok(
+          {
+            id: prior.Id,
+            // Stored cents (0015) back to the whole dollars the wire still speaks.
+            estCost: prior.EstCost === null ? null : centsToWholeDollars(prior.EstCost),
+            status: prior.Status,
+          },
+          201,
+        );
     }
     throw e;
   }
@@ -878,14 +904,14 @@ export async function createBooking(
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       petNames: chosen.map((p) => p!.Name),
-      estCost,
+      estCost: estCostCents,
       status: 'pending',
     }).catch((err) => {
       console.error('calendar sync failed', err);
     }),
   );
 
-  return ok({ id, estCost, status: 'pending' }, 201);
+  return ok({ id, estCost: centsToWholeDollars(estCostCents), status: 'pending' }, 201);
 }
 
 // ─── Cancel ──────────────────────────────────────────────────────────────────
@@ -1013,7 +1039,9 @@ export async function cancelBooking(
     }),
   );
 
-  return ok({ status: 'cancelled' as const, cancellationFee: fee });
+  // `fee` is cents everywhere above (stored, emailed via `formatCents`, handed to the calendar);
+  // the wire is still whole dollars in this commit.
+  return ok({ status: 'cancelled' as const, cancellationFee: centsToWholeDollars(fee) });
 }
 
 // ─── Edit ────────────────────────────────────────────────────────────────────
@@ -1228,9 +1256,9 @@ export async function editBooking(
     endDate === booking.EndDate &&
     samePets;
 
-  let estCost: number;
+  let estCostCents: number;
   if (priceRelevantUnchanged) {
-    estCost = booking.EstCost!;
+    estCostCents = booking.EstCost!;
   } else {
     const price = estimateCost(service, option, start, end, pricedPets, rates);
     if (!price.priced) {
@@ -1240,7 +1268,7 @@ export async function editBooking(
         'unpriced_pet_set',
       );
     }
-    estCost = price.cost;
+    estCostCents = price.cost;
   }
 
   // Customer-scoped AND status-guarded in SQL: the guard is the status we read and priced from,
@@ -1252,7 +1280,7 @@ export async function editBooking(
     startTime: bookingStartTime,
     departureTime: bookingDepartureTime,
     petCount: pets,
-    estCost,
+    estCost: estCostCents,
     answers,
     expectedStatus: booking.Status as 'pending' | 'confirmed',
   });
@@ -1340,7 +1368,7 @@ export async function editBooking(
         durationMinutes: option.DurationMinutes,
         petCount: pets,
         petNames,
-        estCost,
+        estCost: estCostCents,
         status: 'pending' as const,
       };
       if (booking.GCalEventId)
@@ -1351,7 +1379,7 @@ export async function editBooking(
     }),
   );
 
-  return ok({ id, estCost, status: 'pending' as const });
+  return ok({ id, estCost: centsToWholeDollars(estCostCents), status: 'pending' as const });
 }
 
 // ─── The customer's own bookings ─────────────────────────────────────────────
@@ -1450,22 +1478,31 @@ export async function listMyBookings(
         /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
          *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
         answers: parseAnswers(r.Answers, r.Id),
-        estCost: r.EstCost,
-        charges: chargesByBooking.get(r.Id) ?? [],
-        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
-        cancellationFee: r.CancellationFee,
+        // Stored cents (0015) → the whole dollars this payload has always carried. The charges
+        // total is summed in CENTS and divided once, rather than as a sum of divided terms.
+        estCost: r.EstCost === null ? null : centsToWholeDollars(r.EstCost),
+        charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
+          label: ch.label,
+          amount: centsToWholeDollars(ch.amount),
+        })),
+        chargesTotal: centsToWholeDollars(
+          (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
+        ),
+        cancellationFee: r.CancellationFee === null ? null : centsToWholeDollars(r.CancellationFee),
         /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
         cancellable,
         /** Whether THIS customer may still change it — see `isCustomerEditable`. */
         editable: isCustomerEditable(r.Status, r.StartDate, today),
         /** What cancelling today would cost, whole dollars; null when it isn't cancellable. */
         feeIfCancelledToday: cancellable
-          ? feeToCancelToday(
-              r.Status,
-              r.EstCost,
-              r.StartDate,
-              tiersByType.get(r.ServiceType) ?? null,
-              today,
+          ? centsToWholeDollars(
+              feeToCancelToday(
+                r.Status,
+                r.EstCost,
+                r.StartDate,
+                tiersByType.get(r.ServiceType) ?? null,
+                today,
+              ),
             )
           : null,
         status: r.Status,
@@ -1542,5 +1579,7 @@ export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyA
     tenant.Id,
     endUserId,
   );
-  return ok(detail ?? emptyAccount(accountId));
+  // Cents → the whole dollars this payload has always carried, through the SAME helper the
+  // sitter-side drill-down uses, so the two statements cannot drift on the unit either.
+  return ok(detail ? householdDetailToDollars({ ...detail, accountId }) : emptyAccount(accountId));
 }

@@ -11,7 +11,7 @@ const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed'
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: 100,
+    estCost: 10000, // repo seed: cents (0015). Route bodies/responses stay whole dollars.
     status,
   });
 
@@ -173,7 +173,7 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500, // repo seed: cents
     });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(

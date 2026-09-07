@@ -14,6 +14,7 @@ import {
 } from '../lib/payment-attribution';
 import app from '../index';
 import { adminHeaders, createTestEnv, seedPets } from './helpers';
+import { dollarsToCents } from '../../src/shared/index.js';
 
 /**
  * THE IDEMPOTENCY KEY MUST SURVIVE ATTRIBUTION. Both importers dedupe by exact set membership on
@@ -84,6 +85,8 @@ async function household(env: Env, raw: DatabaseSync): Promise<Household> {
   return { ownerId: owner.Id, accountId: petIds[0], petIds };
 }
 
+/** `estCost` is WHOLE DOLLARS and is converted here — the column is cents (0015). Everything
+ *  else in this file that touches the repo directly says its own unit at the call site. */
 async function book(env: Env, home: Household, estCost: number): Promise<string> {
   const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
     endUserId: home.ownerId,
@@ -92,7 +95,7 @@ async function book(env: Env, home: Household, estCost: number): Promise<string>
     endDate: '2026-03-06',
     optionKey: 'standard',
     petCount: 1,
-    estCost,
+    estCost: dollarsToCents(estCost),
     status: 'confirmed',
   });
   await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, home.petIds);
@@ -177,12 +180,13 @@ describe('re-import of the source file after attribution', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId: credit.Id,
         accountId: home.accountId,
-        splits: [{ bookingId: stay, amount: 150 }],
-        remainder: 50,
+        // The repo speaks cents (0015); the importer wire above is still whole dollars.
+        splits: [{ bookingId: stay, amount: 15000 }],
+        remainder: 5000,
       }),
     ).toEqual({ ok: true });
     const before = ledger(raw);
-    expect(before).toMatchObject({ rows: 2, total: 200 });
+    expect(before).toMatchObject({ rows: 2, total: 20000 }); // SUM(Amount): cents
 
     // Same export, uploaded again — the preview must still call it already imported…
     const preview = (await (
@@ -197,7 +201,7 @@ describe('re-import of the source file after attribution', () => {
 
     expect(ledger(raw)).toEqual(before);
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotal).toBe(150);
+    expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotal).toBe(15000); // cents
   });
 
   it('creates nothing through the CSV importer, on an overlapping later export', async () => {
@@ -235,12 +239,13 @@ describe('re-import of the source file after attribution', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId: credit.Id,
         accountId: home.accountId,
-        splits: [{ bookingId: stay, amount: 150 }],
-        remainder: 50,
+        // The repo speaks cents (0015); the importer wire above is still whole dollars.
+        splits: [{ bookingId: stay, amount: 15000 }],
+        remainder: 5000,
       }),
     ).toEqual({ ok: true });
     const before = ledger(raw);
-    expect(before).toMatchObject({ rows: 2, total: 200 });
+    expect(before).toMatchObject({ rows: 2, total: 20000 }); // SUM(Amount): cents
 
     // July: the six-month export, which contains March's row unchanged plus one genuinely new one.
     const wide = await previewCsv(CSV_JAN_JUN);
@@ -268,6 +273,6 @@ describe('re-import of the source file after attribution', () => {
     });
 
     // The household gained exactly the $75 that is genuinely new, and not one cent of March again.
-    expect(ledger(raw)).toEqual({ rows: before.rows + 1, total: before.total + 75 });
+    expect(ledger(raw)).toEqual({ rows: before.rows + 1, total: before.total + 7500 }); // cents
   });
 });

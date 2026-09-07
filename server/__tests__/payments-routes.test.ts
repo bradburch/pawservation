@@ -34,7 +34,7 @@ describe('admin payment routes', () => {
     const bookingId = await makeBooking(env, TENANT_A);
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 10,
+      amount: 1000, // repo call: CENTS (0015). The route body below stays whole dollars.
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,

@@ -34,7 +34,8 @@ async function makeBackfilledBooking(
   raw: DatabaseSync,
   tenantId: string,
   suffix: string,
-  estCost = 25,
+  /** CENTS (0015) — this is the `EstCost` column. The PATCH body below stays whole dollars. */
+  estCost = 2500,
 ): Promise<string> {
   const endUserId = seedOwner(raw, tenantId, suffix);
   return insertBackfilledBooking(env.PAWSERVATION_DB, tenantId, {
@@ -96,19 +97,19 @@ describe('a cancelled backfilled booking and the household balance', () => {
       endDate: null,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 25,
+      estCost: 2500, // cents (0015)
       status: 'cancelled',
       gcalEventId: 'evt_bf_cancel_balance',
     });
 
     const { estCost, cancellationFee } = readCosts(raw, bookingId);
-    expect(estCost).toBe(25); // the stay's own figure, kept regardless of status
-    expect(cancellationFee).toBe(25); // the column BASE_AMOUNT_SQL actually reads once cancelled
+    expect(estCost).toBe(2500); // the stay's own figure, in cents, kept regardless of status
+    expect(cancellationFee).toBe(2500); // the column BASE_AMOUNT_SQL actually reads once cancelled
 
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
-    expect(household?.expectedTotal).toBe(25);
-    expect(household?.balance).toBe(25);
+    expect(household?.expectedTotal).toBe(2500);
+    expect(household?.balance).toBe(2500);
   });
 });
 
@@ -123,22 +124,22 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
       endDate: null,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 25,
+      estCost: 2500, // cents (0015)
       status: 'confirmed',
       gcalEventId: 'evt_bf_balance',
     });
 
     const res = await patchCost(env, bookingId, { estCost: 40 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ estCost: 40 });
-    expect(readEstCost(raw, bookingId)).toBe(40);
+    expect(await res.json()).toEqual({ estCost: 40 }); // the wire: whole dollars
+    expect(readEstCost(raw, bookingId)).toBe(4000); // the column: cents (0015)
 
     // The point of the feature: correcting the row must move the household statement with it,
     // not just the raw column.
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
-    expect(household?.expectedTotal).toBe(40);
-    expect(household?.balance).toBe(40);
+    expect(household?.expectedTotal).toBe(4000);
+    expect(household?.balance).toBe(4000);
   });
 
   it('re-prices a cancelled backfilled booking and moves the household balance, not just a column', async () => {
@@ -151,7 +152,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
       endDate: null,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 25,
+      estCost: 2500, // cents (0015)
       status: 'cancelled',
       gcalEventId: 'evt_bf_cancel_patch',
     });
@@ -167,13 +168,13 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     // (the admin list renders it raw, and the Edit form prefills from it), so a corrected stay
     // would report $60 owed while still reading "$25 (estimate)".
     const { estCost, cancellationFee } = readCosts(raw, bookingId);
-    expect(cancellationFee).toBe(60);
-    expect(estCost).toBe(60);
+    expect(cancellationFee).toBe(6000); // the column, in cents
+    expect(estCost).toBe(6000);
 
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
-    expect(household?.expectedTotal).toBe(60);
-    expect(household?.balance).toBe(60);
+    expect(household?.expectedTotal).toBe(6000);
+    expect(household?.balance).toBe(6000);
 
     // The figure the sitter reads back, through the route that actually renders it — not just the
     // column. This is the half the original test was missing.
@@ -197,13 +198,13 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
       endDate: '2030-01-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000, // cents (0015)
       status: 'confirmed',
     });
 
     const res = await patchCost(env, bookingId, { estCost: 40 });
     expect(res.status).toBe(404);
-    expect(readEstCost(raw, bookingId)).toBe(100);
+    expect(readEstCost(raw, bookingId)).toBe(10000);
   });
 
   it('refuses a blocked sentinel with the same 404', async () => {
@@ -230,7 +231,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
 
     const res = await patchCost(env, bookingId, { estCost: 40.5 });
     expect(res.status).toBe(400);
-    expect(readEstCost(raw, bookingId)).toBe(25);
+    expect(readEstCost(raw, bookingId)).toBe(2500);
   });
 
   it('refuses zero and negative amounts', async () => {
@@ -239,7 +240,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
 
     expect((await patchCost(env, bookingId, { estCost: 0 })).status).toBe(400);
     expect((await patchCost(env, bookingId, { estCost: -5 })).status).toBe(400);
-    expect(readEstCost(raw, bookingId)).toBe(25);
+    expect(readEstCost(raw, bookingId)).toBe(2500);
   });
 
   it('refuses an amount over the ceiling', async () => {
@@ -248,7 +249,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
 
     const res = await patchCost(env, bookingId, { estCost: MAX_BACKFILL_EST_COST + 1 });
     expect(res.status).toBe(400);
-    expect(readEstCost(raw, bookingId)).toBe(25);
+    expect(readEstCost(raw, bookingId)).toBe(2500);
   });
 
   it("refuses another tenant's booking id", async () => {
@@ -259,6 +260,6 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
 
     const res = await patchCost(env, bookingId, { estCost: 40 });
     expect(res.status).toBe(404);
-    expect(readEstCost(raw, bookingId)).toBe(25);
+    expect(readEstCost(raw, bookingId)).toBe(2500);
   });
 });

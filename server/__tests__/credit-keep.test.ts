@@ -40,6 +40,7 @@ const SLUG_A = 'sunny-paws';
 const makeBooking = (
   env: Env,
   tenantId: string,
+  /** CENTS (0015) — a repo seed writes the column. Route payloads below are whole dollars. */
   estCost: number,
   status: 'confirmed' | 'pending' = 'confirmed',
 ) =>
@@ -81,8 +82,8 @@ const creditsOf = async (env: Env, tenantId: string) =>
 describe('POST /admin/bookings/:id/credit/keep', () => {
   it('closes the credit by logging exactly the displayed amount as a charge', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 150 }]);
 
     const res = await keep(env, SLUG_A, TENANT_A, id);
@@ -91,8 +92,9 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
     // The charge carries the figure she was shown…
     const charges = await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id);
+    // The COLUMN is cents (0015); the `kept` figure on the wire above is still whole dollars.
     expect(charges.map((c) => ({ Label: c.Label, Amount: c.Amount }))).toEqual([
-      { Label: 'Overpayment kept', Amount: 150 },
+      { Label: 'Overpayment kept', Amount: 15000 },
     ]);
     // …the credit is gone, and the booking is NOT now outstanding either: 250 owed, 250 paid.
     const after = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
@@ -104,23 +106,23 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('the amount is computed server-side: a body asking for more is ignored', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     const res = await keep(env, SLUG_A, TENANT_A, id, { amount: 9999, kept: 9999 });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ kept: 150 });
     const charges = await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id);
-    expect(charges.map((c) => c.Amount)).toEqual([150]);
+    expect(charges.map((c) => c.Amount)).toEqual([15000]); // the column, in cents
   });
 
   it('counts existing charges, so the two sides agree on what is left over', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 105 }]);
     expect(await (await keep(env, SLUG_A, TENANT_A, id)).json()).toEqual({ kept: 105 });
@@ -129,8 +131,8 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('refuses a booking with no credit, and writes nothing', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 60);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 6000);
     const res = await keep(env, SLUG_A, TENANT_A, id);
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain('not in credit');
@@ -139,8 +141,8 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('refuses a DECLINED request: it may keep nothing, so a charge could not close it', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 250, 'pending');
-    await pay(env, TENANT_A, id, 100);
+    const id = await makeBooking(env, TENANT_A, 25000, 'pending');
+    await pay(env, TENANT_A, id, 10000);
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined');
     const res = await keep(env, SLUG_A, TENANT_A, id);
     expect(res.status).toBe(409);
@@ -152,15 +154,15 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('every OTHER credit row advertises the keep path, because it really does close it', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, canKeep: true }]);
   });
 
   it('the refund path is what closes a declined deposit: delete the payment', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 250, 'pending');
-    const paymentId = await pay(env, TENANT_A, id, 100);
+    const id = await makeBooking(env, TENANT_A, 25000, 'pending');
+    const paymentId = await pay(env, TENANT_A, id, 10000);
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined');
     const res = await app.request(
       `/api/${SLUG_A}/admin/bookings/${id}/payments/${paymentId}`,
@@ -174,8 +176,8 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('is reversible: deleting the charge re-opens the credit', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     await keep(env, SLUG_A, TENANT_A, id);
     const [charge] = await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id);
     const res = await app.request(
@@ -189,8 +191,8 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('is not repeatable: the second call has nothing left to close', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     expect((await keep(env, SLUG_A, TENANT_A, id)).status).toBe(200);
     expect((await keep(env, SLUG_A, TENANT_A, id)).status).toBe(409);
     expect((await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id)).length).toBe(1);
@@ -198,8 +200,8 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it("another tenant's booking id is a 404 and writes nothing", async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     const res = await keep(env, 'happy-tails', TENANT_B, id);
     expect(res.status).toBe(404);
     expect(await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id)).toEqual([]);
@@ -213,8 +215,8 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
   it('requires the sitter session', async () => {
     const { env } = createTestEnv();
-    const id = await makeBooking(env, TENANT_A, 100);
-    await pay(env, TENANT_A, id, 250);
+    const id = await makeBooking(env, TENANT_A, 10000);
+    await pay(env, TENANT_A, id, 25000);
     const res = await app.request(
       `/api/${SLUG_A}/admin/bookings/${id}/credit/keep`,
       { method: 'POST' },

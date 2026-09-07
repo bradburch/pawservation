@@ -510,7 +510,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
 
     const row = await getBooking(env, 'ev_bella_walk');
     expect(row).toMatchObject({
-      EstCost: 20, // 'd30' option's flat rate — same as the preview test
+      EstCost: 2000, // the COLUMN, in cents (0015) — $20, the same figure the preview showed
       EndUserId: 'eu_sp_jess',
       Status: 'confirmed',
       GCalEventId: 'ev_bella_walk',
@@ -553,13 +553,13 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(body.imported).toBe(1);
 
     const row = await getBooking(env, 'ev_bella_cancelled');
-    expect(row).toMatchObject({ Status: 'cancelled', EstCost: 20, CancellationFee: 20 });
+    expect(row).toMatchObject({ Status: 'cancelled', EstCost: 2000, CancellationFee: 2000 });
 
     const after = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const afterTotal = after.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotal ?? 0;
     // Before the fix this delta was 0: insertBackfilledBooking never set CancellationFee, so a
     // cancelled row's price was invisible to BASE_AMOUNT_SQL no matter what EstCost held.
-    expect(afterTotal - beforeTotal).toBe(20);
+    expect(afterTotal - beforeTotal).toBe(2000); // cents (0015): $20
   });
 
   it('adopts nothing on a second run over the same range', async () => {
@@ -638,7 +638,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(row?.PetCount).toBe(1);
     // Pricing changed as a result of the dedupe too — one dog, not a 2-dog mix — so pin it, or a
     // future change to how a deduped pet set is priced could regress silently.
-    expect(row?.EstCost).toBe(20); // 'd30' option's flat single-pet rate, same as BELLA_WALK_EVENT
+    expect(row?.EstCost).toBe(2000); // the column, in cents: $20, 'd30''s flat single-pet rate
     const petIds = await getBookingPetIds(env, row!.Id);
     expect(petIds).toEqual(['pet_sp_bella']);
   });
@@ -731,7 +731,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(body.skipped).toEqual([]);
 
     const row = await getBooking(env, 'ev_needs_price');
-    expect(row?.EstCost).toBe(75); // the sitter's figure — never invented by the server
+    expect(row?.EstCost).toBe(7500); // the column, in cents: the sitter's $75, never the server's
     expect(row?.ServiceType).toBe('walk');
     const petIds = await getBookingPetIds(env, row!.Id);
     expect([...petIds].sort()).toEqual(['pet_sp_bella', 'pet_sp_mochi']);
@@ -761,7 +761,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(body.imported).toBe(1);
 
     const row = await getBooking(env, 'ev_bella_walk');
-    expect(row?.EstCost).toBe(99); // sitter's figure, not the rate card's 20
+    expect(row?.EstCost).toBe(9900); // the column, in cents: her $99, not the rate card's $20
   });
 
   it.each([0.5, 0, -5, 1_000_001])(

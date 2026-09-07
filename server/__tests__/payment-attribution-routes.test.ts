@@ -10,7 +10,7 @@ import {
   updateBookingStatus,
 } from '../db/repo';
 import { adminHeaders, createTestEnv, seedPets, TENANT_A } from './helpers';
-import { MAX_ATTRIBUTIONS_PER_REQUEST } from '../../src/shared/index.js';
+import { dollarsToCents, MAX_ATTRIBUTIONS_PER_REQUEST } from '../../src/shared/index.js';
 import app from '../index';
 
 /**
@@ -54,6 +54,12 @@ async function household(
  * measuring to the whole stay: a 2023 walk that "ends" in 2030 contains every payment date this
  * file uses and is 0 days from all of them. Use `bookStay` when a test means a real range.
  */
+/**
+ * `estCost` here is WHOLE DOLLARS and this helper converts it, because that is the unit every
+ * figure in this file's PROSE and in the preview/apply payloads is in. The COLUMN is cents (0015),
+ * which is why the conversion lives at the fixture boundary rather than in 200 call sites — the
+ * raw-SQL assertions further down read cents and say so.
+ */
 async function book(
   env: Env,
   home: Household,
@@ -73,14 +79,14 @@ async function book(
     endDate: null,
     optionKey: 'standard',
     petCount: 1,
-    estCost,
+    estCost: dollarsToCents(estCost),
     status,
   });
   await addBookingPets(env.PAWSERVATION_DB, tenantId, id, home.petIds);
   return id;
 }
 
-/** A RANGE-shaped stay — house sitting, `EndDate` the exclusive checkout. */
+/** A RANGE-shaped stay — house sitting, `EndDate` the exclusive checkout. `estCost` is dollars. */
 async function bookStay(
   env: Env,
   home: Household,
@@ -96,13 +102,14 @@ async function bookStay(
     endDate,
     optionKey: 'standard',
     petCount: 1,
-    estCost,
+    estCost: dollarsToCents(estCost),
     status: 'confirmed',
   });
   await addBookingPets(env.PAWSERVATION_DB, tenantId, id, home.petIds);
   return id;
 }
 
+/** `amount` is WHOLE DOLLARS, converted here — see `book`. */
 function credit(
   env: Env,
   accountId: string,
@@ -112,7 +119,7 @@ function credit(
 ): Promise<string | null> {
   return insertAccountPayment(env.PAWSERVATION_DB, tenantId, {
     accountId,
-    amount,
+    amount: dollarsToCents(amount),
     method: 'venmo',
     paidDate,
     note: null,
@@ -1214,7 +1221,7 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
     const settled = await book(env, home, 40, '2026-07-01');
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: settled,
-      amount: 40,
+      amount: dollarsToCents(40), // the repo speaks cents (0015)
       method: 'cash',
       paidDate: '2026-06-15',
       note: null,
@@ -1282,7 +1289,7 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
     // The money landed on the stay the sitter named, and the household's total is unmoved.
     const rows = paymentRows(raw);
     expect(rows.filter((r) => r.BookingRequestId === bookingId)).toHaveLength(1);
-    expect(rows.find((r) => r.BookingRequestId === bookingId)?.Amount).toBe(40);
+    expect(rows.find((r) => r.BookingRequestId === bookingId)?.Amount).toBe(4000); // cents
     const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     expect(after?.balance).toBe(before?.balance);
 
@@ -1660,7 +1667,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
 
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ BookingRequestId: bookingId, AccountId: null, Amount: 100 });
+    expect(rows[0]).toMatchObject({ BookingRequestId: bookingId, AccountId: null, Amount: 10000 });
   });
 
   it('a double-submit applies once', async () => {
@@ -1691,7 +1698,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     // Exactly one booking-level payment of $100 — the second call never duplicated the money.
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ BookingRequestId: bookingId, AccountId: null, Amount: 100 });
+    expect(rows[0]).toMatchObject({ BookingRequestId: bookingId, AccountId: null, Amount: 10000 });
   });
 
   it('an attribution whose splits do not sum is refused with nothing written', async () => {
@@ -1819,13 +1826,14 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(res.status).toBe(200);
     expect((await res.json()) as ApplyBody).toEqual({ applied: 1, skipped: [] });
 
+    // The COLUMN is cents (0015); the $10 tip the body named is 1000 here.
     expect(chargeRows(raw)).toEqual([
-      { BookingRequestId: walk, Label: 'Tip', Amount: 10, Origin: null },
+      { BookingRequestId: walk, Label: 'Tip', Amount: 1000, Origin: null },
     ]);
     // One booking payment for the whole $50, and no account-level credit left looking for a stay.
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ BookingRequestId: walk, AccountId: null, Amount: 50 });
+    expect(rows[0]).toMatchObject({ BookingRequestId: walk, AccountId: null, Amount: 5000 });
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     expect(detail?.balance).toBe(0);
   });
@@ -1901,16 +1909,16 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const rows = paymentRows(raw);
     const bookingRows = rows.filter((r) => r.BookingRequestId === bookingId);
     expect(bookingRows).toHaveLength(1);
-    expect(bookingRows[0].Amount).toBe(100);
+    expect(bookingRows[0].Amount).toBe(10000); // cents
     const householdRows = rows.filter((r) => r.AccountId === home.accountId);
     expect(householdRows).toHaveLength(1);
-    expect(householdRows[0].Amount).toBe(100);
+    expect(householdRows[0].Amount).toBe(10000); // cents
 
     // $100 expected, $200 paid ($100 on the booking + the second credit still sitting unclaimed at
     // the household level) — genuinely $100 in the household's favor, not zeroed out. The point is
     // this reads as an honest credit, not as an invisible $100 the booking silently absorbed twice.
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(detail?.balance).toBe(-100);
+    expect(detail?.balance).toBe(-10000); // getHouseholdDetail returns cents (0015)
   });
 
   it('a mixed-validity batch — good, bad, good — applies both good ones and skips only the bad one', async () => {
@@ -1961,11 +1969,11 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const rows = paymentRows(raw);
     const thirdRows = rows.filter((r) => r.BookingRequestId === thirdBooking);
     expect(thirdRows).toHaveLength(1);
-    expect(thirdRows[0].Amount).toBe(75);
+    expect(thirdRows[0].Amount).toBe(7500); // cents
     // The first attribution's rows exist too.
     const firstRows = rows.filter((r) => r.BookingRequestId === firstBooking);
     expect(firstRows).toHaveLength(1);
-    expect(firstRows[0].Amount).toBe(100);
+    expect(firstRows[0].Amount).toBe(10000); // cents
     // The second (refused) household-level credit is still sitting, unattributed.
     const secondRows = rows.filter((r) => r.Id === secondPaymentId);
     expect(secondRows).toHaveLength(1);
@@ -2289,8 +2297,8 @@ describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-r
     // (or quietly mis-split) would otherwise sail under both ceilings.
     const rows = paymentRows(raw);
     for (const h of homes) {
-      expect(rows.filter((r) => r.BookingRequestId === h.near)).toMatchObject([{ Amount: 100 }]);
-      expect(rows.filter((r) => r.BookingRequestId === h.far)).toMatchObject([{ Amount: 60 }]);
+      expect(rows.filter((r) => r.BookingRequestId === h.near)).toMatchObject([{ Amount: 10000 }]);
+      expect(rows.filter((r) => r.BookingRequestId === h.far)).toMatchObject([{ Amount: 6000 }]);
       expect(rows.filter((r) => r.Id === h.paymentId)).toEqual([]); // source consumed
     }
 

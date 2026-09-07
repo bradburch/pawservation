@@ -45,8 +45,10 @@ function seed(raw: DatabaseSync) {
   );
   raw.exec(
     'INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES ' +
-      "('p_a1','t_a','b_a1',100,'cash','2026-07-15')," + // recent
-      "('p_a2','t_a','b_a2',50,'cash','2026-01-05');", // old
+      // Payments.Amount is CENTS (0015): 10000 is $100. `Earned` below is the raw column sum,
+      // in cents; the /owner/sitters ROUTE divides it back to whole dollars.
+      "('p_a1','t_a','b_a1',10000,'cash','2026-07-15')," + // recent
+      "('p_a2','t_a','b_a2',5000,'cash','2026-01-05');", // old
   );
   // Beta: ZERO activity (no EndUsers, no bookings, no payments) — must still appear (LEFT JOIN, earned $0)
 }
@@ -66,7 +68,8 @@ describe('listSitterRoster', () => {
     const all = await listSitterRoster(env.PAWSERVATION_DB, null);
     const alpha = all.find((r) => r.TenantId === 't_a')!;
     const beta = all.find((r) => r.TenantId === 't_b')!;
-    expect(alpha).toMatchObject({ Clients: 2, Bookings: 2, Earned: 150 }); // cancelled + blocked excluded; earned = payments only
+    // `Earned` is the repo's raw column sum, so cents.
+    expect(alpha).toMatchObject({ Clients: 2, Bookings: 2, Earned: 15000 }); // cancelled + blocked excluded; earned = payments only
     expect(beta).toMatchObject({ Clients: 0, Bookings: 0, Earned: 0 }); // zero-activity sitter present
   });
 
@@ -77,7 +80,7 @@ describe('listSitterRoster', () => {
 
     const recent = await listSitterRoster(env.PAWSERVATION_DB, '2026-06-23');
     const alphaR = recent.find((r) => r.TenantId === 't_a')!;
-    expect(alphaR).toMatchObject({ Clients: 2, Bookings: 1, Earned: 100 });
+    expect(alphaR).toMatchObject({ Clients: 2, Bookings: 1, Earned: 10000 });
   });
 
   it('platform totals equal the sum of the roster', async () => {
@@ -86,7 +89,7 @@ describe('listSitterRoster', () => {
     seed(raw);
 
     const all = await listSitterRoster(env.PAWSERVATION_DB, null);
-    expect(sum(all)).toEqual({ clients: 2, bookings: 2, earned: 150 });
+    expect(sum(all)).toEqual({ clients: 2, bookings: 2, earned: 15000 });
   });
 });
 
@@ -115,8 +118,8 @@ describe('owner sitter routes', () => {
     raw
       .prepare(
         `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES
-         ('p_a1','t_a','b_a1',100,'cash', ?),
-         ('p_a2','t_a','b_a2',50,'cash', ?)`,
+         ('p_a1','t_a','b_a1',10000,'cash', ?),
+         ('p_a2','t_a','b_a2',5000,'cash', ?)`,
       )
       .run(inWindow, outOfWindow);
   }
@@ -135,15 +138,15 @@ describe('owner sitter routes', () => {
     raw
       .prepare(
         `INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, Status, EstCost, CreatedAt) VALUES
-         ('b_a1','t_a','eu_a1','boarding','2026-07-20','confirmed',100, ? || ' 09:00:00'),
-         ('b_b1','t_b','eu_b1','boarding','2026-07-20','confirmed',100, ? || ' 09:00:00')`,
+         ('b_a1','t_a','eu_a1','boarding','2026-07-20','confirmed',10000, ? || ' 09:00:00'),
+         ('b_b1','t_b','eu_b1','boarding','2026-07-20','confirmed',10000, ? || ' 09:00:00')`,
       )
       .run(inWindow, inWindow);
     raw
       .prepare(
         `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES
-         ('p_a1','t_a','b_a1',80,'cash', ?),
-         ('p_b1','t_b','b_b1',80,'cash', ?)`,
+         ('p_a1','t_a','b_a1',8000,'cash', ?),
+         ('p_b1','t_b','b_b1',8000,'cash', ?)`,
       )
       .run(inWindow, inWindow);
   }

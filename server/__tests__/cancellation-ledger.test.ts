@@ -27,7 +27,8 @@ const makeBooking = (
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: over.estCost !== undefined ? over.estCost : 100,
+    // CENTS (0015) — `makeBooking` seeds the column directly.
+    estCost: over.estCost !== undefined ? over.estCost : 10000,
     status: over.status ?? 'confirmed',
   });
 
@@ -116,11 +117,11 @@ describe('getAnalytics outstanding includes cancelled-with-fee', () => {
 
   it('/admin/analytics marks cancelled-with-fee outstanding rows with isCancellationFee, confirmed rows without', async () => {
     const { env } = createTestEnv();
-    const cancelledWithFee = await makeBooking(env, TENANT_C, { estCost: 250 });
-    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledWithFee, 'cancelled', 100);
-    await pay(env, TENANT_C, cancelledWithFee, 40);
-    const confirmedUnderpaid = await makeBooking(env, TENANT_C, { estCost: 300 });
-    await pay(env, TENANT_C, confirmedUnderpaid, 50);
+    const cancelledWithFee = await makeBooking(env, TENANT_C, { estCost: 25000 });
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledWithFee, 'cancelled', 10000);
+    await pay(env, TENANT_C, cancelledWithFee, 4000);
+    const confirmedUnderpaid = await makeBooking(env, TENANT_C, { estCost: 30000 });
+    await pay(env, TENANT_C, confirmedUnderpaid, 5000);
 
     const res = await app.request(
       '/api/paws-and-relax/admin/analytics',
@@ -149,16 +150,16 @@ describe('admin bookings payload carries cancellation fields', () => {
     const confirmedTiers = await makeBooking(env, TENANT_A, {
       serviceType: 'boarding',
       startDate: soon,
-      estCost: 100,
+      estCost: 10000,
     });
     // Confirmed on a service WITHOUT tiers (walk) -> feeIfCancelledToday null.
     const confirmedNoTiers = await makeBooking(env, TENANT_A, {
       serviceType: 'walk',
-      estCost: 60,
+      estCost: 6000,
     });
     // Cancelled boarding with a stored $55 fee.
-    const cancelled = await makeBooking(env, TENANT_A, { serviceType: 'boarding', estCost: 90 });
-    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, cancelled, 'cancelled', 55);
+    const cancelled = await makeBooking(env, TENANT_A, { serviceType: 'boarding', estCost: 9000 });
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, cancelled, 'cancelled', 5500);
 
     const body = (await (await getBookings(env)).json()) as {
       bookings: {

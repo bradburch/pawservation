@@ -1,6 +1,6 @@
 /**
  * Rules shared by every payment importer (Venmo today, a generic mapped-CSV importer next): what
- * counts as a whole-dollar amount, how a cell gets made safe to echo and store, how a payer name
+ * counts as an importable amount, how a cell gets made safe to echo and store, how a payer name
  * folds onto a client, and when that fold is too ambiguous to trust. These live in one place so a
  * second importer cannot quietly drift from the first about what an amount is or when a name is
  * ambiguous — two independently-tuned copies of "is this $45.50 or cents" is exactly the kind of
@@ -34,19 +34,27 @@ export function sanitizeCell(value: string): string {
 }
 
 /**
- * "+ $45.00" → { sign: '+', dollars: 45 }. Returns null for anything that is not a whole-dollar
- * amount of at least $1 — cents are deliberately unrepresentable in this codebase, so a $45.50 row
- * is REPORTED to the sitter rather than silently rounded into a wrong ledger entry.
+ * "+ $45.00" → { sign: '+', cents: 4500 }. The unit is CENTS because that is what the ledger
+ * stores (0015) and what both importers hand to `insertAccountPayment`.
+ *
+ * A FRACTIONAL AMOUNT IS STILL REFUSED HERE. The storage unit moved; the importer's contract with
+ * the sitter has not, and a `$45.50` row is still REPORTED to her rather than recorded. Making it
+ * importable is a separate, deliberate change — the dedupe keys both importers derive from the
+ * amount would start carrying a decimal, and a sitter re-uploading an overlapping export must not
+ * get a second copy of a payment because the key moved. So this returns null on a non-zero
+ * fraction and every importer test keeps its existing expectations.
  */
-export function parseAmount(raw: string): { sign: '+' | '-'; dollars: number } | null {
+export function parseAmount(raw: string): { sign: '+' | '-'; cents: number } | null {
   const m = /^\s*([+-])?\s*\$?\s*([\d,]+)(?:\.(\d{1,2}))?\s*$/.exec(
     raw.replace(new RegExp(String.fromCharCode(160), 'g'), ' '),
   );
   if (!m) return null;
-  if (m[3] !== undefined && Number(m[3].padEnd(2, '0')) !== 0) return null;
-  const dollars = Number(m[2].replace(/,/g, ''));
-  if (!Number.isSafeInteger(dollars) || dollars < 1) return null;
-  return { sign: m[1] === '-' ? '-' : '+', dollars };
+  const frac = m[3] === undefined ? 0 : Number(m[3].padEnd(2, '0'));
+  if (frac !== 0) return null; // see the paragraph above; lifted in its own commit
+  const whole = Number(m[2].replace(/,/g, ''));
+  const cents = whole * 100 + frac;
+  if (!Number.isSafeInteger(cents) || cents < 100) return null;
+  return { sign: m[1] === '-' ? '-' : '+', cents };
 }
 
 /**

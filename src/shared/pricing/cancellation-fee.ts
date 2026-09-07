@@ -11,17 +11,25 @@ export type CancellationTier = { withinDays: number; percent: number };
  * tenant's timezone) a booking starting `startDate`. Tiers are sorted ascending
  * by withinDays (validateCancellationTiers enforces this at the trust
  * boundary), so the first match is the tightest tier. Cancelling on or after
- * the start date counts as 0 days out. Whole dollars; 0 outside every tier.
+ * the start date counts as 0 days out. 0 outside every tier.
+ *
+ * `estCostCents` is CENTS, and so is the result — but the fee itself is still a
+ * WHOLE-DOLLAR amount, expressed in cents: the percentage is taken in dollars,
+ * rounded to the dollar exactly as a sitter's policy has always rounded it, and
+ * scaled back up. $350 at 25% is $87.50 → $88 → 8800, not 8750. Moving the unit
+ * must not quietly make a cancellation fee a cent-precise figure; that is a
+ * pricing-policy change, and this function makes none.
  */
 export function cancellationFee(
   tiers: CancellationTier[],
-  estCost: number,
+  estCostCents: number,
   startDate: string,
   todayStr: string,
 ): number {
   const daysUntil = Math.max(0, nightsBetween(todayStr, startDate));
   const tier = tiers.find((t) => daysUntil <= t.withinDays);
-  return tier ? Math.round((estCost * tier.percent) / 100) : 0;
+  if (!tier) return 0;
+  return Math.round(((estCostCents / 100) * tier.percent) / 100) * 100;
 }
 
 /** Trust-boundary validator for admin-supplied tier config. */

@@ -19,6 +19,7 @@ async function book(
   env: Env,
   endUserId: string,
   petIds: string[],
+  /** CENTS (0015) — this goes straight into the `EstCost` column. */
   estCost: number,
   status: 'pending' | 'confirmed' = 'confirmed',
   startDate = '2030-01-01',
@@ -63,10 +64,10 @@ describe('getHouseholdDetail (repo)', () => {
     // Distinct start dates: `getHouseholdBalances` orders bookings by (StartDate, Id), and Id is a
     // random UUID — two bookings sharing a date would make the received ORDER (not its content)
     // depend on UUID luck, which is not what this test is checking.
-    const b1 = await book(env, jen.Id, [rex], 100, 'confirmed', '2030-01-01', '2030-01-03');
+    const b1 = await book(env, jen.Id, [rex], 10000, 'confirmed', '2030-01-01', '2030-01-03');
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: b1,
-      amount: 40,
+      amount: 4000,
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,
@@ -75,9 +76,9 @@ describe('getHouseholdDetail (repo)', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: b1,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
-    const b2 = await book(env, jen.Id, [rex], 60, 'confirmed', '2030-02-01', '2030-02-03');
+    const b2 = await book(env, jen.Id, [rex], 6000, 'confirmed', '2030-02-01', '2030-02-03');
 
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, rex);
     expect(detail).not.toBeNull();
@@ -88,11 +89,11 @@ describe('getHouseholdDetail (repo)', () => {
         startDate: '2030-01-01',
         endDate: '2030-01-03',
         status: 'confirmed',
-        cost: 100,
-        charges: [{ id: expect.any(String), label: 'Vet visit', amount: 45 }],
-        chargesTotal: 45,
-        paidTotal: 40,
-        expected: 145,
+        cost: 10000,
+        charges: [{ id: expect.any(String), label: 'Vet visit', amount: 4500 }],
+        chargesTotal: 4500,
+        paidTotal: 4000,
+        expected: 14500,
       },
       {
         bookingId: b2,
@@ -100,15 +101,16 @@ describe('getHouseholdDetail (repo)', () => {
         startDate: '2030-02-01',
         endDate: '2030-02-03',
         status: 'confirmed',
-        cost: 60,
+        cost: 6000,
         charges: [],
         chargesTotal: 0,
         paidTotal: 0,
-        expected: 60,
+        expected: 6000,
       },
     ]);
-    // Every figure reconciles EXACTLY to the balance above it: (145 + 60) expected, 40 paid.
-    expect(detail).toMatchObject({ expectedTotal: 205, paidTotal: 40, balance: 165 });
+    // Every figure reconciles EXACTLY to the balance above it: ($145 + $60) expected, $40 paid —
+    // in CENTS (0015), which is the unit `getHouseholdDetail` returns; the route below divides.
+    expect(detail).toMatchObject({ expectedTotal: 20500, paidTotal: 4000, balance: 16500 });
     expect(detail!.bookings.reduce((sum, b) => sum + b.expected, 0)).toBe(detail!.expectedTotal);
   });
 
@@ -121,21 +123,21 @@ describe('getHouseholdDetail (repo)', () => {
       'Ana',
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    const cancelled = await book(env, ana.Id, [mia], 200);
+    const cancelled = await book(env, ana.Id, [mia], 20000);
     await env.PAWSERVATION_DB.prepare(
-      "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 30 WHERE TenantId = ? AND Id = ?",
+      "UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = 3000 WHERE TenantId = ? AND Id = ?",
     )
       .bind(TENANT_C, cancelled)
       .run();
-    const live = await book(env, ana.Id, [mia], 90);
+    const live = await book(env, ana.Id, [mia], 9000);
 
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
     const cancelledRow = detail!.bookings.find((b) => b.bookingId === cancelled)!;
     const liveRow = detail!.bookings.find((b) => b.bookingId === live)!;
     // The $30 fee sits on the cancelled booking, at its own cost figure — never folded into `live`.
-    expect(cancelledRow).toMatchObject({ status: 'cancelled', cost: 30, expected: 30 });
-    expect(liveRow).toMatchObject({ status: 'confirmed', cost: 90, expected: 90 });
-    expect(detail!.expectedTotal).toBe(120);
+    expect(cancelledRow).toMatchObject({ status: 'cancelled', cost: 3000, expected: 3000 });
+    expect(liveRow).toMatchObject({ status: 'confirmed', cost: 9000, expected: 9000 });
+    expect(detail!.expectedTotal).toBe(12000);
   });
 
   it('shows a household-level payment as household-level, never attributed to one booking', async () => {
@@ -147,11 +149,11 @@ describe('getHouseholdDetail (repo)', () => {
       'Jen',
     );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
-    const b1 = await book(env, jen.Id, [rex], 50);
-    const b2 = await book(env, jen.Id, [rex], 50);
+    const b1 = await book(env, jen.Id, [rex], 5000);
+    const b2 = await book(env, jen.Id, [rex], 5000);
     const paymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: rex,
-      amount: 100,
+      amount: 10000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: 'covers both stays',
@@ -164,13 +166,13 @@ describe('getHouseholdDetail (repo)', () => {
     expect(detail!.householdPayments).toEqual([
       {
         id: paymentId,
-        amount: 100,
+        amount: 10000,
         method: 'venmo',
         paidDate: '2026-07-01',
         note: 'covers both stays',
       },
     ]);
-    expect(detail).toMatchObject({ expectedTotal: 100, paidTotal: 100, balance: 0 });
+    expect(detail).toMatchObject({ expectedTotal: 10000, paidTotal: 10000, balance: 0 });
     expect([b1, b2]).toHaveLength(2); // both bookings exist and are accounted for above
   });
 
@@ -185,14 +187,19 @@ describe('getHouseholdDetail (repo)', () => {
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: mia,
-      amount: 200,
+      amount: 20000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,
       externalRef: null,
     });
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
-    expect(detail).toMatchObject({ bookings: [], expectedTotal: 0, paidTotal: 200, balance: -200 });
+    expect(detail).toMatchObject({
+      bookings: [],
+      expectedTotal: 0,
+      paidTotal: 20000,
+      balance: -20000,
+    });
   });
 
   it('identifies a booking with nothing recorded against it, distinct from one with a partial payment', async () => {
@@ -204,7 +211,7 @@ describe('getHouseholdDetail (repo)', () => {
       'Ana',
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    const unpaid = await book(env, ana.Id, [mia], 80);
+    const unpaid = await book(env, ana.Id, [mia], 8000);
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia);
     expect(detail!.bookings.find((b) => b.bookingId === unpaid)).toMatchObject({ paidTotal: 0 });
   });
@@ -223,7 +230,7 @@ describe('getHouseholdDetail (repo)', () => {
       'Ana',
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    await book(env, ana.Id, [mia], 80);
+    await book(env, ana.Id, [mia], 8000);
     expect(await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_A, mia)).toBeNull();
   });
 
@@ -236,10 +243,10 @@ describe('getHouseholdDetail (repo)', () => {
       'Ana',
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    const declined = await book(env, ana.Id, [mia], 500, 'pending');
+    const declined = await book(env, ana.Id, [mia], 50000, 'pending');
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: declined,
-      amount: 25,
+      amount: 2500,
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,
@@ -250,7 +257,7 @@ describe('getHouseholdDetail (repo)', () => {
     const row = detail!.bookings.find((b) => b.bookingId === declined)!;
     expect(row).toMatchObject({ status: 'declined', expected: 0 });
     expect(detail!.expectedTotal).toBe(0);
-    expect(detail!.paidTotal).toBe(25); // the $25 was still received; it just isn't billed to anything
+    expect(detail!.paidTotal).toBe(2500); // the $25 was still received; it just isn't billed to anything
   });
 });
 
@@ -264,10 +271,11 @@ describe('GET /:slug/admin/accounts/:accountId (route)', () => {
       'Jen',
     );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
-    const bookingId = await book(env, jen.Id, [rex], 100);
+    // Seeded through the repo, so in CENTS (0015); the RESPONSE below is whole dollars, unchanged.
+    const bookingId = await book(env, jen.Id, [rex], 10000);
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,
-      amount: 25,
+      amount: 2500,
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,

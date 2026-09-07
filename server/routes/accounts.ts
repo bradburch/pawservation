@@ -8,6 +8,8 @@ import {
 } from '../db/repo';
 import { adminAuth } from '../lib/middleware';
 import { isPaymentMethod, isRealDate, isValidRate } from '../lib/validation';
+import { householdDetailToDollars } from '../lib/wire-dollars';
+import { centsToWholeDollars, dollarsToCents } from '../../src/shared/index.js';
 import type { AppEnv } from '../types';
 
 export const accountsRoutes = new Hono<AppEnv>()
@@ -28,7 +30,8 @@ export const accountsRoutes = new Hono<AppEnv>()
       c.req.param('accountId'),
     );
     if (!detail) return c.json({ error: 'Not found.' }, 404);
-    return c.json(detail);
+    // The repo speaks cents (0015); this payload has always spoken whole dollars.
+    return c.json(householdDetailToDollars(detail));
   })
 
   /**
@@ -37,6 +40,10 @@ export const accountsRoutes = new Hono<AppEnv>()
    * in the same order (whole dollars ≥ 1, a known method, a real date), because a household payment
    * and a booking payment are one ledger and a rule enforced on one of them only is a rule that
    * moves depending on where the sitter clicked.
+   *
+   * THE BODY IS STILL WHOLE DOLLARS. 0015 moved STORAGE to cents, not the wire, so `isValidRate`
+   * still guards a whole-dollar number and `dollarsToCents` converts it on the way into the
+   * ledger. A later commit switches the body to `amountCents` and retires both.
    *
    * `:accountId` is an account id — a pet id — and the tenant guard is inside `insertAccountPayment`'s
    * SQL, so a household of another tenant is an indistinguishable 404, the same answer every other
@@ -59,7 +66,7 @@ export const accountsRoutes = new Hono<AppEnv>()
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
     const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
       accountId,
-      amount: body.amount,
+      amount: dollarsToCents(body.amount),
       method: body.method,
       paidDate: body.paidDate,
       note,
@@ -77,7 +84,7 @@ export const accountsRoutes = new Hono<AppEnv>()
       {
         payment: {
           id: created.Id,
-          amount: created.Amount,
+          amount: centsToWholeDollars(created.Amount),
           method: created.Method,
           paidDate: created.PaidDate,
           note: created.Note,
@@ -85,7 +92,9 @@ export const accountsRoutes = new Hono<AppEnv>()
         // The household this payment landed on, found by MEMBERSHIP rather than by id equality for
         // the reason the schema gives: the account id is the first-sorted pet and can be renamed by
         // a pet added later, so `:accountId` is not necessarily the household's current id.
-        balance: households.find((h) => h.petIds.includes(accountId))?.balance ?? 0,
+        balance: centsToWholeDollars(
+          households.find((h) => h.petIds.includes(accountId))?.balance ?? 0,
+        ),
       },
       201,
     );
@@ -101,7 +110,7 @@ export const accountsRoutes = new Hono<AppEnv>()
     return c.json({
       payments: rows.map((p) => ({
         id: p.Id,
-        amount: p.Amount,
+        amount: centsToWholeDollars(p.Amount),
         method: p.Method,
         paidDate: p.PaidDate,
         note: p.Note,

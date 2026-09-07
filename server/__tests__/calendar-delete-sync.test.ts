@@ -26,7 +26,7 @@ async function seedBooking(
     endDate: '2030-03-04',
     optionKey: null,
     petCount: 1,
-    estCost: 150,
+    estCost: 15000,
     status,
   });
   if (gcalEventId)

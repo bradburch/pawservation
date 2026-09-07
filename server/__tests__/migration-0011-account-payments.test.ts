@@ -55,8 +55,8 @@ function preMigrationDb(): DatabaseSync {
   raw.exec(`
     INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef, CreatedAt)
     VALUES
-      ('pay_hand', '${TENANT_A}', 'seed_sp_board1', 150, 'cash', '2026-06-01', 'deposit', NULL, '2026-06-01 10:00:00'),
-      ('pay_venmo', '${TENANT_A}', 'seed_sp_board1', 100, 'venmo', '2026-06-14', NULL, 'venmo-txn-77', '2026-06-14 11:30:00');
+      ('pay_hand', '${TENANT_A}', 'seed_sp_board1', 15000, 'cash', '2026-06-01', 'deposit', NULL, '2026-06-01 10:00:00'),
+      ('pay_venmo', '${TENANT_A}', 'seed_sp_board1', 10000, 'venmo', '2026-06-14', NULL, 'venmo-txn-77', '2026-06-14 11:30:00');
   `);
   return raw;
 }
@@ -133,7 +133,7 @@ describe('migration 0011 (account-level payments) against a pre-migration databa
       raw
         .prepare(
           `INSERT INTO Payments (Id, TenantId, BookingRequestId, AccountId, Amount, Method, PaidDate)
-           VALUES ('pay_new', ?, ?, ?, 40, 'cash', '2026-07-01')`,
+           VALUES ('pay_new', ?, ?, ?, 4000, 'cash', '2026-07-01')`,
         )
         .run(TENANT_A, booking, account);
 
@@ -151,7 +151,7 @@ describe('migration 0011 (account-level payments) against a pre-migration databa
       raw
         .prepare(
           `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, ExternalRef)
-           VALUES ('pay_replay', ?, 'seed_sp_board1', 100, 'venmo', '2026-06-14', 'venmo-txn-77')`,
+           VALUES ('pay_replay', ?, 'seed_sp_board1', 10000, 'venmo', '2026-06-14', 'venmo-txn-77')`,
         )
         .run(TENANT_A),
     ).toThrow(/unique/i);
@@ -159,7 +159,7 @@ describe('migration 0011 (account-level payments) against a pre-migration databa
       raw
         .prepare(
           `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate)
-           VALUES ('pay_orphan', ?, 'no-such-booking', 100, 'cash', '2026-06-14')`,
+           VALUES ('pay_orphan', ?, 'no-such-booking', 10000, 'cash', '2026-06-14')`,
         )
         .run(TENANT_A),
     ).toThrow(/foreign key/i);

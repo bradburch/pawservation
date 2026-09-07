@@ -62,7 +62,8 @@ describe('applyMapping', () => {
     expect(out.payments[0]).toMatchObject({
       row: 2,
       date: '2026-07-03',
-      amount: 45,
+      // CENTS (0015) — the unit `insertAccountPayment` stores.
+      amount: 4500,
       payer: 'Thomas Finch',
       method: 'zelle',
       reference: 'ZL-1',
@@ -138,7 +139,7 @@ describe('applyMapping', () => {
     if (!out.ok) return;
     expect(out.problems).toEqual([]);
     expect(out.payments).toHaveLength(1);
-    expect(out.payments[0].amount).toBe(45);
+    expect(out.payments[0].amount).toBe(4500);
   });
 
   it('reports each repeat of a mapped reference within the file instead of silently dropping it', () => {
@@ -168,6 +169,18 @@ describe('applyMapping', () => {
     expect(out.payments).toHaveLength(1);
     expect(out.payments[0].reference).toBeNull();
     expect(out.payments[0].dedupeKey).toMatch(/^csv:[0-9a-f]{16}:0$/);
+  });
+
+  it('keys a whole-dollar row exactly as it did before money moved to cents', () => {
+    // THE DEDUPE KEY MUST NOT MOVE WITH THE STORAGE UNIT. `ExternalRef` holds keys already written
+    // by every past import; if 0015 had let the hash see 4000 where it used to see 40, a sitter
+    // re-uploading an overlapping export would import every one of those payments a SECOND time,
+    // silently — the exact failure this key exists to prevent. So the hash input is the amount as
+    // she wrote it (`formatCentsForKey`, back through `Number`), and this literal is the key this
+    // row produced before the commit that moved the unit.
+    const f = ['Date,Amount,Payer', '2026-07-03,40,Finch'].join('\n');
+    const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out.ok && out.payments[0].dedupeKey).toBe('csv:afae57b0ac74ed44:0');
   });
 
   it('gives two identical unreferenced rows different keys, so both import', () => {

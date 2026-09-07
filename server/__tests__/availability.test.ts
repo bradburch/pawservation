@@ -8,6 +8,7 @@ import {
 } from '../db/repo';
 import { checkAvailability, estimateCost, rowsToCapacityEvents } from '../lib/availability';
 import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
+import { dollarsToCents } from '../../src/shared/index.js';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import { createTestEnv, endUserToken, seedPets, TENANT_A, TENANT_B } from './helpers';
 
@@ -448,7 +449,7 @@ describe('rowsToCapacityEvents', () => {
         StartTime: null,
         DepartureTime: null,
         GCalEventId: null,
-        EstCost: 100,
+        EstCost: 10000, // column: cents (0015)
         CancellationFee: null,
         Status: 'pending',
         CreatedAt: '',
@@ -866,7 +867,7 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
       [bella],
       noRates,
     );
-    expect(res).toEqual({ priced: true, cost: 150, billedUnits: 3, unit: 'night' });
+    expect(res).toEqual({ priced: true, cost: 15000, billedUnits: 3, unit: 'night' });
   });
 
   it('TWO pets with no stored rate REFUSE — no price, and never a coerced 0', () => {
@@ -900,7 +901,7 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
       },
     );
     // $70/night for the PAIR × 3 nights. Not 2 × $70, not $50 + $70, not $50 × 2.
-    expect(res).toEqual({ priced: true, cost: 210, billedUnits: 3, unit: 'night' });
+    expect(res).toEqual({ priced: true, cost: 21000, billedUnits: 3, unit: 'night' });
   });
 
   it('a pet-id group rate BEATS a species rate for the same set', () => {
@@ -924,7 +925,7 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
         ],
       },
     );
-    expect(res).toEqual({ priced: true, cost: 65, billedUnits: 1, unit: 'night' });
+    expect(res).toEqual({ priced: true, cost: 6500, billedUnits: 1, unit: 'night' });
   });
 
   it('a rate for ANOTHER option of the same service never leaks in', () => {
@@ -951,7 +952,7 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
       [bella],
       noRates,
     );
-    expect(res).toEqual({ priced: true, cost: 20 });
+    expect(res).toEqual({ priced: true, cost: 2000 });
   });
 
   it('an EMPTY pet set is refused, never priced at the option rate', () => {
@@ -975,7 +976,7 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
       [bella, bella],
       noRates,
     );
-    expect(res).toEqual({ priced: true, cost: 20 });
+    expect(res).toEqual({ priced: true, cost: 2000 });
   });
 });
 
@@ -1025,8 +1026,8 @@ describe('estimateCost — PetRateMode: multiplication ONLY where the sitter opt
     );
     // 3 nights x $50 = $150 for one pet; x2 pets = $300. The quantity fields do NOT double:
     // three nights are three nights however many dogs sleep through them.
-    expect(one).toEqual({ priced: true, cost: 150, billedUnits: 3, unit: 'night' });
-    expect(two).toEqual({ priced: true, cost: 300, billedUnits: 3, unit: 'night' });
+    expect(one).toEqual({ priced: true, cost: 15000, billedUnits: 3, unit: 'night' });
+    expect(two).toEqual({ priced: true, cost: 30000, billedUnits: 3, unit: 'night' });
   });
 
   it("under 'linear', a STORED pet-set rate still wins — a typed rate is never multiplied", () => {
@@ -1043,7 +1044,7 @@ describe('estimateCost — PetRateMode: multiplication ONLY where the sitter opt
         mixRates: [{ mixKey: 'dog:2', rate: 70, serviceType: 'boarding', optionKey: 'standard' }],
       },
     );
-    expect(res).toEqual({ priced: true, cost: 210, billedUnits: 3, unit: 'night' }); // 70x3, not 140x3
+    expect(res).toEqual({ priced: true, cost: 21000, billedUnits: 3, unit: 'night' }); // 70x3, not 140x3
   });
 
   it("under 'linear', a stored pet-ID group rate also wins over the multiplier", () => {
@@ -1065,7 +1066,7 @@ describe('estimateCost — PetRateMode: multiplication ONLY where the sitter opt
         mixRates: [],
       },
     );
-    expect(res).toEqual({ priced: true, cost: 65, billedUnits: 1, unit: 'night' }); // not 100
+    expect(res).toEqual({ priced: true, cost: 6500, billedUnits: 1, unit: 'night' }); // not 100
   });
 
   it("under 'linear', ONE pet is untouched — x1 is not a price change", () => {
@@ -1092,7 +1093,7 @@ describe('estimateCost — PetRateMode: multiplication ONLY where the sitter opt
       [bella, bella],
       noRates,
     );
-    expect(res).toEqual({ priced: true, cost: 20 });
+    expect(res).toEqual({ priced: true, cost: 2000 });
   });
 
   it("under 'linear', an EMPTY pet set is STILL refused — the multiplier never manufactures a $0", () => {
@@ -1137,8 +1138,8 @@ describe('estimateCost — PetRateMode: multiplication ONLY where the sitter opt
       [bella, mochi],
       noRates,
     );
-    expect(one).toMatchObject({ priced: true, cost: 220, holidayUnits: 2, holidayRate: 90 });
-    expect(two).toMatchObject({ priced: true, cost: 440, holidayUnits: 2, holidayRate: 90 });
+    expect(one).toMatchObject({ priced: true, cost: 22000, holidayUnits: 2, holidayRate: 90 });
+    expect(two).toMatchObject({ priced: true, cost: 44000, holidayUnits: 2, holidayRate: 90 });
     // The BREAKDOWN is unchanged by pet count: 2 holiday nights, one stored $90 rate. Only the
     // total scales — `holiday-cost.ts` still never sees a pet.
     expect((two as { holidayUnits: number }).holidayUnits).toBe(
@@ -1187,10 +1188,10 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
   it('regression lock — night-unit range services bill exactly nights, at the seeded rates', () => {
     expect(
       estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-13', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 150 }); // 3 nights
+    ).toMatchObject({ priced: true, cost: 15000 }); // 3 nights
     expect(
       estimateCost(svc('boarding'), opt({ Rate: 40 }), '2028-06-21', '2028-06-24', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 120 }); // Happy Tails
+    ).toMatchObject({ priced: true, cost: 12000 }); // Happy Tails
     expect(
       estimateCost(
         svc('housesitting'),
@@ -1200,14 +1201,14 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
         onePet,
         noRates,
       ),
-    ).toMatchObject({ priced: true, cost: 350 }); // 5 nights
+    ).toMatchObject({ priced: true, cost: 35000 }); // 5 nights
     expect(
       estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-11', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 50 }); // 1 night
+    ).toMatchObject({ priced: true, cost: 5000 }); // 1 night
     // Degenerate 0-night range still bills the 1-night floor (billableUnits' Math.max(1, …)).
     expect(
       estimateCost(svc('boarding'), opt({ Rate: 50 }), '2028-08-10', '2028-08-10', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 50 });
+    ).toMatchObject({ priced: true, cost: 5000 });
     // Both built-in range templates are night-billed — the premise of the lock above.
     expect(SERVICE_TEMPLATES.boarding.rateUnit).toBe('night');
     expect(SERVICE_TEMPLATES.housesitting.rateUnit).toBe('night');
@@ -1218,24 +1219,24 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
     // Apr 10 → Apr 13 is 3 nights = 4 chargeable DAYS at $30 → $120, not $90.
     expect(
       estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-13', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 120 });
+    ).toMatchObject({ priced: true, cost: 12000 });
     // A same-day day-unit range is 1 day, never 2.
     expect(
       estimateCost(dayBoarding, opt({ Rate: 30 }), '2029-04-10', '2029-04-10', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 30 });
+    ).toMatchObject({ priced: true, cost: 3000 });
   });
 
   it('single-shape services return the flat option rate whatever their RateUnit', () => {
     expect(
       estimateCost(svc('walk'), opt({ Rate: 20 }), '2028-08-01', '', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 20 });
+    ).toMatchObject({ priced: true, cost: 2000 });
     expect(
       estimateCost(svc('checkin'), opt({ Rate: 12 }), '2028-08-01', '', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 12 });
+    ).toMatchObject({ priced: true, cost: 1200 });
     // daycare is the shape:'single' + rateUnit:'day' pairing — flat rate, no nights math.
     expect(
       estimateCost(svc('daycare'), opt({ Rate: 40 }), '2028-08-01', '', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 40 });
+    ).toMatchObject({ priced: true, cost: 4000 });
   });
 
   it('an unexpected RateUnit on a range service falls back to per-night (never inflates a bill)', () => {
@@ -1243,7 +1244,7 @@ describe('estimateCost — the billing unit is the service’s RateUnit, not a h
     const odd = svc('boarding', { RateUnit: 'visit' });
     expect(
       estimateCost(odd, opt({ Rate: 50 }), '2028-08-10', '2028-08-13', onePet, noRates),
-    ).toMatchObject({ priced: true, cost: 150 }); // 3 nights, not 4
+    ).toMatchObject({ priced: true, cost: 15000 }); // 3 nights, not 4
   });
 });
 
@@ -1637,7 +1638,8 @@ describe('quote/stamp parity for a day-unit range service', () => {
     const stored = raw
       .prepare('SELECT EstCost FROM BookingRequests WHERE Id = ?')
       .get(booked.id) as { EstCost: number } | undefined;
-    expect(stored?.EstCost).toBe(quoteBody.estCost);
+    // The COLUMN is cents (0015); the quote and the create response are still whole dollars.
+    expect(stored?.EstCost).toBe(dollarsToCents(quoteBody.estCost));
   });
 });
 

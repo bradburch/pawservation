@@ -5,8 +5,10 @@ import {
   buildCapacity,
   buildGroupKey,
   buildMixKey,
+  centsToWholeDollars,
   DEFAULT_TIMEZONE,
   dedupePets,
+  dollarsToCents,
   getPacificDateStr,
   isWellFormedCapacityEvent,
   mixFromPetTypes,
@@ -90,6 +92,8 @@ export type AvailabilityResult =
       /** Discriminant. `true` means the sitter has priced this exact pet set (or it is a single
        *  pet falling back to the option's own rate). See the `priced: false` arm. */
       priced: true;
+      /** WHOLE DOLLARS. This is the wire, and 0015 moved storage only: `estimateCost` returns
+       *  cents and the two call sites below divide back with `centsToWholeDollars`. */
       estCost: number;
       /**
        * The quantity `estCost` was actually billed for, in `unit`s — the number the widget shows
@@ -179,6 +183,8 @@ export type AvailabilityResult =
 export type PriceResult =
   | {
       priced: true;
+      /** CENTS (0015). `estimateCost` is the single ×100; `holidayRate` below stays whole dollars,
+       *  because it is the stored rate the sitter typed rather than a computed cost. */
       cost: number;
       billedUnits?: number;
       unit?: 'night' | 'day';
@@ -295,7 +301,11 @@ export function estimateCost(
   // nights scale is a discontinuity nobody typed either. `holidayAwareCost` therefore still never
   // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
-  const cost = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
+  // THE single ×100 of the whole price path. Every operand above is a whole-dollar rate the
+  // sitter typed; every consumer below stores or sums the result, and storage is cents (0015).
+  // `dollarsToCents` throws rather than rounds, so a rate that somehow arrived fractional is a
+  // loud failure here instead of a silently truncated price.
+  const cost = dollarsToCents(holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier);
 
   if (service.Shape !== 'range') return { priced: true, cost, ...holidayFields(service, split) };
   return {
@@ -578,7 +588,9 @@ async function checkRange(
   return {
     available: true,
     priced: true,
-    estCost: price.cost,
+    // The wire is still whole dollars (0015 moved storage only); `centsToWholeDollars` throws on
+    // a non-whole figure, so a missed conversion is loud rather than a silently floored quote.
+    estCost: centsToWholeDollars(price.cost),
     // The quantity the price was computed from — same unit, same `billableUnits` call as
     // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
     billedUnits: price.billedUnits,
@@ -677,7 +689,9 @@ async function checkSingle(
   return {
     available: true,
     priced: true,
-    estCost: price.cost,
+    // The wire is still whole dollars (0015 moved storage only); `centsToWholeDollars` throws on
+    // a non-whole figure, so a missed conversion is loud rather than a silently floored quote.
+    estCost: centsToWholeDollars(price.cost),
     holidayUnits: price.holidayUnits,
     holidayRate: price.holidayRate,
   };

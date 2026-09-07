@@ -4,9 +4,11 @@ import { balancedRemainder, sitterPicksFirst } from '../../src/shared/index.js';
 /**
  * THE PANEL'S OWN "does not sum to the credit must not be submittable" GUARD (Task 5 of payment
  * attribution) — the client-side mirror of the conservation check `proposeAttribution`
- * (server/lib/payment-attribution.ts) enforces server-side. Pure: given the whole-dollar splits a
- * sitter has typed or accepted against one credit, either hand back the remainder that would stay
- * as account credit, or refuse with `null` — never a rounded or invented number. This is what
+ * (server/lib/payment-attribution.ts) enforces server-side. Pure and UNIT-AGNOSTIC — it is integer
+ * subtraction, so 0015's move to cents changed nothing here and the figures below are left as they
+ * were: given the splits a sitter has typed or accepted against one credit, either hand back the
+ * remainder that would stay as account credit, or refuse with `null` — never a rounded or invented
+ * number. This is what
  * lets `AttributionPanel.tsx` say so INLINE instead of letting a bad edit round-trip to the server
  * only to come back in `skipped`.
  */

@@ -98,7 +98,7 @@ async function seedSyncedBooking(
     endDate: dates.endDate,
     optionKey: 'standard',
     petCount: 1,
-    estCost: 150,
+    estCost: 15000,
     status: 'confirmed',
   });
   await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_1', null);
@@ -538,7 +538,7 @@ describe('reconcile v2 — does not cancel or shadow an adopted booking', () => 
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: opts.status ?? 'confirmed',
       gcalEventId: opts.gcalEventId,
     });
@@ -751,7 +751,7 @@ describe('reconcile v2 — delete-detection now notifies the customer', () => {
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: 'confirmed',
     });
     await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_gone', null);

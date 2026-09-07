@@ -98,13 +98,14 @@ async function jenWithAPaymentAnchoredOnAlpha(env: Env, raw: Parameters<typeof s
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: 500,
+    // Repo seeds, so CENTS (0015): $500 and $400.
+    estCost: 50000,
     status: 'confirmed',
   });
   await addBookingPets(env.PAWSERVATION_DB, TENANT_C, bookingId, ['p_beta']);
   const paymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
     accountId: 'p_alpha',
-    amount: 400,
+    amount: 40000,
     method: 'venmo',
     paidDate: '2026-07-01',
     note: null,
@@ -124,9 +125,9 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
     // The household is now named p_beta (p_alpha holds no live edge), and still holds the money.
     expect(households[0]).toMatchObject({
       accountId: 'p_beta',
-      expectedTotal: 500,
-      paidTotal: 400,
-      balance: 100,
+      expectedTotal: 50000,
+      paidTotal: 40000,
+      balance: 10000,
     });
     expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([]);
   });
@@ -140,10 +141,10 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
       const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, accountId);
       expect(detail, `drill-down for ${accountId}`).not.toBeNull();
       expect(detail!.householdPayments).toEqual([
-        expect.objectContaining({ id: paymentId, amount: 400 }),
+        expect.objectContaining({ id: paymentId, amount: 40000 }),
       ]);
       // The listed payment and the counted balance are the same money — never two different sets.
-      expect(detail!.paidTotal).toBe(400);
+      expect(detail!.paidTotal).toBe(40000);
     }
   });
 });
@@ -162,7 +163,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_ana', petType: 'dog' }]);
     const paymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: 'p_ana',
-      amount: 250,
+      amount: 25000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,
@@ -173,7 +174,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
 
     // The row is still in Payments — the delete never touched it — so it MUST be visible somewhere.
     expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([
-      { accountId: 'p_ana', total: 250 },
+      { accountId: 'p_ana', total: 25000 },
     ]);
   });
 
@@ -190,7 +191,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_ana', petType: 'dog' }]);
     const orphan = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: 'p_ana',
-      amount: 250,
+      amount: 25000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,
@@ -209,7 +210,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
       false,
     );
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual([
-      expect.objectContaining({ paidTotal: 400 }),
+      expect.objectContaining({ paidTotal: 40000 }),
     ]);
   });
 
@@ -225,7 +226,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_ana', petType: 'dog' }]);
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: 'p_ana',
-      amount: 250,
+      amount: 25000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,
@@ -239,9 +240,9 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     const inHouseholds = analytics.households.reduce((sum, h) => sum + h.paidTotal, 0);
     const orphaned = analytics.orphanedPayments.reduce((sum, o) => sum + o.total, 0);
 
-    expect(revenue).toBe(650);
-    expect(inHouseholds).toBe(400);
-    expect(orphaned).toBe(250);
+    expect(revenue).toBe(65000);
+    expect(inHouseholds).toBe(40000);
+    expect(orphaned).toBe(25000);
     // The invariant: revenue is fully accounted for. No dollar counts in one view and vanishes
     // from the other.
     expect(inHouseholds + orphaned).toBe(revenue);

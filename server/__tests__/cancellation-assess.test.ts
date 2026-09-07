@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
-import { addDays, getPacificDateStr } from '../../src/shared/index.js';
+import { addDays, dollarsToCents, getPacificDateStr } from '../../src/shared/index.js';
 
 /** Books one dog (Bella, sunny-paws) for a boarding stay via the real customer flow. */
 async function bookBoarding(env: Env, startDate: string, endDate: string): Promise<Response> {
@@ -92,7 +92,8 @@ describe('cancellation fee assessment at cancel time', () => {
       notified: false,
       cancellationFee: created.estCost,
     });
-    expect(feeRow(raw, created.id)).toBe(created.estCost);
+    // `created.estCost` is the CREATE RESPONSE, still whole dollars; the COLUMN is cents (0015).
+    expect(feeRow(raw, created.id)).toBe(dollarsToCents(created.estCost));
     expect(statusRow(raw, created.id)).toBe('cancelled');
   });
 
