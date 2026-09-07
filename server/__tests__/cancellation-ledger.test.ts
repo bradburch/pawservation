@@ -57,7 +57,12 @@ const postPayment = async (env: Env, bookingId: string) =>
     {
       method: 'POST',
       headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: 40, method: 'venmo', paidDate: '2026-07-11', note: null }),
+      body: JSON.stringify({
+        amountCents: 4000,
+        method: 'venmo',
+        paidDate: '2026-07-11',
+        note: null,
+      }),
     },
     env,
   );
@@ -81,9 +86,9 @@ describe('payment guard on cancelled bookings', () => {
       { headers: await adminHeaders(TENANT_A) },
       env,
     );
-    const body = (await list.json()) as { payments: { amount: number }[] };
+    const body = (await list.json()) as { payments: { amountCents: number }[] };
     expect(body.payments).toHaveLength(1);
-    expect(body.payments[0]).toMatchObject({ amount: 40 });
+    expect(body.payments[0]).toMatchObject({ amountCents: 4000 });
   });
 });
 
@@ -141,7 +146,7 @@ describe('admin bookings payload carries cancellation fields', () => {
   const getBookings = async (env: Env) =>
     app.request('/api/sunny-paws/admin/bookings', { headers: await adminHeaders(TENANT_A) }, env);
 
-  it('cancelled row carries cancellationFee; confirmed on a tiers service carries numeric feeIfCancelledToday; no-tiers carries null', async () => {
+  it('cancelled row carries cancellationFeeCents; confirmed on a tiers service carries numeric feeIfCancelledTodayCents; no-tiers carries null', async () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
 
@@ -164,17 +169,23 @@ describe('admin bookings payload carries cancellation fields', () => {
     const body = (await (await getBookings(env)).json()) as {
       bookings: {
         id: string;
-        cancellationFee: number | null;
-        feeIfCancelledToday: number | null;
+        cancellationFeeCents: number | null;
+        feeIfCancelledTodayCents: number | null;
       }[];
     };
     const byId = (id: string) => body.bookings.find((b) => b.id === id)!;
 
-    expect(byId(cancelled)).toMatchObject({ cancellationFee: 55, feeIfCancelledToday: null });
-    expect(byId(confirmedTiers)).toMatchObject({ cancellationFee: null, feeIfCancelledToday: 100 });
+    expect(byId(cancelled)).toMatchObject({
+      cancellationFeeCents: 5500,
+      feeIfCancelledTodayCents: null,
+    });
+    expect(byId(confirmedTiers)).toMatchObject({
+      cancellationFeeCents: null,
+      feeIfCancelledTodayCents: 10000,
+    });
     expect(byId(confirmedNoTiers)).toMatchObject({
-      cancellationFee: null,
-      feeIfCancelledToday: null,
+      cancellationFeeCents: null,
+      feeIfCancelledTodayCents: null,
     });
   });
 });

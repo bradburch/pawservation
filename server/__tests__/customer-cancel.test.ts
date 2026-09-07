@@ -102,14 +102,14 @@ const cancel = async (env: Env, token: string, id: string) =>
 const jessToken = (env: Env) => endUserToken(env, SLUG, 'jess@example.com');
 
 /** Record a hand-entered payment as the sitter — 201 when insertPayment's guard allows it, 404
- *  when it refuses (the route's existing idiom). */
-const pay = async (env: Env, id: string, amount = 10) =>
+ *  when it refuses (the route's existing idiom). `amountCents` is CENTS (0015), like the route. */
+const pay = async (env: Env, id: string, amountCents = 1000) =>
   app.request(
     `/api/${SLUG}/admin/bookings/${id}/payments`,
     {
       method: 'POST',
       headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount, method: 'cash', paidDate: TODAY }),
+      body: JSON.stringify({ amountCents, method: 'cash', paidDate: TODAY }),
     },
     env,
   );
@@ -397,8 +397,8 @@ describe('the admin status route shares the delete-vs-retitle rule', () => {
 
     const res = await postStatus(env, id, { status: 'cancelled', chargeFee: true });
     expect(res.status).toBe(200);
-    // The ADMIN status route, whose wire is still whole dollars until the sitter-side rename.
-    expect(await res.json()).toMatchObject({ status: 'cancelled', cancellationFee: 100 });
+    // The ADMIN status route, cents on the wire like the customer-facing one (0015).
+    expect(await res.json()).toMatchObject({ status: 'cancelled', cancellationFeeCents: 10000 });
 
     expect(calls(spy)).toEqual([
       'PATCH https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_admin',
@@ -629,9 +629,9 @@ describe('Earnings after a customer cancellation', () => {
       ChargesTotal: 4500,
     });
     // …and the sitter can now actually record the payment against it.
-    const res = await pay(env, id, 45);
+    const res = await pay(env, id, 4500);
     expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ paidTotal: 45 });
+    expect(await res.json()).toMatchObject({ paidTotalCents: 4500 });
   });
 
   it('a DECLINED booking is never payable, charges or not — declines are never billed', async () => {

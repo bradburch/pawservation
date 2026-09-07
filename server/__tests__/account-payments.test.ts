@@ -172,26 +172,33 @@ describe('account payments (admin routes)', () => {
       env,
     );
 
-  const valid = { amount: 400, method: 'venmo', paidDate: '2026-07-01' };
+  // CENTS on the wire (0015) — $400.00, the same unit and the same body shape as the
+  // booking-level payment route.
+  const valid = { amountCents: 40000, method: 'venmo', paidDate: '2026-07-01' };
 
   it('records one payment against the household and reports the new balance', async () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
-    await book(env, jen.Id, [accountId], 25000); // repo seed: cents. The body below is dollars.
-    const res = await post(env, TENANT_C, accountId, { ...valid, amount: 100, note: 'July' });
+    await book(env, jen.Id, [accountId], 25000); // cents, like the body below
+    // $100.50, which is the point of the unit: she can record what the client actually sent.
+    const res = await post(env, TENANT_C, accountId, {
+      ...valid,
+      amountCents: 10050,
+      note: 'July',
+    });
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
       payment: {
         id: string;
-        amount: number;
+        amountCents: number;
         method: string;
         paidDate: string;
         note: string | null;
       };
-      balance: number;
+      balanceCents: number;
     };
-    expect(body.payment).toMatchObject({ amount: 100, method: 'venmo', note: 'July' });
-    expect(body.balance).toBe(150); // computed server-side, never sent by the client
+    expect(body.payment).toMatchObject({ amountCents: 10050, method: 'venmo', note: 'July' });
+    expect(body.balanceCents).toBe(14950); // computed server-side, never sent by the client
   });
 
   it('lists and deletes household payments', async () => {
@@ -230,8 +237,20 @@ describe('account payments (admin routes)', () => {
   it('validates the amount, the method and the date the way the booking route does', async () => {
     const { env, raw } = createTestEnv();
     const { accountId } = await household(env, raw);
-    expect((await post(env, TENANT_C, accountId, { ...valid, amount: 0 })).status).toBe(400);
-    expect((await post(env, TENANT_C, accountId, { ...valid, amount: 12.5 })).status).toBe(400);
+    expect((await post(env, TENANT_C, accountId, { ...valid, amountCents: 0 })).status).toBe(400);
+    expect((await post(env, TENANT_C, accountId, { ...valid, amountCents: 12.5 })).status).toBe(
+      400,
+    );
+    // The retired whole-dollar body is refused here exactly as it is on the booking route.
+    expect(
+      (
+        await post(env, TENANT_C, accountId, {
+          amount: 400,
+          method: 'venmo',
+          paidDate: '2026-07-01',
+        })
+      ).status,
+    ).toBe(400);
     expect((await post(env, TENANT_C, accountId, { ...valid, method: 'bitcoin' })).status).toBe(
       400,
     );

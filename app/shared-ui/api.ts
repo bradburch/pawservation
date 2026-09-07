@@ -220,33 +220,37 @@ export type AdminBooking = {
   /** The Google event's title, for calendar display. Null unless external. */
   externalSummary: string | null;
   /** True for a booking adopted from the sitter's own calendar (`Source = 'calendar-backfill'`).
-   *  Its `estCost` was priced from TODAY's rate card for a stay that may predate it — an estimate,
-   *  not a figure any client saw or agreed to — so the UI must label it as one and offer the
-   *  correction PATCH (`adminApi.bookings.updateCost`), which only these rows accept. */
+   *  Its `estCostCents` was priced from TODAY's rate card for a stay that may predate it — an
+   *  estimate, not a figure any client saw or agreed to — so the UI must label it as one and offer
+   *  the correction PATCH (`adminApi.bookings.updateCost`), which only these rows accept. */
   isBackfilled: boolean;
   /** Intake answers keyed by question id; {} when the customer answered nothing. */
   answers: Record<string, string>;
-  estCost: number | null;
-  paidTotal: number;
+  /** CENTS (0015), like every money field below it. */
+  estCostCents: number | null;
+  paidTotalCents: number;
   charges: BookingCharge[];
-  /** SUM(charges). Total due is `estCost + chargesTotal` — estCost itself is never mutated. */
-  chargesTotal: number;
+  /** SUM(charges), CENTS. Total due is `estCostCents + chargesTotalCents` — the estimate itself is
+   *  never mutated. */
+  chargesTotalCents: number;
   status: string;
-  cancellationFee: number | null;
-  feeIfCancelledToday: number | null;
+  cancellationFeeCents: number | null;
+  feeIfCancelledTodayCents: number | null;
   createdAt: string;
 };
 
+/** One recorded payment, booking-level or household-level — the two ledgers emit one shape. */
 export type Payment = {
   id: string;
-  amount: number;
+  /** CENTS (0015): a payment is what a person actually sent, so $45.50 is 4550. */
+  amountCents: number;
   method: string;
   paidDate: string;
   note: string | null;
 };
 
-/** One extra charge on a booking — additive; it never changes the booking's estCost. */
-export type BookingCharge = { id: string; label: string; amount: number };
+/** One extra charge on a booking — additive; it never changes the booking's estimate. */
+export type BookingCharge = { id: string; label: string; amountCents: number };
 
 export type VenmoPreviewRow = {
   txnId: string;
@@ -937,9 +941,9 @@ export const adminApi = {
       slug: string,
       token: string,
       bookingId: string,
-      body: { amount: number; method: string; paidDate: string; note?: string },
+      body: { amountCents: number; method: string; paidDate: string; note?: string },
     ) =>
-      request<{ payment: Payment; paidTotal: number }>(
+      request<{ payment: Payment; paidTotalCents: number }>(
         `/api/${slug}/admin/bookings/${bookingId}/payments`,
         {
           method: 'POST',
@@ -958,7 +962,7 @@ export const adminApi = {
      * logs can never differ from the figure she was shown.
      */
     keepCredit: (slug: string, token: string, bookingId: string) =>
-      request<{ kept: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
+      request<{ keptCents: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
         method: 'POST',
         headers: authHeaders(token),
       }),
@@ -976,9 +980,9 @@ export const adminApi = {
       slug: string,
       token: string,
       accountId: string,
-      body: { amount: number; method: string; paidDate: string; note?: string },
+      body: { amountCents: number; method: string; paidDate: string; note?: string },
     ) =>
-      request<{ payment: Payment; balance: number }>(
+      request<{ payment: Payment; balanceCents: number }>(
         `/api/${slug}/admin/accounts/${accountId}/payments`,
         {
           method: 'POST',
@@ -1081,9 +1085,9 @@ export const adminApi = {
       slug: string,
       token: string,
       bookingId: string,
-      charge: { label: string; amount: number },
+      charge: { label: string; amountCents: number },
     ) =>
-      request<{ charge: BookingCharge; chargesTotal: number }>(
+      request<{ charge: BookingCharge; chargesTotalCents: number }>(
         `/api/${slug}/admin/bookings/${bookingId}/charges`,
         {
           method: 'POST',
@@ -1121,7 +1125,7 @@ export const adminApi = {
        */
       overrideCapacity?: boolean,
     ) =>
-      request<{ status: string; notified: boolean; cancellationFee: number | null }>(
+      request<{ status: string; notified: boolean; cancellationFeeCents: number | null }>(
         `/api/${slug}/admin/bookings/${id}/status`,
         {
           method: 'POST',
@@ -1134,15 +1138,16 @@ export const adminApi = {
         },
       ),
     /**
-     * Correct the price on a booking ADOPTED from the calendar (`isBackfilled`) — its `estCost`
-     * was invented from today's rate card, never a figure any client agreed to. Whole dollars
-     * only; the server 404s for anything that isn't `Source = 'calendar-backfill'`.
+     * Correct the price on a booking ADOPTED from the calendar (`isBackfilled`) — its
+     * `estCostCents` was invented from today's rate card, never a figure any client agreed to.
+     * CENTS on the wire (0015); the panel still asks the sitter for whole dollars and scales.
+     * The server 404s for anything that isn't `Source = 'calendar-backfill'`.
      */
-    updateCost: (slug: string, token: string, id: string, estCost: number) =>
-      request<{ estCost: number }>(`/api/${slug}/admin/bookings/${id}/cost`, {
+    updateCost: (slug: string, token: string, id: string, estCostCents: number) =>
+      request<{ estCostCents: number }>(`/api/${slug}/admin/bookings/${id}/cost`, {
         method: 'PATCH',
         headers: { ...jsonHeaders, ...authHeaders(token) },
-        body: JSON.stringify({ estCost }),
+        body: JSON.stringify({ estCostCents }),
       }),
   },
   /**

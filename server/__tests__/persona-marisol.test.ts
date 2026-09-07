@@ -290,7 +290,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     expect(await declineRes.json()).toEqual({
       status: 'declined',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
 
     expect(spy).toHaveBeenCalledOnce();

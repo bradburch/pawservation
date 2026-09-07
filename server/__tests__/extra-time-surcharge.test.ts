@@ -391,7 +391,7 @@ describe('an edit re-derives the surcharge only when the TIMES moved', () => {
       {
         method: 'POST',
         headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: 'Vet visit', amount: 45 }),
+        body: JSON.stringify({ label: 'Vet visit', amountCents: 4500 }),
       },
       env,
     );

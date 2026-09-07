@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { isValidRate } from '../../src/shared/index.js';
+import { formatCents, parseDollarsInput } from '../../src/shared/index.js';
 import { adminApi, PAYMENT_METHODS, type Payment } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -51,10 +51,12 @@ export function PaymentsPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const RECORDING = '__record__';
 
-  const amountNum = Number(amount);
-  // Same predicate the server enforces on POST payments (server/lib/validation.ts re-exports it)
-  // — this copy is UX only; the server still validates independently.
-  const canSubmit = isValidRate(amountNum) && paidDate.trim() !== '';
+  // "45.50" is a payment a client actually made, so the field is text and the SHARED parser turns
+  // it into cents — the same parser the server's own boundary agrees with. `null` = unparseable or
+  // under a cent, which is exactly the condition that disables the button. This copy is UX only;
+  // the server still validates independently.
+  const amountCents = parseDollarsInput(amount);
+  const canSubmit = amountCents !== null && paidDate.trim() !== '';
 
   // One key for the effect below and one branch for the three calls: 'bookingId' in target is the
   // only place this component asks which kind of ledger it is showing.
@@ -78,11 +80,13 @@ export function PaymentsPanel({
   }, [targetId, session]);
 
   const record = async () => {
-    if (busyId) return;
+    // Null is the same condition that disables the button; re-asserted here so the body below is
+    // a number of cents by construction and never an unparsed string.
+    if (busyId || amountCents === null) return;
     setBusyId(RECORDING);
     try {
       const body = {
-        amount: amountNum,
+        amountCents,
         method,
         paidDate,
         ...(note.trim() ? { note: note.trim() } : {}),
@@ -113,7 +117,7 @@ export function PaymentsPanel({
     if (busyId) return;
     // Money rows get a confirm — same rule as cancel-with-fee in BookingsSection.
     const p = payments?.find((row) => row.id === paymentId);
-    const what = p ? `the $${p.amount} payment` : 'this payment';
+    const what = p ? `the ${formatCents(p.amountCents)} payment` : 'this payment';
     if (!window.confirm(`Delete ${what}? This changes what the client owes.`)) return;
     setBusyId(paymentId);
     try {
@@ -149,13 +153,13 @@ export function PaymentsPanel({
           {payments.map((p) => (
             <li key={p.id}>
               <span>
-                ${p.amount} · {p.method} · {p.paidDate}
+                {formatCents(p.amountCents)} · {p.method} · {p.paidDate}
                 {p.note ? ` — ${p.note}` : ''}
               </span>
               <button
                 disabled={busyId === p.id}
                 onClick={() => void remove(p.id)}
-                aria-label={`Delete the $${p.amount} ${p.method} payment`}
+                aria-label={`Delete the ${formatCents(p.amountCents)} ${p.method} payment`}
               >
                 Delete
               </button>
@@ -168,9 +172,9 @@ export function PaymentsPanel({
           <label className="pb-inline">
             Amount ($)
             <input
-              type="number"
-              min={1}
-              step={1}
+              type="text"
+              inputMode="decimal"
+              aria-invalid={amount !== '' && amountCents === null}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
@@ -199,7 +203,8 @@ export function PaymentsPanel({
           <Hint label="Recording payments">
             Pawservation doesn&rsquo;t take payments — you collect money however you like (cash,
             Venmo, Zelle…). Record what you received here so Earnings stays right; deposits and
-            partial payments are fine.
+            partial payments are fine, and cents are too &mdash; type 45.50 if that is what they
+            sent.
           </Hint>
         </div>
       )}

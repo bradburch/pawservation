@@ -855,7 +855,7 @@ export async function updateBackfilledBookingCost(
   db: D1Database,
   tenantId: string,
   bookingId: string,
-  /** CENTS (0015) — the route converts the whole-dollar body it accepts. */
+  /** CENTS (0015) — the correction PATCH takes `estCostCents` and passes it straight through. */
   estCost: number,
 ): Promise<boolean> {
   const result = await db
@@ -926,7 +926,7 @@ export async function listBookingsForUser(
  * All non-blocked bookings for the sitter's admin list, newest-first, with the customer's
  * Email/Name joined in (NULL for a booking whose customer was later removed — EndUserId only
  * ever points at a row in the SAME tenant, enforced by how bookings are created), plus the
- * total paid so far (0 for bookings with no payments).
+ * total paid so far IN CENTS (0015; 0 for bookings with no payments).
  */
 export async function listBookingsForTenant(
   db: D1Database,
@@ -1268,7 +1268,7 @@ export async function insertPayment(
   tenantId: string,
   payment: {
     bookingRequestId: string;
-    /** CENTS (0015). The route converts the whole-dollar body it accepts. */
+    /** CENTS (0015) — the payment routes take `amountCents` and pass it straight through. */
     amount: number;
     method: PaymentMethod;
     paidDate: string;

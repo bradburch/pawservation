@@ -186,6 +186,7 @@ import {
   dollarsToCents,
   getPacificDateStr,
   isDedicatedCalendarId,
+  isValidCents,
   MAX_ATTRIBUTIONS_PER_REQUEST,
   MAX_BACKFILL_EVENTS,
   parseMixKey,
@@ -281,8 +282,10 @@ export { MAX_BACKFILL_EVENTS };
  *  with 15 digits behind it is a typo, not a stay anyone actually charged.
  *
  *  WHOLE DOLLARS, and deliberately NOT scaled by 0015: it bounds the number a sitter TYPES, and
- *  the two routes that enforce it still take a whole-dollar body. They convert with
- *  `dollarsToCents` at the write, so the ceiling and the message the sitter reads are unchanged. */
+ *  she types dollars. The backfill import body is still whole dollars and converts with
+ *  `dollarsToCents` at the write; the correction PATCH now takes `estCostCents` and compares
+ *  against `dollarsToCents(MAX_BACKFILL_EST_COST)`, so the ceiling and the message she reads are
+ *  the same figure on both. */
 export const MAX_BACKFILL_EST_COST = 1_000_000;
 
 /**
@@ -2573,25 +2576,24 @@ export const adminRoutes = new Hono<AppEnv>()
         // design.md) — the same restriction the PATCH .../cost route enforces server-side.
         isBackfilled: r.Source === 'calendar-backfill',
         answers: r.Answers,
-        // Storage is cents (0015); this payload still speaks whole dollars. Each total is summed
-        // in CENTS and divided once, never as a sum of already-divided terms.
-        estCost: r.EstCost === null ? null : centsToWholeDollars(r.EstCost),
-        paidTotal: centsToWholeDollars(r.PaidTotal ?? 0),
+        // Every money figure here is INTEGER CENTS and says so in its name (0015). Nothing is
+        // divided on the way out and nothing is summed across units: the totals are sums of cents.
+        estCostCents: r.EstCost,
+        paidTotalCents: r.PaidTotal ?? 0,
         charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
           id: ch.Id,
           label: ch.Label,
-          amount: centsToWholeDollars(ch.Amount),
+          amountCents: ch.Amount,
         })),
-        chargesTotal: centsToWholeDollars(
-          (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.Amount, 0),
+        chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce(
+          (sum, ch) => sum + ch.Amount,
+          0,
         ),
         status: r.Status,
-        cancellationFee: r.CancellationFee === null ? null : centsToWholeDollars(r.CancellationFee),
-        feeIfCancelledToday:
+        cancellationFeeCents: r.CancellationFee,
+        feeIfCancelledTodayCents:
           r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
-            ? centsToWholeDollars(
-                cancellationFee(tiersByType.get(r.ServiceType)!, r.EstCost, r.StartDate, today),
-              )
+            ? cancellationFee(tiersByType.get(r.ServiceType)!, r.EstCost, r.StartDate, today)
             : null,
         createdAt: r.CreatedAt,
       })),
@@ -2656,7 +2658,7 @@ export const adminRoutes = new Hono<AppEnv>()
       if (!svc?.CancellationTiers)
         return c.json({ error: 'This service has no cancellation policy.' }, 400);
       const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
-      // Cents in, cents out (0015) — stored as cents, and divided only in the response below.
+      // Cents in, cents out (0015) — computed, stored and reported in cents, never divided.
       const computed = cancellationFee(svc.CancellationTiers, bk.EstCost, bk.StartDate, today);
       if (computed > 0) fee = computed; // $0 stores NULL per spec
     }
@@ -2739,7 +2741,7 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       status,
       notified,
-      cancellationFee: fee === undefined ? null : centsToWholeDollars(fee),
+      cancellationFeeCents: fee === undefined ? null : fee,
     });
   })
 
@@ -2747,19 +2749,21 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const bookingId = c.req.param('id');
     const body = await c.req
-      .json<{ amount?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
+      .json<{ amountCents?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
       .catch(() => ({}) as Record<string, never>);
-    // THE BODY IS STILL WHOLE DOLLARS. 0015 moved storage to cents, not the wire, so the
-    // whole-dollar predicate stands and `dollarsToCents` converts on the way into the ledger.
-    if (!isValidRate(body.amount))
-      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    // THE BODY IS CENTS (0015), because a payment is what a person actually sent and $45.50 is a
+    // real thing to be sent. The old whole-dollar `amount` is gone rather than tolerated: a body
+    // this route quietly accepted in the wrong unit is a 100× money bug, so an amount that isn't
+    // an integer number of cents is refused here and the sitter is told the unit.
+    if (!isValidCents(body.amountCents))
+      return c.json({ error: 'Amount must be a whole number of cents ≥ 1.' }, 400);
     if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
     const paymentId = await insertPayment(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
-      amount: dollarsToCents(body.amount),
+      amount: body.amountCents,
       method: body.method,
       paidDate: body.paidDate,
       note,
@@ -2775,12 +2779,12 @@ export const adminRoutes = new Hono<AppEnv>()
       {
         payment: {
           id: created.Id,
-          amount: centsToWholeDollars(created.Amount),
+          amountCents: created.Amount,
           method: created.Method,
           paidDate: created.PaidDate,
           note: created.Note,
         },
-        paidTotal: centsToWholeDollars(payments.reduce((sum, p) => sum + p.Amount, 0)),
+        paidTotalCents: payments.reduce((sum, p) => sum + p.Amount, 0),
       },
       201,
     );
@@ -2798,7 +2802,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const result = await keepBookingCredit(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('id'));
     switch (result.outcome) {
       case 'kept':
-        return c.json({ kept: centsToWholeDollars(result.amount) });
+        return c.json({ keptCents: result.amount });
       case 'not-found':
         return c.json({ error: 'Not found.' }, 404);
       case 'declined':
@@ -2831,7 +2835,7 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       payments: rows.map((p) => ({
         id: p.Id,
-        amount: centsToWholeDollars(p.Amount),
+        amountCents: p.Amount,
         method: p.Method,
         paidDate: p.PaidDate,
         note: p.Note,
@@ -2855,20 +2859,20 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const bookingId = c.req.param('id');
     const body = await c.req
-      .json<{ label?: unknown; amount?: unknown }>()
+      .json<{ label?: unknown; amountCents?: unknown }>()
       .catch(() => ({}) as Record<string, never>);
     const label = typeof body.label === 'string' ? body.label.trim() : '';
     if (!label) return c.json({ error: 'Give the charge a name.' }, 400);
     if (label.length > MAX_CHARGE_LABEL)
       return c.json({ error: `Name must be ${MAX_CHARGE_LABEL} characters or fewer.` }, 400);
-    // Same predicate as a payment amount and a rate: whole dollars >= 1 on the wire, stored as
-    // cents (0015).
-    if (!isValidRate(body.amount))
-      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    // Cents on the wire and in the column (0015). A charge is no longer a whole-dollar figure:
+    // `keepBookingCredit` writes a credit derived from payments into this very column.
+    if (!isValidCents(body.amountCents))
+      return c.json({ error: 'Amount must be a whole number of cents ≥ 1.' }, 400);
     const chargeId = await insertBookingCharge(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
       label,
-      amount: dollarsToCents(body.amount),
+      amount: body.amountCents,
     });
     // Guard refused: foreign booking or the 'blocked' sentinel.
     if (!chargeId) return c.json({ error: 'Not found.' }, 404);
@@ -2880,9 +2884,9 @@ export const adminRoutes = new Hono<AppEnv>()
         charge: {
           id: created.Id,
           label: created.Label,
-          amount: centsToWholeDollars(created.Amount),
+          amountCents: created.Amount,
         },
-        chargesTotal: centsToWholeDollars(charges.reduce((sum, ch) => sum + ch.Amount, 0)),
+        chargesTotalCents: charges.reduce((sum, ch) => sum + ch.Amount, 0),
       },
       201,
     );
@@ -2899,7 +2903,7 @@ export const adminRoutes = new Hono<AppEnv>()
       charges: rows.map((ch) => ({
         id: ch.Id,
         label: ch.Label,
-        amount: centsToWholeDollars(ch.Amount),
+        amountCents: ch.Amount,
       })),
     });
   })
@@ -4046,32 +4050,25 @@ export const adminRoutes = new Hono<AppEnv>()
   .patch('/:slug/admin/bookings/:id/cost', async (c) => {
     const tenant = c.get('tenant');
     const body = await c.req
-      .json<{ estCost?: unknown }>()
-      .catch(() => ({}) as { estCost?: unknown });
-    const estCost = body.estCost;
-    // The BODY is whole dollars (0015 moved storage, not the wire). Same ceiling as the sitter's
-    // price on the same field at import time (Task 7); two bounds on one field would drift.
-    if (
-      typeof estCost !== 'number' ||
-      !Number.isInteger(estCost) ||
-      estCost < 1 ||
-      estCost > MAX_BACKFILL_EST_COST
-    )
-      return c.json(
-        { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
-        400,
-      );
+      .json<{ estCostCents?: unknown }>()
+      .catch(() => ({}) as { estCostCents?: unknown });
+    const estCostCents = body.estCostCents;
+    // The BODY is CENTS (0015), like the column. The ceiling is the sitter's own whole-dollar
+    // bound from import time, scaled once here so the two routes cannot drift about the figure
+    // she is allowed to type.
+    if (!isValidCents(estCostCents) || estCostCents > dollarsToCents(MAX_BACKFILL_EST_COST))
+      return c.json({ error: `Enter an amount between $1 and $${MAX_BACKFILL_EST_COST}.` }, 400);
 
     const ok = await updateBackfilledBookingCost(
       c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('id'),
-      dollarsToCents(estCost),
+      estCostCents,
     );
     // One 404 for: another tenant's booking, an unknown id, a sentinel, and a booking a client
     // agreed to. Same non-oracle posture as the other booking routes.
     if (!ok) return c.json({ error: 'Not found.' }, 404);
-    return c.json({ estCost });
+    return c.json({ estCostCents });
   })
 
   /**

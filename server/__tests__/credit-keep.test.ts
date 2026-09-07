@@ -40,7 +40,7 @@ const SLUG_A = 'sunny-paws';
 const makeBooking = (
   env: Env,
   tenantId: string,
-  /** CENTS (0015) — a repo seed writes the column. Route payloads below are whole dollars. */
+  /** CENTS (0015) — a repo seed writes the column, and the route payloads below are cents too. */
   estCost: number,
   status: 'confirmed' | 'pending' = 'confirmed',
 ) =>
@@ -88,11 +88,11 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
 
     const res = await keep(env, SLUG_A, TENANT_A, id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ kept: 150 });
+    expect(await res.json()).toEqual({ keptCents: 15000 });
 
     // The charge carries the figure she was shown…
     const charges = await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id);
-    // The COLUMN is cents (0015); the `kept` figure on the wire above is still whole dollars.
+    // Column and wire are the same unit now (0015): `keptCents` above IS the Amount below.
     expect(charges.map((c) => ({ Label: c.Label, Amount: c.Amount }))).toEqual([
       { Label: 'Overpayment kept', Amount: 15000 },
     ]);
@@ -108,9 +108,9 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
     const { env } = createTestEnv();
     const id = await makeBooking(env, TENANT_A, 10000);
     await pay(env, TENANT_A, id, 25000);
-    const res = await keep(env, SLUG_A, TENANT_A, id, { amount: 9999, kept: 9999 });
+    const res = await keep(env, SLUG_A, TENANT_A, id, { amountCents: 999900, keptCents: 999900 });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ kept: 150 });
+    expect(await res.json()).toEqual({ keptCents: 15000 });
     const charges = await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id);
     expect(charges.map((c) => c.Amount)).toEqual([15000]); // the column, in cents
   });
@@ -125,7 +125,7 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
       amount: 4500,
     });
     expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 105 }]);
-    expect(await (await keep(env, SLUG_A, TENANT_A, id)).json()).toEqual({ kept: 105 });
+    expect(await (await keep(env, SLUG_A, TENANT_A, id)).json()).toEqual({ keptCents: 10500 });
     expect(await creditsOf(env, TENANT_A)).toEqual([]);
   });
 

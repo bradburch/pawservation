@@ -3,8 +3,13 @@ import { ApiError, adminApi, type AdminBooking } from '../../shared-ui/api.js';
 import { IconClipboardCheck } from '../../shared-ui/icons';
 import { ChargesPanel } from '../ChargesPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
-import { totalDue, type ServiceForm, type Session } from '../shared.js';
-import { formatFriendlyDate } from '../../../src/shared/index.js';
+import { totalDueCents, type ServiceForm, type Session } from '../shared.js';
+import {
+  dollarsToCents,
+  formatCents,
+  formatFriendlyDate,
+  isValidRate,
+} from '../../../src/shared/index.js';
 import { Hint } from '../Hint';
 
 /**
@@ -54,14 +59,20 @@ function chipClass(status: string): string {
 }
 
 /** Payment state for a row; null for unpaid rows with nothing owing. 'paid in full' covers
- * overpayment/tips. Measured against `totalDue` — the stay price PLUS any extra charges — so a
+ * overpayment/tips. Measured against `totalDueCents` — the stay price PLUS any extra charges — so a
  * booking with a $45 vet visit on it does not read "paid in full" at the stay price. Shown for
- * cancelled/declined rows too, so a sitter reviewing a refund case can still see the amount. */
+ * cancelled/declined rows too, so a sitter reviewing a refund case can still see the amount.
+ *
+ * Both sides of the comparison are CENTS (0015), which is the whole reason it can be a bare `>=`:
+ * one unit, integers, no rounding. */
 function paidText(b: AdminBooking): string | null {
-  const due = totalDue(b);
-  if (b.paidTotal === 0) return due != null && b.chargesTotal > 0 ? `owes $${due}` : null;
-  if (due == null) return `paid $${b.paidTotal}`;
-  return b.paidTotal >= due ? 'paid in full' : `paid $${b.paidTotal} of $${due}`;
+  const dueCents = totalDueCents(b);
+  if (b.paidTotalCents === 0)
+    return dueCents != null && b.chargesTotalCents > 0 ? `owes ${formatCents(dueCents)}` : null;
+  if (dueCents == null) return `paid ${formatCents(b.paidTotalCents)}`;
+  return b.paidTotalCents >= dueCents
+    ? 'paid in full'
+    : `paid ${formatCents(b.paidTotalCents)} of ${formatCents(dueCents)}`;
 }
 
 /** Fee state for a cancelled row that had a cancellation fee assessed. Mirrors paidText's
@@ -72,11 +83,12 @@ function paidText(b: AdminBooking): string | null {
 function feeText(b: AdminBooking): string | null {
   // `> 0`, not just non-null: a customer self-cancel stores a real 0 for "cancelled, nothing
   // owed" (server/db/repo.ts's cancelBookingForUser), which is not a fee to announce.
-  if (b.status !== 'cancelled' || b.cancellationFee == null || b.cancellationFee <= 0) return null;
-  const extras = b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : '';
-  return b.paidTotal > 0
-    ? `paid $${b.paidTotal} of fee $${b.cancellationFee}${extras}`
-    : `fee $${b.cancellationFee}${extras}`;
+  if (b.status !== 'cancelled' || b.cancellationFeeCents == null || b.cancellationFeeCents <= 0)
+    return null;
+  const extras = b.chargesTotalCents > 0 ? ` + ${formatCents(b.chargesTotalCents)} extras` : '';
+  return b.paidTotalCents > 0
+    ? `paid ${formatCents(b.paidTotalCents)} of fee ${formatCents(b.cancellationFeeCents)}${extras}`
+    : `fee ${formatCents(b.cancellationFeeCents)}${extras}`;
 }
 
 type ListProps = {
@@ -125,11 +137,15 @@ function BookingList({
     )
       return;
     // Second prompt only when there's actually a fee to charge on this cancel; OK charges it,
-    // Cancel waives it. Confirmed rows of a tiers service carry feeIfCancelledToday.
+    // Cancel waives it. Confirmed rows of a tiers service carry feeIfCancelledTodayCents.
     let chargeFee = false;
-    if (status === 'cancelled' && b.feeIfCancelledToday != null && b.feeIfCancelledToday > 0) {
+    if (
+      status === 'cancelled' &&
+      b.feeIfCancelledTodayCents != null &&
+      b.feeIfCancelledTodayCents > 0
+    ) {
       chargeFee = window.confirm(
-        `Charge the $${b.feeIfCancelledToday} cancellation fee? OK charges it; Cancel waives it.`,
+        `Charge the ${formatCents(b.feeIfCancelledTodayCents)} cancellation fee? OK charges it; Cancel waives it.`,
       );
     }
     clearError();
@@ -159,7 +175,7 @@ function BookingList({
         if (!window.confirm(`${e.message}\n\nConfirm anyway?`)) return;
         result = await post(true);
       }
-      const { notified, cancellationFee } = result;
+      const { notified, cancellationFeeCents } = result;
       const who = b.customerName || b.customerEmail || 'the client';
       const verb =
         status === 'confirmed' ? 'Confirmed' : status === 'declined' ? 'Declined' : 'Cancelled';
@@ -168,9 +184,10 @@ function BookingList({
           (notified
             ? `We emailed ${who} the update.`
             : `${who} couldn't be emailed automatically (email sending isn't set up), so let them know directly.`) +
-          // Server-computed (authoritative) amount, not the client-side feeIfCancelledToday preview.
-          (chargeFee && cancellationFee != null
-            ? ` Charged $${cancellationFee} cancellation fee.`
+          // Server-computed (authoritative) amount, not the client-side feeIfCancelledTodayCents
+          // preview.
+          (chargeFee && cancellationFeeCents != null
+            ? ` Charged ${formatCents(cancellationFeeCents)} cancellation fee.`
             : ''),
       );
       reloadBookings();
@@ -183,21 +200,25 @@ function BookingList({
 
   const startEditCost = (b: AdminBooking) => {
     setEditingCostId(b.id);
-    setCostInput(b.estCost != null ? String(b.estCost) : '');
+    // The field is WHOLE DOLLARS — a historical stay price the sitter types, the same figure and
+    // the same `isValidRate` rule as the backfill import she typed it in first. Only a whole-dollar
+    // estimate can be in the box, so dividing the stored cents back is exact.
+    setCostInput(b.estCostCents != null ? String(Math.round(b.estCostCents / 100)) : '');
   };
 
   /** Correct a backfilled booking's estimated cost to the real historical figure — the PATCH the
    *  calendar-backfill design doc adds specifically so the accepted "priced from today's rate
-   *  card" inaccuracy stays recoverable. Whole dollars only, same rule as every other amount here;
-   *  the Save button is disabled until the typed value passes, so a bad amount never reaches the
-   *  server (which would 400 it anyway). */
+   *  card" inaccuracy stays recoverable. WHOLE DOLLARS in the box (`isValidRate`, the rule for
+   *  every figure a sitter types), scaled to the route's `estCostCents` by the one shared
+   *  converter; the Save button is disabled until the typed value passes, so a bad amount never
+   *  reaches the server (which would 400 it anyway). */
   const saveCost = async (b: AdminBooking) => {
     if (busyId) return;
     const value = Number(costInput);
-    if (!Number.isInteger(value) || value < 1) return;
+    if (!isValidRate(value)) return;
     setBusyId(b.id);
     try {
-      await adminApi.bookings.updateCost(session.slug, session.token, b.id, value);
+      await adminApi.bookings.updateCost(session.slug, session.token, b.id, dollarsToCents(value));
       setEditingCostId(null);
       reloadBookings();
     } catch (e) {
@@ -211,10 +232,9 @@ function BookingList({
    *  the calendar (`isBackfilled`) — "$X (estimate)" with an inline Edit affordance, so the
    *  estimate is never presented as if it were a price a client actually agreed to. */
   const costDisplay = (b: AdminBooking) => {
-    if (b.estCost == null) return null;
+    if (b.estCostCents == null) return null;
     if (editingCostId === b.id) {
-      const value = Number(costInput);
-      const valid = Number.isInteger(value) && value >= 1;
+      const valid = isValidRate(Number(costInput));
       return (
         <>
           {' · '}
@@ -240,7 +260,7 @@ function BookingList({
     }
     return (
       <>
-        {` · $${b.estCost}`}
+        {` · ${formatCents(b.estCostCents)}`}
         {b.isBackfilled && (
           <>
             {' '}
@@ -279,8 +299,8 @@ function BookingList({
         </button>
       )}
       {(isActive(b) ||
-        b.paidTotal > 0 ||
-        b.chargesTotal > 0 ||
+        b.paidTotalCents > 0 ||
+        b.chargesTotalCents > 0 ||
         Object.keys(b.answers).length > 0) && (
         <button onClick={() => setOpenId(openId === b.id ? null : b.id)}>
           {openId === b.id ? 'Close' : 'Details'}
@@ -303,7 +323,7 @@ function BookingList({
           <br />
           {formatWhen(b)}
           {costDisplay(b)}
-          {b.chargesTotal > 0 ? ` + $${b.chargesTotal} extras` : ''}{' '}
+          {b.chargesTotalCents > 0 ? ` + ${formatCents(b.chargesTotalCents)} extras` : ''}{' '}
           {/* Capitalized to match the client-status chips ("Active"/"Pending") in Clients. */}
           <span className={`pb-chip${chipClass(b.status)}`}>
             {b.status.charAt(0).toUpperCase() + b.status.slice(1)}
@@ -312,8 +332,8 @@ function BookingList({
         </span>
         {actionsFor(b)}
         {(isActive(b) ||
-          b.paidTotal > 0 ||
-          b.chargesTotal > 0 ||
+          b.paidTotalCents > 0 ||
+          b.chargesTotalCents > 0 ||
           Object.keys(b.answers).length > 0) &&
           openId === b.id && (
             <>

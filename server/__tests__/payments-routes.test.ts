@@ -26,7 +26,8 @@ const postPayment = async (env: Env, bookingId: string, body: unknown) =>
     env,
   );
 
-const goodBody = { amount: 40, method: 'venmo', paidDate: '2026-07-11', note: 'deposit' };
+// CENTS on the wire (0015) — $40.00.
+const goodBody = { amountCents: 4000, method: 'venmo', paidDate: '2026-07-11', note: 'deposit' };
 
 describe('admin payment routes', () => {
   it('records a payment and returns it with the new paid total', async () => {
@@ -34,7 +35,7 @@ describe('admin payment routes', () => {
     const bookingId = await makeBooking(env, TENANT_A);
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 1000, // repo call: CENTS (0015). The route body below stays whole dollars.
+      amount: 1000, // repo call: CENTS (0015), as the route body below now is too.
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,
@@ -45,20 +46,20 @@ describe('admin payment routes', () => {
     const body = (await res.json()) as {
       payment: {
         id: string;
-        amount: number;
+        amountCents: number;
         method: string;
         paidDate: string;
         note: string | null;
       };
-      paidTotal: number;
+      paidTotalCents: number;
     };
     expect(body.payment).toMatchObject({
-      amount: 40,
+      amountCents: 4000,
       method: 'venmo',
       paidDate: '2026-07-11',
       note: 'deposit',
     });
-    expect(body.paidTotal).toBe(50);
+    expect(body.paidTotalCents).toBe(5000);
   });
 
   it('allows recording against a PENDING booking (deposits)', async () => {
@@ -71,8 +72,8 @@ describe('admin payment routes', () => {
   it('400s on a non-integer, zero, or missing amount', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
-    for (const amount of [12.5, 0, -3, '40', undefined]) {
-      const res = await postPayment(env, bookingId, { ...goodBody, amount });
+    for (const amountCents of [12.5, 0, -3, '4000', undefined]) {
+      const res = await postPayment(env, bookingId, { ...goodBody, amountCents });
       expect(res.status).toBe(400);
     }
   });
@@ -131,9 +132,9 @@ describe('admin payment routes', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { payments: { amount: number; method: string }[] };
+    const body = (await res.json()) as { payments: { amountCents: number; method: string }[] };
     expect(body.payments).toHaveLength(1);
-    expect(body.payments[0]).toMatchObject({ amount: 40, method: 'venmo' });
+    expect(body.payments[0]).toMatchObject({ amountCents: 4000, method: 'venmo' });
   });
 
   it('404s listing payments for a nonexistent booking', async () => {
@@ -174,7 +175,7 @@ describe('admin payment routes', () => {
     expect((await del(bookingId, created.payment.id)).status).toBe(404);
   });
 
-  it('the bookings list carries paidTotal', async () => {
+  it('the bookings list carries paidTotalCents', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
     await postPayment(env, bookingId, goodBody);
@@ -183,9 +184,51 @@ describe('admin payment routes', () => {
       { headers: await adminHeaders(TENANT_A) },
       env,
     );
-    const body = (await res.json()) as { bookings: { id: string; paidTotal: number }[] };
-    expect(body.bookings.find((b) => b.id === bookingId)?.paidTotal).toBe(40);
+    const body = (await res.json()) as { bookings: { id: string; paidTotalCents: number }[] };
+    expect(body.bookings.find((b) => b.id === bookingId)?.paidTotalCents).toBe(4000);
     // Seeded unpaid booking reports 0, not null/undefined.
-    expect(body.bookings.find((b) => b.id === 'seed_sp_board1')?.paidTotal).toBe(0);
+    expect(body.bookings.find((b) => b.id === 'seed_sp_board1')?.paidTotalCents).toBe(0);
+  });
+
+  // TASK 5 (RED): the wire says its unit. The body is `amountCents`, an integer number of cents,
+  // so a sitter can record the $45.50 a client actually sent.
+  it('records a cents payment and answers with the new paid total in cents', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A, 'pending');
+    const res = await postPayment(env, bookingId, {
+      amountCents: 4550,
+      method: 'venmo',
+      paidDate: '2026-07-11',
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      payment: { amountCents: number; method: string };
+      paidTotalCents: number;
+    };
+    expect(body.payment).toMatchObject({ amountCents: 4550, method: 'venmo' });
+    expect(body.paidTotalCents).toBe(4550);
+  });
+
+  it('400s on the old whole-dollar `amount` body', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A);
+    const res = await postPayment(env, bookingId, {
+      amount: 40,
+      method: 'venmo',
+      paidDate: '2026-07-11',
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toHaveProperty('error');
+  });
+
+  it('400s on a fractional amountCents', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A);
+    const res = await postPayment(env, bookingId, {
+      amountCents: 45.5,
+      method: 'venmo',
+      paidDate: '2026-07-11',
+    });
+    expect(res.status).toBe(400);
   });
 });

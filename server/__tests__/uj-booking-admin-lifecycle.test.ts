@@ -49,24 +49,26 @@ describe('booking admin lifecycle', () => {
       {
         method: 'POST',
         headers: adminJson,
-        body: JSON.stringify({ label: 'Extra vet visit', amount: 45 }),
+        body: JSON.stringify({ label: 'Extra vet visit', amountCents: 4500 }),
       },
       env,
     );
     expect(charge.status).toBe(201);
-    expect(((await charge.json()) as { chargesTotal: number }).chargesTotal).toBe(45);
+    expect(((await charge.json()) as { chargesTotalCents: number }).chargesTotalCents).toBe(4500);
 
     const partialPayment = await app.request(
       `/api/${SLUG}/admin/bookings/${id}/payments`,
       {
         method: 'POST',
         headers: adminJson,
-        body: JSON.stringify({ amount: 100, method: 'venmo', paidDate: '2026-01-15' }),
+        body: JSON.stringify({ amountCents: 10000, method: 'venmo', paidDate: '2026-01-15' }),
       },
       env,
     );
     expect(partialPayment.status).toBe(201);
-    expect(((await partialPayment.json()) as { paidTotal: number }).paidTotal).toBe(100);
+    expect(((await partialPayment.json()) as { paidTotalCents: number }).paidTotalCents).toBe(
+      10000,
+    );
 
     const analyticsMid = (await (
       await app.request(`/api/${SLUG}/admin/analytics`, { headers: admin }, env)
@@ -79,12 +81,12 @@ describe('booking admin lifecycle', () => {
       {
         method: 'POST',
         headers: adminJson,
-        body: JSON.stringify({ amount: 95, method: 'venmo', paidDate: '2026-01-16' }),
+        body: JSON.stringify({ amountCents: 9500, method: 'venmo', paidDate: '2026-01-16' }),
       },
       env,
     );
     expect(finalPayment.status).toBe(201);
-    expect(((await finalPayment.json()) as { paidTotal: number }).paidTotal).toBe(195);
+    expect(((await finalPayment.json()) as { paidTotalCents: number }).paidTotalCents).toBe(19500);
 
     const analyticsAfter = (await (
       await app.request(`/api/${SLUG}/admin/analytics`, { headers: admin }, env)

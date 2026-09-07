@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
-import { addDays, centsToWholeDollars, getPacificDateStr } from '../../src/shared/index.js';
+import { addDays, getPacificDateStr } from '../../src/shared/index.js';
 
 /** Books one dog (Bella, sunny-paws) for a boarding stay via the real customer flow. */
 async function bookBoarding(env: Env, startDate: string, endDate: string): Promise<Response> {
@@ -87,12 +87,12 @@ describe('cancellation fee assessment at cancel time', () => {
       chargeFee: true,
     });
     expect(res.status).toBe(200);
-    // The customer's create response is CENTS; this ADMIN response is still whole dollars — the
-    // sitter-facing wire is renamed in its own commit. One number, two units, said explicitly.
+    // Both wires are CENTS now (0015): the fee the admin route reports IS the figure stamped on
+    // the column, so the assertion needs no conversion on either side.
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: centsToWholeDollars(created.estCostCents),
+      cancellationFeeCents: created.estCostCents,
     });
     expect(feeRow(raw, created.id)).toBe(created.estCostCents);
     expect(statusRow(raw, created.id)).toBe('cancelled');
@@ -115,7 +115,7 @@ describe('cancellation fee assessment at cancel time', () => {
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(feeRow(raw, created.id)).toBeNull();
     expect(statusRow(raw, created.id)).toBe('cancelled');
@@ -134,7 +134,7 @@ describe('cancellation fee assessment at cancel time', () => {
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(feeRow(raw, created.id)).toBeNull();
     expect(statusRow(raw, created.id)).toBe('cancelled');
