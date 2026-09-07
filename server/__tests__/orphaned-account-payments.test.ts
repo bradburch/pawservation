@@ -50,8 +50,8 @@ describe('a payment whose anchor pet dies stays in its household (pure)', () => 
     expect(households).toHaveLength(1);
     expect(households[0]).toMatchObject({
       accountId: 'p_beta', // the account is RENAMED by the death; the money still lands on it
-      paidTotal: 400,
-      balance: 100,
+      paidTotalCents: 400,
+      balanceCents: 100,
     });
   });
 
@@ -125,9 +125,9 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
     // The household is now named p_beta (p_alpha holds no live edge), and still holds the money.
     expect(households[0]).toMatchObject({
       accountId: 'p_beta',
-      expectedTotal: 50000,
-      paidTotal: 40000,
-      balance: 10000,
+      expectedTotalCents: 50000,
+      paidTotalCents: 40000,
+      balanceCents: 10000,
     });
     expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([]);
   });
@@ -141,10 +141,10 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
       const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, accountId);
       expect(detail, `drill-down for ${accountId}`).not.toBeNull();
       expect(detail!.householdPayments).toEqual([
-        expect.objectContaining({ id: paymentId, amount: 40000 }),
+        expect.objectContaining({ id: paymentId, amountCents: 40000 }),
       ]);
       // The listed payment and the counted balance are the same money — never two different sets.
-      expect(detail!.paidTotal).toBe(40000);
+      expect(detail!.paidTotalCents).toBe(40000);
     }
   });
 });
@@ -210,7 +210,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
       false,
     );
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual([
-      expect.objectContaining({ paidTotal: 40000 }),
+      expect.objectContaining({ paidTotalCents: 40000 }),
     ]);
   });
 
@@ -237,7 +237,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
 
     const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, '2026-08-01');
     const revenue = analytics.monthly.reduce((sum, m) => sum + m.Total, 0);
-    const inHouseholds = analytics.households.reduce((sum, h) => sum + h.paidTotal, 0);
+    const inHouseholds = analytics.households.reduce((sum, h) => sum + h.paidTotalCents, 0);
     const orphaned = analytics.orphanedPayments.reduce((sum, o) => sum + o.total, 0);
 
     expect(revenue).toBe(65000);

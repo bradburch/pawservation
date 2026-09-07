@@ -8,7 +8,6 @@ import {
 } from '../db/repo';
 import { adminAuth } from '../lib/middleware';
 import { isPaymentMethod, isRealDate } from '../lib/validation';
-import { householdDetailToDollars } from '../lib/wire-dollars';
 import { isValidCents } from '../../src/shared/index.js';
 import type { AppEnv } from '../types';
 
@@ -21,6 +20,10 @@ export const accountsRoutes = new Hono<AppEnv>()
    * fee without leaving the number she is questioning. Same 404-for-unowned-id answer as the
    * sibling payment routes: `getHouseholdDetail` returns null for an account id of another tenant
    * or no tenant at all, indistinguishably.
+   *
+   * EVERY MONEY FIELD IS CENTS AND SAYS SO, including each booking's `outstandingCents` — what
+   * that stay still owes, computed by the server from the same figures the balance sums rather
+   * than subtracted by whoever renders the row.
    */
   .get('/:slug/admin/accounts/:accountId', async (c) => {
     const tenant = c.get('tenant');
@@ -30,8 +33,10 @@ export const accountsRoutes = new Hono<AppEnv>()
       c.req.param('accountId'),
     );
     if (!detail) return c.json({ error: 'Not found.' }, 404);
-    // The repo speaks cents (0015); this payload has always spoken whole dollars.
-    return c.json(householdDetailToDollars(detail));
+    // EMITTED VERBATIM. Every money field on the row is cents and names itself so (design spec §2),
+    // which is what let the last dollar serializer on this surface be deleted: there is no unit
+    // change left to make here, so there is no place left for one to be made wrongly.
+    return c.json(detail);
   })
 
   /**
@@ -91,7 +96,7 @@ export const accountsRoutes = new Hono<AppEnv>()
         // The household this payment landed on, found by MEMBERSHIP rather than by id equality for
         // the reason the schema gives: the account id is the first-sorted pet and can be renamed by
         // a pet added later, so `:accountId` is not necessarily the household's current id.
-        balanceCents: households.find((h) => h.petIds.includes(accountId))?.balance ?? 0,
+        balanceCents: households.find((h) => h.petIds.includes(accountId))?.balanceCents ?? 0,
       },
       201,
     );

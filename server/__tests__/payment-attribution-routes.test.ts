@@ -1291,7 +1291,7 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
     expect(rows.filter((r) => r.BookingRequestId === bookingId)).toHaveLength(1);
     expect(rows.find((r) => r.BookingRequestId === bookingId)?.Amount).toBe(4000); // cents
     const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(after?.balance).toBe(before?.balance);
+    expect(after?.balanceCents).toBe(before?.balanceCents);
 
     // And now there is genuinely nothing left: both survivors report no candidates, so they fall
     // into the summarised list rather than staying interactive forever.
@@ -1649,7 +1649,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const paymentId = (await credit(env, home.accountId, 100))!;
 
     const before = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(before?.balance).toBe(0); // fully covered by the household-level credit already
+    expect(before?.balanceCents).toBe(0); // fully covered by the household-level credit already
 
     const attribution: ApplyAttributionInput = {
       paymentId,
@@ -1663,7 +1663,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(body).toEqual({ applied: 1, skipped: [] });
 
     const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(after?.balance).toBe(before?.balance);
+    expect(after?.balanceCents).toBe(before?.balanceCents);
 
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
@@ -1881,7 +1881,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ BookingRequestId: walk, AccountId: null, Amount: 5000 });
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(detail?.balance).toBe(0);
+    expect(detail?.balanceCents).toBe(0);
   });
 
   it('a malformed tip is a 400 with nothing written', async () => {
@@ -1964,7 +1964,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     // the household level) — genuinely $100 in the household's favor, not zeroed out. The point is
     // this reads as an honest credit, not as an invisible $100 the booking silently absorbed twice.
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(detail?.balance).toBe(-10000); // getHouseholdDetail returns cents (0015)
+    expect(detail?.balanceCents).toBe(-10000); // getHouseholdDetail returns cents (0015)
   });
 
   it('a mixed-validity batch — good, bad, good — applies both good ones and skips only the bad one', async () => {

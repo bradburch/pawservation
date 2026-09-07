@@ -510,7 +510,11 @@ describe('applyAttribution (repo)', () => {
 
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(before).toHaveLength(1);
-    expect(before[0]).toMatchObject({ expectedTotal: 20500, paidTotal: 20000, balance: 500 });
+    expect(before[0]).toMatchObject({
+      expectedTotalCents: 20500,
+      paidTotalCents: 20000,
+      balanceCents: 500,
+    });
 
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
@@ -962,7 +966,11 @@ describe('applyAttribution — a tip', () => {
     // Expected $50, paid $50, balance $0 — the stay is settled, not over-paid.
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(balances).toHaveLength(1);
-    expect(balances[0]).toMatchObject({ expectedTotal: 5000, paidTotal: 5000, balance: 0 });
+    expect(balances[0]).toMatchObject({
+      expectedTotalCents: 5000,
+      paidTotalCents: 5000,
+      balanceCents: 0,
+    });
     expect(
       (await householdOutstandingByBooking(env.PAWSERVATION_DB, TENANT_C, home.accountId)).get(
         walk,
@@ -972,8 +980,8 @@ describe('applyAttribution — a tip', () => {
 
   it('moves the household balance by EXACTLY the tip and nothing else — money IN is untouched', async () => {
     // The design doc's "attribution leaves the household balance unchanged" is a statement about
-    // MONEY RECEIVED, and that half still holds to the dollar: `paidTotal` is identical either
-    // side of the write. What a tip deliberately DOES move is `expectedTotal` — the phantom $10
+    // MONEY RECEIVED, and that half still holds to the cent: `paidTotalCents` is identical either
+    // side of the write. What a tip deliberately DOES move is `expectedTotalCents` — the phantom $10
     // credit becomes $10 the stay was worth — so the balance rises by the tip and by nothing else.
     // Asserted against the same fixture applied WITHOUT a tip, so the difference is attributable
     // to the tip alone rather than to anything else the write does.
@@ -989,7 +997,11 @@ describe('applyAttribution — a tip', () => {
       await book(env, home, 4500, '2026-08-10'); // untouched, so the totals are not just the split's
       const paymentId = (await credit(env, home.accountId, 5000))!;
       const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-      expect(before[0]).toMatchObject({ expectedTotal: 8500, paidTotal: 5000, balance: 3500 });
+      expect(before[0]).toMatchObject({
+        expectedTotalCents: 8500,
+        paidTotalCents: 5000,
+        balanceCents: 3500,
+      });
       expect(
         await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
           paymentId,
@@ -1009,7 +1021,7 @@ describe('applyAttribution — a tip', () => {
     // With a tip: paid unchanged, expected and balance each up by the $10 and not a dollar more.
     const tipped = await run(withTip, true);
     expect(tipped.after).toEqual([
-      { ...tipped.before[0], expectedTotal: 9500, paidTotal: 5000, balance: 4500 },
+      { ...tipped.before[0], expectedTotalCents: 9500, paidTotalCents: 5000, balanceCents: 4500 },
     ]);
   });
 
@@ -1311,7 +1323,7 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
 
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     const fromDetail = new Map(
-      (detail?.bookings ?? []).map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      (detail?.bookings ?? []).map((b) => [b.bookingId, b.expectedCents - b.paidTotalCents]),
     );
     const lean = await householdOutstandingByBooking(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     expect(lean).toEqual(fromDetail);

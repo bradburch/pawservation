@@ -1843,7 +1843,7 @@ export async function applyAttribution(
   // "Is this booking in this household, and what does it still owe RIGHT NOW" is asked of
   // `householdOutstandingByBooking` — the same money expressions, the same candidate predicate and
   // the same one-booking-one-household attachment rule `getHouseholdDetail` computes its own
-  // `expected - paidTotal` from, minus the statement's payments, charge rows and totals, which no
+  // `outstandingCents` from, minus the statement's payments, charge rows and totals, which no
   // guard here reads (see its doc comment for why that is a narrowing rather than a second rule).
   // A household this account id does not resolve to leaves the map empty and every split is refused,
   // exactly as a `null` detail did. The graph loaded above is handed back rather than re-read.
@@ -2386,6 +2386,36 @@ const PAYMENTS_JOIN_SQL = `LEFT JOIN (
 /** How much this booking is over-paid by, in cents; the Earnings page divides it back for display. */
 const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`;
 
+/**
+ * WHAT ONE BOOKING STILL OWES, IN CENTS — `CREDITABLE_AMOUNT_SQL` minus the payments recorded
+ * against that booking, and NOTHING ELSE. One expression, in one place, because there are two
+ * readers of it and a second copy is a second answer:
+ *
+ *  - `assembleHouseholdDetail`, which publishes it as the statement's `outstandingCents`;
+ *  - `householdOutstandingByBooking`, whose map is the ceiling `applyAttribution` refuses a split
+ *    against.
+ *
+ * Both are handed the SAME two selected columns (`Expected`, `PaidTotal`), read by the same joins,
+ * so the figure on the sitter's statement and the figure the attribution guard enforces are the
+ * same number by construction rather than by two functions happening to agree today.
+ *
+ * IT IS RAW, AND MAY BE NEGATIVE: a booking holding more than it may keep — an over-payment, or a
+ * deposit on a request later declined — reads below zero here, and `householdOutstandingByBooking`
+ * needs that sign (a negative is what makes a split against such a booking refuse with no separate
+ * status check). The STATEMENT clamps at zero at its own emit site, where a reader can see it: a
+ * per-booking "still owes" figure never reports a debt of minus money, and the credit that negative
+ * names is a household-level fact the balance and the Earnings page's credit list already carry.
+ *
+ * A HOUSEHOLD-LEVEL PAYMENT MOVES NOTHING HERE. `PAYMENTS_JOIN_SQL` sums `Payments` by
+ * `BookingRequestId`, and a household payment carries `AccountId` instead (mutually exclusive by
+ * CHECK, 0011) — so it lowers the household's balance and leaves every booking's outstanding
+ * exactly where it was. That is the attribution semantics, not an oversight: splitting one payment
+ * across several stays is a decision only the sitter makes, through the attribution panel.
+ */
+function bookingOutstanding(row: { Expected: number; PaidTotal: number }): number {
+  return row.Expected - row.PaidTotal;
+}
+
 /** The label every kept-overpayment charge carries. One string, so the UI and the ledger agree. */
 export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
 
@@ -2536,8 +2566,8 @@ export async function getHouseholdBalances(
  * Reported rather than guessed at, and rather than dropped. Guessing a household for money is the
  * one thing this codebase refuses to do anywhere (`buildAccounts` refuses it, the Venmo importer
  * refuses it); dropping it is worse still, because the analytics revenue line goes on counting it.
- * `Σ household paidTotal + Σ orphaned = revenue` is the invariant that makes the two views agree,
- * and it is only true because this list exists.
+ * `Σ household paidTotalCents + Σ orphaned = revenue` is the invariant that makes the two views
+ * agree, and it is only true because this list exists.
  */
 export async function getOrphanedAccountPayments(
   db: D1Database,
@@ -2641,9 +2671,9 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
       petIds: h.petIds,
       anchorPetIds: h.anchorPetIds,
       bookingIds: h.bookingIds,
-      expectedTotal: h.expectedTotal,
-      paidTotal: h.paidTotal,
-      balance: h.balance,
+      expectedTotalCents: h.expectedTotalCents,
+      paidTotalCents: h.paidTotalCents,
+      balanceCents: h.balanceCents,
     })),
     orphanedPayments: unattachedPaymentAccountIds.map((accountId) => ({
       accountId,
@@ -2660,14 +2690,16 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
  * Finds the household by asking `getHouseholdBalances` for the whole tenant and matching by
  * MEMBERSHIP (`petIds.includes(accountId)`), the same resolution every other household read uses —
  * deliberately NOT a second, narrower query, because a second query is a second place the account-id-
- * renaming rule (see the 0011 migration header) could be forgotten. `expectedTotal`/`paidTotal`/
- * `balance` are that household's own fields, passed through rather than recomputed, so this can
- * never print a number the balance above it disagrees with.
+ * renaming rule (see the 0011 migration header) could be forgotten.
+ * `expectedTotalCents`/`paidTotalCents`/`balanceCents` are that household's own fields, passed
+ * through rather than recomputed, so this can never print a number the balance above it
+ * disagrees with.
  *
  * Each booking's `cost` and `expected` are read with the SAME `BASE_AMOUNT_SQL`/
  * `CREDITABLE_AMOUNT_SQL` expressions the household sum is built from (declined zeroed, cancelled
- * reading its assessed fee), which is what makes `Σ(bookings[].expected) === expectedTotal` a fact
- * of the SQL rather than a coincidence two readers happen to agree on today.
+ * reading its assessed fee), which is what makes `Σ(bookings[].expectedCents) ===
+ * expectedTotalCents` a fact of the SQL rather than a coincidence two readers happen to agree on
+ * today.
  */
 type HouseholdDetailBookingRow = {
   BookingId: string;
@@ -2782,8 +2814,8 @@ async function householdDetailFor(
       )
       .bind(tenantId, tenantId, ...candidateArgs)
       .all<HouseholdDetailBookingRow & { EndUserId: string | null }>(),
-    // The household's own payments, read once and used twice: summed into `paidTotal` by the pure
-    // module and listed as `householdPayments`. Literally the same rows, so the statement can never
+    // The household's own payments, read once and used twice: summed into `paidTotalCents` by the
+    // pure module and listed as `householdPayments`. Literally the same rows, so the statement can never
     // list a payment the balance did not count.
     db
       .prepare(
@@ -2857,11 +2889,11 @@ async function householdDetailFor(
 /** `BookingCharges` rows keyed by their booking, in the order the query returned them. */
 function groupChargesByBooking(
   rows: BookingChargeRow[],
-): Map<string, { id: string; label: string; amount: number }[]> {
-  const byBooking = new Map<string, { id: string; label: string; amount: number }[]>();
+): Map<string, { id: string; label: string; amountCents: number }[]> {
+  const byBooking = new Map<string, { id: string; label: string; amountCents: number }[]>();
   for (const row of rows) {
     const list = byBooking.get(row.BookingRequestId) ?? [];
-    list.push({ id: row.Id, label: row.Label, amount: row.Amount });
+    list.push({ id: row.Id, label: row.Label, amountCents: row.Amount });
     byBooking.set(row.BookingRequestId, list);
   }
   return byBooking;
@@ -2881,12 +2913,12 @@ function assembleHouseholdDetail(
   household: {
     accountId: string;
     bookingIds: string[];
-    expectedTotal: number;
-    paidTotal: number;
-    balance: number;
+    expectedTotalCents: number;
+    paidTotalCents: number;
+    balanceCents: number;
   },
   bookingsById: Map<string, HouseholdDetailBookingRow>,
-  chargesByBooking: Map<string, { id: string; label: string; amount: number }[]>,
+  chargesByBooking: Map<string, { id: string; label: string; amountCents: number }[]>,
   payments: PaymentRow[],
 ): HouseholdDetailRow {
   return {
@@ -2903,23 +2935,27 @@ function assembleHouseholdDetail(
         startDate: row.StartDate,
         endDate: row.EndDate,
         status: row.Status,
-        cost: row.Cost,
+        costCents: row.Cost,
         charges: chargesByBooking.get(bookingId) ?? [],
-        chargesTotal: row.ChargesTotal,
-        paidTotal: row.PaidTotal,
-        expected: row.Expected,
+        chargesTotalCents: row.ChargesTotal,
+        paidTotalCents: row.PaidTotal,
+        expectedCents: row.Expected,
+        // Clamped HERE rather than in `bookingOutstanding`, which the attribution guard needs raw:
+        // a statement line never reads "owes -$50". An over-paid booking's credit is the
+        // household's balance, and the Earnings page lists it as a credit of its own.
+        outstandingCents: Math.max(0, bookingOutstanding(row)),
       };
     }),
     householdPayments: payments.map((p) => ({
       id: p.Id,
-      amount: p.Amount,
+      amountCents: p.Amount,
       method: p.Method,
       paidDate: p.PaidDate,
       note: p.Note,
     })),
-    expectedTotal: household.expectedTotal,
-    paidTotal: household.paidTotal,
-    balance: household.balance,
+    expectedTotalCents: household.expectedTotalCents,
+    paidTotalCents: household.paidTotalCents,
+    balanceCents: household.balanceCents,
   };
 }
 
@@ -3043,7 +3079,7 @@ async function bulkHouseholdDetails(
 /**
  * WHAT ONE HOUSEHOLD'S BOOKINGS STILL OWE, RIGHT NOW — and nothing else.
  *
- * The same question `getHouseholdDetail(...).bookings` answers with `expected - paidTotal`, asked
+ * The same question `getHouseholdDetail(...).bookings` answers with `outstandingCents`, asked
  * with two queries instead of six. `applyAttribution` is the caller, and it is the reason this
  * exists at all: it must re-read live outstanding ON EVERY CALL (that re-read is what refuses a
  * second credit landing on a booking the previous attribution in the same request already settled),
@@ -3148,7 +3184,7 @@ export async function householdOutstandingByBooking(
   return new Map(
     bookingRes.results
       .filter((r) => mine.has(r.BookingId))
-      .map((r) => [r.BookingId, r.Expected - r.PaidTotal]),
+      .map((r) => [r.BookingId, bookingOutstanding(r)]),
   );
 }
 

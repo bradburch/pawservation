@@ -109,8 +109,8 @@ describe('a cancelled backfilled booking and the household balance', () => {
 
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
-    expect(household?.expectedTotal).toBe(2500);
-    expect(household?.balance).toBe(2500);
+    expect(household?.expectedTotalCents).toBe(2500);
+    expect(household?.balanceCents).toBe(2500);
   });
 });
 
@@ -139,8 +139,8 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     // not just the raw column.
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
-    expect(household?.expectedTotal).toBe(4000);
-    expect(household?.balance).toBe(4000);
+    expect(household?.expectedTotalCents).toBe(4000);
+    expect(household?.balanceCents).toBe(4000);
   });
 
   it('re-prices a cancelled backfilled booking and moves the household balance, not just a column', async () => {
@@ -174,8 +174,8 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
 
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
-    expect(household?.expectedTotal).toBe(6000);
-    expect(household?.balance).toBe(6000);
+    expect(household?.expectedTotalCents).toBe(6000);
+    expect(household?.balanceCents).toBe(6000);
 
     // The figure the sitter reads back, through the route that actually renders it — not just the
     // column. This is the half the original test was missing.

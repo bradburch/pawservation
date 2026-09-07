@@ -306,7 +306,7 @@ export type AnalyticsData = {
   }[];
   /**
    * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets `buildAccounts` derives,
-   * summed as `Σ(booking costs + charges) − Σ(payments)` (`getHouseholdBalances` in
+   * summed as `Σ(booking costs + charges) − Σ(payments)`, in CENTS (`getHouseholdBalances` in
    * `server/db/repo.ts`). Already camelCase, unlike every aggregate above it, because it is
    * COMPUTED rather than selected: `serializeAnalytics` passes it through untouched, and the client
    * re-derives no part of it — balances are server-side money, like every other figure here.
@@ -317,7 +317,8 @@ export type AnalyticsData = {
    * DELETED (a `deleteCustomer` cascade removes the pet and its owner edges together, and never
    * touches `Payments`), so nothing left in the database can say whose money it was. Published
    * beside the balances precisely because every revenue figure above still counts it:
-   * `Σ households.paidTotal + Σ orphanedPayments.total` is the whole of the household money, and
+   * `Σ households.paidTotalCents + Σ orphanedPayments.total` is the whole of the household money,
+   * once the two are read in the same unit, and
    * this list is what keeps that identity true rather than leaving a payment counted in one view
    * and silently absent from the other. A pet that merely DIED is never here — its payments still
    * resolve to its own household (`buildPaymentAnchors`).
@@ -328,8 +329,9 @@ export type AnalyticsData = {
 /**
  * One household's statement, as `getHouseholdBalances` computes it and the dashboard renders it.
  * `accountId` is the account id `buildAccounts` produces (the lexicographically-first pet of the
- * component), the same identity invoice numbering keys off. `balance` is negative when the
- * household is in CREDIT. `expectedTotal`/`paidTotal`/`balance` are CENTS (0015).
+ * component), the same identity invoice numbering keys off. `balanceCents` is negative when the
+ * household is in CREDIT. Every money field is CENTS and NAMES the unit (design spec §2): this row
+ * goes onto the analytics payload unchanged, so the name on the type is the name on the wire.
  */
 export type HouseholdBalanceRow = {
   accountId: string;
@@ -342,20 +344,21 @@ export type HouseholdBalanceRow = {
    *  from `petIds` so a dead pet is never listed as one of a client's pets. */
   anchorPetIds: string[];
   bookingIds: string[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
 
 /**
  * The drill-down behind one household balance (Story 2.4, FR-7c) — `getHouseholdDetail` in
- * `server/db/repo.ts`. `expectedTotal`/`paidTotal`/`balance` are `getHouseholdBalances`'s own
- * numbers for this household, passed through rather than recomputed, so the detail can never
- * disagree with the balance it sits beneath.
+ * `server/db/repo.ts`. `expectedTotalCents`/`paidTotalCents`/`balanceCents` are
+ * `getHouseholdBalances`'s own numbers for this household, passed through rather than recomputed,
+ * so the detail can never disagree with the balance it sits beneath.
  *
- * EVERY MONEY FIELD ON THIS TYPE IS CENTS (0015) — it is what the repo returns, and it is read by
- * the payment-attribution proposer as well as by the two routes that serve it. Those routes divide
- * back to whole dollars on the wire; nothing else may.
+ * EVERY MONEY FIELD ON THIS TYPE IS CENTS AND SAYS SO (design spec §2). Both routes that serve it
+ * — the sitter's drill-down and the customer's own `/:slug/account` — now emit these figures
+ * verbatim, so there is no longer any place that divides: the name a reader sees on the wire is
+ * the name on this type, and the dollar-named twin is gone rather than kept alongside.
  */
 export type HouseholdDetailRow = {
   accountId: string;
@@ -371,28 +374,42 @@ export type HouseholdDetailRow = {
     status: string;
     /** The quote, or the assessed cancellation fee on a cancelled row — EXCLUDING extra charges,
      *  so a cancellation fee stays readable as its own figure rather than folded into one number. */
-    cost: number;
-    charges: { id: string; label: string; amount: number }[];
-    chargesTotal: number;
+    costCents: number;
+    charges: { id: string; label: string; amountCents: number }[];
+    chargesTotalCents: number;
     /** Payments recorded against THIS booking only — a household-level payment never appears here. */
-    paidTotal: number;
-    /** What this booking contributes to `expectedTotal`: `cost + chargesTotal`, or zero for a
-     *  declined request — declined bookings are never billed at all, the same rule
-     *  `CREDITABLE_AMOUNT_SQL` applies to the balance above. Sums to `expectedTotal` exactly. */
-    expected: number;
+    paidTotalCents: number;
+    /** What this booking contributes to `expectedTotalCents`: `costCents + chargesTotalCents`, or
+     *  zero for a declined request — declined bookings are never billed at all, the same rule
+     *  `CREDITABLE_AMOUNT_SQL` applies to the balance above. Sums to `expectedTotalCents` exactly. */
+    expectedCents: number;
+    /**
+     * WHAT THIS BOOKING STILL OWES: `max(0, expectedCents − paidTotalCents)`, computed by the
+     * server inside the same read (`bookingOutstanding` in `server/db/repo.ts`) from the same two
+     * figures the household balance sums, so no caller has to subtract — and none can subtract
+     * differently. Zero for a fee-free cancelled booking, and never negative: a booking holding
+     * more than it may keep is a CREDIT, which is a household-level fact (`balanceCents`, and the
+     * Earnings page's credit list), not a debt of minus money.
+     *
+     * A HOUSEHOLD-LEVEL PAYMENT DOES NOT REDUCE IT. `paidTotalCents` counts only payments filed
+     * against this booking; a household payment lowers `balanceCents` and leaves every booking
+     * where it was, because splitting one payment across several stays is a decision only the
+     * sitter makes (the attribution panel), never one this figure invents.
+     */
+    outstandingCents: number;
   }[];
   /** Payments recorded against the HOUSEHOLD (0011) rather than any one booking — never attributed
    *  to a booking above, however convenient that would be to render. */
   householdPayments: {
     id: string;
-    amount: number;
+    amountCents: number;
     method: string;
     paidDate: string;
     note: string | null;
   }[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
 
 export type ProviderConnection = {

@@ -11,8 +11,14 @@ import type { AnalyticsData } from '../types';
  * credit, both tile sums — is therefore single-unit integer arithmetic in CENTS, and
  * `centsToWholeDollars` is applied only at the last step, on its way out. It THROWS on a figure
  * that is not a whole number of dollars, which in this commit is the loud failure of a missed
- * conversion upstream rather than a case to round away. (Task 6 makes the wire cents and deletes
- * every `d()` below.)
+ * conversion upstream rather than a case to round away.
+ *
+ * THE HOUSEHOLD ROWS HAVE ALREADY LEFT: they are cents on the wire and named so, published
+ * verbatim, so no `d()` touches them. Everything still divided below — the tiles, the monthly and
+ * by-service series, the outstanding and credit lists, the orphaned-payment totals — is Task 7's,
+ * and until then this payload carries both units. Nothing adds a household figure to one of them:
+ * the earnings page renders each list on its own, and the `Σ households.paidTotalCents +
+ * Σ orphanedPayments.total` identity is asserted against `getAnalytics`'s raw cents, never here.
  */
 const d = centsToWholeDollars;
 
@@ -96,27 +102,25 @@ export function serializeAnalytics(data: AnalyticsData) {
     outstanding,
     credits,
     /**
-     * HOUSEHOLD BALANCES, passed through apart from the unit. Every figure is already computed — by
-     * `getHouseholdBalances`, over the same `CREDITABLE_AMOUNT_SQL` the two lists above are built
-     * from — so there is deliberately nothing to map here: a balance is money, money is server-side,
-     * and a client that re-added the numbers could disagree with the page it is printed on.
+     * HOUSEHOLD BALANCES, PASSED THROUGH WHOLE — the row `getHouseholdBalances` computed, over the
+     * same `CREDITABLE_AMOUNT_SQL` the two lists above are built from, published unchanged. There
+     * is deliberately nothing to map: a balance is money, money is server-side, and a client that
+     * re-added the numbers could disagree with the page it is printed on. Its money fields name
+     * their unit (`expectedTotalCents`/`paidTotalCents`/`balanceCents`, design spec §2), so not
+     * even the unit changes here any more — the identity below is now the only mapping left, and
+     * it is a whole-dollar one until Task 7 moves the rest of this payload.
      *
      * The tiles above are NOT rebuilt from these rows. `outstandingTotal` and `creditTotal` stay
      * per-booking and stay un-netted: netting a debt against a credit is right WITHIN one household
      * (that is what a statement is) and wrong across two, and the tiles speak for the whole book.
      */
-    households: data.households.map((h) => ({
-      ...h,
-      expectedTotal: d(h.expectedTotal),
-      paidTotal: d(h.paidTotal),
-      balance: d(h.balance),
-    })),
+    households: data.households,
     /**
      * MONEY THAT BELONGS TO NO HOUSEHOLD — a household payment whose account-id pet was deleted
      * along with its owner edges (`deleteCustomer`), leaving nothing in the database able to say
      * which household it settled. Passed through beside the balances rather than folded into one
      * of them or quietly dropped: the revenue figures above already count this money, so
-     * `Σ households.paidTotal + Σ orphanedPayments.total` must equal it for the page to be telling
+     * `Σ households.paidTotalCents + Σ orphanedPayments.total` must equal it for the page to be telling
      * the truth. Naming an orphan out loud is the only honest option; guessing it a household is
      * the one thing worse than losing it.
      */

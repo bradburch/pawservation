@@ -3201,10 +3201,10 @@ export const adminRoutes = new Hono<AppEnv>()
    * `listPaymentsForAccount` returns for a household IS an unapplied credit — one already
    * attributed to a booking would carry `BookingRequestId` instead and simply not be in that list.
    *
-   * CANDIDATE BOOKINGS ARE RESTRICTED TO `outstanding > 0`, computed here from
-   * `getHouseholdDetail`'s own `expected`/`paidTotal` (the same figures the household balance is
-   * built from) rather than trusted from anywhere else. This is the fix a prior review asked for:
-   * `getHouseholdDetail` also lists `declined` bookings, whose `expected` is zeroed by
+   * CANDIDATE BOOKINGS ARE RESTRICTED TO `outstandingCents > 0` — `getHouseholdDetail`'s own
+   * per-booking figure, computed inside its read from the same numbers the household balance is
+   * built from, rather than subtracted here or trusted from anywhere else. This is the fix a prior review asked for:
+   * `getHouseholdDetail` also lists `declined` bookings, whose `expectedCents` is zeroed by
    * `CREDITABLE_AMOUNT_SQL` but which can still carry a payment recorded before they were
    * declined (`insertPayment` allows it while a booking is still pending) — leaving a NEGATIVE
    * outstanding. Handing that straight to `proposeAttribution` would trip its own
@@ -3333,7 +3333,12 @@ export const adminRoutes = new Hono<AppEnv>()
     for (const { accountId, detail, credits } of targets) {
       // outstanding > 0 only — see the doc comment above for why this must happen before
       // proposeAttribution ever sees the list.
-      const candidates = detail.bookings.filter((b) => b.expected - b.paidTotal > 0);
+      // `outstandingCents` is the SERVER's own `max(0, expectedCents − paidTotalCents)`, computed
+      // inside the same read the balance is (`bookingOutstanding`, server/db/repo.ts) — asked for
+      // here rather than subtracted, so this filter and the ceiling `applyAttribution` enforces
+      // cannot be two subtractions that drift. The clamp changes nothing this predicate sees: an
+      // over-paid booking is excluded either way, by `0 > 0` instead of by a negative.
+      const candidates = detail.bookings.filter((b) => b.outstandingCents > 0);
       const staticById = new Map(
         candidates.map((b) => [
           b.bookingId,
@@ -3353,9 +3358,7 @@ export const adminRoutes = new Hono<AppEnv>()
       // $40. A booking that reaches 0 here simply stops appearing with positive outstanding, and
       // `proposeAttribution` already treats "no candidate with outstanding > 0" as
       // `no-unpaid-bookings` — the true answer for a later credit with nothing left to attach to.
-      const outstandingById = new Map(
-        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
-      );
+      const outstandingById = new Map(candidates.map((b) => [b.bookingId, b.outstandingCents]));
       // The booking's genuinely LIVE outstanding — never decremented as this loop works through
       // the household's credits, unlike `outstandingById` above. `outstandingById` still has to
       // drive `proposeAttribution` itself (it genuinely needs to know what an earlier credit in
@@ -3377,9 +3380,7 @@ export const adminRoutes = new Hono<AppEnv>()
       // this panel already surfaces (`AttributionPanel.tsx`'s skipped-reason rendering). Blocking
       // it here too would be a nice-to-have; blocking a legal single settlement, which is what
       // this fixes, is not acceptable.
-      const liveOutstandingById = new Map(
-        candidates.map((b) => [b.bookingId, b.expected - b.paidTotal]),
-      );
+      const liveOutstandingById = new Map(candidates.map((b) => [b.bookingId, b.outstandingCents]));
 
       // AMOUNT CONGRUENCE'S HOUSEHOLD HALF, COMPUTED HERE BECAUSE ONLY HERE CAN IT BE — an amount
       // is distinctive when exactly one unpaid stay owes it AND exactly one unattributed credit is
@@ -3648,7 +3649,7 @@ export const adminRoutes = new Hono<AppEnv>()
    * `applyAttribution` (server/db/repo.ts) does the re-derivation: it re-reads the source payment
    * (its `Amount` is the only authority, never the caller's), re-checks conservation
    * (`sum(splits) + remainder === Amount` exactly, in cents), re-reads EVERY TARGET BOOKING'S
-   * OWN LIVE OUTSTANDING (`getHouseholdDetail`'s `expected - paidTotal`) and refuses any split that
+   * OWN LIVE OUTSTANDING (`getHouseholdDetail`'s `outstandingCents`) and refuses any split that
    * would exceed it, resolves the household by pet-id MEMBERSHIP rather than `AccountId` equality
    * (an account id is the household's lexicographically-first pet and moves when a pet is added —
    * see its own doc comment), and writes the whole thing as one `db.batch` so a partially-applied

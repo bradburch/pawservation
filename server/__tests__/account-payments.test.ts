@@ -75,7 +75,11 @@ describe('account payments (repo)', () => {
 
     // The household balance reflects the $400 exactly once: 8 × $50 owed, $400 received.
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(balance).toMatchObject({ expectedTotal: 40000, paidTotal: 40000, balance: 0 });
+    expect(balance).toMatchObject({
+      expectedTotalCents: 40000,
+      paidTotalCents: 40000,
+      balanceCents: 0,
+    });
   });
 
   it('adds to whatever was already paid per booking, never replacing it', async () => {
@@ -92,7 +96,11 @@ describe('account payments (repo)', () => {
     });
     await accountPayment(env, TENANT_C, accountId, 15000);
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(balance).toMatchObject({ expectedTotal: 30000, paidTotal: 25000, balance: 5000 });
+    expect(balance).toMatchObject({
+      expectedTotalCents: 30000,
+      paidTotalCents: 25000,
+      balanceCents: 5000,
+    });
   });
 
   it('lands on the household even when the account id names a co-owned pet', async () => {
@@ -109,7 +117,7 @@ describe('account payments (repo)', () => {
     await accountPayment(env, TENANT_C, accountId, 6000);
     const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(households).toHaveLength(1); // still one household, one balance
-    expect(households[0]).toMatchObject({ paidTotal: 6000, balance: 4000 });
+    expect(households[0]).toMatchObject({ paidTotalCents: 6000, balanceCents: 4000 });
   });
 
   it('leaves a household that has only prepaid in credit, with no booking yet', async () => {
@@ -117,7 +125,11 @@ describe('account payments (repo)', () => {
     const { accountId } = await household(env, raw);
     await accountPayment(env, TENANT_C, accountId, 20000);
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(balance).toMatchObject({ expectedTotal: 0, paidTotal: 20000, balance: -20000 });
+    expect(balance).toMatchObject({
+      expectedTotalCents: 0,
+      paidTotalCents: 20000,
+      balanceCents: -20000,
+    });
   });
 
   it('refuses an account id belonging to another tenant, and stays invisible to it', async () => {
@@ -132,7 +144,7 @@ describe('account payments (repo)', () => {
     // TENANT_B has households of its own (seed.sql), and not a dollar of C's money is in them.
     const otherTenant = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_B);
     expect(otherTenant.some((h) => h.accountId === accountId)).toBe(false);
-    expect(otherTenant.reduce((sum, h) => sum + h.paidTotal, 0)).toBe(0);
+    expect(otherTenant.reduce((sum, h) => sum + h.paidTotalCents, 0)).toBe(0);
   });
 
   it('deleting a household payment is tenant-scoped and needs the matching account id', async () => {

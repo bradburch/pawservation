@@ -7,7 +7,7 @@ import { CsvImportPanel } from '../CsvImportPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
-import { formatFriendlyDate } from '../../../src/shared/index.js';
+import { formatCents, formatFriendlyDate } from '../../../src/shared/index.js';
 import { Hint } from '../Hint';
 
 const NO_PAYMENTS = 'No payments recorded yet.';
@@ -71,8 +71,9 @@ function monthLabel(month: string): string {
  * charges stay attributed to that booking — a cancellation fee never reads as part of some other
  * stay — and a household-level payment is listed on its own, never pinned to whichever booking
  * happened to be open. Fetches independently of the summary row above it: the server's own
- * `expectedTotal`/`paidTotal`/`balance` are printed here too, so there is nothing for a reader to
- * add up that the server hasn't already added up identically.
+ * `expectedTotalCents`/`paidTotalCents`/`balanceCents` are printed here too — and each booking's
+ * own `outstandingCents` — so there is nothing for a reader to add up, or subtract, that the
+ * server hasn't already computed identically.
  */
 function HouseholdDetailPanel({ session, accountId }: { session: Session; accountId: string }) {
   const [detail, setDetail] = useState<HouseholdDetail | null>(null);
@@ -103,14 +104,19 @@ function HouseholdDetailPanel({ session, accountId }: { session: Session; accoun
             <li key={b.bookingId}>
               {b.serviceType} ({formatFriendlyDate(b.startDate)}) — {b.status}
               <br />
-              {b.status === 'cancelled' && b.cost > 0
-                ? `$${b.cost} cancellation fee`
-                : `$${b.cost}`}
-              {b.chargesTotal > 0 &&
-                ` + $${b.chargesTotal} extras (${b.charges.map((c) => `${c.label} $${c.amount}`).join(', ')})`}
-              {' — paid $'}
-              {b.paidTotal}
-              {b.paidTotal === 0 && b.expected > 0 && (
+              {b.status === 'cancelled' && b.costCents > 0
+                ? `${formatCents(b.costCents)} cancellation fee`
+                : formatCents(b.costCents)}
+              {b.chargesTotalCents > 0 &&
+                ` + ${formatCents(b.chargesTotalCents)} extras (${b.charges
+                  .map((c) => `${c.label} ${formatCents(c.amountCents)}`)
+                  .join(', ')})`}
+              {` — paid ${formatCents(b.paidTotalCents)}`}
+              {/* WHAT THIS STAY STILL OWES, printed as the server computed it (`outstandingCents`)
+                  rather than subtracted here: the sitter reading a disputed line sees the same
+                  figure the attribution guard enforces, because it IS that figure. */}
+              {b.outstandingCents > 0 && `, ${formatCents(b.outstandingCents)} still owing`}
+              {b.paidTotalCents === 0 && b.expectedCents > 0 && (
                 <span className="pb-hint"> — nothing recorded against this booking</span>
               )}
             </li>
@@ -123,7 +129,7 @@ function HouseholdDetailPanel({ session, accountId }: { session: Session; accoun
           <ul>
             {detail.householdPayments.map((p) => (
               <li key={p.id}>
-                ${p.amount} via {p.method} on {formatFriendlyDate(p.paidDate)}
+                {formatCents(p.amountCents)} via {p.method} on {formatFriendlyDate(p.paidDate)}
                 {p.note ? ` — ${p.note}` : ''}
               </li>
             ))}
@@ -400,12 +406,13 @@ export function EarningsView({
               <span className="pb-truncate-block" title={householdName(h)}>
                 <span className="pb-truncate">{householdName(h)}</span>
                 <br />
-                {h.balance > 0
-                  ? `owes $${h.balance}`
-                  : h.balance < 0
-                    ? `in credit $${-h.balance}`
+                {h.balanceCents > 0
+                  ? `owes ${formatCents(h.balanceCents)}`
+                  : h.balanceCents < 0
+                    ? `in credit ${formatCents(-h.balanceCents)}`
                     : 'settled up'}{' '}
-                (paid ${h.paidTotal} of ${h.expectedTotal} across {h.bookingIds.length} booking
+                (paid {formatCents(h.paidTotalCents)} of {formatCents(h.expectedTotalCents)} across{' '}
+                {h.bookingIds.length} booking
                 {h.bookingIds.length === 1 ? '' : 's'})
               </span>
               {/* RECORD ONE PAYMENT FOR THE WHOLE HOUSEHOLD (0011). This is the affordance the

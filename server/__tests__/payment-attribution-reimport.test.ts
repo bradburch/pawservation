@@ -201,7 +201,7 @@ describe('re-import of the source file after attribution', () => {
 
     expect(ledger(raw)).toEqual(before);
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotal).toBe(15000); // cents
+    expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotalCents).toBe(15000); // cents
   });
 
   it('creates nothing through the CSV importer, on an overlapping later export', async () => {

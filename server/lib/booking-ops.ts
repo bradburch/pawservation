@@ -1521,19 +1521,23 @@ export async function listMyBookings(
 // ─── The customer's own account balance ──────────────────────────────────────
 
 /**
- * The shape `getHouseholdDetail` returns for the admin drill-down, with every money field named
- * in cents (see below) and `accountId` widened to `null`: a caller with no live pet at all holds
- * no edge in the owner<->pet graph
+ * The shape `getHouseholdDetail` returns for the admin drill-down, with `accountId` widened to
+ * `null`: a caller with no live pet at all holds no edge in the owner<->pet graph
  * (`buildAccounts`), so no household names them — genuinely "nothing owed" rather than a lookup
  * failure, the same distinction `MatchClient.accountId` draws for the Venmo importer's first-ever
  * payment.
+ *
+ * THE WIDENING IS NOW THE ONLY DIFFERENCE. `HouseholdDetailRow`'s own money fields name their unit
+ * (design spec §2), so this type restates them rather than renaming them, and
+ * `toMyAccountBalance` below is a field-for-field passthrough — nothing is converted any more,
+ * which is why it no longer calls itself a conversion. Kept as its own type all the same: it is the CUSTOMER's
+ * published statement, and a field added to the sitter's row should have to be added here on
+ * purpose rather than arrive on a pet owner's wire by structural accident.
  */
 export type MyAccountBalance = {
   accountId: string | null;
-  /** Every money field is CENTS and says so (design spec §2). The names are the ONLY thing that
-   *  differs from `HouseholdDetailRow`, whose fields carry the same cents under dollar-era names
-   *  — this payload is renamed here rather than in the shared row because the sitter-side
-   *  drill-down that reads the same row is a separate surface with its own rename. */
+  /** Every money field is CENTS and says so (design spec §2), matching `HouseholdDetailRow`
+   *  field for field. */
   bookings: {
     bookingId: string;
     serviceType: string;
@@ -1545,6 +1549,10 @@ export type MyAccountBalance = {
     chargesTotalCents: number;
     paidTotalCents: number;
     expectedCents: number;
+    /** What THIS stay still owes: `max(0, expectedCents − paidTotalCents)`, the server's own
+     *  figure (`bookingOutstanding`, server/db/repo.ts) rather than a subtraction the client makes.
+     *  A payment recorded against the HOUSEHOLD lowers `balanceCents` and leaves this alone. */
+    outstandingCents: number;
   }[];
   householdPayments: {
     id: string;
@@ -1559,13 +1567,18 @@ export type MyAccountBalance = {
 };
 
 /**
- * `HouseholdDetailRow` (cents, dollar-era field names) → the customer's statement (cents, named
- * so). Arithmetic-free on purpose: every figure is carried across verbatim, so this rename can
- * neither round a balance nor recompute one. The admin drill-down reads the SAME row through
- * `householdDetailToDollars`; both are pure renamings of one computation, which is what keeps the
- * two statements from drifting on anything but the field name.
+ * `HouseholdDetailRow` → the customer's statement. Arithmetic-free, and now name-for-name as well:
+ * the sitter's drill-down (`GET /:slug/admin/accounts/:accountId`) serves the very same row, so
+ * the two statements are one computation published twice rather than two that agree.
+ *
+ * Written out field by field rather than spread, so adding a field to the sitter's row is a
+ * DECISION to publish it to pet owners too, not an accident of structural typing — the widened
+ * `accountId` is the only thing this function actually changes.
  */
-function accountToCents(accountId: string | null, detail: HouseholdDetailRow): MyAccountBalance {
+function toMyAccountBalance(
+  accountId: string | null,
+  detail: HouseholdDetailRow,
+): MyAccountBalance {
   return {
     accountId,
     bookings: detail.bookings.map((b) => ({
@@ -1574,22 +1587,23 @@ function accountToCents(accountId: string | null, detail: HouseholdDetailRow): M
       startDate: b.startDate,
       endDate: b.endDate,
       status: b.status,
-      costCents: b.cost,
-      charges: b.charges.map((c) => ({ id: c.id, label: c.label, amountCents: c.amount })),
-      chargesTotalCents: b.chargesTotal,
-      paidTotalCents: b.paidTotal,
-      expectedCents: b.expected,
+      costCents: b.costCents,
+      charges: b.charges.map((c) => ({ id: c.id, label: c.label, amountCents: c.amountCents })),
+      chargesTotalCents: b.chargesTotalCents,
+      paidTotalCents: b.paidTotalCents,
+      expectedCents: b.expectedCents,
+      outstandingCents: b.outstandingCents,
     })),
     householdPayments: detail.householdPayments.map((p) => ({
       id: p.id,
-      amountCents: p.amount,
+      amountCents: p.amountCents,
       method: p.method,
       paidDate: p.paidDate,
       note: p.note,
     })),
-    expectedTotalCents: detail.expectedTotal,
-    paidTotalCents: detail.paidTotal,
-    balanceCents: detail.balance,
+    expectedTotalCents: detail.expectedTotalCents,
+    paidTotalCents: detail.paidTotalCents,
+    balanceCents: detail.balanceCents,
   };
 }
 
@@ -1643,5 +1657,5 @@ export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyA
     tenant.Id,
     endUserId,
   );
-  return ok(detail ? accountToCents(accountId, detail) : emptyAccount(accountId));
+  return ok(detail ? toMyAccountBalance(accountId, detail) : emptyAccount(accountId));
 }

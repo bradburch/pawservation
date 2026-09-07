@@ -47,9 +47,9 @@ describe('buildHouseholdBalances (pure)', () => {
       accountId: 'p_rex',
       ownerIds: ['o_jen', 'o_sam'],
       bookingIds: ['b1', 'b2'],
-      expectedTotal: 35000,
-      paidTotal: 4000,
-      balance: 31000,
+      expectedTotalCents: 35000,
+      paidTotalCents: 4000,
+      balanceCents: 31000,
     });
   });
 
@@ -63,7 +63,7 @@ describe('buildHouseholdBalances (pure)', () => {
       ],
     });
     expect(households.map((h) => h.accountId)).toEqual(['p_rex']);
-    expect(households[0].balance).toBe(15000);
+    expect(households[0].balanceCents).toBe(15000);
   });
 
   it('never nets one household against another', () => {
@@ -74,7 +74,7 @@ describe('buildHouseholdBalances (pure)', () => {
         { bookingId: 'b2', ownerId: 'o_ana', petIds: ['p_mia'], expected: 0, paid: 10000 },
       ],
     });
-    expect(households.map((h) => [h.accountId, h.balance])).toEqual([
+    expect(households.map((h) => [h.accountId, h.balanceCents])).toEqual([
       ['p_mia', -10000],
       ['p_rex', 10000],
     ]);
@@ -86,7 +86,7 @@ describe('buildHouseholdBalances (pure)', () => {
       links,
       bookings: [{ bookingId: 'b1', ownerId: null, petIds: ['p_rex'], expected: 8000, paid: 0 }],
     });
-    expect(households).toMatchObject([{ accountId: 'p_rex', balance: 8000 }]);
+    expect(households).toMatchObject([{ accountId: 'p_rex', balanceCents: 8000 }]);
     expect(unattachedBookingIds).toEqual([]);
   });
 
@@ -98,7 +98,7 @@ describe('buildHouseholdBalances (pure)', () => {
       ],
     });
     expect(households.filter((h) => h.bookingIds.includes('b1'))).toHaveLength(1);
-    expect(households.reduce((sum, h) => sum + h.expectedTotal, 0)).toBe(9000);
+    expect(households.reduce((sum, h) => sum + h.expectedTotalCents, 0)).toBe(9000);
   });
 
   it('surfaces a booking that belongs to no household rather than dropping its money', () => {
@@ -125,7 +125,9 @@ describe('buildHouseholdBalances (pure)', () => {
       ],
       payments: [{ accountId: 'p_rex', amount: 40000 }],
     });
-    expect(households).toMatchObject([{ expectedTotal: 40000, paidTotal: 40000, balance: 0 }]);
+    expect(households).toMatchObject([
+      { expectedTotalCents: 40000, paidTotalCents: 40000, balanceCents: 0 },
+    ]);
   });
 
   it('resolves a household payment stored against any pet of the household', () => {
@@ -139,7 +141,9 @@ describe('buildHouseholdBalances (pure)', () => {
       bookings: [],
       payments: [{ accountId: 'p_zed', amount: 7500 }],
     });
-    expect(households).toMatchObject([{ accountId: 'p_rex', paidTotal: 7500, balance: -7500 }]);
+    expect(households).toMatchObject([
+      { accountId: 'p_rex', paidTotalCents: 7500, balanceCents: -7500 },
+    ]);
   });
 
   it('surfaces a household payment that resolves to no household', () => {
@@ -238,9 +242,9 @@ describe('getHouseholdBalances (repo)', () => {
     expect(households).toHaveLength(1);
     expect(households[0]).toMatchObject({
       accountId: rex,
-      expectedTotal: 16000,
-      paidTotal: 4000,
-      balance: 12000,
+      expectedTotalCents: 16000,
+      paidTotalCents: 4000,
+      balanceCents: 12000,
     });
     expect(households[0].owners.map((o) => o.email).sort()).toEqual([
       'jen@example.com',
@@ -265,7 +269,11 @@ describe('getHouseholdBalances (repo)', () => {
     });
     await pay(env, TENANT_C, bookingId, 20000);
     const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(household).toMatchObject({ expectedTotal: 14500, paidTotal: 20000, balance: -5500 });
+    expect(household).toMatchObject({
+      expectedTotalCents: 14500,
+      paidTotalCents: 20000,
+      balanceCents: -5500,
+    });
   });
 
   it('bills a cancelled booking for its assessed fee, and a declined one for nothing', async () => {
@@ -293,7 +301,11 @@ describe('getHouseholdBalances (repo)', () => {
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined');
     const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     // $30 owed on the cancellation, nothing owed on the declined request, $25 of her money held.
-    expect(household).toMatchObject({ expectedTotal: 3000, paidTotal: 2500, balance: 500 });
+    expect(household).toMatchObject({
+      expectedTotalCents: 3000,
+      paidTotalCents: 2500,
+      balanceCents: 500,
+    });
   });
 
   it('holds a balance that is not a whole number of dollars — the point of the unit', async () => {
@@ -302,8 +314,9 @@ describe('getHouseholdBalances (repo)', () => {
     // the household's balance was wrong by the difference, permanently. $250 owed less $87.50 paid
     // is $162.50 — 16250 cents, exactly, with no rounding anywhere in the expression.
     //
-    // Seeded through the repo rather than through the payment route on purpose: the WIRE is still
-    // whole dollars in this commit, so the route could not carry 87.50 yet. The ledger can.
+    // Seeded through the repo rather than through the payment route only because this case is
+    // about the LEDGER's unit; the wire carries the same figure now, named `balanceCents` (see the
+    // earnings-payload cases below).
     const { env, raw } = createTestEnv();
     const ana = await insertInvitedCustomer(
       env.PAWSERVATION_DB,
@@ -319,7 +332,11 @@ describe('getHouseholdBalances (repo)', () => {
     });
     await pay(env, TENANT_C, bookingId, 8750);
     const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(household).toMatchObject({ expectedTotal: 25000, paidTotal: 8750, balance: 16250 });
+    expect(household).toMatchObject({
+      expectedTotalCents: 25000,
+      paidTotalCents: 8750,
+      balanceCents: 16250,
+    });
   });
 
   it('is tenant-isolated', async () => {
@@ -363,11 +380,14 @@ describe('household balances on the earnings payload', () => {
     const payload = serializeAnalytics(
       await getAnalytics(env.PAWSERVATION_DB, TENANT_C, '2026-07-15'),
     );
-    expect(payload.households.map((h) => [h.accountId, h.balance])).toEqual([
-      [mia, -100],
-      [rex, 100],
+    // CENTS on the wire, named so — the row `getHouseholdBalances` computed, published verbatim.
+    expect(payload.households.map((h) => [h.accountId, h.balanceCents])).toEqual([
+      [mia, -10000],
+      [rex, 10000],
     ]);
     // The tiles keep their own rule: a debt and a credit of equal size are NOT a settled book.
+    // They are still WHOLE DOLLARS — the rest of this payload moves in the analytics task, and
+    // nothing here adds a tile to a household figure.
     expect(payload.tiles.outstandingTotal).toBe(100);
     expect(payload.tiles.creditTotal).toBe(100);
   });
@@ -395,9 +415,9 @@ describe('household balances on the earnings payload', () => {
         petIds: string[];
         anchorPetIds: string[];
         bookingIds: string[];
-        expectedTotal: number;
-        paidTotal: number;
-        balance: number;
+        expectedTotalCents: number;
+        paidTotalCents: number;
+        balanceCents: number;
       }[];
     };
     expect(body.households).toEqual([
@@ -408,10 +428,38 @@ describe('household balances on the earnings payload', () => {
         // Empty until one of this household's pets dies holding a payment filed under its id.
         anchorPetIds: [],
         bookingIds: [bookingId],
-        expectedTotal: 100,
-        paidTotal: 25,
-        balance: 75,
+        expectedTotalCents: 10000,
+        paidTotalCents: 2500,
+        balanceCents: 7500,
       },
     ]);
+  });
+
+  /** Every money field on the household row names its unit (design spec §2), with NO dollar-named
+   *  twin left beside it — the removal is what makes a reader who was treating one as dollars a
+   *  type error rather than a wrong number on a page. */
+  it('drops every dollar-named money field from the household row', async () => {
+    const { env, raw } = createTestEnv();
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      'jen@example.com',
+      'Jen',
+    );
+    const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
+    const bookingId = await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] });
+    // A WHOLE-dollar payment, deliberately: the rest of this payload is still divided to dollars
+    // by `centsToWholeDollars`, which THROWS on a figure that is not whole — a loud failure the
+    // analytics task removes when it moves the tiles. The household row itself is cents either way.
+    await pay(env, TENANT_C, bookingId, 2500);
+    const res = await app.request(
+      `/api/${SLUG_C}/admin/analytics`,
+      { headers: await adminHeaders(TENANT_C) },
+      env,
+    );
+    const { households } = (await res.json()) as { households: Record<string, unknown>[] };
+    for (const gone of ['expectedTotal', 'paidTotal', 'balance'])
+      expect(households[0]).not.toHaveProperty(gone);
+    expect(households[0]).toMatchObject({ paidTotalCents: 2500, balanceCents: 7500 });
   });
 });

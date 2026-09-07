@@ -67,13 +67,21 @@ describe('household credit (Story 2.3)', () => {
     await prepay(env, TENANT_C, mia, 30000);
     // No booking exists yet: pure prepayment reads as credit, not an error or a dangling reference.
     const [before] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(before).toMatchObject({ expectedTotal: 0, paidTotal: 30000, balance: -30000 });
+    expect(before).toMatchObject({
+      expectedTotalCents: 0,
+      paidTotalCents: 30000,
+      balanceCents: -30000,
+    });
 
     // The booking arrives AFTER the payment. Timing carries no meaning in the arithmetic: the same
     // subtraction runs whether the payment or the booking was recorded first.
     await book(env, TENANT_C, ana.Id, [mia], 12000);
     const [after] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(after).toMatchObject({ expectedTotal: 12000, paidTotal: 30000, balance: -18000 });
+    expect(after).toMatchObject({
+      expectedTotalCents: 12000,
+      paidTotalCents: 30000,
+      balanceCents: -18000,
+    });
   });
 
   it('draws the credit down automatically as more bookings are added, with no reconciliation step', async () => {
@@ -88,12 +96,14 @@ describe('household credit (Story 2.3)', () => {
     await prepay(env, TENANT_C, mia, 30000);
 
     await book(env, TENANT_C, ana.Id, [mia], 10000);
-    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balance).toBe(-20000);
+    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balanceCents).toBe(
+      -20000,
+    );
 
     // A second booking pushes the household from credit into owing money — same computation, no
     // special-cased "apply the credit" call anywhere in between.
     await book(env, TENANT_C, ana.Id, [mia], 25000);
-    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balance).toBe(5000);
+    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balanceCents).toBe(5000);
   });
 
   it('never lets a household in credit read as owing money in a filtered outstanding list', async () => {
@@ -119,7 +129,7 @@ describe('household credit (Story 2.3)', () => {
     const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     // Any "who owes me money" list is built by filtering this same server-computed balance, never a
     // second money rule — so a credit household filters itself out by the sign of its own balance.
-    const outstanding = households.filter((h) => h.balance > 0);
+    const outstanding = households.filter((h) => h.balanceCents > 0);
     expect(outstanding.map((h) => h.accountId)).toEqual([rex]);
     expect(outstanding.some((h) => h.accountId === mia)).toBe(false);
   });

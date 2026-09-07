@@ -18,6 +18,7 @@ type AccountBody = {
     costCents: number;
     expectedCents: number;
     paidTotalCents: number;
+    outstandingCents: number;
   }[];
   householdPayments: { id: string; amountCents: number }[];
   expectedTotalCents: number;
@@ -84,11 +85,64 @@ describe('GET /:slug/account', () => {
     const body = (await res.json()) as AccountBody;
     expect(body).toMatchObject({
       accountId: rex,
-      bookings: [{ bookingId, costCents: 10000, expectedCents: 10000, paidTotalCents: 2500 }],
+      bookings: [
+        {
+          bookingId,
+          costCents: 10000,
+          expectedCents: 10000,
+          paidTotalCents: 2500,
+          // What this ONE stay still owes, said by the server — the customer subtracts nothing.
+          outstandingCents: 7500,
+        },
+      ],
       expectedTotalCents: 10000,
       paidTotalCents: 2500,
       balanceCents: 7500,
     });
+  });
+
+  /**
+   * A HOUSEHOLD-LEVEL PAYMENT LOWERS THE BALANCE AND LEAVES THE STAY WHERE IT WAS. The customer's
+   * statement carries the same attribution semantics as the sitter's (0011): money paid against
+   * the household covers no particular stay until she says which, so `outstandingCents` on the
+   * booking is unmoved while `balanceCents` falls by the whole payment.
+   */
+  it('does not let a household payment reduce any one booking outstanding', async () => {
+    const { env, raw } = createTestEnv();
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jen@example.com',
+      'Jen',
+    );
+    const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_hh', petType: 'dog' }]);
+    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 25000);
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
+      bookingRequestId: bookingId,
+      amount: 8750,
+      method: 'venmo',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    });
+    await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
+      accountId: rex,
+      amount: 10000,
+      method: 'venmo',
+      paidDate: '2026-07-02',
+      note: null,
+      externalRef: null,
+    });
+    const token = await endUserToken(env, 'sunny-paws', 'jen@example.com');
+
+    const res = await app.request(
+      '/api/sunny-paws/account',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    const body = (await res.json()) as AccountBody;
+    expect(body.bookings[0]).toMatchObject({ paidTotalCents: 8750, outstandingCents: 16250 });
+    expect(body.balanceCents).toBe(6250);
   });
 
   /** The statement says its unit (design spec §2): every money field is `*Cents`, and the
@@ -125,7 +179,15 @@ describe('GET /:slug/account', () => {
     };
     expect(body).toMatchObject({
       accountId: rex,
-      bookings: [{ bookingId, costCents: 10050, expectedCents: 10050, paidTotalCents: 2550 }],
+      bookings: [
+        {
+          bookingId,
+          costCents: 10050,
+          expectedCents: 10050,
+          paidTotalCents: 2550,
+          outstandingCents: 7500,
+        },
+      ],
       expectedTotalCents: 10050,
       paidTotalCents: 2550,
       balanceCents: 7500,
@@ -136,6 +198,7 @@ describe('GET /:slug/account', () => {
     expect(body.bookings[0].cost).toBeUndefined();
     expect(body.bookings[0].expected).toBeUndefined();
     expect(body.bookings[0].paidTotal).toBeUndefined();
+    expect(body.bookings[0]).not.toHaveProperty('outstanding');
   });
 
   it('gives a prepaying caller a NEGATIVE balance, not an error (mirrors Story 2.3)', async () => {

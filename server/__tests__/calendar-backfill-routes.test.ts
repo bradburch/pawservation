@@ -545,7 +545,8 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     );
 
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
-    const beforeTotal = before.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotal ?? 0;
+    const beforeTotal =
+      before.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotalCents ?? 0;
 
     const res = await runImport(env, [{ eventId: 'ev_bella_cancelled' }]);
     expect(res.status).toBe(200);
@@ -556,7 +557,8 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(row).toMatchObject({ Status: 'cancelled', EstCost: 2000, CancellationFee: 2000 });
 
     const after = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
-    const afterTotal = after.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotal ?? 0;
+    const afterTotal =
+      after.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotalCents ?? 0;
     // Before the fix this delta was 0: insertBackfilledBooking never set CancellationFee, so a
     // cancelled row's price was invisible to BASE_AMOUNT_SQL no matter what EstCost held.
     expect(afterTotal - beforeTotal).toBe(2000); // cents (0015): $20

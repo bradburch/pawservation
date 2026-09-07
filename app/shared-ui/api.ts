@@ -587,9 +587,10 @@ export type AnalyticsPayload = {
    * invoice number (two customers who share a single pet are one household), summed as
    * `Σ(booking costs + charges) − Σ(payments)` across every booking of that household.
    *
-   * Every figure arrives computed. The client adds nothing up: `balance` is money, money is
-   * server-side, and a total re-derived in the browser is a total that can disagree with the one
-   * the server would have printed. Negative `balance` = the household is in credit.
+   * Every figure arrives computed, in CENTS and named so (design spec §2). The client adds nothing
+   * up: `balanceCents` is money, money is server-side, and a total re-derived in the browser is a
+   * total that can disagree with the one the server would have printed. Negative `balanceCents` =
+   * the household is in credit.
    */
   households: {
     accountId: string;
@@ -600,9 +601,9 @@ export type AnalyticsPayload = {
      *  stays on this balance. Not part of the household's pets; never rendered as one. */
     anchorPetIds: string[];
     bookingIds: string[];
-    expectedTotal: number;
-    paidTotal: number;
-    balance: number;
+    expectedTotalCents: number;
+    paidTotalCents: number;
+    balanceCents: number;
   }[];
   /**
    * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — the pet whose id the payment was filed under
@@ -616,9 +617,10 @@ export type AnalyticsPayload = {
 
 /**
  * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — mirrors `HouseholdDetailRow` in
- * `server/types.ts`. `expectedTotal`/`paidTotal`/`balance` are the same numbers the household row
- * in `AnalyticsPayload.households` already carries, repeated here so the detail view reconciles to
- * itself without the caller having to keep the summary row around.
+ * `server/types.ts`, field for field, in CENTS. `expectedTotalCents`/`paidTotalCents`/`balanceCents`
+ * are the same numbers the household row in `AnalyticsPayload.households` already carries, repeated
+ * here so the detail view reconciles to itself without the caller having to keep the summary row
+ * around.
  */
 export type HouseholdDetail = {
   accountId: string;
@@ -629,22 +631,26 @@ export type HouseholdDetail = {
     /** Exclusive checkout for a range-shaped stay; NULL for a single-day service. */
     endDate: string | null;
     status: string;
-    cost: number;
-    charges: { id: string; label: string; amount: number }[];
-    chargesTotal: number;
-    paidTotal: number;
-    expected: number;
+    costCents: number;
+    charges: { id: string; label: string; amountCents: number }[];
+    chargesTotalCents: number;
+    paidTotalCents: number;
+    expectedCents: number;
+    /** What this booking STILL OWES, `max(0, expectedCents − paidTotalCents)` as the server
+     *  computed it — never subtracted here. Zero, not negative, on an over-paid stay; a payment
+     *  recorded against the household lowers `balanceCents` and leaves this alone. */
+    outstandingCents: number;
   }[];
   householdPayments: {
     id: string;
-    amount: number;
+    amountCents: number;
     method: string;
     paidDate: string;
     note: string | null;
   }[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
 
 export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';
