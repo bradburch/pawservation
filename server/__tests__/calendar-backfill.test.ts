@@ -1158,4 +1158,29 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
     expect(out).toMatchObject({ kind: 'needs-price', startDate: '2026-07-17' });
     expect(out).not.toHaveProperty('estCost');
   });
+
+  it('refuses an absurd description Cost: instead of throwing out of the classifier', () => {
+    // `Cost:` is free text in the sitter's own calendar and `parseEventDescription` accepts ANY
+    // run of digits, so nothing upstream bounds it. Under 'total' the figure used to be adopted
+    // exactly as typed and handed straight to `dollarsToCents`, which throws a RangeError — out of
+    // `classifyEvent`, out of the preview route, taking every other event on that calendar with
+    // it, because of one line in one description. Both widths matter: fifteen digits is a safe
+    // integer of DOLLARS whose cents are not (so the conversion succeeds and stores an inexact
+    // number), eighteen is unsafe on its own (so the conversion throws). Both are the same
+    // answer — needs-price, with no cost field invented.
+    for (const digits of ['999999999999999', '999999999999999999']) {
+      const out = classifyEvent(
+        event({
+          summary: 'Sadie Boarding',
+          description: `Cost: ${digits}`,
+          start: '2026-07-17',
+          end: '2026-07-20',
+          allDay: true,
+        }),
+        rangeCtx('boarding', 'Boarding', 'total'),
+      );
+      expect(out).toMatchObject({ kind: 'needs-price', startDate: '2026-07-17' });
+      expect(out).not.toHaveProperty('estCost');
+    }
+  });
 });

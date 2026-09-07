@@ -110,11 +110,13 @@ export type TenantService = {
   PetRateMode: PetRateMode;
   /**
    * Extra-time surcharge config (0009), all nullable and each SIDE needing both its time and its
-   * fee — NULL anywhere = the feature is off, the `HolidayRate` convention. The two fees are FLAT
-   * whole dollars charged at most once PER STAY, never per hour and never per day, and never part of
-   * `EstCost`: the fee is a `BookingCharges` row, so `estimateCost` stays "units of time × a stored
-   * rate". They are RATES the sitter typed, so 0015 left them in DOLLARS; `extraTimeSurcharges`
-   * converts to cents on its way to `BookingCharges.Amount`. See `server/lib/booking-times.ts`.
+   * fee — NULL anywhere = the feature is off, the `HolidayRate` convention. Each fee is FLAT and
+   * applies at most once PER STAY, never per hour and never per day, and never as part of
+   * `EstCost`: it becomes a `BookingCharges` row, so `estimateCost` stays "units of time × a
+   * stored rate". TWO UNITS meet here and both matter: the fee STORED in these columns is a RATE
+   * the sitter typed, so 0015 left it in WHOLE DOLLARS, while the CHARGE it produces is INTEGER
+   * CENTS like every other `BookingCharges.Amount` — `extraTimeSurcharges` is the ×100 between
+   * them. See `server/lib/booking-times.ts`.
    */
   StandardArrivalTime: string | null;
   StandardDepartureTime: string | null;

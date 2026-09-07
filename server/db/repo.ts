@@ -50,8 +50,12 @@ import { DEMO_EMAIL } from '../lib/demo';
  * `Payments.Amount`; every function here takes them in cents and returns them in cents, and no
  * expression below scales anything. RATES a sitter types are the exception and stay whole dollars
  * (`TenantServices.*Rate`, `HolidayRate`, `EarlyArrivalFee`, `LateDepartureFee`, the pet-set rate
- * tables) — `estimateCost` is the single place a rate becomes a cost. Dividing back for the wire
- * happens in the ROUTES and in `server/lib`'s serializers, never here.
+ * tables) — `estimateCost` is the single place a rate becomes a cost. NOTHING divides these
+ * figures back: a stored amount reaches the wire as cents in a `*Cents` field and is formatted for
+ * display (`formatCents`) in the client. The `centsToWholeDollars` calls left in `server/` all
+ * divide a FRESH `dollarsToCents` result, never a column read here — availability's retained
+ * whole-dollar `estCost` twin, `booking-ops`' extra-time twin, and the backfill preview's
+ * classifier output.
  */
 
 const TENANT_COLS =
@@ -2384,7 +2388,8 @@ const PAYMENTS_JOIN_SQL = `LEFT JOIN (
          FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
        ) paid ON paid.BookingRequestId = b.Id`;
 
-/** How much this booking is over-paid by, in cents; the Earnings page divides it back for display. */
+/** How much this booking is over-paid by, in CENTS; the Earnings page renders it with
+ *  `formatCents` — nothing divides it back. */
 const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`;
 
 /**
@@ -2436,7 +2441,8 @@ export const TIP_LABEL = 'Tip';
 
 export type KeepCreditResult =
   /** `amount` is CENTS (0015) — computed by `CREDIT_AMOUNT_SQL` and returned by the INSERT, so it
-   *  is the same unit as the credit the Earnings page displays. The route divides it back. */
+   *  is the same unit as the credit the Earnings page displays. The route publishes it unchanged
+   *  as `keptCents`; nothing divides it back. */
   { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };
 
 /**

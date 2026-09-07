@@ -569,12 +569,21 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
     // A range span yielding no whole night is broken data, not a $0 stay, and whole-dollar
     // arithmetic that has left the exact-integer range is not money anyone can be billed. Neither
     // is adoptable, and neither is roundable: hand both to the sitter as needs-price — the same
-    // arm an unpriced pet set takes — rather than write a number nobody charged. Only the
-    // multiplying path can manufacture those: under 'total' the figure is adopted as typed, and
-    // the sitter's own stated total on an odd span is still the total she stated.
+    // arm an unpriced pet set takes — rather than write a number nobody charged.
+    //
+    // The BROKEN-SPAN half is per-night-only: under 'total' the sitter's own stated total on an
+    // odd span is still the total she stated. The SAFE-INTEGER half is not, and used to be. `Cost:`
+    // is free text in a sitter's own calendar and `parseEventDescription` accepts any run of
+    // digits, so under 'total' a fifteen-digit line was adopted exactly as typed and reached
+    // `dollarsToCents` unguarded — a `RangeError` thrown straight out of `classifyEvent`, which
+    // 500s the whole preview and takes every other event on that calendar down with it, over one
+    // absurd line in one description. The ×100 is checked as well as the figure, because a safe
+    // integer of dollars can be an unsafe integer of cents.
+    const brokenSpan = perNight && (!Number.isSafeInteger(nights) || nights < 1);
     if (
-      perNight &&
-      (!Number.isSafeInteger(nights) || nights < 1 || !Number.isSafeInteger(totalDollars))
+      brokenSpan ||
+      !Number.isSafeInteger(totalDollars) ||
+      !Number.isSafeInteger(totalDollars * 100)
     ) {
       return needsPrice();
     }

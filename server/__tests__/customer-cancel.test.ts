@@ -67,7 +67,8 @@ async function seedBooking(
     endDate: addDays(start, over.nights ?? 2),
     optionKey: 'standard',
     petCount: 1,
-    // CENTS (0015) — a repo seed writes the column. Route responses below stay whole dollars.
+    // CENTS (0015) — a repo seed writes the column, and the cancel route answers in the SAME
+    // unit (`cancellationFeeCents` below).
     estCost: over.estCost === undefined ? 20000 : over.estCost,
     status: over.status ?? 'confirmed',
   });

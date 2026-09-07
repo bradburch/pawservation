@@ -393,7 +393,8 @@ describe('GET /:slug/admin/accounts/:accountId (route)', () => {
       'Jen',
     );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
-    // Seeded through the repo, so in CENTS (0015); the RESPONSE below is whole dollars, unchanged.
+    // Seeded through the repo, so in CENTS (0015) — and the RESPONSE below is the same cents,
+    // emitted verbatim.
     const bookingId = await book(env, jen.Id, [rex], 10000);
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: bookingId,

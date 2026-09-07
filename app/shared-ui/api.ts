@@ -776,18 +776,23 @@ export const api = {
      */
     idempotencyKey?: string,
   ) =>
-    request<{ id: string; estCostCents: number; status: string; demo?: boolean; note?: string }>(
-      `/api/${slug}/bookings`,
-      {
-        method: 'POST',
-        headers: {
-          ...jsonHeaders,
-          ...authHeaders(token),
-          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
-        },
-        body: JSON.stringify(body),
+    request<{
+      id: string;
+      /** CENTS, and NULLABLE — matches `CreateBookingPayload` in `server/lib/booking-ops.ts`: a row
+       *  the server stamped no estimate on comes back with `null`, not `0`. */
+      estCostCents: number | null;
+      status: string;
+      demo?: boolean;
+      note?: string;
+    }>(`/api/${slug}/bookings`, {
+      method: 'POST',
+      headers: {
+        ...jsonHeaders,
+        ...authHeaders(token),
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       },
-    ),
+      body: JSON.stringify(body),
+    }),
 
   /**
    * The customer changes their own booking — dates, pets, arrival time, intake answers. There is

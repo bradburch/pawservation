@@ -349,10 +349,19 @@ export function BookTab({
         quotedCents !== null && quotedCents !== res.estCostCents
           ? ` (the estimate showed ${formatCents(quotedCents)})`
           : '';
+      // `estCostCents` is NULLABLE: a row the server stamped no estimate on comes back as `null`,
+      // not `0`. Say nothing about money in that case rather than confirming a "$0.00" booking.
+      const stamped =
+        res.estCostCents === null ? null : `${formatCents(res.estCostCents)}${changed}`;
+      const demoNote = res.note ?? 'This was a demo — no booking was created.';
       setConfirmation(
         res.demo
-          ? `Looks good! ${formatCents(res.estCostCents)}${changed}. ${res.note ?? 'This was a demo — no booking was created.'}`
-          : `Request sent! ${formatCents(res.estCostCents)}${changed} — your sitter confirms it. Track it under "My bookings".`,
+          ? stamped
+            ? `Looks good! ${stamped}. ${demoNote}`
+            : `Looks good! ${demoNote}`
+          : stamped
+            ? `Request sent! ${stamped} — your sitter confirms it. Track it under "My bookings".`
+            : `Request sent! Your sitter confirms it. Track it under "My bookings".`,
       );
       attemptKey.current = null;
       setStart('');

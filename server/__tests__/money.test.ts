@@ -46,9 +46,13 @@ describe('money', () => {
     expect(formatCents(123400)).toBe('$1,234.00');
     expect(formatCents(-1200)).toBe('-$12.00');
     expect(formatCents(5)).toBe('$0.05');
+    // Zero is a real figure on every one of these surfaces — a $0 cancellation fee, an empty
+    // month's bar, a booking with nothing owing — so both formatters are pinned at it.
+    expect(formatCents(0)).toBe('$0.00');
     expect(formatCentsPlain(4550)).toBe('45.50');
     expect(formatCentsPlain(123400)).toBe('1234.00');
     expect(formatCentsForKey(4500)).toBe('45');
     expect(formatCentsForKey(4550)).toBe('45.50');
+    expect(formatCentsForKey(0)).toBe('0');
   });
 });

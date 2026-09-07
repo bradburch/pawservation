@@ -7,7 +7,7 @@ import { CsvImportPanel } from '../CsvImportPanel';
 import { PaymentsPanel } from '../PaymentsPanel';
 import { VenmoImportPanel } from '../VenmoImportPanel';
 import type { Session } from '../shared.js';
-import { formatCents, formatFriendlyDate } from '../../../src/shared/index.js';
+import { formatCents, formatCentsForKey, formatFriendlyDate } from '../../../src/shared/index.js';
 import { Hint } from '../Hint';
 
 const NO_PAYMENTS = 'No payments recorded yet.';
@@ -162,10 +162,15 @@ function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
         return (
           <g key={m.month}>
             {/* The label only fits above a short bar. The threshold is the SAME $10,000 it always
-                was, restated in the payload's unit. */}
+                was, restated in the payload's unit. This is the ONE render that does not use
+                `formatCents`: a full "$4,250.00" is nine glyphs at fontSize 7 and overflows the
+                30-unit bar pitch, clipping at the chart's edges, so the bar caption drops the
+                grouping comma and the trailing ".00" via `formatCentsForKey` ("$4250",
+                "$4250.50"). Tiles, lists and every other figure on this page stay on
+                `formatCents`. */}
             {m.totalCents > 0 && m.totalCents < 1_000_000 && (
               <text x={x + barW / 2} y={chartH - h - 3} textAnchor="middle" fontSize="7">
-                {formatCents(m.totalCents)}
+                {`$${formatCentsForKey(m.totalCents)}`}
               </text>
             )}
             <rect x={x} y={chartH - h} width={barW} height={h} rx="2" />

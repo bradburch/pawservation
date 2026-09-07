@@ -62,7 +62,9 @@ async function seedBooking(env: Env, over: Over = {}): Promise<string> {
     optionKey: over.optionKey === undefined ? 'standard' : over.optionKey,
     petCount: over.petCount ?? (over.petIds?.length || 1),
     startTime: over.startTime ?? null,
-    // CENTS (0015) — a repo seed writes the column directly. Route bodies stay whole dollars.
+    // CENTS (0015) — a repo seed writes the column directly, and the edit route answers in the
+    // SAME unit (`estCostCents` below). The only whole-dollar figure in this file is the
+    // availability probe's retained `estCost` twin.
     estCost: over.estCost === undefined ? 15000 : over.estCost,
     status: over.status ?? 'pending',
     answers: over.answers,
