@@ -24,6 +24,20 @@ describe('cancellationFee', () => {
   it('empty tiers → 0', () => {
     expect(cancellationFee([], 200, '2028-10-10', '2028-10-10')).toBe(0);
   });
+  it('pins the whole-dollar rounding before the unit moves to cents', () => {
+    // $10 at 15% is $1.50, which the sitter's policy has always rounded to $2.
+    expect(cancellationFee([{ withinDays: 7, percent: 15 }], 10, '2026-10-10', '2026-10-08')).toBe(
+      2,
+    );
+    // $350 at 25% is $87.50, which rounds to $88.
+    expect(cancellationFee([{ withinDays: 7, percent: 25 }], 350, '2026-10-10', '2026-10-08')).toBe(
+      88,
+    );
+    // Cancelling outside every tier owes nothing.
+    expect(cancellationFee([{ withinDays: 7, percent: 15 }], 10, '2026-10-10', '2026-01-01')).toBe(
+      0,
+    );
+  });
 });
 
 describe('validateCancellationTiers', () => {
