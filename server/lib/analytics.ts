@@ -1,4 +1,3 @@
-import { centsToWholeDollars } from '../../src/shared/index.js';
 import type { AnalyticsData } from '../types';
 
 /**
@@ -6,22 +5,17 @@ import type { AnalyticsData } from '../types';
  * the owner sitter-detail view) render. Pure — no I/O. Extracted from the inline mapping that
  * used to live in the `/:slug/admin/analytics` route handler so both routes stay in lockstep.
  *
- * THIS IS THE ONE PLACE THE ANALYTICS PAYLOAD'S MONEY CHANGES UNIT. `AnalyticsData` is cents
- * throughout (0015); every arithmetic expression below — `EstCost + ChargesTotal - PaidTotal`, the
- * credit, both tile sums — is therefore single-unit integer arithmetic in CENTS, and
- * `centsToWholeDollars` is applied only at the last step, on its way out. It THROWS on a figure
- * that is not a whole number of dollars, which in this commit is the loud failure of a missed
- * conversion upstream rather than a case to round away.
+ * NO FIGURE ON THIS PAYLOAD CHANGES UNIT ANY MORE. `AnalyticsData` is cents throughout (0015) and
+ * so is everything below, named `*Cents` on the wire (design spec §2) — the tiles, the monthly and
+ * quarterly series, by-service and top-clients, the outstanding and credit lists, the household
+ * rows and the orphaned-payment totals. The dollar-named fields are REMOVED rather than kept
+ * beside their cents twins, so a reader that still means dollars is a type error rather than a
+ * 100x-wrong number on a page.
  *
- * THE HOUSEHOLD ROWS HAVE ALREADY LEFT: they are cents on the wire and named so, published
- * verbatim, so no `d()` touches them. Everything still divided below — the tiles, the monthly and
- * by-service series, the outstanding and credit lists, the orphaned-payment totals — is Task 7's,
- * and until then this payload carries both units. Nothing adds a household figure to one of them:
- * the earnings page renders each list on its own, and the `Σ households.paidTotalCents +
- * Σ orphanedPayments.total` identity is asserted against `getAnalytics`'s raw cents, never here.
+ * Every arithmetic expression here — `EstCost + ChargesTotal - PaidTotal`, the credit, both tile
+ * sums — is therefore single-unit integer arithmetic in cents, and there is no division left to
+ * lose a half-dollar to. That is the point: a client who pays $45.50 reaches this page intact.
  */
-const d = centsToWholeDollars;
-
 export function serializeAnalytics(data: AnalyticsData) {
   const outstanding = data.outstanding.map((o) => ({
     bookingId: o.BookingId,
@@ -29,12 +23,11 @@ export function serializeAnalytics(data: AnalyticsData) {
     email: o.Email,
     serviceType: o.ServiceType,
     startDate: o.StartDate,
-    estCost: d(o.EstCost),
-    chargesTotal: d(o.ChargesTotal),
-    paidTotal: d(o.PaidTotal),
+    estCostCents: o.EstCost,
+    chargesTotalCents: o.ChargesTotal,
+    paidTotalCents: o.PaidTotal,
     // Total due is the stay price (or fee) PLUS extra charges; EstCost stays the quoted price.
-    // Summed in CENTS and divided once, never as three divided terms added back together.
-    balance: d(o.EstCost + o.ChargesTotal - o.PaidTotal),
+    balanceCents: o.EstCost + o.ChargesTotal - o.PaidTotal,
     // The subquery's EstCost is aliased from CancellationFee on a cancelled row, so the UI
     // needs this flag to label the amount as a fee rather than a live booking balance. Status
     // alone is NOT enough: a fee-FREE cancellation can still be outstanding purely for its extra
@@ -45,12 +38,12 @@ export function serializeAnalytics(data: AnalyticsData) {
   }));
   /**
    * OVER-payments — money the customer no longer owes. The one place an edit's re-stamped `EstCost`
-   * can leave a client in credit becomes visible: `credit` is `paidTotal - keepable`, the same
-   * one-rule arithmetic the outstanding row's `balance` uses, read in the other direction. There is
-   * deliberately no *Record payment* affordance on these rows (see `CREDIT_WHERE_SQL`): a credit is
-   * a negative balance, not a payable one — the *resolution* affordances are `credit/keep` (the client
-   * agreed she keeps it) and correcting the payment ledger (the money went back). See
-   * `keepBookingCredit`.
+   * can leave a client in credit becomes visible: `creditCents` is `paidTotalCents - keepableCents`,
+   * the same one-rule arithmetic the outstanding row's `balanceCents` uses, read in the other
+   * direction. There is deliberately no *Record payment* affordance on these rows (see
+   * `CREDIT_WHERE_SQL`): a credit is a negative balance, not a payable one — the *resolution*
+   * affordances are `credit/keep` (the client agreed she keeps it) and correcting the payment
+   * ledger (the money went back). See `keepBookingCredit`.
    */
   const credits = data.credits.map((c) => ({
     bookingId: c.BookingId,
@@ -59,9 +52,9 @@ export function serializeAnalytics(data: AnalyticsData) {
     serviceType: c.ServiceType,
     startDate: c.StartDate,
     status: c.Status,
-    keepable: d(c.Keepable),
-    paidTotal: d(c.PaidTotal),
-    credit: d(c.PaidTotal - c.Keepable),
+    keepableCents: c.Keepable,
+    paidTotalCents: c.PaidTotal,
+    creditCents: c.PaidTotal - c.Keepable,
     /**
      * Can this credit be closed by KEEPING it (`POST /credit/keep` logs it as a charge), or only by
      * refunding it? A `'declined'` request may keep nothing at all — `CREDITABLE_AMOUNT_SQL` is 0
@@ -74,29 +67,30 @@ export function serializeAnalytics(data: AnalyticsData) {
   }));
   return {
     tiles: {
-      thisMonth: d(data.monthly.at(-1)?.Total ?? 0),
-      lastMonth: d(data.monthly.at(-2)?.Total ?? 0),
-      outstandingTotal: d(
-        data.outstanding.reduce((sum, o) => sum + o.EstCost + o.ChargesTotal - o.PaidTotal, 0),
+      thisMonthCents: data.monthly.at(-1)?.Total ?? 0,
+      lastMonthCents: data.monthly.at(-2)?.Total ?? 0,
+      outstandingTotalCents: data.outstanding.reduce(
+        (sum, o) => sum + o.EstCost + o.ChargesTotal - o.PaidTotal,
+        0,
       ),
       outstandingCount: outstanding.length,
-      // Never netted against `outstandingTotal`: one client owing $100 and another being owed $100
-      // is not a settled book, and showing $0 would say it was.
-      creditTotal: d(data.credits.reduce((sum, c) => sum + c.PaidTotal - c.Keepable, 0)),
+      // Never netted against `outstandingTotalCents`: one client owing $100 and another being owed
+      // $100 is not a settled book, and showing $0 would say it was.
+      creditTotalCents: data.credits.reduce((sum, c) => sum + c.PaidTotal - c.Keepable, 0),
     },
-    monthly: data.monthly.map((m) => ({ month: m.Month, total: d(m.Total) })),
-    ytd: d(data.ytd),
-    quarterly: data.quarterly.map((q) => ({ q: q.q, total: d(q.total) })),
+    monthly: data.monthly.map((m) => ({ month: m.Month, totalCents: m.Total })),
+    ytdCents: data.ytd,
+    quarterly: data.quarterly.map((q) => ({ q: q.q, totalCents: q.total })),
     byService: data.byService.map((s) => ({
       serviceType: s.ServiceType,
       label: s.Label,
-      total: d(s.Total),
+      totalCents: s.Total,
     })),
     topClients: data.topClients.map((t) => ({
       endUserId: t.EndUserId,
       name: t.Name,
       email: t.Email,
-      total: d(t.Total),
+      totalCents: t.Total,
       bookings: t.Bookings,
     })),
     outstanding,
@@ -105,14 +99,12 @@ export function serializeAnalytics(data: AnalyticsData) {
      * HOUSEHOLD BALANCES, PASSED THROUGH WHOLE — the row `getHouseholdBalances` computed, over the
      * same `CREDITABLE_AMOUNT_SQL` the two lists above are built from, published unchanged. There
      * is deliberately nothing to map: a balance is money, money is server-side, and a client that
-     * re-added the numbers could disagree with the page it is printed on. Its money fields name
-     * their unit (`expectedTotalCents`/`paidTotalCents`/`balanceCents`, design spec §2), so not
-     * even the unit changes here any more — the identity below is now the only mapping left, and
-     * it is a whole-dollar one until Task 7 moves the rest of this payload.
+     * re-added the numbers could disagree with the page it is printed on.
      *
-     * The tiles above are NOT rebuilt from these rows. `outstandingTotal` and `creditTotal` stay
-     * per-booking and stay un-netted: netting a debt against a credit is right WITHIN one household
-     * (that is what a statement is) and wrong across two, and the tiles speak for the whole book.
+     * The tiles above are NOT rebuilt from these rows. `outstandingTotalCents` and
+     * `creditTotalCents` stay per-booking and stay un-netted: netting a debt against a credit is
+     * right WITHIN one household (that is what a statement is) and wrong across two, and the tiles
+     * speak for the whole book.
      */
     households: data.households,
     /**
@@ -120,13 +112,14 @@ export function serializeAnalytics(data: AnalyticsData) {
      * along with its owner edges (`deleteCustomer`), leaving nothing in the database able to say
      * which household it settled. Passed through beside the balances rather than folded into one
      * of them or quietly dropped: the revenue figures above already count this money, so
-     * `Σ households.paidTotalCents + Σ orphanedPayments.total` must equal it for the page to be telling
-     * the truth. Naming an orphan out loud is the only honest option; guessing it a household is
-     * the one thing worse than losing it.
+     * `Σ households.paidTotalCents + Σ orphanedPayments.totalCents` must equal it for the page to
+     * be telling the truth — one unit on both sides, so the sum needs no conversion to be checked.
+     * Naming an orphan out loud is the only honest option; guessing it a household is the one
+     * thing worse than losing it.
      */
     orphanedPayments: data.orphanedPayments.map((o) => ({
       accountId: o.accountId,
-      total: d(o.total),
+      totalCents: o.total,
     })),
   };
 }

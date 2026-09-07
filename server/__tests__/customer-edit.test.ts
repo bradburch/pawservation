@@ -670,12 +670,12 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       )
     ).json()) as AnalyticsPayload;
     expect(earnings.credits.find((c) => c.bookingId === id)).toMatchObject({
-      credit: 150,
-      paidTotal: 250,
-      keepable: 100,
+      creditCents: 15000,
+      paidTotalCents: 25000,
+      keepableCents: 10000,
       status: 'pending',
     });
-    expect(earnings.tiles.creditTotal).toBe(150);
+    expect(earnings.tiles.creditTotalCents).toBe(15000);
     // And it is NOT also reported as owing — the two predicates are mutually exclusive.
     expect(earnings.outstanding.find((o) => o.bookingId === id)).toBeUndefined();
   });

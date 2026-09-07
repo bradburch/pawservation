@@ -37,8 +37,8 @@ const makeBooking = (
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    // CENTS (0015) — `makeBooking` seeds the column. `getAnalytics` returns cents too;
-    // `serializeAnalytics` is where the payload becomes whole dollars.
+    // CENTS (0015) — `makeBooking` seeds the column. `getAnalytics` returns cents, and so does
+    // the payload `serializeAnalytics` shapes: every money field there is named `*Cents`.
     estCost: over.estCost !== undefined ? over.estCost : 10000,
     status: over.status ?? 'confirmed',
   });
@@ -198,8 +198,8 @@ describe('getAnalytics (repo)', () => {
     expect(row.ChargesTotal).toBe(4500);
     expect(row.EstCost).toBe(10000); // the stay price itself is untouched
     expect(
-      serializeAnalytics(after).outstanding.find((o) => o.bookingId === bookingId)!.balance,
-    ).toBe(45);
+      serializeAnalytics(after).outstanding.find((o) => o.bookingId === bookingId)!.balanceCents,
+    ).toBe(4500);
   });
 
   it('a cancelled booking with a charge but NO assessed CancellationFee still appears, owing the charge', async () => {
@@ -220,8 +220,9 @@ describe('getAnalytics (repo)', () => {
     expect(row).toBeDefined();
     expect(row).toMatchObject({ EstCost: 0, ChargesTotal: 4500, PaidTotal: 0 });
     expect(
-      serializeAnalytics(analytics).outstanding.find((o) => o.bookingId === bookingId)!.balance,
-    ).toBe(45);
+      serializeAnalytics(analytics).outstanding.find((o) => o.bookingId === bookingId)!
+        .balanceCents,
+    ).toBe(4500);
   });
 
   /**
@@ -259,8 +260,17 @@ describe('getAnalytics (repo)', () => {
     // Still not outstanding, and now not silent either.
     expect(after.outstanding).toEqual([]);
     const payload = serializeAnalytics(after);
-    expect(payload.credits[0]).toMatchObject({ bookingId, credit: 150, paidTotal: 250 });
-    expect(payload.tiles.creditTotal).toBe(150);
+    expect(payload.credits[0]).toMatchObject({
+      bookingId,
+      creditCents: 15000,
+      paidTotalCents: 25000,
+      keepableCents: 10000,
+    });
+    // The dollar names are GONE, not aliased: a reader that kept treating `credit` as dollars
+    // would silently read `undefined` rather than a 100x-wrong number.
+    for (const gone of ['credit', 'paidTotal', 'keepable'])
+      expect(payload.credits[0]).not.toHaveProperty(gone);
+    expect(payload.tiles.creditTotalCents).toBe(15000);
   });
 
   it('credits: a DECLINED booking that took a deposit owes the whole deposit back', async () => {
@@ -308,7 +318,7 @@ describe('getAnalytics (repo)', () => {
       { BookingId: overpaid, Keepable: 14500, PaidTotal: 25000 },
     ]);
     expect(data.outstanding.map((o) => o.BookingId)).toEqual([partial]);
-    expect(serializeAnalytics(data).credits[0].credit).toBe(105);
+    expect(serializeAnalytics(data).credits[0].creditCents).toBe(10500);
   });
 
   it('credits are tenant-isolated, and blocked/external rows never appear', async () => {
@@ -362,27 +372,27 @@ describe('GET /:slug/admin/analytics (route)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       tiles: {
-        thisMonth: number;
-        lastMonth: number;
-        outstandingTotal: number;
+        thisMonthCents: number;
+        lastMonthCents: number;
+        outstandingTotalCents: number;
         outstandingCount: number;
-        creditTotal: number;
+        creditTotalCents: number;
       };
-      monthly: { month: string; total: number }[];
+      monthly: { month: string; totalCents: number }[];
       byService: unknown[];
       topClients: unknown[];
       outstanding: unknown[];
       credits: unknown[];
     };
     expect(body.tiles).toEqual({
-      thisMonth: 0,
-      lastMonth: 0,
-      outstandingTotal: 0,
+      thisMonthCents: 0,
+      lastMonthCents: 0,
+      outstandingTotalCents: 0,
       outstandingCount: 0,
-      creditTotal: 0,
+      creditTotalCents: 0,
     });
     expect(body.monthly).toHaveLength(12);
-    expect(body.monthly.every((m) => m.total === 0)).toBe(true);
+    expect(body.monthly.every((m) => m.totalCents === 0)).toBe(true);
     expect(body.monthly[11].month).toBe(getPacificDateStr().slice(0, 7));
     expect(body.byService).toEqual([]);
     expect(body.topClients).toEqual([]);
@@ -409,41 +419,49 @@ describe('GET /:slug/admin/analytics (route)', () => {
     await pay(env, TENANT_C, bookingId, 6000, lastMonthDate);
     const body = (await (await getAnalyticsRoute(env)).json()) as {
       tiles: {
-        thisMonth: number;
-        lastMonth: number;
-        outstandingTotal: number;
+        thisMonthCents: number;
+        lastMonthCents: number;
+        outstandingTotalCents: number;
         outstandingCount: number;
-        creditTotal: number;
+        creditTotalCents: number;
       };
-      monthly: { month: string; total: number }[];
-      byService: { serviceType: string; label: string; total: number }[];
+      monthly: { month: string; totalCents: number }[];
+      byService: { serviceType: string; label: string; totalCents: number }[];
       topClients: {
         endUserId: string;
         name: string | null;
         email: string | null;
-        total: number;
+        totalCents: number;
         bookings: number;
       }[];
       outstanding: {
         bookingId: string;
-        estCost: number;
-        paidTotal: number;
-        balance: number;
+        estCostCents: number;
+        paidTotalCents: number;
+        balanceCents: number;
         isCancellationFee: boolean;
       }[];
     };
     expect(body.tiles).toEqual({
-      thisMonth: 100,
-      lastMonth: 60,
-      outstandingTotal: 140, // 300 est - 160 paid
+      thisMonthCents: 10000,
+      lastMonthCents: 6000,
+      outstandingTotalCents: 14000, // $300 est - $160 paid
       outstandingCount: 1,
-      // Never netted against `outstandingTotal` — see serializeAnalytics.
-      creditTotal: 0,
+      // Never netted against `outstandingTotalCents` — see serializeAnalytics.
+      creditTotalCents: 0,
     });
-    expect(body.monthly[11]).toEqual({ month: today.slice(0, 7), total: 100 });
-    expect(body.byService).toEqual([{ serviceType: 'boarding', label: 'Boarding', total: 160 }]);
+    expect(body.monthly[11]).toEqual({ month: today.slice(0, 7), totalCents: 10000 });
+    expect(body.byService).toEqual([
+      { serviceType: 'boarding', label: 'Boarding', totalCents: 16000 },
+    ]);
     expect(body.topClients).toEqual([
-      { endUserId: jess.Id, name: 'Jess Demo', email: 'jess@example.com', total: 160, bookings: 1 },
+      {
+        endUserId: jess.Id,
+        name: 'Jess Demo',
+        email: 'jess@example.com',
+        totalCents: 16000,
+        bookings: 1,
+      },
     ]);
     expect(body.outstanding).toEqual([
       {
@@ -452,13 +470,44 @@ describe('GET /:slug/admin/analytics (route)', () => {
         email: 'jess@example.com',
         serviceType: 'boarding',
         startDate: '2030-01-01',
-        estCost: 300,
-        chargesTotal: 0,
-        paidTotal: 160,
-        balance: 140,
+        estCostCents: 30000,
+        chargesTotalCents: 0,
+        paidTotalCents: 16000,
+        balanceCents: 14000,
         isCancellationFee: false,
       },
     ]);
+  });
+
+  /**
+   * THE WHOLE POINT OF THE UNIT CHANGE, on this payload: a client really did hand over $45.50, and
+   * every figure derived from it keeps the half-dollar. Under the old serializer this request was
+   * a 500 — `centsToWholeDollars` threw rather than round — which is the loud failure that made
+   * the fractional payment unrepresentable here at all.
+   */
+  it('carries a $45.50 payment to the cent, on every figure derived from it', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_C, { estCost: 30000 });
+    await pay(env, TENANT_C, bookingId, 4550, getPacificDateStr());
+    const res = await getAnalyticsRoute(env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tiles: { thisMonthCents: number; outstandingTotalCents: number };
+      monthly: { totalCents: number }[];
+      ytdCents: number;
+      byService: { totalCents: number }[];
+      outstanding: { paidTotalCents: number; balanceCents: number }[];
+    };
+    expect(body.tiles.thisMonthCents).toBe(4550);
+    expect(body.tiles.thisMonthCents % 100).toBe(50); // the cents really are on the wire
+    expect(body.monthly[11].totalCents).toBe(4550);
+    expect(body.ytdCents).toBe(4550);
+    expect(body.byService[0].totalCents).toBe(4550);
+    expect(body.outstanding[0]).toMatchObject({
+      paidTotalCents: 4550,
+      balanceCents: 25450, // 30000 - 4550, subtracted once, server-side
+    });
+    expect(body.tiles.outstandingTotalCents).toBe(25450);
   });
 
   it('forwards ytd and quarterly in the payload', async () => {
@@ -467,14 +516,17 @@ describe('GET /:slug/admin/analytics (route)', () => {
     const today = getPacificDateStr(); // e.g. current Pacific day
     await pay(env, TENANT_C, b, 9000, today);
     const body = (await (await getAnalyticsRoute(env)).json()) as {
-      ytd: number;
-      quarterly: { q: number; total: number }[];
+      ytdCents: number;
+      quarterly: { q: number; totalCents: number }[];
     };
-    expect(body.ytd).toBe(90);
+    expect(body.ytdCents).toBe(9000);
     expect(body.quarterly).toHaveLength(4);
     expect(body.quarterly.map((q) => q.q)).toEqual([1, 2, 3, 4]);
     const [, month] = today.split('-').map(Number);
     const thisQ = Math.floor((month - 1) / 3) + 1;
-    expect(body.quarterly.find((q) => q.q === thisQ)?.total).toBe(90);
+    expect(body.quarterly.find((q) => q.q === thisQ)?.totalCents).toBe(9000);
+    // Dollar names removed, not aliased, on this payload's last two figures too.
+    expect(body).not.toHaveProperty('ytd');
+    expect(body.quarterly[0]).not.toHaveProperty('total');
   });
 });

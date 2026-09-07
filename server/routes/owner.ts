@@ -22,12 +22,7 @@ import { invalidateTenantCache } from '../lib/tenant-resolve';
 import { EMAIL_RE } from '../lib/validation';
 import type { AppEnv } from '../types';
 import { quarterSinceDate } from '../../src/shared/analytics/periods.js';
-import {
-  addDays,
-  centsToWholeDollars,
-  DEFAULT_TIMEZONE,
-  getPacificDateStr,
-} from '../../src/shared/index.js';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 
 /**
  * Owner console: allowlist management. Non-slug-scoped ('owner' is in RESERVED_SLUGS) and
@@ -169,15 +164,15 @@ export const ownerRoutes = new Hono<AppEnv>()
       premiumUntil: r.PremiumUntil,
       clients: r.Clients,
       bookings: r.Bookings,
-      // `Earned` is cents (0015); this roster has always published whole dollars. The TOTAL is
-      // summed from the raw cents and divided once, not from the divided per-sitter figures.
-      earned: centsToWholeDollars(r.Earned),
+      // `Earned` is the raw column sum, in CENTS (0015), and the wire says so (design spec §2).
+      // Nothing is divided here, so the TOTAL below is just the sum of these same integers.
+      earnedCents: r.Earned,
     }));
     const totals = {
       sitters: sitters.length,
       clients: sitters.reduce((s, r) => s + r.clients, 0),
       bookings: sitters.reduce((s, r) => s + r.bookings, 0),
-      earned: centsToWholeDollars(rows.reduce((s, r) => s + r.Earned, 0)),
+      earnedCents: sitters.reduce((s, r) => s + r.earnedCents, 0),
     };
     return c.json({ window, totals, sitters });
   })

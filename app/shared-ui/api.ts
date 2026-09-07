@@ -525,25 +525,32 @@ export type AttributionApplyResult = {
   skipped: { paymentId: string; reason: string }[];
 };
 
+/**
+ * The Earnings payload, mirroring `serializeAnalytics` (`server/lib/analytics.ts`) field for field.
+ * EVERY money figure is CENTS and named so (design spec §2); the dollar-named fields are gone, so
+ * a reader that still means dollars fails to compile rather than printing a 100x-wrong number.
+ * Render each one through `formatCents` — this page adds nothing up that the server has not.
+ */
 export type AnalyticsPayload = {
   tiles: {
-    thisMonth: number;
-    lastMonth: number;
-    outstandingTotal: number;
+    thisMonthCents: number;
+    lastMonthCents: number;
+    outstandingTotalCents: number;
     outstandingCount: number;
     /** Money paid on bookings that no longer owe it — see `credits`. Never netted against
-     *  `outstandingTotal`: one client owing $100 while another is owed $100 is not a settled book. */
-    creditTotal: number;
+     *  `outstandingTotalCents`: one client owing $100 while another is owed $100 is not a settled
+     *  book. */
+    creditTotalCents: number;
   };
-  monthly: { month: string; total: number }[];
-  ytd: number;
-  quarterly: { q: number; total: number }[];
-  byService: { serviceType: string; label: string; total: number }[];
+  monthly: { month: string; totalCents: number }[];
+  ytdCents: number;
+  quarterly: { q: number; totalCents: number }[];
+  byService: { serviceType: string; label: string; totalCents: number }[];
   topClients: {
     endUserId: string;
     name: string | null;
     email: string | null;
-    total: number;
+    totalCents: number;
     bookings: number;
   }[];
   outstanding: {
@@ -552,18 +559,19 @@ export type AnalyticsPayload = {
     email: string | null;
     serviceType: string;
     startDate: string;
-    estCost: number;
-    chargesTotal: number;
-    paidTotal: number;
-    balance: number;
+    estCostCents: number;
+    chargesTotalCents: number;
+    paidTotalCents: number;
+    balanceCents: number;
     isCancellationFee: boolean;
   }[];
   /**
    * The mirror of `outstanding`: bookings paid MORE than they may keep, which is where a booking
-   * edited down below what was already paid now shows up. `credit` is `paidTotal - keepable`. These
-   * rows deliberately carry no *Record payment* affordance — a credit is a negative balance, not a
-   * payable one. What they DO carry is the two ways to close one: keep it (`keepCredit`, when
-   * `canKeep`) or correct the payment ledger (the money went back).
+   * edited down below what was already paid now shows up. `creditCents` is
+   * `paidTotalCents - keepableCents`, computed server-side. These rows deliberately carry no
+   * *Record payment* affordance — a credit is a negative balance, not a payable one. What they DO
+   * carry is the two ways to close one: keep it (`keepCredit`, when `canKeep`) or correct the
+   * payment ledger (the money went back).
    */
   credits: {
     bookingId: string;
@@ -572,9 +580,9 @@ export type AnalyticsPayload = {
     serviceType: string;
     startDate: string;
     status: string;
-    keepable: number;
-    paidTotal: number;
-    credit: number;
+    keepableCents: number;
+    paidTotalCents: number;
+    creditCents: number;
     /**
      * Server-derived: may this credit be closed by KEEPING it? False for a declined request, which
      * may keep nothing at all — so the button is not offered rather than offered and refused. The
@@ -612,7 +620,7 @@ export type AnalyticsPayload = {
    * here: shown, the sitter can re-record it against the right household and delete the stray;
    * unpublished, it would be revenue with no statement anywhere that accounts for it.
    */
-  orphanedPayments: { accountId: string; total: number }[];
+  orphanedPayments: { accountId: string; totalCents: number }[];
 };
 
 /**
@@ -661,13 +669,15 @@ export type SitterRow = {
   createdAt: string;
   clients: number;
   bookings: number;
-  earned: number;
+  /** CENTS (design spec §2) — the raw `SUM(Payments.Amount)` for the window, undivided. */
+  earnedCents: number;
   disabled: boolean;
   premiumUntil: string | null;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;
-  totals: { sitters: number; clients: number; bookings: number; earned: number };
+  /** `earnedCents` is the sum of the rows' own `earnedCents`, computed server-side. */
+  totals: { sitters: number; clients: number; bookings: number; earnedCents: number };
   sitters: SitterRow[];
 };
 

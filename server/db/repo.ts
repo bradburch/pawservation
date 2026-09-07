@@ -2534,7 +2534,7 @@ export async function keepBookingCredit(
  *
  * NETTING happens WITHIN a household and never across households. A credit on one booking cancelling
  * a debt on another IS the household statement. Two different households are two rows, and the
- * earnings tiles keep reporting `outstandingTotal` and `creditTotal` separately (see
+ * earnings tiles keep reporting `outstandingTotalCents` and `creditTotalCents` separately (see
  * `serializeAnalytics`) — one client owing $100 while another is owed $100 is not a settled book.
  *
  * Six tenant-scoped reads, composed by the pure `buildHouseholdBalances`: the per-booking money,

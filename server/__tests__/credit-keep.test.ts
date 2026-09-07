@@ -84,7 +84,7 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
     const { env } = createTestEnv();
     const id = await makeBooking(env, TENANT_A, 10000);
     await pay(env, TENANT_A, id, 25000);
-    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 150 }]);
+    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, creditCents: 15000 }]);
 
     const res = await keep(env, SLUG_A, TENANT_A, id);
     expect(res.status).toBe(200);
@@ -101,7 +101,7 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
     expect(after.credits).toEqual([]);
     expect(after.outstanding.find((o) => o.BookingId === id)).toBeUndefined();
     // Revenue is untouched — the money really was received and really was kept.
-    expect(serializeAnalytics(after).ytd).toBe(250);
+    expect(serializeAnalytics(after).ytdCents).toBe(25000);
   });
 
   it('the amount is computed server-side: a body asking for more is ignored', async () => {
@@ -124,7 +124,7 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
       label: 'Vet visit',
       amount: 4500,
     });
-    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 105 }]);
+    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, creditCents: 10500 }]);
     expect(await (await keep(env, SLUG_A, TENANT_A, id)).json()).toEqual({ keptCents: 10500 });
     expect(await creditsOf(env, TENANT_A)).toEqual([]);
   });
@@ -186,7 +186,7 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
       env,
     );
     expect(res.status).toBe(204);
-    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 150 }]);
+    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, creditCents: 15000 }]);
   });
 
   it('is not repeatable: the second call has nothing left to close', async () => {
@@ -205,7 +205,7 @@ describe('POST /admin/bookings/:id/credit/keep', () => {
     const res = await keep(env, 'happy-tails', TENANT_B, id);
     expect(res.status).toBe(404);
     expect(await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, id)).toEqual([]);
-    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, credit: 150 }]);
+    expect(await creditsOf(env, TENANT_A)).toMatchObject([{ bookingId: id, creditCents: 15000 }]);
   });
 
   it('an unknown booking id is a 404', async () => {

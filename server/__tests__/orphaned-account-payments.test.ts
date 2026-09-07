@@ -13,6 +13,7 @@ import {
   insertInvitedCustomer,
   setPetDeceased,
 } from '../db/repo';
+import { serializeAnalytics } from '../lib/analytics';
 import { createTestEnv, seedPets } from './helpers';
 
 const TENANT_C = 'tnt_pawsandrelax'; // seeded clean slate: customers, no bookings
@@ -243,8 +244,18 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     expect(revenue).toBe(65000);
     expect(inHouseholds).toBe(40000);
     expect(orphaned).toBe(25000);
-    // The invariant: revenue is fully accounted for. No dollar counts in one view and vanishes
+    // The invariant: revenue is fully accounted for. No cent counts in one view and vanishes
     // from the other.
     expect(inHouseholds + orphaned).toBe(revenue);
+
+    // …and it survives the wire, in ONE unit end to end: the payload is cents throughout, so the
+    // same three sums add up there without a conversion standing between them.
+    const payload = serializeAnalytics(analytics);
+    expect(payload.orphanedPayments).toEqual([{ accountId: 'p_ana', totalCents: 25000 }]);
+    expect(payload.orphanedPayments[0]).not.toHaveProperty('total');
+    expect(
+      payload.households.reduce((sum, h) => sum + h.paidTotalCents, 0) +
+        payload.orphanedPayments.reduce((sum, o) => sum + o.totalCents, 0),
+    ).toBe(payload.monthly.reduce((sum, m) => sum + m.totalCents, 0));
   });
 });

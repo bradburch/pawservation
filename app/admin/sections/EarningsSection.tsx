@@ -35,8 +35,8 @@ const MONTH_NAMES = [
  */
 function breakdown(o: AnalyticsPayload['outstanding'][number]): string {
   const parts = [
-    ...(o.isCancellationFee ? [`$${o.estCost} cancellation fee`] : []),
-    ...(o.chargesTotal > 0 ? [`$${o.chargesTotal} extras`] : []),
+    ...(o.isCancellationFee ? [`${formatCents(o.estCostCents)} cancellation fee`] : []),
+    ...(o.chargesTotalCents > 0 ? [`${formatCents(o.chargesTotalCents)} extras`] : []),
   ];
   return parts.length ? `, incl. ${parts.join(' + ')}` : '';
 }
@@ -142,7 +142,7 @@ function HouseholdDetailPanel({ session, accountId }: { session: Session; accoun
 
 /** Hand-rolled 12-bar SVG chart — no chart library (see the design's non-goals). */
 function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
-  const max = Math.max(1, ...monthly.map((m) => m.total));
+  const max = Math.max(1, ...monthly.map((m) => m.totalCents));
   const barW = 22;
   const gap = 8;
   const chartH = 110;
@@ -155,13 +155,17 @@ function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
       aria-label="Recorded revenue by month over the last 12 months"
     >
       {monthly.map((m, i) => {
-        const h = m.total === 0 ? 0 : Math.max(2, Math.round((m.total / max) * (chartH - 16)));
+        // Bar geometry is a RATIO, so it is unit-agnostic and unchanged by the move to cents.
+        const h =
+          m.totalCents === 0 ? 0 : Math.max(2, Math.round((m.totalCents / max) * (chartH - 16)));
         const x = i * (barW + gap);
         return (
           <g key={m.month}>
-            {m.total > 0 && m.total < 10000 && (
+            {/* The label only fits above a short bar. The threshold is the SAME $10,000 it always
+                was, restated in the payload's unit. */}
+            {m.totalCents > 0 && m.totalCents < 1_000_000 && (
               <text x={x + barW / 2} y={chartH - h - 3} textAnchor="middle" fontSize="7">
-                ${m.total}
+                {formatCents(m.totalCents)}
               </text>
             )}
             <rect x={x} y={chartH - h} width={barW} height={h} rx="2" />
@@ -213,7 +217,7 @@ export function EarningsView({
     const who = c.name || c.email || 'your client';
     if (
       !window.confirm(
-        `Log the $${c.credit} overpayment as kept on this booking? Use this when ${who} agreed you keep it — your Earnings total doesn't change, the booking is just owed $${c.credit} more.`,
+        `Log the ${formatCents(c.creditCents)} overpayment as kept on this booking? Use this when ${who} agreed you keep it — your Earnings total doesn't change, the booking is just owed ${formatCents(c.creditCents)} more.`,
       )
     )
       return;
@@ -237,8 +241,9 @@ export function EarningsView({
   );
 
   const hasPayments = data.byService.length > 0;
-  const maxService = Math.max(1, ...data.byService.map((s) => s.total));
-  const maxQuarter = Math.max(1, ...data.quarterly.map((q) => q.total));
+  // Both are bar-scaling denominators only — a ratio, so the unit never reaches the geometry.
+  const maxService = Math.max(1, ...data.byService.map((s) => s.totalCents));
+  const maxQuarter = Math.max(1, ...data.quarterly.map((q) => q.totalCents));
 
   return (
     <>
@@ -252,19 +257,19 @@ export function EarningsView({
 
       <div className="pb-tiles">
         <div className="pb-tile">
-          <strong>${data.tiles.thisMonth}</strong>
+          <strong>{formatCents(data.tiles.thisMonthCents)}</strong>
           <span>This month</span>
         </div>
         <div className="pb-tile">
-          <strong>${data.tiles.lastMonth}</strong>
+          <strong>{formatCents(data.tiles.lastMonthCents)}</strong>
           <span>Last month</span>
         </div>
         <div className="pb-tile">
-          <strong>${data.ytd}</strong>
+          <strong>{formatCents(data.ytdCents)}</strong>
           <span>Year to date</span>
         </div>
         <div className="pb-tile">
-          <strong>${data.tiles.outstandingTotal}</strong>
+          <strong>{formatCents(data.tiles.outstandingTotalCents)}</strong>
           <span>Outstanding</span>
         </div>
         <div className="pb-tile">
@@ -273,9 +278,9 @@ export function EarningsView({
         </div>
         {/* Only when there IS one: a permanent "$0 in credit" tile would be noise on a healthy
             book, and this figure is never netted into Outstanding (see the server comment). */}
-        {data.tiles.creditTotal > 0 && (
+        {data.tiles.creditTotalCents > 0 && (
           <div className="pb-tile">
-            <strong>${data.tiles.creditTotal}</strong>
+            <strong>{formatCents(data.tiles.creditTotalCents)}</strong>
             <span>Owed back</span>
           </div>
         )}
@@ -296,10 +301,10 @@ export function EarningsView({
             <div className="pb-hbar">
               <div
                 className="pb-hbar-fill"
-                style={{ width: `${(qt.total / maxQuarter) * 100}%` }}
+                style={{ width: `${(qt.totalCents / maxQuarter) * 100}%` }}
               />
             </div>
-            <span>${qt.total}</span>
+            <span>{formatCents(qt.totalCents)}</span>
           </li>
         ))}
       </ul>
@@ -315,10 +320,10 @@ export function EarningsView({
               <div className="pb-hbar">
                 <div
                   className="pb-hbar-fill"
-                  style={{ width: `${(s.total / maxService) * 100}%` }}
+                  style={{ width: `${(s.totalCents / maxService) * 100}%` }}
                 />
               </div>
-              <span>${s.total}</span>
+              <span>{formatCents(s.totalCents)}</span>
             </li>
           ))}
         </ul>
@@ -335,7 +340,7 @@ export function EarningsView({
                 {t.name || t.email || 'Unknown client'}
               </span>
               <span>
-                ${t.total} · {t.bookings} booking{t.bookings === 1 ? '' : 's'}
+                {formatCents(t.totalCents)} · {t.bookings} booking{t.bookings === 1 ? '' : 's'}
               </span>
             </li>
           ))}
@@ -468,7 +473,7 @@ export function EarningsView({
           <ul>
             {data.orphanedPayments.map((o) => (
               <li key={o.accountId}>
-                ${o.total} filed under a deleted pet ({o.accountId})
+                {formatCents(o.totalCents)} filed under a deleted pet ({o.accountId})
               </li>
             ))}
           </ul>
@@ -486,7 +491,11 @@ export function EarningsView({
                 <span className="pb-truncate">{o.name || o.email || 'Unknown client'}</span> —{' '}
                 {o.serviceType} ({formatFriendlyDate(o.startDate)})
                 <br />
-                owes ${o.balance} (paid ${o.paidTotal} of ${o.estCost + o.chargesTotal}
+                {/* `estCostCents + chargesTotalCents` is the documented total-due rule (design
+                    spec §4), and both terms are now the SAME unit — the one sum this page is
+                    allowed to do. `balanceCents` itself is the server's, never re-derived here. */}
+                owes {formatCents(o.balanceCents)} (paid {formatCents(o.paidTotalCents)} of{' '}
+                {formatCents(o.estCostCents + o.chargesTotalCents)}
                 {breakdown(o)})
               </span>
               {session && onChanged && handleError && (
@@ -530,8 +539,11 @@ export function EarningsView({
                   <span className="pb-truncate">{c.name || c.email || 'Unknown client'}</span> —{' '}
                   {c.serviceType} ({formatFriendlyDate(c.startDate)})
                   <br />
-                  overpaid ${c.credit} (paid ${c.paidTotal}
-                  {c.keepable > 0 ? ` of $${c.keepable}` : ', now owes nothing'})
+                  overpaid {formatCents(c.creditCents)} (paid {formatCents(c.paidTotalCents)}
+                  {c.keepableCents > 0
+                    ? ` of ${formatCents(c.keepableCents)}`
+                    : ', now owes nothing'}
+                  )
                 </span>
                 {session && onChanged && handleError && (
                   <span>
@@ -551,8 +563,8 @@ export function EarningsView({
                 {session && onChanged && handleError && openId === c.bookingId && (
                   <>
                     <p className="pb-hint">
-                      Send the ${c.credit} back however you paid it, then correct the record here:
-                      delete the payment and re-record what you actually kept.
+                      Send the {formatCents(c.creditCents)} back however you paid it, then correct
+                      the record here: delete the payment and re-record what you actually kept.
                     </p>
                     {/* allowRecord=false on purpose: on a credit row the ledger is delete-only. Once
                         the overpayment is gone the booking is either settled or shows up under

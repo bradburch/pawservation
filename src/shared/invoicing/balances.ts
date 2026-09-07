@@ -27,7 +27,7 @@
  * debt on another — that IS the household statement, the thing the sitter is asking for when she
  * asks "does Jennifer owe me anything?". ACROSS households nothing is ever netted: one client owing
  * $100 while another is owed $100 is not a settled book, so the two appear as two rows here and the
- * earnings tiles keep reporting `outstandingTotal` and `creditTotal` separately (see
+ * earnings tiles keep reporting `outstandingTotalCents` and `creditTotalCents` separately (see
  * `serializeAnalytics`). This module returns per-household figures only and computes no grand total,
  * so there is nothing here for a caller to net by accident.
  */

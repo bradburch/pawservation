@@ -94,8 +94,8 @@ describe('cancellation flow', () => {
 
     const analytics = (await (
       await app.request(`/api/${SLUG}/admin/analytics`, { headers: admin }, env)
-    ).json()) as { outstanding: { bookingId: string; balance: number }[] };
+    ).json()) as { outstanding: { bookingId: string; balanceCents: number }[] };
     const row = analytics.outstanding.find((o) => o.bookingId === id)!;
-    expect(row.balance).toBe(75);
+    expect(row.balanceCents).toBe(7500);
   });
 });

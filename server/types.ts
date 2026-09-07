@@ -264,8 +264,8 @@ export type BookingChargeRow = {
  * Exception: `ytd`/`quarterly` are already in payload (camelCase) shape — the helper emits them
  * that way and the route forwards them unmapped, so do NOT "correct" them to PascalCase. */
 export type AnalyticsData = {
-  /** EVERY money field on this type is CENTS (0015) — the raw SQL sums, unscaled.
-   *  `serializeAnalytics` is the one place they become whole dollars for the wire. */
+  /** EVERY money field on this type is CENTS (0015) — the raw SQL sums, unscaled. They stay
+   *  cents on the wire too: `serializeAnalytics` renames them `*Cents` and divides nothing. */
   monthly: { Month: string; Total: number }[];
   ytd: number;
   quarterly: { q: number; total: number }[];
@@ -317,8 +317,8 @@ export type AnalyticsData = {
    * DELETED (a `deleteCustomer` cascade removes the pet and its owner edges together, and never
    * touches `Payments`), so nothing left in the database can say whose money it was. Published
    * beside the balances precisely because every revenue figure above still counts it:
-   * `Σ households.paidTotalCents + Σ orphanedPayments.total` is the whole of the household money,
-   * once the two are read in the same unit, and
+   * `Σ households.paidTotalCents + Σ orphanedPayments.total` is the whole of the household money —
+   * both sides cents, here and on the wire (`orphanedPayments[].totalCents`) — and
    * this list is what keeps that identity true rather than leaving a payment counted in one view
    * and silently absent from the other. A pet that merely DIED is never here — its payments still
    * resolve to its own household (`buildPaymentAnchors`).

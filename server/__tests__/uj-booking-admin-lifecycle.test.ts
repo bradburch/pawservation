@@ -72,9 +72,9 @@ describe('booking admin lifecycle', () => {
 
     const analyticsMid = (await (
       await app.request(`/api/${SLUG}/admin/analytics`, { headers: admin }, env)
-    ).json()) as { outstanding: { bookingId: string; balance: number }[] };
+    ).json()) as { outstanding: { bookingId: string; balanceCents: number }[] };
     const mid = analyticsMid.outstanding.find((o) => o.bookingId === id)!;
-    expect(mid.balance).toBe(95); // 150 + 45 - 100
+    expect(mid.balanceCents).toBe(9500); // 15000 + 4500 - 10000, one unit throughout
 
     const finalPayment = await app.request(
       `/api/${SLUG}/admin/bookings/${id}/payments`,

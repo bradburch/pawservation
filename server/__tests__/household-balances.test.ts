@@ -386,10 +386,10 @@ describe('household balances on the earnings payload', () => {
       [rex, 10000],
     ]);
     // The tiles keep their own rule: a debt and a credit of equal size are NOT a settled book.
-    // They are still WHOLE DOLLARS — the rest of this payload moves in the analytics task, and
-    // nothing here adds a tile to a household figure.
-    expect(payload.tiles.outstandingTotal).toBe(100);
-    expect(payload.tiles.creditTotal).toBe(100);
+    // Cents now too, like every other figure on this payload — and nothing here adds a tile to a
+    // household figure.
+    expect(payload.tiles.outstandingTotalCents).toBe(10000);
+    expect(payload.tiles.creditTotalCents).toBe(10000);
   });
 
   it('is on the admin analytics route, computed server-side', async () => {
@@ -448,18 +448,28 @@ describe('household balances on the earnings payload', () => {
     );
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_C, { endUserId: jen.Id, petIds: [rex] });
-    // A WHOLE-dollar payment, deliberately: the rest of this payload is still divided to dollars
-    // by `centsToWholeDollars`, which THROWS on a figure that is not whole — a loud failure the
-    // analytics task removes when it moves the tiles. The household row itself is cents either way.
-    await pay(env, TENANT_C, bookingId, 2500);
+    // A FRACTIONAL payment, deliberately: nothing on this payload divides by 100 any more, so
+    // $25.50 reaches the wire intact. It used to throw (`centsToWholeDollars` refuses a figure
+    // that is not a whole dollar) before the tiles and the lists moved to cents.
+    await pay(env, TENANT_C, bookingId, 2550);
     const res = await app.request(
       `/api/${SLUG_C}/admin/analytics`,
       { headers: await adminHeaders(TENANT_C) },
       env,
     );
-    const { households } = (await res.json()) as { households: Record<string, unknown>[] };
+    expect(res.status).toBe(200);
+    const { households, tiles } = (await res.json()) as {
+      households: Record<string, unknown>[];
+      tiles: Record<string, unknown>;
+    };
     for (const gone of ['expectedTotal', 'paidTotal', 'balance'])
       expect(households[0]).not.toHaveProperty(gone);
-    expect(households[0]).toMatchObject({ paidTotalCents: 2500, balanceCents: 7500 });
+    expect(households[0]).toMatchObject({ paidTotalCents: 2550, balanceCents: 7450 });
+    // …and the tiles beside them, which is where the fractional figure used to blow up. (The
+    // revenue tiles are dated by `pay`'s fixed PaidDate, not today, so this one asserts the
+    // outstanding tile — the figure the $25.50 actually moves.)
+    expect(tiles).toMatchObject({ outstandingTotalCents: 7450 });
+    for (const gone of ['thisMonth', 'lastMonth', 'outstandingTotal', 'creditTotal'])
+      expect(tiles).not.toHaveProperty(gone);
   });
 });
