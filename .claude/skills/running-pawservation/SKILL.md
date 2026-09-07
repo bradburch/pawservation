@@ -20,7 +20,9 @@ Server: **http://localhost:8787** (landing → /admin, /demo; widget at /embed/:
 
 **Why the `--var` overrides (do not skip):** `.dev.vars` contains a REAL `RESEND_API_KEY`, so with it active the widget's identify flow sends actual email — and the seeded addresses (`@example.com`, `.test`) are undeliverable, which 502s the login step. Blanking `RESEND_API_KEY`/`RESEND_FROM_NOREPLY`/`RESEND_FROM_BOOKING` makes `isEmailConfigured()` false (it requires all three), and `ENVIRONMENT=development` then shows the 6-digit login code ON SCREEN (see `server/routes/auth.ts`). Never edit or overwrite `.dev.vars` itself — `TOKEN_SECRET` must keep coming from it or every API route 503s.
 
-`npm run dev` also works (build --watch + wrangler dev) but reads `.dev.vars` as-is → real email mode. Prefer the explicit `wrangler dev --var` line above for demos.
+**Only ONE of the three seeded tenants actually needs those overrides, and it is worth knowing which.** `sunny-paws` and `happy-tails` are listed in `DEMO_TENANT_SLUGS` (`server/routes/auth.ts`) and return the login code on screen as `prototypeCode` **before** `isEmailConfigured` is ever consulted — so a plain `npm run dev` already works for those two and sends no mail at all. The third, `paws-and-relax`, is not in that list: its seeded addresses get a real send attempt, which fails undeliverable and 502s login. So use the `--var` line whenever you need `paws-and-relax`, and whenever you want to be certain no mail can leave the machine regardless of which tenant gets driven.
+
+`npm run dev` also works (build --watch + wrangler dev) but reads `.dev.vars` as-is → real email mode for any non-demo-slug tenant. Prefer the explicit `wrangler dev --var` line above for demos.
 
 ## Drive it
 
@@ -41,5 +43,5 @@ Server: **http://localhost:8787** (landing → /admin, /demo; widget at /embed/:
 
 - Local D1/KV state lives under `.wrangler/` per checkout — a fresh worktree has none until `seed:local` runs.
 - Re-running `seed:local` resets all data (INSERT OR REPLACE seed; schema is IF NOT EXISTS).
-- Do NOT use `npm run migrate:*` against existing DBs — `sql/schema.sql` is the baseline (re-baselined 2026-07-27); `migrations/` is empty by design and no real DB has a `d1_migrations` tracking table. See `migrations/README.md`.
+- Do NOT use `npm run migrate:*` against existing DBs — `sql/schema.sql` is the baseline (re-baselined 2026-07-27) and no real DB here has a `d1_migrations` tracking table. `migrations/` is NOT empty: it holds the schema changes made since that re-baseline, numbered from `0001` and applied to the remote DB by hand with `wrangler d1 execute … --file`. For a local DB that predates a schema change, `rm -rf .wrangler/state/v3/d1 && npm run seed:local` rather than applying anything. See `migrations/README.md`.
 - Widget auth tokens are per-slug in sessionStorage; admin token in localStorage — a stale admin session survives reloads via `GET /api/admin/session`.

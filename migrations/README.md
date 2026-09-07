@@ -2,6 +2,10 @@
 
 ## Baseline doctrine (re-baselined 2026-07-27)
 
+**The database lifecycle is separate from code deploys.** `npm run deploy` ships the worker only —
+it never touches the DB. Schema changes are applied by hand, before the merge that deploys the code
+depending on them.
+
 **`sql/schema.sql` IS the baseline.** Every database — local, remote, and the Vitest harness
 (`server/__tests__/helpers.ts` executes schema.sql + seed.sql directly) — is expected to match it
 exactly. The incremental migrations that built the old schema (`0001`–`0025`) were deleted in the
@@ -14,6 +18,22 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
 
 - **Fresh installs:** `npm run seed:local` / `seed:remote` (schema.sql, then seed.sql, then
   seed-demo.sql). Never `wrangler d1 migrations apply`.
+- **Do NOT run `npm run migrate:*` against an existing DB** — no real DB here has a `d1_migrations`
+  tracking table, so the migration runner has no applied-state to reason from and will try to
+  replay files against a database that already has their columns. Hand-apply with
+  `wrangler d1 execute … --file` instead (see "New schema changes" below).
+- **A migration that adds a `Tenants` column the request path reads must ALSO bump the KV
+  tenant-config cache key in the same commit** (`server/lib/tenant-resolve.ts`, currently
+  `tenant:<slug>:config:v5`). That cache stores the whole `Tenants` row as JSON, so for one
+  60-second TTL after deploy the new code reads the new field as `undefined` — with no error and no
+  log — and runs every cached tenant at whatever the code's fallback happens to be. 0010, 0013 and
+  0014 are each why the key is at v5 rather than v2; 0007, 0008, 0009, 0011 and 0012 add no
+  `Tenants` column and correctly needed no bump.
+- **No migration in this directory may contain a transaction statement** — no `BEGIN`, `COMMIT` or
+  `SAVEPOINT`. Cloudflare D1's remote executor rejects explicit SQL transactions outright, and D1
+  applies a `--file` execution atomically on its own. See 0011 below, which shipped a wrapper that
+  passed every local check (including a dedicated `node:sqlite` test) and still could not be
+  applied.
 - **Two seed files.** `sql/seed.sql` is the minimal base fixture the Vitest harness loads and the
   suite asserts against; `sql/seed-demo.sql` is the lived-in demo layered on top (extra clients, a
   booking per enabled service, deliberate conflicts, dated relative to `now`). `seed-demo.sql` is
