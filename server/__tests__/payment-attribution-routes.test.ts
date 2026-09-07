@@ -1726,6 +1726,52 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(paymentRows(raw)).toEqual(before);
   });
 
+  /**
+   * THE FRACTIONAL BODY, AND THE SENTENCE IT PRODUCES. The apply body is still whole dollars in
+   * this commit, so `toStoredCents` (server/routes/admin.ts) scales it — but only when it is a
+   * safe non-negative integer. A fractional figure is passed through DELIBERATELY, so
+   * `applyAttribution`'s own guard refuses just that item by name instead of `dollarsToCents`
+   * throwing and 500ing the whole approved batch.
+   *
+   * What must not then happen is the refusal dressing the fraction up as money: `formatCents(45.5)`
+   * renders `$0.45.5`, a figure that exists in no currency and tells the sitter nothing. The guard
+   * reports a non-integer RAW (`describeAmount`), so the sentence carries `45.5` and never a
+   * dollar amount with two decimal points in it.
+   */
+  it('refuses a FRACTIONAL split per item, and never renders it as "$0.45.5"', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+
+    const before = paymentRows(raw);
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          splits: [{ bookingId, amount: 45.5 }],
+          remainder: 54.5,
+        } satisfies ApplyAttributionInput,
+      ],
+    });
+
+    // A per-item skip, not a 400 and not a 500: the batch survives one malformed figure.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ApplyBody;
+    expect(body.applied).toBe(0);
+    expect(body.skipped).toHaveLength(1);
+    expect(body.skipped[0].paymentId).toBe(paymentId);
+    expect(body.skipped[0].reason).toContain('every split must be a positive amount of money');
+    // The figure itself, reported as the caller wrote it…
+    expect(body.skipped[0].reason).toContain('45.5');
+    // …and NEVER as `$0.` followed by a second dot — the shape `formatCents` produces for a
+    // fraction of a cent, and the whole reason this guard does not go through it.
+    expect(body.skipped[0].reason).not.toMatch(/\$0\.[^\s]*\./);
+
+    expect(paymentRows(raw)).toEqual(before);
+  });
+
   it("another tenant's payment is refused", async () => {
     const { env, raw } = createTestEnv();
     const foreignHome = await household(env, raw, 'jen', TENANT_A);

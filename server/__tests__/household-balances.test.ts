@@ -21,6 +21,12 @@ import { serializeAnalytics } from '../lib/analytics';
  * Σ(booking costs + charges) − Σ(payments) over every booking belonging to it. No schema change is
  * involved anywhere in this file: every figure comes from per-booking money that exists today.
  */
+/**
+ * `buildHouseholdBalances` is pure and unit-agnostic — integer addition and subtraction, no
+ * scaling — so 0015 did not change it. The figures below are nevertheless written in CENTS, the
+ * unit its one production caller (`computeHouseholdRollup`, server/db/repo.ts) actually hands it,
+ * so the pure half and the repo half of this file cannot be read as speaking different money.
+ */
 describe('buildHouseholdBalances (pure)', () => {
   const links = [
     { ownerId: 'o_jen', petId: 'p_rex' },
@@ -78,9 +84,9 @@ describe('buildHouseholdBalances (pure)', () => {
     // Widget-era bookings can carry a NULL EndUserId; the pets still name the household.
     const { households, unattachedBookingIds } = buildHouseholdBalances({
       links,
-      bookings: [{ bookingId: 'b1', ownerId: null, petIds: ['p_rex'], expected: 80, paid: 0 }],
+      bookings: [{ bookingId: 'b1', ownerId: null, petIds: ['p_rex'], expected: 8000, paid: 0 }],
     });
-    expect(households).toMatchObject([{ accountId: 'p_rex', balance: 80 }]);
+    expect(households).toMatchObject([{ accountId: 'p_rex', balance: 8000 }]);
     expect(unattachedBookingIds).toEqual([]);
   });
 
@@ -88,17 +94,17 @@ describe('buildHouseholdBalances (pure)', () => {
     const { households } = buildHouseholdBalances({
       links,
       bookings: [
-        { bookingId: 'b1', ownerId: null, petIds: ['p_mia', 'p_rex'], expected: 90, paid: 0 },
+        { bookingId: 'b1', ownerId: null, petIds: ['p_mia', 'p_rex'], expected: 9000, paid: 0 },
       ],
     });
     expect(households.filter((h) => h.bookingIds.includes('b1'))).toHaveLength(1);
-    expect(households.reduce((sum, h) => sum + h.expectedTotal, 0)).toBe(90);
+    expect(households.reduce((sum, h) => sum + h.expectedTotal, 0)).toBe(9000);
   });
 
   it('surfaces a booking that belongs to no household rather than dropping its money', () => {
     const { households, unattachedBookingIds } = buildHouseholdBalances({
       links,
-      bookings: [{ bookingId: 'b1', ownerId: 'o_ghost', petIds: [], expected: 70, paid: 0 }],
+      bookings: [{ bookingId: 'b1', ownerId: 'o_ghost', petIds: [], expected: 7000, paid: 0 }],
     });
     expect(households).toEqual([]);
     expect(unattachedBookingIds).toEqual(['b1']);
@@ -114,12 +120,12 @@ describe('buildHouseholdBalances (pure)', () => {
     const { households } = buildHouseholdBalances({
       links,
       bookings: [
-        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 200, paid: 0 },
-        { bookingId: 'b2', ownerId: 'o_sam', petIds: ['p_rex'], expected: 200, paid: 0 },
+        { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 20000, paid: 0 },
+        { bookingId: 'b2', ownerId: 'o_sam', petIds: ['p_rex'], expected: 20000, paid: 0 },
       ],
-      payments: [{ accountId: 'p_rex', amount: 400 }],
+      payments: [{ accountId: 'p_rex', amount: 40000 }],
     });
-    expect(households).toMatchObject([{ expectedTotal: 400, paidTotal: 400, balance: 0 }]);
+    expect(households).toMatchObject([{ expectedTotal: 40000, paidTotal: 40000, balance: 0 }]);
   });
 
   it('resolves a household payment stored against any pet of the household', () => {
@@ -131,16 +137,16 @@ describe('buildHouseholdBalances (pure)', () => {
         { ownerId: 'o_jen', petId: 'p_zed' },
       ],
       bookings: [],
-      payments: [{ accountId: 'p_zed', amount: 75 }],
+      payments: [{ accountId: 'p_zed', amount: 7500 }],
     });
-    expect(households).toMatchObject([{ accountId: 'p_rex', paidTotal: 75, balance: -75 }]);
+    expect(households).toMatchObject([{ accountId: 'p_rex', paidTotal: 7500, balance: -7500 }]);
   });
 
   it('surfaces a household payment that resolves to no household', () => {
     const { households, unattachedPaymentAccountIds } = buildHouseholdBalances({
       links,
       bookings: [],
-      payments: [{ accountId: 'p_gone', amount: 50 }],
+      payments: [{ accountId: 'p_gone', amount: 5000 }],
     });
     expect(households).toEqual([]);
     expect(unattachedPaymentAccountIds).toEqual(['p_gone']);
@@ -148,8 +154,8 @@ describe('buildHouseholdBalances (pure)', () => {
 
   it('returns households in a deterministic order however the rows arrive', () => {
     const bookings = [
-      { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 100, paid: 0 },
-      { bookingId: 'b2', ownerId: 'o_ana', petIds: ['p_mia'], expected: 100, paid: 0 },
+      { bookingId: 'b1', ownerId: 'o_jen', petIds: ['p_rex'], expected: 10000, paid: 0 },
+      { bookingId: 'b2', ownerId: 'o_ana', petIds: ['p_mia'], expected: 10000, paid: 0 },
     ];
     const forward = buildHouseholdBalances({ links, bookings });
     const reversed = buildHouseholdBalances({

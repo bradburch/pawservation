@@ -299,6 +299,12 @@ export const MAX_BACKFILL_EST_COST = 1_000_000;
  * booking, and scaling (or throwing on) it here would either hide the fault or convert one bad row
  * in an approved batch into a 500 for the whole request. `dollarsToCents` is not used for exactly
  * that reason — it throws.
+ *
+ * SANCTIONED, AND TEMPORARY: this is the fourth dollars→cents site (with `money.ts`,
+ * `cancellation-fee.ts` and `payment-import.ts`'s parser), permitted only until Task 8 moves the
+ * attribution apply body to `amountCents` — at which point this function and every call to it go.
+ * A figure that reaches `applyAttribution` un-scaled because it was not an integer is reported raw
+ * by `describeAmount` there, never dressed up as money.
  */
 function toStoredCents(dollars: number): number {
   return Number.isSafeInteger(dollars) && dollars >= 0 ? dollars * 100 : dollars;

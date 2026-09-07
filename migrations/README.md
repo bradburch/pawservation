@@ -258,8 +258,15 @@ COLUMN`, the same shape as 0013's `CalendarCostBasis`), and the DEFAULT stamps e
   dollar, so ×100 is exact and no balance moves by a cent. No `Tenants` column changes, so the KV
   tenant-config cache key needs **no** bump. It contains no `BEGIN`/`COMMIT`/`SAVEPOINT` (D1
   rejects them — see 0011). **NOT YET APPLIED to the remote DB — it MUST be hand-applied before
-  this branch merges**, because the deployed code reads these four columns as cents and would
-  report every stored figure at a hundredth of its value until it runs:
+  this branch merges**, and the deployed-code-meets-un-migrated-data failure is TWO failures, not
+  one, which is worth knowing before reading a pager: `centsToWholeDollars` (the serializer every
+  route divides through) **THROWS** on a figure that is not a multiple of 100, so an un-migrated
+  `EstCost = 250` is a `RangeError` and a **500** — the admin bookings list, the earnings payload,
+  the household drill-down, `/:slug/account` and the CSV export all go DOWN, not merely wrong.
+  A round figure like `EstCost = 200` divides cleanly and comes back as **$2**, silently. So an
+  on-call reader seeing a dead dashboard on this branch should suspect the un-applied migration
+  first, and should not be reassured by the pages that still render — they are reporting
+  hundredths. Apply it with:
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0015_money_in_cents.sql`.
   Like every bare `ADD COLUMN` above it must not be run twice — a second run multiplies every
   balance by 100 again, and unlike a duplicate column that failure is SILENT.

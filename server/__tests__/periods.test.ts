@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { quarterlyBreakdown, quarterSinceDate } from '../../src/shared/analytics/periods.js';
 
+/**
+ * `quarterlyBreakdown` and `quarterSinceDate` are pure and UNIT-AGNOSTIC — the first is integer
+ * addition over whatever `monthly[].Total` holds, the second touches no money at all — so 0015's
+ * move to cents changed nothing here and the figures below are left as they were. The suites where
+ * the unit is real (`analytics.test.ts`, and every repo suite) say cents.
+ */
 describe('quarterlyBreakdown', () => {
   // A two-calendar-year monthly[] (the rolling 12-month window shape), currentYear = 2026.
   const monthly = [

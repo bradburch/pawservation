@@ -17,7 +17,7 @@ describe('booking lifecycle repo', () => {
       endDate: '2030-01-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_B, {
@@ -27,7 +27,7 @@ describe('booking lifecycle repo', () => {
       endDate: '2030-01-04',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     const rows = await listBookingsForTenant(env.PAWSERVATION_DB, TENANT_A);
@@ -50,7 +50,7 @@ describe('booking lifecycle repo', () => {
       endDate: '2030-02-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'confirmed')).toBe(true);
@@ -68,7 +68,7 @@ describe('booking lifecycle repo', () => {
       endDate: null,
       optionKey: 'd30',
       petCount: 1,
-      estCost: 20,
+      estCost: 2000,
       status: 'pending',
     });
     expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined')).toBe(true);
@@ -89,7 +89,7 @@ describe('booking lifecycle repo', () => {
       endDate: '2030-04-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_B, id, 'confirmed')).toBe(false);

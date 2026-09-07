@@ -1695,6 +1695,21 @@ export async function deleteAccountPayment(
  * for a stay this money is settling, and one attached to any other stay is either malformed or an
  * unstated second attribution.
  */
+/**
+ * A money figure for one of `applyAttribution`'s three amount refusals. `formatCents` assumes an
+ * INTEGER number of cents; hand it `45.5` and it renders `$0.45.5`, which is worse than useless in
+ * a sentence a sitter has to act on. Those three guards fire exactly when `Number.isInteger` has
+ * already failed (or the sign is wrong), so a non-integer is reported RAW here instead of being
+ * dressed up as money.
+ *
+ * `formatCents` itself is deliberately left un-throwing. This is a REFUSAL path — a throw would
+ * turn one bad row's per-item skip into a 500 for the whole batch the sitter approved, which is
+ * the failure `admin.ts`'s `toStoredCents` pass-through exists to avoid in the first place.
+ */
+function describeAmount(value: number): string {
+  return Number.isInteger(value) ? formatCents(value) : String(value);
+}
+
 export async function applyAttribution(
   db: D1Database,
   tenantId: string,
@@ -1720,13 +1735,13 @@ export async function applyAttribution(
   if (badSplit) {
     return {
       ok: false,
-      reason: `Split for booking ${badSplit.bookingId} is ${formatCents(badSplit.amount)}; every split must be a positive amount of money.`,
+      reason: `Split for booking ${badSplit.bookingId} is ${describeAmount(badSplit.amount)}; every split must be a positive amount of money.`,
     };
   }
   if (!Number.isInteger(remainder) || remainder < 0) {
     return {
       ok: false,
-      reason: `Remainder ${formatCents(remainder)} is not a whole, non-negative amount of money.`,
+      reason: `Remainder ${describeAmount(remainder)} is not a whole, non-negative amount of money.`,
     };
   }
   // The same bar every split clears, and for the same reason: `BookingCharges.Amount` is
@@ -1737,7 +1752,7 @@ export async function applyAttribution(
   if (tip && (!Number.isInteger(tip.amount) || tip.amount <= 0)) {
     return {
       ok: false,
-      reason: `Tip for booking ${tip.bookingId} is ${formatCents(tip.amount)}; a tip must be a positive amount of money.`,
+      reason: `Tip for booking ${tip.bookingId} is ${describeAmount(tip.amount)}; a tip must be a positive amount of money.`,
     };
   }
 

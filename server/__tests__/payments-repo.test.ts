@@ -17,11 +17,12 @@ const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed'
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: 100,
+    estCost: 10000, // CENTS (0015) — a repo seed writes the column directly
     status,
   });
 
-const pay = (env: Env, tenantId: string, bookingRequestId: string, amount = 50) =>
+/** `amount` is CENTS (0015), like every money value crossing the repo. */
+const pay = (env: Env, tenantId: string, bookingRequestId: string, amount = 5000) =>
   insertPayment(env.PAWSERVATION_DB, tenantId, {
     bookingRequestId,
     amount,
@@ -37,7 +38,7 @@ describe('payments repo', () => {
     const bookingId = await makeBooking(env, TENANT_A);
     const paymentId = await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 75,
+      amount: 7500,
       method: 'venmo',
       paidDate: '2026-07-02',
       note: 'deposit',
@@ -50,7 +51,7 @@ describe('payments repo', () => {
       Id: paymentId,
       TenantId: TENANT_A,
       BookingRequestId: bookingId,
-      Amount: 75,
+      Amount: 7500, // the column, in cents
       Method: 'venmo',
       PaidDate: '2026-07-02',
       Note: 'deposit',
@@ -123,7 +124,7 @@ describe('payments repo', () => {
     const otherBookingId = await makeBooking(env, TENANT_A);
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 10,
+      amount: 1000,
       method: 'cash',
       paidDate: '2026-06-01',
       note: null,
@@ -131,25 +132,25 @@ describe('payments repo', () => {
     });
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 20,
+      amount: 2000,
       method: 'zelle',
       paidDate: '2026-07-01',
       note: null,
       externalRef: null,
     });
-    await pay(env, TENANT_A, otherBookingId, 999);
+    await pay(env, TENANT_A, otherBookingId, 99900);
     const rows = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_A, bookingId);
-    expect(rows.map((r) => r.Amount)).toEqual([20, 10]);
+    expect(rows.map((r) => r.Amount)).toEqual([2000, 1000]); // the column, in cents
   });
 
   it('listBookingsForTenant aggregates PaidTotal (0 when unpaid)', async () => {
     const { env } = createTestEnv();
     const paidId = await makeBooking(env, TENANT_A);
     const unpaidId = await makeBooking(env, TENANT_A);
-    await pay(env, TENANT_A, paidId, 30);
-    await pay(env, TENANT_A, paidId, 45);
+    await pay(env, TENANT_A, paidId, 3000);
+    await pay(env, TENANT_A, paidId, 4500);
     const rows = await listBookingsForTenant(env.PAWSERVATION_DB, TENANT_A);
-    expect(rows.find((r) => r.Id === paidId)?.PaidTotal).toBe(75);
+    expect(rows.find((r) => r.Id === paidId)?.PaidTotal).toBe(7500);
     expect(rows.find((r) => r.Id === unpaidId)?.PaidTotal).toBe(0);
   });
 });
