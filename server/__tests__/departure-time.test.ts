@@ -266,7 +266,7 @@ describe('an edit changes the times', () => {
       startTime: '17:00',
       departureTime: '08:00',
     });
-    const { id, estCost } = (await created.json()) as { id: string; estCost: number };
+    const { id, estCostCents } = (await created.json()) as { id: string; estCostCents: number };
 
     const token = await endUserToken(env, SLUG, 'jess@example.com');
     const res = await app.request(
@@ -286,7 +286,7 @@ describe('an edit changes the times', () => {
       env,
     );
     expect(res.status).toBe(200);
-    expect((await res.json()) as { estCost: number }).toMatchObject({ estCost });
+    expect((await res.json()) as { estCostCents: number }).toMatchObject({ estCostCents });
     expect(await times(env, id)).toEqual({ StartTime: '18:00', DepartureTime: '11:00' });
   });
 

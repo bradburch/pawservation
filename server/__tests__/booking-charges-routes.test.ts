@@ -184,13 +184,13 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
     const { bookings } = (await res.json()) as {
       bookings: {
         id: string;
-        charges: { label: string; amount: number }[];
-        chargesTotal: number;
+        charges: { label: string; amountCents: number }[];
+        chargesTotalCents: number;
       }[];
     };
     const row = bookings.find((b) => b.id === 'seed_sp_board1')!;
-    expect(row.chargesTotal).toBe(45);
-    expect(row.charges).toEqual([{ label: 'Vet visit', amount: 45 }]);
+    expect(row.chargesTotalCents).toBe(4500);
+    expect(row.charges).toEqual([{ label: 'Vet visit', amountCents: 4500 }]);
 
     // A second sunny-paws customer, with their own booking, must never see jess's charge.
     const other = await insertInvitedCustomer(
@@ -216,9 +216,9 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
       env,
     );
     const { bookings: otherBookings } = (await otherRes.json()) as {
-      bookings: { id: string; charges: unknown[]; chargesTotal: number }[];
+      bookings: { id: string; charges: unknown[]; chargesTotalCents: number }[];
     };
     expect(otherBookings.find((b) => b.id === 'seed_sp_board1')).toBeUndefined();
-    expect(otherBookings.every((b) => b.chargesTotal === 0)).toBe(true);
+    expect(otherBookings.every((b) => b.chargesTotalCents === 0)).toBe(true);
   });
 });

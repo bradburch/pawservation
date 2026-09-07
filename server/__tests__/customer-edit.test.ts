@@ -161,7 +161,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id, estCost: 250, status: 'pending' });
+    expect(await res.json()).toEqual({ id, estCostCents: 25000, status: 'pending' });
     const after = await row(env, id);
     expect(after.StartDate).toBe(addDays(TODAY, 50));
     expect(after.EndDate).toBe(addDays(TODAY, 55));
@@ -205,7 +205,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(300); // 3 nights × $50 × 2
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(30000); // 3 nights × $50 × 2
     expect(await bookingPetIds(env, id)).toEqual([BELLA, MOCHI].sort());
     expect((await row(env, id)).PetCount).toBe(2);
   });
@@ -262,7 +262,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id, estCost: 300, status: 'pending' });
+    expect(await res.json()).toEqual({ id, estCostCents: 30000, status: 'pending' });
     const after = await row(env, id);
     expect(after.EstCost).toBe(30000);
     expect(after.StartTime).toBe('14:30');
@@ -290,8 +290,8 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    // $90 (Christmas Eve) + $90 (Christmas Day) + $50 — re-quoted, not the stored 100.
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(230);
+    // $90 (Christmas Eve) + $90 (Christmas Day) + $50 — re-quoted, not the stored $100.
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(23000);
     expect((await row(env, id)).EstCost).toBe(23000);
   });
 
@@ -309,7 +309,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(300);
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(30000);
   });
 
   it('re-prices a never-priced booking rather than keeping its NULL EstCost', async () => {
@@ -326,7 +326,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(150);
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(15000);
   });
 
   it('re-runs the booking window: too soon', async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatFriendlyDate } from '../../src/shared/index.js';
+import { formatCents, formatFriendlyDate } from '../../src/shared/index.js';
 import {
   api,
   getToken,
@@ -124,7 +124,7 @@ export function MineTab({
     <ul className="bp-mine">
       {bookings.map((b) => {
         const confirming = confirmId === b.id;
-        const fee = b.feeIfCancelledToday ?? 0;
+        const feeCents = b.feeIfCancelledTodayCents ?? 0;
         return (
           <li key={b.id} className="bp-mine-item">
             <div className="bp-mine-head">
@@ -136,12 +136,16 @@ export function MineTab({
               {b.pets.length > 0
                 ? b.pets.join(', ')
                 : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`}
-              {b.estCost != null ? ` · est. $${b.estCost}` : ''}
-              {b.chargesTotal > 0
-                ? ` · plus $${b.chargesTotal} (${b.charges.map((ch) => ch.label).join(', ')})`
+              {b.estCostCents != null ? ` · est. ${formatCents(b.estCostCents)}` : ''}
+              {b.chargesTotalCents > 0
+                ? ` · plus ${formatCents(b.chargesTotalCents)} (${b.charges
+                    .map((ch) => ch.label)
+                    .join(', ')})`
                 : ''}
-              {b.status === 'cancelled' && b.cancellationFee != null && b.cancellationFee > 0
-                ? ` · cancellation fee $${b.cancellationFee}`
+              {b.status === 'cancelled' &&
+              b.cancellationFeeCents != null &&
+              b.cancellationFeeCents > 0
+                ? ` · cancellation fee ${formatCents(b.cancellationFeeCents)}`
                 : ''}
             </div>
             {/* The action slot is ALWAYS rendered, empty or not: the widget lives in an
@@ -199,8 +203,8 @@ export function MineTab({
                 <div className="bp-mine-confirm-body">
                   <p className="bp-mine-confirm-q">Cancel this booking?</p>
                   <p className="bp-mine-confirm-fee">
-                    {fee > 0
-                      ? `A $${fee} cancellation fee applies.`
+                    {feeCents > 0
+                      ? `A ${formatCents(feeCents)} cancellation fee applies.`
                       : 'No cancellation fee applies.'}
                   </p>
                   {/* Rescheduling now has a real answer in the widget, so it is offered FIRST —

@@ -16,13 +16,14 @@ import { centsToWholeDollars } from '../../src/shared/index.js';
 import type { HouseholdDetailRow } from '../types';
 
 /**
- * One household's statement, cents → whole dollars. Two callers serialize this exact shape —
- * `GET /:slug/admin/accounts/:accountId` (the sitter's drill-down) and `GET /:slug/account`
- * (`getMyAccount`, the customer's own "what do I owe?") — and they must not drift, for the same
- * reason `assembleHouseholdDetail` is shared by the two reads that produce it.
+ * One household's statement, cents → whole dollars, for the SITTER's drill-down
+ * (`GET /:slug/admin/accounts/:accountId`) — now its only caller. The customer's own
+ * "what do I owe?" (`GET /:slug/account`) used to share it; that surface's wire is cents and
+ * says so, so `getMyAccount` renames the same row itself rather than dividing. When the sitter's
+ * wire follows, this whole module goes with it.
  *
- * `accountId` is widened to `string | null` because the customer-side payload allows a caller who
- * holds no live pet to have no household at all; every money field is identical either way.
+ * `accountId` stays widened to `string | null` — the generic parameter is what let the two
+ * callers share one helper, and narrowing it now would be churn on a module about to be deleted.
  */
 export function householdDetailToDollars<T extends { accountId: string | null }>(
   detail: T & Omit<HouseholdDetailRow, 'accountId'>,

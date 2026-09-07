@@ -87,8 +87,13 @@ export type Availability =
   | {
       available: true;
       priced: true;
+      /** CENTS — the figure to render (via `formatCents`). */
+      estCostCents: number;
+      /** WHOLE DOLLARS, the same money as `estCostCents`. The quote is the one payload that keeps
+       *  its dollar-named fields (design spec §2), for out-of-tree readers; in-tree code renders
+       *  `estCostCents` so nothing has to know which of the two it is holding. */
       estCost: number;
-      /** Quantity `estCost` was billed for, with its noun. Absent for single-day services
+      /** Quantity the estimate was billed for, with its noun. Absent for single-day services
        *  (flat per-booking charge, no quantity). Label from these, never from
        *  `ServiceConfig.rateUnit` — the number and its noun must share one source. */
       billedUnits?: number;
@@ -96,17 +101,19 @@ export type Availability =
       /** Wire-compat only; always a night count. Prefer `billedUnits`/`unit`. */
       nights?: number;
       /** How many billed units the SERVER charged at the sitter's holiday rate, and that rate.
-       *  Both absent unless a holiday actually applied. Display only — `estCost` already
+       *  Both absent unless a holiday actually applied. Display only — the estimate already
        *  includes them; the widget must never re-derive a total from these. */
       holidayUnits?: number;
       holidayRate?: number;
       /** The extra-time surcharge the chosen arrival/departure times attract (0009) and its total,
-       *  both absent unless a fee applies. NOT included in `estCost` — it becomes a separate charge
-       *  on the booking, so what the client will owe is `estCost + extraTimeTotal`. Render these
-       *  verbatim: the amounts are the server's, and the widget must never derive a fee from a time
-       *  of day (it is not sent the sitter's standard hours at all, precisely so it cannot). */
-      extraTimeFees?: { label: string; amount: number }[];
+       *  both absent unless a fee applies. NOT included in the estimate — it becomes a separate
+       *  charge on the booking, so what the client will owe is `estCostCents + extraTimeTotalCents`.
+       *  Render these verbatim: the amounts are the server's, and the widget must never derive a fee
+       *  from a time of day (it is not sent the sitter's standard hours at all, precisely so it
+       *  cannot). `amount`/`extraTimeTotal` are the retained whole-dollar twins, as `estCost` is. */
+      extraTimeFees?: { label: string; amount: number; amountCents: number }[];
       extraTimeTotal?: number;
+      extraTimeTotalCents?: number;
     }
   | {
       /** The dates are free but the sitter has never priced this set of pets. The widget shows
@@ -136,15 +143,16 @@ export type Booking = {
   /** The pet ids on the booking, so an edit form can pre-select them without matching names. */
   petIds: string[];
   petCount: number;
-  estCost: number | null;
-  /** Extras the sitter added after the fact. `estCost` excludes them by design; what the client
-   *  owes is `estCost + chargesTotal`. */
-  charges: { label: string; amount: number }[];
-  chargesTotal: number;
+  /** CENTS, like every money field on this type. */
+  estCostCents: number | null;
+  /** Extras the sitter added after the fact. `estCostCents` excludes them by design; what the
+   *  client owes is `estCostCents + chargesTotalCents`. */
+  charges: { label: string; amountCents: number }[];
+  chargesTotalCents: number;
   /** What was answered ON THIS BOOKING, keyed by question id — not the saved pre-fill, which may
    *  since have moved on. The edit form opens showing these. */
   answers: Record<string, string>;
-  cancellationFee: number | null;
+  cancellationFeeCents: number | null;
   /** Whether the customer may still cancel this one. The SERVER's answer — the widget does no
    *  date math and never infers cancellability from `status` + dates itself. */
   cancellable: boolean;
@@ -152,9 +160,9 @@ export type Booking = {
    *  not the same question as `cancellable`: a stay already under way can be cancelled but not
    *  re-dated. */
   editable: boolean;
-  /** Whole dollars owed if cancelled today; null when it isn't cancellable. Server-computed from
-   *  the sitter's stored policy — the widget renders money, it never derives it. */
-  feeIfCancelledToday: number | null;
+  /** CENTS owed if cancelled today; null when it isn't cancellable. Server-computed from the
+   *  sitter's stored policy — the widget renders money, it never derives it. */
+  feeIfCancelledTodayCents: number | null;
   status: string;
   pets: string[];
 };
@@ -729,14 +737,14 @@ export const api = {
       answers: Record<string, string>;
     },
     /**
-     * Dedupes a retried attempt: the server returns the ORIGINAL `{id, estCost, status}` with 201
+     * Dedupes a retried attempt: the server returns the ORIGINAL `{id, estCostCents, status}` with 201
      * instead of creating a second booking (≤128 chars, unique per tenant+customer). Generate one
      * per attempt and reuse it across retries of that same attempt — a changed selection is a new
      * attempt and must carry a new key, or the replay would return the booking for the old dates.
      */
     idempotencyKey?: string,
   ) =>
-    request<{ id: string; estCost: number; status: string; demo?: boolean; note?: string }>(
+    request<{ id: string; estCostCents: number; status: string; demo?: boolean; note?: string }>(
       `/api/${slug}/bookings`,
       {
         method: 'POST',
@@ -768,7 +776,7 @@ export const api = {
       answers: Record<string, string>;
     },
   ) =>
-    request<{ id: string; estCost: number; status: string }>(
+    request<{ id: string; estCostCents: number; status: string }>(
       `/api/${slug}/bookings/${encodeURIComponent(id)}`,
       {
         method: 'PUT',
@@ -814,7 +822,7 @@ export const api = {
    * wrong. The response echoes the amount actually stamped on the booking.
    */
   cancelBooking: (slug: string, token: string, id: string) =>
-    request<{ status: string; cancellationFee: number }>(
+    request<{ status: string; cancellationFeeCents: number }>(
       `/api/${slug}/bookings/${encodeURIComponent(id)}/cancel`,
       { method: 'POST', headers: authHeaders(token) },
     ),

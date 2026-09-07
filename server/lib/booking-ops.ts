@@ -81,7 +81,6 @@ import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
 import { isUniqueViolation } from './db-errors';
 import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
-import { householdDetailToDollars } from './wire-dollars';
 import {
   isValidPetCount,
   validateBoardingRange,
@@ -236,15 +235,19 @@ function withExtraTimePreview(
   if (!(result.available && result.priced)) return result;
   const fees = extraTimeSurcharges(service, times);
   if (fees.length === 0) return result;
-  // `extraTimeSurcharges` returns cents (0015, it writes `BookingCharges.Amount`); the QUOTE is
-  // still whole dollars, so the total is summed in cents and divided once on its way out.
+  // `extraTimeSurcharges` returns cents (0015, it writes `BookingCharges.Amount`). The quote is
+  // the ONE payload that keeps whole-dollar twins beside its `*Cents` figures (design spec §2),
+  // so the total is summed in cents once and divided once — never a sum of divided terms.
+  const totalCents = fees.reduce((sum, fee) => sum + fee.amountCents, 0);
   return {
     ...result,
     extraTimeFees: fees.map(({ label, amountCents }) => ({
       label,
+      amountCents,
       amount: centsToWholeDollars(amountCents),
     })),
-    extraTimeTotal: centsToWholeDollars(fees.reduce((sum, fee) => sum + fee.amountCents, 0)),
+    extraTimeTotalCents: totalCents,
+    extraTimeTotal: centsToWholeDollars(totalCents),
   };
 }
 
@@ -598,7 +601,9 @@ export type CreateBookingInput = {
 
 export type CreateBookingPayload = {
   id: string;
-  estCost: number | null;
+  /** CENTS (design spec §2). The stay's estimate exactly as it was stamped on the row — the
+   *  whole-dollar `estCost` this payload used to carry is gone, so no reader can misread it. */
+  estCostCents: number | null;
   status: string;
   demo?: true;
   note?: string;
@@ -638,8 +643,7 @@ export async function createBooking(
       return ok(
         {
           id: prior.Id,
-          // Stored cents (0015) back to the whole dollars the wire still speaks.
-          estCost: prior.EstCost === null ? null : centsToWholeDollars(prior.EstCost),
+          estCostCents: prior.EstCost,
           status: prior.Status,
         },
         201,
@@ -787,7 +791,7 @@ export async function createBooking(
     return ok(
       {
         id: `demo_${crypto.randomUUID()}`,
-        estCost: centsToWholeDollars(estCostCents),
+        estCostCents,
         status: 'pending',
         demo: true as const,
         note: 'This was a demo — no booking was created.',
@@ -828,8 +832,7 @@ export async function createBooking(
         return ok(
           {
             id: prior.Id,
-            // Stored cents (0015) back to the whole dollars the wire still speaks.
-            estCost: prior.EstCost === null ? null : centsToWholeDollars(prior.EstCost),
+            estCostCents: prior.EstCost,
             status: prior.Status,
           },
           201,
@@ -911,13 +914,15 @@ export async function createBooking(
     }),
   );
 
-  return ok({ id, estCost: centsToWholeDollars(estCostCents), status: 'pending' }, 201);
+  return ok({ id, estCostCents, status: 'pending' }, 201);
 }
 
 // ─── Cancel ──────────────────────────────────────────────────────────────────
 
 export type CancelBookingInput = { bookingId: string };
-export type CancelBookingPayload = { status: 'cancelled'; cancellationFee: number };
+/** `cancellationFeeCents` is CENTS (design spec §2) — the figure actually stamped on the row,
+ *  never recomputed downstream. Zero when nothing was owed. */
+export type CancelBookingPayload = { status: 'cancelled'; cancellationFeeCents: number };
 
 /**
  * Owner-initiated cancellation. The booking row is NEVER deleted — `BookingRequestPets` has no
@@ -1039,9 +1044,9 @@ export async function cancelBooking(
     }),
   );
 
-  // `fee` is cents everywhere above (stored, emailed via `formatCents`, handed to the calendar);
-  // the wire is still whole dollars in this commit.
-  return ok({ status: 'cancelled' as const, cancellationFee: centsToWholeDollars(fee) });
+  // `fee` is cents everywhere — stored, emailed via `formatCents`, handed to the calendar, and
+  // now said in the same unit on the wire.
+  return ok({ status: 'cancelled' as const, cancellationFeeCents: fee });
 }
 
 // ─── Edit ────────────────────────────────────────────────────────────────────
@@ -1056,7 +1061,8 @@ export type EditBookingInput = {
   departureTime: string | null;
 };
 
-export type EditBookingPayload = { id: string; estCost: number; status: 'pending' };
+/** `estCostCents` is CENTS (design spec §2) — the RE-QUOTED estimate now stamped on the row. */
+export type EditBookingPayload = { id: string; estCostCents: number; status: 'pending' };
 
 /**
  * Customer-initiated edit of an existing booking: DATES, WHICH PETS, ARRIVAL TIME and INTAKE
@@ -1379,7 +1385,7 @@ export async function editBooking(
     }),
   );
 
-  return ok({ id, estCost: centsToWholeDollars(estCostCents), status: 'pending' as const });
+  return ok({ id, estCostCents, status: 'pending' as const });
 }
 
 // ─── The customer's own bookings ─────────────────────────────────────────────
@@ -1396,13 +1402,15 @@ export type MyBooking = {
   petCount: number;
   pets: string[];
   answers: Record<string, string>;
-  estCost: number | null;
-  charges: { label: string; amount: number }[];
-  chargesTotal: number;
-  cancellationFee: number | null;
+  /** CENTS, like every money field on this payload (design spec §2). No dollar-named twin is
+   *  kept: the widget formats these with `formatCents` and derives nothing from them. */
+  estCostCents: number | null;
+  charges: { label: string; amountCents: number }[];
+  chargesTotalCents: number;
+  cancellationFeeCents: number | null;
   cancellable: boolean;
   editable: boolean;
-  feeIfCancelledToday: number | null;
+  feeIfCancelledTodayCents: number | null;
   status: string;
 };
 
@@ -1478,31 +1486,30 @@ export async function listMyBookings(
         /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
          *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
         answers: parseAnswers(r.Answers, r.Id),
-        // Stored cents (0015) → the whole dollars this payload has always carried. The charges
-        // total is summed in CENTS and divided once, rather than as a sum of divided terms.
-        estCost: r.EstCost === null ? null : centsToWholeDollars(r.EstCost),
+        // Stored cents (0015) straight out onto a wire that now says so — no division anywhere on
+        // this payload, so nothing here can round, throw, or drift from the stored figure.
+        estCostCents: r.EstCost,
         charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
           label: ch.label,
-          amount: centsToWholeDollars(ch.amount),
+          amountCents: ch.amount,
         })),
-        chargesTotal: centsToWholeDollars(
-          (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
+        chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce(
+          (sum, ch) => sum + ch.amount,
+          0,
         ),
-        cancellationFee: r.CancellationFee === null ? null : centsToWholeDollars(r.CancellationFee),
+        cancellationFeeCents: r.CancellationFee,
         /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
         cancellable,
         /** Whether THIS customer may still change it — see `isCustomerEditable`. */
         editable: isCustomerEditable(r.Status, r.StartDate, today),
-        /** What cancelling today would cost, whole dollars; null when it isn't cancellable. */
-        feeIfCancelledToday: cancellable
-          ? centsToWholeDollars(
-              feeToCancelToday(
-                r.Status,
-                r.EstCost,
-                r.StartDate,
-                tiersByType.get(r.ServiceType) ?? null,
-                today,
-              ),
+        /** What cancelling today would cost, in CENTS; null when it isn't cancellable. */
+        feeIfCancelledTodayCents: cancellable
+          ? feeToCancelToday(
+              r.Status,
+              r.EstCost,
+              r.StartDate,
+              tiersByType.get(r.ServiceType) ?? null,
+              today,
             )
           : null,
         status: r.Status,
@@ -1514,20 +1521,77 @@ export async function listMyBookings(
 // ─── The customer's own account balance ──────────────────────────────────────
 
 /**
- * Same shape `getHouseholdDetail` returns for the admin drill-down, `accountId` widened to
- * `null`: a caller with no live pet at all holds no edge in the owner<->pet graph
+ * The shape `getHouseholdDetail` returns for the admin drill-down, with every money field named
+ * in cents (see below) and `accountId` widened to `null`: a caller with no live pet at all holds
+ * no edge in the owner<->pet graph
  * (`buildAccounts`), so no household names them — genuinely "nothing owed" rather than a lookup
  * failure, the same distinction `MatchClient.accountId` draws for the Venmo importer's first-ever
  * payment.
  */
 export type MyAccountBalance = {
   accountId: string | null;
-  bookings: HouseholdDetailRow['bookings'];
-  householdPayments: HouseholdDetailRow['householdPayments'];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  /** Every money field is CENTS and says so (design spec §2). The names are the ONLY thing that
+   *  differs from `HouseholdDetailRow`, whose fields carry the same cents under dollar-era names
+   *  — this payload is renamed here rather than in the shared row because the sitter-side
+   *  drill-down that reads the same row is a separate surface with its own rename. */
+  bookings: {
+    bookingId: string;
+    serviceType: string;
+    startDate: string;
+    endDate: string | null;
+    status: string;
+    costCents: number;
+    charges: { id: string; label: string; amountCents: number }[];
+    chargesTotalCents: number;
+    paidTotalCents: number;
+    expectedCents: number;
+  }[];
+  householdPayments: {
+    id: string;
+    amountCents: number;
+    method: string;
+    paidDate: string;
+    note: string | null;
+  }[];
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
+
+/**
+ * `HouseholdDetailRow` (cents, dollar-era field names) → the customer's statement (cents, named
+ * so). Arithmetic-free on purpose: every figure is carried across verbatim, so this rename can
+ * neither round a balance nor recompute one. The admin drill-down reads the SAME row through
+ * `householdDetailToDollars`; both are pure renamings of one computation, which is what keeps the
+ * two statements from drifting on anything but the field name.
+ */
+function accountToCents(accountId: string | null, detail: HouseholdDetailRow): MyAccountBalance {
+  return {
+    accountId,
+    bookings: detail.bookings.map((b) => ({
+      bookingId: b.bookingId,
+      serviceType: b.serviceType,
+      startDate: b.startDate,
+      endDate: b.endDate,
+      status: b.status,
+      costCents: b.cost,
+      charges: b.charges.map((c) => ({ id: c.id, label: c.label, amountCents: c.amount })),
+      chargesTotalCents: b.chargesTotal,
+      paidTotalCents: b.paidTotal,
+      expectedCents: b.expected,
+    })),
+    householdPayments: detail.householdPayments.map((p) => ({
+      id: p.id,
+      amountCents: p.amount,
+      method: p.method,
+      paidDate: p.paidDate,
+      note: p.note,
+    })),
+    expectedTotalCents: detail.expectedTotal,
+    paidTotalCents: detail.paidTotal,
+    balanceCents: detail.balance,
+  };
+}
 
 /** A statement with no activity yet: not an error, just nothing recorded either side. */
 function emptyAccount(accountId: string | null): MyAccountBalance {
@@ -1535,15 +1599,15 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
     accountId,
     bookings: [],
     householdPayments: [],
-    expectedTotal: 0,
-    paidTotal: 0,
-    balance: 0,
+    expectedTotalCents: 0,
+    paidTotalCents: 0,
+    balanceCents: 0,
   };
 }
 
 /**
  * "What do I owe?" — the one question `/bookings/mine` cannot answer, because a booking's own
- * `estCost` is what THAT stay costs, not what the household owes across every stay and payment.
+ * `estCostCents` is what THAT stay costs, not what the household owes across every stay and payment.
  * The household balance already existed (`buildHouseholdBalances`, Story 2.1) and was reachable
  * only from the admin dashboard; this is the same computation, unchanged, reached from the other
  * side of the same number.
@@ -1579,7 +1643,5 @@ export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyA
     tenant.Id,
     endUserId,
   );
-  // Cents → the whole dollars this payload has always carried, through the SAME helper the
-  // sitter-side drill-down uses, so the two statements cannot drift on the unit either.
-  return ok(detail ? householdDetailToDollars({ ...detail, accountId }) : emptyAccount(accountId));
+  return ok(detail ? accountToCents(accountId, detail) : emptyAccount(accountId));
 }

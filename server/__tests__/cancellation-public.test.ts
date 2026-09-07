@@ -5,7 +5,7 @@ import { addDays, getPacificDateStr } from '../../src/shared/index.js';
 
 type ConfigService = { type: string; cancellationTiers: unknown };
 type ConfigResponse = { services: ConfigService[] };
-type MineBooking = { id: string; cancellationFee: number | null };
+type MineBooking = { id: string; cancellationFeeCents: number | null };
 type MineResponse = { bookings: MineBooking[] };
 
 /** Books one dog (Bella, sunny-paws) for a boarding stay via the real customer flow. */
@@ -91,7 +91,7 @@ describe('GET /config exposes cancellationTiers per service', () => {
   });
 });
 
-describe('GET /bookings/mine exposes cancellationFee', () => {
+describe('GET /bookings/mine exposes cancellationFeeCents', () => {
   it('returns the assessed fee on a fee-charged cancelled booking', async () => {
     const { env, raw } = createTestEnv();
     seedTiers(raw);
@@ -99,7 +99,7 @@ describe('GET /bookings/mine exposes cancellationFee', () => {
     const end = addDays(getPacificDateStr(), 3);
     const created = (await (await bookBoarding(env, start, end)).json()) as {
       id: string;
-      estCost: number;
+      estCostCents: number;
     };
     await confirm(env, created.id);
 
@@ -108,10 +108,10 @@ describe('GET /bookings/mine exposes cancellationFee', () => {
 
     const { bookings } = await mine(env);
     const row = bookings.find((b) => b.id === created.id)!;
-    expect(row.cancellationFee).toBe(created.estCost);
+    expect(row.cancellationFeeCents).toBe(created.estCostCents);
   });
 
-  it('returns null cancellationFee on a booking cancelled without a fee', async () => {
+  it('returns null cancellationFeeCents on a booking cancelled without a fee', async () => {
     const { env, raw } = createTestEnv();
     seedTiers(raw);
     const start = addDays(getPacificDateStr(), 1);
@@ -124,10 +124,10 @@ describe('GET /bookings/mine exposes cancellationFee', () => {
 
     const { bookings } = await mine(env);
     const row = bookings.find((b) => b.id === created.id)!;
-    expect(row.cancellationFee).toBeNull();
+    expect(row.cancellationFeeCents).toBeNull();
   });
 
-  it('returns null cancellationFee on a pending (uncancelled) booking', async () => {
+  it('returns null cancellationFeeCents on a pending (uncancelled) booking', async () => {
     const { env } = createTestEnv();
     const start = addDays(getPacificDateStr(), 1);
     const end = addDays(getPacificDateStr(), 3);
@@ -135,6 +135,6 @@ describe('GET /bookings/mine exposes cancellationFee', () => {
 
     const { bookings } = await mine(env);
     const row = bookings.find((b) => b.id === created.id)!;
-    expect(row.cancellationFee).toBeNull();
+    expect(row.cancellationFeeCents).toBeNull();
   });
 });

@@ -198,7 +198,7 @@ describe('quote/stamp parity across a holiday', () => {
         { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
-    ).json()) as { estCost: number; holidayUnits: number };
+    ).json()) as { estCost: number; estCostCents: number; holidayUnits: number };
 
     const created = (await (
       await app.request(
@@ -215,10 +215,10 @@ describe('quote/stamp parity across a holiday', () => {
         },
         env,
       )
-    ).json()) as { estCost: number };
+    ).json()) as { estCostCents: number };
 
     expect(quote.holidayUnits).toBe(2);
-    expect(created.estCost).toBe(quote.estCost);
+    expect(created.estCostCents).toBe(quote.estCostCents);
   });
 
   it('the booking stamps exactly what the quote said for a SINGLE-DAY service on a holiday', async () => {
@@ -235,7 +235,7 @@ describe('quote/stamp parity across a holiday', () => {
         { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
-    ).json()) as { estCost: number; holidayUnits: number };
+    ).json()) as { estCost: number; estCostCents: number; holidayUnits: number };
 
     const created = (await (
       await app.request(
@@ -252,10 +252,11 @@ describe('quote/stamp parity across a holiday', () => {
         },
         env,
       )
-    ).json()) as { estCost: number };
+    ).json()) as { estCostCents: number };
 
     expect(quote.estCost).toBe(25); // holiday rate replaces the $12 base for Christmas Day
+    expect(quote.estCostCents).toBe(2500);
     expect(quote.holidayUnits).toBe(1);
-    expect(created.estCost).toBe(quote.estCost);
+    expect(created.estCostCents).toBe(quote.estCostCents);
   });
 });

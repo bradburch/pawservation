@@ -72,7 +72,7 @@ describe("booking POST refuses an unpriced pet set (mode 'exact')", () => {
       petIds: ['pet_sp_bella'],
     });
     expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ estCost: 20 });
+    expect(await res.json()).toMatchObject({ estCostCents: 2000 });
   });
 
   it('the quote and the POST refuse TOGETHER for the same set', async () => {
@@ -110,13 +110,13 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
       petIds: ['pet_sp_bella', 'pet_sp_mochi'],
     });
     expect(res.status).toBe(201);
-    const booked = (await res.json()) as { id: string; estCost: number };
-    expect(booked.estCost).toBe(40); // the $20 d30 walk x 2 pets
+    const booked = (await res.json()) as { id: string; estCostCents: number };
+    expect(booked.estCostCents).toBe(4000); // the $20 d30 walk x 2 pets
     const stored = raw.prepare(`SELECT EstCost FROM BookingRequests WHERE Id=?`).get(booked.id) as {
       EstCost: number;
     };
-    // The COLUMN is cents (0015); the create RESPONSE above is still whole dollars.
-    expect(stored.EstCost).toBe(dollarsToCents(40));
+    // Column and create response are one unit now — the stamp IS the number the customer read.
+    expect(stored.EstCost).toBe(booked.estCostCents);
   });
 
   it('the quote and the POST AGREE for the same set — parity holds in the new mode too', async () => {
@@ -127,16 +127,16 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
         'pet_sp_bella',
         'pet_sp_mochi',
       ])
-    ).json()) as { priced: boolean; estCost: number };
+    ).json()) as { priced: boolean; estCost: number; estCostCents: number };
     const p = await book(env, 'sunny-paws', {
       type: 'walk',
       startDate: '2028-08-12',
       optionKey: 'd30',
       petIds: ['pet_sp_bella', 'pet_sp_mochi'],
     });
-    expect(q).toMatchObject({ priced: true, estCost: 40 });
+    expect(q).toMatchObject({ priced: true, estCost: 40, estCostCents: 4000 });
     expect(p.status).toBe(201);
-    expect(((await p.json()) as { estCost: number }).estCost).toBe(q.estCost);
+    expect(((await p.json()) as { estCostCents: number }).estCostCents).toBe(q.estCostCents);
   });
 
   it('a stored rate for that exact set still wins over the multiplier at the POST', async () => {
@@ -156,7 +156,7 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
     });
     expect(res.status).toBe(201);
     // $33 — the rate the sitter typed for a dog + a cat. Not $40 (2 x $20), not $66 (2 x $33).
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(33);
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(3300);
   });
 
   it('a single pet is unchanged by the mode — x1 never moves a price', async () => {
@@ -169,7 +169,7 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
       petIds: ['pet_sp_bella'],
     });
     expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ estCost: 20 });
+    expect(await res.json()).toMatchObject({ estCostCents: 2000 });
   });
 
   it('the mode is per SERVICE — opting walks in does not opt boarding in', async () => {
@@ -187,7 +187,7 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
 });
 
 describe('quote/stamp parity', () => {
-  it('a PRICED multi-pet set: quote estCost === POST estCost === stored EstCost', async () => {
+  it('a PRICED multi-pet set: quote estCostCents === POST estCostCents === stored EstCost', async () => {
     const { env, raw } = createTestEnv();
     raw
       .prepare(
@@ -200,8 +200,8 @@ describe('quote/stamp parity', () => {
         'pet_sp_bella',
         'pet_sp_mochi',
       ])
-    ).json()) as { priced: boolean; estCost: number };
-    expect(q).toMatchObject({ priced: true, estCost: 33 });
+    ).json()) as { priced: boolean; estCost: number; estCostCents: number };
+    expect(q).toMatchObject({ priced: true, estCost: 33, estCostCents: 3300 });
 
     const res = await book(env, 'sunny-paws', {
       type: 'walk',
@@ -210,12 +210,13 @@ describe('quote/stamp parity', () => {
       petIds: ['pet_sp_bella', 'pet_sp_mochi'],
     });
     expect(res.status).toBe(201);
-    const booked = (await res.json()) as { id: string; estCost: number };
-    expect(booked.estCost).toBe(q.estCost);
+    const booked = (await res.json()) as { id: string; estCostCents: number };
+    expect(booked.estCostCents).toBe(q.estCostCents);
     const stored = raw.prepare(`SELECT EstCost FROM BookingRequests WHERE Id=?`).get(booked.id) as {
       EstCost: number;
     };
-    expect(stored.EstCost).toBe(dollarsToCents(q.estCost));
+    expect(stored.EstCost).toBe(q.estCostCents);
+    expect(q.estCostCents).toBe(dollarsToCents(q.estCost));
   });
 
   it('a pet-ID group rate beats the species rate at BOTH the quote and the stamp', async () => {
@@ -237,15 +238,15 @@ describe('quote/stamp parity', () => {
         'pet_sp_mochi',
         'pet_sp_bella',
       ])
-    ).json()) as { estCost: number };
-    expect(q.estCost).toBe(21); // group beats mix; selection ORDER does not change the key
+    ).json()) as { estCostCents: number };
+    expect(q.estCostCents).toBe(2100); // group beats mix; selection ORDER does not change the key
     const res = await book(env, 'sunny-paws', {
       type: 'walk',
       startDate: '2028-08-05',
       optionKey: 'd30',
       petIds: ['pet_sp_mochi', 'pet_sp_bella'],
     });
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(21);
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(2100);
   });
 });
 
@@ -267,7 +268,7 @@ describe('rates are tenant-scoped', () => {
       ])
     ).json()) as Record<string, unknown>;
     expect(q).toMatchObject({ priced: false, reason: 'unpriced-pet-set' });
-    expect(q.estCost).not.toBe(99);
+    expect(q.estCostCents).not.toBe(9900);
   });
 
   it("tenant A's pet-GROUP rate never prices tenant B's booking", async () => {

@@ -41,7 +41,7 @@ describe('cancellation flow', () => {
 
     const cancelRes = await cancel(env, token, id);
     expect(cancelRes.status).toBe(200);
-    expect(await cancelRes.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await cancelRes.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
 
     const mine = (await (
       await app.request(
@@ -72,8 +72,8 @@ describe('cancellation flow', () => {
       petIds: ['pet_sp_bella'],
     });
     expect(bookRes.status).toBe(201);
-    const { id, estCost } = (await bookRes.json()) as { id: string; estCost: number };
-    expect(estCost).toBe(150); // 3 nights x $50
+    const { id, estCostCents } = (await bookRes.json()) as { id: string; estCostCents: number };
+    expect(estCostCents).toBe(15000); // 3 nights x $50
 
     const admin = await adminHeaders(TENANT_A);
     const confirm = await app.request(
@@ -89,8 +89,8 @@ describe('cancellation flow', () => {
 
     const cancelRes = await cancel(env, token, id);
     expect(cancelRes.status).toBe(200);
-    const { cancellationFee } = (await cancelRes.json()) as { cancellationFee: number };
-    expect(cancellationFee).toBe(75); // round(150 * 0.5)
+    const { cancellationFeeCents } = (await cancelRes.json()) as { cancellationFeeCents: number };
+    expect(cancellationFeeCents).toBe(7500); // round($150 * 0.5)
 
     const analytics = (await (
       await app.request(`/api/${SLUG}/admin/analytics`, { headers: admin }, env)

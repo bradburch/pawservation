@@ -11,12 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import type { DatabaseSync } from 'node:sqlite';
-import {
-  addDays,
-  centsToWholeDollars,
-  DEFAULT_TIMEZONE,
-  getPacificDateStr,
-} from '../../src/shared/index.js';
+import { addDays, DEFAULT_TIMEZONE, getPacificDateStr } from '../../src/shared/index.js';
 import {
   adminHeaders,
   createTestEnv,
@@ -50,8 +45,10 @@ type QuoteExtras = {
   available: boolean;
   priced?: boolean;
   estCost?: number;
-  extraTimeFees?: { label: string; amount: number }[];
+  estCostCents?: number;
+  extraTimeFees?: { label: string; amount: number; amountCents: number }[];
   extraTimeTotal?: number;
+  extraTimeTotalCents?: number;
 };
 
 async function quote(
@@ -99,9 +96,9 @@ async function mine(env: Env, id: string) {
   const body = (await res.json()) as {
     bookings: {
       id: string;
-      estCost: number | null;
-      chargesTotal: number;
-      charges: { label: string; amount: number }[];
+      estCostCents: number | null;
+      chargesTotalCents: number;
+      charges: { label: string; amountCents: number }[];
     }[];
   };
   return body.bookings.find((b) => b.id === id)!;
@@ -124,13 +121,16 @@ describe('the previewed surcharge and the stamped one are the same number', () =
       departureTime: '13:00',
     });
     expect(previewed.status).toBe(200);
+    // The quote keeps its whole-dollar twins beside the cents (design spec §2's two exceptions).
     expect(previewed.body.extraTimeFees).toEqual([
-      { label: 'Early arrival (07:00)', amount: 20 },
-      { label: 'Late departure (13:00)', amount: 15 },
+      { label: 'Early arrival (07:00)', amount: 20, amountCents: 2000 },
+      { label: 'Late departure (13:00)', amount: 15, amountCents: 1500 },
     ]);
     expect(previewed.body.extraTimeTotal).toBe(35);
+    expect(previewed.body.extraTimeTotalCents).toBe(3500);
     // The stay's own price is untouched by the surcharge: 3 nights x $50.
     expect(previewed.body.estCost).toBe(150);
+    expect(previewed.body.estCostCents).toBe(15000);
 
     const res = await book(env, {
       type: 'boarding',
@@ -141,23 +141,20 @@ describe('the previewed surcharge and the stamped one are the same number', () =
       departureTime: '13:00',
     });
     expect(res.status).toBe(201);
-    const { id, estCost } = (await res.json()) as { id: string; estCost: number };
+    const { id, estCostCents } = (await res.json()) as { id: string; estCostCents: number };
 
-    // THE PARITY LOCK: the stamped rows carry exactly the previewed labels and amounts. The
-    // COLUMN is cents (0015) and the QUOTE is still whole dollars, so the comparison converts —
-    // it is the same fee either way, which is the whole point of the lock.
+    // THE PARITY LOCK: the stamped rows carry exactly the previewed labels and amounts. Column
+    // and quote are now one unit, so the comparison is direct — no conversion stands between the
+    // fee the customer read and the fee they owe.
     const stamped = await charges(env, id);
-    expect(
-      stamped.map(({ Label, Amount }) => ({
-        label: Label,
-        amount: centsToWholeDollars(Amount),
-      })),
-    ).toEqual(previewed.body.extraTimeFees);
+    expect(stamped.map(({ Label, Amount }) => ({ label: Label, amountCents: Amount }))).toEqual(
+      previewed.body.extraTimeFees!.map(({ label, amountCents }) => ({ label, amountCents })),
+    );
     // EstCost is the stay, never the surcharge — total due is EstCost + chargesTotal.
-    expect(estCost).toBe(150);
+    expect(estCostCents).toBe(15000);
     const row = await mine(env, id);
-    expect(row.estCost).toBe(150);
-    expect(row.chargesTotal).toBe(previewed.body.extraTimeTotal);
+    expect(row.estCostCents).toBe(15000);
+    expect(row.chargesTotalCents).toBe(previewed.body.extraTimeTotalCents);
   });
 });
 
@@ -177,6 +174,7 @@ describe('NULL config is the feature switched off', () => {
     });
     expect(q.body).not.toHaveProperty('extraTimeFees');
     expect(q.body).not.toHaveProperty('extraTimeTotal');
+    expect(q.body).not.toHaveProperty('extraTimeTotalCents');
 
     const res = await book(env, {
       type: 'boarding',
@@ -269,9 +267,9 @@ describe('flat, per stay, and never scaled', () => {
       departureTime: '13:00',
     });
     expect(res.status).toBe(201);
-    const { id, estCost } = (await res.json()) as { id: string; estCost: number };
+    const { id, estCostCents } = (await res.json()) as { id: string; estCostCents: number };
     // The STAY doubles under 'linear' (3 nights x $50 x 2 pets) …
-    expect(estCost).toBe(300);
+    expect(estCostCents).toBe(30000);
     // … and the surcharge does not. A per-pet fee nobody typed is the defect the no-inferred-
     // pricing invariant exists to prevent, and it is exactly what placing this inside
     // `estimateCost` would have produced.

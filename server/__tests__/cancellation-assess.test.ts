@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A, TENANT_B } from './helpers';
-import { addDays, dollarsToCents, getPacificDateStr } from '../../src/shared/index.js';
+import { addDays, centsToWholeDollars, getPacificDateStr } from '../../src/shared/index.js';
 
 /** Books one dog (Bella, sunny-paws) for a boarding stay via the real customer flow. */
 async function bookBoarding(env: Env, startDate: string, endDate: string): Promise<Response> {
@@ -78,7 +78,7 @@ describe('cancellation fee assessment at cancel time', () => {
     const end = addDays(getPacificDateStr(), 3);
     const created = (await (await bookBoarding(env, start, end)).json()) as {
       id: string;
-      estCost: number;
+      estCostCents: number;
     };
     await confirm(env, created.id);
 
@@ -87,13 +87,14 @@ describe('cancellation fee assessment at cancel time', () => {
       chargeFee: true,
     });
     expect(res.status).toBe(200);
+    // The customer's create response is CENTS; this ADMIN response is still whole dollars — the
+    // sitter-facing wire is renamed in its own commit. One number, two units, said explicitly.
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: created.estCost,
+      cancellationFee: centsToWholeDollars(created.estCostCents),
     });
-    // `created.estCost` is the CREATE RESPONSE, still whole dollars; the COLUMN is cents (0015).
-    expect(feeRow(raw, created.id)).toBe(dollarsToCents(created.estCost));
+    expect(feeRow(raw, created.id)).toBe(created.estCostCents);
     expect(statusRow(raw, created.id)).toBe('cancelled');
   });
 

@@ -52,12 +52,12 @@ describe('demo booking POST', () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
       id: string;
-      estCost: number;
+      estCostCents: number;
       status: string;
       demo?: boolean;
       note?: string;
     };
-    expect(body.estCost).toBe(90); // 2 nights × $45 — same estimateCost as a real booking
+    expect(body.estCostCents).toBe(9000); // 2 nights × $45 — same estimateCost as a real booking
     expect(body.status).toBe('pending');
     expect(body.demo).toBe(true);
     expect(body.note).toBe('This was a demo — no booking was created.');
@@ -198,7 +198,7 @@ describe('demo booking POST', () => {
     });
     expect(res.status).toBe(201);
     // 2 nights × $45 = $90 for one pet; two pets on a 'linear' service = $180.
-    expect(await res.json()).toMatchObject({ estCost: 180, demo: true });
+    expect(await res.json()).toMatchObject({ estCostCents: 18000, demo: true });
     expect(countRows(raw, 'BookingRequests', TENANT_C)).toBe(bookingsBefore);
   });
 

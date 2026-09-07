@@ -573,6 +573,31 @@ describe('checkAvailability', () => {
     expect(res).toMatchObject({ available: true, estCost: 150, nights: 3 });
   });
 
+  /** The quote is the ONE payload that keeps both names (design spec §2): `estCost` stays whole
+   *  dollars for out-of-tree readers because rate × units is whole by construction, and
+   *  `estCostCents` says the unit the rest of the wire now speaks. */
+  it('the quote carries estCostCents beside the whole-dollar estCost', async () => {
+    const { env } = createTestEnv();
+    const t = tenant();
+    const o = opt({
+      ServiceType: 'boarding',
+      OptionKey: 'standard',
+      DurationMinutes: null,
+      Rate: 50,
+    });
+    const res = await checkAvailability(
+      env,
+      t,
+      svc('boarding'),
+      o,
+      '2028-08-10',
+      '2028-08-15',
+      onePet,
+      noRates,
+    );
+    expect(res).toMatchObject({ available: true, estCost: 250, estCostCents: 25000 });
+  });
+
   it('house-sit conflicts when it overlaps existing boarding by more than a day', async () => {
     const { env } = createTestEnv();
     const t = tenant(); // housesit cap null = unlimited; conflict must come from overlap rule
@@ -1608,12 +1633,14 @@ describe('quote/stamp parity for a day-unit range service', () => {
     ).json()) as {
       available: boolean;
       estCost: number;
+      estCostCents: number;
       nights: number;
       billedUnits: number;
       unit: string;
     };
     expect(quoteBody).toMatchObject({ available: true, nights: 3, billedUnits: 4, unit: 'day' });
     expect(quoteBody.estCost).toBe(120); // 3 nights = 4 days × $30
+    expect(quoteBody.estCostCents).toBe(12000); // the same money, in the unit the wire speaks
     expect(quoteBody.billedUnits * 30).toBe(quoteBody.estCost); // the label and the price agree
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
@@ -1632,14 +1659,15 @@ describe('quote/stamp parity for a day-unit range service', () => {
       env,
     );
     expect(res.status).toBe(201);
-    const booked = (await res.json()) as { id: string; estCost: number };
-    expect(booked.estCost).toBe(quoteBody.estCost);
+    const booked = (await res.json()) as { id: string; estCostCents: number };
+    expect(booked.estCostCents).toBe(quoteBody.estCostCents);
 
     const stored = raw
       .prepare('SELECT EstCost FROM BookingRequests WHERE Id = ?')
       .get(booked.id) as { EstCost: number } | undefined;
-    // The COLUMN is cents (0015); the quote and the create response are still whole dollars.
-    expect(stored?.EstCost).toBe(dollarsToCents(quoteBody.estCost));
+    // Column, quote and create response are now ONE unit — no conversion stands between them.
+    expect(stored?.EstCost).toBe(quoteBody.estCostCents);
+    expect(quoteBody.estCostCents).toBe(dollarsToCents(quoteBody.estCost));
   });
 });
 

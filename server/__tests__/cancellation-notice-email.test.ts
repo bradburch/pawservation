@@ -280,7 +280,7 @@ describe('the cancel route notifies the sitter', () => {
 
     const res = await cancel(env, id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 10000 });
     const row = (await env.PAWSERVATION_DB.prepare(
       'SELECT Status, CancellationFee FROM BookingRequests WHERE Id = ?',
     )

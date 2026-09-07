@@ -92,8 +92,17 @@ export type AvailabilityResult =
       /** Discriminant. `true` means the sitter has priced this exact pet set (or it is a single
        *  pet falling back to the option's own rate). See the `priced: false` arm. */
       priced: true;
-      /** WHOLE DOLLARS. This is the wire, and 0015 moved storage only: `estimateCost` returns
-       *  cents and the two call sites below divide back with `centsToWholeDollars`. */
+      /** CENTS — the unit everything is stored, summed and quoted in. This is the figure to read;
+       *  `estCost` below is the same money in whole dollars, kept only for out-of-tree readers. */
+      estCostCents: number;
+      /**
+       * WHOLE DOLLARS, and one of the design spec's TWO retained dollar names (§2), the other
+       * being `extraTimeTotal`. It survives the cents rename because rate × units is whole by
+       * construction — `centsToWholeDollars` throws rather than round, so a fractional quote
+       * would be a loud failure here, not a silently floored price — and because the out-of-tree
+       * booking MCP deployment reads it, for the same reason `nights` is retained just below.
+       * In-tree readers use `estCostCents`.
+       */
       estCost: number;
       /**
        * The quantity `estCost` was actually billed for, in `unit`s — the number the widget shows
@@ -124,9 +133,14 @@ export type AvailabilityResult =
       holidayRate?: number;
       /**
        * The extra-time surcharge the owner's chosen times attract (0009), and its total — DISPLAY
-       * ONLY, and deliberately NOT part of `estCost`. `estCost` is the price of the stay;
-       * `extraTimeTotal` is what will be added to it as `BookingCharges` rows when the booking is
+       * ONLY, and deliberately NOT part of the estimate. The estimate is the price of the stay;
+       * the surcharge is what will be added to it as `BookingCharges` rows when the booking is
        * created, so `totalDue` stays `EstCost + chargesTotal` at every read site.
+       *
+       * `amountCents`/`extraTimeTotalCents` are the figures to read; `amount`/`extraTimeTotal`
+       * are the same money in whole dollars, retained beside them for the same out-of-tree
+       * readers as `estCost` and on the same guarantee — a flat fee the sitter typed is whole,
+       * and `centsToWholeDollars` throws rather than round if one ever isn't.
        *
        * Both fields are absent unless a fee actually applies, so a quote for a service with no
        * standard hours (every service until a sitter sets some) is byte-identical to what it was
@@ -136,8 +150,9 @@ export type AvailabilityResult =
        * stamp. Attached OUTSIDE `estimateCost`/`checkAvailability` on purpose: the price formula
        * never sees a time, and a surcharge never passes through it.
        */
-      extraTimeFees?: { label: string; amount: number }[];
+      extraTimeFees?: { label: string; amount: number; amountCents: number }[];
       extraTimeTotal?: number;
+      extraTimeTotalCents?: number;
     }
   | {
       /**
@@ -588,8 +603,9 @@ async function checkRange(
   return {
     available: true,
     priced: true,
-    // The wire is still whole dollars (0015 moved storage only); `centsToWholeDollars` throws on
-    // a non-whole figure, so a missed conversion is loud rather than a silently floored quote.
+    estCostCents: price.cost,
+    // The retained whole-dollar twin (see `AvailabilityResult`). `centsToWholeDollars` throws on
+    // a non-whole figure, so a fractional quote is loud rather than a silently floored one.
     estCost: centsToWholeDollars(price.cost),
     // The quantity the price was computed from — same unit, same `billableUnits` call as
     // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
@@ -689,8 +705,9 @@ async function checkSingle(
   return {
     available: true,
     priced: true,
-    // The wire is still whole dollars (0015 moved storage only); `centsToWholeDollars` throws on
-    // a non-whole figure, so a missed conversion is loud rather than a silently floored quote.
+    estCostCents: price.cost,
+    // The retained whole-dollar twin (see `AvailabilityResult`). `centsToWholeDollars` throws on
+    // a non-whole figure, so a fractional quote is loud rather than a silently floored one.
     estCost: centsToWholeDollars(price.cost),
     holidayUnits: price.holidayUnits,
     holidayRate: price.holidayRate,

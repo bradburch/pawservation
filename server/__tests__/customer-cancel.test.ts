@@ -138,7 +138,7 @@ describe('POST /:slug/bookings/:id/cancel — fee-free path', () => {
 
     const res = await cancel(env, await jessToken(env), id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
 
     // A REAL 0, not NULL: "cancelled and nothing owed" is a recorded fact.
     expect(await row(env, id)).toMatchObject({
@@ -168,7 +168,7 @@ describe('POST /:slug/bookings/:id/cancel — fee-free path', () => {
 
     const res = await cancel(env, await jessToken(env), id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
     expect(await row(env, id)).toMatchObject({ Status: 'cancelled', CancellationFee: 0 });
     // Deleted, not retitled: there is no receivable to keep a calendar record of.
     expect(calls(spy)).toEqual([
@@ -203,7 +203,7 @@ describe('POST /:slug/bookings/:id/cancel — fee path', () => {
 
     const res = await cancel(env, await jessToken(env), id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 10000 });
     expect(await row(env, id)).toMatchObject({
       Status: 'cancelled',
       CancellationFee: 10000,
@@ -240,7 +240,7 @@ describe('POST /:slug/bookings/:id/cancel — fee path', () => {
       },
       env,
     );
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 10000 });
     expect((await row(env, id)).CancellationFee).toBe(10000); // the column, in cents
   });
 
@@ -248,7 +248,7 @@ describe('POST /:slug/bookings/:id/cancel — fee path', () => {
     const { env } = createTestEnv(); // tiers NOT seeded
     const id = await seedBooking(env, { startsInDays: 1 });
     const res = await cancel(env, await jessToken(env), id);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
   });
 });
 
@@ -397,6 +397,7 @@ describe('the admin status route shares the delete-vs-retitle rule', () => {
 
     const res = await postStatus(env, id, { status: 'cancelled', chargeFee: true });
     expect(res.status).toBe(200);
+    // The ADMIN status route, whose wire is still whole dollars until the sitter-side rename.
     expect(await res.json()).toMatchObject({ status: 'cancelled', cancellationFee: 100 });
 
     expect(calls(spy)).toEqual([
@@ -789,13 +790,33 @@ describe('GET /:slug/bookings/mine — the fee preview the confirm step renders'
       env,
     );
     const { bookings } = (await res.json()) as {
-      bookings: { id: string; cancellable: boolean; feeIfCancelledToday: number | null }[];
+      bookings: { id: string; cancellable: boolean; feeIfCancelledTodayCents: number | null }[];
     };
     const by = (id: string) => bookings.find((b) => b.id === id)!;
-    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledToday: 100 });
-    expect(by(far)).toMatchObject({ cancellable: true, feeIfCancelledToday: 0 });
-    expect(by(pending)).toMatchObject({ cancellable: true, feeIfCancelledToday: 0 });
-    expect(by(past)).toMatchObject({ cancellable: false, feeIfCancelledToday: null });
+    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 10000 });
+    expect(by(far)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 0 });
+    expect(by(pending)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 0 });
+    expect(by(past)).toMatchObject({ cancellable: false, feeIfCancelledTodayCents: null });
+  });
+
+  /** The preview names its unit (design spec §2): `feeIfCancelledTodayCents`, with no
+   *  dollar-named twin left for a reader to misread. */
+  it('states the prospective fee in cents, and drops the dollar-named field', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const soon = await seedBooking(env, { startsInDays: 5 }); // 50% tier → $100
+    const past = await seedBooking(env, { startsInDays: -30 });
+
+    const res = await app.request(
+      `/api/${SLUG}/bookings/mine`,
+      { headers: { Authorization: `Bearer ${await jessToken(env)}` } },
+      env,
+    );
+    const { bookings } = (await res.json()) as { bookings: Record<string, unknown>[] };
+    const by = (id: string) => bookings.find((b) => b.id === id)!;
+    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 10000 });
+    expect(by(past)).toMatchObject({ cancellable: false, feeIfCancelledTodayCents: null });
+    expect(by(soon).feeIfCancelledToday).toBeUndefined();
   });
 
   it('the preview and the amount actually stamped are the same number', async () => {
@@ -809,10 +830,11 @@ describe('GET /:slug/bookings/mine — the fee preview the confirm step renders'
         { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
-    ).json()) as { bookings: { id: string; feeIfCancelledToday: number | null }[] };
-    const previewed = list.bookings.find((b) => b.id === id)!.feeIfCancelledToday;
-    const stamped = ((await (await cancel(env, token, id)).json()) as { cancellationFee: number })
-      .cancellationFee;
+    ).json()) as { bookings: { id: string; feeIfCancelledTodayCents: number | null }[] };
+    const previewed = list.bookings.find((b) => b.id === id)!.feeIfCancelledTodayCents;
+    const stamped = (
+      (await (await cancel(env, token, id)).json()) as { cancellationFeeCents: number }
+    ).cancellationFeeCents;
     expect(stamped).toBe(previewed);
   });
 });

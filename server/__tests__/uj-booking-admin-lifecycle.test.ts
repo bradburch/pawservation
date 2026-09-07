@@ -25,8 +25,8 @@ describe('booking admin lifecycle', () => {
       env,
     );
     expect(bookRes.status).toBe(201);
-    const { id, estCost } = (await bookRes.json()) as { id: string; estCost: number };
-    expect(estCost).toBe(150); // 3 nights x $50
+    const { id, estCostCents } = (await bookRes.json()) as { id: string; estCostCents: number };
+    expect(estCostCents).toBe(15000); // 3 nights x $50
 
     const admin = await adminHeaders(TENANT_A);
     const adminJson = { ...admin, 'Content-Type': 'application/json' };
