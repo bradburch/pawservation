@@ -6,11 +6,11 @@ import { balancedRemainder, sitterPicksFirst } from '../../src/shared/index.js';
  * attribution) — the client-side mirror of the conservation check `proposeAttribution`
  * (server/lib/payment-attribution.ts) enforces server-side. Pure and UNIT-AGNOSTIC — it is integer
  * subtraction, so the figures below are left as they were even though its parameters now say
- * CENTS in their names (the panel that calls it works in cents end to end): given the splits a sitter has typed or accepted against one credit, either hand back the
- * remainder that would stay as account credit, or refuse with `null` — never a rounded or invented
- * number. This is what
- * lets `AttributionPanel.tsx` say so INLINE instead of letting a bad edit round-trip to the server
- * only to come back in `skipped`.
+ * CENTS in their names (the panel that calls it works in cents end to end): given the splits a
+ * sitter has typed or accepted against one credit, either hand back the remainder that would stay
+ * as account credit, or refuse with `null` — never a rounded or invented number. This is what lets
+ * `AttributionPanel.tsx` say so INLINE instead of letting a bad edit round-trip to the server only
+ * to come back in `skipped`.
  */
 describe('balancedRemainder', () => {
   it('splits that exactly consume the credit leave a zero remainder', () => {

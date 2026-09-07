@@ -320,8 +320,8 @@ INSERT OR REPLACE INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, 
 -- flat option rate for single-day services) EXPRESSED IN CENTS (migration 0015): a 7-night $350
 -- boarding is stored 35000. The Rate columns above are untouched and stay whole dollars — they are
 -- what the sitter typed; estimateCost is the one place a rate becomes a cost. So nothing here is a
--- price the server would not have quoted. PetCount is always 1 in every seeded booking below, on purpose, so each EstCost is
--- unambiguous regardless of a service's PetRateMode — the 'linear' multiplier above only ever
+-- price the server would not have quoted. PetCount is always 1 in every seeded booking below, on
+-- purpose, so each EstCost is unambiguous regardless of a service's PetRateMode — the 'linear' multiplier above only ever
 -- fires for a pet SET (2+ distinct pets) a customer selects live in the widget, never for a
 -- seeded row.
 --

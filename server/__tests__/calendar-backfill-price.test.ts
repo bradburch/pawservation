@@ -266,9 +266,11 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     const { env, raw } = createTestEnv();
     const bookingId = await makeBackfilledBooking(env, raw, TENANT_A, 'ceiling');
 
-    // The ceiling is the sitter's own WHOLE-DOLLAR bound, scaled once for the cents body.
+    // The ceiling is the sitter's own WHOLE-DOLLAR bound, scaled once for the cents body. One
+    // whole dollar OVER it, not one cent: the route's `% 100 !== 0` clause would refuse a +1 body
+    // first, and this test is here for the ceiling.
     const res = await patchCost(env, bookingId, {
-      estCostCents: dollarsToCents(MAX_BACKFILL_EST_COST) + 1,
+      estCostCents: dollarsToCents(MAX_BACKFILL_EST_COST) + 100,
     });
     expect(res.status).toBe(400);
     expect(readEstCost(raw, bookingId)).toBe(2500);

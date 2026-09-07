@@ -47,7 +47,7 @@ async function book(
  * pinned to whichever booking happened to be open.
  *
  * Every figure here is read from the SAME `CREDITABLE_AMOUNT_SQL`/`PAYMENTS_JOIN_SQL` expressions
- * `getHouseholdBalances` sums, and `expectedTotalCents`/`paidTotalCents`/`balance` are literally
+ * `getHouseholdBalances` sums, and `expectedTotalCents`/`paidTotalCents`/`balanceCents` are literally
  * `getHouseholdBalances`'s own numbers passed through — not a second computation that could drift
  * from the figure the sitter is questioning.
  */
@@ -111,7 +111,8 @@ describe('getHouseholdDetail (repo)', () => {
       },
     ]);
     // Every figure reconciles EXACTLY to the balance above it: ($145 + $60) expected, $40 paid —
-    // in CENTS (0015), which is the unit `getHouseholdDetail` returns; the route below divides.
+    // in CENTS (0015), which is the unit `getHouseholdDetail` returns AND the unit the route
+    // publishes, since 0015 renamed every one of these fields `*Cents` rather than dividing.
     expect(detail).toMatchObject({
       expectedTotalCents: 20500,
       paidTotalCents: 4000,
