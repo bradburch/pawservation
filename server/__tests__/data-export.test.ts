@@ -104,7 +104,7 @@ describe('admin data export route', () => {
 
   it('exports only this tenant, never the other one', async () => {
     const { env } = createTestEnv();
-    // Repo seeds, so CENTS (0015). The CSV cells asserted below are still whole dollars.
+    // Repo seeds, so CENTS (0015). Nothing here asserts on the formatted amount, only markers.
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
       amount: 10000,
@@ -152,7 +152,7 @@ describe('admin data export route', () => {
   it('includes deceased pets and cancelled bookings, with their status in a column', async () => {
     const { env } = createTestEnv();
     await setPetDeceased(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_mochi', true);
-    // Repo call, so the fee is CENTS (0015); the CSV cell asserted below still reads "75".
+    // Repo call, so the fee is CENTS (0015); the CSV cell asserted below reads "75.00".
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, 'seed_sp_board1', 'cancelled', 7500);
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, 'seed_sp_pend1', 'declined');
 
@@ -171,7 +171,7 @@ describe('admin data export route', () => {
     const feeIndex = bookingRows[0].indexOf('Cancellation fee');
     const byId = new Map(bookingRows.slice(1).map((r) => [r[0], r]));
     expect(byId.get('seed_sp_board1')![statusIndex]).toBe('cancelled');
-    expect(byId.get('seed_sp_board1')![feeIndex]).toBe('75');
+    expect(byId.get('seed_sp_board1')![feeIndex]).toBe('75.00');
     expect(byId.get('seed_sp_pend1')![statusIndex]).toBe('declined');
   });
 
@@ -343,7 +343,31 @@ describe('admin data export route', () => {
     expect(rows.flat().some((cell) => cell.includes('venmo-txn-9f3c1'))).toBe(false);
     expect(rows[0].some((h) => /external|ref/i.test(h))).toBe(false);
     // Not vacuous: the payment itself really is in the file.
-    expect(rows.slice(1).some((r) => r[rows[0].indexOf('Amount')] === '41')).toBe(true);
+    expect(rows.slice(1).some((r) => r[rows[0].indexOf('Amount')] === '41.00')).toBe(true);
+  });
+
+  it('prints a fractional payment as decimal dollars, in both the payments and bookings CSVs', async () => {
+    const { env } = createTestEnv();
+    // Repo call, so CENTS (0015): 4550 is $45.50, not a whole dollar amount — the case
+    // `centsToWholeDollars` used to 500 the export on (it throws on a non-multiple of 100).
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
+      bookingRequestId: 'seed_sp_board1',
+      amount: 4550,
+      method: 'venmo',
+      paidDate: '2028-06-19',
+      note: null,
+      externalRef: null,
+    });
+
+    const paymentRows = await rowsOf(await get(env, 'payments'));
+    expect(paymentRows.slice(1).some((r) => r[paymentRows[0].indexOf('Amount')] === '45.50')).toBe(
+      true,
+    );
+
+    const bookingRows = await rowsOf(await get(env, 'bookings'));
+    const paidIndex = bookingRows[0].indexOf('Paid');
+    const booking = bookingRows.slice(1).find((r) => r[0] === 'seed_sp_board1')!;
+    expect(booking[paidIndex]).toBe('45.50');
   });
 
   it('answers a tenant with nothing in it with a header row and no more', async () => {
@@ -465,7 +489,7 @@ describe('admin data export route', () => {
 
     const rows = await rowsOf(await get(env, 'payments'));
     const idx = (name: string) => rows[0].indexOf(name);
-    const row = rows.slice(1).find((r) => r[idx('Amount')] === '77')!;
+    const row = rows.slice(1).find((r) => r[idx('Amount')] === '77.00')!;
     expect(row).toBeDefined();
     // No pet name and no booking left to name it, so the raw account id is the last thread back to
     // what this money was filed against. A blank here is money with no attribution at all.

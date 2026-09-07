@@ -286,7 +286,7 @@ describe('google-calendar', () => {
     });
     expect(r.summary).toBe('[REQUEST] Bella, Mochi — Boarding');
     expect(r.description).toBe(
-      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150.00\n' +
         'Requested via Pawservation — confirm or decline in your dashboard.',
     );
   });
@@ -310,7 +310,7 @@ describe('google-calendar', () => {
     });
     expect(r.summary).toBe('Bella, Mochi — Boarding');
     expect(r.description).toBe(
-      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150',
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150.00',
     );
     expect(r.description).not.toContain('Requested via');
   });

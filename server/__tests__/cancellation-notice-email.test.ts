@@ -20,7 +20,7 @@ const notice = (over: Partial<CancellationNotice> = {}): CancellationNotice => (
   whenText: '2030-03-01 – 2030-03-04',
   wasConfirmed: true,
   // CENTS (0015) — `CancellationNotice.cancellationFee` is the STORED figure; the template
-  // prints it as whole dollars, which is what a cancellation fee always is.
+  // prints it with `formatCents` ($100.00), never re-derived or rounded to whole dollars.
   cancellationFee: 10000,
   ...over,
 });
@@ -56,7 +56,7 @@ describe('sendCancellationNoticeToSitter', () => {
       expect(body.text).toContain(part);
     }
     expect(body.html).toContain('cancelled a confirmed booking');
-    expect(body.html).toContain('Cancellation fee: $100');
+    expect(body.html).toContain('Cancellation fee: $100.00');
     expect(body.html).toContain('on behalf of Sunny Paws');
   });
 
@@ -223,7 +223,7 @@ describe('the cancel route notifies the sitter', () => {
     expect(body.to).toBe('hello@sunnypaws.example');
     expect(body.from).toBe('Pawservation <booking@x.com>');
     expect(body.subject).toContain('Cancelled: Boarding for Jess Demo');
-    expect(body.html).toContain('Cancellation fee: $100'); // the STORED fee
+    expect(body.html).toContain('Cancellation fee: $100.00'); // the STORED fee
     expect(body.html).toContain('jess@example.com');
   });
 

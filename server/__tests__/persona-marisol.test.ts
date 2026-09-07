@@ -140,7 +140,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     // A pending request is marked [REQUEST], names the pets, and carries full booking metadata.
     expect(resource.summary).toBe('[REQUEST] Bella, Mochi — Boarding');
     expect(resource.description).toBe(
-      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150.00\n' +
         'Requested via Pawservation — confirm or decline in your dashboard.',
     );
     expect(resource.extendedProperties?.private).toEqual({
