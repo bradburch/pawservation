@@ -134,7 +134,7 @@ describe('POST /:slug/admin/payments/venmo/preview', () => {
     const res = await post(env, 'payments/venmo/preview', { csv: VENMO_CSV });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      matched: { txnId: string; accountId: string; amount: number; clientLabel: string }[];
+      matched: { txnId: string; accountId: string; amountCents: number; clientLabel: string }[];
       unmatched: { txnId: string; reason: string }[];
       ignored: number;
     };
@@ -142,9 +142,13 @@ describe('POST /:slug/admin/payments/venmo/preview', () => {
     expect(body.matched[0]).toMatchObject({
       txnId: '4139874112233445566',
       accountId: 'pet_sp_bella',
-      amount: 250,
+      // CENTS on the wire (0015) — the preview no longer divides on its way out, so a $250.00
+      // payment reads 25000 and a $250.50 one would read 25050.
+      amountCents: 25000,
       clientLabel: 'Jess Demo',
     });
+    // The dollar-named field is REMOVED, not aliased: nothing can read 25000 as $25,000.
+    expect(body.matched[0]).not.toHaveProperty('amount');
     expect(body.unmatched.map((u) => u.txnId)).toEqual(['4139874112233445567']);
     expect(body.ignored).toBe(1);
     // NOTHING is written by a preview.
@@ -222,7 +226,7 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     const { env, raw } = createTestEnv();
     const res = await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ imported: 1, totalAmount: 250, skipped: [] });
+    expect(await res.json()).toEqual({ imported: 1, totalAmountCents: 25000, skipped: [] });
     const row = raw
       .prepare(
         'SELECT BookingRequestId, AccountId, Amount, Method, PaidDate, Note, ExternalRef FROM Payments',
@@ -231,12 +235,22 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     expect(row).toMatchObject({
       BookingRequestId: null,
       AccountId: 'pet_sp_bella',
-      Amount: 25000, // the COLUMN, which is cents (0015); the route body above is dollars
+      Amount: 25000, // the COLUMN — the same cents the route now reports as totalAmountCents
       Method: 'venmo',
       PaidDate: '2026-07-03',
       ExternalRef: '4139874112233445566',
     });
     expect(String(row.Note)).toContain('Boarding for Bella');
+  });
+
+  it('records $45.50 as $45.50 — the row the importer used to refuse', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = VENMO_CSV.replace('+ $250.00', '+ $45.50');
+    const res = await post(env, 'payments/venmo/import', { csv, choices });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ imported: 1, totalAmountCents: 4550, skipped: [] });
+    // Exact, not rounded to $45 or $46, and not multiplied twice into $4,550.
+    expect(raw.prepare('SELECT Amount FROM Payments').get()).toMatchObject({ Amount: 4550 });
   });
 
   it('is idempotent: re-uploading the same file records nothing twice', async () => {
@@ -277,11 +291,19 @@ describe('POST /:slug/admin/payments/venmo/import', () => {
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
   });
 
-  it('ignores a dollar figure in the body — money comes from the file, never the client', async () => {
+  it('ignores an amount in the body — money comes from the file, never the client', async () => {
     const { env, raw } = createTestEnv();
     await post(env, 'payments/venmo/import', {
       csv: VENMO_CSV,
-      choices: [{ ...choices[0], amount: 999999, paidDate: '1999-01-01', method: 'cash' }],
+      choices: [
+        {
+          ...choices[0],
+          amount: 999999,
+          amountCents: 999999,
+          paidDate: '1999-01-01',
+          method: 'cash',
+        },
+      ],
     });
     expect(raw.prepare('SELECT Amount, Method, PaidDate FROM Payments').get()).toMatchObject({
       Amount: 25000, // the column, in cents

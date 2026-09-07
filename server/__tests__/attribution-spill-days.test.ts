@@ -301,7 +301,7 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
         optionKey: 'standard',
         petCount: 1,
         // The DB half seeds CENTS (0015); the pure half above is unit-agnostic integers, and the
-        // preview response below is still whole dollars.
+        // preview response below is cents too, which is why the assertions convert.
         estCost: dollarsToCents(40),
         status: 'confirmed',
       });
@@ -317,7 +317,7 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
     });
   }
 
-  async function preview(env: Env): Promise<{ splits: number; remainder: number }> {
+  async function preview(env: Env): Promise<{ splits: number; remainderCents: number }> {
     const res = await app.request(
       `/api/${SLUG_C}/admin/payments/attribute/preview`,
       { method: 'POST', headers: await adminHeaders(TENANT_C), body: JSON.stringify({}) },
@@ -325,10 +325,13 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      proposals: { splits: unknown[]; remainder: number }[];
+      proposals: { splits: unknown[]; remainderCents: number }[];
     };
     expect(body.proposals).toHaveLength(1);
-    return { splits: body.proposals[0].splits.length, remainder: body.proposals[0].remainder };
+    return {
+      splits: body.proposals[0].splits.length,
+      remainderCents: body.proposals[0].remainderCents,
+    };
   }
 
   it('leaves most of a monthly payment as remainder under the default', async () => {
@@ -336,7 +339,7 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
     await monthlyHousehold(env, raw);
     expect(await preview(env)).toEqual({
       splits: FUNDED_AT_DEFAULT,
-      remainder: MONTHLY_TOTAL - FUNDED_AT_DEFAULT * 40,
+      remainderCents: dollarsToCents(MONTHLY_TOTAL - FUNDED_AT_DEFAULT * 40),
     });
   });
 
@@ -353,6 +356,6 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
       env,
     );
     expect(res.status).toBe(204);
-    expect(await preview(env)).toEqual({ splits: MONTHLY_WALKS.length, remainder: 0 });
+    expect(await preview(env)).toEqual({ splits: MONTHLY_WALKS.length, remainderCents: 0 });
   });
 });

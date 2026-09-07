@@ -8,7 +8,7 @@ const txn = (over: Partial<VenmoTxn> = {}): VenmoTxn => ({
   status: 'Complete',
   note: 'Boarding',
   from: 'Jess Demo',
-  amount: 250,
+  amountCents: 25000,
   ...over,
 });
 
@@ -43,7 +43,7 @@ describe('matchVenmoTxns', () => {
       {
         txnId: 't1',
         date: '2026-07-03',
-        amount: 250,
+        amountCents: 25000,
         from: 'Jess Demo',
         note: 'Boarding',
         endUserId: 'eu_1',
@@ -120,7 +120,7 @@ describe('matchVenmoTxns', () => {
   it('never proposes over-paying anything — a household payment carries no balance to exceed', () => {
     // A prepayment far larger than anything owed is still legitimate (Story 2.3): the amount is
     // never checked against a balance here at all.
-    const preview = run({ txns: [txn({ amount: 100000 })] });
-    expect(preview.matched).toEqual([{ ...preview.matched[0], amount: 100000 }]);
+    const preview = run({ txns: [txn({ amountCents: 10000000 })] });
+    expect(preview.matched).toEqual([{ ...preview.matched[0], amountCents: 10000000 }]);
   });
 });

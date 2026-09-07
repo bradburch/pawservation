@@ -1704,7 +1704,8 @@ export async function deleteAccountPayment(
  *
  * `formatCents` itself is deliberately left un-throwing. This is a REFUSAL path — a throw would
  * turn one bad row's per-item skip into a 500 for the whole batch the sitter approved, which is
- * the failure `admin.ts`'s `toStoredCents` pass-through exists to avoid in the first place.
+ * why the apply route checks only the SHAPE of an `amountCents` and lets the figure itself reach
+ * these guards untouched (`admin.ts`, `payments/attribute/apply`).
  */
 function describeAmount(value: number): string {
   return Number.isInteger(value) ? formatCents(value) : String(value);

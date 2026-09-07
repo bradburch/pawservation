@@ -127,6 +127,48 @@ function credit(
   });
 }
 
+/**
+ * THE SAME TWO FIXTURES IN CENTS, for the figures whole dollars cannot express. `book` and
+ * `credit` above take dollars because that is the unit this file's prose is written in and the
+ * unit 200 of its call sites use; these two exist for the tests that are ABOUT the cents — a
+ * $87.50 credit, a $2.50 tip — and take the column's own unit straight through.
+ */
+async function bookCents(
+  env: Env,
+  home: Household,
+  estCostCents: number,
+  startDate = '2026-07-08',
+): Promise<string> {
+  const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
+    endUserId: home.ownerId,
+    serviceType: 'walk',
+    startDate,
+    endDate: null,
+    optionKey: 'standard',
+    petCount: 1,
+    estCost: estCostCents,
+    status: 'confirmed',
+  });
+  await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, home.petIds);
+  return id;
+}
+
+function creditCents(
+  env: Env,
+  accountId: string,
+  amountCents: number,
+  paidDate = '2026-07-01',
+): Promise<string | null> {
+  return insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
+    accountId,
+    amount: amountCents,
+    method: 'venmo',
+    paidDate,
+    note: null,
+    externalRef: null,
+  });
+}
+
 function paymentRows(raw: DatabaseSync, tenantId = TENANT_C) {
   return raw
     .prepare(
@@ -145,22 +187,22 @@ type PreviewBody = {
   proposals: {
     accountId: string;
     paymentId: string;
-    amount: number;
+    amountCents: number;
     splits: {
       bookingId: string;
-      amount: number;
-      outstanding: number;
+      amountCents: number;
+      outstandingCents: number;
       endDate: string | null;
     }[];
-    remainder: number;
+    remainderCents: number;
   }[];
   unresolved: {
     accountId: string;
     paymentId: string;
-    amount: number;
+    amountCents: number;
     reason: string;
     detail: string;
-    bookings: { bookingId: string; outstanding: number; endDate: string | null }[];
+    bookings: { bookingId: string; outstandingCents: number; endDate: string | null }[];
   }[];
 };
 
@@ -180,11 +222,11 @@ async function preview(env: Env, tenantId: string, accountId?: string) {
 type ApplyAttributionInput = {
   paymentId: string;
   accountId: string;
-  splits: { bookingId: string; amount: number }[];
-  remainder: number;
+  splits: { bookingId: string; amountCents: number }[];
+  remainderCents: number;
   /** Part of this payment the client meant as a tip, recorded as a `BookingCharges` row on one of
    *  the bookings this attribution's own splits name. The split stays EXCLUSIVE of it. */
-  tip?: { bookingId: string; amount: number };
+  tip?: { bookingId: string; amountCents: number };
 };
 
 function chargeRows(raw: DatabaseSync, tenantId = TENANT_C) {
@@ -235,10 +277,39 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     const proposal = body.proposals[0];
     expect(proposal.accountId).toBe(home.accountId);
     expect(proposal.paymentId).toBe(paymentId);
-    expect(proposal.remainder).toBe(40);
+    expect(proposal.remainderCents).toBe(4000);
     expect(new Set(proposal.splits.map((s) => s.bookingId))).toEqual(new Set([first, second]));
-    expect(proposal.splits.find((s) => s.bookingId === first)?.amount).toBe(100);
-    expect(proposal.splits.find((s) => s.bookingId === second)?.amount).toBe(60);
+    expect(proposal.splits.find((s) => s.bookingId === first)?.amountCents).toBe(10000);
+    expect(proposal.splits.find((s) => s.bookingId === second)?.amountCents).toBe(6000);
+  });
+
+  it('proposes an $87.50 credit against a $250 stay, to the cent', async () => {
+    // The figure whole dollars could not carry. Nothing is rounded on the way out and nothing is
+    // scaled: 8750 cents in the ledger is 8750 on the wire, against a stay owing 25000.
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await bookCents(env, home, 25000, '2026-07-01');
+    const paymentId = (await creditCents(env, home.accountId, 8750))!;
+
+    const res = await preview(env, TENANT_C, home.accountId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    expect(body.unresolved).toEqual([]);
+    expect(body.proposals).toHaveLength(1);
+    expect(body.proposals[0]).toMatchObject({
+      paymentId,
+      amountCents: 8750,
+      remainderCents: 0,
+      splits: [{ bookingId, amountCents: 8750, outstandingCents: 25000 }],
+    });
+    // THE DOLLAR-NAMED FIELDS ARE GONE, not kept alongside: a reader that still says `amount`
+    // would be reading 8750 as $8,750, which is the 100× bug this rename exists to make
+    // impossible.
+    expect(body.proposals[0]).not.toHaveProperty('amount');
+    expect(body.proposals[0]).not.toHaveProperty('remainder');
+    expect(body.proposals[0].splits[0]).not.toHaveProperty('amount');
+    expect(body.proposals[0].splits[0]).not.toHaveProperty('outstanding');
   });
 
   it('a household with no unpaid bookings reports no-unpaid-bookings, not an empty success', async () => {
@@ -303,12 +374,12 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
 
     expect(body.proposals).toEqual([]);
     expect(body.unresolved).toHaveLength(1);
-    expect(body.unresolved[0]).toMatchObject({ paymentId, amount: 50, reason: 'ambiguous' });
+    expect(body.unresolved[0]).toMatchObject({ paymentId, amountCents: 5000, reason: 'ambiguous' });
     // Placeable: the sitter is offered exactly the stays the refusal is about.
     expect(new Set(body.unresolved[0].bookings.map((b) => b.bookingId))).toEqual(
       new Set([first, second]),
     );
-    for (const b of body.unresolved[0].bookings) expect(b.outstanding).toBe(100);
+    for (const b of body.unresolved[0].bookings) expect(b.outstandingCents).toBe(10000);
   });
 
   it('a declined booking is NOT offered as a candidate', async () => {
@@ -339,9 +410,9 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
 
     expect(body.unresolved).toEqual([]);
     expect(body.proposals).toHaveLength(1);
-    expect(body.proposals[0]).toMatchObject({ paymentId, remainder: 0 });
+    expect(body.proposals[0]).toMatchObject({ paymentId, remainderCents: 0 });
     expect(body.proposals[0].splits).toHaveLength(1);
-    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: unpaid, amount: 100 });
+    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: unpaid, amountCents: 10000 });
   });
 
   it("another tenant's accountId is refused", async () => {
@@ -389,11 +460,11 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
     expect(byPaymentId.get(jensPaymentId)).toMatchObject({
       accountId: jen.accountId,
-      splits: [{ bookingId: jensBooking, amount: 100 }],
+      splits: [{ bookingId: jensBooking, amountCents: 10000 }],
     });
     expect(byPaymentId.get(samsPaymentId)).toMatchObject({
       accountId: sam.accountId,
-      splits: [{ bookingId: samsBooking, amount: 50 }],
+      splits: [{ bookingId: samsBooking, amountCents: 5000 }],
     });
   });
 
@@ -436,16 +507,16 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     expect(proposal.paymentId).toBe(paymentId);
     // $250 credit against ONLY the $100 real booking — $150 left over, not applied to the
     // cross-tenant booking that a leaking read would have offered it to.
-    expect(proposal.remainder).toBe(150);
+    expect(proposal.remainderCents).toBe(15000);
     expect(proposal.splits).toEqual([
       {
         bookingId: booking,
-        amount: 100,
+        amountCents: 10000,
         serviceType: 'walk',
         startDate: '2026-07-01',
         endDate: null,
         status: 'confirmed',
-        outstanding: 100,
+        outstandingCents: 10000,
       },
     ]);
 
@@ -523,8 +594,8 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     expect(body.proposals).toHaveLength(1);
     expect(body.proposals[0]).toMatchObject({
       paymentId: third,
-      remainder: 0,
-      splits: [{ bookingId, amount: 40 }],
+      remainderCents: 0,
+      splits: [{ bookingId, amountCents: 4000 }],
     });
 
     // The other two credits find nothing left to attach to — the truth, not a failure.
@@ -535,10 +606,10 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
 
     // The invariant, restated concretely: proposed money never exceeds actual outstanding.
     const totalProposed = body.proposals.reduce(
-      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amount, 0),
+      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amountCents, 0),
       0,
     );
-    expect(totalProposed).toBeLessThanOrEqual(40);
+    expect(totalProposed).toBeLessThanOrEqual(4000);
   });
 
   it('partial consumption: a $100 booking against two $60 credits', async () => {
@@ -559,14 +630,14 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     // The credit NEARER the stay (06-02, 29 days from it) takes the first $60 of the booking's
     // $100 outstanding, in full.
     expect(byPaymentId.get(second)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId, amount: 60 }],
+      remainderCents: 0,
+      splits: [{ bookingId, amountCents: 6000 }],
     });
     // The farther credit sees only $40 of outstanding left, takes it all, and reports the $20 it
     // couldn't place as remainder.
     expect(byPaymentId.get(first)).toMatchObject({
-      remainder: 20,
-      splits: [{ bookingId, amount: 40 }],
+      remainderCents: 2000,
+      splits: [{ bookingId, amountCents: 4000 }],
     });
   });
 
@@ -596,8 +667,8 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
       expect(body.proposals).toHaveLength(1);
       expect(body.proposals[0]).toMatchObject({
         paymentId: idByDateIndex.get(2),
-        remainder: 0,
-        splits: [{ bookingId, amount: 40 }],
+        remainderCents: 0,
+        splits: [{ bookingId, amountCents: 4000 }],
       });
       expect(body.unresolved).toHaveLength(2);
       const unresolvedIds = body.unresolved.map((u) => u.paymentId).sort();
@@ -619,9 +690,9 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     expect(res.status).toBe(200);
     const body = (await res.json()) as PreviewBody;
 
-    const totalOutstanding = 40 + 25; // bookings a and b
+    const totalOutstanding = dollarsToCents(40 + 25); // bookings a and b, in cents
     const totalProposed = body.proposals.reduce(
-      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amount, 0),
+      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amountCents, 0),
       0,
     );
     expect(totalProposed).toBeLessThanOrEqual(totalOutstanding);
@@ -656,15 +727,15 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     // The nearer credit's own proposed amount is still $40 (it can't propose more than it's
     // worth) — only the `outstanding` figure reported alongside it changes.
     expect(byPaymentId.get(nearer)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId, amount: 40, outstanding: 600 }],
+      remainderCents: 0,
+      splits: [{ bookingId, amountCents: 4000, outstandingCents: 60000 }],
     });
     // The farther credit still proposes only $560 (the sequenced amount actually available to
     // IT, in this batch, is what drives the proposed split) — but the `outstanding` alongside
     // that split reads the booking's real, undecremented $600, not $560.
     expect(byPaymentId.get(farther)).toMatchObject({
-      remainder: 40,
-      splits: [{ bookingId, amount: 560, outstanding: 600 }],
+      remainderCents: 4000,
+      splits: [{ bookingId, amountCents: 56000, outstandingCents: 60000 }],
     });
   });
 
@@ -698,11 +769,11 @@ describe('POST /:slug/admin/payments/attribute/preview — sequential attributio
     const ambiguous = body.unresolved.find((u) => u.paymentId === tied);
     expect(ambiguous?.reason).toBe('ambiguous');
     // All three bookings are offered, `zeroed` among them, each reporting its live outstanding.
-    expect(new Map(ambiguous!.bookings.map((b) => [b.bookingId, b.outstanding]))).toEqual(
+    expect(new Map(ambiguous!.bookings.map((b) => [b.bookingId, b.outstandingCents]))).toEqual(
       new Map([
-        [zeroed, 100],
-        [near, 100],
-        [alsoNear, 100],
+        [zeroed, 10000],
+        [near, 10000],
+        [alsoNear, 10000],
       ]),
     );
   });
@@ -749,16 +820,16 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
     expect(body.proposals).toHaveLength(3);
     const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
     expect(byPaymentId.get(july23)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId: walk23, amount: 40 }],
+      remainderCents: 0,
+      splits: [{ bookingId: walk23, amountCents: 4000 }],
     });
     expect(byPaymentId.get(july30)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId: walk30, amount: 40 }],
+      remainderCents: 0,
+      splits: [{ bookingId: walk30, amountCents: 4000 }],
     });
     expect(byPaymentId.get(july17)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId: walk16, amount: 40 }],
+      remainderCents: 0,
+      splits: [{ bookingId: walk16, amountCents: 4000 }],
     });
 
     // And the June credits — the ones oldest-first proposed for all three walks — are proposed for
@@ -793,8 +864,8 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
       expect(body.proposals).toHaveLength(1);
       expect(body.proposals[0]).toMatchObject({
         paymentId: ids.sameDay,
-        remainder: 0,
-        splits: [{ bookingId: walk, amount: 40 }],
+        remainderCents: 0,
+        splits: [{ bookingId: walk, amountCents: 4000 }],
       });
       expect(body.unresolved).toHaveLength(1);
       expect(body.unresolved[0].paymentId).toBe(ids.older);
@@ -864,7 +935,7 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
       expect(body.proposals).toHaveLength(1);
       expect(body.proposals[0]).toMatchObject({
         paymentId: idByDate.get('2026-07-20'),
-        splits: [{ bookingId: walk, amount: 40 }],
+        splits: [{ bookingId: walk, amountCents: 4000 }],
       });
       expect(body.unresolved).toHaveLength(1);
       expect(body.unresolved[0].paymentId).toBe(idByDate.get('2026-07-10'));
@@ -892,10 +963,10 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
       expect(body.unresolved).toEqual([]);
       const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
       expect(byPaymentId.get(idByDate.get('2026-07-15')!)).toMatchObject({
-        splits: [{ bookingId: early, amount: 40 }],
+        splits: [{ bookingId: early, amountCents: 4000 }],
       });
       expect(byPaymentId.get(idByDate.get('2026-07-25')!)).toMatchObject({
-        splits: [{ bookingId: late, amount: 40 }],
+        splits: [{ bookingId: late, amountCents: 4000 }],
       });
     }
   });
@@ -925,14 +996,14 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
     expect(body.unresolved).toEqual([]);
     const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
     expect(byPaymentId.get(small)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId: boarding, amount: 40 }],
+      remainderCents: 0,
+      splits: [{ bookingId: boarding, amountCents: 4000 }],
     });
-    expect(byPaymentId.get(big)!.remainder).toBe(0);
-    expect(new Map(byPaymentId.get(big)!.splits.map((s) => [s.bookingId, s.amount]))).toEqual(
+    expect(byPaymentId.get(big)!.remainderCents).toBe(0);
+    expect(new Map(byPaymentId.get(big)!.splits.map((s) => [s.bookingId, s.amountCents]))).toEqual(
       new Map([
-        [oldWalk, 40],
-        [boarding, 60],
+        [oldWalk, 4000],
+        [boarding, 6000],
       ]),
     );
   });
@@ -952,10 +1023,10 @@ describe('POST /:slug/admin/payments/attribute/preview — closest pair goes fir
     const body = (await res.json()) as PreviewBody;
 
     const totalProposed = body.proposals.reduce(
-      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amount, 0),
+      (sum, p) => sum + p.splits.reduce((s, split) => s + split.amountCents, 0),
       0,
     );
-    expect(totalProposed).toBeLessThanOrEqual(40 + 25);
+    expect(totalProposed).toBeLessThanOrEqual(dollarsToCents(40 + 25));
     for (const p of body.proposals)
       for (const split of p.splits) expect([a, b]).toContain(split.bookingId);
   });
@@ -1000,14 +1071,14 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
     const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
     // The $280 settles the boarding and stops: the walk is not its to take.
     expect(byPaymentId.get(big)).toMatchObject({
-      splits: [{ bookingId: boarding, amount: 100 }],
-      remainder: 180,
+      splits: [{ bookingId: boarding, amountCents: 10000 }],
+      remainderCents: 18000,
     });
     expect(byPaymentId.get(big)!.splits.some((s) => s.bookingId === walk)).toBe(false);
     // And the credit paid on the walk's own day gets the walk.
     expect(byPaymentId.get(sameDay)).toMatchObject({
-      splits: [{ bookingId: walk, amount: 40 }],
-      remainder: 10,
+      splits: [{ bookingId: walk, amountCents: 4000 }],
+      remainderCents: 1000,
     });
   });
 
@@ -1028,12 +1099,12 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
 
     expect(body.unresolved).toEqual([]);
     expect(body.proposals).toHaveLength(1);
-    expect(body.proposals[0]).toMatchObject({ paymentId, remainder: 0 });
-    expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amount]))).toEqual(
+    expect(body.proposals[0]).toMatchObject({ paymentId, remainderCents: 0 });
+    expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amountCents]))).toEqual(
       new Map([
-        [third, 40],
-        [second, 40],
-        [first, 40],
+        [third, 4000],
+        [second, 4000],
+        [first, 4000],
       ]),
     );
   });
@@ -1059,12 +1130,12 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
     expect(body.unresolved).toEqual([]);
     const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
     expect(byPaymentId.get(proposed)).toMatchObject({
-      remainder: 60,
-      splits: [{ bookingId: own, amount: 40 }],
+      remainderCents: 6000,
+      splits: [{ bookingId: own, amountCents: 4000 }],
     });
     expect(byPaymentId.get(settling)).toMatchObject({
-      remainder: 0,
-      splits: [{ bookingId: contested, amount: 40 }],
+      remainderCents: 0,
+      splits: [{ bookingId: contested, amountCents: 4000 }],
     });
   });
 
@@ -1088,11 +1159,11 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
     // Asserted by role rather than by id: with the same paid date the tie-break is the payment id,
     // which is generated — what matters is that ONE credit took both stays, not which.
     expect(body.proposals).toHaveLength(1);
-    expect(body.proposals[0].remainder).toBe(20);
-    expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amount]))).toEqual(
+    expect(body.proposals[0].remainderCents).toBe(2000);
+    expect(new Map(body.proposals[0].splits.map((s) => [s.bookingId, s.amountCents]))).toEqual(
       new Map([
-        [contested, 40],
-        [own, 40],
+        [contested, 4000],
+        [own, 4000],
       ]),
     );
     expect(body.unresolved).toHaveLength(1);
@@ -1117,12 +1188,12 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
     expect(body.unresolved).toEqual([]);
     const byPaymentId = new Map(body.proposals.map((p) => [p.paymentId, p]));
     expect(byPaymentId.get(big)).toMatchObject({
-      splits: [{ bookingId: firstWalk, amount: 40 }],
-      remainder: 160,
+      splits: [{ bookingId: firstWalk, amountCents: 4000 }],
+      remainderCents: 16000,
     });
     expect(byPaymentId.get(late)).toMatchObject({
-      splits: [{ bookingId: secondWalk, amount: 40 }],
-      remainder: 20,
+      splits: [{ bookingId: secondWalk, amountCents: 4000 }],
+      remainderCents: 2000,
     });
   });
 
@@ -1150,14 +1221,14 @@ describe('POST /:slug/admin/payments/attribute/preview — a spill never takes a
         .map(
           (p) =>
             `${p.paymentId === ids.big ? 'big' : 'sameDay'}->${p.splits
-              .map((s) => `${s.bookingId === boarding ? 'boarding' : 'walk'}:${s.amount}`)
-              .join(',')}+${p.remainder}`,
+              .map((s) => `${s.bookingId === boarding ? 'boarding' : 'walk'}:${s.amountCents}`)
+              .join(',')}+${p.remainderCents}`,
         )
         .sort();
     }
 
     const forward = await run(true);
-    expect(forward).toEqual(['big->boarding:100+180', 'sameDay->walk:40+10']);
+    expect(forward).toEqual(['big->boarding:10000+18000', 'sameDay->walk:4000+1000']);
     expect(await run(false)).toEqual(forward);
   });
 });
@@ -1208,7 +1279,7 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
       // The booking is offered, at its LIVE $40 — not the sequenced $0 the earlier credit's
       // proposal left behind, which is what would false-block the very pick this exists for.
       expect(u.bookings).toHaveLength(1);
-      expect(u.bookings[0]).toMatchObject({ bookingId, outstanding: 40 });
+      expect(u.bookings[0]).toMatchObject({ bookingId, outstandingCents: 4000 });
       // And the sentence shown verbatim beside it says what actually happened, rather than the
       // pure proposer's "no unpaid bookings", which a non-empty `bookings` flatly contradicts.
       expect(u.detail).toContain('Earlier credits');
@@ -1278,8 +1349,8 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
         {
           paymentId: first,
           accountId: home.accountId,
-          splits: [{ bookingId, amount: 40 }],
-          remainder: 0,
+          splits: [{ bookingId, amountCents: 4000 }],
+          remainderCents: 0,
         } satisfies ApplyAttributionInput,
       ],
     });
@@ -1319,8 +1390,8 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
         {
           paymentId: third,
           accountId: home.accountId,
-          splits: [{ bookingId, amount: 100 }],
-          remainder: 0,
+          splits: [{ bookingId, amountCents: 10000 }],
+          remainderCents: 0,
         } satisfies ApplyAttributionInput,
       ],
     });
@@ -1366,10 +1437,12 @@ describe('POST /:slug/admin/payments/attribute/preview — the staleness floor s
     });
     // The whole point: non-empty, at LIVE outstanding, so the panel's actionable/inert split
     // (keyed on `bookings.length`) makes this editable rather than a summarised dead end.
-    expect(new Map(body.unresolved[0].bookings.map((b) => [b.bookingId, b.outstanding]))).toEqual(
+    expect(
+      new Map(body.unresolved[0].bookings.map((b) => [b.bookingId, b.outstandingCents])),
+    ).toEqual(
       new Map([
-        [older, 40],
-        [newer, 60],
+        [older, 4000],
+        [newer, 6000],
       ]),
     );
   });
@@ -1389,8 +1462,8 @@ describe('POST /:slug/admin/payments/attribute/preview — the staleness floor s
     expect(body.proposals).toHaveLength(1);
     expect(body.proposals[0]).toMatchObject({
       paymentId,
-      splits: [{ bookingId: near, amount: 40 }],
-      remainder: 60,
+      splits: [{ bookingId: near, amountCents: 4000 }],
+      remainderCents: 6000,
     });
     expect(body.proposals[0].splits.some((s) => s.bookingId === far)).toBe(false);
   });
@@ -1423,8 +1496,8 @@ describe('POST /:slug/admin/payments/attribute/preview — proximity to the whol
     // would measure the stay from 2026-07-29 — 20 days — and hand the money to the walk.
     expect(body.proposals[0]).toMatchObject({
       paymentId,
-      splits: [{ bookingId: sit, amount: 40 }],
-      remainder: 0,
+      splits: [{ bookingId: sit, amountCents: 4000 }],
+      remainderCents: 0,
     });
     expect(body.proposals[0].splits.some((s) => s.bookingId === walk)).toBe(false);
   });
@@ -1525,9 +1598,9 @@ describe('POST /:slug/admin/payments/attribute/preview — amount congruence', (
 
     expect(body.unresolved).toEqual([]);
     expect(body.proposals).toHaveLength(1);
-    expect(body.proposals[0]).toMatchObject({ paymentId, remainder: 0 });
+    expect(body.proposals[0]).toMatchObject({ paymentId, remainderCents: 0 });
     expect(body.proposals[0].splits).toHaveLength(1);
-    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: exact, amount: 37 });
+    expect(body.proposals[0].splits[0]).toMatchObject({ bookingId: exact, amountCents: 3700 });
     expect(other).not.toBe(exact);
   });
 
@@ -1605,10 +1678,10 @@ describe('POST /:slug/admin/payments/attribute/preview — amount congruence', (
     expect(body.unresolved).toEqual([]);
     expect(body.proposals).toHaveLength(2);
     const byPayment = new Map(body.proposals.map((p) => [p.paymentId, p]));
-    expect(byPayment.get(exact)!.splits).toMatchObject([{ bookingId: sit, amount: 40 }]);
-    expect(byPayment.get(exact)!.remainder).toBe(0);
-    expect(byPayment.get(bundled)!.splits).toMatchObject([{ bookingId: walk, amount: 60 }]);
-    expect(byPayment.get(bundled)!.remainder).toBe(40);
+    expect(byPayment.get(exact)!.splits).toMatchObject([{ bookingId: sit, amountCents: 4000 }]);
+    expect(byPayment.get(exact)!.remainderCents).toBe(0);
+    expect(byPayment.get(bundled)!.splits).toMatchObject([{ bookingId: walk, amountCents: 6000 }]);
+    expect(byPayment.get(bundled)!.remainderCents).toBe(4000);
   });
 
   it('a distinctive exact match outside the late-payment window is still refused, never reached for', async () => {
@@ -1654,8 +1727,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const attribution: ApplyAttributionInput = {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId, amount: 100 }],
-      remainder: 0,
+      splits: [{ bookingId, amountCents: 10000 }],
+      remainderCents: 0,
     };
     const res = await apply(env, TENANT_C, { attributions: [attribution] });
     expect(res.status).toBe(200);
@@ -1678,8 +1751,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const attribution: ApplyAttributionInput = {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId, amount: 100 }],
-      remainder: 0,
+      splits: [{ bookingId, amountCents: 10000 }],
+      remainderCents: 0,
     };
 
     const first = await apply(env, TENANT_C, { attributions: [attribution] });
@@ -1712,8 +1785,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
       paymentId,
       accountId: home.accountId,
       // $60 of splits + $0 remainder accounts for only $60 of a $100 payment.
-      splits: [{ bookingId, amount: 60 }],
-      remainder: 0,
+      splits: [{ bookingId, amountCents: 6000 }],
+      remainderCents: 0,
     };
     const res = await apply(env, TENANT_C, { attributions: [attribution] });
     expect(res.status).toBe(200);
@@ -1727,18 +1800,19 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
   });
 
   /**
-   * THE FRACTIONAL BODY, AND THE SENTENCE IT PRODUCES. The apply body is still whole dollars in
-   * this commit, so `toStoredCents` (server/routes/admin.ts) scales it — but only when it is a
-   * safe non-negative integer. A fractional figure is passed through DELIBERATELY, so
-   * `applyAttribution`'s own guard refuses just that item by name instead of `dollarsToCents`
-   * throwing and 500ing the whole approved batch.
+   * THE FRACTIONAL BODY, AND THE SENTENCE IT PRODUCES. The body is CENTS now, so a fraction in it
+   * is a fraction of a cent — money this ledger cannot hold. Nothing scales it on the way in and
+   * nothing throws: the figure is carried through DELIBERATELY so `applyAttribution`'s own guard
+   * refuses just that item by name, rather than one bad figure 400ing or 500ing the whole approved
+   * batch. (A structurally wrong body — a missing or non-numeric `amountCents` — is still the 400
+   * the tests below pin; this is a well-formed request with an unusable figure in it.)
    *
-   * What must not then happen is the refusal dressing the fraction up as money: `formatCents(45.5)`
-   * renders `$0.45.5`, a figure that exists in no currency and tells the sitter nothing. The guard
-   * reports a non-integer RAW (`describeAmount`), so the sentence carries `45.5` and never a
-   * dollar amount with two decimal points in it.
+   * What must not then happen is the refusal dressing the fraction up as money:
+   * `formatCents(4550.5)` renders `$45.50.5`, a figure that exists in no currency and tells the
+   * sitter nothing. The guard reports a non-integer RAW (`describeAmount`), so the sentence carries
+   * `4550.5` and never a dollar amount with two decimal points in it.
    */
-  it('refuses a FRACTIONAL split per item, and never renders it as "$0.45.5"', async () => {
+  it('refuses a FRACTIONAL split per item, and never renders it as "$45.50.5"', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
     const bookingId = await book(env, home, 100, '2026-07-01');
@@ -1750,8 +1824,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
         {
           paymentId,
           accountId: home.accountId,
-          splits: [{ bookingId, amount: 45.5 }],
-          remainder: 54.5,
+          splits: [{ bookingId, amountCents: 4550.5 }],
+          remainderCents: 5449.5,
         } satisfies ApplyAttributionInput,
       ],
     });
@@ -1764,10 +1838,10 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(body.skipped[0].paymentId).toBe(paymentId);
     expect(body.skipped[0].reason).toContain('every split must be a positive amount of money');
     // The figure itself, reported as the caller wrote it…
-    expect(body.skipped[0].reason).toContain('45.5');
-    // …and NEVER as `$0.` followed by a second dot — the shape `formatCents` produces for a
-    // fraction of a cent, and the whole reason this guard does not go through it.
-    expect(body.skipped[0].reason).not.toMatch(/\$0\.[^\s]*\./);
+    expect(body.skipped[0].reason).toContain('4550.5');
+    // …and NEVER as a dollar figure with a second dot in it — the shape `formatCents` produces
+    // for a fraction of a cent, and the whole reason this guard does not go through it.
+    expect(body.skipped[0].reason).not.toMatch(/\$\d[^\s]*\.\d+\./);
 
     expect(paymentRows(raw)).toEqual(before);
   });
@@ -1788,8 +1862,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const attribution: ApplyAttributionInput = {
       paymentId: foreignPaymentId,
       accountId: foreignHome.accountId,
-      splits: [{ bookingId: foreignBooking, amount: 100 }],
-      remainder: 0,
+      splits: [{ bookingId: foreignBooking, amountCents: 10000 }],
+      remainderCents: 0,
     };
     // Authenticated as TENANT_C, naming TENANT_A's own payment and household.
     const res = await apply(env, TENANT_C, { attributions: [attribution] });
@@ -1820,8 +1894,8 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const good: ApplyAttributionInput = {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId, amount: 100 }],
-      remainder: 0,
+      splits: [{ bookingId, amountCents: 10000 }],
+      remainderCents: 0,
     };
     // `splits` is not an array on the second item — malformed shape, not a semantically-refusable
     // attribution. A route that validated and applied each item in turn (rather than validating the
@@ -1831,7 +1905,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const res = await apply(env, TENANT_C, {
       attributions: [
         good,
-        { paymentId: 'whatever', accountId: home.accountId, splits: 'nope', remainder: 0 },
+        { paymentId: 'whatever', accountId: home.accountId, splits: 'nope', remainderCents: 0 },
       ],
     });
     expect(res.status).toBe(400);
@@ -1846,7 +1920,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(res.status).toBe(400);
 
     const res2 = await apply(env, TENANT_C, {
-      attributions: [{ paymentId: 'p1', accountId: 'a1', splits: [null], remainder: 0 }],
+      attributions: [{ paymentId: 'p1', accountId: 'a1', splits: [null], remainderCents: 0 }],
     });
     expect(res2.status).toBe(400);
   });
@@ -1863,9 +1937,9 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
           paymentId,
           accountId: home.accountId,
           // EXCLUSIVE of the tip: $40 is what the walk owed, and the server adds the $10.
-          splits: [{ bookingId: walk, amount: 40 }],
-          tip: { bookingId: walk, amount: 10 },
-          remainder: 0,
+          splits: [{ bookingId: walk, amountCents: 4000 }],
+          tip: { bookingId: walk, amountCents: 1000 },
+          remainderCents: 0,
         } satisfies ApplyAttributionInput,
       ],
     });
@@ -1884,6 +1958,76 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(detail?.balanceCents).toBe(0);
   });
 
+  it('conserves with a $2.50 tip — the fraction of a dollar the old body could not carry', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'kelly');
+    const walk = await bookCents(env, home, 4000, '2026-07-01');
+    const paymentId = (await creditCents(env, home.accountId, 4550))!;
+
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          // 4000 + 250 + 300 === 4550, exactly, in integers. The conservation rule is unchanged
+          // in shape; only its unit moved.
+          splits: [{ bookingId: walk, amountCents: 4000 }],
+          tip: { bookingId: walk, amountCents: 250 },
+          remainderCents: 300,
+        } satisfies ApplyAttributionInput,
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as ApplyBody).toEqual({ applied: 1, skipped: [] });
+
+    // The tip lands in BookingCharges.Amount as 250 cents — $2.50, not $250 and not $2.
+    expect(chargeRows(raw)).toEqual([
+      { BookingRequestId: walk, Label: 'Tip', Amount: 250, Origin: null },
+    ]);
+    // $42.50 against the walk, $3.00 still household credit.
+    expect(paymentRows(raw).map((r) => [r.BookingRequestId, r.AccountId, r.Amount])).toEqual([
+      [walk, null, 4250],
+      [null, home.accountId, 300],
+    ]);
+  });
+
+  it('REFUSES the retired whole-dollar body outright, rather than reading 100 as $1', async () => {
+    // The old shape — `amount` / `remainder` — is a 400 for the whole request with nothing
+    // written, never silently re-read as cents. A body that named $100 and moved $1 would be the
+    // worst possible outcome of this rename.
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'jen');
+    const bookingId = await book(env, home, 100, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 100))!;
+    const before = paymentRows(raw);
+
+    const res = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          splits: [{ bookingId, amount: 100 }],
+          remainder: 0,
+        },
+      ],
+    });
+    expect(res.status).toBe(400);
+    // …and the same body with only the remainder left in dollars is refused too.
+    const half = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          splits: [{ bookingId, amountCents: 10000 }],
+          remainder: 0,
+        },
+      ],
+    });
+    expect(half.status).toBe(400);
+    expect(paymentRows(raw)).toEqual(before);
+    expect(chargeRows(raw)).toEqual([]);
+  });
+
   it('a malformed tip is a 400 with nothing written', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
@@ -1893,7 +2037,7 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const base = {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: walk, amount: 40 }],
+      splits: [{ bookingId: walk, amountCents: 4000 }],
     };
 
     // A structurally broken tip is a fault in the request, not a refusable attribution — same
@@ -1902,13 +2046,13 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
       null,
       'ten',
       { bookingId: walk },
-      { amount: 10 },
-      { bookingId: 42, amount: 10 },
-      { bookingId: walk, amount: '10' },
-      { bookingId: '', amount: 10 },
+      { amountCents: 1000 },
+      { bookingId: 42, amountCents: 1000 },
+      { bookingId: walk, amountCents: '10' },
+      { bookingId: '', amountCents: 1000 },
     ]) {
       const res = await apply(env, TENANT_C, {
-        attributions: [{ ...base, tip, remainder: 0 }],
+        attributions: [{ ...base, tip, remainderCents: 0 }],
       });
       expect(res.status).toBe(400);
     }
@@ -1928,14 +2072,14 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
         {
           paymentId: first,
           accountId: home.accountId,
-          splits: [{ bookingId, amount: 100 }],
-          remainder: 0,
+          splits: [{ bookingId, amountCents: 10000 }],
+          remainderCents: 0,
         },
         {
           paymentId: second,
           accountId: home.accountId,
-          splits: [{ bookingId, amount: 100 }],
-          remainder: 0,
+          splits: [{ bookingId, amountCents: 10000 }],
+          remainderCents: 0,
         },
       ],
     });
@@ -1986,21 +2130,21 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
         {
           paymentId: firstPaymentId,
           accountId: first.accountId,
-          splits: [{ bookingId: firstBooking, amount: 100 }],
-          remainder: 0,
+          splits: [{ bookingId: firstBooking, amountCents: 10000 }],
+          remainderCents: 0,
         },
         {
           // Splits don't sum to the $100 payment — refused on the merits, not malformed.
           paymentId: secondPaymentId,
           accountId: second.accountId,
-          splits: [{ bookingId: secondBooking, amount: 40 }],
-          remainder: 0,
+          splits: [{ bookingId: secondBooking, amountCents: 4000 }],
+          remainderCents: 0,
         },
         {
           paymentId: thirdPaymentId,
           accountId: third.accountId,
-          splits: [{ bookingId: thirdBooking, amount: 75 }],
-          remainder: 0,
+          splits: [{ bookingId: thirdBooking, amountCents: 7500 }],
+          remainderCents: 0,
         },
       ],
     });
@@ -2168,65 +2312,65 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
         ...homes.map((h) => ({
           accountId: h.home.accountId,
           paymentId: h.paymentId,
-          amount: 200,
+          amountCents: 20000,
           paidDate: '2026-07-01',
           splits: [
             {
               bookingId: h.near,
-              amount: 100,
+              amountCents: 10000,
               serviceType: 'walk',
               startDate: '2026-06-30',
               endDate: null,
               status: 'confirmed',
-              outstanding: 100,
+              outstandingCents: 10000,
             },
             {
               bookingId: h.far,
-              amount: 60,
+              amountCents: 6000,
               serviceType: 'walk',
               startDate: '2026-07-05',
               endDate: null,
               status: 'confirmed',
-              outstanding: 60,
+              outstandingCents: 6000,
             },
           ],
-          remainder: 40,
+          remainderCents: 4000,
         })),
         {
           accountId: seq.accountId,
           paymentId: seqThird,
-          amount: 40,
+          amountCents: 4000,
           paidDate: '2026-06-03',
           splits: [
             {
               bookingId: seqBooking,
-              amount: 40,
+              amountCents: 4000,
               serviceType: 'walk',
               startDate: '2026-07-01',
               endDate: null,
               status: 'confirmed',
-              outstanding: 40,
+              outstandingCents: 4000,
             },
           ],
-          remainder: 0,
+          remainderCents: 0,
         },
         {
           accountId: declinedHome.accountId,
           paymentId: declinedPaymentId,
-          amount: 100,
+          amountCents: 10000,
           paidDate: '2026-07-01',
           splits: [
             {
               bookingId: declinedUnpaid,
-              amount: 100,
+              amountCents: 10000,
               serviceType: 'walk',
               startDate: '2026-07-01',
               endDate: null,
               status: 'confirmed',
-              outstanding: 100,
+              outstandingCents: 10000,
             },
           ],
-          remainder: 0,
+          remainderCents: 0,
         },
       ],
       // The two credits left with nothing are reported in the pool's own order — oldest paid
@@ -2234,7 +2378,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
       unresolved: [seqFirst, seqSecond].map((paymentId, index) => ({
         accountId: seq.accountId,
         paymentId,
-        amount: 40,
+        amountCents: 4000,
         paidDate: `2026-06-0${index + 1}`,
         reason: 'no-unpaid-bookings',
         // Not the pure proposer's "no unpaid bookings" sentence: this credit IS placeable (the
@@ -2252,7 +2396,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
             startDate: '2026-07-01',
             endDate: null,
             status: 'confirmed',
-            outstanding: 40,
+            outstandingCents: 4000,
           },
         ],
       })),
@@ -2326,10 +2470,10 @@ describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-r
         paymentId: h.paymentId,
         accountId: h.home.accountId,
         splits: [
-          { bookingId: h.near, amount: 100 },
-          { bookingId: h.far, amount: 60 },
+          { bookingId: h.near, amountCents: 10000 },
+          { bookingId: h.far, amountCents: 6000 },
         ],
-        remainder: 40,
+        remainderCents: 4000,
       })),
     });
     expect(res.status).toBe(200);
@@ -2382,11 +2526,11 @@ describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-r
       paymentId: h.paymentId,
       accountId: h.home.accountId,
       splits: [
-        { bookingId: h.near, amount: 100 },
-        { bookingId: h.far, amount: 60 },
+        { bookingId: h.near, amountCents: 10000 },
+        { bookingId: h.far, amountCents: 6000 },
       ],
-      ...(tipped ? { tip: { bookingId: h.near, amount: 10 } } : {}),
-      remainder: tipped ? 30 : 40,
+      ...(tipped ? { tip: { bookingId: h.near, amountCents: 1000 } } : {}),
+      remainderCents: tipped ? 3000 : 4000,
     });
 
     const run = async (tipped: boolean) => {
@@ -2431,8 +2575,8 @@ describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-r
     const one = {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId, amount: 100 }],
-      remainder: 0,
+      splits: [{ bookingId, amountCents: 10000 }],
+      remainderCents: 0,
     };
     const res = await apply(env, TENANT_C, {
       attributions: Array.from({ length: MAX_ATTRIBUTIONS_PER_REQUEST + 1 }, () => one),
@@ -2454,8 +2598,8 @@ describe('POST /:slug/admin/payments/attribute/apply — read cost and the per-r
       attributions.push({
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId, amount: 100 }],
-        remainder: 0,
+        splits: [{ bookingId, amountCents: 10000 }],
+        remainderCents: 0,
       });
     }
     const res = await apply(env, TENANT_C, { attributions });

@@ -172,7 +172,7 @@ describe('re-import of the source file after attribution', () => {
     const choices = [{ txnId: TXN_ID, accountId: home.accountId }];
 
     expect(await (await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices })).json()) //
-      .toEqual({ imported: 1, totalAmount: 200, skipped: [] });
+      .toEqual({ imported: 1, totalAmountCents: 20000, skipped: [] });
 
     // The sitter then places that credit: $150 onto the stay, $50 left as household credit.
     const credit = soleCredit(raw);
@@ -180,7 +180,7 @@ describe('re-import of the source file after attribution', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId: credit.Id,
         accountId: home.accountId,
-        // The repo speaks cents (0015); the importer wire above is still whole dollars.
+        // Cents on both sides now — the repo's own unit and the importer wire's alike.
         splits: [{ bookingId: stay, amount: 15000 }],
         remainder: 5000,
       }),
@@ -217,7 +217,7 @@ describe('re-import of the source file after attribution', () => {
           defaultMethod: 'venmo',
         })
       ).json()) as {
-        matched: { dedupeKey: string; amount: number; accountId: string | null }[];
+        matched: { dedupeKey: string; amountCents: number; accountId: string | null }[];
         alreadyImported: { dedupeKey: string }[];
       };
 
@@ -232,14 +232,14 @@ describe('re-import of the source file after attribution', () => {
           choices: [{ dedupeKey: marchKey, accountId: home.accountId }],
         })
       ).json(),
-    ).toEqual({ imported: 1, totalAmount: 200, skipped: [] });
+    ).toEqual({ imported: 1, totalAmountCents: 20000, skipped: [] });
 
     const credit = soleCredit(raw);
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId: credit.Id,
         accountId: home.accountId,
-        // The repo speaks cents (0015); the importer wire above is still whole dollars.
+        // Cents on both sides now — the repo's own unit and the importer wire's alike.
         splits: [{ bookingId: stay, amount: 15000 }],
         remainder: 5000,
       }),
@@ -268,7 +268,7 @@ describe('re-import of the source file after attribution', () => {
       ).json(),
     ).toMatchObject({
       imported: 1,
-      totalAmount: 75,
+      totalAmountCents: 7500,
       skipped: [{ dedupeKey: marchKey, reason: 'Already imported' }],
     });
 

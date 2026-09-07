@@ -289,44 +289,6 @@ export { MAX_BACKFILL_EVENTS };
 export const MAX_BACKFILL_EST_COST = 1_000_000;
 
 /**
- * An importer preview's three buckets, cents → whole dollars. Both importers' previews carry the
- * same `{ amount }`-bearing row shape, and both are read by a panel that has always been shown
- * dollars — 0015 moved storage, not the wire, so the divide happens here rather than leaving the
- * two previews to drift about it. `centsToWholeDollars` throws on a fractional figure, which
- * cannot occur while `parseAmount` refuses one.
- */
-/**
- * A whole-dollar figure off the attribution wire, as CENTS for the ledger — and anything that is
- * not a whole non-negative dollar amount PASSED THROUGH UNCHANGED. The pass-through is the point:
- * `applyAttribution` refuses a fractional, negative or unreadable figure per item, naming the
- * booking, and scaling (or throwing on) it here would either hide the fault or convert one bad row
- * in an approved batch into a 500 for the whole request. `dollarsToCents` is not used for exactly
- * that reason — it throws.
- *
- * SANCTIONED, AND TEMPORARY: this is the fourth dollars→cents site (with `money.ts`,
- * `cancellation-fee.ts` and `payment-import.ts`'s parser), permitted only until Task 8 moves the
- * attribution apply body to `amountCents` — at which point this function and every call to it go.
- * A figure that reaches `applyAttribution` un-scaled because it was not an integer is reported raw
- * by `describeAmount` there, never dressed up as money.
- */
-function toStoredCents(dollars: number): number {
-  return Number.isSafeInteger(dollars) && dollars >= 0 ? dollars * 100 : dollars;
-}
-
-function previewInDollars<
-  R extends { amount: number },
-  P extends { matched: R[]; unmatched: R[]; alreadyImported: R[] },
->(preview: P): P {
-  const rows = (list: R[]) => list.map((r) => ({ ...r, amount: centsToWholeDollars(r.amount) }));
-  return {
-    ...preview,
-    matched: rows(preview.matched),
-    unmatched: rows(preview.unmatched),
-    alreadyImported: rows(preview.alreadyImported),
-  };
-}
-
-/**
  * Everything the pure classifier (`classifyEvent`, `server/lib/calendar-backfill.ts`) needs,
  * loaded once per pass. Lives here, not in `server/lib/`, because it touches D1 — the same split
  * `loadPaymentMatchInputs` above uses.
@@ -2942,7 +2904,9 @@ export const adminRoutes = new Hono<AppEnv>()
     const parsed = parseVenmoCsv(typeof body.csv === 'string' ? body.csv : '');
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
-    const preview = previewInDollars(matchVenmoTxns({ txns: parsed.incoming, ...inputs }));
+    // Emitted as the matcher built it: every row carries `amountCents`, the ledger's own unit
+    // (0015), so nothing is divided on the way out and no reader has to guess which unit it holds.
+    const preview = matchVenmoTxns({ txns: parsed.incoming, ...inputs });
     return c.json({ ...preview, ignored: parsed.ignored, problems: parsed.problems });
   })
 
@@ -2983,7 +2947,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     const skipped: { txnId: string; reason: string }[] = [];
     let imported = 0;
-    let totalAmount = 0;
+    let totalAmountCents = 0;
 
     for (const { txnId, accountId } of choices) {
       const txn = txnById.get(txnId);
@@ -3007,7 +2971,7 @@ export const adminRoutes = new Hono<AppEnv>()
       try {
         const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
           accountId,
-          amount: txn.amount,
+          amount: txn.amountCents,
           method: 'venmo',
           paidDate: txn.date,
           note: note.slice(0, 300),
@@ -3018,7 +2982,7 @@ export const adminRoutes = new Hono<AppEnv>()
           continue;
         }
         imported++;
-        totalAmount += txn.amount; // cents; divided once in the response below
+        totalAmountCents += txn.amountCents;
       } catch (err) {
         // The partial unique index caught a replay that slipped past the pre-read (a concurrent
         // import of the same file). Idempotency is the index's job, and it did it.
@@ -3026,7 +2990,7 @@ export const adminRoutes = new Hono<AppEnv>()
         else throw err;
       }
     }
-    return c.json({ imported, totalAmount: centsToWholeDollars(totalAmount), skipped });
+    return c.json({ imported, totalAmountCents, skipped });
   })
 
   /**
@@ -3069,13 +3033,13 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const inputs = await loadPaymentMatchInputs(c.env, tenant.Id);
-    const preview = previewInDollars(
-      matchCsvPayments({
-        payments: parsed.payments,
-        clients: inputs.clients,
-        alreadyImported: inputs.alreadyImported,
-      }),
-    );
+    // Cents on the wire, as the Venmo preview above emits them — `applyMapping` already reads
+    // the file to the cent, so a `45.50` row previews as 4550 rather than being reported back.
+    const preview = matchCsvPayments({
+      payments: parsed.payments,
+      clients: inputs.clients,
+      alreadyImported: inputs.alreadyImported,
+    });
     // `households` rides along so the panel can offer a client for a row the matcher couldn't
     // place — the sitter assigning it is the design's own answer to an unmatched row.
     return c.json({ ...preview, households: inputs.households, problems: parsed.problems });
@@ -3143,7 +3107,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     const skipped: { dedupeKey: string; reason: string }[] = [];
     let imported = 0;
-    let totalAmount = 0;
+    let totalAmountCents = 0;
 
     for (const { dedupeKey, accountId } of choices) {
       const payment = paymentByKey.get(dedupeKey);
@@ -3166,7 +3130,7 @@ export const adminRoutes = new Hono<AppEnv>()
       try {
         const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
           accountId,
-          amount: payment.amount,
+          amount: payment.amountCents,
           method: payment.method,
           paidDate: payment.date,
           note: note.slice(0, 300),
@@ -3177,7 +3141,7 @@ export const adminRoutes = new Hono<AppEnv>()
           continue;
         }
         imported++;
-        totalAmount += payment.amount; // cents; divided once in the response below
+        totalAmountCents += payment.amountCents;
       } catch (err) {
         // The partial unique index caught a replay that slipped past the pre-read (a concurrent
         // import of the same file). Idempotency is the index's job, and it did it.
@@ -3185,7 +3149,7 @@ export const adminRoutes = new Hono<AppEnv>()
         else throw err;
       }
     }
-    return c.json({ imported, totalAmount: centsToWholeDollars(totalAmount), skipped });
+    return c.json({ imported, totalAmountCents, skipped });
   })
 
   /**
@@ -3293,11 +3257,12 @@ export const adminRoutes = new Hono<AppEnv>()
     const proposals: {
       accountId: string;
       paymentId: string;
-      amount: number;
+      /** CENTS (0015) — the credit's own face value, straight off `Payments.Amount`. */
+      amountCents: number;
       paidDate: string;
       splits: {
         bookingId: string;
-        amount: number;
+        amountCents: number;
         serviceType: string;
         startDate: string;
         // `null` means a single-day service (a walk); a range service (a stay) carries its own
@@ -3308,14 +3273,14 @@ export const adminRoutes = new Hono<AppEnv>()
         status: string;
         // Declared, not merely emitted: the panel's over-split guard reads this, so dropping it
         // must be a type error rather than a silent `undefined` that quietly disables the guard.
-        outstanding: number;
+        outstandingCents: number;
       }[];
-      remainder: number;
+      remainderCents: number;
     }[] = [];
     const unresolved: {
       accountId: string;
       paymentId: string;
-      amount: number;
+      amountCents: number;
       paidDate: string;
       reason: string;
       detail: string;
@@ -3326,7 +3291,7 @@ export const adminRoutes = new Hono<AppEnv>()
         // Same meaning as the split's `endDate` above: `null` for a single-day service.
         endDate: string | null;
         status: string;
-        outstanding: number;
+        outstandingCents: number;
       }[];
     }[] = [];
 
@@ -3552,21 +3517,22 @@ export const adminRoutes = new Hono<AppEnv>()
           tenant.AttributionSpillDays,
         );
         if (proposal.ok) {
-          // EVERY FIGURE ABOVE THIS POINT IS CENTS (0015) — the proposer, the outstanding maps and
-          // the distinctive-amounts set all work in one unit. The PANEL still speaks whole
-          // dollars, and the apply route below still accepts them, so the divide happens here, at
-          // the edge, and nowhere earlier.
+          // EVERY FIGURE HERE IS CENTS (0015) — the proposer, the outstanding maps, the
+          // distinctive-amounts set, this response and the apply route that reads it back all work
+          // in one unit. Nothing is divided at the edge any more, which is what lets a credit of
+          // $87.50 be proposed at all: there is no point in this path where 8750 has to be a whole
+          // number of dollars.
           proposals.push({
             accountId,
             paymentId: proposal.paymentId,
-            amount: centsToWholeDollars(row.Amount),
+            amountCents: row.Amount,
             paidDate: row.PaidDate,
             splits: proposal.splits.map((s) => ({
-              amount: centsToWholeDollars(s.amount),
+              amountCents: s.amount,
               ...staticById.get(s.bookingId)!,
-              outstanding: centsToWholeDollars(liveOutstandingById.get(s.bookingId)!),
+              outstandingCents: liveOutstandingById.get(s.bookingId)!,
             })),
-            remainder: centsToWholeDollars(proposal.remainder),
+            remainderCents: proposal.remainder,
           });
           // Carry the decrement forward for the next credit in this household.
           for (const s of proposal.splits)
@@ -3603,13 +3569,13 @@ export const adminRoutes = new Hono<AppEnv>()
                 .filter((b) => liveOutstandingById.get(b.bookingId)! > 0)
                 .map((b) => ({
                   ...staticById.get(b.bookingId)!,
-                  outstanding: centsToWholeDollars(liveOutstandingById.get(b.bookingId)!),
+                  outstandingCents: liveOutstandingById.get(b.bookingId)!,
                 }))
             : [];
           unresolved.push({
             accountId,
             paymentId: proposal.paymentId,
-            amount: centsToWholeDollars(row.Amount),
+            amountCents: row.Amount,
             paidDate: row.PaidDate,
             reason: proposal.reason,
             // THE PURE PROPOSER'S SENTENCE IS REPLACED, NOT DECORATED, FOR THE ONE CASE IT CANNOT
@@ -3639,12 +3605,19 @@ export const adminRoutes = new Hono<AppEnv>()
    * and in what amounts; everything else is re-derived from live state, because the browser's copy
    * is a snapshot from whenever the preview ran and money moves in between.
    *
-   * THE BODY IS WHOLE DOLLARS, THE LEDGER IS CENTS (0015). The panel is handed dollars by the
-   * preview above, so it sends dollars back, and `toStoredCents` below is the one place they are
-   * converted. It converts ONLY a safe non-negative integer and passes anything else through
-   * untouched, deliberately: a fractional or negative figure has to reach `applyAttribution`'s own
-   * guards, which refuse it PER ITEM with a sentence naming the booking — throwing here would turn
-   * one bad row in an approved batch into a 500 for the whole request.
+   * THE BODY IS CENTS (0015), like the preview above and like the ledger underneath — one unit
+   * end to end, so nothing on this path multiplies or divides by 100 and there is no site left
+   * where a figure could be scaled twice or not at all. The whole-dollar `amount` / `remainder`
+   * body is GONE rather than tolerated: a request in the old shape is a 400, never re-read as
+   * cents, because reading `100` as $1.00 when it meant $100 is the one failure worth 400ing over.
+   *
+   * SHAPE IS CHECKED HERE; THE FIGURE ITSELF IS NOT. `typeof === 'number'` is the whole of what
+   * this route asks of an amount, deliberately: a fractional or negative one has to reach
+   * `applyAttribution`'s own guards, which refuse it PER ITEM with a sentence naming the booking
+   * (`describeAmount`, server/db/repo.ts, reports a non-integer raw rather than dressing it up as
+   * money). Refusing it here would turn one bad row in an approved batch into a 400 for the whole
+   * request — the same reason the malformed-body checks and the on-the-merits refusals are two
+   * different outcomes throughout this route.
    *
    * `applyAttribution` (server/db/repo.ts) does the re-derivation: it re-reads the source payment
    * (its `Amount` is the only authority, never the caller's), re-checks conservation
@@ -3672,7 +3645,7 @@ export const adminRoutes = new Hono<AppEnv>()
    * of the exact same body apply once: the second call's `applyAttribution` re-reads the row, finds
    * it gone, and skips with a reason instead of duplicating the money.
    *
-   * AN ATTRIBUTION MAY CARRY A `tip` — `{ bookingId, amount }`, naming one of its own splits'
+   * AN ATTRIBUTION MAY CARRY A `tip` — `{ bookingId, amountCents }`, naming one of its own splits'
    * bookings. That is the one part of a payment that is not settlement: `applyAttribution` records
    * it as a `BookingCharges` row on the stay instead of leaving it as an account-level credit that
    * would tell the sitter she owes her client money she was thanked with. THE SPLIT IS SENT
@@ -3709,6 +3682,8 @@ export const adminRoutes = new Hono<AppEnv>()
         400,
       );
 
+    // `applyAttribution`'s own input shape (server/db/repo.ts), whose `amount` fields hold exactly
+    // the cents the body carried — the rename is on the wire, not in the repo's signature.
     const attributions: {
       paymentId: string;
       accountId: string;
@@ -3725,7 +3700,7 @@ export const adminRoutes = new Hono<AppEnv>()
         paymentId?: unknown;
         accountId?: unknown;
         splits?: unknown;
-        remainder?: unknown;
+        remainderCents?: unknown;
         tip?: unknown;
       };
       if (
@@ -3734,7 +3709,7 @@ export const adminRoutes = new Hono<AppEnv>()
         typeof a.accountId !== 'string' ||
         a.accountId === '' ||
         !Array.isArray(a.splits) ||
-        typeof a.remainder !== 'number'
+        typeof a.remainderCents !== 'number'
       )
         return c.json({ error: 'That list of attributions is malformed.' }, 400);
 
@@ -3742,36 +3717,45 @@ export const adminRoutes = new Hono<AppEnv>()
       for (const rawSplit of a.splits) {
         if (typeof rawSplit !== 'object' || rawSplit === null)
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
-        const s = rawSplit as { bookingId?: unknown; amount?: unknown };
-        if (typeof s.bookingId !== 'string' || s.bookingId === '' || typeof s.amount !== 'number')
+        const s = rawSplit as { bookingId?: unknown; amountCents?: unknown };
+        if (
+          typeof s.bookingId !== 'string' ||
+          s.bookingId === '' ||
+          typeof s.amountCents !== 'number'
+        )
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
-        splits.push({ bookingId: s.bookingId, amount: toStoredCents(s.amount) });
+        splits.push({ bookingId: s.bookingId, amount: s.amountCents });
       }
 
       // THE OPTIONAL TIP — part of this payment the client meant as thanks, which
       // `applyAttribution` records as a `BookingCharges` row on one of the bookings above rather
       // than as an account-level credit that would read as a debt. SHAPE ONLY is checked here: that
-      // the amount is a whole positive dollar figure, that the booking is one of this attribution's
-      // own splits, and that it belongs to this payment's household are all decided by
-      // `applyAttribution` against LIVE state, and are refusals on the merits (per-item `skipped`)
-      // rather than malformed bodies. Absent is the ordinary case and stays `undefined`, so the
-      // repo function's own `tip === undefined` branch is what every existing caller keeps hitting.
+      // the amount is a positive whole number of cents, that the booking is one of this
+      // attribution's own splits, and that it belongs to this payment's household are all decided
+      // by `applyAttribution` against LIVE state, and are refusals on the merits (per-item
+      // `skipped`) rather than malformed bodies. Absent is the ordinary case and stays `undefined`,
+      // so the repo function's own `tip === undefined` branch is what every existing caller keeps
+      // hitting.
       let tip: { bookingId: string; amount: number } | undefined;
       if (a.tip !== undefined) {
         // `typeof null === 'object'`, so a null tip must be turned away before the property reads.
         if (typeof a.tip !== 'object' || a.tip === null)
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
-        const t = a.tip as { bookingId?: unknown; amount?: unknown };
-        if (typeof t.bookingId !== 'string' || t.bookingId === '' || typeof t.amount !== 'number')
+        const t = a.tip as { bookingId?: unknown; amountCents?: unknown };
+        if (
+          typeof t.bookingId !== 'string' ||
+          t.bookingId === '' ||
+          typeof t.amountCents !== 'number'
+        )
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
-        tip = { bookingId: t.bookingId, amount: toStoredCents(t.amount) };
+        tip = { bookingId: t.bookingId, amount: t.amountCents };
       }
 
       attributions.push({
         paymentId: a.paymentId,
         accountId: a.accountId,
         splits,
-        remainder: toStoredCents(a.remainder),
+        remainder: a.remainderCents,
         tip,
       });
     }

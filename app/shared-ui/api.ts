@@ -255,7 +255,8 @@ export type BookingCharge = { id: string; label: string; amountCents: number };
 export type VenmoPreviewRow = {
   txnId: string;
   date: string;
-  amount: number;
+  /** CENTS (0015) — the server reads the file to the cent and reports it unchanged. */
+  amountCents: number;
   from: string;
   note: string;
 };
@@ -277,7 +278,8 @@ export type VenmoPreview = {
 };
 export type VenmoImportResult = {
   imported: number;
-  totalAmount: number;
+  /** CENTS (0015) — the sum of what was actually recorded, added up server-side. */
+  totalAmountCents: number;
   skipped: { txnId: string; reason: string }[];
 };
 
@@ -300,7 +302,8 @@ export type CsvPreviewRow = {
   dedupeKey: string;
   row: number;
   date: string;
-  amount: number;
+  /** CENTS (0015), as on the Venmo preview row above. */
+  amountCents: number;
   payer: string;
   method: PaymentMethod;
   reference: string | null;
@@ -321,7 +324,8 @@ export type CsvPreview = {
 };
 export type CsvImportResult = {
   imported: number;
-  totalAmount: number;
+  /** CENTS (0015), as on the Venmo import result above. */
+  totalAmountCents: number;
   skipped: { dedupeKey: string; reason: string }[];
 };
 
@@ -411,8 +415,8 @@ export type BackfillImportResult = {
 /** One booking a credit could land on — hand-mirrors the `splits`/`bookings` row shape both
  *  `server/routes/admin.ts` attribution routes emit: static booking facts plus its OWN live
  *  outstanding, computed at preview time (`server/lib/payment-attribution.ts`'s `UnpaidBooking`
- *  under a different name). `outstanding` is a snapshot for display only — `apply` re-reads it
- *  live and refuses a split that no longer fits.
+ *  under a different name). `outstandingCents` is a snapshot for display only — `apply` re-reads
+ *  it live and refuses a split that no longer fits.
  *
  *  Deliberately NOT decremented by any other credit proposed in the same preview response: a
  *  household can have several unattached credits, and the preview route simulates applying them
@@ -421,7 +425,7 @@ export type BackfillImportResult = {
  *  current outstanding, so a sitter who edits or excludes a credit (e.g. raises a later split to
  *  settle the booking outright) isn't capped against a number that was never really live. Two
  *  splits on the same booking, from two different credits in the same preview, can therefore both
- *  legitimately show the same `outstanding` — over-attributing across them is caught server-side
+ *  legitimately show the same `outstandingCents` — over-attributing across them is caught server-side
  *  by `applyAttribution` re-reading live state per attribution, not prevented here. */
 export type AttributionCandidateBooking = {
   bookingId: string;
@@ -431,23 +435,25 @@ export type AttributionCandidateBooking = {
   // checkout date here — the whole interval `proposeAttribution` measures proximity against.
   endDate: string | null;
   status: string;
-  outstanding: number;
+  /** CENTS (0015) — the server's own `max(0, expectedCents − paidTotalCents)`, never derived here. */
+  outstandingCents: number;
 };
 
 /** A resolved split, as `preview` proposed it — `proposeAttribution`'s own `Split` plus the
  *  static booking facts the route joins in for display. */
-export type AttributionProposalSplit = AttributionCandidateBooking & { amount: number };
+export type AttributionProposalSplit = AttributionCandidateBooking & { amountCents: number };
 
 /** One credit `proposeAttribution` could place unambiguously against this household's unpaid
- *  bookings. `remainder` is what's left of `amount` after every split — never negative, never
- *  computed here (see `payment-attribution.ts`'s conservation invariant). */
+ *  bookings. `remainderCents` is what's left of `amountCents` after every split — never negative,
+ *  never computed here (see `payment-attribution.ts`'s conservation invariant). */
 export type AttributionProposal = {
   accountId: string;
   paymentId: string;
-  amount: number;
+  /** CENTS (0015), like every other figure on this payload — the credit's face value. */
+  amountCents: number;
   paidDate: string;
   splits: AttributionProposalSplit[];
-  remainder: number;
+  remainderCents: number;
 };
 
 /** A credit `proposeAttribution` refused to place — `reason` is the closed union the pure
@@ -481,7 +487,8 @@ export type AttributionProposal = {
 export type AttributionUnresolved = {
   accountId: string;
   paymentId: string;
-  amount: number;
+  /** CENTS (0015). */
+  amountCents: number;
   paidDate: string;
   reason:
     | 'no-unpaid-bookings'
@@ -505,19 +512,24 @@ export type AttributionPreview = {
 export type AttributionInput = {
   paymentId: string;
   accountId: string;
-  splits: { bookingId: string; amount: number }[];
-  remainder: number;
+  /** CENTS (0015) on every figure here, the same unit the preview reported and the ledger holds.
+   *  The whole-dollar body this route used to take is gone: the server 400s it rather than read
+   *  `100` as $1.00. */
+  splits: { bookingId: string; amountCents: number }[];
+  remainderCents: number;
   /**
    * Part of this payment the client meant as thanks rather than as settlement — recorded server-
    * side as a `BookingCharges` row labelled "Tip" on the named booking, which must be one THIS
-   * attribution's own `splits` name. Without it the excess becomes `remainder`, an account-level
-   * credit, which says the sitter OWES the money back and then reappears in every future preview.
+   * attribution's own `splits` name. Without it the excess becomes `remainderCents`, an
+   * account-level credit, which says the sitter OWES the money back and then reappears in every
+   * future preview.
    *
-   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is `sum(splits) + tip + remainder === amount`,
-   * and the server writes `split + tip` against the booking (`applyAttribution`, server/db/repo.ts).
-   * Sending an already-inclusive split fails conservation rather than paying the tip twice.
+   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is
+   * `sum(splits) + tip + remainderCents === amountCents`, and the server writes `split + tip` against
+   * the booking (`applyAttribution`, server/db/repo.ts). Sending an already-inclusive split fails
+   * conservation rather than paying the tip twice.
    */
-  tip?: { bookingId: string; amount: number };
+  tip?: { bookingId: string; amountCents: number };
 };
 
 export type AttributionApplyResult = {

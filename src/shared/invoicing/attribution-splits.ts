@@ -9,8 +9,10 @@
  * conservation check (`applyAttribution`'s re-derivation) turn a bad edit into a `skipped` entry
  * the sitter then has to go re-read and fix. It invents no number of its own: every split amount
  * here is either a proposal's own figure or something the sitter typed, and this only checks
- * whether they add up — the same "whole dollars, exact integer arithmetic, no rounding" rule the
- * server-side proposer states for itself.
+ * whether they add up — the same "exact integer arithmetic, no rounding" rule the server-side
+ * proposer states for itself. The unit is CENTS (0015), which the parameter names carry: the
+ * arithmetic itself is unit-agnostic, but every caller is in cents and a reader should not have
+ * to go and find that out.
  */
 /**
  * How many attributions one `POST .../attribute/apply` request may carry — the cap the server
@@ -47,19 +49,19 @@
 export const MAX_ATTRIBUTIONS_PER_REQUEST = 6;
 
 export function balancedRemainder(
-  creditAmount: number,
-  splits: { amount: number }[],
+  creditCents: number,
+  splits: { amountCents: number }[],
 ): number | null {
-  if (!Number.isInteger(creditAmount) || creditAmount < 0) return null;
+  if (!Number.isInteger(creditCents) || creditCents < 0) return null;
 
   let sum = 0;
   for (const s of splits) {
-    if (!Number.isInteger(s.amount) || s.amount <= 0) return null;
-    sum += s.amount;
+    if (!Number.isInteger(s.amountCents) || s.amountCents <= 0) return null;
+    sum += s.amountCents;
   }
-  if (sum > creditAmount) return null;
+  if (sum > creditCents) return null;
 
-  return creditAmount - sum;
+  return creditCents - sum;
 }
 
 /**

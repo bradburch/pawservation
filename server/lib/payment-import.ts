@@ -3,8 +3,8 @@
  * counts as an importable amount, how a cell gets made safe to echo and store, how a payer name
  * folds onto a client, and when that fold is too ambiguous to trust. These live in one place so a
  * second importer cannot quietly drift from the first about what an amount is or when a name is
- * ambiguous — two independently-tuned copies of "is this $45.50 or cents" is exactly the kind of
- * divergence this module exists to prevent.
+ * ambiguous — two independently-tuned copies of "is this $45.50 or is it 45.50 cents" is exactly
+ * the kind of divergence this module exists to prevent.
  *
  * PURE. No D1, no env, no fetch — every function here takes plain data and returns plain data.
  */
@@ -34,26 +34,35 @@ export function sanitizeCell(value: string): string {
 }
 
 /**
- * "+ $45.00" → { sign: '+', cents: 4500 }. The unit is CENTS because that is what the ledger
+ * "+ $45.50" → { sign: '+', cents: 4550 }. The unit is CENTS because that is what the ledger
  * stores (0015) and what both importers hand to `insertAccountPayment`.
  *
- * A FRACTIONAL AMOUNT IS STILL REFUSED HERE. The storage unit moved; the importer's contract with
- * the sitter has not, and a `$45.50` row is still REPORTED to her rather than recorded. Making it
- * importable is a separate, deliberate change — the dedupe keys both importers derive from the
- * amount would start carrying a decimal, and a sitter re-uploading an overlapping export must not
- * get a second copy of a payment because the key moved. So this returns null on a non-zero
- * fraction and every importer test keeps its existing expectations.
+ * A FRACTIONAL AMOUNT IS RECORDED, NOT REFUSED. It used to be reported back to the sitter for her
+ * to enter by hand, because the ledger could not hold it; the ledger can, so refusing it would be
+ * this module inventing a limitation the storage no longer has. A payment is what a person
+ * actually sent.
+ *
+ * THE FLOOR IS ONE CENT, not one dollar. Below that there is no payment to record, which is a
+ * different sentence from "we cannot represent this" — `payment-csv.ts` says so for the `$0` case
+ * specifically. `Payments.Amount CHECK (Amount > 0)` backstops it in the column.
+ *
+ * WHAT DID NOT MOVE: the sign. A negative row is a refund, which this model cannot represent at
+ * all, so it comes back with `sign: '-'` for the importers to report — never coerced positive.
+ * And the mapped-CSV dedupe key is unaffected: it hashes `formatCentsForKey(cents)`, which writes
+ * "45" for 4500 and "45.50" for 4550, so every key an existing whole-dollar row already has is
+ * byte-identical and a re-uploaded export still dedupes (`payment-csv.ts`, `applyMapping`).
  */
 export function parseAmount(raw: string): { sign: '+' | '-'; cents: number } | null {
   const m = /^\s*([+-])?\s*\$?\s*([\d,]+)(?:\.(\d{1,2}))?\s*$/.exec(
     raw.replace(new RegExp(String.fromCharCode(160), 'g'), ' '),
   );
   if (!m) return null;
+  // `padEnd` before `Number`, so "$45.5" is 50 cents rather than 5 — one decimal place means
+  // tenths of a dollar, and a sitter's export writes it either way.
   const frac = m[3] === undefined ? 0 : Number(m[3].padEnd(2, '0'));
-  if (frac !== 0) return null; // see the paragraph above; lifted in its own commit
   const whole = Number(m[2].replace(/,/g, ''));
   const cents = whole * 100 + frac;
-  if (!Number.isSafeInteger(cents) || cents < 100) return null;
+  if (!Number.isSafeInteger(cents) || cents < 1) return null;
   return { sign: m[1] === '-' ? '-' : '+', cents };
 }
 

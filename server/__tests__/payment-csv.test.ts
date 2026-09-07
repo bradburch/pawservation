@@ -54,16 +54,16 @@ const FILE = [
 ].join('\n');
 
 describe('applyMapping', () => {
-  it('maps a good row and reports the bad ones with their file line numbers', () => {
+  it('maps the good rows — fractions included — and reports the bad ones with their file line numbers', () => {
     const out = applyMapping(FILE, MAP, 'zelle', 'tnt_x');
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.payments).toHaveLength(1);
+    expect(out.payments).toHaveLength(2);
     expect(out.payments[0]).toMatchObject({
       row: 2,
       date: '2026-07-03',
       // CENTS (0015) — the unit `insertAccountPayment` stores.
-      amount: 4500,
+      amountCents: 4500,
       payer: 'Thomas Finch',
       method: 'zelle',
       reference: 'ZL-1',
@@ -71,12 +71,23 @@ describe('applyMapping', () => {
       // ExternalRef column / unique index.
       dedupeKey: 'csv:ZL-1',
     });
-    // 1-indexed against the sitter's own file, so "row 3" means row 3 in their spreadsheet.
-    expect(out.problems.map((p) => p.row)).toEqual([3, 4, 5]);
-    expect(out.problems[0].reason).toMatch(/whole dollar/i);
-    // The refund row (row 4) and the bad-date row (row 5) are told apart, not lumped in with the
-    // cents problem.
-    expect(out.problems[1].reason).toMatch(/refund/i);
+    // THE ROW THIS TASK EXISTS FOR: `45.50` is recorded as 4550, not reported back to the sitter.
+    expect(out.payments[1]).toMatchObject({
+      row: 3,
+      date: '2026-07-04',
+      amountCents: 4550,
+      payer: 'Dana Cole',
+      dedupeKey: 'csv:ZL-2',
+    });
+    // The dollar-named field is gone, so no reader can take 4550 for $4,550.
+    expect(out.payments[1]).not.toHaveProperty('amount');
+    // 1-indexed against the sitter's own file, so "row 4" means row 4 in their spreadsheet: the
+    // refund and the bad date, which are the only two rows left with anything wrong with them.
+    expect(out.problems.map((p) => p.row)).toEqual([4, 5]);
+    expect(out.problems[0].reason).toMatch(/refund/i);
+    expect(out.problems[1].reason).toMatch(/YYYY-MM-DD/);
+    // Nothing here says "whole dollars" any more, because nothing here is refused for being one.
+    for (const problem of out.problems) expect(problem.reason).not.toMatch(/whole dollar/i);
   });
 
   it("names the format a date must be in, rather than only saying it couldn't be read", () => {
@@ -116,7 +127,7 @@ describe('applyMapping', () => {
     expect(out2.ok && out2.problems).toEqual([]);
   });
 
-  it('gives a $0 row its own reason rather than saying it records whole dollars', () => {
+  it('gives a $0 row its own reason — there is no payment to record', () => {
     const f = ['Date,Amount,Payer', '2026-07-03,$0.00,Finch', '2026-07-04,0,Cole'].join('\n');
     const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
     expect(out.ok).toBe(true);
@@ -139,7 +150,7 @@ describe('applyMapping', () => {
     if (!out.ok) return;
     expect(out.problems).toEqual([]);
     expect(out.payments).toHaveLength(1);
-    expect(out.payments[0].amount).toBe(4500);
+    expect(out.payments[0].amountCents).toBe(4500);
   });
 
   it('reports each repeat of a mapped reference within the file instead of silently dropping it', () => {
@@ -181,6 +192,11 @@ describe('applyMapping', () => {
     const f = ['Date,Amount,Payer', '2026-07-03,40,Finch'].join('\n');
     const out = applyMapping(f, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
     expect(out.ok && out.payments[0].dedupeKey).toBe('csv:afae57b0ac74ed44:0');
+    // …and a row of the same shape that is NOT whole dollars keys differently, because
+    // `formatCentsForKey` writes its decimal — two different payments, two different keys.
+    const cents = ['Date,Amount,Payer', '2026-07-03,40.50,Finch'].join('\n');
+    const out2 = applyMapping(cents, { date: 0, amount: 1, payer: 2 }, 'cash', 'tnt_x');
+    expect(out2.ok && out2.payments[0].dedupeKey).not.toBe('csv:afae57b0ac74ed44:0');
   });
 
   it('gives two identical unreferenced rows different keys, so both import', () => {

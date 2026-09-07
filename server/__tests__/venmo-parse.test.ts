@@ -52,7 +52,7 @@ describe('parseVenmoCsv', () => {
         note: 'Boarding for Bella',
         from: 'Jess Demo',
         // CENTS (0015) — `parseVenmoCsv` hands `insertAccountPayment` the ledger's own unit.
-        amount: 25000,
+        amountCents: 25000,
       },
       {
         txnId: '4139874112233445567',
@@ -61,7 +61,7 @@ describe('parseVenmoCsv', () => {
         status: 'Complete',
         note: 'walks',
         from: 'Tina Alvarez',
-        amount: 4000,
+        amountCents: 4000,
       },
     ]);
     // The outgoing transfer and the pending payment are counted, never guessed at; the balance
@@ -88,18 +88,43 @@ describe('parseVenmoCsv', () => {
     expect(parseVenmoCsv('   \n').ok).toBe(false);
   });
 
-  it('reports a cents amount instead of rounding it', () => {
+  it('records a fractional amount rather than reporting it', () => {
     const csv = VENMO_CSV.replace('+ $250.00', '+ $250.50');
     const result = parseVenmoCsv(csv);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.incoming.map((t) => t.txnId)).toEqual(['4139874112233445567']);
-    expect(result.problems).toEqual([
-      {
-        row: 5,
-        reason: 'Couldn’t read the amount "+ $250.50" — Pawservation records whole dollars',
-      },
+    // Both rows come through, and the 50¢ is kept exactly — no rounding, no problem row.
+    expect(result.incoming.map((t) => [t.txnId, t.amountCents])).toEqual([
+      ['4139874112233445566', 25050],
+      ['4139874112233445567', 4000],
     ]);
+    expect(result.problems).toEqual([]);
+  });
+
+  it('still refuses an unreadable amount, and never says "whole dollars" about it', () => {
+    const csv = VENMO_CSV.replace('+ $250.00', 'about $250ish');
+    const result = parseVenmoCsv(csv);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.incoming.map((t) => t.txnId)).toEqual(['4139874112233445567']);
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0].row).toBe(5);
+    expect(result.problems[0].reason).toContain('about $250ish');
+    expect(result.problems[0].reason).not.toMatch(/whole dollar/i);
+  });
+
+  it('still counts a NEGATIVE incoming row as a refund and records nothing for it', () => {
+    // A refund the sitter sent back out. `Payments.Amount CHECK (Amount > 0)` has no room for it,
+    // and lifting the fraction refusal did not lift this one: it is ignored, never coerced
+    // positive, and never recorded. (The outgoing bank transfer on line 33 of the fixture is
+    // ignored one step earlier still, on its Type/Status.)
+    const csv = VENMO_CSV.replace('+ $250.00', '- $250.50');
+    const result = parseVenmoCsv(csv);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.incoming.map((t) => t.txnId)).toEqual(['4139874112233445567']);
+    expect(result.problems).toEqual([]);
+    expect(result.ignored).toBe(3);
   });
 
   it('caps the number of transactions instead of running an unbounded import', () => {
@@ -139,12 +164,12 @@ describe('sanitizeCell', () => {
 });
 
 describe('parseAmount', () => {
-  // Whole dollars in, CENTS out (0015): the ledger's unit. A fractional cell is still refused —
-  // the storage unit moved, the importer's contract with the sitter did not.
-  it('reads whole dollars with either sign and refuses everything else', () => {
+  // Dollars in, CENTS out (0015): the ledger's unit, and a fractional cell is now part of it.
+  it('reads either sign, keeps the cents, and refuses everything below one', () => {
     expect(parseAmount('- $885.00')).toEqual({ sign: '-', cents: 88500 });
     expect(parseAmount('$1,250.00')).toEqual({ sign: '+', cents: 125000 });
-    expect(parseAmount('+ $250.50')).toBeNull();
+    expect(parseAmount('+ $250.50')).toEqual({ sign: '+', cents: 25050 });
+    expect(parseAmount('$0.01')).toEqual({ sign: '+', cents: 1 });
     expect(parseAmount('$0.00')).toBeNull();
     expect(parseAmount('')).toBeNull();
     expect(parseAmount('lots')).toBeNull();

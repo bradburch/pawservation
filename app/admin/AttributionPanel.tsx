@@ -10,18 +10,15 @@ import {
 } from '../shared-ui/api.js';
 import {
   balancedRemainder,
+  formatCents,
+  formatCentsPlain,
   formatFriendlyDate,
   MAX_ATTRIBUTIONS_PER_REQUEST,
+  parseDollarsInput,
   sitterPicksFirst,
 } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
-
-/** Whole dollars only, at least $1 — same idiom as CalendarBackfillPanel's `isWholeDollar`. This
- *  is UX only; the server independently validates every split and refuses a bad one. */
-function isWholeDollar(value: string): boolean {
-  return /^[1-9]\d*$/.test(value.trim());
-}
 
 /**
  * How many attributions one Apply request carries. The apply route refuses more than this
@@ -48,6 +45,12 @@ const APPLY_CHUNK_SIZE = MAX_ATTRIBUTIONS_PER_REQUEST;
  *  the same rule as every other amount on this panel. */
 type Row = AttributionCandidateBooking & {
   checked: boolean;
+  /** AS TYPED, IN DOLLARS — e.g. "45.50". Everything else on this panel is CENTS, and
+   *  `parseDollarsInput` (src/shared/pricing/money.ts) is the one thing that crosses between:
+   *  "45.50" and "45" alike become cents, and anything else (blank, a fraction of a cent, a
+   *  negative) becomes `null`, which is exactly the condition that blocks Apply. The same parser
+   *  runs at the server's boundary, so the two cannot drift — and this copy is UX only, since the
+   *  server re-validates every split against live state regardless. */
   amountText: string;
   tipText: string;
 };
@@ -58,13 +61,14 @@ type Row = AttributionCandidateBooking & {
 type EditableCredit = {
   paymentId: string;
   accountId: string;
-  amount: number;
+  /** CENTS (0015), the preview's own `amountCents` carried through unchanged. */
+  amountCents: number;
   paidDate: string;
   rows: Row[];
   included: boolean;
-  /** The server's OWN remainder for this credit as proposed (`AttributionProposal.remainder`) —
-   *  shown verbatim until the sitter changes a row, rather than recomputed from scratch for a
-   *  state that hasn't moved. `null` for an unresolved credit (a tie, or one the sequencing
+  /** The server's OWN remainder for this credit as proposed (`AttributionProposal.remainderCents`),
+   *  in cents — shown verbatim until the sitter changes a row, rather than recomputed from scratch
+   *  for a state that hasn't moved. `null` for an unresolved credit (a tie, or one the sequencing
    *  skipped): the server proposed nothing for it at all, so there is no server figure to prefer
    *  over the live derivation. */
   serverRemainder: number | null;
@@ -103,13 +107,15 @@ function fromProposal(p: AttributionProposal): EditableCredit {
   const rows = p.splits.map((s) => ({
     ...s,
     checked: true,
-    amountText: String(s.amount),
+    // The proposal's cents, written back out as the dollars the field takes — 4550 pre-fills as
+    // "45.50", which `parseDollarsInput` reads back as exactly 4550.
+    amountText: formatCentsPlain(s.amountCents),
     tipText: '',
   }));
   return {
     paymentId: p.paymentId,
     accountId: p.accountId,
-    amount: p.amount,
+    amountCents: p.amountCents,
     paidDate: p.paidDate,
     rows,
     // A proposal can still carry NO splits — a $0 credit resolves cleanly to nothing at all. (It
@@ -118,7 +124,7 @@ function fromProposal(p: AttributionProposal): EditableCredit {
     // handled by the editor below.) There is nothing to check either way, so it starts
     // un-included: ticking it would only submit an empty, server-refused attribution.
     included: p.splits.length > 0,
-    serverRemainder: p.remainder,
+    serverRemainder: p.remainderCents,
     originalRows: snapshotRows(rows),
   };
 }
@@ -142,7 +148,7 @@ function fromUnresolved(u: AttributionUnresolved): EditableCredit {
   return {
     paymentId: u.paymentId,
     accountId: u.accountId,
-    amount: u.amount,
+    amountCents: u.amountCents,
     paidDate: u.paidDate,
     rows,
     included: false,
@@ -172,12 +178,15 @@ function isActionable(u: AttributionUnresolved): boolean {
  * A tip on an UNCHECKED row is ignored, matching the server's own rule that a tip must name a
  * booking among this attribution's splits — untick the stay and its tip goes with it.
  */
-function tipOf(credit: EditableCredit): { bookingId: string; amount: number } | 'invalid' | null {
+function tipOf(
+  credit: EditableCredit,
+): { bookingId: string; amountCents: number } | 'invalid' | null {
   const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
   if (typed.length === 0) return null;
   if (typed.length > 1) return 'invalid';
-  if (!isWholeDollar(typed[0].tipText)) return 'invalid';
-  return { bookingId: typed[0].bookingId, amount: Number(typed[0].tipText) };
+  const amountCents = parseDollarsInput(typed[0].tipText);
+  if (amountCents === null) return 'invalid';
+  return { bookingId: typed[0].bookingId, amountCents };
 }
 
 /**
@@ -189,10 +198,11 @@ function tipOf(credit: EditableCredit): { bookingId: string; amount: number } | 
  */
 function leftoverBeforeTip(credit: EditableCredit): number | null {
   const checked = credit.rows.filter((r) => r.checked);
-  for (const r of checked) if (!isWholeDollar(r.amountText)) return null;
+  const cents = checked.map((r) => parseDollarsInput(r.amountText));
+  if (cents.some((c) => c === null)) return null;
   return balancedRemainder(
-    credit.amount,
-    checked.map((r) => ({ amount: Number(r.amountText) })),
+    credit.amountCents,
+    cents.map((c) => ({ amountCents: c! })),
   );
 }
 
@@ -209,19 +219,22 @@ function leftoverBeforeTip(credit: EditableCredit): number | null {
  */
 function remainderFor(credit: EditableCredit): number | null {
   const checked = credit.rows.filter((r) => r.checked);
+  const cents: number[] = [];
   for (const r of checked) {
-    if (!isWholeDollar(r.amountText)) return null;
-    if (Number(r.amountText) > r.outstanding) return null;
+    const c = parseDollarsInput(r.amountText);
+    if (c === null || c > r.outstandingCents) return null;
+    cents.push(c);
   }
   const tip = tipOf(credit);
   if (tip === 'invalid') return null;
   // THE TIP IS A THIRD TERM, NOT PART OF A SPLIT — the server's conservation rule is
-  // `sum(splits) + tip + remainder === amount` and the split it is sent alongside stays EXCLUSIVE
-  // of it (`applyAttribution`, server/db/repo.ts). Folding it into a split here would send an
-  // inclusive figure the server then refuses for double-counting.
-  return balancedRemainder(credit.amount, [
-    ...checked.map((r) => ({ amount: Number(r.amountText) })),
-    ...(tip === null ? [] : [{ amount: tip.amount }]),
+  // `sum(splits) + tip + remainder === amountCents` and the split it is sent alongside stays
+  // EXCLUSIVE of it (`applyAttribution`, server/db/repo.ts). Folding it into a split here would
+  // send an inclusive figure the server then refuses for double-counting. Every term is an
+  // integer number of cents, so the equality is exact — the same shape it had in whole dollars.
+  return balancedRemainder(credit.amountCents, [
+    ...cents.map((c) => ({ amountCents: c })),
+    ...(tip === null ? [] : [{ amountCents: tip.amountCents }]),
   ]);
 }
 
@@ -233,25 +246,27 @@ function remainderFor(credit: EditableCredit): number | null {
  */
 function creditIssue(credit: EditableCredit): string {
   const checked = credit.rows.filter((r) => r.checked);
-  const blank = checked.find((r) => !isWholeDollar(r.amountText));
-  if (blank) return `Type a whole-dollar amount of $1 or more for ${blank.serviceType}.`;
-  const overOutstanding = checked.find((r) => Number(r.amountText) > r.outstanding);
+  const blank = checked.find((r) => parseDollarsInput(r.amountText) === null);
+  if (blank) return `Type an amount of $0.01 or more for ${blank.serviceType}, like 45.50.`;
+  const overOutstanding = checked.find(
+    (r) => parseDollarsInput(r.amountText)! > r.outstandingCents,
+  );
   if (overOutstanding)
-    return `$${overOutstanding.amountText} is more than the $${overOutstanding.outstanding} outstanding on ${overOutstanding.serviceType}.`;
+    return `${formatCents(parseDollarsInput(overOutstanding.amountText)!)} is more than the ${formatCents(overOutstanding.outstandingCents)} outstanding on ${overOutstanding.serviceType}.`;
   const tip = tipOf(credit);
   if (tip === 'invalid') {
     const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
     if (typed.length > 1)
       return 'Only one booking can carry the tip — clear it from the others, or add them up onto one.';
-    return `Type a whole-dollar tip of $1 or more for ${typed[0].serviceType}, or clear it.`;
+    return `Type a tip of $0.01 or more for ${typed[0].serviceType}, or clear it.`;
   }
-  const sum = checked.reduce((s, r) => s + Number(r.amountText), 0);
+  const sumCents = checked.reduce((s, r) => s + parseDollarsInput(r.amountText)!, 0);
   // The tip is named separately in the sentence for the same reason it is a separate term on the
   // wire: it is the figure most likely to be the one that overshot, and burying it inside "these
   // splits" would leave the sitter looking at the wrong box.
   return tip === null
-    ? `These splits add up to $${sum}, more than the $${credit.amount} payment.`
-    : `These splits and a $${tip.amount} tip add up to $${sum + tip.amount}, more than the $${credit.amount} payment.`;
+    ? `These splits add up to ${formatCents(sumCents)}, more than the ${formatCents(credit.amountCents)} payment.`
+    : `These splits and a ${formatCents(tip.amountCents)} tip add up to ${formatCents(sumCents + tip.amountCents)}, more than the ${formatCents(credit.amountCents)} payment.`;
 }
 
 /** One credit's editable block — the split rows plus the master include tick, shared by the
@@ -288,10 +303,11 @@ function CreditEditor({
   const canTip = leftover !== null && leftover > 0;
   // The server's own remainder, shown verbatim while nothing has moved since the preview — the
   // moment the sitter touches a row it's necessarily stale and the live derivation takes over.
-  const displayRemainder =
-    remainder !== null && credit.serverRemainder !== null && isUnedited(credit)
-      ? credit.serverRemainder
-      : remainder;
+  // Takes the live figure as an argument rather than closing over the nullable one: it is only
+  // ever rendered on the branch where `remainder` is a number, and passing it in is what says so
+  // without an assertion.
+  const displayRemainder = (live: number): number =>
+    credit.serverRemainder !== null && isUnedited(credit) ? credit.serverRemainder : live;
   const anyChecked = credit.rows.some((r) => r.checked);
   return (
     <li>
@@ -302,13 +318,15 @@ function CreditEditor({
           disabled={busy}
           onChange={onToggleIncluded}
         />{' '}
-        <strong>${credit.amount}</strong> from {label} on {formatFriendlyDate(credit.paidDate)}
+        <strong>{formatCents(credit.amountCents)}</strong> from {label} on{' '}
+        {formatFriendlyDate(credit.paidDate)}
       </label>
       {detail && <p className="pb-hint">{detail}</p>}
       {credit.rows.length === 0 ? (
         <>
           <p className="pb-hint">
-            Nothing to attach this to yet — ${credit.amount} would stay as account credit.
+            Nothing to attach this to yet — {formatCents(credit.amountCents)} would stay as account
+            credit.
           </p>
           {credit.included && (
             <p className="pb-error">
@@ -332,15 +350,17 @@ function CreditEditor({
                   {r.endDate === null
                     ? formatFriendlyDate(r.startDate)
                     : `${formatFriendlyDate(r.startDate)} → ${formatFriendlyDate(r.endDate)}`}
-                  ) — {r.status}, ${r.outstanding} outstanding
+                  ) — {r.status}, {formatCents(r.outstandingCents)} outstanding
                 </label>{' '}
+                {/* TEXT, not `type="number"`: a split can be 45.50 now, and a number input's own
+                    min/step/max is whole-number-shaped — the cap it used to carry is enforced by
+                    `remainderFor` against `outstandingCents` either way. `parseDollarsInput` is
+                    the only thing that decides whether what she typed is money. */}
                 <label className="pb-inline">
                   $
                   <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    max={r.outstanding}
+                    type="text"
+                    inputMode="decimal"
                     value={r.amountText}
                     disabled={busy || !r.checked}
                     onChange={(e) => onRowAmount(r.bookingId, e.target.value)}
@@ -356,9 +376,8 @@ function CreditEditor({
                     <label className="pb-inline">
                       plus tip $
                       <input
-                        type="number"
-                        min={1}
-                        step={1}
+                        type="text"
+                        inputMode="decimal"
                         value={r.tipText}
                         disabled={busy}
                         onChange={(e) => onRowTip(r.bookingId, e.target.value)}
@@ -380,7 +399,9 @@ function CreditEditor({
             (remainder === null ? (
               <p className="pb-error">{creditIssue(credit)}</p>
             ) : (
-              <p className="pb-hint">${displayRemainder} would stay as account credit.</p>
+              <p className="pb-hint">
+                {formatCents(displayRemainder(remainder))} would stay as account credit.
+              </p>
             ))}
         </>
       )}
@@ -462,7 +483,7 @@ export function AttributionPanel({
   // preview may have already rebuilt `credits` without that entry, or removed a since-applied one
   // it briefly shared an id namespace with. This is the only place left that still knows which
   // household and amount a given skipped id was.
-  const [resultInfo, setResultInfo] = useState<Map<string, { amount: number; label: string }>>(
+  const [resultInfo, setResultInfo] = useState<Map<string, { amountCents: number; label: string }>>(
     new Map(),
   );
 
@@ -580,9 +601,12 @@ export function AttributionPanel({
       paymentId: credit.paymentId,
       accountId: credit.accountId,
       // EXCLUSIVE of the tip, which travels as its own term. See `AttributionInput.tip`.
-      splits: checked.map((r) => ({ bookingId: r.bookingId, amount: Number(r.amountText) })),
+      splits: checked.map((r) => ({
+        bookingId: r.bookingId,
+        amountCents: parseDollarsInput(r.amountText)!,
+      })),
       ...(tip === null || tip === 'invalid' ? {} : { tip }),
-      remainder,
+      remainderCents: remainder,
     });
   }
 
@@ -611,7 +635,10 @@ export function AttributionPanel({
       new Map(
         toApply.map((a) => {
           const credit = credits.get(a.paymentId)!;
-          return [a.paymentId, { amount: credit.amount, label: label(credit.accountId) }] as const;
+          return [
+            a.paymentId,
+            { amountCents: credit.amountCents, label: label(credit.accountId) },
+          ] as const;
         }),
       ),
     );
@@ -767,7 +794,9 @@ export function AttributionPanel({
                   // no separator/trailing punctuation is added around it, just an identifying
                   // prefix so a sitter with dozens of skips can tell which credit each is about.
                   const info = resultInfo.get(s.paymentId);
-                  return info ? `$${info.amount} from ${info.label} — ${s.reason}` : s.reason;
+                  return info
+                    ? `${formatCents(info.amountCents)} from ${info.label} — ${s.reason}`
+                    : s.reason;
                 })
                 .join(' ')}`
             : ''}
@@ -891,7 +920,8 @@ export function AttributionPanel({
               <ul>
                 {noUnpaidBookings.map((u) => (
                   <li key={u.paymentId} className="pb-hint">
-                    ${u.amount} from {label(u.accountId)} on {formatFriendlyDate(u.paidDate)}
+                    {formatCents(u.amountCents)} from {label(u.accountId)} on{' '}
+                    {formatFriendlyDate(u.paidDate)}
                   </li>
                 ))}
               </ul>
@@ -907,8 +937,8 @@ export function AttributionPanel({
               <ul>
                 {otherIssues.map((u) => (
                   <li key={u.paymentId} className="pb-hint">
-                    ${u.amount} from {label(u.accountId)} on {formatFriendlyDate(u.paidDate)} —{' '}
-                    {u.detail}
+                    {formatCents(u.amountCents)} from {label(u.accountId)} on{' '}
+                    {formatFriendlyDate(u.paidDate)} — {u.detail}
                   </li>
                 ))}
               </ul>
