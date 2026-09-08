@@ -18,6 +18,7 @@ const TENANT_TABLES = [
   'BookingCharges',
   'ProviderConnections',
   'PersonalAccessTokens',
+  'TenantAccessTokens',
 ] as const;
 
 function seedFullTenant(raw: DatabaseSync, t: string, slug: string) {
@@ -63,6 +64,10 @@ function seedFullTenant(raw: DatabaseSync, t: string, slug: string) {
   // A personal access token (0012) FKs to BOTH Tenants and EndUsers, so it must go before either.
   raw.exec(
     `INSERT INTO PersonalAccessTokens (Id, TenantId, EndUserId, Name, TokenHash) VALUES ('${t}_pat','${t}','${t}_eu','Laptop','${t}_hash');`,
+  );
+  // A tenant access token (0016) FKs to BOTH Tenants and TenantUsers, so it must go before either.
+  raw.exec(
+    `INSERT INTO TenantAccessTokens (Id, TenantId, TenantUserId, Name, TokenHash) VALUES ('${t}_tat','${t}','${t}_u','CLI','${t}_tathash');`,
   );
 }
 

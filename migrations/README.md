@@ -227,6 +227,21 @@ COLUMN`, the same shape as 0013's `CalendarCostBasis`), and the DEFAULT stamps e
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0014_attribution_spill_days.sql`.
   Like every bare `ADD COLUMN` above, it must not be run twice.
 
+- **`0016_tenant_access_tokens.sql`** (`feat/sitter-access-tokens`) — adds the
+  `TenantAccessTokens` table and its two indexes: the mirror of 0012's `PersonalAccessTokens` for
+  the sitter side, so a sitter can issue herself a long-lived credential that `adminAuth` accepts
+  wherever it accepts the admin session JWT, with identical authority. Same entropy (32 CSPRNG
+  bytes), same hash (plain SHA-256, no salt, no iterated KDF — `server/lib/personal-access-token.ts`
+  owns the argument, shared rather than forked between the two credential families), same
+  deliberate absence of an expiry column. Stores a SHA-256 of each token and never the token;
+  revocation is a `RevokedAt` timestamp filtered by the auth lookup, so it bites on the next
+  request rather than at an expiry. Additive only (one `CREATE TABLE`, two `CREATE INDEX`, all `IF
+NOT EXISTS`). No `Tenants` column, so the KV tenant-config cache key needs **no** bump.
+  **Numbered 0016 deliberately**: 0015 is taken by another unmerged branch, and the numbers are
+  first-come by branch point, not by merge order — a gap is fine, a duplicate is not.
+  **NOT YET APPLIED to the remote DB** — it must be hand-applied before this branch merges:
+  `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0016_tenant_access_tokens.sql`.
+
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,
 `0002_holiday_and_charges.sql`, `0003_gcal_sync.sql`, `0004_booking_window.sql`,

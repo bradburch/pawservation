@@ -61,6 +61,19 @@
  */
 export const PAT_PREFIX = 'pawsv_';
 
+/**
+ * The sitter-side twin of `PAT_PREFIX` (0016): same length and shape (`paws[va]_…` covers both
+ * with one scanner pattern), different letter, for two mechanical reasons. First,
+ * `looksLikePersonalAccessToken` / `looksLikeTenantAccessToken` are the cheap screens that keep a
+ * credential from the OTHER path from ever reaching this one's database as a candidate — a shared
+ * prefix would make each side spend a hash and a read on the other's token and then fire the
+ * wrong security event, poisoning the signal that means "someone is walking a token list". Second,
+ * a leaked secret's prefix is the only thing a scanner or a person triaging the leak has to judge
+ * the blast radius by, and that radius differs by an order of magnitude between one pet owner's
+ * bookings and a sitter's whole book.
+ */
+export const TAT_PREFIX = 'pawsa_';
+
 /** 256 bits. See decision 1 above; also the reason decision 2 can skip an iterated KDF. */
 const SECRET_BYTES = 32;
 
@@ -81,16 +94,29 @@ function toHex(bytes: Uint8Array): string {
 }
 
 /**
- * A fresh token. Base64url over 32 CSPRNG bytes: URL- and header-safe, and free of the `+`, `/`
- * and `=` that get mangled when a token is pasted through a shell or a query string.
+ * A fresh token under the given prefix. Base64url over 32 CSPRNG bytes: URL- and header-safe, and
+ * free of the `+`, `/` and `=` that get mangled when a token is pasted through a shell or a query
+ * string. Shared by both credential families — only the prefix differs, never the entropy or the
+ * encoding — so `generatePersonalAccessToken` and `generateTenantAccessToken` are two thin,
+ * one-line callers of this, not two forks of it.
  */
-export function generatePersonalAccessToken(): string {
+function makeToken(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(SECRET_BYTES));
   const b64 = btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
-  return `${PAT_PREFIX}${b64}`;
+  return `${prefix}${b64}`;
+}
+
+/** A fresh end-user personal access token. See `makeToken`. */
+export function generatePersonalAccessToken(): string {
+  return makeToken(PAT_PREFIX);
+}
+
+/** A fresh sitter-side tenant access token (0016). See `makeToken`. */
+export function generateTenantAccessToken(): string {
+  return makeToken(TAT_PREFIX);
 }
 
 /** Lowercase hex SHA-256 of a token — the only form of it that is ever persisted. */
@@ -106,6 +132,11 @@ export async function hashPersonalAccessToken(token: string): Promise<string> {
  */
 export function looksLikePersonalAccessToken(token: string): boolean {
   return token.startsWith(PAT_PREFIX);
+}
+
+/** The `TAT_PREFIX` twin of `looksLikePersonalAccessToken` — same caveat: not a security check. */
+export function looksLikeTenantAccessToken(token: string): boolean {
+  return token.startsWith(TAT_PREFIX);
 }
 
 /** True when a use should refresh `LastUsedAt` — see LAST_USED_RESOLUTION_MS. */

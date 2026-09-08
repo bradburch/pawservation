@@ -305,6 +305,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_PersonalAccessTokens_Hash
 CREATE INDEX IF NOT EXISTS idx_PersonalAccessTokens_Owner
   ON PersonalAccessTokens (TenantId, EndUserId);
 
+-- A long-lived credential a SITTER issues to HERSELF (0016) — the mirror of PersonalAccessTokens
+-- above, one table down, for the admin side. `adminAuth` accepts one wherever it accepts the
+-- admin session JWT, with the identical authority: same tenant, same admin, no more. Same
+-- entropy, same hash (no salt, no iterated KDF — see server/lib/personal-access-token.ts, which
+-- this table's generator and hash function are shared with, not forked), same reasoning for no
+-- expiry column. RevokedAt is a timestamp rather than a DELETE for the same reason as above: the
+-- hash survives revocation so a dead secret can never land on a live row, and the owner keeps a
+-- record. LastUsedAt is a recognition aid, stamped at coarse resolution.
+--
+-- The one structural difference from PersonalAccessTokens is the owner column: TenantUserId, not
+-- EndUserId, because the credential this table mints stands in for a sitter's own admin session,
+-- not a customer's widget session.
+CREATE TABLE IF NOT EXISTS TenantAccessTokens (
+  Id TEXT PRIMARY KEY,
+  TenantId TEXT NOT NULL REFERENCES Tenants(Id),
+  TenantUserId TEXT NOT NULL REFERENCES TenantUsers(Id),
+  -- The owner's own label for the client they issued it to ("my laptop", "my assistant"): how they
+  -- tell one token from another in the revoke list, so it is required. Never interpreted.
+  Name TEXT NOT NULL,
+  TokenHash TEXT NOT NULL, -- lowercase hex SHA-256; the plaintext is disclosed once, at creation
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  LastUsedAt TEXT,
+  RevokedAt TEXT -- NULL = live; set = dead from that instant, filtered by the auth lookup
+);
+
+-- The authentication lookup, bound on every token-authenticated admin request. UNIQUE costs
+-- nothing here and turns a hash collision — or a bug that re-inserted a secret — into a
+-- write-time error rather than an ambiguous read.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_TenantAccessTokens_Hash
+  ON TenantAccessTokens (TenantId, TokenHash);
+
+-- The owner's own list, and the scope of every management route.
+CREATE INDEX IF NOT EXISTS idx_TenantAccessTokens_Owner
+  ON TenantAccessTokens (TenantId, TenantUserId);
+
 -- Blocked days are rows with ServiceType='blocked' (EndUserId NULL, Status 'confirmed'),
 -- mirroring how production models blocked time as calendar events of type 'blocked'.
 -- Materialized Google events are rows with ServiceType='external' (see calendar-sync.ts).

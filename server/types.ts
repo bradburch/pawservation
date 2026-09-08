@@ -58,6 +58,16 @@ export type TenantUser = {
   PasswordHash: string;
 };
 
+/** One tenant access token (0016) row as its OWNER (the sitter) sees it. `TokenHash` is absent by
+ *  construction, not by omission at the route — the secret and its digest have no read path out
+ *  of `db/repo.ts`. Mirrors the end-user `PersonalAccessTokenRow` shape one for one. */
+export type TenantAccessTokenRow = {
+  Id: string;
+  Name: string;
+  CreatedAt: string;
+  LastUsedAt: string | null;
+};
+
 /** Instance-level platform-owner login row (see the owner-scope section of db/repo.ts). */
 export type OwnerUser = {
   Id: string;
