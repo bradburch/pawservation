@@ -16,11 +16,8 @@ CREATE TABLE IF NOT EXISTS SchemaMeta (
   Value TEXT NOT NULL
 );
 
--- Fresh installs are BORN in cents: this file creates the money columns for a database with no
--- rows in them, so there is nothing for 0015 to convert and its guard must already read 'cents'.
--- That keeps the test harness (which builds from this file) and every new database in the state
--- an applied 0015 leaves behind — and makes running 0015 against one a no-op rather than a ×100.
-INSERT OR IGNORE INTO SchemaMeta (Key, Value) VALUES ('money_unit', 'cents');
+-- The `money_unit` row is seeded at the BOTTOM of this file, not here: the seed is conditional on
+-- the money tables being empty, so it cannot run before they exist. See the end of the file.
 
 CREATE TABLE IF NOT EXISTS Tenants (
   Id TEXT PRIMARY KEY,
@@ -531,3 +528,27 @@ CREATE TABLE IF NOT EXISTS AllowedSitters (
   ClaimedAt TEXT,
   TenantId TEXT REFERENCES Tenants(Id)
 );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SEED: the money unit, for a FRESH database only.
+--
+-- A fresh install is BORN in cents — this file creates the money columns for a database with no
+-- rows in them, so there is nothing for 0015 to convert and its guard should already read 'cents'.
+-- That keeps the test harness (which builds from this file) and every new database in the state an
+-- applied 0015 leaves behind, and makes running 0015 against one a no-op rather than a ×100.
+--
+-- CONDITIONAL, and that condition is the whole point. This file is not applied only to empty
+-- databases: `npm run seed:local` re-applies it over an existing one, and `seed:remote` has been
+-- pointed at production. Seeding 'cents' unconditionally would therefore stamp 'cents' onto a
+-- DOLLARS-era database and disarm 0015 permanently and silently — every guarded UPDATE would find
+-- the marker already flipped, do nothing, and report success, leaving every balance a hundred
+-- times too small with nothing left to say so.
+--
+-- So the seed asserts what it claims: there is no stored money here. A database with any of the
+-- three gets NO marker at all, which is exactly what an un-migrated database should look like —
+-- 0015's own `INSERT OR IGNORE … 'dollars'` then supplies it and the migration runs normally.
+INSERT OR IGNORE INTO SchemaMeta (Key, Value)
+  SELECT 'money_unit', 'cents'
+  WHERE NOT EXISTS (SELECT 1 FROM BookingRequests WHERE EstCost IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM Payments)
+    AND NOT EXISTS (SELECT 1 FROM BookingCharges);

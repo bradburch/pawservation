@@ -28,11 +28,22 @@ const FLAG_HEADINGS: Record<BackfillFlagReason, string> = {
   'no-pets': "Couldn't find a pet on your list in the title",
 };
 
-/** Whole dollars only, at least $1 — the same rule the server enforces on every price this panel
- *  sends. This copy is UX only (matches PaymentsPanel's `isValidRate` idiom); the server still
- *  validates independently and refuses a fraction with 400. */
+/** Mirrors `MAX_BACKFILL_EST_COST` in server/routes/admin.ts, and `MAX_EST_COST` in
+ *  sections/BookingsSection.tsx — the same ceiling on the same figure, typed into two different
+ *  boxes. UX only; the import route validates independently and answers with its own sentence. */
+const MAX_EST_COST = 1_000_000;
+
+/** Whole dollars only, at least $1, at most `MAX_EST_COST` — the same rule the server
+ *  enforces on every price this panel sends. This copy is UX only (matches PaymentsPanel's
+ *  `isValidRate` idiom); the server still validates independently and refuses a fraction with 400.
+ *
+ *  The CEILING is not cosmetic here: everything this predicate accepts is handed to
+ *  `dollarsToCents`, which THROWS rather than round on a figure whose ×100 leaves the safe-integer
+ *  range — inside a click handler, where a throw is a dead button. A typo with 300 digits in it is
+ *  refused before it can get that far. */
 function isWholeDollar(value: string): boolean {
-  return /^[1-9]\d*$/.test(value.trim());
+  const trimmed = value.trim();
+  return /^[1-9]\d*$/.test(trimmed) && Number(trimmed) <= MAX_EST_COST;
 }
 
 function eventWhen(startDate: string, endDate: string | null): string {

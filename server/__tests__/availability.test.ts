@@ -1032,6 +1032,25 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
     expect(res).toMatchObject({ groupKey: 'pet_sp_bella', mixKey: 'dog:1' });
   });
 
+  it('a FRACTIONAL stored rate refuses too — the other input dollarsToCents throws on', () => {
+    // The guard covers both of `dollarsToCents`' refusals, not just the overflow one. A rate
+    // column holding 45.5 (legacy data, a hand edit, anything that predates `isValidRate`) would
+    // otherwise throw straight out of the price formula and 500 a quote — the same failure, from
+    // the other end of the same conversion.
+    const price = () =>
+      estimateCost(
+        svc('boarding'),
+        opt({ Rate: 45.5 }),
+        '2028-08-10',
+        '2028-08-13',
+        [bella],
+        noRates,
+      );
+    expect(price).not.toThrow();
+    expect(price()).toMatchObject({ priced: false, reason: 'cost-out-of-range' });
+    expect(price()).not.toHaveProperty('cost');
+  });
+
   it('the refusal reaches the availability answer as a quote, not a 500', async () => {
     // Through `checkAvailability`, the shape a route actually serves: available (the DATES are
     // fine — nothing about capacity is wrong here), unpriced, with the reason named and no cost.

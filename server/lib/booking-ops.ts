@@ -116,6 +116,36 @@ const fail = (status: OpStatus, error: string, code?: string): OpFailure =>
   code === undefined ? { ok: false, status, error } : { ok: false, status, error, code };
 
 /**
+ * THE TWO WAYS A QUOTE CAN HAVE NO PRICE, told apart — in one place, so the booking POST and the
+ * edit PUT cannot drift about which sentence a customer reads.
+ *
+ * `unpriced-pet-set` is the ordinary one and the one this product is built around: the sitter has
+ * never priced this combination of pets, so the answer is to go and ask her (CLAUDE.md's
+ * unpriced-pet-set trap — never estimate, never extrapolate, never multiply).
+ *
+ * `cost-out-of-range` is arithmetic, not policy: the stored rate over this stay is too large to
+ * express exactly in cents, so the server declines rather than record a figure it cannot hold. It
+ * gets its OWN `code` and its OWN sentence because folding it into the other one would tell the
+ * customer to ask for a rate that already exists, and would tell an agent reading `code` that the
+ * sitter needs to add a price when what she needs is to fix one.
+ */
+const unpricedRefusal = (
+  reason: 'unpriced-pet-set' | 'cost-out-of-range',
+  sitterName: string,
+): OpFailure =>
+  reason === 'cost-out-of-range'
+    ? fail(
+        400,
+        `That stay comes to more than we can record — please contact ${sitterName} to book it.`,
+        'cost_out_of_range',
+      )
+    : fail(
+        400,
+        `Ask ${sitterName} for a price for this group of pets — they haven't set one yet.`,
+        'unpriced_pet_set',
+      );
+
+/**
  * Everything an operation needs that is not part of the request itself. `endUserId` is the
  * authenticated customer — every op is customer-scoped, and the scoping is enforced in SQL (the
  * repo functions carry `EndUserId = ?`), never by a caller-side pre-check.
@@ -198,6 +228,36 @@ export function feeToCancelToday(
 ): number {
   if (status !== 'confirmed' || estCostCents == null || !tiers) return 0;
   return cancellationFee(tiers, estCostCents, startDate, today);
+}
+
+/**
+ * `feeToCancelToday` FOR ONE ROW OF A LIST, where the answer is allowed to be "we can't say".
+ *
+ * `cancellationFee` throws a `RangeError` on a cost that is not a whole number of dollars, which
+ * is right for the pure function — the alternative is billing a percentage of a figure the booking
+ * never had — but it is the wrong blast radius here. `/bookings/mine` and the admin bookings list
+ * compute this preview for EVERY row, so one bad row (an un-migrated database, or a row written
+ * past both cost routes) would 500 the whole response and take away the customer's booking list
+ * along with it. The preview is a convenience; the list is not.
+ *
+ * So the throw is caught per row, that row reports `null` — the same value it already carries when
+ * the fee is not previewable — and the failure is logged with the booking id (never a name, an
+ * email, or the customer's own figures; the `RangeError` carries only the offending cents).
+ */
+export function feeToCancelTodayForList(
+  bookingId: string,
+  status: BookingRow['Status'],
+  estCostCents: number | null,
+  startDate: string,
+  tiers: CancellationTier[] | null,
+  today: string,
+): number | null {
+  try {
+    return feeToCancelToday(status, estCostCents, startDate, tiers, today);
+  } catch (err) {
+    console.error('cancellation fee preview failed', bookingId, err);
+    return null;
+  }
 }
 
 /**
@@ -761,12 +821,10 @@ export async function createBooking(
   if (!price.priced) {
     // Refused BEFORE the optimistic insert: an unpriced booking must not exist even briefly,
     // and there is no fallback number to write — a `?? 0` here would be the whole feature
-    // defeated in four characters.
-    return fail(
-      400,
-      `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
-      'unpriced_pet_set',
-    );
+    // defeated in four characters. TWO reasons reach here and they are told apart, because
+    // "your sitter hasn't priced these pets together" and "that stay's price is too large to
+    // record" call for completely different things from the customer.
+    return unpricedRefusal(price.reason, tenant.DisplayName);
   }
   const estCostCents = price.cost;
 
@@ -1267,13 +1325,7 @@ export async function editBooking(
     estCostCents = booking.EstCost!;
   } else {
     const price = estimateCost(service, option, start, end, pricedPets, rates);
-    if (!price.priced) {
-      return fail(
-        400,
-        `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
-        'unpriced_pet_set',
-      );
-    }
+    if (!price.priced) return unpricedRefusal(price.reason, tenant.DisplayName);
     estCostCents = price.cost;
   }
 
@@ -1504,7 +1556,8 @@ export async function listMyBookings(
         editable: isCustomerEditable(r.Status, r.StartDate, today),
         /** What cancelling today would cost, in CENTS; null when it isn't cancellable. */
         feeIfCancelledTodayCents: cancellable
-          ? feeToCancelToday(
+          ? feeToCancelTodayForList(
+              r.Id,
               r.Status,
               r.EstCost,
               r.StartDate,

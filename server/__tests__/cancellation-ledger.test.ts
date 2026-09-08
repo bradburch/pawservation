@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getAnalytics, insertBookingRequest, insertPayment, updateBookingStatus } from '../db/repo';
 import { adminHeaders, createTestEnv, TENANT_A } from './helpers';
 import app from '../index';
@@ -187,5 +187,41 @@ describe('admin bookings payload carries cancellation fields', () => {
       cancellationFeeCents: null,
       feeIfCancelledTodayCents: null,
     });
+  });
+
+  /**
+   * The sitter's side of the same guarantee `/bookings/mine` carries: `cancellationFee` throws on
+   * a cost it cannot round to a whole dollar, and this preview is computed for every row of her
+   * whole book. One un-roundable row (an un-migrated column, or one written past both cost
+   * routes) must report null for itself rather than 500 the list she runs her business from.
+   */
+  it("an un-roundable cost reports null for THAT row rather than 500ing the sitter's list", async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const soon = addDays(getPacificDateStr(), 1);
+    const good = await makeBooking(env, TENANT_A, {
+      serviceType: 'boarding',
+      startDate: soon,
+      estCost: 10000,
+    });
+    // $455.50: whole cents, not whole dollars.
+    const fractional = await makeBooking(env, TENANT_A, {
+      serviceType: 'boarding',
+      startDate: soon,
+      estCost: 45550,
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await getBookings(env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      bookings: { id: string; feeIfCancelledTodayCents: number | null }[];
+    };
+    const byId = (id: string) => body.bookings.find((b) => b.id === id)!;
+    expect(byId(fractional).feeIfCancelledTodayCents).toBeNull();
+    expect(byId(good).feeIfCancelledTodayCents).toBe(10000);
+    expect(consoleError).toHaveBeenCalled();
+    expect(consoleError.mock.calls[0]).toContain(fractional);
+    consoleError.mockRestore();
   });
 });

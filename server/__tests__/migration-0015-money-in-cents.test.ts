@@ -44,8 +44,9 @@ const TENANT = 'tnt_premig';
 function preMigrationDb(): DatabaseSync {
   const raw = new DatabaseSync(':memory:');
   raw.exec(SCHEMA);
-  // `schema.sql` seeds the marker at 'cents', because a database it builds is born in cents. This
-  // fixture is deliberately the OTHER world — a real database as it stands the moment before 0015
+  // `schema.sql` seeds the marker at 'cents' when — as here, at this point — the money tables are
+  // empty, because a database it builds from nothing is born in cents. This fixture is
+  // deliberately the OTHER world — a real database as it stands the moment before 0015
   // is hand-applied — so the marker is wound back to match the dollar rows seeded below. Winding
   // it back HERE rather than deleting the row keeps the fixture honest about which state it is:
   // 'dollars' is what an existing production database will read once 0015 creates the row.
@@ -168,6 +169,52 @@ describe('migration 0015 (money in cents) against a pre-migration database', () 
     raw.exec(MIGRATION);
     expect(money(raw)).toEqual(before);
     expect(marker(raw)).toBe('cents');
+  });
+
+  /**
+   * THE SEED IS CONDITIONAL, AND THIS IS THE FAILURE IT EXISTS FOR. `sql/schema.sql` is not
+   * applied only to empty databases — `npm run seed:local` re-applies it over an existing one, and
+   * `seed:remote` has been pointed at production. An unconditional `money_unit = 'cents'` seed
+   * would therefore stamp 'cents' onto a DOLLARS-era database, and every guarded UPDATE in 0015
+   * would then find the marker already flipped, do nothing, and report success — leaving every
+   * balance a hundred times too small with nothing in the database left to say so. Silent, and
+   * unrecoverable by re-running anything.
+   *
+   * So re-applying schema.sql over a database that HAS stored money must leave no marker at all,
+   * which is exactly what an un-migrated database looks like, and 0015 must then migrate it
+   * normally off its own `INSERT OR IGNORE … 'dollars'`.
+   */
+  it('re-applying schema.sql over a dollars-era database leaves NO marker, so 0015 still fires', () => {
+    const raw = preMigrationDb();
+    // The state a real production database is in: dollar rows, and no marker yet (the row is only
+    // created by 0015 itself, which has not run).
+    raw.exec(`DELETE FROM SchemaMeta WHERE Key = 'money_unit'`);
+    expect(marker(raw)).toBeUndefined();
+
+    // What `seed:local` / `seed:remote` does. It must NOT claim this database is in cents.
+    raw.exec(SCHEMA);
+    expect(marker(raw)).toBeUndefined();
+
+    raw.exec(MIGRATION);
+    expect(marker(raw)).toBe('cents');
+    expect(one(raw, "SELECT EstCost FROM BookingRequests WHERE Id = 'br_plain'")).toEqual({
+      EstCost: 25000,
+    });
+    expect(one(raw, "SELECT Amount FROM Payments WHERE Id = 'pay_dep'")).toEqual({ Amount: 7500 });
+    expect(one(raw, "SELECT Amount FROM BookingCharges WHERE Id = 'bc_vet'")).toEqual({
+      Amount: 4500,
+    });
+  });
+
+  it('re-applying schema.sql over an ALREADY-MIGRATED database leaves its marker alone', () => {
+    // The other direction of the same statement: once 0015 has run, the marker says 'cents' and
+    // `INSERT OR IGNORE` cannot overwrite it — so a later seed run neither disarms nor re-arms it.
+    const raw = preMigrationDb();
+    raw.exec(MIGRATION);
+    const after = money(raw);
+    raw.exec(SCHEMA);
+    expect(marker(raw)).toBe('cents');
+    expect(money(raw)).toEqual(after);
   });
 
   it('contains no BEGIN/COMMIT/SAVEPOINT statement', () => {

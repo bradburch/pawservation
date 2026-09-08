@@ -274,8 +274,28 @@ COLUMN`, the same shape as 0013's `CalendarCostBasis`), and the DEFAULT stamps e
   nothing** — which is why this one is not on the "must not be run twice" list below. A database
   freshly built from `sql/schema.sql` is born reading `cents` (it creates the money columns empty,
   so there is nothing to convert), which is also what makes running 0015 against a test database
-  harmless. Apply it with:
+  harmless. That seed is **conditional on the money tables being empty**, deliberately: `seed:local`
+  re-applies `schema.sql` over an existing database and `seed:remote` has been pointed at
+  production, and an unconditional seed would stamp `cents` onto a dollars-era database and disarm
+  this migration permanently and silently. Re-seeding a database that holds money therefore leaves
+  no marker at all — which is what an un-migrated database should look like — and 0015 supplies it
+  as `dollars` when it runs. Apply it with:
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0015_money_in_cents.sql`.
+
+  **If the PRE-MARKER draft of 0015 was ever hand-applied to a database** (the four bare `UPDATE …
+  - 100` statements, before this file grew its guard), that database is already in cents and has no
+    marker, so running the file now would multiply everything by 100 a second time. Insert the marker
+    by hand **first**, and only then run it (or skip it — with the marker in place the run is a
+    no-op):
+
+  ```
+  npx wrangler d1 execute pawservation-db --remote --command "INSERT OR REPLACE INTO SchemaMeta (Key, Value) VALUES ('money_unit', 'cents')"
+  ```
+
+  That command needs `SchemaMeta` to exist; if it does not, create it with the same
+  `CREATE TABLE IF NOT EXISTS` the migration carries. Check a stored figure before you decide which
+  world you are in — an `EstCost` that reads as a plausible stay price in dollars is un-migrated,
+  one that reads a hundred times too small is not.
 
   **NOT YET APPLIED to the remote DB — it MUST be hand-applied before this branch merges**, and
   the deployed-code-meets-un-migrated-data failure is mostly the QUIET kind, which is worth knowing

@@ -231,6 +231,38 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
   });
 
   /**
+   * The edit's half of the create path's `cost_out_of_range` refusal. The re-quote is where an
+   * absurd stored rate reaches this route, and it must be told apart from an unpriced set for the
+   * same reason it is on the create: the two call for completely different things from the
+   * customer. And, like every refused edit here, the stored booking is left exactly as it was.
+   */
+  it("refuses a re-quote too large to record with 'cost_out_of_range', leaving the booking untouched", async () => {
+    const { env, raw } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const id = await seedBooking(env);
+    raw
+      .prepare(
+        `UPDATE TenantServiceOptions SET Rate = ? WHERE TenantId = ? AND ServiceType = 'boarding' AND OptionKey = 'standard'`,
+      )
+      .run(Number.MAX_SAFE_INTEGER, TENANT_A);
+
+    // The DATES change, so the price is re-quoted — the pet set is untouched, which is what keeps
+    // this test about the arithmetic rather than about an unpriced set.
+    const res = await edit(env, token, id, {
+      startDate: START,
+      endDate: addDays(START, 4),
+      petIds: [BELLA],
+      answers: {},
+    });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe('cost_out_of_range');
+    const after = await row(env, id);
+    expect(after.EstCost).toBe(15000);
+    expect(after.EndDate).toBe(END);
+  });
+
+  /**
    * The re-quote is what makes an edit honest, but it must not be able to make an editable booking
    * UNEDITABLE. `/bookings/mine` advertises `editable: true` from status + start date alone, so a
    * re-price that can fail on a set the customer is not changing is a booking the widget offers to

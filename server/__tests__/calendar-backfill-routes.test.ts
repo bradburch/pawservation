@@ -790,6 +790,21 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     },
   );
 
+  // THE RETIRED KEY. A caller still sending whole-dollar `estCost` is one that has not been
+  // updated, and ignoring the field would adopt the stay at the rate card's price instead of the
+  // sitter's — a wrong figure written without a word, which is the exact failure moving the unit
+  // was meant to end. Refused outright, and named, so the caller can be fixed.
+  it('400s on a body still carrying the retired whole-dollar estCost', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCost: 99 }]);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('estCostCents');
+    expect(await countBackfilledBookings(env)).toBe(0);
+  });
+
   // The largest price the route accepts, at the ceiling rather than past it — so the bound above
   // is pinned as EXCLUSIVE-of-one-cent-more rather than as "big numbers fail", which a stricter
   // ceiling would satisfy just as well.

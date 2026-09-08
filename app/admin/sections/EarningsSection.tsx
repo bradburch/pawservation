@@ -144,6 +144,10 @@ function HouseholdDetailPanel({ session, accountId }: { session: Session; accoun
  *  characters is the measured limit ("$4250" fits, "$4250.50" does not); the `<title>` on every
  *  bar carries the exact figure regardless, so omitting the caption hides nothing. */
 function barLabel(totalCents: number): string | null {
+  // A non-integer is not money and `formatCentsForKey` hands it back raw rather than formatting
+  // it, so `$4550.5` would be printed as a caption. Nothing on this page should render a figure
+  // that is not an amount; the bar's `<title>` still carries whatever the value actually is.
+  if (!Number.isInteger(totalCents)) return null;
   const text = `$${formatCentsForKey(totalCents)}`;
   return text.length <= 6 ? text : null;
 }

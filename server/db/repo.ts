@@ -1702,16 +1702,21 @@ export async function deleteAccountPayment(
  * unstated second attribution.
  */
 /**
- * A money figure for one of `applyAttribution`'s three amount refusals. `formatCents` assumes an
- * INTEGER number of cents; hand it `45.5` and it renders `$0.45.5`, which is worse than useless in
- * a sentence a sitter has to act on. Those three guards fire exactly when `Number.isInteger` has
- * already failed (or the sign is wrong), so a non-integer is reported RAW here instead of being
- * dressed up as money.
+ * A money figure for one of `applyAttribution`'s three amount refusals — RAW when it is not an
+ * integer number of cents, formatted when it is.
  *
- * `formatCents` itself is deliberately left un-throwing. This is a REFUSAL path — a throw would
- * turn one bad row's per-item skip into a 500 for the whole batch the sitter approved, which is
- * why the apply route checks only the SHAPE of an `amountCents` and lets the figure itself reach
- * these guards untouched (`admin.ts`, `payments/attribute/apply`).
+ * `formatCents` no longer dresses a fraction up as money (it hands `45.5` straight back rather
+ * than rendering `$0.45.5`), so this function is no longer the only thing standing between a
+ * sitter and a nonsense figure. It stays because it says WHICH of the two it is doing at the one
+ * place it matters — these three guards fire exactly when `Number.isInteger` has already failed,
+ * or the sign is wrong, and a sentence a sitter has to act on should quote the number she actually
+ * sent rather than a formatting of it.
+ *
+ * `formatCents` is also deliberately left un-throwing. This is a REFUSAL path — a throw would turn
+ * one bad row's per-item skip into a 500 for the whole batch the sitter approved. That is the same
+ * reason the apply route (`admin.ts`, `payments/attribute/apply`) applies only the `MAX_AMOUNT_CENTS`
+ * CEILING to an `amountCents` and leaves integrality and sign to these guards: an absurd figure is
+ * a malformed body, an unusable one is a per-item refusal, and they get different answers.
  */
 function describeAmount(value: number): string {
   return Number.isInteger(value) ? formatCents(value) : String(value);

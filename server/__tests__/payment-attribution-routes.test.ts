@@ -1807,10 +1807,13 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
    * batch. (A structurally wrong body — a missing or non-numeric `amountCents` — is still the 400
    * the tests below pin; this is a well-formed request with an unusable figure in it.)
    *
-   * What must not then happen is the refusal dressing the fraction up as money:
-   * `formatCents(4550.5)` renders `$45.50.5`, a figure that exists in no currency and tells the
-   * sitter nothing. The guard reports a non-integer RAW (`describeAmount`), so the sentence carries
-   * `4550.5` and never a dollar amount with two decimal points in it.
+   * What must not then happen is the refusal dressing the fraction up as money. `formatCents` used
+   * to render `4550.5` as `$45.50.5` — a figure that exists in no currency and tells the sitter
+   * nothing — and no longer does: it hands a non-integer straight back. Both halves of that are
+   * still asserted here, because the guarantee belongs to the SENTENCE, not to whichever function
+   * currently produces it: `describeAmount` reports a non-integer raw, so the reason carries
+   * `4550.5` and never a dollar amount with two decimal points in it, whichever of the two is
+   * doing the work.
    */
   it('refuses a FRACTIONAL split per item, and never renders it as "$45.50.5"', async () => {
     const { env, raw } = createTestEnv();

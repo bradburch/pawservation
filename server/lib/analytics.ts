@@ -118,7 +118,15 @@ export function serializeAnalytics(data: AnalyticsData) {
      * be telling the truth — one unit on both sides, so the sum needs no conversion to be checked.
      * Naming an orphan out loud is the only honest option; guessing it a household is the one
      * thing worse than losing it.
+     *
+     * Mapped field-for-field rather than handed over by reference, even though the names now
+     * match: this function's contract is that the payload is a fresh object the caller owns, and a
+     * shared row would make a later field added to `AnalyticsData` appear on the wire without
+     * anyone choosing to publish it.
      */
-    orphanedPayments: data.orphanedPayments,
+    orphanedPayments: data.orphanedPayments.map((o) => ({
+      accountId: o.accountId,
+      totalCents: o.totalCents,
+    })),
   };
 }

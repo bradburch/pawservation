@@ -151,6 +151,7 @@ import {
   matchCsvPayments,
   parseCsvColumnMapping,
 } from '../lib/payment-csv';
+import { feeToCancelTodayForList } from '../lib/booking-ops';
 import { NONCE_KEY } from './oauth';
 import {
   AMOUNT_RANGE_MESSAGE,
@@ -2556,9 +2557,20 @@ export const adminRoutes = new Hono<AppEnv>()
         ),
         status: r.Status,
         cancellationFeeCents: r.CancellationFee,
+        // Through the list-safe wrapper: `cancellationFee` throws on a cost that is not a whole
+        // number of dollars, and one such row must not 500 the sitter's whole bookings list. The
+        // guard around it is unchanged — a row that is not confirmed, has no cost, or has no
+        // tiers has never had a preview, and still reports null.
         feeIfCancelledTodayCents:
           r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
-            ? cancellationFee(tiersByType.get(r.ServiceType)!, r.EstCost, r.StartDate, today)
+            ? feeToCancelTodayForList(
+                r.Id,
+                r.Status,
+                r.EstCost,
+                r.StartDate,
+                tiersByType.get(r.ServiceType)!,
+                today,
+              )
             : null,
         createdAt: r.CreatedAt,
       })),
@@ -2971,6 +2983,14 @@ export const adminRoutes = new Hono<AppEnv>()
         skipped.push({ txnId, reason: 'That household is no longer a match for this payment' });
         continue;
       }
+      // The CEILING, applied to a figure the sitter did not type: an importer reads amounts out of
+      // a file, and a malformed or misparsed row can carry one far past anything real. Skipped
+      // with a reason like every other per-row refusal here rather than 400ing the whole import —
+      // one bad line in a bank export must not cost the sitter the other two hundred good ones.
+      if (!isValidAmountCents(txn.amountCents)) {
+        skipped.push({ txnId, reason: 'That amount is not one this ledger can record' });
+        continue;
+      }
       const note = `Venmo import — ${txn.from}${txn.note ? `: ${txn.note}` : ''} (txn ${txn.txnId})`;
       try {
         const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
@@ -3128,6 +3148,14 @@ export const adminRoutes = new Hono<AppEnv>()
       // preview told the browser.
       if (!householdIds.has(accountId)) {
         skipped.push({ dedupeKey, reason: 'That household is not one of your clients' });
+        continue;
+      }
+      // The CEILING, applied to a figure the sitter did not type: an importer reads amounts out of
+      // a file, and a malformed or misparsed row can carry one far past anything real. Skipped
+      // with a reason like every other per-row refusal here rather than 400ing the whole import —
+      // one bad line in a bank export must not cost the sitter the other two hundred good ones.
+      if (!isValidAmountCents(payment.amountCents)) {
+        skipped.push({ dedupeKey, reason: 'That amount is not one this ledger can record' });
         continue;
       }
       const note = `CSV import — ${payment.payer}${payment.note ? `: ${payment.note}` : ''}`;
@@ -3926,6 +3954,12 @@ export const adminRoutes = new Hono<AppEnv>()
       const entry = raw as { eventId?: unknown; estCostCents?: unknown };
       if (typeof entry.eventId !== 'string' || entry.eventId === '')
         return c.json({ error: 'That list of events is malformed.' }, 400);
+      // The RETIRED whole-dollar key, refused outright rather than ignored. A body still sending
+      // `estCost` is a caller that has not been updated, and silently dropping the field would
+      // adopt the stay at the rate card's price instead of the sitter's — a wrong figure written
+      // without a word, which is the exact failure moving the unit was meant to end.
+      if ('estCost' in entry)
+        return c.json({ error: 'Send the price as estCostCents (whole dollars in cents).' }, 400);
       if (entry.estCostCents !== undefined) {
         // WHOLE DOLLARS EXPRESSED IN CENTS, exactly as the correction PATCH demands: she types
         // this price in a whole-dollar box, and the admin list's Edit affordance reopens it with

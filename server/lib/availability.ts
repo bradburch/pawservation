@@ -331,13 +331,19 @@ export function estimateCost(
   // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
   const dollars = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
-  // A stored rate is only bounded by `isValidRate` at the moment a sitter types it, and rate ×
-  // units × pets compounds: a big enough rate over a long enough stay puts the ×100 past
-  // `Number.MAX_SAFE_INTEGER`, where the product is a float and no longer exact money. That is
-  // REFUSED as a quote rather than thrown, and refused in the shape the unpriced-pet-set arm
-  // already uses — a `RangeError` escaping the price formula would 500 an availability check and
-  // a booking POST alike, which is a worse answer to bad data than "we can't price this".
-  if (!Number.isSafeInteger(dollars * 100))
+  // EVERY input `dollarsToCents` would throw on, caught here as a refusal instead. Two of them,
+  // and both are reachable from stored data alone. The product may leave the safe-integer range:
+  // a stored rate is only bounded by `isValidRate` at the moment a sitter types it, and rate ×
+  // units × pets compounds, so a big enough rate over a long enough stay puts the ×100 past
+  // `Number.MAX_SAFE_INTEGER`, where it is a float and no longer exact money. And `dollars`
+  // itself may be fractional — a legacy or hand-edited rate column, or one that arrived before
+  // `isValidRate` guarded it — which `dollarsToCents` refuses rather than round.
+  //
+  // Both are REFUSED as a quote rather than thrown. A `RangeError` escaping the price formula
+  // 500s an availability check and a booking POST alike, and "the server broke" is a worse answer
+  // to bad data than "we can't price this" — which at least tells the customer to call the sitter,
+  // and tells the sitter which pet set to look at.
+  if (!Number.isSafeInteger(dollars) || !Number.isSafeInteger(dollars * 100))
     return {
       priced: false,
       reason: 'cost-out-of-range',
@@ -346,8 +352,9 @@ export function estimateCost(
     };
   // THE single ×100 of the whole price path. Every operand above is a whole-dollar rate the
   // sitter typed; every consumer below stores or sums the result, and storage is cents (0015).
-  // `dollarsToCents` throws rather than rounds, so a rate that somehow arrived fractional is a
-  // loud failure here instead of a silently truncated price.
+  // `dollarsToCents` still throws rather than rounds — it is kept as the conversion rather than a
+  // bare `* 100` so the rule lives in one place — but the guard above means it cannot throw from
+  // here, so a truncated price is impossible in either direction.
   const cost = dollarsToCents(dollars);
 
   if (service.Shape !== 'range') return { priced: true, cost, ...holidayFields(service, split) };

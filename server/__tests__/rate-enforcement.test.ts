@@ -184,6 +184,43 @@ describe("booking POST prices a multi-pet set when the sitter stored 'linear'", 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: 'unpriced_pet_set' });
   });
+
+  /**
+   * THE OTHER WAY A QUOTE CAN HAVE NO PRICE, AND WHY IT NEEDS ITS OWN CODE. `estimateCost` refuses
+   * a cost too large to express exactly in cents (`cost-out-of-range`) rather than throwing a
+   * `RangeError` through the price path and 500ing the request. Reported as `unpriced_pet_set` it
+   * would tell the customer to ask for a rate that already exists, and tell an agent reading
+   * `code` that the sitter needs to ADD a price when what she needs is to fix one. So: its own
+   * code, its own sentence, and — like every refusal here — nothing written.
+   */
+  it("a cost too large to record 400s as 'cost_out_of_range', not as an unpriced set", async () => {
+    const { env, raw } = createTestEnv();
+    // A rate no sitter would type, but nothing stops one being stored: `isValidRate` admits any
+    // whole number. One walk × one pet at this rate cannot survive the x100 into cents.
+    raw
+      .prepare(
+        `UPDATE TenantServiceOptions SET Rate = ? WHERE TenantId = ? AND ServiceType = 'walk' AND OptionKey = 'd30'`,
+      )
+      .run(Number.MAX_SAFE_INTEGER, TENANT_A);
+
+    const res = await book(env, 'sunny-paws', {
+      type: 'walk',
+      startDate: '2028-08-21',
+      optionKey: 'd30',
+      petIds: ['pet_sp_bella'],
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('cost_out_of_range');
+    // The sentence points at the sitter rather than at a missing rate.
+    expect(body.error).not.toContain("haven't set one yet");
+    const rows = raw
+      .prepare(
+        `SELECT COUNT(*) AS n FROM BookingRequests WHERE ServiceType='walk' AND StartDate='2028-08-21'`,
+      )
+      .get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
 });
 
 describe('quote/stamp parity', () => {

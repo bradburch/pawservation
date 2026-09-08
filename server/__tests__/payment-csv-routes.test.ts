@@ -262,6 +262,30 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     expect(raw.prepare('SELECT Amount FROM Payments').get()).toMatchObject({ Amount: 4550 });
   });
 
+  /**
+   * THE CEILING, ON A FIGURE THE SITTER DID NOT TYPE. An importer reads amounts out of a file, so
+   * `MAX_AMOUNT_CENTS` ($1,000,000) is the only thing between a malformed or misparsed line and a
+   * ledger row that poisons every balance it reaches. Skipped with a reason like every other
+   * per-row refusal here, never a 400 for the whole import — one bad line in a bank export must
+   * not cost the sitter the two hundred good ones beside it.
+   */
+  it('skips a row over the $1,000,000 ceiling with a reason, and writes nothing for it', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = ['Date,Amount,Payer,Reference', '2026-07-01,2000000.00,Jess Demo,REF9'].join('\n');
+    const res = await post(env, 'payments/csv/import', {
+      csv,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:REF9', accountId: 'pet_sp_bella' }],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ dedupeKey: 'csv:REF9', reason: 'That amount is not one this ledger can record' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
+  });
+
   it('is idempotent: re-running the identical import records nothing the second time', async () => {
     const { env, raw } = createTestEnv();
     await post(env, 'payments/csv/import', {

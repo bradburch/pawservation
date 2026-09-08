@@ -221,8 +221,13 @@ function BookingList({
     // those routes puts a non-multiple of 100 in this column, and the throw would land inside a
     // click handler — a dead Edit button and a blank panel, with nothing said. So the case is
     // handled instead: an empty box and a sentence asking for the price again, which is the only
-    // thing that can actually fix the row.
-    if (b.estCostCents != null && b.estCostCents % 100 !== 0) {
+    // thing that can actually fix the row. The test is `centsToWholeDollars`' OWN test, both
+    // halves of it: a non-safe-integer throws there just as a non-multiple of 100 does, and a
+    // guard that checked only the remainder would still let `4550.5` or `1e20` through.
+    if (
+      b.estCostCents != null &&
+      (!Number.isSafeInteger(b.estCostCents) || b.estCostCents % 100 !== 0)
+    ) {
       setCostInput('');
       setMessage('This price is not a whole number of dollars; enter a new one.');
       return;

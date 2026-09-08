@@ -820,6 +820,45 @@ describe('GET /:slug/bookings/mine — the fee preview the confirm step renders'
     expect(by(soon).feeIfCancelledToday).toBeUndefined();
   });
 
+  /**
+   * ONE UNROUNDABLE ROW MUST NOT COST THE CUSTOMER THEIR WHOLE LIST. `cancellationFee` throws a
+   * `RangeError` on a cost that is not a whole number of dollars — correctly, because rounding a
+   * percentage of $45.50 to the dollar would bill a figure the booking never had. But this preview
+   * is computed for EVERY row, so an un-migrated database (0015 applied to the code, not the data)
+   * or a row written past both cost routes would 500 the entire response and take away every other
+   * booking with it. The preview is a convenience; the list is not.
+   *
+   * The bad row reports `null` — the same value it already carries when no preview is possible —
+   * and every good row beside it answers normally.
+   */
+  it('a cost that cannot be rounded reports null for THAT row, not a 500 for the list', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const soon = await seedBooking(env, { startsInDays: 5 }); // $200, 50% tier → $100
+    // $455.50 — a perfectly good number of cents, and not a whole number of dollars. Reachable
+    // from an un-migrated column; unreachable through either route that writes this one.
+    const fractional = await seedBooking(env, { startsInDays: 5, estCost: 45550 });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await app.request(
+      `/api/${SLUG}/bookings/mine`,
+      { headers: { Authorization: `Bearer ${await jessToken(env)}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const { bookings } = (await res.json()) as {
+      bookings: { id: string; cancellable: boolean; feeIfCancelledTodayCents: number | null }[];
+    };
+    const by = (id: string) => bookings.find((b) => b.id === id)!;
+    expect(by(fractional)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: null });
+    // The good row is untouched — the failure is scoped to the row that caused it.
+    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 10000 });
+    // …and it is not swallowed: the booking id is logged so it can be found and corrected.
+    expect(consoleError).toHaveBeenCalled();
+    expect(consoleError.mock.calls[0]).toContain(fractional);
+    consoleError.mockRestore();
+  });
+
   it('the preview and the amount actually stamped are the same number', async () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
