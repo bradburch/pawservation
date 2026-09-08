@@ -204,6 +204,14 @@ describe('tenant access tokens — authenticating', () => {
 
     expect(await attempt('pawsa_totally-made-up')).toBe(401);
     expect(await attempt('')).toBe(401);
+    // 401 is not enough: the token miss must be INDISTINGUISHABLE from every other way of not
+    // being signed in, or the refusal itself confirms that a `pawsa_` string was a real token
+    // shape. `endUserAuth` deliberately answers its two misses with DIFFERENT strings, so
+    // "finish the mirror" is a plausible future edit — this is what would catch it.
+    const tokenMiss = await settings(env, 'pawsa_totally-made-up');
+    const jwtMiss = await settings(env, 'not-a-jwt-at-all');
+    expect(tokenMiss.status).toBe(jwtMiss.status);
+    expect(await tokenMiss.json()).toEqual(await jwtMiss.json());
     // A digest is what gets matched, never the plaintext — so a token differing from a live one in
     // a single character shares nothing with it. The substitutes must actually differ from the
     // character they replace, or roughly 1 run in 64 recreates the live token and passes.
@@ -215,17 +223,22 @@ describe('tenant access tokens — authenticating', () => {
     const { env } = createTestEnv();
     const { token } = await mintTenantToken(env);
     const jess = await endUserToken(env, 'sunny-paws', 'jess@example.com');
-    const petOwnerToken = (await (
-      await app.request(
-        '/api/sunny-paws/tokens',
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${jess}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'Hers' }),
-        },
-        env,
-      )
-    ).json()) as { token: string };
+    const minted = await app.request(
+      '/api/sunny-paws/tokens',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jess}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Hers' }),
+      },
+      env,
+    );
+    // Proven to be a REAL end-user credential before it is used as one: a mint that quietly
+    // failed would leave `token` undefined, and "undefined is refused on /admin/*" is a test of
+    // nothing at all.
+    expect(minted.status).toBe(201);
+    const petOwnerToken = (await minted.json()) as { token: string };
+    expect(typeof petOwnerToken.token).toBe('string');
+    expect(petOwnerToken.token.startsWith('pawsv_')).toBe(true);
 
     // A pet owner's credential is not a sitter's. It does not even look like one, so it falls
     // through to the JWT verifier and is a plain 401 — and crucially fires NO tenant-token event:
@@ -341,6 +354,9 @@ describe('tenant access tokens — last used', () => {
     const statements = recordStatements(env);
     await settings(env, token);
     await settings(env, token);
+    // The recorder is proven to be installed before "no UPDATE was issued" is allowed to mean
+    // anything: a wrapper that silently failed to take would record nothing and pass forever.
+    expect(statements.length).toBeGreaterThan(0);
     expect(statements.filter((s) => s.includes('UPDATE TenantAccessTokens'))).toEqual([]);
     expect(lastUsed(raw, id)).toBe(stamped);
   });
@@ -360,9 +376,39 @@ describe('tenant access tokens — last used', () => {
     expect(lastUsed(raw, id)).not.toBe(stale);
   });
 
+  /**
+   * Makes the shim's writes genuinely asynchronous, for the one test that asserts on WHEN a write
+   * lands rather than on whether it did.
+   *
+   * `helpers.ts` backs D1 with node:sqlite, which is synchronous: the shim's `run()` is an async
+   * function whose body contains no await, so `touchTenantAccessToken(...)` has ALREADY written
+   * the row by the time its promise reaches `waitUntil`. Asserting "still unstamped" against that
+   * would be asserting about the harness, not about the middleware — and would keep passing if
+   * the middleware started awaiting the write. Real D1 is a network round-trip; one real tick
+   * before the work restores that, and makes the deferral something a test can see.
+   */
+  function deferWrites(env: Env): void {
+    const wrap = (stmt: D1PreparedStatement): D1PreparedStatement =>
+      ({
+        ...stmt,
+        bind: (...args: unknown[]) =>
+          wrap((stmt.bind as (...a: unknown[]) => D1PreparedStatement)(...args)),
+        run: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return await stmt.run();
+        },
+      }) as unknown as D1PreparedStatement;
+    const real = env.PAWSERVATION_DB;
+    (env as { PAWSERVATION_DB: D1Database }).PAWSERVATION_DB = {
+      ...real,
+      prepare: (sql: string) => wrap(real.prepare(sql)),
+    } as unknown as D1Database;
+  }
+
   it('defers the write to waitUntil when there is an ExecutionContext', async () => {
     const { env, raw } = createTestEnv();
     const { token, id } = await mintTenantToken(env);
+    deferWrites(env);
     const tail: Promise<unknown>[] = [];
     const ctx = {
       waitUntil: (p: Promise<unknown>) => tail.push(p),
@@ -376,8 +422,11 @@ describe('tenant access tokens — last used', () => {
       ctx,
     );
     expect(res.status).toBe(200);
-    // Deferred, not awaited: the response is not paying for the stamp.
+    // Deferred, not awaited, and literally so: the response came back with the stamp still
+    // unwritten, and only draining the tail writes it. An implementation that awaited the touch
+    // on the request path would have stamped the row before `res` resolved.
     expect(tail).toHaveLength(1);
+    expect(lastUsed(raw, id)).toBeNull();
     await Promise.all(tail);
     expect(lastUsed(raw, id)).not.toBeNull();
   });

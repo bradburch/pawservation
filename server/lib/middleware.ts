@@ -156,7 +156,7 @@ export const widgetSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
  * and saying so would mean reading across a tenant boundary to find out.
  */
 export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const token = extractBearer(c.req.header('Authorization'));
+  const presented = extractBearer(c.req.header('Authorization'));
   const tenant = c.get('tenant');
 
   // Tenant access token. Screened by its public prefix first, so an ordinary admin JWT never costs
@@ -164,13 +164,16 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   // owner's `pawsv_` token fails this screen and falls through to the JWT verifier, which is why
   // it is a plain 401 here and never fires the sitter-side event: the two prefixes differ so that
   // each family's rejection signal stays about its own family.
-  if (looksLikeTenantAccessToken(token)) {
-    const hash = await hashPersonalAccessToken(token);
+  if (looksLikeTenantAccessToken(presented)) {
+    const hash = await hashPersonalAccessToken(presented);
     const row = await findLiveTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, hash);
     if (!row) {
       // Unknown, revoked, or another sitter's — one answer to the caller, and deliberately the
-      // same body the JWT miss returns so the two are indistinguishable. The three of them
-      // together are the shape of someone walking a token list, and that is worth seeing.
+      // SAME BODY the JWT miss below returns, byte for byte, so a token's refusal is not
+      // distinguishable from any other way of not being signed in. (`endUserAuth` answers its two
+      // misses with different strings; do not "finish the mirror" by copying that here — it is
+      // pinned by a test.) The three of them together are the shape of someone walking a token
+      // list, and that is worth seeing.
       securityEvent('tenant_access_token_rejected', {
         tenant: tenant.Slug,
         ...requestContext(c.req),
@@ -196,7 +199,7 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
     return;
   }
 
-  const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
+  const claims = presented ? await verifyAdminToken(presented, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in.' }, 401);
   if (claims.tid !== tenant.Id) return c.json({ error: 'Wrong account.' }, 403);
   c.set('adminUserId', claims.sub);
