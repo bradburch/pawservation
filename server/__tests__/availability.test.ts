@@ -1051,6 +1051,25 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
     expect(price()).not.toHaveProperty('cost');
   });
 
+  it('a NEGATIVE stored rate refuses too — the third input dollarsToCents would reject', () => {
+    // The guard now covers all three of `dollarsToCents`' refusals. A rate column holding -45
+    // (legacy data, a hand edit; `TenantServiceOptions.Rate` has no CHECK constraint) would
+    // otherwise produce a negative dollar amount, which the formula then passes through. The
+    // guard rejects it as an invalid price the same way it rejects unsafe integers and fractions.
+    const price = () =>
+      estimateCost(
+        svc('boarding'),
+        opt({ Rate: -45 }),
+        '2028-08-10',
+        '2028-08-13',
+        [bella],
+        noRates,
+      );
+    expect(price).not.toThrow();
+    expect(price()).toMatchObject({ priced: false, reason: 'cost-out-of-range' });
+    expect(price()).not.toHaveProperty('cost');
+  });
+
   it('the refusal reaches the availability answer as a quote, not a 500', async () => {
     // Through `checkAvailability`, the shape a route actually serves: available (the DATES are
     // fine — nothing about capacity is wrong here), unpriced, with the reason named and no cost.

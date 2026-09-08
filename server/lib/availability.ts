@@ -331,19 +331,20 @@ export function estimateCost(
   // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
   const dollars = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
-  // EVERY input `dollarsToCents` would throw on, caught here as a refusal instead. Two of them,
-  // and both are reachable from stored data alone. The product may leave the safe-integer range:
+  // EVERY input `dollarsToCents` would throw on, caught here as a refusal instead. Three of them,
+  // and all are reachable from stored data alone. The product may leave the safe-integer range:
   // a stored rate is only bounded by `isValidRate` at the moment a sitter types it, and rate ×
   // units × pets compounds, so a big enough rate over a long enough stay puts the ×100 past
-  // `Number.MAX_SAFE_INTEGER`, where it is a float and no longer exact money. And `dollars`
-  // itself may be fractional — a legacy or hand-edited rate column, or one that arrived before
-  // `isValidRate` guarded it — which `dollarsToCents` refuses rather than round.
+  // `Number.MAX_SAFE_INTEGER`, where it is a float and no longer exact money. `dollars` itself
+  // may be fractional — a legacy or hand-edited rate column, or one that arrived before
+  // `isValidRate` guarded it — which `dollarsToCents` refuses rather than round. Or it may be
+  // negative — legacy or hand-edited data; `TenantServiceOptions.Rate` has no CHECK constraint.
   //
-  // Both are REFUSED as a quote rather than thrown. A `RangeError` escaping the price formula
+  // All are REFUSED as a quote rather than thrown. A `RangeError` escaping the price formula
   // 500s an availability check and a booking POST alike, and "the server broke" is a worse answer
   // to bad data than "we can't price this" — which at least tells the customer to call the sitter,
   // and tells the sitter which pet set to look at.
-  if (!Number.isSafeInteger(dollars) || !Number.isSafeInteger(dollars * 100))
+  if (!Number.isSafeInteger(dollars) || !Number.isSafeInteger(dollars * 100) || dollars < 0)
     return {
       priced: false,
       reason: 'cost-out-of-range',
