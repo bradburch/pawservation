@@ -16,6 +16,15 @@
  *
  * What SHOULD go in: the tenant slug, the credential KIND, the route, a reason code. Enough to
  * answer "is one sitter being probed, and with what" without naming who.
+ *
+ * THE EVENT NAMES, all of them — four, and this is the list:
+ *   - `wrong_tenant` (lib/middleware.ts) — a VALID widget session presented for another sitter;
+ *   - `personal_access_token_rejected` (lib/middleware.ts) — a `pawsv_` end-user token that is
+ *     unknown, revoked, or another sitter's, which are one answer to the caller on purpose;
+ *   - `tenant_access_token_rejected` (lib/middleware.ts) — the `pawsa_` sitter-side twin (0016).
+ *     A separate name, not a shared one: the two prefixes exist so that a token-walk against a
+ *     sitter's whole book is distinguishable from one against a single customer's bookings;
+ *   - `rate_limited` (lib/rate-limit.ts) — a cap tripped, once per bucket per window.
  */
 export function securityEvent(event: string, detail: Record<string, string | number>): void {
   console.warn('security', { event, ...detail });

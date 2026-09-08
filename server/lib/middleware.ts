@@ -1,8 +1,14 @@
 import { createMiddleware } from 'hono/factory';
-import { findLivePersonalAccessToken, touchPersonalAccessToken } from '../db/repo';
+import {
+  findLivePersonalAccessToken,
+  findLiveTenantAccessToken,
+  touchPersonalAccessToken,
+  touchTenantAccessToken,
+} from '../db/repo';
 import {
   hashPersonalAccessToken,
   looksLikePersonalAccessToken,
+  looksLikeTenantAccessToken,
   shouldRefreshLastUsed,
 } from './personal-access-token';
 import { requestContext, securityEvent } from './log';
@@ -133,16 +139,90 @@ export const widgetSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
 });
 
 /**
- * Sitter-dashboard auth: a Bearer admin session token (from POST /api/admin/login) whose
- * `role` is 'admin' and whose tenant claim matches the route's tenant. 401 = not signed in;
- * 403 = signed in as a different tenant.
+ * Sitter-dashboard auth, of which there are two credentials — a Bearer admin session token (from
+ * POST /api/admin/login) whose `role` is 'admin' and whose tenant claim matches the route's
+ * tenant, or a tenant access token (0016) — and they are interchangeable here on purpose, exactly
+ * as `endUserAuth`'s two are. Both resolve to the same `(TenantId, TenantUserId)` pair and set the
+ * same `adminUserId`, which is the whole of the admin context, so every `/api/:slug/admin/*` route
+ * behaves byte-for-byte the same for either. That is the design, stated rather than discovered:
+ * the destructive routes (customer and service deletion, imports, attribution apply, the CSV
+ * export) are included, because the sitter scripting her own book is the point of the credential.
+ *
+ * The exception is credential management itself — see `adminSessionOnly` below.
+ *
+ * 401 = not signed in; 403 = a session signed in as a different tenant. A tenant access token
+ * cannot produce that 403, for the reason `endUserAuth` gives about its own: the lookup binds
+ * TenantId, so under the wrong sitter the token does not exist rather than existing elsewhere,
+ * and saying so would mean reading across a tenant boundary to find out.
  */
 export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   const token = extractBearer(c.req.header('Authorization'));
+  const tenant = c.get('tenant');
+
+  // Tenant access token. Screened by its public prefix first, so an ordinary admin JWT never costs
+  // a hash and a database read (see looksLikeTenantAccessToken — not a security check). A pet
+  // owner's `pawsv_` token fails this screen and falls through to the JWT verifier, which is why
+  // it is a plain 401 here and never fires the sitter-side event: the two prefixes differ so that
+  // each family's rejection signal stays about its own family.
+  if (looksLikeTenantAccessToken(token)) {
+    const hash = await hashPersonalAccessToken(token);
+    const row = await findLiveTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, hash);
+    if (!row) {
+      // Unknown, revoked, or another sitter's — one answer to the caller, and deliberately the
+      // same body the JWT miss returns so the two are indistinguishable. The three of them
+      // together are the shape of someone walking a token list, and that is worth seeing.
+      securityEvent('tenant_access_token_rejected', {
+        tenant: tenant.Slug,
+        ...requestContext(c.req),
+      });
+      return c.json({ error: 'Please sign in.' }, 401);
+    }
+    c.set('adminUserId', row.TenantUserId);
+    c.set('adminCredential', 'token');
+    // Refreshed at most hourly and handed to waitUntil, for the reasons endUserAuth gives: a
+    // recognition aid for the revoke list must not turn an automated client's every read into a
+    // write. With no ExecutionContext (tests) the write is awaited so the stamp is deterministic.
+    if (shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
+      const task = touchTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, row.Id).catch((err) => {
+        console.error('tenant access token touch failed', err);
+      });
+      try {
+        c.executionCtx.waitUntil(task);
+      } catch {
+        await task;
+      }
+    }
+    await next();
+    return;
+  }
+
   const claims = token ? await verifyAdminToken(token, c.env.TOKEN_SECRET) : null;
   if (!claims) return c.json({ error: 'Please sign in.' }, 401);
-  if (claims.tid !== c.get('tenant').Id) return c.json({ error: 'Wrong account.' }, 403);
+  if (claims.tid !== tenant.Id) return c.json({ error: 'Wrong account.' }, 403);
   c.set('adminUserId', claims.sub);
+  c.set('adminCredential', 'password');
+  await next();
+});
+
+/**
+ * Additionally requires that the sitter authenticated with the PASSWORD session, not with a tenant
+ * access token. Runs after `adminAuth` and reads what it recorded — the sitter-side mirror of
+ * `widgetSessionOnly`, and for the same reason.
+ *
+ * The owner's rule for tenant access tokens is "everything except self-amplifying actions", and in
+ * this codebase that set is exactly the token routes: there is no password-change route under
+ * `/admin/*` (reset is unauthenticated and email-gated), and disabling or deleting a tenant is
+ * owner-scoped and unreachable by any admin credential. A token that could mint its replacement
+ * would make the revoke list advisory — cut off a leaked credential and whoever holds it issues a
+ * new one before the sitter has finished reading the confirmation.
+ *
+ * Fails closed: an unset credential means `adminAuth` did not run, which is a wiring mistake, and
+ * the safe reading of "we do not know how you authenticated" is "not with the password".
+ */
+export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
+  if (c.get('adminCredential') !== 'password') {
+    return c.json({ error: 'Sign in with your password to manage your access tokens.' }, 403);
+  }
   await next();
 });
 

@@ -424,8 +424,16 @@ export type AppEnv = {
      *  itself, which requires the widget session so a leaked token cannot mint its own
      *  replacement (`widgetSessionOnly`). */
     endUserCredential: 'widget' | 'token';
-    /** Set by adminAuth: the authenticated sitter-admin's TenantUser id (AdminClaims.sub). */
+    /** Set by adminAuth: the authenticated sitter-admin's TenantUser id — `AdminClaims.sub` for
+     *  the password session, `TenantAccessTokens.TenantUserId` for a tenant access token (0016).
+     *  The two are indistinguishable here on purpose: it is the whole of the admin context. */
     adminUserId: string;
+    /** Which sitter-admin credential `adminAuth` accepted: the 8-hour password session token from
+     *  POST /api/admin/login, or a tenant access token (0016). Routes must NOT branch on this —
+     *  both resolve to the same TenantUser and confer identical authority — with the single
+     *  exception of token management itself, which requires the password session so a leaked
+     *  token cannot mint its own replacement (`adminSessionOnly`). */
+    adminCredential: 'password' | 'token';
     /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
     ownerEmail: string;
   };

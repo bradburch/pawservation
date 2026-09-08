@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { insertBookingRequest, insertInvitedCustomer, listBookingsForUser } from '../db/repo';
+import {
+  createTenantAccessToken,
+  insertBookingRequest,
+  insertInvitedCustomer,
+  listBookingsForUser,
+} from '../db/repo';
+import { generateTenantAccessToken, hashPersonalAccessToken } from '../lib/personal-access-token';
 import { mintToken } from '../lib/token';
 import { createTestEnv, endUserToken, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
@@ -113,6 +119,35 @@ describe('tenant isolation', () => {
     // …and it still works where it belongs, so the refusal is the boundary and not a dead token.
     const readA = await app.request(
       '/api/sunny-paws/bookings/mine',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(readA.status).toBe(200);
+  });
+
+  it('CREDENTIAL: a tenant access token issued under tenant A is nothing under tenant B', async () => {
+    const { env } = createTestEnv();
+    // The sitter-side twin of the case above, and the one with the larger blast radius: this
+    // credential opens a whole book, not one customer's bookings.
+    const token = generateTenantAccessToken();
+    await createTenantAccessToken(env.PAWSERVATION_DB, TENANT_A, {
+      tenantUserId: 'tu_sunny',
+      name: 'Isolation',
+      tokenHash: await hashPersonalAccessToken(token),
+    });
+
+    const readB = await app.request(
+      '/api/happy-tails/admin/settings',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    // 401 and never 403: the lookup binds TenantId, so under the wrong sitter the token does not
+    // exist rather than existing elsewhere — saying "wrong account" would be reading across the
+    // boundary to find out.
+    expect(readB.status).toBe(401);
+    // …and it still works where it belongs, so the refusal is the boundary and not a dead token.
+    const readA = await app.request(
+      '/api/sunny-paws/admin/settings',
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
