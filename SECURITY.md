@@ -40,10 +40,12 @@ Security-relevant areas include:
   token (`pawsv_`) and a sitter's tenant access token (`pawsa_`) are random secrets matched by
   stored digest, not signatures over the secret, so every one of them keeps working across a
   rotation. Revoke those from their own lists: a customer from the booking page's token list, a
-  sitter from Settings → Business → Access tokens. Two things revoke a sitter's automatically —
-  the owner disabling the account (a token is refused outright for a disabled tenant, reads
-  included), and the sitter completing a password reset (which revokes every token that login
-  issued).
+  sitter from Settings → Business → Access tokens. A sitter's token can also revoke ITSELF, with
+  `DELETE /api/<slug>/admin/tokens/self` — the presenting token and nothing else, so an automated
+  client can hand its credential back when it is done instead of leaving a live one behind. Two
+  things revoke a sitter's automatically — the owner disabling the account (a token is refused
+  outright for a disabled tenant, reads included), and the sitter completing a password reset
+  (which revokes every token that login issued).
 - Bind only the dedicated D1/KV resources for this app; never bind unrelated production
   resources.
 

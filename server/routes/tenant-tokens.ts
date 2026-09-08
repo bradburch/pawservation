@@ -16,6 +16,14 @@
  * back rather than leave it lying about waiting to be noticed. A SIBLING token is still a 403:
  * revoking someone else's credential is not de-amplifying, and one token turning off another is
  * exactly the amplification the carve-out exists to prevent.
+ *
+ * WHICH LEFT THAT EXCEPTION UNREACHABLE BY THE ONLY CALLER IT WAS CUT FOR, and `SELF` is the fix.
+ * Revoking by id requires knowing the id, and the one route that reports ids is the list — which
+ * is `adminSessionOnly`, deliberately, because a credential that can enumerate the revoke list is
+ * most of the way to managing it. So a script holding nothing but its secret could never name its
+ * own row. `DELETE …/admin/tokens/self` names it by role instead: the id comes from
+ * `adminTokenId`, which `adminAuth` already resolved on the way in, so the alias costs no second
+ * lookup and widens nothing — the caller can still address exactly one row, its own.
  */
 import { Hono } from 'hono';
 import { createMiddleware } from 'hono/factory';
@@ -72,20 +80,36 @@ const CreateBody = v.object({
 export const MAX_LIVE_TOKENS_PER_USER = 25;
 
 /**
- * Password session, OR a token revoking its OWN row. Runs after `adminAuth` and reads what it
- * recorded, exactly as `adminSessionOnly` does; the second clause is the whole of the exception.
+ * The path segment that means "whichever token is presenting this request".
+ *
+ * It can never collide with a real id: `createTenantAccessToken` writes `crypto.randomUUID()` and
+ * no route sets `Id` from caller input, so every stored id is 36 characters of fixed shape and
+ * this is four. The `self` route is still registered BEFORE `/:id` below, so reading the file
+ * tells you which handler wins without having to know how Hono ranks a static segment against a
+ * parameter.
+ */
+const SELF = 'self';
+
+/**
+ * Password session, OR a token revoking its OWN row — by id, or by the `SELF` alias. Runs after
+ * `adminAuth` and reads what it recorded, exactly as `adminSessionOnly` does; the second clause is
+ * the whole of the exception.
  *
  * `adminTokenId` is set only on the token branch, so a password session cannot accidentally match
  * it, and a token can only ever match the one id whose secret it already holds — which is why this
  * cannot be turned into "a token may revoke any of its owner's tokens" by a smaller edit than it
- * looks. Refusal reuses `adminSessionOnly`'s message, because from a sibling token's point of view
- * nothing about the rule has changed.
+ * looks. The `SELF` clause is the same authority spelled differently, not more of it: the handler
+ * resolves it to `adminTokenId` and to nothing else, so a token addressing `self` reaches exactly
+ * the row it would have reached by typing its own id. Refusal reuses `adminSessionOnly`'s message,
+ * because from a sibling token's point of view nothing about the rule has changed.
  */
 const adminSessionOrOwnToken = createMiddleware<AppEnv>(async (c, next) => {
   const credential = c.get('adminCredential');
   const addressed = addressedTokenId(c.req.path);
   const isOwnToken =
-    credential === 'token' && addressed !== null && c.get('adminTokenId') === addressed;
+    credential === 'token' &&
+    addressed !== null &&
+    (addressed === SELF || c.get('adminTokenId') === addressed);
   if (credential !== 'password' && !isOwnToken) {
     return c.json({ error: 'Sign in with your password to manage your access tokens.' }, 403);
   }
@@ -177,9 +201,49 @@ export const tenantTokenRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * Revoke. Effective on the very next request, because the auth lookup filters on `RevokedAt`
-   * rather than waiting for an expiry. 404 covers both "no such token" and "not yours": the caller
-   * learns nothing about tokens that are not theirs.
+   * Revoke WHICHEVER token is presenting this request — the route a disconnecting script can
+   * actually call, because it needs to know nothing but the secret it is already sending.
+   *
+   * Registered before `/:id` so the ordering is a property of this file rather than of the
+   * router's ranking rules. The id is read from `adminTokenId`, which `adminAuth` set when it
+   * authenticated the caller: no second hash, no second read, and no way for the request body or
+   * path to influence which row is revoked.
+   *
+   * A PASSWORD SESSION GETS 400, not 403. Nothing is being refused — the gate above lets it
+   * through on purpose — it is that a session has no token of its own to hand back, so the
+   * request names a thing that does not exist for this caller. The list is what it wants, and the
+   * message says so.
+   *
+   * Idempotence needs no `COALESCE` here the way `/:id` does: a second call cannot reach this
+   * handler at all, because `adminAuth` no longer resolves the credential and answers 401 first.
+   */
+  .delete(`/:slug/admin/tokens/${SELF}`, async (c) => {
+    if (c.get('adminCredential') === 'password') {
+      return c.json(
+        { error: 'You are signed in with your password; revoke a token from the list instead.' },
+        400,
+      );
+    }
+    // Reachable only on the token branch, which always sets `adminTokenId` — but read defensively
+    // rather than with a `!`, so a future credential kind that skipped it would be refused here
+    // instead of revoking `undefined`.
+    const id = c.get('adminTokenId');
+    const revoked =
+      id !== undefined &&
+      (await revokeTenantAccessToken(
+        c.env.PAWSERVATION_DB,
+        c.get('tenant').Id,
+        c.get('adminUserId'),
+        id,
+      ));
+    if (!revoked) return c.json({ error: 'No such token.' }, 404);
+    return c.json({ revoked: true });
+  })
+
+  /**
+   * Revoke by id. Effective on the very next request, because the auth lookup filters on
+   * `RevokedAt` rather than waiting for an expiry. 404 covers both "no such token" and "not
+   * yours": the caller learns nothing about tokens that are not theirs.
    *
    * No gate of its own: `adminSessionOrOwnToken` on the subtree above already covers this route
    * and every other path under `/tokens/`. Adding one here as well would read as though the

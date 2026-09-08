@@ -165,7 +165,9 @@ export function TokensPanel({
         A token acts as your sign-in for this dashboard&apos;s API, so a script or another tool can
         work as you: it can do everything you can here, including deleting clients and exporting
         your book, and it never expires. It cannot create, list or revoke other tokens; only your
-        password can. Revoke it here the moment you suspect it leaked.
+        password can. Revoke it here the moment you suspect it leaked — or a script can revoke its
+        own token when it is finished, with{' '}
+        <code>DELETE /api/{session.slug}/admin/tokens/self</code>.
       </p>
       {created ? (
         <div>
