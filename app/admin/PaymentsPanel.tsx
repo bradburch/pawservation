@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { formatCents, parseDollarsInput } from '../../src/shared/index.js';
+import {
+  AMOUNT_RANGE_MESSAGE,
+  formatCents,
+  isValidAmountCents,
+  parseDollarsInput,
+} from '../../src/shared/index.js';
 import { adminApi, PAYMENT_METHODS, type Payment } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -56,7 +61,12 @@ export function PaymentsPanel({
   // under a cent, which is exactly the condition that disables the button. This copy is UX only;
   // the server still validates independently.
   const amountCents = parseDollarsInput(amount);
-  const canSubmit = amountCents !== null && paidDate.trim() !== '';
+  // A parseable figure can still be one nobody meant: the server refuses anything over
+  // `MAX_AMOUNT_CENTS`, so the form says so here rather than letting her press the button and read
+  // a 400. Split from `amountCents === null` because it is a DIFFERENT complaint — the figure was
+  // understood, it is just too large — and it is the one worth spelling out.
+  const amountOverCap = amountCents !== null && !isValidAmountCents(amountCents);
+  const canSubmit = amountCents !== null && !amountOverCap && paidDate.trim() !== '';
 
   // One key for the effect below and one branch for the three calls: 'bookingId' in target is the
   // only place this component asks which kind of ledger it is showing.
@@ -82,7 +92,7 @@ export function PaymentsPanel({
   const record = async () => {
     // Null is the same condition that disables the button; re-asserted here so the body below is
     // a number of cents by construction and never an unparsed string.
-    if (busyId || amountCents === null) return;
+    if (busyId || amountCents === null || amountOverCap) return;
     setBusyId(RECORDING);
     try {
       const body = {
@@ -174,11 +184,16 @@ export function PaymentsPanel({
             <input
               type="text"
               inputMode="decimal"
-              aria-invalid={amount !== '' && amountCents === null}
+              aria-invalid={amount !== '' && (amountCents === null || amountOverCap)}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
           </label>
+          {amountOverCap && (
+            <p className="pb-error" role="alert">
+              {AMOUNT_RANGE_MESSAGE}
+            </p>
+          )}
           <label className="pb-inline">
             Method
             <select value={method} onChange={(e) => setMethod(e.target.value)}>

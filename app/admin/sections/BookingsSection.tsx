@@ -213,8 +213,20 @@ function BookingList({
     setEditingCostId(b.id);
     // The field is WHOLE DOLLARS — a historical stay price the sitter types, the same figure and
     // the same `isValidRate` rule as the backfill import she typed it in first. Both routes that
-    // write this column refuse a fractional dollar, so `centsToWholeDollars` cannot throw here and
-    // the figure she opens is exactly the figure that was stored.
+    // write this column refuse a fractional dollar, so the figure she opens is normally exactly
+    // the figure that was stored.
+    //
+    // "Normally" is not "provably", and `centsToWholeDollars` THROWS rather than round: an
+    // un-migrated database (0015 applied to the code but not the data) or a row written past
+    // those routes puts a non-multiple of 100 in this column, and the throw would land inside a
+    // click handler — a dead Edit button and a blank panel, with nothing said. So the case is
+    // handled instead: an empty box and a sentence asking for the price again, which is the only
+    // thing that can actually fix the row.
+    if (b.estCostCents != null && b.estCostCents % 100 !== 0) {
+      setCostInput('');
+      setMessage('This price is not a whole number of dollars; enter a new one.');
+      return;
+    }
     setCostInput(b.estCostCents != null ? String(centsToWholeDollars(b.estCostCents)) : '');
   };
 

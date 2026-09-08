@@ -121,7 +121,10 @@ export type Availability =
        *  client does not do money. */
       available: true;
       priced: false;
-      reason: 'unpriced-pet-set';
+      /** `'cost-out-of-range'` is the same refusal for a different cause: the sitter's stored rate
+       *  over this stay is too large to express exactly in cents, so the server declines to quote
+       *  rather than 500. Either way there is no price, and the client still computes none. */
+      reason: 'unpriced-pet-set' | 'cost-out-of-range';
       groupKey: string;
       mixKey: string;
     }
@@ -1202,7 +1205,12 @@ export const adminApi = {
       token: string,
       from: string,
       to: string,
-      events: { eventId: string; estCost?: number }[],
+      /** `estCostCents` is the sitter's own price for that event: CENTS (0015), like the column
+       *  and like the sibling cost PATCH, though still a WHOLE NUMBER OF DOLLARS expressed in
+       *  them — the box she typed it into is a whole-dollar box. Note the asymmetry with the
+       *  PREVIEW's `BackfillAdoptRow.estCost`, which stays whole dollars: that figure is what the
+       *  panel puts INTO that box, this one is what it sends back. */
+      events: { eventId: string; estCostCents?: number }[],
     ) =>
       request<BackfillImportResult>(`/api/${slug}/admin/calendar/backfill/import`, {
         method: 'POST',

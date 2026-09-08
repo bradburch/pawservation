@@ -12,6 +12,8 @@ import {
   balancedRemainder,
   formatCents,
   formatCentsPlain,
+  isValidAmountCents,
+  AMOUNT_RANGE_MESSAGE,
   formatFriendlyDate,
   MAX_ATTRIBUTIONS_PER_REQUEST,
   parseDollarsInput,
@@ -48,9 +50,11 @@ type Row = AttributionCandidateBooking & {
   /** AS TYPED, IN DOLLARS — e.g. "45.50". Everything else on this panel is CENTS, and
    *  `parseDollarsInput` (src/shared/pricing/money.ts) is the one thing that crosses between:
    *  "45.50" and "45" alike become cents, and anything else (blank, a fraction of a cent, a
-   *  negative) becomes `null`, which is exactly the condition that blocks Apply. The same parser
-   *  runs at the server's boundary, so the two cannot drift — and this copy is UX only, since the
-   *  server re-validates every split against live state regardless. */
+   *  negative) becomes `null`, which is exactly the condition that blocks Apply. The PARSING
+   *  happens only here — the server never sees this string. What crosses the wire is the integer
+   *  the parser produced, and the server validates THAT (`isValidAmountCents`, at the apply
+   *  route's boundary) and re-checks every split against live state besides, so nothing on this
+   *  panel is trusted; it is UX that spares a round trip. */
   amountText: string;
   tipText: string;
 };
@@ -185,7 +189,8 @@ function tipOf(
   if (typed.length === 0) return null;
   if (typed.length > 1) return 'invalid';
   const amountCents = parseDollarsInput(typed[0].tipText);
-  if (amountCents === null) return 'invalid';
+  // Over `MAX_AMOUNT_CENTS` is as unusable as unparseable — the apply route refuses both.
+  if (amountCents === null || !isValidAmountCents(amountCents)) return 'invalid';
   return { bookingId: typed[0].bookingId, amountCents };
 }
 
@@ -222,7 +227,7 @@ function remainderFor(credit: EditableCredit): number | null {
   const cents: number[] = [];
   for (const r of checked) {
     const c = parseDollarsInput(r.amountText);
-    if (c === null || c > r.outstandingCents) return null;
+    if (c === null || !isValidAmountCents(c) || c > r.outstandingCents) return null;
     cents.push(c);
   }
   const tip = tipOf(credit);
@@ -248,6 +253,10 @@ function creditIssue(credit: EditableCredit): string {
   const checked = credit.rows.filter((r) => r.checked);
   const blank = checked.find((r) => parseDollarsInput(r.amountText) === null);
   if (blank) return `Type an amount of $0.01 or more for ${blank.serviceType}, like 45.50.`;
+  // Checked BEFORE the outstanding comparison: a figure past the ceiling is refused on its own
+  // terms whatever the booking happens to owe, and that is the sentence the sitter needs.
+  const overCap = checked.find((r) => !isValidAmountCents(parseDollarsInput(r.amountText)!));
+  if (overCap) return AMOUNT_RANGE_MESSAGE;
   const overOutstanding = checked.find(
     (r) => parseDollarsInput(r.amountText)! > r.outstandingCents,
   );
@@ -258,6 +267,8 @@ function creditIssue(credit: EditableCredit): string {
     const typed = credit.rows.filter((r) => r.checked && r.tipText.trim() !== '');
     if (typed.length > 1)
       return 'Only one booking can carry the tip — clear it from the others, or add them up onto one.';
+    const typedTip = parseDollarsInput(typed[0].tipText);
+    if (typedTip !== null && !isValidAmountCents(typedTip)) return AMOUNT_RANGE_MESSAGE;
     return `Type a tip of $0.01 or more for ${typed[0].serviceType}, or clear it.`;
   }
   const sumCents = checked.reduce((s, r) => s + parseDollarsInput(r.amountText)!, 0);

@@ -19,6 +19,15 @@ export type CancellationTier = { withinDays: number; percent: number };
  * scaled back up. $350 at 25% is $87.50 → $88 → 8800, not 8750. Moving the unit
  * must not quietly make a cancellation fee a cent-precise figure; that is a
  * pricing-policy change, and this function makes none.
+ *
+ * That rounding ASSUMES `estCostCents` is a whole number of dollars, which every
+ * stored `EstCost` is (`estimateCost` multiplies whole-dollar rates; both routes
+ * that let a sitter correct one refuse a fraction). The assumption is asserted
+ * rather than trusted: on a fractional cost the dollar rounding would silently
+ * charge a percentage of a DIFFERENT figure than the one on the booking, and a
+ * fee quietly computed off the wrong base is worse than a loud refusal. It also
+ * catches the un-migrated-database case (0015 applied to the code, not the data)
+ * at the one place that would otherwise absorb it without a symptom.
  */
 export function cancellationFee(
   tiers: CancellationTier[],
@@ -26,6 +35,11 @@ export function cancellationFee(
   startDate: string,
   todayStr: string,
 ): number {
+  if (!Number.isSafeInteger(estCostCents) || estCostCents % 100 !== 0) {
+    throw new RangeError(
+      `cancellationFee: estCostCents must be a whole number of dollars in cents, got ${estCostCents}`,
+    );
+  }
   const daysUntil = Math.max(0, nightsBetween(todayStr, startDate));
   const tier = tiers.find((t) => daysUntil <= t.withinDays);
   if (!tier) return 0;

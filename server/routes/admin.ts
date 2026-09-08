@@ -153,6 +153,7 @@ import {
 } from '../lib/payment-csv';
 import { NONCE_KEY } from './oauth';
 import {
+  AMOUNT_RANGE_MESSAGE,
   DEFENSIVE_MAX_NIGHTS,
   DEFENSIVE_MAX_PET_COUNT,
   EMAIL_RE,
@@ -161,10 +162,13 @@ import {
   isPetRateMode,
   isCalendarCostBasis,
   isRealDate,
+  isValidAmountCents,
+  isValidCents,
   isValidDuration,
   isValidRate,
   isValidTimeString,
   MAX_ADVANCE_MONTHS_CAP,
+  MAX_AMOUNT_CENTS,
   MAX_OVERLAP_DAYS_CAP,
   isValidOverlapDays,
   MAX_LEAD_DAYS_CAP,
@@ -186,7 +190,6 @@ import {
   dollarsToCents,
   getPacificDateStr,
   isDedicatedCalendarId,
-  isValidCents,
   MAX_ATTRIBUTIONS_PER_REQUEST,
   MAX_BACKFILL_EVENTS,
   parseMixKey,
@@ -282,10 +285,10 @@ export { MAX_BACKFILL_EVENTS };
  *  with 15 digits behind it is a typo, not a stay anyone actually charged.
  *
  *  WHOLE DOLLARS, and deliberately NOT scaled by 0015: it bounds the number a sitter TYPES, and
- *  she types dollars. The backfill import body is still whole dollars and converts with
- *  `dollarsToCents` at the write; the correction PATCH now takes `estCostCents` and compares
- *  against `dollarsToCents(MAX_BACKFILL_EST_COST)`, so the ceiling and the message she reads are
- *  the same figure on both. */
+ *  she types dollars. BOTH routes that take that number — the backfill import and the correction
+ *  PATCH — now carry it as `estCostCents` (whole dollars expressed in cents) and compare against
+ *  `dollarsToCents(MAX_BACKFILL_EST_COST)`, so the wire unit matches the column's, the ceiling is
+ *  one figure, and neither route can be handed a cents-shaped body it would store 100× too large. */
 export const MAX_BACKFILL_EST_COST = 1_000_000;
 
 /**
@@ -2703,7 +2706,7 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       status,
       notified,
-      cancellationFeeCents: fee === undefined ? null : fee,
+      cancellationFeeCents: fee ?? null,
     });
   })
 
@@ -2716,9 +2719,10 @@ export const adminRoutes = new Hono<AppEnv>()
     // THE BODY IS CENTS (0015), because a payment is what a person actually sent and $45.50 is a
     // real thing to be sent. The old whole-dollar `amount` is gone rather than tolerated: a body
     // this route quietly accepted in the wrong unit is a 100× money bug, so an amount that isn't
-    // an integer number of cents is refused here and the sitter is told the unit.
-    if (!isValidCents(body.amountCents))
-      return c.json({ error: 'Amount must be a whole number of cents ≥ 1.' }, 400);
+    // an integer number of cents is refused here and the sitter is told the range IN DOLLARS.
+    // `isValidAmountCents` adds the `MAX_AMOUNT_CENTS` ceiling: a payment of MAX_SAFE_INTEGER
+    // cents passes every other check and poisons every balance it lands in.
+    if (!isValidAmountCents(body.amountCents)) return c.json({ error: AMOUNT_RANGE_MESSAGE }, 400);
     if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
@@ -2828,9 +2832,9 @@ export const adminRoutes = new Hono<AppEnv>()
     if (label.length > MAX_CHARGE_LABEL)
       return c.json({ error: `Name must be ${MAX_CHARGE_LABEL} characters or fewer.` }, 400);
     // Cents on the wire and in the column (0015). A charge is no longer a whole-dollar figure:
-    // `keepBookingCredit` writes a credit derived from payments into this very column.
-    if (!isValidCents(body.amountCents))
-      return c.json({ error: 'Amount must be a whole number of cents ≥ 1.' }, 400);
+    // `keepBookingCredit` writes a credit derived from payments into this very column. Bounded by
+    // the same `MAX_AMOUNT_CENTS` ceiling as every other typed amount, and refused in dollars.
+    if (!isValidAmountCents(body.amountCents)) return c.json({ error: AMOUNT_RANGE_MESSAGE }, 400);
     const chargeId = await insertBookingCharge(c.env.PAWSERVATION_DB, tenant.Id, {
       bookingRequestId: bookingId,
       label,
@@ -3718,10 +3722,18 @@ export const adminRoutes = new Hono<AppEnv>()
         if (typeof rawSplit !== 'object' || rawSplit === null)
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
         const s = rawSplit as { bookingId?: unknown; amountCents?: unknown };
+        // SHAPE plus the CEILING, and deliberately not the rest of `isValidAmountCents`. The
+        // ceiling belongs here because nothing downstream bounds it and an absurd split poisons
+        // every balance it lands in. Integrality and "at least one cent" do NOT: a well-formed
+        // body carrying an unusable figure is refused PER ITEM by `applyAttribution`, by name and
+        // with the raw figure quoted, so one bad split cannot 400 a whole batch the sitter
+        // approved together (see the fractional-split test). Those are different failures and
+        // they get different answers.
         if (
           typeof s.bookingId !== 'string' ||
           s.bookingId === '' ||
-          typeof s.amountCents !== 'number'
+          typeof s.amountCents !== 'number' ||
+          s.amountCents > MAX_AMOUNT_CENTS
         )
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
         splits.push({ bookingId: s.bookingId, amount: s.amountCents });
@@ -3742,10 +3754,13 @@ export const adminRoutes = new Hono<AppEnv>()
         if (typeof a.tip !== 'object' || a.tip === null)
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
         const t = a.tip as { bookingId?: unknown; amountCents?: unknown };
+        // Same split of duties as the splits above: the ceiling here, everything else on the
+        // merits in `applyAttribution`.
         if (
           typeof t.bookingId !== 'string' ||
           t.bookingId === '' ||
-          typeof t.amountCents !== 'number'
+          typeof t.amountCents !== 'number' ||
+          t.amountCents > MAX_AMOUNT_CENTS
         )
           return c.json({ error: 'That list of attributions is malformed.' }, 400);
         tip = { bookingId: t.bookingId, amount: t.amountCents };
@@ -3881,8 +3896,11 @@ export const adminRoutes = new Hono<AppEnv>()
    *
    * The amount is the exception, because pricing a historical stay is the sitter's own decision,
    * not a claim about their calendar (see the module doc on `insertBackfilledBooking` and the
-   * design doc). `estCost`, when supplied, must be a whole-dollar integer >= 1 or the WHOLE
-   * request is refused with 400 — never a silent coercion, and never a partial import.
+   * design doc). `estCostCents`, when supplied, must be a WHOLE NUMBER OF DOLLARS EXPRESSED IN
+   * CENTS (0015) — the column's own unit, and the same body shape and the same ceiling as the
+   * sibling cost PATCH, so a cents-shaped body cannot be stored a hundred times too large here
+   * and correctly there. Anything else refuses the WHOLE request with 400 — never a silent
+   * coercion, and never a partial import.
    */
   .post('/:slug/admin/calendar/backfill/import', async (c) => {
     const tenant = c.get('tenant');
@@ -3898,28 +3916,36 @@ export const adminRoutes = new Hono<AppEnv>()
     if (body.events.length > MAX_BACKFILL_EVENTS)
       return c.json({ error: `Import ${MAX_BACKFILL_EVENTS} events or fewer at a time.` }, 400);
 
-    // eventId -> the sitter's own price for it, when given, in WHOLE DOLLARS as typed (converted
-    // to cents at the stamp below); a bad one fails the WHOLE request rather than being coerced or
-    // silently dropping just its own row.
+    // eventId -> the sitter's own price for it, when given, in CENTS (0015) — the column's unit,
+    // and stored as handed over rather than converted at the stamp below. A bad one fails the
+    // WHOLE request rather than being coerced or silently dropping just its own row.
     const wanted = new Map<string, number | null>();
     for (const raw of body.events) {
       if (typeof raw !== 'object' || raw === null)
         return c.json({ error: 'That list of events is malformed.' }, 400);
-      const entry = raw as { eventId?: unknown; estCost?: unknown };
+      const entry = raw as { eventId?: unknown; estCostCents?: unknown };
       if (typeof entry.eventId !== 'string' || entry.eventId === '')
         return c.json({ error: 'That list of events is malformed.' }, 400);
-      if (entry.estCost !== undefined) {
+      if (entry.estCostCents !== undefined) {
+        // WHOLE DOLLARS EXPRESSED IN CENTS, exactly as the correction PATCH demands: she types
+        // this price in a whole-dollar box, and the admin list's Edit affordance reopens it with
+        // `centsToWholeDollars`, which throws on anything else.
         if (
-          !Number.isInteger(entry.estCost) ||
-          (entry.estCost as number) < 1 ||
-          (entry.estCost as number) > MAX_BACKFILL_EST_COST
+          !isValidCents(entry.estCostCents) ||
+          entry.estCostCents % 100 !== 0 ||
+          entry.estCostCents > dollarsToCents(MAX_BACKFILL_EST_COST)
         )
           return c.json(
-            { error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST}.` },
+            {
+              error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST.toLocaleString('en-US')}.`,
+            },
             400,
           );
       }
-      wanted.set(entry.eventId, entry.estCost === undefined ? null : (entry.estCost as number));
+      wanted.set(
+        entry.eventId,
+        entry.estCostCents === undefined ? null : (entry.estCostCents as number),
+      );
     }
 
     const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
@@ -3955,7 +3981,7 @@ export const adminRoutes = new Hono<AppEnv>()
 
     const skipped: { eventId: string; reason: string }[] = [];
     let imported = 0;
-    for (const [eventId, suppliedCost] of wanted) {
+    for (const [eventId, suppliedCentsCost] of wanted) {
       const row = resolvable.get(eventId);
       if (!row) {
         // 'already-adopted' gets its own message — a sitter re-running an import over an
@@ -3972,16 +3998,13 @@ export const adminRoutes = new Hono<AppEnv>()
       }
       // The sitter's figure wins when given; otherwise the rate card's, which only an 'adopt' row
       // has. A 'needs-price' row with no supplied amount is never adopted at zero and never at a
-      // number this server invented. `suppliedCost` is the sitter's typed WHOLE DOLLARS and is
-      // converted here; `row.estCost` is already cents (the classifier converted it). The two
-      // arms are converted separately on purpose — one `?? ` over mixed units is exactly the
-      // hundred-fold error 0015 makes possible.
+      // number this server invented. BOTH arms are already CENTS — `suppliedCentsCost` was
+      // validated as cents at the boundary above and `row.estCost` was converted by the
+      // classifier — so nothing is scaled here. That is the point of moving the body's unit: a
+      // conversion at this line, over a value whose unit depends on which arm produced it, is
+      // exactly the hundred-fold error 0015 makes possible.
       const estCost =
-        suppliedCost !== null
-          ? dollarsToCents(suppliedCost)
-          : row.kind === 'adopt'
-            ? row.estCost
-            : null;
+        suppliedCentsCost !== null ? suppliedCentsCost : row.kind === 'adopt' ? row.estCost : null;
       if (estCost === null) {
         skipped.push({ eventId, reason: 'That event still needs a price' });
         continue;
@@ -4049,9 +4072,12 @@ export const adminRoutes = new Hono<AppEnv>()
       estCostCents % 100 !== 0 ||
       estCostCents > dollarsToCents(MAX_BACKFILL_EST_COST)
     )
+      // Spoken in DOLLARS even though the body is cents: the box she typed into is a whole-dollar
+      // box, and a ceiling quoted as "100000000" makes her count zeros to find out she is allowed
+      // a million. Same sentence as the import route, which takes the same figure.
       return c.json(
         {
-          error: `Enter a whole-dollar amount in cents, between 100 and ${dollarsToCents(MAX_BACKFILL_EST_COST)}.`,
+          error: `Enter a whole-dollar amount between $1 and $${MAX_BACKFILL_EST_COST.toLocaleString('en-US')}.`,
         },
         400,
       );

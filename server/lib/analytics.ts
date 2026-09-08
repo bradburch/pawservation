@@ -69,14 +69,16 @@ export function serializeAnalytics(data: AnalyticsData) {
     tiles: {
       thisMonthCents: data.monthly.at(-1)?.Total ?? 0,
       lastMonthCents: data.monthly.at(-2)?.Total ?? 0,
-      outstandingTotalCents: data.outstanding.reduce(
-        (sum, o) => sum + o.EstCost + o.ChargesTotal - o.PaidTotal,
-        0,
-      ),
+      // SUMMED FROM THE ROWS ABOVE, not re-derived from the raw columns. `balanceCents` and
+      // `creditCents` are each stated once, in the mapping, and the tile is their total — so a
+      // change to what a balance MEANS (an extra term, a clamp) cannot land on the list and miss
+      // the figure printed above it. The two used to be independent copies of the same
+      // expression, which is a disagreement waiting to be shipped.
+      outstandingTotalCents: outstanding.reduce((sum, o) => sum + o.balanceCents, 0),
       outstandingCount: outstanding.length,
       // Never netted against `outstandingTotalCents`: one client owing $100 and another being owed
       // $100 is not a settled book, and showing $0 would say it was.
-      creditTotalCents: data.credits.reduce((sum, c) => sum + c.PaidTotal - c.Keepable, 0),
+      creditTotalCents: credits.reduce((sum, c) => sum + c.creditCents, 0),
     },
     monthly: data.monthly.map((m) => ({ month: m.Month, totalCents: m.Total })),
     ytdCents: data.ytd,
@@ -117,9 +119,6 @@ export function serializeAnalytics(data: AnalyticsData) {
      * Naming an orphan out loud is the only honest option; guessing it a household is the one
      * thing worse than losing it.
      */
-    orphanedPayments: data.orphanedPayments.map((o) => ({
-      accountId: o.accountId,
-      totalCents: o.total,
-    })),
+    orphanedPayments: data.orphanedPayments,
   };
 }

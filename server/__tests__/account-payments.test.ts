@@ -270,4 +270,24 @@ describe('account payments (admin routes)', () => {
       (await post(env, TENANT_C, accountId, { ...valid, paidDate: '2026-13-40' })).status,
     ).toBe(400);
   });
+
+  /**
+   * THE CEILING. `isValidCents` bounds nothing above, so a fat-fingered `9007199254740991` is a
+   * whole positive number of cents and passes every other check — and then poisons every balance,
+   * tile and export it lands in. `MAX_AMOUNT_CENTS` ($1,000,000) is the same figure the
+   * whole-dollar backfill ceiling has always used, so a sitter meets ONE limit wherever she types
+   * an amount, and the refusal speaks in dollars because dollars are what she typed.
+   */
+  it('400s on an amount over the $1,000,000 ceiling, like the booking route', async () => {
+    const { env, raw } = createTestEnv();
+    const { accountId } = await household(env, raw);
+    const over = await post(env, TENANT_C, accountId, { ...valid, amountCents: 100_000_001 });
+    expect(over.status).toBe(400);
+    expect((await over.json()) as { error: string }).toEqual({
+      error: 'Enter an amount between $0.01 and $1,000,000.',
+    });
+    expect(
+      (await post(env, TENANT_C, accountId, { ...valid, amountCents: 100_000_000 })).status,
+    ).toBe(201);
+  });
 });

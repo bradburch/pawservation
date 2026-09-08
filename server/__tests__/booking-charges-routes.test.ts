@@ -87,6 +87,25 @@ describe('admin booking-charge routes', () => {
     expect(old.status).toBe(400);
   });
 
+  /**
+   * THE CEILING. `isValidCents` bounds nothing above, so a fat-fingered `9007199254740991` is a
+   * whole positive number of cents and passes every other check — and then poisons every balance,
+   * tile and export it lands in. `MAX_AMOUNT_CENTS` ($1,000,000) is the same figure the
+   * whole-dollar backfill ceiling has always used, so a sitter meets ONE limit wherever she types
+   * an amount, and the refusal speaks in dollars because dollars are what she typed.
+   */
+  it('400s on an amount over the $1,000,000 ceiling, and says the range in dollars', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A);
+    const over = await postCharge(env, bookingId, { ...goodBody, amountCents: 100_000_001 });
+    expect(over.status).toBe(400);
+    expect((await over.json()) as { error: string }).toEqual({
+      error: 'Enter an amount between $0.01 and $1,000,000.',
+    });
+    const at = await postCharge(env, bookingId, { ...goodBody, amountCents: 100_000_000 });
+    expect(at.status).toBe(201);
+  });
+
   // A charge may now carry cents — the credit `keepBookingCredit` writes into this column is
   // derived from payments, and a payment is what a person actually sent.
   it('accepts a charge of amountCents that is not a whole dollar', async () => {

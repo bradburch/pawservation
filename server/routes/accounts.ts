@@ -7,8 +7,12 @@ import {
   listPaymentsForAccount,
 } from '../db/repo';
 import { adminAuth } from '../lib/middleware';
-import { isPaymentMethod, isRealDate } from '../lib/validation';
-import { isValidCents } from '../../src/shared/index.js';
+import {
+  AMOUNT_RANGE_MESSAGE,
+  isPaymentMethod,
+  isRealDate,
+  isValidAmountCents,
+} from '../lib/validation';
 import type { AppEnv } from '../types';
 
 export const accountsRoutes = new Hono<AppEnv>()
@@ -62,8 +66,7 @@ export const accountsRoutes = new Hono<AppEnv>()
     const body = await c.req
       .json<{ amountCents?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
       .catch(() => ({}) as Record<string, never>);
-    if (!isValidCents(body.amountCents))
-      return c.json({ error: 'Amount must be a whole number of cents ≥ 1.' }, 400);
+    if (!isValidAmountCents(body.amountCents)) return c.json({ error: AMOUNT_RANGE_MESSAGE }, 400);
     if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);

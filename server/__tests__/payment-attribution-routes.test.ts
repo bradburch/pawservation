@@ -2028,6 +2028,51 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     expect(chargeRows(raw)).toEqual([]);
   });
 
+  /**
+   * THE CEILING, AND WHY IT IS THE ONE PART OF `isValidAmountCents` THIS ROUTE APPLIES. A split
+   * over `MAX_AMOUNT_CENTS` ($1,000,000) is refused as a malformed body — nothing downstream
+   * bounds it, and an absurd figure poisons every balance it reaches. Integrality and "at least a
+   * cent" are deliberately NOT checked here: a well-formed body carrying an unusable figure is
+   * refused PER ITEM by `applyAttribution`, by name and with the raw figure quoted, so one bad
+   * split cannot 400 a batch the sitter approved together (see the fractional-split test above).
+   * Different failures, different answers.
+   */
+  it('a split or tip over the $1,000,000 ceiling is a 400 with nothing written', async () => {
+    const { env, raw } = createTestEnv();
+    const home = await household(env, raw, 'kelly');
+    const walk = await book(env, home, 40, '2026-07-01');
+    const paymentId = (await credit(env, home.accountId, 50))!;
+    const before = paymentRows(raw);
+
+    const overSplit = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          splits: [{ bookingId: walk, amountCents: 100_000_001 }],
+          remainderCents: 0,
+        },
+      ],
+    });
+    expect(overSplit.status).toBe(400);
+
+    const overTip = await apply(env, TENANT_C, {
+      attributions: [
+        {
+          paymentId,
+          accountId: home.accountId,
+          splits: [{ bookingId: walk, amountCents: 4000 }],
+          tip: { bookingId: walk, amountCents: 100_000_001 },
+          remainderCents: 0,
+        },
+      ],
+    });
+    expect(overTip.status).toBe(400);
+
+    expect(paymentRows(raw)).toEqual(before);
+    expect(chargeRows(raw)).toEqual([]);
+  });
+
   it('a malformed tip is a 400 with nothing written', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');

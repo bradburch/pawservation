@@ -4,7 +4,7 @@
 live account right now, produced by running the real preview route over a read-only copy of
 production. Every figure below is the route's own answer, not an estimate.
 
-Figures are the route's own, to the cent; nothing is rounded. Every credit on this account happens to be a whole number of dollars, which is why each total below still reads as one.
+Figures are the route's own, to the cent; nothing is rounded.
 
 ## The headline
 

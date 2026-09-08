@@ -262,9 +262,15 @@ export type BookingChargeRow = {
 };
 
 /** getAnalytics result: raw PascalCase aggregate rows. monthly is exactly 12 entries, oldest
- * month first, zero-filled. The route maps to camelCase and derives the stat tiles in JS.
- * Exception: `ytd`/`quarterly` are already in payload (camelCase) shape — the helper emits them
- * that way and the route forwards them unmapped, so do NOT "correct" them to PascalCase. */
+ * month first, zero-filled. `serializeAnalytics` maps everything to camelCase, names every money
+ * field `*Cents`, and derives the stat tiles in JS.
+ *
+ * Exception: `ytd`/`quarterly` and `households`/`orphanedPayments` are already camelCase here,
+ * because the helper COMPUTES them rather than selecting them — so do NOT "correct" those four to
+ * PascalCase. Being camelCase is not the same as reaching the wire untouched, and only the last
+ * two do: `ytd` and `quarterly[].total` are still RENAMED on the way out (`ytdCents`,
+ * `quarterly[].totalCents`), while `households` and `orphanedPayments` are passed through whole,
+ * which is why those two already name their unit on this type. */
 export type AnalyticsData = {
   /** EVERY money field on this type is CENTS (0015) — the raw SQL sums, unscaled. They stay
    *  cents on the wire too: `serializeAnalytics` renames them `*Cents` and divides nothing. */
@@ -319,13 +325,13 @@ export type AnalyticsData = {
    * DELETED (a `deleteCustomer` cascade removes the pet and its owner edges together, and never
    * touches `Payments`), so nothing left in the database can say whose money it was. Published
    * beside the balances precisely because every revenue figure above still counts it:
-   * `Σ households.paidTotalCents + Σ orphanedPayments.total` is the whole of the household money —
-   * both sides cents, here and on the wire (`orphanedPayments[].totalCents`) — and
-   * this list is what keeps that identity true rather than leaving a payment counted in one view
-   * and silently absent from the other. A pet that merely DIED is never here — its payments still
+   * `Σ households.paidTotalCents + Σ orphanedPayments.totalCents` is the whole of the household
+   * money — one unit and one name on both sides, here and on the wire — and this list is what
+   * keeps that identity true rather than leaving a payment counted in one view and silently
+   * absent from the other. A pet that merely DIED is never here — its payments still
    * resolve to its own household (`buildPaymentAnchors`).
    */
-  orphanedPayments: { accountId: string; total: number }[];
+  orphanedPayments: { accountId: string; totalCents: number }[];
 };
 
 /**

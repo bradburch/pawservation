@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { formatCents, parseDollarsInput } from '../../src/shared/index.js';
+import {
+  AMOUNT_RANGE_MESSAGE,
+  formatCents,
+  isValidAmountCents,
+  parseDollarsInput,
+} from '../../src/shared/index.js';
 import { adminApi, type BookingCharge } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -36,7 +41,14 @@ export function ChargesPanel({
   // `keepBookingCredit` logs lands in this same column. Same predicates the server enforces —
   // UX only; the server validates independently.
   const amountCents = parseDollarsInput(amount);
-  const canSubmit = label.trim() !== '' && label.trim().length <= MAX_LABEL && amountCents !== null;
+  // Same ceiling the route enforces (`MAX_AMOUNT_CENTS`), told here as its own complaint: the
+  // figure parsed fine, it is simply larger than any charge is allowed to be.
+  const amountOverCap = amountCents !== null && !isValidAmountCents(amountCents);
+  const canSubmit =
+    label.trim() !== '' &&
+    label.trim().length <= MAX_LABEL &&
+    amountCents !== null &&
+    !amountOverCap;
 
   const load = () =>
     adminApi.charges.list(session.slug, session.token, bookingId).then(({ charges: l }) => l);
@@ -55,7 +67,7 @@ export function ChargesPanel({
   const add = async () => {
     // Same guard as PaymentsPanel: null is what disables the button, re-asserted so the request
     // body carries cents and never an unparsed string.
-    if (busyId || amountCents === null) return;
+    if (busyId || amountCents === null || amountOverCap) return;
     setBusyId(ADDING);
     try {
       await adminApi.charges.add(session.slug, session.token, bookingId, {
@@ -141,11 +153,16 @@ export function ChargesPanel({
             <input
               type="text"
               inputMode="decimal"
-              aria-invalid={amount !== '' && amountCents === null}
+              aria-invalid={amount !== '' && (amountCents === null || amountOverCap)}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
           </label>
+          {amountOverCap && (
+            <p className="pb-error" role="alert">
+              {AMOUNT_RANGE_MESSAGE}
+            </p>
+          )}
           <button disabled={busyId === ADDING || !canSubmit} onClick={() => void add()}>
             Add charge
           </button>

@@ -661,7 +661,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
 
     const res = await runImport(env, [
       { eventId: 'ev_bella_walk' },
-      { eventId: 'ev_needs_price', estCost: 50 },
+      { eventId: 'ev_needs_price', estCostCents: 5000 },
     ]);
     expect(res.status).toBe(200);
     const body = (await res.json()) as ImportBody;
@@ -727,7 +727,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     await connectCalendar(env);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([NEEDS_PRICE_EVENT]));
 
-    const res = await runImport(env, [{ eventId: 'ev_needs_price', estCost: 75 }]);
+    const res = await runImport(env, [{ eventId: 'ev_needs_price', estCostCents: 7500 }]);
     const body = (await res.json()) as ImportBody;
     expect(body.imported).toBe(1);
     expect(body.skipped).toEqual([]);
@@ -758,7 +758,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     await connectCalendar(env);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
 
-    const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCost: 99 }]);
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCostCents: 9900 }]);
     const body = (await res.json()) as ImportBody;
     expect(body.imported).toBe(1);
 
@@ -766,37 +766,56 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(row?.EstCost).toBe(9900); // the column, in cents: her $99, not the rate card's $20
   });
 
-  it.each([0.5, 0, -5, 1_000_001])(
-    'a bad estCost (%s) fails the whole request with 400 and writes nothing at all',
+  // THE BODY IS CENTS (0015) AND STILL WHOLE DOLLARS. Both halves are pinned: a fraction of a
+  // cent (50.5), nothing (0), a negative, one cent past the $1,000,000 ceiling, and — the case
+  // that only exists because the unit moved — 4550, a perfectly good cents figure that is not a
+  // whole number of dollars. The last one is the reason the route cannot simply take
+  // `isValidCents`: the admin list's Edit box reopens this column with `centsToWholeDollars`,
+  // which throws on exactly that value, so a price it could never show must never be stored.
+  it.each([50.5, 0, -500, 100_000_100, 4550])(
+    'a bad estCostCents (%s) fails the whole request with 400 and writes nothing at all',
     async (badCost) => {
       const { env } = await createTestEnv();
       await connectCalendar(env);
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
 
-      // One perfectly good event alongside the bad one — proves the bad estCost fails the WHOLE
+      // One perfectly good event alongside the bad one — proves the bad price fails the WHOLE
       // request rather than just its own row.
       const res = await runImport(env, [
         { eventId: 'ev_bella_walk' },
-        { eventId: 'ev_other', estCost: badCost },
+        { eventId: 'ev_other', estCostCents: badCost },
       ]);
       expect(res.status).toBe(400);
       expect(await countBackfilledBookings(env)).toBe(0);
     },
   );
 
-  // Pins today's behavior for every non-integer shape estCost can arrive as, not just the
+  // The largest price the route accepts, at the ceiling rather than past it — so the bound above
+  // is pinned as EXCLUSIVE-of-one-cent-more rather than as "big numbers fail", which a stricter
+  // ceiling would satisfy just as well.
+  it('accepts a price exactly at the $1,000,000 ceiling', async () => {
+    const { env } = await createTestEnv();
+    await connectCalendar(env);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
+
+    const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCostCents: 100_000_000 }]);
+    expect(res.status).toBe(200);
+    expect((await getBooking(env, 'ev_bella_walk'))?.EstCost).toBe(100_000_000);
+  });
+
+  // Pins today's behavior for every non-integer shape the price can arrive as, not just the
   // out-of-range numbers above. NaN and Infinity round-trip through JSON.stringify as `null` (JSON
-  // has no literal for either), so those two cases exercise the same "no estCost" path as an
+  // has no literal for either), so those two cases exercise the same "no price" path as an
   // explicit null over the wire — still worth pinning, since a coercion bug could turn any of
   // these into a truthy, accepted amount.
-  it.each(['50', null, true, NaN, Infinity])(
-    'a non-integer estCost (%s) is rejected, not coerced',
+  it.each(['5000', null, true, NaN, Infinity])(
+    'a non-integer estCostCents (%s) is rejected, not coerced',
     async (badCost) => {
       const { env } = await createTestEnv();
       await connectCalendar(env);
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(calendarResponse([BELLA_WALK_EVENT]));
 
-      const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCost: badCost }]);
+      const res = await runImport(env, [{ eventId: 'ev_bella_walk', estCostCents: badCost }]);
       expect(res.status).toBe(400);
       expect(await countBackfilledBookings(env)).toBe(0);
     },

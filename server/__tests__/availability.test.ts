@@ -1003,6 +1003,53 @@ describe('estimateCost — PriceResult, and the refusal arm', () => {
     );
     expect(res).toEqual({ priced: true, cost: 2000 });
   });
+
+  /**
+   * A COST TOO LARGE TO EXPRESS IN CENTS IS A REFUSAL, NOT A CRASH. `isValidRate` bounds a rate
+   * when a sitter types it, but rate × units × pets compounds and nothing bounds the product — so
+   * a big enough stored rate over a long enough stay puts the ×100 past `Number.MAX_SAFE_INTEGER`,
+   * where `dollarsToCents` throws. Thrown out of here, that `RangeError` 500s an availability
+   * check and a booking POST alike: the customer learns nothing and the sitter is paged for a
+   * number she typed. So it comes back in the shape the unpriced-pet-set arm already uses, with
+   * its own reason, and — as on that arm — carrying NO cost field for anyone to coerce into $0.
+   */
+  it('an absurd stored rate refuses the quote instead of throwing', () => {
+    const price = () =>
+      estimateCost(
+        svc('boarding'),
+        opt({ Rate: Number.MAX_SAFE_INTEGER }),
+        '2028-08-10',
+        '2028-08-13',
+        [bella],
+        noRates,
+      );
+    expect(price).not.toThrow();
+    const res = price();
+    expect(res).toMatchObject({ priced: false, reason: 'cost-out-of-range' });
+    expect(res).not.toHaveProperty('cost');
+    // The keys are still the ones that found (or would have found) a rate, so a sitter reading the
+    // refusal can see which pet set it is about — the same affordance the other arm gives.
+    expect(res).toMatchObject({ groupKey: 'pet_sp_bella', mixKey: 'dog:1' });
+  });
+
+  it('the refusal reaches the availability answer as a quote, not a 500', async () => {
+    // Through `checkAvailability`, the shape a route actually serves: available (the DATES are
+    // fine — nothing about capacity is wrong here), unpriced, with the reason named and no cost.
+    const { env } = createTestEnv();
+    const res = await checkAvailability(
+      env,
+      tenant(),
+      svc('boarding'),
+      opt({ Rate: Number.MAX_SAFE_INTEGER }),
+      '2028-08-10',
+      '2028-08-13',
+      [bella],
+      noRates,
+    );
+    expect(res).toMatchObject({ available: true, priced: false, reason: 'cost-out-of-range' });
+    expect(res).not.toHaveProperty('estCost');
+    expect(res).not.toHaveProperty('estCostCents');
+  });
 });
 
 /**

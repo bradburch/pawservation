@@ -165,7 +165,14 @@ export type AvailabilityResult =
        */
       available: true;
       priced: false;
-      reason: 'unpriced-pet-set';
+      /** WHY there is no price. `'unpriced-pet-set'` is the ordinary one described above.
+       *  `'cost-out-of-range'` is the arithmetic backstop: a stored rate so large that rate ×
+       *  units × pets could not survive the ×100 into cents as an exact integer. That is a
+       *  refusal, not a fault — the alternative is a `RangeError` out of the pricing engine and a
+       *  500 on a quote, which tells the customer nothing and pages the sitter for a number she
+       *  typed. Both arms carry NO cost field, which is what makes either impossible to coerce
+       *  into $0. */
+      reason: 'unpriced-pet-set' | 'cost-out-of-range';
       groupKey: string;
       mixKey: string;
     }
@@ -206,7 +213,14 @@ export type PriceResult =
       holidayUnits?: number;
       holidayRate?: number;
     }
-  | { priced: false; reason: 'unpriced-pet-set'; groupKey: string; mixKey: string };
+  | {
+      priced: false;
+      /** See `AvailabilityResult`'s `priced: false` arm — the same two reasons, unchanged as they
+       *  pass through `checkAvailability`. */
+      reason: 'unpriced-pet-set' | 'cost-out-of-range';
+      groupKey: string;
+      mixKey: string;
+    };
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
@@ -316,11 +330,25 @@ export function estimateCost(
   // nights scale is a discontinuity nobody typed either. `holidayAwareCost` therefore still never
   // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
+  const dollars = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
+  // A stored rate is only bounded by `isValidRate` at the moment a sitter types it, and rate ×
+  // units × pets compounds: a big enough rate over a long enough stay puts the ×100 past
+  // `Number.MAX_SAFE_INTEGER`, where the product is a float and no longer exact money. That is
+  // REFUSED as a quote rather than thrown, and refused in the shape the unpriced-pet-set arm
+  // already uses — a `RangeError` escaping the price formula would 500 an availability check and
+  // a booking POST alike, which is a worse answer to bad data than "we can't price this".
+  if (!Number.isSafeInteger(dollars * 100))
+    return {
+      priced: false,
+      reason: 'cost-out-of-range',
+      groupKey: buildGroupKey(distinct.map((p) => p.id)),
+      mixKey: buildMixKey(mixFromPetTypes(distinct.map((p) => p.petType))),
+    };
   // THE single ×100 of the whole price path. Every operand above is a whole-dollar rate the
   // sitter typed; every consumer below stores or sums the result, and storage is cents (0015).
   // `dollarsToCents` throws rather than rounds, so a rate that somehow arrived fractional is a
   // loud failure here instead of a silently truncated price.
-  const cost = dollarsToCents(holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier);
+  const cost = dollarsToCents(dollars);
 
   if (service.Shape !== 'range') return { priced: true, cost, ...holidayFields(service, split) };
   return {

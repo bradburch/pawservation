@@ -50,7 +50,9 @@ import { DEMO_EMAIL } from '../lib/demo';
  * `Payments.Amount`; every function here takes them in cents and returns them in cents, and no
  * expression below scales anything. RATES a sitter types are the exception and stay whole dollars
  * (`TenantServices.*Rate`, `HolidayRate`, `EarlyArrivalFee`, `LateDepartureFee`, the pet-set rate
- * tables) — `estimateCost` is the single place a rate becomes a cost. NOTHING divides these
+ * tables) — TWO places turn one into cents, not one: `estimateCost` (a rate becomes a stay's
+ * COST) and `extraTimeSurcharges` in `server/lib/booking-times.ts` (the flat `EarlyArrivalFee`
+ * and `LateDepartureFee` become CHARGES). NOTHING divides these
  * figures back: a stored amount reaches the wire as cents in a `*Cents` field and is formatted for
  * display (`formatCents`) in the client. The `centsToWholeDollars` calls left in `server/` all
  * divide a FRESH `dollarsToCents` result, never a column read here — availability's retained
@@ -2579,13 +2581,17 @@ export async function getHouseholdBalances(
 export async function getOrphanedAccountPayments(
   db: D1Database,
   tenantId: string,
-): Promise<{ accountId: string; total: number }[]> {
+): Promise<{ accountId: string; totalCents: number }[]> {
   return (await computeHouseholdRollup(db, tenantId)).orphanedPayments;
 }
 
 type HouseholdRollup = {
   households: HouseholdBalanceRow[];
-  orphanedPayments: { accountId: string; total: number }[];
+  /** CAMELCASE AND UNIT-NAMED, like `HouseholdBalanceRow` beside it and unlike the PascalCase
+   *  aggregate rows elsewhere in this module: both are COMPUTED here rather than selected, and a
+   *  computed money field states its unit in its name so the identity
+   *  `Σ households.paidTotalCents + Σ orphanedPayments.totalCents` reads in one unit end to end. */
+  orphanedPayments: { accountId: string; totalCents: number }[];
 };
 
 async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise<HouseholdRollup> {
@@ -2684,7 +2690,7 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
     })),
     orphanedPayments: unattachedPaymentAccountIds.map((accountId) => ({
       accountId,
-      total: orphanedTotals.get(accountId) ?? 0,
+      totalCents: orphanedTotals.get(accountId) ?? 0,
     })),
   };
 }
@@ -5672,7 +5678,11 @@ export type SitterRosterRow = {
   PremiumUntil: string | null; // null = free
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
-  Earned: number; // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate
+  // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
+  // is a raw PascalCase column row, and no raw row in this module names its unit (`EstCost`,
+  // `ChargesTotal`, `PaidTotal`, `Total` are all cents too). The unit is named where the figure
+  // becomes a payload — `earnedCents`, in server/routes/owner.ts.
+  Earned: number;
 };
 
 /**

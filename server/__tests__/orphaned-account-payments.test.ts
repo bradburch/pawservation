@@ -175,7 +175,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
 
     // The row is still in Payments — the delete never touched it — so it MUST be visible somewhere.
     expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([
-      { accountId: 'p_ana', total: 25000 },
+      { accountId: 'p_ana', totalCents: 25000 },
     ]);
   });
 
@@ -239,7 +239,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_C, '2026-08-01');
     const revenue = analytics.monthly.reduce((sum, m) => sum + m.Total, 0);
     const inHouseholds = analytics.households.reduce((sum, h) => sum + h.paidTotalCents, 0);
-    const orphaned = analytics.orphanedPayments.reduce((sum, o) => sum + o.total, 0);
+    const orphaned = analytics.orphanedPayments.reduce((sum, o) => sum + o.totalCents, 0);
 
     expect(revenue).toBe(65000);
     expect(inHouseholds).toBe(40000);

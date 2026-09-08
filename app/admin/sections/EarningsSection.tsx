@@ -140,6 +140,14 @@ function HouseholdDetailPanel({ session, accountId }: { session: Session; accoun
   );
 }
 
+/** The bar caption, or `null` when it would not fit the 30-unit bar pitch at fontSize 7. Six
+ *  characters is the measured limit ("$4250" fits, "$4250.50" does not); the `<title>` on every
+ *  bar carries the exact figure regardless, so omitting the caption hides nothing. */
+function barLabel(totalCents: number): string | null {
+  const text = `$${formatCentsForKey(totalCents)}`;
+  return text.length <= 6 ? text : null;
+}
+
 /** Hand-rolled 12-bar SVG chart — no chart library (see the design's non-goals). */
 function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
   const max = Math.max(1, ...monthly.map((m) => m.totalCents));
@@ -167,13 +175,24 @@ function MonthlyChart({ monthly }: { monthly: AnalyticsPayload['monthly'] }) {
                 30-unit bar pitch, clipping at the chart's edges, so the bar caption drops the
                 grouping comma and the trailing ".00" via `formatCentsForKey` ("$4250",
                 "$4250.50"). Tiles, lists and every other figure on this page stay on
-                `formatCents`. */}
-            {m.totalCents > 0 && m.totalCents < 1_000_000 && (
+                `formatCents`.
+
+                Dropping ".00" is not enough on its own once cents exist: "$4250.50" is eight
+                glyphs and overflows the pitch exactly as "$4,250.00" did, so the caption is
+                rendered ONLY when it actually fits — six characters or fewer, which is every
+                whole-dollar figure under the threshold and every cent-bearing one up to $999.99.
+                A month that has cents AND four figures simply goes uncaptioned rather than
+                spilling across its neighbours; the bar keeps its `<title>`, so the exact total is
+                still one hover away and nothing is lost but the printed duplicate. */}
+            {m.totalCents > 0 && m.totalCents < 1_000_000 && barLabel(m.totalCents) !== null && (
               <text x={x + barW / 2} y={chartH - h - 3} textAnchor="middle" fontSize="7">
-                {`$${formatCentsForKey(m.totalCents)}`}
+                {barLabel(m.totalCents)}
               </text>
             )}
-            <rect x={x} y={chartH - h} width={barW} height={h} rx="2" />
+            <rect x={x} y={chartH - h} width={barW} height={h} rx="2">
+              {/* The full figure, always — the caption above is the one that may be dropped. */}
+              <title>{`${monthLabel(m.month)}: ${formatCents(m.totalCents)}`}</title>
+            </rect>
             <text x={x + barW / 2} y={chartH + 11} textAnchor="middle" fontSize="7">
               {monthLabel(m.month)}
             </text>
