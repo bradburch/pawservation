@@ -58,6 +58,16 @@ export type TenantUser = {
   PasswordHash: string;
 };
 
+/** One tenant access token (0016) row as its OWNER (the sitter) sees it. `TokenHash` is absent by
+ *  construction, not by omission at the route — the secret and its digest have no read path out
+ *  of `db/repo.ts`. Mirrors the end-user `PersonalAccessTokenRow` shape one for one. */
+export type TenantAccessTokenRow = {
+  Id: string;
+  Name: string;
+  CreatedAt: string;
+  LastUsedAt: string | null;
+};
+
 /** Instance-level platform-owner login row (see the owner-scope section of db/repo.ts). */
 export type OwnerUser = {
   Id: string;
@@ -450,8 +460,22 @@ export type AppEnv = {
      *  itself, which requires the widget session so a leaked token cannot mint its own
      *  replacement (`widgetSessionOnly`). */
     endUserCredential: 'widget' | 'token';
-    /** Set by adminAuth: the authenticated sitter-admin's TenantUser id (AdminClaims.sub). */
+    /** Set by adminAuth: the authenticated sitter-admin's TenantUser id — `AdminClaims.sub` for
+     *  the password session, `TenantAccessTokens.TenantUserId` for a tenant access token (0016).
+     *  The two are indistinguishable here on purpose: it is the whole of the admin context. */
     adminUserId: string;
+    /** Which sitter-admin credential `adminAuth` accepted: the 8-hour password session token from
+     *  POST /api/admin/login, or a tenant access token (0016). Routes must NOT branch on this —
+     *  both resolve to the same TenantUser and confer identical authority — with the single
+     *  exception of token management itself, which requires the password session so a leaked
+     *  token cannot mint its own replacement (`adminSessionOnly`). */
+    adminCredential: 'password' | 'token';
+    /** Set by adminAuth ONLY on the tenant-access-token branch: `TenantAccessTokens.Id` of the
+     *  credential that was presented; unset for a password session. Read by exactly one route —
+     *  the DELETE that lets a token revoke ITSELF (`routes/tenant-tokens.ts`), which is
+     *  de-amplifying and so sits inside the carve-out rather than against it. Nothing else may
+     *  branch on it. */
+    adminTokenId: string;
     /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
     ownerEmail: string;
   };

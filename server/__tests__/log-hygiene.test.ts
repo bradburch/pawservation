@@ -3,6 +3,7 @@ import app from '../index';
 import { sendSitterInvite } from '../lib/email';
 import { insertInvitedCustomer } from '../db/repo';
 import { reconcileIfStale } from '../lib/calendar-sync';
+import { hashPersonalAccessToken } from '../lib/personal-access-token';
 import { mintToken } from '../lib/token';
 import { createTestEnv, endUserToken, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
@@ -101,6 +102,29 @@ describe('credential refusals are reported, without reporting the credential', (
     const line = warn.mock.calls.map((c) => JSON.stringify(c)).join('\n');
     expect(line).toContain('personal_access_token_rejected');
     expect(line).not.toContain('deadbeef');
+  });
+
+  it('warns when a tenant access token is rejected, and never logs the token', async () => {
+    const { env } = createTestEnv();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const presented = 'pawsa_cafebabecafebabecafebabecafebabe';
+
+    const res = await app.request(
+      '/api/sunny-paws/admin/settings',
+      { headers: { Authorization: `Bearer ${presented}` } },
+      env,
+    );
+
+    expect(res.status).toBe(401);
+    const line = warn.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    // Its own event name, not the end-user one: the two prefixes exist so a token-walk against
+    // the sitter's whole book is distinguishable from one against a single customer's bookings.
+    expect(line).toContain('tenant_access_token_rejected');
+    expect(line).not.toContain('personal_access_token_rejected');
+    // Not the string, not a prefix of it, not its digest.
+    expect(line).not.toContain(presented);
+    expect(line).not.toContain('cafebabe');
+    expect(line).not.toContain(await hashPersonalAccessToken(presented));
   });
 });
 
@@ -267,6 +291,29 @@ describe('security events are bounded in volume and joinable to the other worker
     const line = warn.mock.calls.map((c) => JSON.stringify(c)).join('\n');
     expect(line).toContain('7a6b5c4d3e2f1a0b-IAD');
     expect(line).toContain('GET');
+  });
+
+  /** The same for the sitter-side refusal, which is a different middleware branch. */
+  it('carries the ray and the method on a rejected tenant access token', async () => {
+    const { env } = createTestEnv();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await app.request(
+      '/api/sunny-paws/admin/settings',
+      {
+        headers: {
+          Authorization: 'Bearer pawsa_cafebabecafebabecafebabecafebabe',
+          'CF-Ray': '1b2c3d4e5f60718a-LHR',
+        },
+      },
+      env,
+    );
+
+    const line = warn.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    expect(line).toContain('tenant_access_token_rejected');
+    expect(line).toContain('1b2c3d4e5f60718a-LHR');
+    expect(line).toContain('GET');
+    expect(line).toContain('/api/sunny-paws/admin/settings');
   });
 });
 

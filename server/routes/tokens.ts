@@ -5,6 +5,9 @@
  * surface here on purpose — a sitter must not be able to mint a credential that acts as one of
  * her clients, and nothing about these tokens is hers to manage.
  *
+ * @see server/routes/tenant-tokens.ts for the mirror on the sitter's own side (0016) — a
+ * deliberately separate file with its own carve-out, not a variant of this one.
+ *
  * WHY THE PRODUCT NEEDS THIS AT ALL: `lib/llms.ts` publishes, for every tenant, exactly how to
  * check availability, quote, book, change and cancel — and each of those endpoints requires
  * `endUserAuth`. Until now the only credential that satisfied it was a 24-hour widget JWT minted

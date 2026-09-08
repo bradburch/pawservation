@@ -123,6 +123,18 @@ export default function App() {
       <p>
         {isReset ? 'Resetting the password for' : 'Setting up'} <strong>{payload.email}</strong>
       </p>
+      {/* A reset is what someone does when they think their access is compromised, so the server
+          revokes every access token this login has issued (server/routes/password-reset.ts). Said
+          here because it is the one place the sitter is looking: a script that stops working
+          tomorrow with no explanation is worse than one she was told would stop. Future tense —
+          this paragraph is on the FORM, read before the reset happens, and there is no
+          confirmation screen afterwards to say it in the past. */}
+      {isReset && sitter && (
+        <p className="pb-hint">
+          Completing this will revoke any access tokens you created. Anything signing in with one
+          will need a new token from Settings afterwards.
+        </p>
+      )}
       {!isReset && sitter && (
         <label>
           Business name

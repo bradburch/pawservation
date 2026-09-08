@@ -16,6 +16,7 @@ import type {
   ProviderConnection,
   ProviderConnectionWithTokens,
   Tenant,
+  TenantAccessTokenRow,
   TenantPetTypeRow,
   TenantService,
   TenantServiceOption,
@@ -4474,6 +4475,173 @@ export async function revokePersonalAccessToken(
   return ((result.meta as { changes?: number }).changes ?? 0) > 0;
 }
 
+// A credential a SITTER issues to HERSELF (0016), the mirror of the PersonalAccessTokens block
+// above for the admin side: `adminAuth` accepts one wherever it accepts the admin session JWT,
+// with identical authority. Only a SHA-256 of the token is ever stored; the reasoning (shared with
+// the end-user token, not forked) lives in server/lib/personal-access-token.ts.
+// Every query below binds TenantId: there is deliberately no way to look a token up globally.
+
+/**
+ * Stores a new token's hash and returns the created row (minus `TokenHash`). The plaintext never
+ * reaches this layer. `CreatedAt` comes back off the same INSERT via `RETURNING` so the caller
+ * never needs a second read to report it.
+ *
+ * THE PER-SITTER CAP IS IN THIS STATEMENT, not in the route, and that is the whole point of its
+ * shape. `INSERT … SELECT … WHERE (SELECT COUNT(*) …) < ?` counts and inserts as ONE statement, so
+ * two mints racing at `maxLive - 1` cannot both read "there is room" and both write: SQLite
+ * evaluates the subquery against the state the insert is applying to. A count in the route
+ * followed by an insert can, and the window is exactly as wide as the round trip between them.
+ *
+ * Returns `null` when the cap turned the insert away — nothing was written, and the caller answers
+ * 409. That is deliberately not an exception: being at the cap is an ordinary thing for a sitter's
+ * account to be, not a fault.
+ */
+export async function createTenantAccessToken(
+  db: D1Database,
+  tenantId: string,
+  args: { tenantUserId: string; name: string; tokenHash: string; maxLive: number },
+): Promise<{ Id: string; Name: string; CreatedAt: string } | null> {
+  const id = crypto.randomUUID();
+  const row = await db
+    .prepare(
+      `INSERT INTO TenantAccessTokens (Id, TenantId, TenantUserId, Name, TokenHash)
+            SELECT ?, ?, ?, ?, ?
+             WHERE (SELECT COUNT(*)
+                      FROM TenantAccessTokens
+                     WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL) < ?
+       RETURNING CreatedAt`,
+    )
+    .bind(
+      id,
+      tenantId,
+      args.tenantUserId,
+      args.name,
+      args.tokenHash,
+      tenantId,
+      args.tenantUserId,
+      args.maxLive,
+    )
+    .first<{ CreatedAt: string }>();
+  // No row means the WHERE was false: the sitter is at her cap and nothing was inserted. Told
+  // apart from "the write came back empty" only by there being no other way for this statement to
+  // return nothing — which is why the cap is the ONLY condition in that WHERE.
+  return row ? { Id: id, Name: args.name, CreatedAt: row.CreatedAt } : null;
+}
+
+/** This sitter's LIVE tokens, newest first. A revoked token is gone from their list — the row
+ *  survives (see the schema) but it is no longer something they can act on. */
+export async function listTenantAccessTokens(
+  db: D1Database,
+  tenantId: string,
+  tenantUserId: string,
+): Promise<TenantAccessTokenRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT Id, Name, CreatedAt, LastUsedAt
+         FROM TenantAccessTokens
+        WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL
+        ORDER BY CreatedAt DESC, Id DESC`,
+    )
+    .bind(tenantId, tenantUserId)
+    .all<TenantAccessTokenRow>();
+  return results ?? [];
+}
+
+/**
+ * THE AUTHENTICATION LOOKUP: one indexed read on (TenantId, TokenHash), which is the whole cost of
+ * authenticating a token request. `RevokedAt IS NULL` is in the WHERE clause rather than checked
+ * by the caller, so a revoked token is refused by the same query that would otherwise have found
+ * it — there is no window in which some other code path could forget the check.
+ *
+ * TenantId is bound, so a token minted under one sitter simply does not exist under another —
+ * Model A holding by construction, exactly as `findLivePersonalAccessToken` argues.
+ */
+export async function findLiveTenantAccessToken(
+  db: D1Database,
+  tenantId: string,
+  tokenHash: string,
+): Promise<{ Id: string; TenantUserId: string; LastUsedAt: string | null } | null> {
+  return await db
+    .prepare(
+      `SELECT Id, TenantUserId, LastUsedAt
+         FROM TenantAccessTokens
+        WHERE TenantId = ? AND TokenHash = ? AND RevokedAt IS NULL`,
+    )
+    .bind(tenantId, tokenHash)
+    .first<{ Id: string; TenantUserId: string; LastUsedAt: string | null }>();
+}
+
+/** Stamps a token as used now. Called only when the stamp is actually stale (see
+ *  `shouldRefreshLastUsed`) and only off the response path, so the ordinary request writes nothing.
+ *  Two concurrent uses may both write; they write the same minute, and last-writer-wins is right.
+ *
+ *  `RevokedAt IS NULL` is in the WHERE clause because the write is deferred: the request that
+ *  authenticated may have been the one that revoked this very token, and a touch landing after
+ *  that would move `LastUsedAt` forward on a dead row — a revoked credential appearing to have
+ *  been used after it was cut off is the one thing this column must never say. */
+export async function touchTenantAccessToken(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE TenantAccessTokens SET LastUsedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ? AND RevokedAt IS NULL`,
+    )
+    .bind(tenantId, id)
+    .run();
+}
+
+/**
+ * Revokes one of this sitter's OWN tokens. Scoped by TenantUserId as well as TenantId, so one
+ * admin can neither revoke nor probe for another admin's token — a stranger's id is
+ * indistinguishable from a nonexistent one, which is what the route's 404 says.
+ *
+ * `COALESCE` keeps the FIRST revocation's timestamp, so revoking twice is idempotent and does not
+ * rewrite history; SQLite still counts the row as changed, so a second call reports success rather
+ * than a confusing 404 for a token the caller can plainly see is already dead. Returns false only
+ * when no such token belongs to this sitter.
+ */
+export async function revokeTenantAccessToken(
+  db: D1Database,
+  tenantId: string,
+  tenantUserId: string,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE TenantAccessTokens SET RevokedAt = COALESCE(RevokedAt, datetime('now'))
+        WHERE TenantId = ? AND TenantUserId = ? AND Id = ?`,
+    )
+    .bind(tenantId, tenantUserId, id)
+    .run();
+  return ((result.meta as { changes?: number }).changes ?? 0) > 0;
+}
+
+/**
+ * Revokes EVERY live token this sitter holds, in one statement. Called by the password reset
+ * (`routes/password-reset.ts`): a reset is what someone does when they believe their access is
+ * compromised, and a long-lived credential that survived it would mean the reset settled nothing —
+ * whoever held the token still has the whole book, and the sitter has no reason to suspect it.
+ *
+ * `COALESCE` for the same reason the single-token revoke uses it: an already-revoked row keeps its
+ * first revocation timestamp rather than having history rewritten by an unrelated reset.
+ */
+export async function revokeAllTenantAccessTokensForUser(
+  db: D1Database,
+  tenantId: string,
+  tenantUserId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE TenantAccessTokens SET RevokedAt = COALESCE(RevokedAt, datetime('now'))
+        WHERE TenantId = ? AND TenantUserId = ?`,
+    )
+    .bind(tenantId, tenantUserId)
+    .run();
+}
+
 export async function getEndUserByEmail(
   db: D1Database,
   tenantId: string,
@@ -5828,6 +5996,8 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
     db.prepare('DELETE FROM TenantServices WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantPetTypes WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM ProviderConnections WHERE TenantId = ?').bind(tenantId),
+    // A tenant access token (0016) FKs to TenantUsers, so it must go before that delete.
+    db.prepare('DELETE FROM TenantAccessTokens WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM TenantUsers WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM AllowedSitters WHERE TenantId = ?').bind(tenantId),
     db.prepare('DELETE FROM Tenants WHERE Id = ?').bind(tenantId),

@@ -868,6 +868,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         dirty={dirty}
         saveBlocked={unpricedService !== undefined}
         onSave={save}
+        handleError={handle}
       />
     ),
     pets: (

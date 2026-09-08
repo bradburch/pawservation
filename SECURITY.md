@@ -36,6 +36,14 @@ Security-relevant areas include:
   development placeholder in production. The Worker refuses to serve (HTTP 503) when
   `TOKEN_SECRET` is unset or left at the known insecure default.
 - Rotate `TOKEN_SECRET` if you suspect exposure (note: this invalidates all active sessions).
+  Rotation does **not** touch the two database-backed credentials — a pet owner's personal access
+  token (`pawsv_`) and a sitter's tenant access token (`pawsa_`) are random secrets matched by
+  stored digest, not signatures over the secret, so every one of them keeps working across a
+  rotation. Revoke those from their own lists: a customer from the booking page's token list, a
+  sitter from Settings → Business → Access tokens. Two things revoke a sitter's automatically —
+  the owner disabling the account (a token is refused outright for a disabled tenant, reads
+  included), and the sitter completing a password reset (which revokes every token that login
+  issued).
 - Bind only the dedicated D1/KV resources for this app; never bind unrelated production
   resources.
 
@@ -50,6 +58,13 @@ account and by nobody else. Two channels:
 - `console.warn('security', { event, … })` — a credential was refused or a cap was hit
   (`lib/log.ts`). Separate from errors on purpose: these want a different alert, and mixing them
   means the interesting one is buried under calendar-sync noise.
+
+Two credentials outlive a session by design, so something other than a signed-in browser can keep
+working: the end-user personal access token (`pawsv_`) and the sitter's tenant access token
+(`pawsa_`), both in `server/lib/personal-access-token.ts`, mirroring each other decision for
+decision. Presenting an unknown, revoked, or another tenant's one is logged as
+`personal_access_token_rejected` or `tenant_access_token_rejected` — the credential kind, never
+the credential.
 
 A tripped cap is reported once per window rather than once per refused request: the limiter exists
 to make abusive traffic cheap, and a line per refusal hands an unauthenticated caller a dial on how
@@ -76,8 +91,11 @@ customer data** beyond demos:
   arrives in Phase 2; until then, end-user email verification provides no real assurance and
   anyone who knows an email can obtain a session for it.
 - **No rate limiting / lockout on authentication endpoints.** Admin password login and
-  end-user code verification accept unlimited attempts. Add Cloudflare Rate Limiting (or a KV
-  attempt counter) before any real-data deployment.
+  end-user code verification accept unlimited attempts. The Bearer access-token path
+  (`pawsv_`/`pawsa_`) is deliberately unlimited too: the secrets carry 256 bits of entropy, so
+  online guessing is irrelevant, but the accepted cost is that a caller walking token strings
+  generates an unbounded number of rejection lines. Add Cloudflare Rate Limiting (or a KV attempt
+  counter) before any real-data deployment.
 - **Booking confirmation is check-then-insert without a transaction**, so two concurrent
   requests can both pass the availability check and slightly overbook a day. A
   Durable-Object-per-tenant serialization will close this in a later phase.
