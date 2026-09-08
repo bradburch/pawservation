@@ -12,7 +12,7 @@ describe('BookingRequestPets repo', () => {
       endDate: '2026-08-03',
       optionKey: 'standard',
       petCount: 2,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     await addBookingPets(env.PAWSERVATION_DB, TENANT_A, bookingId, [
@@ -36,7 +36,7 @@ describe('BookingRequestPets repo', () => {
       endDate: '2026-08-07',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     // pet_ht_otis belongs to TENANT_B; the guarded insert must write nothing for it.

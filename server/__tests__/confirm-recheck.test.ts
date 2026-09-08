@@ -134,7 +134,7 @@ describe('confirm re-checks the committed calendar', () => {
     expect(await res.json()).toEqual({
       status: 'confirmed',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(statusOf(raw, bella)).toBe('confirmed');
   });

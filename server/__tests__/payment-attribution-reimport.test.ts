@@ -14,6 +14,7 @@ import {
 } from '../lib/payment-attribution';
 import app from '../index';
 import { adminHeaders, createTestEnv, seedPets } from './helpers';
+import { dollarsToCents } from '../../src/shared/index.js';
 
 /**
  * THE IDEMPOTENCY KEY MUST SURVIVE ATTRIBUTION. Both importers dedupe by exact set membership on
@@ -84,6 +85,8 @@ async function household(env: Env, raw: DatabaseSync): Promise<Household> {
   return { ownerId: owner.Id, accountId: petIds[0], petIds };
 }
 
+/** `estCost` is WHOLE DOLLARS and is converted here — the column is cents (0015). Everything
+ *  else in this file that touches the repo directly says its own unit at the call site. */
 async function book(env: Env, home: Household, estCost: number): Promise<string> {
   const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_C, {
     endUserId: home.ownerId,
@@ -92,7 +95,7 @@ async function book(env: Env, home: Household, estCost: number): Promise<string>
     endDate: '2026-03-06',
     optionKey: 'standard',
     petCount: 1,
-    estCost,
+    estCost: dollarsToCents(estCost),
     status: 'confirmed',
   });
   await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, home.petIds);
@@ -169,7 +172,7 @@ describe('re-import of the source file after attribution', () => {
     const choices = [{ txnId: TXN_ID, accountId: home.accountId }];
 
     expect(await (await post(env, 'payments/venmo/import', { csv: VENMO_CSV, choices })).json()) //
-      .toEqual({ imported: 1, totalAmount: 200, skipped: [] });
+      .toEqual({ imported: 1, totalAmountCents: 20000, skipped: [] });
 
     // The sitter then places that credit: $150 onto the stay, $50 left as household credit.
     const credit = soleCredit(raw);
@@ -177,12 +180,13 @@ describe('re-import of the source file after attribution', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId: credit.Id,
         accountId: home.accountId,
-        splits: [{ bookingId: stay, amount: 150 }],
-        remainder: 50,
+        // Cents on both sides now — the repo's own unit and the importer wire's alike.
+        splits: [{ bookingId: stay, amount: 15000 }],
+        remainder: 5000,
       }),
     ).toEqual({ ok: true });
     const before = ledger(raw);
-    expect(before).toMatchObject({ rows: 2, total: 200 });
+    expect(before).toMatchObject({ rows: 2, total: 20000 }); // SUM(Amount): cents
 
     // Same export, uploaded again — the preview must still call it already imported…
     const preview = (await (
@@ -197,7 +201,7 @@ describe('re-import of the source file after attribution', () => {
 
     expect(ledger(raw)).toEqual(before);
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
-    expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotal).toBe(150);
+    expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotalCents).toBe(15000); // cents
   });
 
   it('creates nothing through the CSV importer, on an overlapping later export', async () => {
@@ -213,7 +217,7 @@ describe('re-import of the source file after attribution', () => {
           defaultMethod: 'venmo',
         })
       ).json()) as {
-        matched: { dedupeKey: string; amount: number; accountId: string | null }[];
+        matched: { dedupeKey: string; amountCents: number; accountId: string | null }[];
         alreadyImported: { dedupeKey: string }[];
       };
 
@@ -228,19 +232,20 @@ describe('re-import of the source file after attribution', () => {
           choices: [{ dedupeKey: marchKey, accountId: home.accountId }],
         })
       ).json(),
-    ).toEqual({ imported: 1, totalAmount: 200, skipped: [] });
+    ).toEqual({ imported: 1, totalAmountCents: 20000, skipped: [] });
 
     const credit = soleCredit(raw);
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId: credit.Id,
         accountId: home.accountId,
-        splits: [{ bookingId: stay, amount: 150 }],
-        remainder: 50,
+        // Cents on both sides now — the repo's own unit and the importer wire's alike.
+        splits: [{ bookingId: stay, amount: 15000 }],
+        remainder: 5000,
       }),
     ).toEqual({ ok: true });
     const before = ledger(raw);
-    expect(before).toMatchObject({ rows: 2, total: 200 });
+    expect(before).toMatchObject({ rows: 2, total: 20000 }); // SUM(Amount): cents
 
     // July: the six-month export, which contains March's row unchanged plus one genuinely new one.
     const wide = await previewCsv(CSV_JAN_JUN);
@@ -263,11 +268,11 @@ describe('re-import of the source file after attribution', () => {
       ).json(),
     ).toMatchObject({
       imported: 1,
-      totalAmount: 75,
+      totalAmountCents: 7500,
       skipped: [{ dedupeKey: marchKey, reason: 'Already imported' }],
     });
 
     // The household gained exactly the $75 that is genuinely new, and not one cent of March again.
-    expect(ledger(raw)).toEqual({ rows: before.rows + 1, total: before.total + 75 });
+    expect(ledger(raw)).toEqual({ rows: before.rows + 1, total: before.total + 7500 }); // cents
   });
 });

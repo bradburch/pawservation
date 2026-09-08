@@ -1,6 +1,6 @@
 /**
- * Venmo CSV import: turning the file a sitter downloads from Venmo into whole-dollar payments that
- * can be proposed against the households they came from (Story 2.5, 0011).
+ * Venmo CSV import: turning the file a sitter downloads from Venmo into payments — in CENTS, to
+ * the cent — that can be proposed against the households they came from (Story 2.5, 0011).
  *
  * PURE. No D1, no env, no fetch — every function here takes plain data and returns plain data, so
  * `server/db/repo.ts` remains the only module that touches the database.
@@ -12,7 +12,7 @@
  * The format (verified against a real export):
  *  - two preamble rows, then a header row, and a LEADING EMPTY COLUMN on every row;
  *  - balance and disclaimer rows top and tail the transactions, marked by a blank `Datetime`;
- *  - `Amount (total)` looks like "+ $45.00" / "- $885.00";
+ *  - `Amount (total)` looks like "+ $45.50" / "- $885.00";
  *  - Venmo's own column alignment drifts (a real file puts "Venmo balance" under `Destination`
  *    rather than `Funding Source`), so every column is looked up BY HEADER NAME, never by index;
  *  - `From` is the payer's DISPLAY NAME, not their @handle — hence `EndUsers.VenmoUsername` is
@@ -78,7 +78,7 @@ export type VenmoTxn = {
   status: string;
   note: string;
   from: string; // the payer's Venmo display name, sanitized
-  amount: number; // whole dollars, always positive (incoming only)
+  amountCents: number; // CENTS (0015), always positive (incoming only)
 };
 
 export type VenmoProblem = { row: number; reason: string };
@@ -164,7 +164,7 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
       // sanitizeCell's formula-injection apostrophe and misquote the very value being reported.
       problems.push({
         row,
-        reason: `Couldn’t read the amount "${cell(idx.amount).trim()}" — Pawservation records whole dollars`,
+        reason: `Couldn’t read the amount "${cell(idx.amount).trim()}"`,
       });
       continue;
     }
@@ -185,7 +185,9 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
       status,
       note: sanitizeCell(cell(idx.note)).slice(0, MAX_VENMO_NOTE),
       from: sanitizeCell(cell(idx.from)),
-      amount: amount.dollars,
+      // Cents, straight from `parseAmount` — the unit `insertAccountPayment` stores (0015), and
+      // now the unit the preview reports too. A "+ $45.50" row is 4550 all the way through.
+      amountCents: amount.cents,
     });
   }
 
@@ -198,7 +200,8 @@ export function parseVenmoCsv(text: string): VenmoParseResult {
 export type PreviewRow = {
   txnId: string;
   date: string;
-  amount: number;
+  /** CENTS (0015) — this row is emitted on the wire as-is, so the name carries the unit. */
+  amountCents: number;
   from: string;
   note: string;
 };
@@ -245,7 +248,7 @@ export function matchVenmoTxns(input: {
     const row: PreviewRow = {
       txnId: txn.txnId,
       date: txn.date,
-      amount: txn.amount,
+      amountCents: txn.amountCents,
       from: txn.from,
       note: txn.note,
     };

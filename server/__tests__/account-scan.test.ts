@@ -88,10 +88,11 @@ async function measureAccountRead(bookingsEach: number): Promise<Counts & { body
   const { env, raw } = createTestEnv();
   const me = await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_C, 'me@example.com', 'Me');
   seedPets(raw, TENANT_C, me.Id, [{ id: 'p_mine', petType: 'dog' }]);
-  await book(env, me.Id, ['p_mine'], 100);
+  // Repo seeds, so CENTS (0015) — the unit the route now answers in too.
+  await book(env, me.Id, ['p_mine'], 10000);
   await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
     accountId: 'p_mine',
-    amount: 40,
+    amount: 4000,
     method: 'venmo',
     paidDate: '2026-07-01',
     note: null,
@@ -106,7 +107,7 @@ async function measureAccountRead(bookingsEach: number): Promise<Counts & { body
       `Other ${i}`,
     );
     seedPets(raw, TENANT_C, other.Id, [{ id: `p_other${i}`, petType: 'dog' }]);
-    for (let b = 0; b < bookingsEach; b++) await book(env, other.Id, [`p_other${i}`], 200);
+    for (let b = 0; b < bookingsEach; b++) await book(env, other.Id, [`p_other${i}`], 20000);
   }
 
   // Token minted BEFORE the counter is attached: the login flow is not what is being measured.
@@ -128,7 +129,7 @@ describe('GET /:slug/account reads one household, not the whole tenant', () => {
 
     // The answer itself is unchanged — this is the same balance either way. (Payment ids are
     // random per fixture, so the money is compared, not the row identities.)
-    const money = { expectedTotal: 100, paidTotal: 40, balance: 60 };
+    const money = { expectedTotalCents: 10000, paidTotalCents: 4000, balanceCents: 6000 };
     expect(quiet.body).toMatchObject(money);
     expect(busy.body).toMatchObject(money);
 

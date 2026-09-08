@@ -27,8 +27,8 @@ describe('booking flow', () => {
       env,
     );
     expect(bookRes.status).toBe(201);
-    const booked = (await bookRes.json()) as { id: string; estCost: number; status: string };
-    expect(booked.estCost).toBe(250); // $50/night × 5 nights
+    const booked = (await bookRes.json()) as { id: string; estCostCents: number; status: string };
+    expect(booked.estCostCents).toBe(25000); // $50/night × 5 nights
     expect(booked.status).toBe('pending');
 
     const mineRes = await app.request(
@@ -289,8 +289,8 @@ describe('booking flow', () => {
       env,
     );
     expect(bookRes.status).toBe(201);
-    const booked = (await bookRes.json()) as { id: string; estCost: number; status: string };
-    expect(booked.estCost).toBe(35); // d60 walk = $35/visit
+    const booked = (await bookRes.json()) as { id: string; estCostCents: number; status: string };
+    expect(booked.estCostCents).toBe(3500); // d60 walk = $35/visit
     expect(booked.status).toBe('pending');
 
     const row = raw

@@ -164,13 +164,15 @@ export const ownerRoutes = new Hono<AppEnv>()
       premiumUntil: r.PremiumUntil,
       clients: r.Clients,
       bookings: r.Bookings,
-      earned: r.Earned,
+      // `Earned` is the raw column sum, in CENTS (0015), and the wire says so (design spec §2).
+      // Nothing is divided here, so the TOTAL below is just the sum of these same integers.
+      earnedCents: r.Earned,
     }));
     const totals = {
       sitters: sitters.length,
       clients: sitters.reduce((s, r) => s + r.clients, 0),
       bookings: sitters.reduce((s, r) => s + r.bookings, 0),
-      earned: sitters.reduce((s, r) => s + r.earned, 0),
+      earnedCents: sitters.reduce((s, r) => s + r.earnedCents, 0),
     };
     return c.json({ window, totals, sitters });
   })

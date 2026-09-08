@@ -82,7 +82,7 @@ describe('POST /:slug/admin/payments/csv/preview', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      matched: { dedupeKey: string; accountId: string; amount: number; clientLabel: string }[];
+      matched: { dedupeKey: string; accountId: string; amountCents: number; clientLabel: string }[];
       unmatched: { dedupeKey: string; reason: string }[];
       alreadyImported: { dedupeKey: string }[];
       problems: unknown[];
@@ -93,9 +93,12 @@ describe('POST /:slug/admin/payments/csv/preview', () => {
     expect(body.matched.find((m) => m.dedupeKey === 'csv:REF1')).toMatchObject({
       dedupeKey: 'csv:REF1',
       accountId: 'pet_sp_bella',
-      amount: 45,
+      // CENTS on the wire (0015) — the preview divides nothing on its way out any more.
+      amountCents: 4500,
       clientLabel: 'Jess Demo',
     });
+    // The dollar-named field is REMOVED, not aliased: nothing can read 4500 as $4,500.
+    expect(body.matched.find((m) => m.dedupeKey === 'csv:REF1')).not.toHaveProperty('amount');
     // NOTHING is written by a preview.
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
   });
@@ -229,7 +232,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       choices,
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ imported: 1, totalAmount: 45, skipped: [] });
+    expect(await res.json()).toEqual({ imported: 1, totalAmountCents: 4500, skipped: [] });
     const row = raw
       .prepare(
         'SELECT BookingRequestId, AccountId, Amount, Method, PaidDate, ExternalRef FROM Payments',
@@ -238,11 +241,49 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     expect(row).toMatchObject({
       BookingRequestId: null,
       AccountId: 'pet_sp_bella',
-      Amount: 45,
+      Amount: 4500, // the COLUMN — the same cents `totalAmountCents` above reports
       Method: 'cash',
       PaidDate: '2026-07-01',
       ExternalRef: 'csv:REF1',
     });
+  });
+
+  it('records a fractional row exactly — $45.50 stays $45.50', async () => {
+    const { env, raw } = createTestEnv();
+    // The row the mapped-CSV importer used to refuse outright, now the ordinary case.
+    const csv = ['Date,Amount,Payer,Reference', '2026-07-01,45.50,Jess Demo,REF9'].join('\n');
+    const res = await post(env, 'payments/csv/import', {
+      csv,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:REF9', accountId: 'pet_sp_bella' }],
+    });
+    expect(await res.json()).toEqual({ imported: 1, totalAmountCents: 4550, skipped: [] });
+    expect(raw.prepare('SELECT Amount FROM Payments').get()).toMatchObject({ Amount: 4550 });
+  });
+
+  /**
+   * THE CEILING, ON A FIGURE THE SITTER DID NOT TYPE. An importer reads amounts out of a file, so
+   * `MAX_AMOUNT_CENTS` ($1,000,000) is the only thing between a malformed or misparsed line and a
+   * ledger row that poisons every balance it reaches. Skipped with a reason like every other
+   * per-row refusal here, never a 400 for the whole import — one bad line in a bank export must
+   * not cost the sitter the two hundred good ones beside it.
+   */
+  it('skips a row over the $1,000,000 ceiling with a reason, and writes nothing for it', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = ['Date,Amount,Payer,Reference', '2026-07-01,2000000.00,Jess Demo,REF9'].join('\n');
+    const res = await post(env, 'payments/csv/import', {
+      csv,
+      mapping: MAPPING,
+      defaultMethod: 'cash',
+      choices: [{ dedupeKey: 'csv:REF9', accountId: 'pet_sp_bella' }],
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      imported: 0,
+      skipped: [{ dedupeKey: 'csv:REF9', reason: 'That amount is not one this ledger can record' }],
+    });
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 0 });
   });
 
   it('is idempotent: re-running the identical import records nothing the second time', async () => {
@@ -276,14 +317,14 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       defaultMethod: 'cash',
       choices: [{ dedupeKey: 'csv:REF2', accountId: 'pet_sp_bella' }],
     });
-    expect(await res.json()).toEqual({ imported: 1, totalAmount: 20, skipped: [] });
+    expect(await res.json()).toEqual({ imported: 1, totalAmountCents: 2000, skipped: [] });
     // Every figure is still the SERVER's own reading of the file — only the household came from
     // the browser.
     expect(
       raw.prepare('SELECT AccountId, Amount, PaidDate, ExternalRef FROM Payments').get(),
     ).toMatchObject({
       AccountId: 'pet_sp_bella',
-      Amount: 20,
+      Amount: 2000, // cents in the column
       PaidDate: '2026-07-02',
       ExternalRef: 'csv:REF2',
     });
@@ -305,10 +346,10 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       // Jess Demo's row (REF1) auto-matched to pet_sp_bella; the sitter overrode it.
       choices: [{ dedupeKey: 'csv:REF1', accountId: otherPet }],
     });
-    expect(await res.json()).toMatchObject({ imported: 1, totalAmount: 45, skipped: [] });
+    expect(await res.json()).toMatchObject({ imported: 1, totalAmountCents: 4500, skipped: [] });
     expect(raw.prepare('SELECT AccountId, Amount FROM Payments').get()).toMatchObject({
       AccountId: otherPet,
-      Amount: 45,
+      Amount: 4500, // cents in the column
     });
   });
 
@@ -380,7 +421,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       defaultMethod: 'cash',
       choices: dupeChoices,
     });
-    expect(await res.json()).toMatchObject({ imported: 2, totalAmount: 30, skipped: [] });
+    expect(await res.json()).toMatchObject({ imported: 2, totalAmountCents: 3000, skipped: [] });
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 2 });
   });
 
@@ -400,7 +441,7 @@ describe('POST /:slug/admin/payments/csv/import', () => {
     });
     expect(await res.json()).toMatchObject({
       imported: 1,
-      totalAmount: 45,
+      totalAmountCents: 4500,
       skipped: [{ dedupeKey: 'csv:REF1', reason: 'Already imported' }],
     });
     expect(raw.prepare('SELECT COUNT(*) AS n FROM Payments').get()).toMatchObject({ n: 1 });
@@ -412,11 +453,13 @@ describe('POST /:slug/admin/payments/csv/import', () => {
       csv: CSV,
       mapping: MAPPING,
       defaultMethod: 'cash',
-      choices: [{ dedupeKey: 'csv:REF1', accountId: 'pet_sp_bella', amount: 9999 }],
+      choices: [
+        { dedupeKey: 'csv:REF1', accountId: 'pet_sp_bella', amount: 9999, amountCents: 9999 },
+      ],
     });
-    expect(await res.json()).toMatchObject({ imported: 1, totalAmount: 45, skipped: [] });
+    expect(await res.json()).toMatchObject({ imported: 1, totalAmountCents: 4500, skipped: [] });
     const row = raw.prepare('SELECT Amount FROM Payments').get();
-    expect(row).toMatchObject({ Amount: 45 });
+    expect(row).toMatchObject({ Amount: 4500 }); // cents in the column
   });
 
   it('400s a malformed choices array, writing nothing', async () => {

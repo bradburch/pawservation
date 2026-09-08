@@ -19,7 +19,9 @@ const notice = (over: Partial<CancellationNotice> = {}): CancellationNotice => (
   serviceLabel: 'Boarding',
   whenText: '2030-03-01 – 2030-03-04',
   wasConfirmed: true,
-  cancellationFee: 100,
+  // CENTS (0015) — `CancellationNotice.cancellationFee` is the STORED figure; the template
+  // prints it with `formatCents` ($100.00), never re-derived or rounded to whole dollars.
+  cancellationFee: 10000,
   ...over,
 });
 
@@ -54,7 +56,7 @@ describe('sendCancellationNoticeToSitter', () => {
       expect(body.text).toContain(part);
     }
     expect(body.html).toContain('cancelled a confirmed booking');
-    expect(body.html).toContain('Cancellation fee: $100');
+    expect(body.html).toContain('Cancellation fee: $100.00');
     expect(body.html).toContain('on behalf of Sunny Paws');
   });
 
@@ -179,7 +181,7 @@ async function seedBooking(
     endDate: addDays(start, 2),
     optionKey: 'standard',
     petCount: 1,
-    estCost: 200,
+    estCost: 20000, // repo seed: cents
     status: over.status ?? 'confirmed',
   });
 }
@@ -221,7 +223,7 @@ describe('the cancel route notifies the sitter', () => {
     expect(body.to).toBe('hello@sunnypaws.example');
     expect(body.from).toBe('Pawservation <booking@x.com>');
     expect(body.subject).toContain('Cancelled: Boarding for Jess Demo');
-    expect(body.html).toContain('Cancellation fee: $100'); // the STORED fee
+    expect(body.html).toContain('Cancellation fee: $100.00'); // the STORED fee
     expect(body.html).toContain('jess@example.com');
   });
 
@@ -278,13 +280,13 @@ describe('the cancel route notifies the sitter', () => {
 
     const res = await cancel(env, id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 10000 });
     const row = (await env.PAWSERVATION_DB.prepare(
       'SELECT Status, CancellationFee FROM BookingRequests WHERE Id = ?',
     )
       .bind(id)
       .first()) as { Status: string; CancellationFee: number };
-    expect(row).toMatchObject({ Status: 'cancelled', CancellationFee: 100 });
+    expect(row).toMatchObject({ Status: 'cancelled', CancellationFee: 10000 }); // the column
   });
 
   it('a Resend 500 does not fail the cancellation either', async () => {

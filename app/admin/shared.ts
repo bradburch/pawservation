@@ -146,11 +146,13 @@ export type SettingsPayload = {
 };
 
 /**
- * What a client owes on a booking: the stay price (or, on a cancelled row, the assessed
- * cancellation fee) PLUS every extra charge. The single balance rule for the admin app —
+ * What a client owes on a booking IN CENTS (0015): the stay price (or, on a cancelled row, the
+ * assessed cancellation fee) PLUS every extra charge. The single balance rule for the admin app —
  * BookingsSection's row summary and the Earnings outstanding table must not each invent one.
  *
- * `estCost` is NEVER mutated by a charge. The quote promised a price; extras are separate line
+ * Every term is cents, so the one addition here is cents + cents; nothing on this page divides.
+ *
+ * `estCostCents` is NEVER mutated by a charge. The quote promised a price; extras are separate line
  * items, summed at read time. Returns null when there is nothing to owe against.
  *
  * A cancelled booking that owes no fee is "nothing to owe against" whichever way that was
@@ -160,12 +162,12 @@ export type SettingsPayload = {
  * balance and renders "paid in full", hiding from the sitter that she is holding money to refund,
  * while the identical sitter-side cancel still says "paid $100".
  */
-export function totalDue(b: AdminBooking): number | null {
+export function totalDueCents(b: AdminBooking): number | null {
   const cancelled = b.status === 'cancelled';
-  const raw = cancelled ? b.cancellationFee : b.estCost;
+  const raw = cancelled ? b.cancellationFeeCents : b.estCostCents;
   const base = cancelled && raw === 0 ? null : raw;
-  if (base == null) return b.chargesTotal > 0 ? b.chargesTotal : null;
-  return base + b.chargesTotal;
+  if (base == null) return b.chargesTotalCents > 0 ? b.chargesTotalCents : null;
+  return base + b.chargesTotalCents;
 }
 
 export function adminFetch<T>(token: string, path: string, init?: RequestInit): Promise<T> {

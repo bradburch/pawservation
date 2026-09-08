@@ -7,12 +7,17 @@ import {
 } from '../lib/payment-import';
 
 describe('payment-import shared helpers', () => {
-  it('parses a whole-dollar amount and refuses cents', () => {
-    expect(parseAmount('+ $45.00')).toEqual({ sign: '+', dollars: 45 });
-    expect(parseAmount('1,250')).toEqual({ sign: '+', dollars: 1250 });
-    expect(parseAmount('- $885.00')).toEqual({ sign: '-', dollars: 885 });
-    // Cents are unrepresentable — reported, never rounded into a wrong ledger entry.
-    expect(parseAmount('$45.50')).toBeNull();
+  it('parses an amount INTO CENTS, fractions included', () => {
+    expect(parseAmount('+ $45.00')).toEqual({ sign: '+', cents: 4500 });
+    expect(parseAmount('1,250')).toEqual({ sign: '+', cents: 125000 });
+    expect(parseAmount('- $885.00')).toEqual({ sign: '-', cents: 88500 });
+    // THE POINT OF THIS TASK: $45.50 is a real thing a client sends, and the ledger has held cents
+    // since 0015, so it is now RECORDED rather than reported back to the sitter to enter by hand.
+    expect(parseAmount('+ $45.50')).toEqual({ sign: '+', cents: 4550 });
+    expect(parseAmount('$0.99')).toEqual({ sign: '+', cents: 99 });
+    expect(parseAmount('- $250.50')).toEqual({ sign: '-', cents: 25050 });
+    // One cent is the floor, not one dollar: below it there is no payment to record.
+    expect(parseAmount('$0.00')).toBeNull();
     expect(parseAmount('$0')).toBeNull();
     expect(parseAmount('not money')).toBeNull();
   });

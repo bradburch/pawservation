@@ -9,11 +9,13 @@
  *
  * The one invariant this module exists to uphold is CONSERVATION:
  * `splits.reduce((sum, s) => sum + s.amount, 0) + remainder === credit.amount`, exactly, in every
- * branch. Whole dollars throughout, exact integer arithmetic — no `Math.round`, no floating point.
- * A rounded split would silently create or destroy money. That guarantee only holds for inputs
- * that are actually whole dollars, so `credit.amount` and every booking's `outstanding` are
- * checked with `Number.isInteger` (and non-negativity) before any arithmetic runs — a fractional
- * or negative amount is refused rather than quietly producing a fractional or negative split.
+ * branch. INTEGER CENTS throughout (0015), exact integer arithmetic — no `Math.round`, no floating
+ * point. The unit moved; nothing else about this module did, because every rule here was already
+ * "integers, or refuse". A rounded split would silently create or destroy money. That guarantee
+ * only holds for inputs that are actually integers, so `credit.amount` and every booking's
+ * `outstanding` are checked with `Number.isInteger` (and non-negativity) before any arithmetic
+ * runs — a fractional or negative amount is refused rather than quietly producing a fractional or
+ * negative split.
  * `outstanding` is validated against the FULL, unfiltered `bookings` list, before the
  * `outstanding > 0` filter that picks out candidates: `NaN > 0` and `-50 > 0` are both false, so
  * checking only the filtered set would silently drop an unreadable booking from consideration
@@ -311,7 +313,9 @@ export type UnpaidBooking = {
   endDate: string | null;
   outstanding: number;
 };
+/** `amount` is CENTS (0015), like every other money figure crossing this module. */
 export type Credit = { paymentId: string; amount: number; paidDate: string };
+/** `amount` is CENTS (0015). */
 export type Split = { bookingId: string; amount: number };
 export type Proposal =
   | { ok: true; paymentId: string; splits: Split[]; remainder: number }
@@ -637,7 +641,7 @@ export function proposeAttribution(
       ok: false,
       paymentId: credit.paymentId,
       reason: 'invalid-amount',
-      detail: `Payment ${credit.paymentId} has a non-whole-dollar or negative amount (${credit.amount}); refusing rather than risk a fractional or negative split.`,
+      detail: `Payment ${credit.paymentId} has a fractional or negative amount (${credit.amount} cents); refusing rather than risk a fractional or negative split.`,
     };
   }
 
@@ -662,7 +666,7 @@ export function proposeAttribution(
       ok: false,
       paymentId: credit.paymentId,
       reason: 'invalid-amount',
-      detail: `Booking ${badOutstanding.bookingId} has an unreadable outstanding amount (${badOutstanding.outstanding}); refusing rather than silently drop it from consideration.`,
+      detail: `Booking ${badOutstanding.bookingId} has an unreadable outstanding amount (${badOutstanding.outstanding} cents); refusing rather than silently drop it from consideration.`,
     };
   }
 

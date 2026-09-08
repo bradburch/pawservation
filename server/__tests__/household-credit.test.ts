@@ -12,6 +12,7 @@ import { createTestEnv, seedPets } from './helpers';
 // tests use it — household assertions can be exact.
 const TENANT_C = 'tnt_pawsandrelax';
 
+/** `estCost` and `prepay`'s `amount` are CENTS (0015) — both go straight into a money column. */
 const book = (env: Env, tenantId: string, endUserId: string, petIds: string[], estCost: number) =>
   insertBookingRequest(env.PAWSERVATION_DB, tenantId, {
     endUserId,
@@ -63,16 +64,24 @@ describe('household credit (Story 2.3)', () => {
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
 
-    await prepay(env, TENANT_C, mia, 300);
+    await prepay(env, TENANT_C, mia, 30000);
     // No booking exists yet: pure prepayment reads as credit, not an error or a dangling reference.
     const [before] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(before).toMatchObject({ expectedTotal: 0, paidTotal: 300, balance: -300 });
+    expect(before).toMatchObject({
+      expectedTotalCents: 0,
+      paidTotalCents: 30000,
+      balanceCents: -30000,
+    });
 
     // The booking arrives AFTER the payment. Timing carries no meaning in the arithmetic: the same
     // subtraction runs whether the payment or the booking was recorded first.
-    await book(env, TENANT_C, ana.Id, [mia], 120);
+    await book(env, TENANT_C, ana.Id, [mia], 12000);
     const [after] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-    expect(after).toMatchObject({ expectedTotal: 120, paidTotal: 300, balance: -180 });
+    expect(after).toMatchObject({
+      expectedTotalCents: 12000,
+      paidTotalCents: 30000,
+      balanceCents: -18000,
+    });
   });
 
   it('draws the credit down automatically as more bookings are added, with no reconciliation step', async () => {
@@ -84,15 +93,17 @@ describe('household credit (Story 2.3)', () => {
       'Ana',
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
-    await prepay(env, TENANT_C, mia, 300);
+    await prepay(env, TENANT_C, mia, 30000);
 
-    await book(env, TENANT_C, ana.Id, [mia], 100);
-    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balance).toBe(-200);
+    await book(env, TENANT_C, ana.Id, [mia], 10000);
+    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balanceCents).toBe(
+      -20000,
+    );
 
     // A second booking pushes the household from credit into owing money — same computation, no
     // special-cased "apply the credit" call anywhere in between.
-    await book(env, TENANT_C, ana.Id, [mia], 250);
-    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balance).toBe(50);
+    await book(env, TENANT_C, ana.Id, [mia], 25000);
+    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balanceCents).toBe(5000);
   });
 
   it('never lets a household in credit read as owing money in a filtered outstanding list', async () => {
@@ -112,13 +123,13 @@ describe('household credit (Story 2.3)', () => {
     const [rex] = seedPets(raw, TENANT_C, jen.Id, [{ id: 'p_rex', petType: 'dog' }]);
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
 
-    await prepay(env, TENANT_C, mia, 500); // Ana prepays with no booking at all — pure credit.
-    await book(env, TENANT_C, jen.Id, [rex], 90); // Jen genuinely owes $90.
+    await prepay(env, TENANT_C, mia, 50000); // Ana prepays with no booking at all — pure credit.
+    await book(env, TENANT_C, jen.Id, [rex], 9000); // Jen genuinely owes $90.
 
     const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     // Any "who owes me money" list is built by filtering this same server-computed balance, never a
     // second money rule — so a credit household filters itself out by the sign of its own balance.
-    const outstanding = households.filter((h) => h.balance > 0);
+    const outstanding = households.filter((h) => h.balanceCents > 0);
     expect(outstanding.map((h) => h.accountId)).toEqual([rex]);
     expect(outstanding.some((h) => h.accountId === mia)).toBe(false);
   });

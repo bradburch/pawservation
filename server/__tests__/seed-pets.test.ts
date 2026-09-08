@@ -59,8 +59,8 @@ describe('seeded customers all have bookable pets', () => {
       env,
     );
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { estCost: number; status: string };
-    expect(body).toMatchObject({ estCost: 90, status: 'pending' }); // 2 nights × $45
+    const body = (await res.json()) as { estCostCents: number; status: string };
+    expect(body).toMatchObject({ estCostCents: 9000, status: 'pending' }); // 2 nights × $45
     const row = raw
       .prepare(`SELECT PetId FROM BookingRequestPets WHERE PetId = 'pet_pr_luna'`)
       .get();

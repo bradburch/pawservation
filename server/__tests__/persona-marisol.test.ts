@@ -126,9 +126,9 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await bookBoarding(env, raw, token, '2029-04-01', '2029-04-04'); // 3 nights, $50/night
     expect(res.status).toBe(201);
-    const booked = (await res.json()) as { id: string; estCost: number; status: string };
+    const booked = (await res.json()) as { id: string; estCostCents: number; status: string };
     expect(booked.status).toBe('pending');
-    expect(booked.estCost).toBe(150);
+    expect(booked.estCostCents).toBe(15000);
 
     // A POST hit the Google Calendar events endpoint for the tenant's connected calendar.
     expect(spy).toHaveBeenCalledOnce();
@@ -140,7 +140,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     // A pending request is marked [REQUEST], names the pets, and carries full booking metadata.
     expect(resource.summary).toBe('[REQUEST] Bella, Mochi — Boarding');
     expect(resource.description).toBe(
-      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150.00\n' +
         'Requested via Pawservation — confirm or decline in your dashboard.',
     );
     expect(resource.extendedProperties?.private).toEqual({
@@ -290,7 +290,7 @@ describe('Persona: Marisol (Sunny Paws) — booking → Google Calendar → dash
     expect(await declineRes.json()).toEqual({
       status: 'declined',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
 
     expect(spy).toHaveBeenCalledOnce();

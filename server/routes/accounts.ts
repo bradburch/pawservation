@@ -7,7 +7,12 @@ import {
   listPaymentsForAccount,
 } from '../db/repo';
 import { adminAuth } from '../lib/middleware';
-import { isPaymentMethod, isRealDate, isValidRate } from '../lib/validation';
+import {
+  AMOUNT_RANGE_MESSAGE,
+  isPaymentMethod,
+  isRealDate,
+  isValidAmountCents,
+} from '../lib/validation';
 import type { AppEnv } from '../types';
 
 export const accountsRoutes = new Hono<AppEnv>()
@@ -19,6 +24,10 @@ export const accountsRoutes = new Hono<AppEnv>()
    * fee without leaving the number she is questioning. Same 404-for-unowned-id answer as the
    * sibling payment routes: `getHouseholdDetail` returns null for an account id of another tenant
    * or no tenant at all, indistinguishably.
+   *
+   * EVERY MONEY FIELD IS CENTS AND SAYS SO, including each booking's `outstandingCents` — what
+   * that stay still owes, computed by the server from the same figures the balance sums rather
+   * than subtracted by whoever renders the row.
    */
   .get('/:slug/admin/accounts/:accountId', async (c) => {
     const tenant = c.get('tenant');
@@ -28,15 +37,21 @@ export const accountsRoutes = new Hono<AppEnv>()
       c.req.param('accountId'),
     );
     if (!detail) return c.json({ error: 'Not found.' }, 404);
+    // EMITTED VERBATIM. Every money field on the row is cents and names itself so (design spec §2),
+    // which is what let the last dollar serializer on this surface be deleted: there is no unit
+    // change left to make here, so there is no place left for one to be made wrongly.
     return c.json(detail);
   })
 
   /**
    * RECORD ONE PAYMENT AGAINST A HOUSEHOLD (0011) — the way a client who pays weekly or monthly
    * actually pays. The body is the booking form's body minus the booking: the SAME three validators
-   * in the same order (whole dollars ≥ 1, a known method, a real date), because a household payment
-   * and a booking payment are one ledger and a rule enforced on one of them only is a rule that
-   * moves depending on where the sitter clicked.
+   * in the same order (cents ≥ 1, a known method, a real date), because a household payment and a
+   * booking payment are one ledger and a rule enforced on one of them only is a rule that moves
+   * depending on where the sitter clicked.
+   *
+   * THE BODY IS CENTS (0015), named `amountCents` so no caller has to guess the unit — the same
+   * body, validator and answer shape as the booking-level payment route.
    *
    * `:accountId` is an account id — a pet id — and the tenant guard is inside `insertAccountPayment`'s
    * SQL, so a household of another tenant is an indistinguishable 404, the same answer every other
@@ -49,17 +64,16 @@ export const accountsRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     const accountId = c.req.param('accountId');
     const body = await c.req
-      .json<{ amount?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
+      .json<{ amountCents?: unknown; method?: unknown; paidDate?: unknown; note?: unknown }>()
       .catch(() => ({}) as Record<string, never>);
-    if (!isValidRate(body.amount))
-      return c.json({ error: 'Amount must be whole dollars ≥ 1.' }, 400);
+    if (!isValidAmountCents(body.amountCents)) return c.json({ error: AMOUNT_RANGE_MESSAGE }, 400);
     if (!isPaymentMethod(body.method)) return c.json({ error: 'Unknown payment method.' }, 400);
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
     const paymentId = await insertAccountPayment(c.env.PAWSERVATION_DB, tenant.Id, {
       accountId,
-      amount: body.amount,
+      amount: body.amountCents,
       method: body.method,
       paidDate: body.paidDate,
       note,
@@ -77,7 +91,7 @@ export const accountsRoutes = new Hono<AppEnv>()
       {
         payment: {
           id: created.Id,
-          amount: created.Amount,
+          amountCents: created.Amount,
           method: created.Method,
           paidDate: created.PaidDate,
           note: created.Note,
@@ -85,7 +99,7 @@ export const accountsRoutes = new Hono<AppEnv>()
         // The household this payment landed on, found by MEMBERSHIP rather than by id equality for
         // the reason the schema gives: the account id is the first-sorted pet and can be renamed by
         // a pet added later, so `:accountId` is not necessarily the household's current id.
-        balance: households.find((h) => h.petIds.includes(accountId))?.balance ?? 0,
+        balanceCents: households.find((h) => h.petIds.includes(accountId))?.balanceCents ?? 0,
       },
       201,
     );
@@ -99,9 +113,11 @@ export const accountsRoutes = new Hono<AppEnv>()
       c.req.param('accountId'),
     );
     return c.json({
+      // The same `Payment` shape the booking-level ledger emits — one panel reads both, so the
+      // two lists cannot speak different units (0015).
       payments: rows.map((p) => ({
         id: p.Id,
-        amount: p.Amount,
+        amountCents: p.Amount,
         method: p.Method,
         paidDate: p.PaidDate,
         note: p.Note,

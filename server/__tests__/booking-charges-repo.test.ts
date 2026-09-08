@@ -17,7 +17,7 @@ const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed'
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: 100,
+    estCost: 10000, // CENTS (0015)
     status,
   });
 
@@ -40,12 +40,12 @@ describe('BookingCharges repo', () => {
     const id = await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     expect(id).not.toBeNull();
     const rows = await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, bookingId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ Label: 'Vet visit', Amount: 45 });
+    expect(rows[0]).toMatchObject({ Label: 'Vet visit', Amount: 4500 }); // the column, in cents
   });
 
   it('refuses a booking belonging to another tenant', async () => {
@@ -54,7 +54,7 @@ describe('BookingCharges repo', () => {
     const id = await insertBookingCharge(env.PAWSERVATION_DB, TENANT_B, {
       bookingRequestId: bookingId, // tenant A's booking
       label: 'Haircut',
-      amount: 30,
+      amount: 3000,
     });
     expect(id).toBeNull();
     expect(await listChargesForBooking(env.PAWSERVATION_DB, TENANT_A, bookingId)).toHaveLength(0);
@@ -67,7 +67,7 @@ describe('BookingCharges repo', () => {
       await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
         bookingRequestId: blockedId,
         label: 'Nope',
-        amount: 10,
+        amount: 1000,
       }),
     ).toBeNull();
   });
@@ -79,7 +79,7 @@ describe('BookingCharges repo', () => {
     const id = (await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     }))!;
     expect(await deleteBookingCharge(env.PAWSERVATION_DB, TENANT_B, bookingId, id)).toBe(false);
     expect(await deleteBookingCharge(env.PAWSERVATION_DB, TENANT_A, otherBookingId, id)).toBe(
@@ -95,7 +95,7 @@ describe('BookingCharges repo', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     expect(await listChargesForTenant(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(1);
     expect(await listChargesForTenant(env.PAWSERVATION_DB, TENANT_B)).toHaveLength(0);
@@ -107,7 +107,7 @@ describe('BookingCharges repo', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     expect(await deleteTenantCompletely(env.PAWSERVATION_DB, TENANT_A)).toBe(true);
     expect(await listChargesForTenant(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(0);
