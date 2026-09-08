@@ -51,6 +51,13 @@ account and by nobody else. Two channels:
   (`lib/log.ts`). Separate from errors on purpose: these want a different alert, and mixing them
   means the interesting one is buried under calendar-sync noise.
 
+Two credentials outlive a session by design, so something other than a signed-in browser can keep
+working: the end-user personal access token (`pawsv_`) and the sitter's tenant access token
+(`pawsa_`), both in `server/lib/personal-access-token.ts`, mirroring each other decision for
+decision. Presenting an unknown, revoked, or another tenant's one is logged as
+`personal_access_token_rejected` or `tenant_access_token_rejected` — the credential kind, never
+the credential.
+
 A tripped cap is reported once per window rather than once per refused request: the limiter exists
 to make abusive traffic cheap, and a line per refusal hands an unauthenticated caller a dial on how
 much log to generate. `email not configured` is the one line worth alerting on outright — it means
