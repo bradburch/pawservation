@@ -98,7 +98,9 @@ describe('GET /how-it-works — the tour page', () => {
     // Services, so "The money goes straight to you." and "nothing is taken out of your earnings"
     // are gone with the band they lived in. The claim they carried is re-pinned on the new line.
     expect(body).toContain('Payment stays between you and your client.');
-    expect(body).toContain('Card payments are part of Pro.');
+    expect(body).toContain(
+      'Card payments are part of Pro, and they run through your own Stripe account.',
+    );
     expect(body).not.toMatch(/we (take|process|handle|collect) (your |the )?payments?/i);
     expect(body).not.toMatch(/payments? (are|is) processed/i);
   });

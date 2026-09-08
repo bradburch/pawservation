@@ -109,7 +109,7 @@ export function buildProductLlmsTxt(origin: string): string {
 ## When NOT to use this
 
 - Finding a pet sitter as a customer. This is not a marketplace or a directory — there is nobody to browse. A sitter adds their clients before those clients can book.
-- Taking card payments on Solo. Solo records payments; it never touches money and has no card processing. Card payments are part of Pro.
+- Taking card payments on Solo. Solo records payments; it never touches money and has no card processing. Card payments are part of Pro, and they run through the sitter's own Stripe account at Stripe's published rate.
 - Staffing a team on Solo. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.
 - Any species-agnostic or general appointment booking. The rules here model pet care specifically (pets per booking, per-species rates, whose home the sitter sleeps in).
 
@@ -208,7 +208,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `Everything in Solo plus card payments, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
+            description: `Everything in Solo plus card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
           },
         ],
         publisher: { '@id': `${origin}/#organization` },
