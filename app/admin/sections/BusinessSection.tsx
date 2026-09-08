@@ -46,6 +46,7 @@ export function BusinessSection({
   dirty,
   saveBlocked,
   onSave,
+  handleError,
 }: SettingsSectionProps & {
   /** Needed only by the data export, which fetches CSV bytes with the admin bearer token. */
   session: Session;
@@ -55,6 +56,9 @@ export function BusinessSection({
   saveBlocked: boolean;
   /** The save bar's action, surfaced inline near the fields. */
   onSave: () => void;
+  /** The dashboard's failure path, passed through to `TokensPanel` — an expired or revoked
+   *  password session there must sign the sitter out, not print a banner beside a dead session. */
+  handleError: (e: unknown) => void;
 }) {
   return (
     <>
@@ -283,7 +287,7 @@ export function BusinessSection({
       <ExportPanel session={session} />
       {/* Past the export panel for the same reason the export panel is past the save bar: it
           saves nothing of its own, so it belongs after the settings form rather than inside it. */}
-      <TokensPanel session={session} />
+      <TokensPanel session={session} handleError={handleError} />
     </>
   );
 }

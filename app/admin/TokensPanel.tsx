@@ -1,18 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
-import { adminApi, type AdminAccessToken } from '../shared-ui/api.js';
+import { adminApi, ApiError, isAuthExpired, type AdminAccessToken } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 
 const MAX_NAME_LENGTH = 80;
+
+/** A trailing 'Z' or a '+HH:MM'/'-HH:MM' offset — the only two ways a stamp states its zone. */
+const ZONED = /(?:Z|[+-]\d{2}:\d{2})$/;
 
 /**
  * `TenantAccessTokens.CreatedAt`/`LastUsedAt` come off SQLite's `datetime('now')` as
  * "YYYY-MM-DD HH:MM:SS" UTC, no 'T' and no 'Z' — not something every engine parses the same way
  * unlabelled. Label it UTC ourselves before handing it to `Date`, and fall back to the raw string
  * rather than ever rendering "Invalid Date".
+ *
+ * The test is for a stated ZONE, not for a 'T'. "2026-09-07T12:00:00" carries a separator and no
+ * zone at all, and JavaScript reads that one as LOCAL time — so keying on the 'T' would have left
+ * exactly that shape unlabelled and shifted by the viewer's offset, which is the reading nobody
+ * would notice was wrong.
  */
 function formatTimestamp(sqlDatetime: string): string {
-  const iso = sqlDatetime.includes('T') ? sqlDatetime : `${sqlDatetime.replace(' ', 'T')}Z`;
-  const d = new Date(iso);
+  const withT = sqlDatetime.replace(' ', 'T');
+  const d = new Date(ZONED.test(withT) ? withT : `${withT}Z`);
   return Number.isNaN(d.getTime()) ? sqlDatetime : d.toLocaleDateString();
 }
 
@@ -26,7 +34,20 @@ function formatTimestamp(sqlDatetime: string): string {
  * quietly does nothing reads as "the button is broken" rather than as a real problem worth
  * retrying.
  */
-export function TokensPanel({ session }: { session: Session }) {
+export function TokensPanel({
+  session,
+  handleError,
+}: {
+  session: Session;
+  /**
+   * The dashboard's own failure path (`App.tsx`'s `handle`). A 401 or 403 from any call here means
+   * the password session this panel needs has gone — expired, or revoked under it — and the panel
+   * has nothing useful to say about that. Handing it up signs the sitter out, which is the only
+   * response that leads anywhere; showing "could not load your tokens" beside a dead session would
+   * read as a broken feature.
+   */
+  handleError: (e: unknown) => void;
+}) {
   const [tokens, setTokens] = useState<AdminAccessToken[] | null>(null);
   const [listError, setListError] = useState('');
 
@@ -50,7 +71,10 @@ export function TokensPanel({ session }: { session: Session }) {
         setTokens(list);
         setListError('');
       })
-      .catch((e) => setListError(e instanceof Error ? e.message : 'Could not load your tokens.'));
+      .catch((e) => {
+        if (isAuthExpired(e)) return handleError(e);
+        setListError(e instanceof Error ? e.message : 'Could not load your tokens.');
+      });
 
   useEffect(() => {
     void load();
@@ -83,7 +107,8 @@ export function TokensPanel({ session }: { session: Session }) {
       setName('');
       await load();
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : 'Could not create a token. Try again.');
+      if (isAuthExpired(e)) handleError(e);
+      else setCreateError(e instanceof Error ? e.message : 'Could not create a token. Try again.');
     } finally {
       setCreating(false);
     }
@@ -111,7 +136,18 @@ export function TokensPanel({ session }: { session: Session }) {
       setConfirmingId(null);
       await load();
     } catch (e) {
-      setRevokeError(e instanceof Error ? e.message : 'Could not revoke that token. Try again.');
+      if (isAuthExpired(e)) {
+        handleError(e);
+      } else if (e instanceof ApiError && e.status === 404) {
+        // The row is already gone — revoked in another tab, or by the token itself when whatever
+        // held it disconnected. The sitter asked for it gone and it is gone, so this is not a
+        // failure to report: drop the confirmation and re-read the list, which is the thing that
+        // was actually out of date.
+        setConfirmingId(null);
+        await load();
+      } else {
+        setRevokeError(e instanceof Error ? e.message : 'Could not revoke that token. Try again.');
+      }
     } finally {
       setRevokingId(null);
     }
@@ -122,19 +158,29 @@ export function TokensPanel({ session }: { session: Session }) {
       <h3>Access tokens</h3>
       <p className="pb-hint">
         A token acts as your sign-in for this dashboard&apos;s API, so a script or another tool can
-        work as you. It cannot create, list or revoke tokens, only your password can do that. Revoke
-        it below if it ever leaks.
+        work as you: it can do everything you can here, including deleting clients and exporting
+        your book, and it never expires. It cannot create, list or revoke other tokens; only your
+        password can. Revoke it here the moment you suspect it leaked.
       </p>
       {created ? (
         <div>
           <p>
             <strong>{created.name}</strong> is ready.
           </p>
+          {/* A live credential in a text field. Password managers offer to save whatever they
+              find in one, spellcheckers on some platforms send its contents away to be checked,
+              and a browser that remembers it hands it to the next person at this desk — none of
+              which the sitter asked for, and all of which outlive the one screen this value is
+              supposed to exist on. */}
           <textarea
             readOnly
             rows={2}
             aria-label="New access token"
             value={created.token}
+            autoComplete="off"
+            spellCheck={false}
+            data-lpignore="true"
+            data-1p-ignore
             onFocus={(e) => e.target.select()}
           />
           <div className="pb-row">
@@ -147,7 +193,8 @@ export function TokensPanel({ session }: { session: Session }) {
           </div>
           {copyError && <p className="pb-error">{copyError}</p>}
           <p>
-            <strong>This is the only time you will see it. Copy it now.</strong>
+            <strong>This is the only time you will see it. Copy it now.</strong> It is on your
+            clipboard after Copy; paste it where it belongs and clear it.
           </p>
         </div>
       ) : (
