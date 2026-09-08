@@ -16,6 +16,12 @@ import { describe, expect, it } from 'vitest';
  *
  * So: a bare database built from `sql/schema.sql`, seeded with rows in the OLD unit, run through
  * the real migration file, and read back.
+ *
+ * AND the questions the `SchemaMeta.money_unit` marker exists to answer, which are about running
+ * the file at the WRONG time rather than about any one value: a second run must change nothing
+ * (the ×100 is not idempotent on its own, and its second application is silent), and a fresh
+ * `schema.sql` database — already born in cents, and the world every other test in this suite
+ * runs in — must come through untouched.
  */
 const MIGRATION_PATH = join(
   import.meta.dirname,
@@ -38,6 +44,12 @@ const TENANT = 'tnt_premig';
 function preMigrationDb(): DatabaseSync {
   const raw = new DatabaseSync(':memory:');
   raw.exec(SCHEMA);
+  // `schema.sql` seeds the marker at 'cents', because a database it builds is born in cents. This
+  // fixture is deliberately the OTHER world — a real database as it stands the moment before 0015
+  // is hand-applied — so the marker is wound back to match the dollar rows seeded below. Winding
+  // it back HERE rather than deleting the row keeps the fixture honest about which state it is:
+  // 'dollars' is what an existing production database will read once 0015 creates the row.
+  raw.exec(`UPDATE SchemaMeta SET Value = 'dollars' WHERE Key = 'money_unit'`);
   raw.exec(`
     INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('${TENANT}', 'premig', 'Pre-Migration');
 
@@ -62,6 +74,22 @@ function preMigrationDb(): DatabaseSync {
 }
 
 const one = <T>(raw: DatabaseSync, sql: string): T => raw.prepare(sql).get() as unknown as T;
+
+/** The migration's own guard, read back — 'dollars' before, 'cents' after, and the only thing in
+ *  the database that can tell those two states apart. */
+const marker = (raw: DatabaseSync): unknown =>
+  (one<{ Value: unknown }>(raw, `SELECT Value FROM SchemaMeta WHERE Key = 'money_unit'`) ?? {})
+    .Value;
+
+/** Every figure the migration can touch, in one comparable shape — so "changed nothing" is
+ *  asserted over all four columns at once rather than one `expect` at a time. */
+const all = (raw: DatabaseSync, sql: string): unknown[] =>
+  raw.prepare(sql).all() as unknown as unknown[];
+const money = (raw: DatabaseSync) => ({
+  bookings: all(raw, 'SELECT Id, EstCost, CancellationFee FROM BookingRequests ORDER BY Id'),
+  charges: all(raw, 'SELECT Id, Amount FROM BookingCharges ORDER BY Id'),
+  payments: all(raw, 'SELECT Id, Amount FROM Payments ORDER BY Id'),
+});
 
 describe('migration 0015 (money in cents) against a pre-migration database', () => {
   it('multiplies every stored cost, fee, charge and payment by exactly 100', () => {
@@ -100,6 +128,46 @@ describe('migration 0015 (money in cents) against a pre-migration database', () 
     expect(one(raw, "SELECT Rate FROM TenantServiceOptions WHERE Id = 'tso_std'")).toEqual({
       Rate: 50,
     });
+  });
+
+  it("flips the marker to 'cents', so an applied database says so", () => {
+    const raw = preMigrationDb();
+    expect(marker(raw)).toBe('dollars');
+    raw.exec(MIGRATION);
+    expect(marker(raw)).toBe('cents');
+  });
+
+  it('is a NO-OP on a second run — the ×100 does not happen twice', () => {
+    // The failure this guard exists for. Nothing about a re-run errors: without the marker every
+    // stored balance is silently multiplied by 100 again, and the database still looks fine.
+    const raw = preMigrationDb();
+    raw.exec(MIGRATION);
+    const after = money(raw);
+    raw.exec(MIGRATION);
+    expect(money(raw)).toEqual(after);
+    expect(marker(raw)).toBe('cents');
+  });
+
+  it('leaves a FRESH schema.sql database alone — it is already in cents', () => {
+    // Every other test in this suite runs against exactly this database, and `createTestEnv`
+    // builds one per test. If 0015 could scale it, the marker would be worthless: the file has to
+    // be safe to run against a database that never needed it.
+    const raw = new DatabaseSync(':memory:');
+    raw.exec(SCHEMA);
+    expect(marker(raw)).toBe('cents');
+    raw.exec(`
+      INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('${TENANT}', 'fresh', 'Fresh');
+      INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, EstCost, CancellationFee, Status)
+      VALUES ('br_fresh', '${TENANT}', 'boarding', '2026-06-01', '2026-06-06', 1, 4550, 1000, 'confirmed');
+      INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
+      VALUES ('bc_fresh', '${TENANT}', 'br_fresh', 'Vet visit', 4500);
+      INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate)
+      VALUES ('pay_fresh', '${TENANT}', 'br_fresh', 7550, 'cash', '2026-05-20');
+    `);
+    const before = money(raw);
+    raw.exec(MIGRATION);
+    expect(money(raw)).toEqual(before);
+    expect(marker(raw)).toBe('cents');
   });
 
   it('contains no BEGIN/COMMIT/SAVEPOINT statement', () => {

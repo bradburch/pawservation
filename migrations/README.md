@@ -250,29 +250,58 @@ COLUMN`, the same shape as 0013's `CalendarCostBasis`), and the DEFAULT stamps e
 - **`0015_money_in_cents.sql`** (`feat/payments-in-cents`) — moves every stored cost, fee, charge
   and payment from whole dollars to integer cents: four `UPDATE … * 100` statements over
   `BookingRequests.EstCost`, `BookingRequests.CancellationFee`, `BookingCharges.Amount` and
-  `Payments.Amount`. **No schema shape change** — no `ALTER TABLE`, no rebuild, no index touched,
-  and `Payments`' `CHECK (Amount > 0)` still says exactly what it said (a positive amount is
-  positive in either unit). Rates a sitter types stay whole dollars, so no `TenantServices`,
-  `TenantServiceOptions` or pet-set rate column is scaled; `estimateCost` is the single place a
-  rate becomes a cost and the single ×100 in the price path. Every existing value is a whole
+  `Payments.Amount`. **No money-column shape change** — no `ALTER TABLE`, no rebuild, no index
+  touched, and `Payments`' `CHECK (Amount > 0)` still says exactly what it said (a positive amount
+  is positive in either unit). Rates a sitter types stay whole dollars, so no `TenantServices`,
+  `TenantServiceOptions` or pet-set rate column is scaled; `estimateCost` is where a rate becomes a
+  COST and `extraTimeSurcharges` (`server/lib/booking-times.ts`) is where the two flat extra-time
+  fees become CHARGES — those two are the ×100s in the price path. Every existing value is a whole
   dollar, so ×100 is exact and no balance moves by a cent. No `Tenants` column changes, so the KV
   tenant-config cache key needs **no** bump. It contains no `BEGIN`/`COMMIT`/`SAVEPOINT` (D1
-  rejects them — see 0011). **NOT YET APPLIED to the remote DB — it MUST be hand-applied before
-  this branch merges**, and the deployed-code-meets-un-migrated-data failure is the QUIET
-  kind, which is worth knowing before reading a pager: at HEAD **no server serializer divides a
-  stored column any more**, so nothing throws and nothing 500s — every money surface simply renders
-  every stored figure at ONE HUNDREDTH of its real value. An un-migrated `EstCost = 250` shows as
-  **$2.50** on the admin bookings list, in the Earnings payload, in the household drill-down, on
-  `/:slug/account` and in the CSV export, and `feeIfCancelledTodayCents` computes a cancellation fee
-  off that same hundredth. The one loud symptom is the admin panel's Edit-cost box, which is the
-  last place a stored figure is still divided back (`centsToWholeDollars`, client-side, in
-  `BookingsSection.tsx`): it THROWS on a figure that is not a multiple of 100, so opening the cost
-  editor on an un-migrated booking is a `RangeError`. So an on-call reader on this branch should
-  not wait for a dead dashboard — there will not be one; suspect the un-applied migration the
-  moment any amount reads two decimal places too small. Apply it with:
+  rejects them — see 0011); D1 applies a `--file` atomically by itself.
+
+  **It carries a marker, so unlike every migration above it you can ASK a database whether it has
+  been applied, and a second run is a no-op.** The file creates
+  `SchemaMeta (Key TEXT PRIMARY KEY, Value TEXT NOT NULL)` if absent, defaults `money_unit` to
+  `'dollars'`, guards all four UPDATEs on it still reading `'dollars'`, and flips it to `'cents'`
+  at the end. To check, before or after:
+
+  ```
+  npx wrangler d1 execute pawservation-db --remote --command "SELECT Value FROM SchemaMeta WHERE Key = 'money_unit'"
+  ```
+
+  No row or `dollars` = not yet applied. `cents` = applied, and **re-running the file changes
+  nothing** — which is why this one is not on the "must not be run twice" list below. A database
+  freshly built from `sql/schema.sql` is born reading `cents` (it creates the money columns empty,
+  so there is nothing to convert), which is also what makes running 0015 against a test database
+  harmless. Apply it with:
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0015_money_in_cents.sql`.
-  Like every bare `ADD COLUMN` above it must not be run twice — a second run multiplies every
-  balance by 100 again, and unlike a duplicate column that failure is SILENT.
+
+  **NOT YET APPLIED to the remote DB — it MUST be hand-applied before this branch merges**, and
+  the deployed-code-meets-un-migrated-data failure is mostly the QUIET kind, which is worth knowing
+  before reading a pager. At HEAD **no server serializer divides a stored column any more**, so
+  most money surfaces do not throw and do not 500 — they simply render every stored figure at ONE
+  HUNDREDTH of its real value. An un-migrated `EstCost = 200` shows as **$2.00** on the admin
+  bookings list, in the Earnings payload, in the household drill-down, on `/:slug/account` and in
+  the CSV export, with nothing at all to notice.
+
+  The two places that DO complain both complain only about a figure that is **not a multiple of
+  100**, which is most un-migrated values but not all of them — a stay stored as `250` ($250) is
+  caught, one stored as `200` ($200) reads as `$2.00` in silence. Those two are
+  `cancellationFee` (`src/shared/pricing/cancellation-fee.ts`), which throws a `RangeError` rather
+  than compute a percentage off a figure it cannot round in dollars — so assessing a cancellation
+  fee on such a booking 500s; and the admin panel's Edit-cost box, the last place a stored figure
+  is still divided back, which no longer throws but refuses to prefill and says _"This price is not
+  a whole number of dollars; enter a new one."_ So an on-call reader on this branch should not wait
+  for a dead dashboard — there will not be one; suspect the un-applied migration the moment any
+  amount reads two decimal places too small.
+
+  **The apply→deploy window is real and runs the other way, so keep it short and quiet.** Between
+  applying this file and deploying the code that expects cents, the OLD code reads every migrated
+  column as dollars — a $250 stay reads as $25,000 — and every form it serves writes WHOLE DOLLARS
+  back into a column that is now cents, so each payment recorded in that window is stored one
+  hundred times too small and has to be corrected by hand afterwards. Apply immediately before the
+  deploy, not the evening before, and do not invite anyone to use the admin in between.
 
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,

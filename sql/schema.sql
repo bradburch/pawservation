@@ -1,6 +1,27 @@
 -- pawservation schema (isolated D1: pawservation-db)
 -- Model A invariants: TenantId on every table, composite uniqueness, immutable Tenants.Id.
 
+-- FACTS ABOUT THE DATA IN THIS SCHEMA — NOT a migration ledger. Nothing here records which
+-- migration files have run; migrations/README.md is still the ledger, and applying them is still
+-- a hand step. What this table holds is the small number of facts a migration cannot infer by
+-- looking at the shape of the database, because the shape does not change: after 0015 an EstCost
+-- of 250 is either $2.50 in cents or $250 in dollars, and no `PRAGMA` can tell you which. A row
+-- here can, so the migration is inspectable before it runs and idempotent when it is run twice.
+--
+-- Instance-level, like OwnerUsers/AllowedSitters below: it describes the DATABASE, so it cannot
+-- be a tenant row. Add a key only for a fact of that kind — one that is true of the stored data,
+-- invisible in the schema, and needed by something that runs against the database from outside.
+CREATE TABLE IF NOT EXISTS SchemaMeta (
+  Key TEXT PRIMARY KEY,
+  Value TEXT NOT NULL
+);
+
+-- Fresh installs are BORN in cents: this file creates the money columns for a database with no
+-- rows in them, so there is nothing for 0015 to convert and its guard must already read 'cents'.
+-- That keeps the test harness (which builds from this file) and every new database in the state
+-- an applied 0015 leaves behind — and makes running 0015 against one a no-op rather than a ×100.
+INSERT OR IGNORE INTO SchemaMeta (Key, Value) VALUES ('money_unit', 'cents');
+
 CREATE TABLE IF NOT EXISTS Tenants (
   Id TEXT PRIMARY KEY,
   Slug TEXT NOT NULL UNIQUE,
