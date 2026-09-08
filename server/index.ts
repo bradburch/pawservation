@@ -26,6 +26,7 @@ import { ownerRoutes } from './routes/owner';
 import { passwordResetRoutes } from './routes/password-reset';
 import { publicRoutes } from './routes/public';
 import { signupRoutes } from './routes/signup';
+import { tenantTokenRoutes } from './routes/tenant-tokens';
 import { tokenRoutes } from './routes/tokens';
 import type { AppEnv, Tenant } from './types';
 
@@ -98,6 +99,7 @@ app.route('/api', bookingRoutes);
 app.route('/api', tokenRoutes); // /api/:slug/tokens — the customer's own API credentials
 app.route('/api', adminRoutes);
 app.route('/api', accountsRoutes);
+app.route('/api', tenantTokenRoutes); // /api/:slug/admin/tokens — the sitter's own API credentials
 app.route('/api', signupRoutes); // /api/signup/* — no slug ('signup' is a reserved slug)
 app.route('/api', passwordResetRoutes); // /api/password-reset/* — no slug ('password-reset' is a reserved slug)
 app.route('/api', ownerRoutes); // /api/owner/* — owner-token-gated ('owner' is a reserved slug)

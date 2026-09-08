@@ -309,6 +309,214 @@ describe('adminSessionOnly', () => {
   });
 });
 
+/**
+ * Task 3: the routes themselves — mint, list, revoke, and the password-only carve-out.
+ * `server/routes/tenant-tokens.ts` is the file under test here.
+ */
+const adminTokensPath = (slug = 'sunny-paws') => `/api/${slug}/admin/tokens`;
+
+/** POST /admin/tokens with an admin credential, returning the parsed creation response. */
+async function mintViaRoute(
+  env: Env,
+  credential: string,
+  name = 'CI bot',
+  slug = 'sunny-paws',
+): Promise<{ id: string; token: string; name: string }> {
+  const res = await app.request(
+    adminTokensPath(slug),
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    },
+    env,
+  );
+  expect(res.status).toBe(201);
+  return (await res.json()) as { id: string; token: string; name: string };
+}
+
+const listTokens = (env: Env, credential: string, slug = 'sunny-paws') =>
+  app.request(adminTokensPath(slug), { headers: { Authorization: `Bearer ${credential}` } }, env);
+
+const deleteToken = (env: Env, credential: string, id: string, slug = 'sunny-paws') =>
+  app.request(
+    `${adminTokensPath(slug)}/${id}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${credential}` } },
+    env,
+  );
+
+describe('tenant access tokens — issuing', () => {
+  it('mints a token and returns the secret exactly once', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'My assistant');
+    expect(created.name).toBe('My assistant');
+    expect(created.id).toBeTruthy();
+    expect(created.token.startsWith('pawsa_')).toBe(true);
+
+    // The one and only disclosure. Nothing else ever hands it back.
+    const list = await listTokens(env, jwt);
+    expect(JSON.stringify(await list.json())).not.toContain(created.token);
+  });
+
+  it('lists id, name, createdAt and lastUsedAt — never the secret or its hash', async () => {
+    const { env, raw } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Listed');
+
+    const res = await listTokens(env, jwt);
+    expect(res.status).toBe(200);
+    const { tokens } = (await res.json()) as {
+      tokens: { id: string; name: string; createdAt: string; lastUsedAt: string | null }[];
+    };
+    expect(tokens).toEqual([
+      { id: created.id, name: 'Listed', createdAt: expect.any(String), lastUsedAt: null },
+    ]);
+
+    const stored = raw
+      .prepare(`SELECT TokenHash FROM TenantAccessTokens WHERE Id = ?`)
+      .get(created.id) as { TokenHash: string };
+    expect(JSON.stringify(tokens)).not.toContain(stored.TokenHash);
+  });
+
+  it('requires a signed-in admin', async () => {
+    const { env } = createTestEnv();
+    const post = await app.request(
+      adminTokensPath(),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Nobody' }),
+      },
+      env,
+    );
+    expect(post.status).toBe(401);
+    expect((await app.request(adminTokensPath(), {}, env)).status).toBe(401);
+  });
+
+  it('requires a name the sitter will recognise later', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    for (const name of ['', '   ', 'x'.repeat(81), 42, undefined]) {
+      const res = await app.request(
+        adminTokensPath(),
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        },
+        env,
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe(
+        'Name your token (1–80 characters).',
+      );
+    }
+  });
+
+  it('trims the name', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, '  Padded  ');
+    expect(created.name).toBe('Padded');
+    const { tokens } = (await (await listTokens(env, jwt)).json()) as {
+      tokens: { name: string }[];
+    };
+    expect(tokens[0].name).toBe('Padded');
+  });
+
+  it('lists only this admin’s own tokens — another tenant’s token is absent', async () => {
+    const { env } = createTestEnv();
+    const sunny = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    await mintViaRoute(env, sunny, 'Sunny’s');
+
+    // No second TenantUsers row shares a tenant in the base seed, so isolation is shown across
+    // tenants instead: tu_dana must never see a token minted under Sunny Paws.
+    const dana = await mintAdminToken('tu_dana', TENANT_B, TEST_SECRET);
+    const res = await listTokens(env, dana, 'happy-tails');
+    expect(((await res.json()) as { tokens: unknown[] }).tokens).toEqual([]);
+  });
+});
+
+describe('tenant access tokens — carve-out', () => {
+  it('refuses a tenant access token on POST, GET and DELETE of the token routes', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Password-minted');
+    const { token } = created;
+
+    const post = await app.request(
+      adminTokensPath(),
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Self-amplify' }),
+      },
+      env,
+    );
+    expect(post.status).toBe(403);
+    expect(((await post.json()) as { error: string }).error).toMatch(/password/i);
+
+    const get = await listTokens(env, token);
+    expect(get.status).toBe(403);
+    expect(((await get.json()) as { error: string }).error).toMatch(/password/i);
+
+    const del = await deleteToken(env, token, created.id);
+    expect(del.status).toBe(403);
+    expect(((await del.json()) as { error: string }).error).toMatch(/password/i);
+  });
+
+  it('is the gate, not a dead token — the same token still reaches an ordinary admin route', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const { token } = await mintViaRoute(env, jwt, 'Still works elsewhere');
+
+    const settingsRes = await settings(env, token);
+    expect(settingsRes.status).toBe(200);
+  });
+});
+
+describe('tenant access tokens — revoking', () => {
+  it('revokes a token: it drops from the list and 401s on the very next admin request', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Revoke me');
+
+    // Live before revocation.
+    expect((await settings(env, created.token)).status).toBe(200);
+
+    const del = await deleteToken(env, jwt, created.id);
+    expect(del.status).toBe(200);
+    expect(await del.json()).toEqual({ revoked: true });
+
+    const list = await listTokens(env, jwt);
+    expect(((await list.json()) as { tokens: unknown[] }).tokens).toEqual([]);
+
+    // The very next request with the revoked token, no clock advanced and nothing expiring.
+    expect((await settings(env, created.token)).status).toBe(401);
+  });
+
+  it('404s an unknown id and another tenant’s id; a second delete of the same id stays scoped', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Delete twice');
+
+    expect((await deleteToken(env, jwt, created.id)).status).toBe(200);
+    // revokeTenantAccessToken COALESCEs RevokedAt (Task 1, pinned by "is idempotent and scoped by
+    // owner" above): a second delete of an id that still names a real, already-revoked row of
+    // THIS caller's own reports success again rather than a confusing 404 for a token the sitter
+    // can plainly see is already dead. It is out of scope for this task to change that contract.
+    expect((await deleteToken(env, jwt, created.id)).status).toBe(200);
+
+    expect((await deleteToken(env, jwt, 'nope')).status).toBe(404);
+
+    const dana = await mintAdminToken('tu_dana', TENANT_B, TEST_SECRET);
+    const danaCreated = await mintViaRoute(env, dana, 'Dana’s', 'happy-tails');
+    // Another tenant's id: 404, indistinguishable from an id that never existed.
+    expect((await deleteToken(env, jwt, danaCreated.id)).status).toBe(404);
+  });
+});
+
 describe('tenant access tokens — last used', () => {
   /** Wraps the env's D1 so a test can see which statements a request actually issued. */
   function recordStatements(env: Env): string[] {
