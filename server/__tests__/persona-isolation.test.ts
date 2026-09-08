@@ -86,7 +86,7 @@ const syncInput = (bookingId: string, endUserId: string) => ({
   durationMinutes: null,
   petCount: 1,
   petNames: [],
-  estCost: 150,
+  estCost: 15000,
   status: 'pending' as const,
 });
 
@@ -98,7 +98,7 @@ async function seedSynced(env: Env, tenantId: string, endUserId: string, eventId
     endDate: IN_WINDOW_END,
     optionKey: 'standard',
     petCount: 1,
-    estCost: 150,
+    estCost: 15000,
     status: 'confirmed',
   });
   await setBookingGCalEventId(env.PAWSERVATION_DB, tenantId, id, eventId, null);
@@ -141,7 +141,7 @@ describe('Scenario 1: event creation uses each tenant’s own bearer token + cal
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
     const bookingB = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_B, {
@@ -151,7 +151,7 @@ describe('Scenario 1: event creation uses each tenant’s own bearer token + cal
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
 
@@ -298,7 +298,7 @@ describe('Scenario 4: admin decline hits only its own calendar and can’t reach
       endDate: IN_WINDOW_END,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
     await setBookingGCalEventId(env.PAWSERVATION_DB, tenantId, id, eventId, null);

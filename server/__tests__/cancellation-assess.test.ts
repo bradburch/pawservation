@@ -78,7 +78,7 @@ describe('cancellation fee assessment at cancel time', () => {
     const end = addDays(getPacificDateStr(), 3);
     const created = (await (await bookBoarding(env, start, end)).json()) as {
       id: string;
-      estCost: number;
+      estCostCents: number;
     };
     await confirm(env, created.id);
 
@@ -87,12 +87,14 @@ describe('cancellation fee assessment at cancel time', () => {
       chargeFee: true,
     });
     expect(res.status).toBe(200);
+    // Both wires are CENTS now (0015): the fee the admin route reports IS the figure stamped on
+    // the column, so the assertion needs no conversion on either side.
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: created.estCost,
+      cancellationFeeCents: created.estCostCents,
     });
-    expect(feeRow(raw, created.id)).toBe(created.estCost);
+    expect(feeRow(raw, created.id)).toBe(created.estCostCents);
     expect(statusRow(raw, created.id)).toBe('cancelled');
   });
 
@@ -113,7 +115,7 @@ describe('cancellation fee assessment at cancel time', () => {
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(feeRow(raw, created.id)).toBeNull();
     expect(statusRow(raw, created.id)).toBe('cancelled');
@@ -132,7 +134,7 @@ describe('cancellation fee assessment at cancel time', () => {
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(feeRow(raw, created.id)).toBeNull();
     expect(statusRow(raw, created.id)).toBe('cancelled');

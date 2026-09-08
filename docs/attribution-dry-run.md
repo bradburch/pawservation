@@ -4,7 +4,7 @@
 live account right now, produced by running the real preview route over a read-only copy of
 production. Every figure below is the route's own answer, not an estimate.
 
-Whole dollars throughout; nothing is rounded.
+Figures are the route's own, to the cent; nothing is rounded.
 
 ## The headline
 

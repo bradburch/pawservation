@@ -12,6 +12,7 @@ import { adminFetch, type OwnerSession } from './shared.js';
 import { Hint } from './Hint';
 import { EarningsView } from './sections/EarningsSection.js';
 import { IconChartBar, IconUsers } from '../shared-ui/icons';
+import { formatCents } from '../../src/shared/index.js';
 
 /**
  * Platform-owner console: who may join Pawservation. Deliberately non-technical copy — the owner
@@ -41,7 +42,7 @@ const WINDOW_OPTIONS: { key: SitterWindow; label: string }[] = [
   { key: 'all', label: 'All time' },
 ];
 
-type SortKey = 'name' | 'clients' | 'bookings' | 'earned';
+type SortKey = 'name' | 'clients' | 'bookings' | 'earnedCents';
 
 /** Numeric columns default to descending (biggest first); name defaults to A→Z. */
 function defaultDir(key: SortKey): 'asc' | 'desc' {
@@ -139,7 +140,7 @@ export function OwnerConsole({
   const [tab, setTab] = useState<'dashboard' | 'allowlist'>('dashboard');
   const [win, setWin] = useState<SitterWindow>('all');
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
-    key: 'earned',
+    key: 'earnedCents',
     dir: 'desc',
   });
   const [selected, setSelected] = useState<{ tenantId: string; displayName: string } | null>(null);
@@ -381,7 +382,7 @@ export function OwnerConsole({
                       <span>Bookings</span>
                     </div>
                     <div className="pb-tile">
-                      <strong>${roster.totals.earned}</strong>
+                      <strong>{formatCents(roster.totals.earnedCents)}</strong>
                       <span>Earned</span>
                     </div>
                   </div>
@@ -446,7 +447,7 @@ export function OwnerConsole({
                             </th>
                             <th
                               aria-sort={
-                                sort.key === 'earned'
+                                sort.key === 'earnedCents'
                                   ? sort.dir === 'asc'
                                     ? 'ascending'
                                     : 'descending'
@@ -456,9 +457,9 @@ export function OwnerConsole({
                               <button
                                 type="button"
                                 className="pb-linklike"
-                                onClick={() => toggleSort('earned')}
+                                onClick={() => toggleSort('earnedCents')}
                               >
-                                Earned{sortIndicator(sort, 'earned')}
+                                Earned{sortIndicator(sort, 'earnedCents')}
                               </button>
                             </th>
                             <th>Status</th>
@@ -484,7 +485,7 @@ export function OwnerConsole({
                               </td>
                               <td>{s.clients}</td>
                               <td>{s.bookings}</td>
-                              <td>${s.earned}</td>
+                              <td>{formatCents(s.earnedCents)}</td>
                               <td>
                                 {s.disabled && (
                                   <span className="pb-chip pb-chip-warn">Disabled</span>

@@ -73,8 +73,17 @@ export type CsvValue = string | number | null | undefined;
  * costs one apostrophe, and a rule that first has to decide which whitespace is innocent is a rule
  * that can be wrong.
  *
- * `-` costs us nothing to include: every genuinely numeric field this codebase exports (an amount,
- * a count) is handed over as a `number`, and numbers are never neutralised.
+ * `-` costs us nothing to include for a genuinely numeric field (a pet count) that is handed over
+ * as a `number` — those are never neutralised, full stop. The five MONEY cells in
+ * `server/lib/data-export.ts` (`bookingsCsv`'s estimated cost, charges total, cancellation fee,
+ * paid total; `paymentsCsv`'s amount) are the one exception worth naming: `formatCentsPlain`
+ * returns a decimal STRING (`45.50`), not a `number`, so those cells take the generic string
+ * branch below and are only safe from this `-` because every one of them is non-negative by
+ * construction today (`Payments.Amount CHECK > 0`, `BookingCharges.Amount CHECK >= 1`, `EstCost`/
+ * `CancellationFee` never negative). If a negative money figure is ever introduced (a refund),
+ * that sign must be threaded through as a real `number` again — a formatted string leading with
+ * `-` (e.g. `'-12.00'`) IS neutralised by this guard, which would corrupt the figure it exists to
+ * protect. See `data-export.test.ts`'s pin on both halves of this.
  */
 const FORMULA_LEAD = /^[\s=+\-@]/;
 

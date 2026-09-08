@@ -62,7 +62,10 @@ async function seedBooking(env: Env, over: Over = {}): Promise<string> {
     optionKey: over.optionKey === undefined ? 'standard' : over.optionKey,
     petCount: over.petCount ?? (over.petIds?.length || 1),
     startTime: over.startTime ?? null,
-    estCost: over.estCost === undefined ? 150 : over.estCost,
+    // CENTS (0015) — a repo seed writes the column directly, and the edit route answers in the
+    // SAME unit (`estCostCents` below). The only whole-dollar figure in this file is the
+    // availability probe's retained `estCost` twin.
+    estCost: over.estCost === undefined ? 15000 : over.estCost,
     status: over.status ?? 'pending',
     answers: over.answers,
   });
@@ -160,13 +163,13 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id, estCost: 250, status: 'pending' });
+    expect(await res.json()).toEqual({ id, estCostCents: 25000, status: 'pending' });
     const after = await row(env, id);
     expect(after.StartDate).toBe(addDays(TODAY, 50));
     expect(after.EndDate).toBe(addDays(TODAY, 55));
     // Re-stamped, deliberately: EstCost is the price OF the booking as it stands, and a moved or
     // lengthened stay costs a different amount. See booking-ops.ts's `editBooking` doc block.
-    expect(after.EstCost).toBe(250);
+    expect(after.EstCost).toBe(25000);
     expect(after.SyncPending).toBe(1);
   });
 
@@ -204,7 +207,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(300); // 3 nights × $50 × 2
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(30000); // 3 nights × $50 × 2
     expect(await bookingPetIds(env, id)).toEqual([BELLA, MOCHI].sort());
     expect((await row(env, id)).PetCount).toBe(2);
   });
@@ -224,7 +227,39 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     expect(res.status).toBe(400);
     expect(((await res.json()) as { code: string }).code).toBe('unpriced_pet_set');
     expect(await bookingPetIds(env, id)).toEqual([BELLA]);
-    expect((await row(env, id)).EstCost).toBe(150);
+    expect((await row(env, id)).EstCost).toBe(15000);
+  });
+
+  /**
+   * The edit's half of the create path's `cost_out_of_range` refusal. The re-quote is where an
+   * absurd stored rate reaches this route, and it must be told apart from an unpriced set for the
+   * same reason it is on the create: the two call for completely different things from the
+   * customer. And, like every refused edit here, the stored booking is left exactly as it was.
+   */
+  it("refuses a re-quote too large to record with 'cost_out_of_range', leaving the booking untouched", async () => {
+    const { env, raw } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    const id = await seedBooking(env);
+    raw
+      .prepare(
+        `UPDATE TenantServiceOptions SET Rate = ? WHERE TenantId = ? AND ServiceType = 'boarding' AND OptionKey = 'standard'`,
+      )
+      .run(Number.MAX_SAFE_INTEGER, TENANT_A);
+
+    // The DATES change, so the price is re-quoted — the pet set is untouched, which is what keeps
+    // this test about the arithmetic rather than about an unpriced set.
+    const res = await edit(env, token, id, {
+      startDate: START,
+      endDate: addDays(START, 4),
+      petIds: [BELLA],
+      answers: {},
+    });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe('cost_out_of_range');
+    const after = await row(env, id);
+    expect(after.EstCost).toBe(15000);
+    expect(after.EndDate).toBe(END);
   });
 
   /**
@@ -247,7 +282,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     // Priced when the service was 'linear': 3 nights × $50 × 2 pets.
     setService(raw, "PetRateMode = 'linear'");
     const token = await endUserToken(env, SLUG, 'jess@example.com');
-    const id = await seedBooking(env, { petIds: [BELLA, MOCHI], estCost: 300 });
+    const id = await seedBooking(env, { petIds: [BELLA, MOCHI], estCost: 30000 });
     // …and the sitter flips the service back to 'exact' with no two-pet rate stored, so this exact
     // set can no longer be quoted at all.
     setService(raw, "PetRateMode = 'exact'");
@@ -261,9 +296,9 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id, estCost: 300, status: 'pending' });
+    expect(await res.json()).toEqual({ id, estCostCents: 30000, status: 'pending' });
     const after = await row(env, id);
-    expect(after.EstCost).toBe(300);
+    expect(after.EstCost).toBe(30000);
     expect(after.StartTime).toBe('14:30');
   });
 
@@ -278,7 +313,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     const id = await seedBooking(env, {
       startDate: `${year}-12-26`,
       endDate: `${year}-12-28`,
-      estCost: 100,
+      estCost: 10000,
     });
 
     const res = await edit(env, token, id, {
@@ -289,16 +324,16 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    // $90 (Christmas Eve) + $90 (Christmas Day) + $50 — re-quoted, not the stored 100.
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(230);
-    expect((await row(env, id)).EstCost).toBe(230);
+    // $90 (Christmas Eve) + $90 (Christmas Day) + $50 — re-quoted, not the stored $100.
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(23000);
+    expect((await row(env, id)).EstCost).toBe(23000);
   });
 
   it('still re-prices when the PET SET changes under linear mode', async () => {
     const { env, raw } = createTestEnv();
     setService(raw, "PetRateMode = 'linear'");
     const token = await endUserToken(env, SLUG, 'jess@example.com');
-    const id = await seedBooking(env, { estCost: 150 });
+    const id = await seedBooking(env, { estCost: 15000 });
 
     const res = await edit(env, token, id, {
       startDate: START,
@@ -308,7 +343,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(300);
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(30000);
   });
 
   it('re-prices a never-priced booking rather than keeping its NULL EstCost', async () => {
@@ -325,7 +360,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     });
 
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { estCost: number }).estCost).toBe(150);
+    expect(((await res.json()) as { estCostCents: number }).estCostCents).toBe(15000);
   });
 
   it('re-runs the booking window: too soon', async () => {
@@ -391,7 +426,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       endDate: addDays(TODAY, 64),
       optionKey: 'standard',
       petCount: 2,
-      estCost: 400,
+      estCost: 40000,
       status: 'confirmed',
     });
 
@@ -407,7 +442,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     const after = await row(env, mine);
     expect(after.StartDate).toBe(START);
     expect(after.EndDate).toBe(END);
-    expect(after.EstCost).toBe(150);
+    expect(after.EstCost).toBe(15000);
     expect(await bookingPetIds(env, mine)).toEqual([BELLA]);
   });
 
@@ -424,7 +459,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       endDate: addDays(TODAY, 75),
       optionKey: 'standard',
       petCount: 1,
-      estCost: 350,
+      estCost: 35000,
       status: 'confirmed',
     });
 
@@ -603,7 +638,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Medication',
-      amount: 15,
+      amount: 1500,
     });
 
     const res = await edit(env, token, id, {
@@ -619,9 +654,9 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     )
       .bind(id)
       .all<{ Label: string; Amount: number }>();
-    expect(charges.results).toEqual([{ Label: 'Medication', Amount: 15 }]);
+    expect(charges.results).toEqual([{ Label: 'Medication', Amount: 1500 }]); // the column, in cents
     // The estimate is re-stamped and the charge is still additive on top of it.
-    expect((await row(env, id)).EstCost).toBe(100);
+    expect((await row(env, id)).EstCost).toBe(10000);
   });
 
   /**
@@ -639,12 +674,12 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       status: 'confirmed',
       startDate: addDays(TODAY, 40),
       endDate: addDays(TODAY, 45),
-      estCost: 250,
+      estCost: 25000,
     });
     expect(
       await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
         bookingRequestId: id,
-        amount: 250,
+        amount: 25000,
         method: 'cash',
         paidDate: TODAY,
         note: null,
@@ -659,7 +694,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       answers: {},
     });
     expect(res.status).toBe(200);
-    expect((await row(env, id)).EstCost).toBe(100);
+    expect((await row(env, id)).EstCost).toBe(10000);
 
     const earnings = (await (
       await app.request(
@@ -669,12 +704,12 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       )
     ).json()) as AnalyticsPayload;
     expect(earnings.credits.find((c) => c.bookingId === id)).toMatchObject({
-      credit: 150,
-      paidTotal: 250,
-      keepable: 100,
+      creditCents: 15000,
+      paidTotalCents: 25000,
+      keepableCents: 10000,
       status: 'pending',
     });
-    expect(earnings.tiles.creditTotal).toBe(150);
+    expect(earnings.tiles.creditTotalCents).toBe(15000);
     // And it is NOT also reported as owing — the two predicates are mutually exclusive.
     expect(earnings.outstanding.find((o) => o.bookingId === id)).toBeUndefined();
   });
@@ -839,7 +874,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     const id = await seedBooking(env, {
       serviceType: 'daycare',
       endDate: null,
-      estCost: 40,
+      estCost: 4000,
     });
 
     // Both times on ONE day, so the departure must be strictly later than the arrival.
@@ -867,7 +902,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
     expect(after.StartTime).toBe('08:00');
     expect(after.DepartureTime).toBe('17:00');
     // A time is not price-relevant: the stored estimate is kept verbatim.
-    expect(after.EstCost).toBe(40);
+    expect(after.EstCost).toBe(4000);
   });
 
   it('a duration-priced option still owns the clock — a walk edit rejects an arrival time', async () => {
@@ -877,7 +912,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       serviceType: 'walk',
       optionKey: 'd30',
       endDate: null,
-      estCost: 25,
+      estCost: 2500,
     });
 
     const bad = await edit(env, token, id, {

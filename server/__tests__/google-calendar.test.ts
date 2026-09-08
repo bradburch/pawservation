@@ -213,7 +213,7 @@ describe('google-calendar', () => {
       durationMinutes: null,
       petCount: 2,
       petNames: ['Rex', 'Fido'],
-      estCost: 150,
+      estCost: 15000,
       customerEmail: 'a@b.c',
       status: 'confirmed',
       timezone: 'America/Los_Angeles',
@@ -237,7 +237,7 @@ describe('google-calendar', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: ['Rex'],
-      estCost: 40,
+      estCost: 4000,
       customerEmail: null,
       status: 'confirmed',
       timezone: 'America/Los_Angeles',
@@ -258,7 +258,7 @@ describe('google-calendar', () => {
       durationMinutes: 60,
       petCount: 1,
       petNames: ['Rex'],
-      estCost: 35,
+      estCost: 3500,
       customerEmail: 'a@b.c',
       status: 'confirmed',
       timezone: 'America/Los_Angeles',
@@ -279,14 +279,14 @@ describe('google-calendar', () => {
       durationMinutes: null,
       petCount: 2,
       petNames: ['Bella', 'Mochi'],
-      estCost: 150,
+      estCost: 15000,
       customerEmail: 'jess@example.com',
       status: 'pending',
       timezone: 'America/Los_Angeles',
     });
     expect(r.summary).toBe('[REQUEST] Bella, Mochi — Boarding');
     expect(r.description).toBe(
-      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150\n' +
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150.00\n' +
         'Requested via Pawservation — confirm or decline in your dashboard.',
     );
   });
@@ -303,14 +303,14 @@ describe('google-calendar', () => {
       durationMinutes: null,
       petCount: 2,
       petNames: ['Bella', 'Mochi'],
-      estCost: 150,
+      estCost: 15000,
       customerEmail: 'jess@example.com',
       status: 'confirmed',
       timezone: 'America/Los_Angeles',
     });
     expect(r.summary).toBe('Bella, Mochi — Boarding');
     expect(r.description).toBe(
-      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150',
+      'Service: Boarding\nPets: Bella, Mochi\nCustomer: jess@example.com\nEstimated cost: $150.00',
     );
     expect(r.description).not.toContain('Requested via');
   });
@@ -351,7 +351,7 @@ describe('google-calendar', () => {
       durationMinutes: null,
       petCount: 2,
       petNames: ['Bella', 'Mochi'],
-      estCost: 150,
+      estCost: 15000,
       customerEmail: 'jess@example.com',
       status: 'pending',
       timezone: 'America/Los_Angeles',
@@ -400,7 +400,7 @@ describe('google-calendar', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: ['Bella'],
-      estCost: 250,
+      estCost: 25000,
       customerEmail: 'jess@example.com',
       status: 'confirmed',
       timezone: 'America/Los_Angeles',

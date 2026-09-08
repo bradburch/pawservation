@@ -2,7 +2,7 @@
  * Google OAuth2 + Calendar v3 REST client. All network calls go through fetch (mockable in tests).
  * `buildEventResource` is pure so event shaping is unit-tested without touching the network.
  */
-import { addDays } from '../../src/shared/index.js';
+import { addDays, formatCents } from '../../src/shared/index.js';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -315,6 +315,10 @@ export type CalendarBooking = {
   durationMinutes: number | null;
   petCount: number;
   petNames: string[];
+  /** CENTS (0015) — the stored `EstCost`, straight off the row. The description line below is the
+   *  one place it becomes text, printed with `formatCents` (`$45.50`, not `$45`). Not the same
+   *  line `parseEventDescription` (server/lib/calendar-backfill.ts) reads back — that one keys on
+   *  a sitter-typed `Cost:` line only, never `Estimated cost:`, so this format is free to change. */
   estCost: number | null;
   customerEmail: string | null;
   /**
@@ -392,7 +396,7 @@ export function buildEventResource(b: CalendarBooking): EventResource {
   // A RANGE stay's times live in the description, because its event must stay all-day (below).
   if (b.startTime && b.endDate) lines.push(`Arrival: ${b.startTime}`);
   if (b.departureTime && b.endDate) lines.push(`Departure: ${b.departureTime}`);
-  if (b.estCost != null) lines.push(`Estimated cost: $${b.estCost}`);
+  if (b.estCost != null) lines.push(`Estimated cost: ${formatCents(b.estCost)}`);
   if (b.status === 'pending')
     lines.push('Requested via Pawservation — confirm or decline in your dashboard.');
   if (b.status === 'cancelled')

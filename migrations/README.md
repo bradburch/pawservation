@@ -2,6 +2,10 @@
 
 ## Baseline doctrine (re-baselined 2026-07-27)
 
+**The database lifecycle is separate from code deploys.** `npm run deploy` ships the worker only —
+it never touches the DB. Schema changes are applied by hand, before the merge that deploys the code
+depending on them.
+
 **`sql/schema.sql` IS the baseline.** Every database — local, remote, and the Vitest harness
 (`server/__tests__/helpers.ts` executes schema.sql + seed.sql directly) — is expected to match it
 exactly. The incremental migrations that built the old schema (`0001`–`0025`) were deleted in the
@@ -14,6 +18,22 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
 
 - **Fresh installs:** `npm run seed:local` / `seed:remote` (schema.sql, then seed.sql, then
   seed-demo.sql). Never `wrangler d1 migrations apply`.
+- **Do NOT run `npm run migrate:*` against an existing DB** — no real DB here has a `d1_migrations`
+  tracking table, so the migration runner has no applied-state to reason from and will try to
+  replay files against a database that already has their columns. Hand-apply with
+  `wrangler d1 execute … --file` instead (see "New schema changes" below).
+- **A migration that adds a `Tenants` column the request path reads must ALSO bump the KV
+  tenant-config cache key in the same commit** (`server/lib/tenant-resolve.ts`, currently
+  `tenant:<slug>:config:v5`). That cache stores the whole `Tenants` row as JSON, so for one
+  60-second TTL after deploy the new code reads the new field as `undefined` — with no error and no
+  log — and runs every cached tenant at whatever the code's fallback happens to be. 0010, 0013 and
+  0014 are each why the key is at v5 rather than v2; 0007, 0008, 0009, 0011 and 0012 add no
+  `Tenants` column and correctly needed no bump.
+- **No migration in this directory may contain a transaction statement** — no `BEGIN`, `COMMIT` or
+  `SAVEPOINT`. Cloudflare D1's remote executor rejects explicit SQL transactions outright, and D1
+  applies a `--file` execution atomically on its own. See 0011 below, which shipped a wrapper that
+  passed every local check (including a dedicated `node:sqlite` test) and still could not be
+  applied.
 - **Two seed files.** `sql/seed.sql` is the minimal base fixture the Vitest harness loads and the
   suite asserts against; `sql/seed-demo.sql` is the lived-in demo layered on top (extra clients, a
   booking per enabled service, deliberate conflicts, dated relative to `now`). `seed-demo.sql` is
@@ -226,6 +246,82 @@ COLUMN`, the same shape as 0013's `CalendarCostBasis`), and the DEFAULT stamps e
   **NOT YET APPLIED to the remote DB** — it must be hand-applied before this branch merges:
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0014_attribution_spill_days.sql`.
   Like every bare `ADD COLUMN` above, it must not be run twice.
+
+- **`0015_money_in_cents.sql`** (`feat/payments-in-cents`) — moves every stored cost, fee, charge
+  and payment from whole dollars to integer cents: four `UPDATE … * 100` statements over
+  `BookingRequests.EstCost`, `BookingRequests.CancellationFee`, `BookingCharges.Amount` and
+  `Payments.Amount`. **No money-column shape change** — no `ALTER TABLE`, no rebuild, no index
+  touched, and `Payments`' `CHECK (Amount > 0)` still says exactly what it said (a positive amount
+  is positive in either unit). Rates a sitter types stay whole dollars, so no `TenantServices`,
+  `TenantServiceOptions` or pet-set rate column is scaled; `estimateCost` is where a rate becomes a
+  COST and `extraTimeSurcharges` (`server/lib/booking-times.ts`) is where the two flat extra-time
+  fees become CHARGES — those two are the ×100s in the price path. Every existing value is a whole
+  dollar, so ×100 is exact and no balance moves by a cent. No `Tenants` column changes, so the KV
+  tenant-config cache key needs **no** bump. It contains no `BEGIN`/`COMMIT`/`SAVEPOINT` (D1
+  rejects them — see 0011); D1 applies a `--file` atomically by itself.
+
+  **It carries a marker, so unlike every migration above it you can ASK a database whether it has
+  been applied, and a second run is a no-op.** The file creates
+  `SchemaMeta (Key TEXT PRIMARY KEY, Value TEXT NOT NULL)` if absent, defaults `money_unit` to
+  `'dollars'`, guards all four UPDATEs on it still reading `'dollars'`, and flips it to `'cents'`
+  at the end. To check, before or after:
+
+  ```
+  npx wrangler d1 execute pawservation-db --remote --command "SELECT Value FROM SchemaMeta WHERE Key = 'money_unit'"
+  ```
+
+  No row or `dollars` = not yet applied. `cents` = applied, and **re-running the file changes
+  nothing** — which is why this one is not on the "must not be run twice" list below. A database
+  freshly built from `sql/schema.sql` is born reading `cents` (it creates the money columns empty,
+  so there is nothing to convert), which is also what makes running 0015 against a test database
+  harmless. That seed is **conditional on the money tables being empty**, deliberately: `seed:local`
+  re-applies `schema.sql` over an existing database and `seed:remote` has been pointed at
+  production, and an unconditional seed would stamp `cents` onto a dollars-era database and disarm
+  this migration permanently and silently. Re-seeding a database that holds money therefore leaves
+  no marker at all — which is what an un-migrated database should look like — and 0015 supplies it
+  as `dollars` when it runs. Apply it with:
+  `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0015_money_in_cents.sql`.
+
+  **If the PRE-MARKER draft of 0015 was ever hand-applied to a database** (the four bare `UPDATE …
+  - 100` statements, before this file grew its guard), that database is already in cents and has no
+    marker, so running the file now would multiply everything by 100 a second time. Insert the marker
+    by hand **first**, and only then run it (or skip it — with the marker in place the run is a
+    no-op):
+
+  ```
+  npx wrangler d1 execute pawservation-db --remote --command "INSERT OR REPLACE INTO SchemaMeta (Key, Value) VALUES ('money_unit', 'cents')"
+  ```
+
+  That command needs `SchemaMeta` to exist; if it does not, create it with the same
+  `CREATE TABLE IF NOT EXISTS` the migration carries. Check a stored figure before you decide which
+  world you are in — an `EstCost` that reads as a plausible stay price in dollars is un-migrated,
+  one that reads a hundred times too small is not.
+
+  **NOT YET APPLIED to the remote DB — it MUST be hand-applied before this branch merges**, and
+  the deployed-code-meets-un-migrated-data failure is mostly the QUIET kind, which is worth knowing
+  before reading a pager. At HEAD **no server serializer divides a stored column any more**, so
+  most money surfaces do not throw and do not 500 — they simply render every stored figure at ONE
+  HUNDREDTH of its real value. An un-migrated `EstCost = 200` shows as **$2.00** on the admin
+  bookings list, in the Earnings payload, in the household drill-down, on `/:slug/account` and in
+  the CSV export, with nothing at all to notice.
+
+  The two places that DO complain both complain only about a figure that is **not a multiple of
+  100**, which is most un-migrated values but not all of them — a stay stored as `250` ($250) is
+  caught, one stored as `200` ($200) reads as `$2.00` in silence. Those two are
+  `cancellationFee` (`src/shared/pricing/cancellation-fee.ts`), which throws a `RangeError` rather
+  than compute a percentage off a figure it cannot round in dollars — so assessing a cancellation
+  fee on such a booking 500s; and the admin panel's Edit-cost box, the last place a stored figure
+  is still divided back, which no longer throws but refuses to prefill and says _"This price is not
+  a whole number of dollars; enter a new one."_ So an on-call reader on this branch should not wait
+  for a dead dashboard — there will not be one; suspect the un-applied migration the moment any
+  amount reads two decimal places too small.
+
+  **The apply→deploy window is real and runs the other way, so keep it short and quiet.** Between
+  applying this file and deploying the code that expects cents, the OLD code reads every migrated
+  column as dollars — a $250 stay reads as $25,000 — and every form it serves writes WHOLE DOLLARS
+  back into a column that is now cents, so each payment recorded in that window is stored one
+  hundred times too small and has to be corrected by hand afterwards. Apply immediately before the
+  deploy, not the evening before, and do not invite anyone to use the admin in between.
 
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,

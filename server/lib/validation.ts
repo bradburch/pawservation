@@ -10,20 +10,31 @@ import {
   isValidRate,
   isPetRateMode,
   isCalendarCostBasis,
+  isValidCents,
+  isValidAmountCents,
+  MAX_AMOUNT_CENTS,
+  AMOUNT_RANGE_MESSAGE,
   type PaymentMethod,
   type PetRateMode,
   type CalendarCostBasis,
 } from '../../src/shared/index.js';
 
-/** `isValidRate`/`isPetRateMode` live in `src/shared/pricing/rate.ts`, and `isCalendarCostBasis` in
- * `src/shared/pricing/calendar-cost-basis.ts`, so the admin bundle imports the SAME predicates;
- * re-exported here unchanged, and still enforced server-side at the trust boundary. */
+/** `isValidRate`/`isPetRateMode` live in `src/shared/pricing/rate.ts`, `isCalendarCostBasis` in
+ * `src/shared/pricing/calendar-cost-basis.ts`, and the two cents predicates in
+ * `src/shared/pricing/money.ts`, so the admin bundle imports the SAME predicates; re-exported here
+ * unchanged, and still enforced server-side at the trust boundary. Routes import all of them from
+ * THIS module, so there is one list of what a request body is checked against rather than a route
+ * reaching past it into `src/shared` for a money guard and past it again for a rate one. */
 export {
   PAYMENT_METHODS,
   isPaymentMethod,
   isValidRate,
   isPetRateMode,
   isCalendarCostBasis,
+  isValidCents,
+  isValidAmountCents,
+  MAX_AMOUNT_CENTS,
+  AMOUNT_RANGE_MESSAGE,
   type PaymentMethod,
   type PetRateMode,
   type CalendarCostBasis,

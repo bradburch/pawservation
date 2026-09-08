@@ -54,7 +54,7 @@ export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) =>
         acceptedPetTypes: svc.AcceptedPetTypes,
         cancellationTiers: svc.CancellationTiers,
         // Published so the widget can LABEL holiday days and show the rate — it never prices
-        // with it. The quote's estCost remains the only money the widget renders.
+        // with it. The quote's estimate remains the only money the widget renders.
         holidayRate: svc.HolidayRate,
         options: options
           .filter((o) => o.ServiceType === svc.ServiceType)

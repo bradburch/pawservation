@@ -130,18 +130,18 @@ describe('applyAttribution (repo)', () => {
   it('writes one booking-level payment per split and deletes the household row it came from', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100, '2026-06-28');
-    const second = await book(env, home, 60, '2026-07-04');
-    const paymentId = (await credit(env, home.accountId, 200))!;
+    const first = await book(env, home, 10000, '2026-06-28');
+    const second = await book(env, home, 6000, '2026-07-04');
+    const paymentId = (await credit(env, home.accountId, 20000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
       splits: [
-        { bookingId: first, amount: 100 },
-        { bookingId: second, amount: 60 },
+        { bookingId: first, amount: 10000 },
+        { bookingId: second, amount: 6000 },
       ],
-      remainder: 40,
+      remainder: 4000,
     });
     expect(result).toEqual({ ok: true });
 
@@ -149,7 +149,7 @@ describe('applyAttribution (repo)', () => {
     const firstPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, first);
     expect(firstPayments).toHaveLength(1);
     expect(firstPayments[0]).toMatchObject({
-      Amount: 100,
+      Amount: 10000,
       Method: 'venmo',
       PaidDate: '2026-07-01',
       Note: 'July cheque',
@@ -157,7 +157,7 @@ describe('applyAttribution (repo)', () => {
     });
     const secondPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, second);
     expect(secondPayments).toHaveLength(1);
-    expect(secondPayments[0]).toMatchObject({ Amount: 60, Method: 'venmo', Note: 'July cheque' });
+    expect(secondPayments[0]).toMatchObject({ Amount: 6000, Method: 'venmo', Note: 'July cheque' });
 
     // The source row is GONE, replaced by a household row for the remainder alone.
     const accountPayments = await listPaymentsForAccount(
@@ -168,7 +168,7 @@ describe('applyAttribution (repo)', () => {
     expect(accountPayments).toHaveLength(1);
     // The remainder inherits every field the splits do — it is the same money, still household-level.
     expect(accountPayments[0]).toMatchObject({
-      Amount: 40,
+      Amount: 4000,
       Method: 'venmo',
       PaidDate: '2026-07-01',
       Note: 'July cheque',
@@ -181,14 +181,14 @@ describe('applyAttribution (repo)', () => {
   it('writes no remainder row when the splits consume the whole payment', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 150);
-    const paymentId = (await credit(env, home.accountId, 150))!;
+    const only = await book(env, home, 15000);
+    const paymentId = (await credit(env, home.accountId, 15000))!;
 
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId: only, amount: 150 }],
+        splits: [{ bookingId: only, amount: 15000 }],
         remainder: 0,
       }),
     ).toEqual({ ok: true });
@@ -200,16 +200,16 @@ describe('applyAttribution (repo)', () => {
   it('refuses splits that OVER-sum the payment, naming both figures, and writes nothing', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100);
-    const second = await book(env, home, 100, '2026-07-04');
-    const paymentId = (await credit(env, home.accountId, 150))!;
+    const first = await book(env, home, 10000);
+    const second = await book(env, home, 10000, '2026-07-04');
+    const paymentId = (await credit(env, home.accountId, 15000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
       splits: [
-        { bookingId: first, amount: 100 },
-        { bookingId: second, amount: 100 },
+        { bookingId: first, amount: 10000 },
+        { bookingId: second, amount: 10000 },
       ],
       remainder: 0,
     });
@@ -221,20 +221,20 @@ describe('applyAttribution (repo)', () => {
     // Untouched: the source is still the tenant's only payment row.
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 150, ExternalRef: 'venmo-7788' });
+    expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 15000, ExternalRef: 'venmo-7788' });
   });
 
   it('refuses splits that UNDER-sum the payment, naming both figures, and writes nothing', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 100);
-    const paymentId = (await credit(env, home.accountId, 150))!;
+    const only = await book(env, home, 10000);
+    const paymentId = (await credit(env, home.accountId, 15000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: only, amount: 100 }],
-      remainder: 10, // 110, not 150 — $40 would simply evaporate
+      splits: [{ bookingId: only, amount: 10000 }],
+      remainder: 1000, // 110, not 150 — $40 would simply evaporate
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
@@ -243,20 +243,20 @@ describe('applyAttribution (repo)', () => {
 
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 150 });
+    expect(rows[0]).toMatchObject({ Id: paymentId, Amount: 15000 });
   });
 
   it('refuses a booking belonging to another household of the SAME tenant', async () => {
     const { env, raw } = createTestEnv();
     const jen = await household(env, raw, 'jen');
     const sam = await household(env, raw, 'sam');
-    const sams = await book(env, sam, 90);
-    const paymentId = (await credit(env, jen.accountId, 90))!;
+    const sams = await book(env, sam, 9000);
+    const paymentId = (await credit(env, jen.accountId, 9000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: jen.accountId,
-      splits: [{ bookingId: sams, amount: 90 }],
+      splits: [{ bookingId: sams, amount: 9000 }],
       remainder: 0,
     });
     expect(result.ok).toBe(false);
@@ -271,13 +271,13 @@ describe('applyAttribution (repo)', () => {
     const { env, raw } = createTestEnv();
     const jen = await household(env, raw, 'jen');
     const stranger = await household(env, raw, 'stranger', TENANT_A);
-    const theirs = await book(env, stranger, 90, '2030-01-01', TENANT_A);
-    const paymentId = (await credit(env, jen.accountId, 90))!;
+    const theirs = await book(env, stranger, 9000, '2030-01-01', TENANT_A);
+    const paymentId = (await credit(env, jen.accountId, 9000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: jen.accountId,
-      splits: [{ bookingId: theirs, amount: 90 }],
+      splits: [{ bookingId: theirs, amount: 9000 }],
       remainder: 0,
     });
     expect(result.ok).toBe(false);
@@ -291,14 +291,14 @@ describe('applyAttribution (repo)', () => {
   it('refuses a payment of another tenant, and a booking-level payment, as the source', async () => {
     const { env, raw } = createTestEnv();
     const jen = await household(env, raw, 'jen');
-    const only = await book(env, jen, 100);
-    const paymentId = (await credit(env, jen.accountId, 100))!;
+    const only = await book(env, jen, 10000);
+    const paymentId = (await credit(env, jen.accountId, 10000))!;
 
     // Right payment id, wrong tenant.
     const wrongTenant = await applyAttribution(env.PAWSERVATION_DB, TENANT_A, {
       paymentId,
       accountId: jen.accountId,
-      splits: [{ bookingId: only, amount: 100 }],
+      splits: [{ bookingId: only, amount: 10000 }],
       remainder: 0,
     });
     expect(wrongTenant.ok).toBe(false);
@@ -310,7 +310,7 @@ describe('applyAttribution (repo)', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: jen.accountId,
-        splits: [{ bookingId: only, amount: 100 }],
+        splits: [{ bookingId: only, amount: 10000 }],
         remainder: 0,
       }),
     ).toEqual({ ok: true });
@@ -319,7 +319,7 @@ describe('applyAttribution (repo)', () => {
     const notAccountLevel = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId: bookingPaymentId,
       accountId: jen.accountId,
-      splits: [{ bookingId: only, amount: 100 }],
+      splits: [{ bookingId: only, amount: 10000 }],
       remainder: 0,
     });
     expect(notAccountLevel.ok).toBe(false);
@@ -329,8 +329,8 @@ describe('applyAttribution (repo)', () => {
   it('refuses a non-integer, zero or negative split, and a negative remainder', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 100);
-    const paymentId = (await credit(env, home.accountId, 100))!;
+    const only = await book(env, home, 10000);
+    const paymentId = (await credit(env, home.accountId, 10000))!;
     const apply = (splits: { bookingId: string; amount: number }[], remainder: number) =>
       applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
@@ -339,21 +339,23 @@ describe('applyAttribution (repo)', () => {
         remainder,
       });
 
-    expect((await apply([{ bookingId: only, amount: 33.5 }], 66.5)).ok).toBe(false);
+    // Fractional CENTS (0015) — the unit moved, the "integers only" bar did not. Summing to the
+    // credit exactly, so it is the integrality guard that refuses this and not conservation.
+    expect((await apply([{ bookingId: only, amount: 3350.5 }], 6649.5)).ok).toBe(false);
     expect((await apply([{ bookingId: only, amount: 0 }], 100)).ok).toBe(false);
-    expect((await apply([{ bookingId: only, amount: 150 }], -50)).ok).toBe(false);
-    expect((await apply([{ bookingId: only, amount: -50 }], 150)).ok).toBe(false);
-    expect((await apply([], 100)).ok).toBe(false);
+    expect((await apply([{ bookingId: only, amount: 15000 }], -50)).ok).toBe(false);
+    expect((await apply([{ bookingId: only, amount: -5000 }], 150)).ok).toBe(false);
+    expect((await apply([], 10000)).ok).toBe(false);
 
     expect(paymentRows(raw)).toHaveLength(1);
-    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 100 });
+    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 10000 });
   });
 
   it('refuses a split that names the same booking twice within one attribution, and writes nothing', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 100);
-    const paymentId = (await credit(env, home.accountId, 150))!;
+    const only = await book(env, home, 10000);
+    const paymentId = (await credit(env, home.accountId, 15000))!;
 
     // Each of these two splits is individually within the booking's $100 outstanding — the defect
     // this pins is that nothing decrements outstanding as splits are consumed, so two splits on the
@@ -363,8 +365,8 @@ describe('applyAttribution (repo)', () => {
       paymentId,
       accountId: home.accountId,
       splits: [
-        { bookingId: only, amount: 100 },
-        { bookingId: only, amount: 50 },
+        { bookingId: only, amount: 10000 },
+        { bookingId: only, amount: 5000 },
       ],
       remainder: 0,
     });
@@ -374,31 +376,31 @@ describe('applyAttribution (repo)', () => {
     expect(result.reason).toContain('more than once');
 
     expect(paymentRows(raw)).toHaveLength(1);
-    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 150 });
+    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 15000 });
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toEqual([]);
   });
 
   it('refuses a split that overpays a booking by even $1 against a NON-ZERO outstanding — pins the boundary exactly', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 150);
+    const only = await book(env, home, 15000);
     // $50 already paid directly against the booking, so its outstanding is $100 — not $0 and not
     // $150. An off-by-one loosening of the guard (e.g. `amount > outstanding + 1`) would slip past
     // a test built only on a $0-outstanding booking; this pins the boundary at a non-zero value.
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: only,
-      amount: 50,
+      amount: 5000,
       method: 'cash',
       paidDate: '2026-06-01',
       note: null,
       externalRef: null,
     });
-    const paymentId = (await credit(env, home.accountId, 101))!;
+    const paymentId = (await credit(env, home.accountId, 10100))!;
 
     const overResult = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: only, amount: 101 }],
+      splits: [{ bookingId: only, amount: 10100 }],
       remainder: 0,
     });
     expect(overResult.ok).toBe(false);
@@ -414,8 +416,8 @@ describe('applyAttribution (repo)', () => {
     const exactResult = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: only, amount: 100 }],
-      remainder: 1,
+      splits: [{ bookingId: only, amount: 10000 }],
+      remainder: 100,
     });
     expect(exactResult).toEqual({ ok: true });
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only)).toHaveLength(2);
@@ -424,48 +426,48 @@ describe('applyAttribution (repo)', () => {
   it('reports the ACTUAL outstanding when a booking is already over-paid, never clamped to $0', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 50);
+    const only = await book(env, home, 5000);
     // Already $100 paid directly against a $50 booking — genuinely $50 over-paid before this
     // attribution ever runs.
     await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: only,
-      amount: 100,
+      amount: 10000,
       method: 'cash',
       paidDate: '2026-06-01',
       note: null,
       externalRef: null,
     });
-    const paymentId = (await credit(env, home.accountId, 10))!;
+    const paymentId = (await credit(env, home.accountId, 1000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: only, amount: 10 }],
+      splits: [{ bookingId: only, amount: 1000 }],
       remainder: 0,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     // The real, negative figure — not "$0", which would misreport an already-over-paid booking as
     // merely settled rather than over-paid.
-    expect(result.reason).toContain('is $50 over-paid');
+    expect(result.reason).toContain('is $50.00 over-paid');
   });
 
   it('marks ExternalRef per derived row — unique, and traceable back to the source', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100, '2026-06-28');
-    const second = await book(env, home, 60, '2026-07-04');
-    const paymentId = (await credit(env, home.accountId, 200, 'venmo-7788'))!;
+    const first = await book(env, home, 10000, '2026-06-28');
+    const second = await book(env, home, 6000, '2026-07-04');
+    const paymentId = (await credit(env, home.accountId, 20000, 'venmo-7788'))!;
 
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
         splits: [
-          { bookingId: first, amount: 100 },
-          { bookingId: second, amount: 60 },
+          { bookingId: first, amount: 10000 },
+          { bookingId: second, amount: 6000 },
         ],
-        remainder: 40,
+        remainder: 4000,
       }),
     ).toEqual({ ok: true });
 
@@ -483,15 +485,15 @@ describe('applyAttribution (repo)', () => {
   it('derives no ExternalRef when the source payment has none', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 80);
-    const paymentId = (await credit(env, home.accountId, 100, null))!;
+    const only = await book(env, home, 8000);
+    const paymentId = (await credit(env, home.accountId, 10000, null))!;
 
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId: only, amount: 80 }],
-        remainder: 20,
+        splits: [{ bookingId: only, amount: 8000 }],
+        remainder: 2000,
       }),
     ).toEqual({ ok: true });
 
@@ -501,24 +503,28 @@ describe('applyAttribution (repo)', () => {
   it("leaves the household's balance EXACTLY unchanged — attribution moves money, never makes or loses it", async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100, '2026-06-28');
-    const second = await book(env, home, 60, '2026-07-04');
-    await book(env, home, 45, '2026-08-10'); // untouched, so the total is not just the split's own sum
-    const paymentId = (await credit(env, home.accountId, 200))!;
+    const first = await book(env, home, 10000, '2026-06-28');
+    const second = await book(env, home, 6000, '2026-07-04');
+    await book(env, home, 4500, '2026-08-10'); // untouched, so the total is not just the split's own sum
+    const paymentId = (await credit(env, home.accountId, 20000))!;
 
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(before).toHaveLength(1);
-    expect(before[0]).toMatchObject({ expectedTotal: 205, paidTotal: 200, balance: 5 });
+    expect(before[0]).toMatchObject({
+      expectedTotalCents: 20500,
+      paidTotalCents: 20000,
+      balanceCents: 500,
+    });
 
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
         splits: [
-          { bookingId: first, amount: 100 },
-          { bookingId: second, amount: 60 },
+          { bookingId: first, amount: 10000 },
+          { bookingId: second, amount: 6000 },
         ],
-        remainder: 40,
+        remainder: 4000,
       }),
     ).toEqual({ ok: true });
 
@@ -530,9 +536,9 @@ describe('applyAttribution (repo)', () => {
   it('rolls the WHOLE batch back on a mid-batch failure — the source payment survives intact', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100, '2026-06-28');
-    const second = await book(env, home, 60, '2026-07-04');
-    const paymentId = (await credit(env, home.accountId, 200))!;
+    const first = await book(env, home, 10000, '2026-06-28');
+    const second = await book(env, home, 6000, '2026-07-04');
+    const paymentId = (await credit(env, home.accountId, 20000))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     // A db whose batch() carries one extra, doomed statement — `Amount = -1` violates
@@ -562,10 +568,10 @@ describe('applyAttribution (repo)', () => {
         paymentId,
         accountId: home.accountId,
         splits: [
-          { bookingId: first, amount: 100 },
-          { bookingId: second, amount: 60 },
+          { bookingId: first, amount: 10000 },
+          { bookingId: second, amount: 6000 },
         ],
-        remainder: 40,
+        remainder: 4000,
       }),
     ).rejects.toThrow();
 
@@ -576,7 +582,7 @@ describe('applyAttribution (repo)', () => {
       Id: paymentId,
       AccountId: home.accountId,
       BookingRequestId: null,
-      Amount: 200,
+      Amount: 20000,
       ExternalRef: 'venmo-7788',
     });
     expect(await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, first)).toEqual([]);
@@ -587,11 +593,11 @@ describe('applyAttribution (repo)', () => {
   it('applies ONCE when two overlapping calls attribute the same payment — no money from nowhere', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100, '2026-06-28');
-    const second = await book(env, home, 60, '2026-07-04');
+    const first = await book(env, home, 10000, '2026-06-28');
+    const second = await book(env, home, 6000, '2026-07-04');
     // NO ExternalRef: the partial unique index covers only non-NULL refs, so a hand-recorded
     // household payment — the common case — is protected by nothing but the in-batch guard.
-    const paymentId = (await credit(env, home.accountId, 200, null))!;
+    const paymentId = (await credit(env, home.accountId, 20000, null))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     // The harness runs every batch on ONE SQLite connection, so two batches overlapping in real
@@ -616,10 +622,10 @@ describe('applyAttribution (repo)', () => {
         paymentId,
         accountId: home.accountId,
         splits: [
-          { bookingId: first, amount: 100 },
-          { bookingId: second, amount: 60 },
+          { bookingId: first, amount: 10000 },
+          { bookingId: second, amount: 6000 },
         ],
-        remainder: 40,
+        remainder: 4000,
       });
     // Both started before either is awaited — exactly the double-clicked Apply button.
     const outcomes = await Promise.allSettled([apply(), apply()]);
@@ -644,8 +650,8 @@ describe('applyAttribution (repo)', () => {
   it('aborts rather than duplicating when the source payment vanishes between the re-read and the batch', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 100);
-    const paymentId = (await credit(env, home.accountId, 100, null))!;
+    const only = await book(env, home, 10000);
+    const paymentId = (await credit(env, home.accountId, 10000, null))!;
 
     // The same race as above, pinned to the exact instant it matters: a db whose batch() drops the
     // source row immediately before running. A zero-row DELETE does not raise, so without the
@@ -662,7 +668,7 @@ describe('applyAttribution (repo)', () => {
     const result = await applyAttribution(raced, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: only, amount: 100 }],
+      splits: [{ bookingId: only, amount: 10000 }],
       remainder: 0,
     });
     expect(result.ok).toBe(false);
@@ -677,12 +683,12 @@ describe('applyAttribution (repo)', () => {
   it('refuses the SECOND of two concurrent attributions of DIFFERENT payments onto the SAME booking', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const only = await book(env, home, 100);
+    const only = await book(env, home, 10000);
     // TWO separate household credits, each big enough to settle the booking on its own. NO
     // ExternalRef on either: the partial unique index covers only non-NULL refs, so nothing but the
     // in-batch guard stands between these two and a $100 booking holding $200.
-    const firstPaymentId = (await credit(env, home.accountId, 100, null))!;
-    const secondPaymentId = (await credit(env, home.accountId, 100, null))!;
+    const firstPaymentId = (await credit(env, home.accountId, 10000, null))!;
+    const secondPaymentId = (await credit(env, home.accountId, 10000, null))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     // A DIFFERENT RACE FROM THE ONE ABOVE, and the pre-batch guards cannot see it. Two requests
@@ -711,7 +717,7 @@ describe('applyAttribution (repo)', () => {
       applyAttribution(serialised, TENANT_C, {
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId: only, amount: 100 }],
+        splits: [{ bookingId: only, amount: 10000 }],
         remainder: 0,
       });
     const outcomes = await Promise.allSettled([apply(firstPaymentId), apply(secondPaymentId)]);
@@ -728,14 +734,14 @@ describe('applyAttribution (repo)', () => {
     // THE WHOLE POINT: one $100 payment against a $100 booking, never two.
     const bookingPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, only);
     expect(bookingPayments).toHaveLength(1);
-    expect(bookingPayments[0]).toMatchObject({ Amount: 100 });
+    expect(bookingPayments[0]).toMatchObject({ Amount: 10000 });
 
     // The loser's source credit survives WHOLE — household-level, its full amount, still there for
     // the sitter to attribute somewhere it actually fits.
     const survivors = await listPaymentsForAccount(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     expect(survivors).toHaveLength(1);
     expect(survivors[0]).toMatchObject({
-      Amount: 100,
+      Amount: 10000,
       AccountId: home.accountId,
       BookingRequestId: null,
     });
@@ -749,13 +755,13 @@ describe('applyAttribution (repo)', () => {
   it('guards EVERY split, not just the first, when a later booking is settled underneath it', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 60, '2026-06-28');
-    const second = await book(env, home, 40, '2026-07-04');
+    const first = await book(env, home, 6000, '2026-06-28');
+    const second = await book(env, home, 4000, '2026-07-04');
     // The credit that splits across BOTH, and a second credit that will settle `second` from
     // under it. The split onto `second` is index 1, so it carries the outstanding guard but NOT
     // the source guard — which is exactly the axis the single-split test above cannot reach.
-    const splitter = (await credit(env, home.accountId, 100, null))!;
-    const rival = (await credit(env, home.accountId, 40, null))!;
+    const splitter = (await credit(env, home.accountId, 10000, null))!;
+    const rival = (await credit(env, home.accountId, 4000, null))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     // Same queueing shim and the same reasoning as the test above: both calls finish every
@@ -775,15 +781,15 @@ describe('applyAttribution (repo)', () => {
       applyAttribution(serialised, TENANT_C, {
         paymentId: rival,
         accountId: home.accountId,
-        splits: [{ bookingId: second, amount: 40 }],
+        splits: [{ bookingId: second, amount: 4000 }],
         remainder: 0,
       }),
       applyAttribution(serialised, TENANT_C, {
         paymentId: splitter,
         accountId: home.accountId,
         splits: [
-          { bookingId: first, amount: 60 },
-          { bookingId: second, amount: 40 },
+          { bookingId: first, amount: 6000 },
+          { bookingId: second, amount: 4000 },
         ],
         remainder: 0,
       }),
@@ -802,7 +808,7 @@ describe('applyAttribution (repo)', () => {
     // guard on split index 1 it holds $80 — the rival's $40 plus the splitter's, since only the
     // first split of an attribution carries the source guard and nothing else would refuse it.
     const secondPayments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, second);
-    expect(secondPayments.reduce((sum, p) => sum + p.Amount, 0)).toBeLessThanOrEqual(40);
+    expect(secondPayments.reduce((sum, p) => sum + p.Amount, 0)).toBeLessThanOrEqual(4000);
     // And the household still holds exactly the money it started with — attribution moves money
     // between columns, it never creates or destroys any, whichever call won the race.
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
@@ -811,19 +817,19 @@ describe('applyAttribution (repo)', () => {
   it('refuses when a derived ExternalRef collides with one the tenant already holds', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    const first = await book(env, home, 100, '2026-06-28');
-    const second = await book(env, home, 60, '2026-07-04');
+    const first = await book(env, home, 10000, '2026-06-28');
+    const second = await book(env, home, 6000, '2026-07-04');
     // A payment already carrying the ref this attribution's FIRST split would derive.
-    await credit(env, home.accountId, 25, 'attr:1:venmo-7788');
-    const paymentId = (await credit(env, home.accountId, 160, 'venmo-7788'))!;
+    await credit(env, home.accountId, 2500, 'attr:1:venmo-7788');
+    const paymentId = (await credit(env, home.accountId, 16000, 'venmo-7788'))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
       splits: [
-        { bookingId: first, amount: 100 },
-        { bookingId: second, amount: 60 },
+        { bookingId: first, amount: 10000 },
+        { bookingId: second, amount: 6000 },
       ],
       remainder: 0,
     });
@@ -842,8 +848,8 @@ describe('applyAttribution (repo)', () => {
   it('attributes a payment filed under an account id a later pet has since RENAMED', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen'); // accountId 'p_jen'
-    const only = await book(env, home, 100);
-    const paymentId = (await credit(env, home.accountId, 100))!;
+    const only = await book(env, home, 10000);
+    const paymentId = (await credit(env, home.accountId, 10000))!;
 
     // A new pet sorting FIRST renames the household: 'p_aaa' is now the account id, while the
     // payment stays filed under 'p_jen'. Membership, not equality, is what keeps it reachable —
@@ -857,7 +863,7 @@ describe('applyAttribution (repo)', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: renamed,
-        splits: [{ bookingId: only, amount: 100 }],
+        splits: [{ bookingId: only, amount: 10000 }],
         remainder: 0,
       }),
     ).toEqual({ ok: true });
@@ -868,8 +874,8 @@ describe('applyAttribution (repo)', () => {
   it("files the remainder under the SOURCE's account id, not the caller's", async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen'); // accountId 'p_jen'
-    const only = await book(env, home, 100);
-    const paymentId = (await credit(env, home.accountId, 150))!; // filed under 'p_jen'
+    const only = await book(env, home, 10000);
+    const paymentId = (await credit(env, home.accountId, 15000))!; // filed under 'p_jen'
 
     // The two ids now DIFFER: a pet sorting first renames the household to 'p_aaa', while the
     // payment stays filed under 'p_jen'. The caller passes the current name; the leftover money
@@ -886,13 +892,13 @@ describe('applyAttribution (repo)', () => {
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: renamed,
-        splits: [{ bookingId: only, amount: 100 }],
-        remainder: 50,
+        splits: [{ bookingId: only, amount: 10000 }],
+        remainder: 5000,
       }),
     ).toEqual({ ok: true });
 
     const remainderRow = paymentRows(raw).find((r) => r.BookingRequestId === null)!;
-    expect(remainderRow).toMatchObject({ Amount: 50, AccountId: home.accountId });
+    expect(remainderRow).toMatchObject({ Amount: 5000, AccountId: home.accountId });
     expect(remainderRow.AccountId).not.toBe(renamed);
     // And it still rolls up to the same household — the money has not moved, only its shape has.
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
@@ -923,23 +929,23 @@ describe('applyAttribution — a tip', () => {
   it("records Kelly's $10 as a Tip charge on the walk her $50 settled, leaving no credit behind", async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const walk = await book(env, home, 4000);
+    const paymentId = (await credit(env, home.accountId, 5000))!;
 
     expect(
       await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
         // $40 is what the walk OWED; the $10 tip is named separately and added by the server.
-        splits: [{ bookingId: walk, amount: 40 }],
-        tip: { bookingId: walk, amount: 10 },
+        splits: [{ bookingId: walk, amount: 4000 }],
+        tip: { bookingId: walk, amount: 1000 },
         remainder: 0,
       }),
     ).toEqual({ ok: true });
 
     // The tip is a charge the sitter owns: labelled, on the stay, with no derived-charge Origin.
     expect(chargeRows(raw)).toEqual([
-      { BookingRequestId: walk, Label: 'Tip', Amount: 10, Origin: null },
+      { BookingRequestId: walk, Label: 'Tip', Amount: 1000, Origin: null },
     ]);
 
     // ONE payment against the walk, for the WHOLE $50 — split plus tip — inheriting the source's
@@ -947,7 +953,7 @@ describe('applyAttribution — a tip', () => {
     const payments = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_C, walk);
     expect(payments).toHaveLength(1);
     expect(payments[0]).toMatchObject({
-      Amount: 50,
+      Amount: 5000,
       Method: 'venmo',
       PaidDate: '2026-07-01',
       Note: 'July cheque',
@@ -960,7 +966,11 @@ describe('applyAttribution — a tip', () => {
     // Expected $50, paid $50, balance $0 — the stay is settled, not over-paid.
     const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
     expect(balances).toHaveLength(1);
-    expect(balances[0]).toMatchObject({ expectedTotal: 50, paidTotal: 50, balance: 0 });
+    expect(balances[0]).toMatchObject({
+      expectedTotalCents: 5000,
+      paidTotalCents: 5000,
+      balanceCents: 0,
+    });
     expect(
       (await householdOutstandingByBooking(env.PAWSERVATION_DB, TENANT_C, home.accountId)).get(
         walk,
@@ -970,8 +980,8 @@ describe('applyAttribution — a tip', () => {
 
   it('moves the household balance by EXACTLY the tip and nothing else — money IN is untouched', async () => {
     // The design doc's "attribution leaves the household balance unchanged" is a statement about
-    // MONEY RECEIVED, and that half still holds to the dollar: `paidTotal` is identical either
-    // side of the write. What a tip deliberately DOES move is `expectedTotal` — the phantom $10
+    // MONEY RECEIVED, and that half still holds to the cent: `paidTotalCents` is identical either
+    // side of the write. What a tip deliberately DOES move is `expectedTotalCents` — the phantom $10
     // credit becomes $10 the stay was worth — so the balance rises by the tip and by nothing else.
     // Asserted against the same fixture applied WITHOUT a tip, so the difference is attributable
     // to the tip alone rather than to anything else the write does.
@@ -983,18 +993,22 @@ describe('applyAttribution — a tip', () => {
       tipped: boolean,
     ): Promise<{ before: Balances; after: Balances }> => {
       const home = await household(env, raw, 'kelly');
-      const walk = await book(env, home, 40);
-      await book(env, home, 45, '2026-08-10'); // untouched, so the totals are not just the split's
-      const paymentId = (await credit(env, home.accountId, 50))!;
+      const walk = await book(env, home, 4000);
+      await book(env, home, 4500, '2026-08-10'); // untouched, so the totals are not just the split's
+      const paymentId = (await credit(env, home.accountId, 5000))!;
       const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
-      expect(before[0]).toMatchObject({ expectedTotal: 85, paidTotal: 50, balance: 35 });
+      expect(before[0]).toMatchObject({
+        expectedTotalCents: 8500,
+        paidTotalCents: 5000,
+        balanceCents: 3500,
+      });
       expect(
         await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
           paymentId,
           accountId: home.accountId,
-          splits: [{ bookingId: walk, amount: 40 }],
-          ...(tipped ? { tip: { bookingId: walk, amount: 10 } } : {}),
-          remainder: tipped ? 0 : 10,
+          splits: [{ bookingId: walk, amount: 4000 }],
+          ...(tipped ? { tip: { bookingId: walk, amount: 1000 } } : {}),
+          remainder: tipped ? 0 : 1000,
         }),
       ).toEqual({ ok: true });
       return { before, after: await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C) };
@@ -1007,47 +1021,47 @@ describe('applyAttribution — a tip', () => {
     // With a tip: paid unchanged, expected and balance each up by the $10 and not a dollar more.
     const tipped = await run(withTip, true);
     expect(tipped.after).toEqual([
-      { ...tipped.before[0], expectedTotal: 95, paidTotal: 50, balance: 45 },
+      { ...tipped.before[0], expectedTotalCents: 9500, paidTotalCents: 5000, balanceCents: 4500 },
     ]);
   });
 
   it('refuses a tip that breaks conservation, over and under, naming every figure', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const walk = await book(env, home, 4000);
+    const paymentId = (await credit(env, home.accountId, 5000))!;
     const apply = (tipAmount: number, remainder: number) =>
       applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId: walk, amount: 40 }],
+        splits: [{ bookingId: walk, amount: 4000 }],
         tip: { bookingId: walk, amount: tipAmount },
         remainder,
       });
 
     // UNDER: $40 + a $5 tip accounts for $45 of a $50 payment — $5 would simply evaporate.
-    const under = await apply(5, 0);
+    const under = await apply(500, 0);
     expect(under.ok).toBe(false);
     if (under.ok) throw new Error('unreachable');
-    expect(under.reason).toContain('$45');
-    expect(under.reason).toContain('$50');
-    expect(under.reason).toContain('$5 tip');
+    expect(under.reason).toContain('$45.00');
+    expect(under.reason).toContain('$50.00');
+    expect(under.reason).toContain('$5.00 tip');
 
     // OVER: $40 + a $20 tip is $60 against a $50 payment — money from nowhere.
-    const over = await apply(20, 0);
+    const over = await apply(2000, 0);
     expect(over.ok).toBe(false);
     if (over.ok) throw new Error('unreachable');
-    expect(over.reason).toContain('$60');
-    expect(over.reason).toContain('$50');
-    expect(over.reason).toContain('$20 tip');
+    expect(over.reason).toContain('$60.00');
+    expect(over.reason).toContain('$50.00');
+    expect(over.reason).toContain('$20.00 tip');
 
     // A CALLER THAT SENT AN ALREADY-INCLUSIVE SPLIT lands here too, rather than silently paying
     // the tip twice: $50 of split plus a $10 tip is $60 against a $50 payment.
     const inclusive = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: walk, amount: 50 }],
-      tip: { bookingId: walk, amount: 10 },
+      splits: [{ bookingId: walk, amount: 5000 }],
+      tip: { bookingId: walk, amount: 1000 },
       remainder: 0,
     });
     expect(inclusive.ok).toBe(false);
@@ -1055,19 +1069,19 @@ describe('applyAttribution — a tip', () => {
     // Nothing written on any of the three: no charge, and the source credit is whole.
     expect(chargeRows(raw)).toEqual([]);
     expect(paymentRows(raw)).toHaveLength(1);
-    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 50 });
+    expect(paymentRows(raw)[0]).toMatchObject({ Id: paymentId, Amount: 5000 });
   });
 
   it('refuses a zero, fractional or negative tip, and writes nothing', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const walk = await book(env, home, 4000);
+    const paymentId = (await credit(env, home.accountId, 5000))!;
     const apply = (tipAmount: number, remainder: number) =>
       applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId: walk, amount: 40 }],
+        splits: [{ bookingId: walk, amount: 4000 }],
         tip: { bookingId: walk, amount: tipAmount },
         remainder,
       });
@@ -1077,15 +1091,14 @@ describe('applyAttribution — a tip', () => {
     // whole dollars at all, so it is paired with a whole remainder and the assertion below carries
     // the weight: the refusal must be the TIP's, not conservation's.
     for (const [bad, remainder] of [
-      [0, 10],
-      [2.5, 10],
-      [-10, 20],
+      [0, 1000],
+      [250.5, 1000],
+      [-1000, 2000],
     ] as const) {
       const result = await apply(bad, remainder);
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('unreachable');
-      expect(result.reason).toContain(String(bad));
-      expect(result.reason).toContain('a tip must be a whole number of dollars greater than zero');
+      expect(result.reason).toContain('a tip must be a positive amount of money');
     }
 
     expect(chargeRows(raw)).toEqual([]);
@@ -1095,18 +1108,18 @@ describe('applyAttribution — a tip', () => {
   it("refuses a tip naming a booking that is not among this attribution's own splits", async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
+    const walk = await book(env, home, 4000);
     // The same household's OTHER stay: a perfectly real booking of this account, so nothing but
     // the splits-membership rule stands between the sitter and a tip landing on a stay this
     // payment is not settling at all.
-    const boarding = await book(env, home, 90, '2026-06-28');
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const boarding = await book(env, home, 9000, '2026-06-28');
+    const paymentId = (await credit(env, home.accountId, 5000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: walk, amount: 40 }],
-      tip: { bookingId: boarding, amount: 10 },
+      splits: [{ bookingId: walk, amount: 4000 }],
+      tip: { bookingId: boarding, amount: 1000 },
       remainder: 0,
     });
     expect(result.ok).toBe(false);
@@ -1120,16 +1133,16 @@ describe('applyAttribution — a tip', () => {
   it("refuses a tip on ANOTHER household's booking", async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
+    const walk = await book(env, home, 4000);
     const neighbour = await household(env, raw, 'sam');
-    const theirs = await book(env, neighbour, 90, '2026-06-28');
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const theirs = await book(env, neighbour, 9000, '2026-06-28');
+    const paymentId = (await credit(env, home.accountId, 5000))!;
 
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: walk, amount: 40 }],
-      tip: { bookingId: theirs, amount: 10 },
+      splits: [{ bookingId: walk, amount: 4000 }],
+      tip: { bookingId: theirs, amount: 1000 },
       remainder: 0,
     });
     expect(result.ok).toBe(false);
@@ -1145,8 +1158,8 @@ describe('applyAttribution — a tip', () => {
   it('does NOT let a tip raise the ceiling a split is checked against', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const walk = await book(env, home, 4000);
+    const paymentId = (await credit(env, home.accountId, 5000))!;
 
     // $41 of split against a $40 outstanding, with a $9 tip to make it conserve. The tip raises
     // what the stay is expected to total, so a naive guard that compared the split against
@@ -1155,8 +1168,8 @@ describe('applyAttribution — a tip', () => {
     const result = await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
       paymentId,
       accountId: home.accountId,
-      splits: [{ bookingId: walk, amount: 41 }],
-      tip: { bookingId: walk, amount: 9 },
+      splits: [{ bookingId: walk, amount: 4100 }],
+      tip: { bookingId: walk, amount: 900 },
       remainder: 0,
     });
     expect(result.ok).toBe(false);
@@ -1171,8 +1184,8 @@ describe('applyAttribution — a tip', () => {
   it('rolls the tip back with everything else on a mid-batch failure', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'kelly');
-    const walk = await book(env, home, 40);
-    const paymentId = (await credit(env, home.accountId, 50))!;
+    const walk = await book(env, home, 4000);
+    const paymentId = (await credit(env, home.accountId, 5000))!;
     const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
 
     // Same poison as the batch-atomicity test above: one doomed statement (`Amount = -1` violates
@@ -1198,8 +1211,8 @@ describe('applyAttribution — a tip', () => {
       applyAttribution(poisoned, TENANT_C, {
         paymentId,
         accountId: home.accountId,
-        splits: [{ bookingId: walk, amount: 40 }],
-        tip: { bookingId: walk, amount: 10 },
+        splits: [{ bookingId: walk, amount: 4000 }],
+        tip: { bookingId: walk, amount: 1000 },
         remainder: 0,
       }),
     ).rejects.toThrow();
@@ -1214,7 +1227,7 @@ describe('applyAttribution — a tip', () => {
       Id: paymentId,
       AccountId: home.accountId,
       BookingRequestId: null,
-      Amount: 50,
+      Amount: 5000,
     });
     expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual(before);
   });
@@ -1243,12 +1256,12 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
 
     // 1. AN EXTRA CHARGE IS STILL OWED. $100 quoted plus a $25 charge — reading this as
     //    `BASE_AMOUNT_SQL` would put it at $100 and refuse a legitimate $125 split as overpayment.
-    const charged = await book(env, home, 100, '2026-07-01');
+    const charged = await book(env, home, 10000, '2026-07-01');
     expect(
       await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
         bookingRequestId: charged,
         label: 'Late pickup',
-        amount: 25,
+        amount: 2500,
       }),
     ).not.toBeNull();
 
@@ -1263,14 +1276,14 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
       endDate: '2026-07-04',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     await addBookingPets(env.PAWSERVATION_DB, TENANT_C, declined, home.petIds);
     expect(
       await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
         bookingRequestId: declined,
-        amount: 50,
+        amount: 5000,
         method: 'cash',
         paidDate: '2026-06-15',
         note: null,
@@ -1283,9 +1296,9 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
 
     // 3. A CANCELLED BOOKING CARRYING AN ASSESSED FEE IS A LIVE RECEIVABLE — worth its fee, not
     //    its old quote, and attributable exactly that far.
-    const cancelled = await book(env, home, 200, '2026-07-03');
+    const cancelled = await book(env, home, 20000, '2026-07-03');
     expect(
-      await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelled, 'cancelled', 30),
+      await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelled, 'cancelled', 3000),
     ).toBe(true);
 
     // 4. ANOTHER HOUSEHOLD'S BOOKING, ON OUR PET. It matches the candidate predicate (our pet is
@@ -1300,7 +1313,7 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
       endDate: '2026-07-07',
       optionKey: 'standard',
       petCount: 2,
-      estCost: 400,
+      estCost: 40000,
       status: 'confirmed',
     });
     await addBookingPets(env.PAWSERVATION_DB, TENANT_C, theirs, [
@@ -1310,7 +1323,7 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
 
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     const fromDetail = new Map(
-      (detail?.bookings ?? []).map((b) => [b.bookingId, b.expected - b.paidTotal]),
+      (detail?.bookings ?? []).map((b) => [b.bookingId, b.expectedCents - b.paidTotalCents]),
     );
     const lean = await householdOutstandingByBooking(env.PAWSERVATION_DB, TENANT_C, home.accountId);
     expect(lean).toEqual(fromDetail);
@@ -1319,9 +1332,9 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
     // were mutated the same way, and an empty map equals an empty map.
     expect(lean).toEqual(
       new Map([
-        [charged, 125], // $100 quoted + $25 charge, nothing paid
-        [declined, -50], // may keep nothing, yet holds $50 — over-paid, never a candidate
-        [cancelled, 30], // the assessed fee, not the $200 quote
+        [charged, 12500], // $100 quoted + $25 charge, nothing paid
+        [declined, -5000], // may keep nothing, yet holds $50 — over-paid, never a candidate
+        [cancelled, 3000], // the assessed fee, not the $200 quote
       ]),
     );
     expect(lean.has(theirs)).toBe(false);

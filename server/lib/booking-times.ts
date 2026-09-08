@@ -33,15 +33,20 @@
  * On a SINGLE-DAY booking both times sit on `StartDate`, so the departure must be strictly later.
  * That asymmetry is the single easiest thing in this feature to get wrong; it lives here, once.
  */
+import { dollarsToCents } from '../../src/shared/index.js';
 import { isValidTimeString } from './validation';
 import type { ExtraTimeOrigin, TenantService, TenantServiceOption } from '../types';
 
 /**
- * A whole-dollar surcharge a booking's times attract, carrying the `BookingCharges.Origin`
- * provenance tag that lets an EDIT re-derive exactly these rows and leave a charge the sitter typed
- * herself alone. The origin domain lives in `server/types.ts` beside the column it is stored in.
+ * A surcharge a booking's times attract, in CENTS — it is written straight into
+ * `BookingCharges.Amount`, which is cents (0015). The stored `EarlyArrivalFee`/`LateDepartureFee`
+ * the sitter typed are whole dollars like every other rate, so this is one of the two places in
+ * the price path a rate becomes money (`estimateCost` is the other). It carries the
+ * `BookingCharges.Origin` provenance tag that lets an EDIT re-derive exactly these rows and leave
+ * a charge the sitter typed herself alone. The origin domain lives in `server/types.ts` beside the
+ * column it is stored in.
  */
-export type ExtraTimeCharge = { label: string; amount: number; origin: ExtraTimeOrigin };
+export type ExtraTimeCharge = { label: string; amountCents: number; origin: ExtraTimeOrigin };
 
 export type ResolvedTimes = { startTime: string | null; departureTime: string | null };
 export type TimesError = { error: string; code: string; status: 400 };
@@ -140,7 +145,8 @@ export function isTimesError(value: ResolvedTimes | TimesError): value is TimesE
  *
  * ── FLAT, and PER STAY ────────────────────────────────────────────────────────────────────────
  *
- * Two stored whole-dollar amounts the sitter typed, each charged at most once. NOT per hour: an
+ * Two stored whole-dollar amounts the sitter typed, each charged at most once — converted to
+ * cents here, because a charge is stored in cents. NOT per hour: an
  * hourly fee needs a duration and a rounding rule, and a rounding rule is a price the sitter did
  * not type. NOT per day either: a stay has exactly ONE arrival and ONE departure, so billing a
  * multi-day stay per day for a single early drop-off invents an event that never happened. The
@@ -164,7 +170,7 @@ export function extraTimeSurcharges(
   ) {
     charges.push({
       label: `Early arrival (${times.startTime})`,
-      amount: EarlyArrivalFee,
+      amountCents: dollarsToCents(EarlyArrivalFee),
       origin: 'extra_time_early',
     });
   }
@@ -176,7 +182,7 @@ export function extraTimeSurcharges(
   ) {
     charges.push({
       label: `Late departure (${times.departureTime})`,
-      amount: LateDepartureFee,
+      amountCents: dollarsToCents(LateDepartureFee),
       origin: 'extra_time_late',
     });
   }

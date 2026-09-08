@@ -67,7 +67,9 @@ async function seedBooking(
     endDate: addDays(start, over.nights ?? 2),
     optionKey: 'standard',
     petCount: 1,
-    estCost: over.estCost === undefined ? 200 : over.estCost,
+    // CENTS (0015) — a repo seed writes the column, and the cancel route answers in the SAME
+    // unit (`cancellationFeeCents` below).
+    estCost: over.estCost === undefined ? 20000 : over.estCost,
     status: over.status ?? 'confirmed',
   });
   if (over.gcalEventId) {
@@ -101,14 +103,14 @@ const cancel = async (env: Env, token: string, id: string) =>
 const jessToken = (env: Env) => endUserToken(env, SLUG, 'jess@example.com');
 
 /** Record a hand-entered payment as the sitter — 201 when insertPayment's guard allows it, 404
- *  when it refuses (the route's existing idiom). */
-const pay = async (env: Env, id: string, amount = 10) =>
+ *  when it refuses (the route's existing idiom). `amountCents` is CENTS (0015), like the route. */
+const pay = async (env: Env, id: string, amountCents = 1000) =>
   app.request(
     `/api/${SLUG}/admin/bookings/${id}/payments`,
     {
       method: 'POST',
       headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount, method: 'cash', paidDate: TODAY }),
+      body: JSON.stringify({ amountCents, method: 'cash', paidDate: TODAY }),
     },
     env,
   );
@@ -137,7 +139,7 @@ describe('POST /:slug/bookings/:id/cancel — fee-free path', () => {
 
     const res = await cancel(env, await jessToken(env), id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
 
     // A REAL 0, not NULL: "cancelled and nothing owed" is a recorded fact.
     expect(await row(env, id)).toMatchObject({
@@ -167,7 +169,7 @@ describe('POST /:slug/bookings/:id/cancel — fee-free path', () => {
 
     const res = await cancel(env, await jessToken(env), id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
     expect(await row(env, id)).toMatchObject({ Status: 'cancelled', CancellationFee: 0 });
     // Deleted, not retitled: there is no receivable to keep a calendar record of.
     expect(calls(spy)).toEqual([
@@ -202,10 +204,10 @@ describe('POST /:slug/bookings/:id/cancel — fee path', () => {
 
     const res = await cancel(env, await jessToken(env), id);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 10000 });
     expect(await row(env, id)).toMatchObject({
       Status: 'cancelled',
-      CancellationFee: 100,
+      CancellationFee: 10000,
       GCalEventId: 'evt_fee',
       SyncPending: 0,
     });
@@ -239,15 +241,15 @@ describe('POST /:slug/bookings/:id/cancel — fee path', () => {
       },
       env,
     );
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 100 });
-    expect((await row(env, id)).CancellationFee).toBe(100);
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 10000 });
+    expect((await row(env, id)).CancellationFee).toBe(10000); // the column, in cents
   });
 
   it('a service with no cancellation policy never charges', async () => {
     const { env } = createTestEnv(); // tiers NOT seeded
     const id = await seedBooking(env, { startsInDays: 1 });
     const res = await cancel(env, await jessToken(env), id);
-    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFee: 0 });
+    expect(await res.json()).toEqual({ status: 'cancelled', cancellationFeeCents: 0 });
   });
 });
 
@@ -265,7 +267,7 @@ describe('the outbox must not undo a retitle (the 15-minute bug)', () => {
     // have deleted the event this feature exists to keep.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
     expect((await cancel(env, await jessToken(env), id)).status).toBe(200);
-    expect(await row(env, id)).toMatchObject({ CancellationFee: 100, SyncPending: 1 });
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 10000, SyncPending: 1 });
 
     vi.restoreAllMocks();
     const spy = vi
@@ -330,7 +332,7 @@ describe('the outbox must not undo a retitle (the 15-minute bug)', () => {
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
     expect((await cancel(env, await jessToken(env), id)).status).toBe(200);
-    expect(await row(env, id)).toMatchObject({ CancellationFee: 200, SyncPending: 1 });
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 20000, SyncPending: 1 });
 
     vi.restoreAllMocks();
     const spy = vi
@@ -355,7 +357,7 @@ describe('the outbox must not undo a retitle (the 15-minute bug)', () => {
     const id = await seedBooking(env, { startsInDays: 5 }); // no GCalEventId
 
     expect((await cancel(env, await jessToken(env), id)).status).toBe(200);
-    expect(await row(env, id)).toMatchObject({ CancellationFee: 100, SyncPending: 1 });
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 10000, SyncPending: 1 });
 
     const spy = vi.spyOn(globalThis, 'fetch');
     await redriveCalendarOutbox(env, tenant);
@@ -396,7 +398,8 @@ describe('the admin status route shares the delete-vs-retitle rule', () => {
 
     const res = await postStatus(env, id, { status: 'cancelled', chargeFee: true });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: 'cancelled', cancellationFee: 100 });
+    // The ADMIN status route, cents on the wire like the customer-facing one (0015).
+    expect(await res.json()).toMatchObject({ status: 'cancelled', cancellationFeeCents: 10000 });
 
     expect(calls(spy)).toEqual([
       'PATCH https://www.googleapis.com/calendar/v3/calendars/primary/events/evt_admin',
@@ -407,7 +410,7 @@ describe('the admin status route shares the delete-vs-retitle rule', () => {
     expect(body.summary).toContain('[CANCELLED]');
     expect(await row(env, id)).toMatchObject({
       Status: 'cancelled',
-      CancellationFee: 100,
+      CancellationFee: 10000,
       GCalEventId: 'evt_admin',
       SyncPending: 0,
     });
@@ -425,7 +428,7 @@ describe('the admin status route shares the delete-vs-retitle rule', () => {
     // The confirm branch this now shares would otherwise CREATE the event as a catch-up, putting
     // a [CANCELLED] entry on a calendar that never carried the booking.
     expect(spy).not.toHaveBeenCalled();
-    expect(await row(env, id)).toMatchObject({ CancellationFee: 100, GCalEventId: null });
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 10000, GCalEventId: null });
   });
 
   it('cancel WITHOUT a fee still deletes, and a decline still deletes', async () => {
@@ -471,7 +474,7 @@ describe('a retitle never resurrects a hand-deleted event', () => {
     ]);
     expect(calls(spy).some((c) => c.startsWith('POST'))).toBe(false);
     // Flag cleared: there is nothing left to push, so this must not wedge the outbox either.
-    expect(await row(env, id)).toMatchObject({ CancellationFee: 100, SyncPending: 0 });
+    expect(await row(env, id)).toMatchObject({ CancellationFee: 10000, SyncPending: 0 });
   });
 });
 
@@ -570,7 +573,7 @@ describe('Earnings after a customer cancellation', () => {
     const owed = analytics.outstanding.find((o) => o.BookingId === id);
     // EstCost on the outstanding row carries the BASE amount, which for a cancelled booking is
     // the assessed fee — $100 of the $200 stay, never the stay price.
-    expect(owed).toMatchObject({ EstCost: 100, ChargesTotal: 0, PaidTotal: 0 });
+    expect(owed).toMatchObject({ EstCost: 10000, ChargesTotal: 0, PaidTotal: 0 });
   });
 
   it('a fee-free cancel with an extra charge on it still owes that charge, and nothing else', async () => {
@@ -580,7 +583,7 @@ describe('Earnings after a customer cancellation', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     await cancel(env, await jessToken(env), id);
 
@@ -592,7 +595,7 @@ describe('Earnings after a customer cancellation', () => {
     // whether or not it was later cancelled"). If a customer cancellation should ALSO void
     // outstanding charges, that is a deliberate change to the shared earnings predicate — and to
     // the Venmo importer's candidate set, which reads the same SQL.
-    expect(owed).toMatchObject({ EstCost: 0, ChargesTotal: 45 });
+    expect(owed).toMatchObject({ EstCost: 0, ChargesTotal: 4500 });
   });
 
   it('a fee-free cancellation refuses payments — a stored 0 is not a receivable', async () => {
@@ -616,7 +619,7 @@ describe('Earnings after a customer cancellation', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     await cancel(env, await jessToken(env), id);
 
@@ -624,12 +627,12 @@ describe('Earnings after a customer cancellation', () => {
     const analytics = await getAnalytics(env.PAWSERVATION_DB, TENANT_A, TODAY);
     expect(analytics.outstanding.find((o) => o.BookingId === id)).toMatchObject({
       EstCost: 0,
-      ChargesTotal: 45,
+      ChargesTotal: 4500,
     });
     // …and the sitter can now actually record the payment against it.
-    const res = await pay(env, id, 45);
+    const res = await pay(env, id, 4500);
     expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ paidTotal: 45 });
+    expect(await res.json()).toMatchObject({ paidTotalCents: 4500 });
   });
 
   it('a DECLINED booking is never payable, charges or not — declines are never billed', async () => {
@@ -638,7 +641,7 @@ describe('Earnings after a customer cancellation', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: id,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, id, 'declined');
     // Not outstanding either — the guard and the earnings predicate agree in both directions.
@@ -654,7 +657,7 @@ describe('Earnings after a customer cancellation', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: free,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500,
     });
     await cancel(env, await jessToken(env), free);
     const withFee = await seedBooking(env, { startsInDays: 5 });
@@ -734,7 +737,7 @@ describe('POST /:slug/bookings/:id/cancel — refusals', () => {
     const [a, b] = await Promise.all([cancel(env, token, id), cancel(env, token, id)]);
     const statuses = [a.status, b.status].sort();
     expect(statuses).toEqual([200, 409]);
-    expect(await row(env, id)).toMatchObject({ Status: 'cancelled', CancellationFee: 100 });
+    expect(await row(env, id)).toMatchObject({ Status: 'cancelled', CancellationFee: 10000 });
   });
 
   it('a sitter confirming between the pricing and the write makes the cancel LOSE, not land free', async () => {
@@ -788,13 +791,72 @@ describe('GET /:slug/bookings/mine — the fee preview the confirm step renders'
       env,
     );
     const { bookings } = (await res.json()) as {
-      bookings: { id: string; cancellable: boolean; feeIfCancelledToday: number | null }[];
+      bookings: { id: string; cancellable: boolean; feeIfCancelledTodayCents: number | null }[];
     };
     const by = (id: string) => bookings.find((b) => b.id === id)!;
-    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledToday: 100 });
-    expect(by(far)).toMatchObject({ cancellable: true, feeIfCancelledToday: 0 });
-    expect(by(pending)).toMatchObject({ cancellable: true, feeIfCancelledToday: 0 });
-    expect(by(past)).toMatchObject({ cancellable: false, feeIfCancelledToday: null });
+    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 10000 });
+    expect(by(far)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 0 });
+    expect(by(pending)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 0 });
+    expect(by(past)).toMatchObject({ cancellable: false, feeIfCancelledTodayCents: null });
+  });
+
+  /** The preview names its unit (design spec §2): `feeIfCancelledTodayCents`, with no
+   *  dollar-named twin left for a reader to misread. */
+  it('states the prospective fee in cents, and drops the dollar-named field', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const soon = await seedBooking(env, { startsInDays: 5 }); // 50% tier → $100
+    const past = await seedBooking(env, { startsInDays: -30 });
+
+    const res = await app.request(
+      `/api/${SLUG}/bookings/mine`,
+      { headers: { Authorization: `Bearer ${await jessToken(env)}` } },
+      env,
+    );
+    const { bookings } = (await res.json()) as { bookings: Record<string, unknown>[] };
+    const by = (id: string) => bookings.find((b) => b.id === id)!;
+    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 10000 });
+    expect(by(past)).toMatchObject({ cancellable: false, feeIfCancelledTodayCents: null });
+    expect(by(soon).feeIfCancelledToday).toBeUndefined();
+  });
+
+  /**
+   * ONE UNROUNDABLE ROW MUST NOT COST THE CUSTOMER THEIR WHOLE LIST. `cancellationFee` throws a
+   * `RangeError` on a cost that is not a whole number of dollars — correctly, because rounding a
+   * percentage of $45.50 to the dollar would bill a figure the booking never had. But this preview
+   * is computed for EVERY row, so an un-migrated database (0015 applied to the code, not the data)
+   * or a row written past both cost routes would 500 the entire response and take away every other
+   * booking with it. The preview is a convenience; the list is not.
+   *
+   * The bad row reports `null` — the same value it already carries when no preview is possible —
+   * and every good row beside it answers normally.
+   */
+  it('a cost that cannot be rounded reports null for THAT row, not a 500 for the list', async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const soon = await seedBooking(env, { startsInDays: 5 }); // $200, 50% tier → $100
+    // $455.50 — a perfectly good number of cents, and not a whole number of dollars. Reachable
+    // from an un-migrated column; unreachable through either route that writes this one.
+    const fractional = await seedBooking(env, { startsInDays: 5, estCost: 45550 });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await app.request(
+      `/api/${SLUG}/bookings/mine`,
+      { headers: { Authorization: `Bearer ${await jessToken(env)}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const { bookings } = (await res.json()) as {
+      bookings: { id: string; cancellable: boolean; feeIfCancelledTodayCents: number | null }[];
+    };
+    const by = (id: string) => bookings.find((b) => b.id === id)!;
+    expect(by(fractional)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: null });
+    // The good row is untouched — the failure is scoped to the row that caused it.
+    expect(by(soon)).toMatchObject({ cancellable: true, feeIfCancelledTodayCents: 10000 });
+    // …and it is not swallowed: the booking id is logged so it can be found and corrected.
+    expect(consoleError).toHaveBeenCalled();
+    expect(consoleError.mock.calls[0]).toContain(fractional);
+    consoleError.mockRestore();
   });
 
   it('the preview and the amount actually stamped are the same number', async () => {
@@ -808,10 +870,11 @@ describe('GET /:slug/bookings/mine — the fee preview the confirm step renders'
         { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
-    ).json()) as { bookings: { id: string; feeIfCancelledToday: number | null }[] };
-    const previewed = list.bookings.find((b) => b.id === id)!.feeIfCancelledToday;
-    const stamped = ((await (await cancel(env, token, id)).json()) as { cancellationFee: number })
-      .cancellationFee;
+    ).json()) as { bookings: { id: string; feeIfCancelledTodayCents: number | null }[] };
+    const previewed = list.bookings.find((b) => b.id === id)!.feeIfCancelledTodayCents;
+    const stamped = (
+      (await (await cancel(env, token, id)).json()) as { cancellationFeeCents: number }
+    ).cancellationFeeCents;
     expect(stamped).toBe(previewed);
   });
 });

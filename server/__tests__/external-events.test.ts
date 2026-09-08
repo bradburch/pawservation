@@ -83,7 +83,7 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     await expect(
       insertPayment(env.PAWSERVATION_DB, TENANT_A, {
         bookingRequestId: id,
-        amount: 10,
+        amount: 1000, // cents (0015)
         method: 'cash',
         paidDate: TODAY,
         note: null,

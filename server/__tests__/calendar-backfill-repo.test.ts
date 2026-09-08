@@ -17,7 +17,7 @@ const ROW = {
   endDate: null,
   optionKey: 'standard',
   petCount: 1,
-  estCost: 25,
+  estCost: 2500, // CENTS (0015) — this fixture is written straight into the column
   status: 'confirmed' as const,
   gcalEventId: 'ev1',
 };
@@ -47,7 +47,7 @@ describe('insertBackfilledBooking', () => {
     // The whole point: an adopted row must never push an event back to Google.
     expect(row?.SyncPending).toBe(0);
     expect(row?.Source).toBe('calendar-backfill');
-    expect(row?.EstCost).toBe(25);
+    expect(row?.EstCost).toBe(2500);
   });
 
   it('lists adopted event ids for the tenant, and only that tenant', async () => {
@@ -111,7 +111,7 @@ describe('clearBookingCalendarEventIds', () => {
       endDate: null,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'confirmed',
     });
     await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_ordinary', null);

@@ -13,11 +13,17 @@ import { createTestEnv, endUserToken, seedPets, TENANT_A, TENANT_B, TEST_SECRET 
 
 type AccountBody = {
   accountId: string | null;
-  bookings: { bookingId: string; cost: number; expected: number; paidTotal: number }[];
-  householdPayments: { id: string; amount: number }[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  bookings: {
+    bookingId: string;
+    costCents: number;
+    expectedCents: number;
+    paidTotalCents: number;
+    outstandingCents: number;
+  }[];
+  householdPayments: { id: string; amountCents: number }[];
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
 
 const book = (
@@ -25,6 +31,7 @@ const book = (
   tenantId: string,
   endUserId: string,
   petIds: string[],
+  /** CENTS (0015) — a repo seed writes the column directly, and the route answers in cents too. */
   estCost: number,
   status: 'pending' | 'confirmed' = 'confirmed',
 ) =>
@@ -58,10 +65,10 @@ describe('GET /:slug/account', () => {
       'Jen',
     );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_acct', petType: 'dog' }]);
-    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 100);
+    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 10000);
     await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: bookingId,
-      amount: 25,
+      amount: 2500,
       method: 'cash',
       paidDate: '2026-07-01',
       note: null,
@@ -78,11 +85,120 @@ describe('GET /:slug/account', () => {
     const body = (await res.json()) as AccountBody;
     expect(body).toMatchObject({
       accountId: rex,
-      bookings: [{ bookingId, cost: 100, expected: 100, paidTotal: 25 }],
-      expectedTotal: 100,
-      paidTotal: 25,
-      balance: 75,
+      bookings: [
+        {
+          bookingId,
+          costCents: 10000,
+          expectedCents: 10000,
+          paidTotalCents: 2500,
+          // What this ONE stay still owes, said by the server — the customer subtracts nothing.
+          outstandingCents: 7500,
+        },
+      ],
+      expectedTotalCents: 10000,
+      paidTotalCents: 2500,
+      balanceCents: 7500,
     });
+  });
+
+  /**
+   * A HOUSEHOLD-LEVEL PAYMENT LOWERS THE BALANCE AND LEAVES THE STAY WHERE IT WAS. The customer's
+   * statement carries the same attribution semantics as the sitter's (0011): money paid against
+   * the household covers no particular stay until she says which, so `outstandingCents` on the
+   * booking is unmoved while `balanceCents` falls by the whole payment.
+   */
+  it('does not let a household payment reduce any one booking outstanding', async () => {
+    const { env, raw } = createTestEnv();
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jen@example.com',
+      'Jen',
+    );
+    const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_hh', petType: 'dog' }]);
+    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 25000);
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
+      bookingRequestId: bookingId,
+      amount: 8750,
+      method: 'venmo',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    });
+    await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
+      accountId: rex,
+      amount: 10000,
+      method: 'venmo',
+      paidDate: '2026-07-02',
+      note: null,
+      externalRef: null,
+    });
+    const token = await endUserToken(env, 'sunny-paws', 'jen@example.com');
+
+    const res = await app.request(
+      '/api/sunny-paws/account',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    const body = (await res.json()) as AccountBody;
+    expect(body.bookings[0]).toMatchObject({ paidTotalCents: 8750, outstandingCents: 16250 });
+    expect(body.balanceCents).toBe(6250);
+  });
+
+  /** The statement says its unit (design spec §2): every money field is `*Cents`, and the
+   *  dollar-named field is GONE rather than kept alongside, so a reader cannot keep treating a
+   *  renamed figure as dollars. */
+  it('names every money field in cents, and carries no dollar-named twin', async () => {
+    const { env, raw } = createTestEnv();
+    const jen = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'jen@example.com',
+      'Jen',
+    );
+    const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_cents', petType: 'dog' }]);
+    const bookingId = await book(env, TENANT_A, jen.Id, [rex], 10050);
+    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
+      bookingRequestId: bookingId,
+      amount: 2550,
+      method: 'cash',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    });
+    const token = await endUserToken(env, 'sunny-paws', 'jen@example.com');
+
+    const res = await app.request(
+      '/api/sunny-paws/account',
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown> & {
+      bookings: Record<string, unknown>[];
+    };
+    expect(body).toMatchObject({
+      accountId: rex,
+      bookings: [
+        {
+          bookingId,
+          costCents: 10050,
+          expectedCents: 10050,
+          paidTotalCents: 2550,
+          outstandingCents: 7500,
+        },
+      ],
+      expectedTotalCents: 10050,
+      paidTotalCents: 2550,
+      balanceCents: 7500,
+    });
+    expect(body.balance).toBeUndefined();
+    expect(body.paidTotal).toBeUndefined();
+    expect(body.expectedTotal).toBeUndefined();
+    expect(body.bookings[0].cost).toBeUndefined();
+    expect(body.bookings[0].expected).toBeUndefined();
+    expect(body.bookings[0].paidTotal).toBeUndefined();
+    expect(body.bookings[0]).not.toHaveProperty('outstanding');
   });
 
   it('gives a prepaying caller a NEGATIVE balance, not an error (mirrors Story 2.3)', async () => {
@@ -96,7 +212,7 @@ describe('GET /:slug/account', () => {
     const [mia] = seedPets(raw, TENANT_A, ana.Id, [{ id: 'p_mia_acct', petType: 'dog' }]);
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: mia,
-      amount: 300,
+      amount: 30000,
       method: 'venmo',
       paidDate: '2026-07-01',
       note: null,
@@ -111,9 +227,9 @@ describe('GET /:slug/account', () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AccountBody;
-    expect(body.balance).toBe(-300);
+    expect(body.balanceCents).toBe(-30000);
     expect(body.bookings).toEqual([]);
-    expect(body.householdPayments).toEqual([expect.objectContaining({ amount: 300 })]);
+    expect(body.householdPayments).toEqual([expect.objectContaining({ amountCents: 30000 })]);
   });
 
   it('answers zero for a brand-new customer with no bookings, no payments and no pets', async () => {
@@ -132,9 +248,9 @@ describe('GET /:slug/account', () => {
       accountId: null,
       bookings: [],
       householdPayments: [],
-      expectedTotal: 0,
-      paidTotal: 0,
-      balance: 0,
+      expectedTotalCents: 0,
+      paidTotalCents: 0,
+      balanceCents: 0,
     });
   });
 
@@ -170,7 +286,7 @@ describe('GET /:slug/account', () => {
       env,
     );
     const body = (await res.json()) as AccountBody;
-    expect(body.balance).toBe(0);
+    expect(body.balanceCents).toBe(0);
     expect(body.bookings).toEqual([]);
     expect(JSON.stringify(body)).not.toContain('999');
   });

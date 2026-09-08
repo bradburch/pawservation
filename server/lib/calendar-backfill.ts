@@ -10,6 +10,7 @@
 import {
   addDays,
   buildAccounts,
+  dollarsToCents,
   nightsBetween,
   type CalendarCostBasis,
 } from '../../src/shared/index.js';
@@ -117,9 +118,12 @@ export function parseEventDescription(description: string): EventMeta {
     const value = line.slice(colon + 1).trim();
 
     if (key === 'cost') {
-      // A whole positive integer only — cents are unrepresentable codebase-wide, and a bad value
-      // must never become money, so anything fractional, zero, negative, or non-numeric falls
-      // back to null (the rate card then applies).
+      // A whole positive integer of DOLLARS only. This line is a sitter's own free text in her
+      // Google Calendar, written before this product existed and unchanged by 0015 — the storage
+      // unit moved, what she typed did not, and `Cost: 45.50` is still refused here (Task 9 is
+      // where a fractional description cost becomes representable). A bad value must never become
+      // money, so anything fractional, zero, negative, or non-numeric falls back to null (the
+      // rate card then applies).
       cost = /^[0-9]+$/.test(value) && Number(value) > 0 ? Number(value) : null;
     } else if (key === 'booking') {
       booking = value;
@@ -364,6 +368,8 @@ export type Classified =
       serviceType: string;
       optionKey: string;
       petIds: string[];
+      /** CENTS (0015) — either the whole-dollar `Cost:` line converted below, or `estimateCost`'s
+       *  own result, which is already cents. */
       estCost: number;
       cancelled: boolean;
     }
@@ -559,14 +565,26 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
   if (meta.cost !== null) {
     const perNight = service.service.shape === 'range' && ctx.costBasis === 'per-night';
     const nights = perNight ? nightsBetween(event.start, spanEndExclusive(event)) : 1;
-    const total = meta.cost * nights;
+    const totalDollars = meta.cost * nights;
     // A range span yielding no whole night is broken data, not a $0 stay, and whole-dollar
     // arithmetic that has left the exact-integer range is not money anyone can be billed. Neither
     // is adoptable, and neither is roundable: hand both to the sitter as needs-price — the same
-    // arm an unpriced pet set takes — rather than write a number nobody charged. Only the
-    // multiplying path can manufacture those: under 'total' the figure is adopted as typed, and
-    // the sitter's own stated total on an odd span is still the total she stated.
-    if (perNight && (!Number.isSafeInteger(nights) || nights < 1 || !Number.isSafeInteger(total))) {
+    // arm an unpriced pet set takes — rather than write a number nobody charged.
+    //
+    // The BROKEN-SPAN half is per-night-only: under 'total' the sitter's own stated total on an
+    // odd span is still the total she stated. The SAFE-INTEGER half is not, and used to be. `Cost:`
+    // is free text in a sitter's own calendar and `parseEventDescription` accepts any run of
+    // digits, so under 'total' a fifteen-digit line was adopted exactly as typed and reached
+    // `dollarsToCents` unguarded — a `RangeError` thrown straight out of `classifyEvent`, which
+    // 500s the whole preview and takes every other event on that calendar down with it, over one
+    // absurd line in one description. The ×100 is checked as well as the figure, because a safe
+    // integer of dollars can be an unsafe integer of cents.
+    const brokenSpan = perNight && (!Number.isSafeInteger(nights) || nights < 1);
+    if (
+      brokenSpan ||
+      !Number.isSafeInteger(totalDollars) ||
+      !Number.isSafeInteger(totalDollars * 100)
+    ) {
       return needsPrice();
     }
     return {
@@ -579,7 +597,8 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
       serviceType: service.service.serviceType,
       optionKey: service.service.optionKey,
       petIds,
-      estCost: total,
+      // The description's figure is WHOLE DOLLARS (see `parseEventDescription`); storage is cents.
+      estCost: dollarsToCents(totalDollars),
       cancelled: parsed.cancelled,
     };
   }
@@ -601,8 +620,9 @@ export function classifyEvent(event: CalendarEvent, ctx: BackfillContext): Class
     serviceType: service.service.serviceType,
     optionKey: service.service.optionKey,
     petIds,
-    // Already the total for the whole span — the rate card was handed the span itself and applied
-    // the service's own per-night/per-day unit inside. Never multiplied again here.
+    // Already the total for the whole span, in cents — the rate card was handed the span itself
+    // and applied the service's own per-night/per-day unit inside. `estimateCost` did the single
+    // ×100; never multiplied again here.
     estCost: price.cost,
     cancelled: parsed.cancelled,
   };

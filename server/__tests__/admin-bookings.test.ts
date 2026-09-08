@@ -93,7 +93,7 @@ describe('admin booking lifecycle', () => {
     expect(await confirm.json()).toEqual({
       status: 'confirmed',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
 
     const list = (await (
@@ -124,7 +124,7 @@ describe('admin booking lifecycle', () => {
     expect(await decline.json()).toEqual({
       status: 'declined',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
 
     const list = (await (
@@ -159,7 +159,7 @@ describe('admin booking lifecycle', () => {
     expect(await cancel.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
 
     // Cancelled is terminal: even re-confirming the same row is rejected.
@@ -176,7 +176,7 @@ describe('admin booking lifecycle', () => {
       endDate: '2030-06-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000, // repo seed: cents (0015)
       status: 'confirmed',
     });
     const spy = vi.spyOn(globalThis, 'fetch');
@@ -319,7 +319,7 @@ describe('admin booking lifecycle', () => {
     expect(list.bookings.find((b) => b.id === bare.id)?.answers).toEqual({});
   });
 
-  it('reports charges and chargesTotal on each booking row', async () => {
+  it('reports charges and chargesTotalCents on each booking row', async () => {
     const { env } = createTestEnv();
     const charged = (await (await bookBoarding(env, '2029-01-01', '2029-01-03')).json()) as {
       id: string;
@@ -330,7 +330,7 @@ describe('admin booking lifecycle', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: charged.id,
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500, // repo seed: cents (0015), as the route payload below is too.
     });
     const res = await app.request(
       '/api/sunny-paws/admin/bookings',
@@ -338,14 +338,46 @@ describe('admin booking lifecycle', () => {
       env,
     );
     const { bookings } = (await res.json()) as {
-      bookings: { id: string; estCost: number | null; charges: unknown[]; chargesTotal: number }[];
+      bookings: {
+        id: string;
+        estCostCents: number | null;
+        charges: unknown[];
+        chargesTotalCents: number;
+      }[];
     };
     const row = bookings.find((b) => b.id === charged.id)!;
-    expect(row.chargesTotal).toBe(45);
-    expect(row.charges).toEqual([expect.objectContaining({ label: 'Vet visit', amount: 45 })]);
+    expect(row.chargesTotalCents).toBe(4500);
+    expect(row.charges).toEqual([
+      expect.objectContaining({ label: 'Vet visit', amountCents: 4500 }),
+    ]);
     // EstCost is NEVER mutated by a charge — total due is derived, not stored.
     const untouched = bookings.find((b) => b.id === untouchedBooking.id)!;
-    expect(untouched.chargesTotal).toBe(0);
+    expect(untouched.chargesTotalCents).toBe(0);
+  });
+
+  /** Every money field on this row names its unit (design spec §2), with NO dollar-named twin left
+   *  for a reader to pick up by accident — the removal is what makes the rename findable. */
+  it('drops every dollar-named money field from the row', async () => {
+    const { env } = createTestEnv();
+    const created = (await (await bookBoarding(env, '2029-03-01', '2029-03-03')).json()) as {
+      id: string;
+    };
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings',
+      { headers: await adminHeaders(TENANT_A) },
+      env,
+    );
+    const { bookings } = (await res.json()) as { bookings: Record<string, unknown>[] };
+    const row = bookings.find((b) => b.id === created.id)!;
+    for (const gone of [
+      'estCost',
+      'paidTotal',
+      'chargesTotal',
+      'cancellationFee',
+      'feeIfCancelledToday',
+    ])
+      expect(row).not.toHaveProperty(gone);
+    expect(row).toMatchObject({ paidTotalCents: 0, chargesTotalCents: 0 });
   });
 
   it('reports every pet name on a multi-pet booking, tenant-scoped', async () => {
@@ -361,7 +393,7 @@ describe('admin booking lifecycle', () => {
       endDate: '2029-03-03',
       optionKey: 'standard',
       petCount: 2,
-      estCost: 200,
+      estCost: 20000, // repo seed: cents (0015)
       status: 'pending',
     });
     await addBookingPets(env.PAWSERVATION_DB, TENANT_A, multiPetId, [
@@ -407,7 +439,7 @@ describe('admin booking lifecycle', () => {
       endDate: null,
       optionKey: 'standard',
       petCount: 1,
-      estCost: 25,
+      estCost: 2500, // repo seed: cents
       status: 'confirmed',
       gcalEventId: 'evt_isbackfilled_test',
     });

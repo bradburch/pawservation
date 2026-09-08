@@ -175,8 +175,8 @@ describe('weekday-only — range-shaped option (spec: reject a weekend ANYWHERE 
     // 2028-07-24 = Mon, checkout 2028-07-28 = Fri. Occupied nights: Mon Tue Wed Thu — no weekend.
     const res = await bookBoarding(env, '2028-07-24', '2028-07-28');
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { estCost: number; status: string };
-    expect(body).toMatchObject({ estCost: 200, status: 'pending' });
+    const body = (await res.json()) as { estCostCents: number; status: string };
+    expect(body).toMatchObject({ estCostCents: 20000, status: 'pending' });
   });
 });
 
@@ -217,8 +217,8 @@ describe('weekday-only — booking enforcement (real schema, real routes)', () =
 
     const res = await bookWalk(env, 'pack-walk', '2028-07-24');
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { estCost: number; status: string };
-    expect(body).toMatchObject({ estCost: 25, status: 'pending' });
+    const body = (await res.json()) as { estCostCents: number; status: string };
+    expect(body).toMatchObject({ estCostCents: 2500, status: 'pending' });
   });
 
   it('still accepts Saturday bookings for a normal (non-weekday-only) option', async () => {

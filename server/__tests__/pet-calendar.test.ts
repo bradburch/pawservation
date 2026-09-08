@@ -125,7 +125,7 @@ describe('POST create-calendar', () => {
       endDate: addDays(today, 13),
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: 'confirmed',
     });
     await setBookingGCalEventId(env.PAWSERVATION_DB, TENANT_A, id, 'evt_in_old_calendar', null);
