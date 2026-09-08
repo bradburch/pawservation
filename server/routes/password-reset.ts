@@ -3,6 +3,7 @@ import * as v from 'valibot';
 import {
   getOwnerUserByEmail,
   getTenantUserByEmail,
+  revokeAllTenantAccessTokensForUser,
   updateOwnerPasswordHash,
   updateTenantUserPasswordHash,
 } from '../db/repo';
@@ -165,6 +166,13 @@ export const passwordResetRoutes = new Hono<AppEnv>()
       passwordHash,
     );
     if (!changed) return c.json({ error: EXPIRED_ERROR }, 400);
+    // A reset is what someone does when they think their access is compromised, so every
+    // long-lived credential that access could have minted goes with it (0016). Without this the
+    // reset settles nothing: the password JWTs expire in eight hours on their own, but a tenant
+    // access token never expires, so whoever took the account keeps the whole book and the sitter
+    // has no reason to suspect it. Awaited, not deferred — the sitter is told on the reset page
+    // that this happened, and a promise that had not landed yet would make that a lie.
+    await revokeAllTenantAccessTokensForUser(c.env.PAWSERVATION_DB, user.TenantId, user.Id);
     const adminToken = await mintAdminToken(user.Id, user.TenantId, c.env.TOKEN_SECRET);
     return c.json({ token: adminToken, role: 'admin', email: payload.email });
   });

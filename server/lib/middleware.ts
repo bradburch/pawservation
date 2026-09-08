@@ -156,8 +156,23 @@ export const widgetSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
  * and saying so would mean reading across a tenant boundary to find out.
  */
 export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
+  // ALREADY AUTHENTICATED, so do it once. Hono flattens `.use()` patterns across every app mounted
+  // at the same base, so a request to /api/:slug/admin/tokens matches BOTH admin.ts's
+  // `.use('/:slug/admin/*', adminAuth)` and tenant-tokens.ts's own `.use('/:slug/admin/tokens')` —
+  // this middleware runs twice on that one request. Without this guard that is two token hashes,
+  // two authentication reads, and two `LastUsedAt` touches for one request. Only `adminAuth` sets
+  // `adminCredential`, so its presence means exactly "an earlier run of this middleware already
+  // resolved the caller", and re-resolving the same Authorization header cannot reach a different
+  // answer.
+  if (c.get('adminCredential') !== undefined) return next();
+
   const presented = extractBearer(c.req.header('Authorization'));
+  // `tenantMiddleware` sets this for every /api/:slug/* route; an unset tenant means this
+  // middleware was mounted somewhere that never resolved one, and the safe reading of "we do not
+  // know whose dashboard this is" is "you are not signed in to it". Guarded rather than assumed
+  // because the alternative is a TypeError on `tenant.Id` below, which surfaces as a 500.
   const tenant = c.get('tenant');
+  if (!tenant) return c.json({ error: 'Please sign in.' }, 401);
 
   // Tenant access token. Screened by its public prefix first, so an ordinary admin JWT never costs
   // a hash and a database read (see looksLikeTenantAccessToken — not a security check). A pet
@@ -165,6 +180,19 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
   // it is a plain 401 here and never fires the sitter-side event: the two prefixes differ so that
   // each family's rejection signal stays about its own family.
   if (looksLikeTenantAccessToken(presented)) {
+    // A DISABLED tenant refuses the token outright, before the lookup. `tenantMiddleware` only
+    // blocks mutations for a disabled sitter — the dashboard stays readable so she can still see
+    // her book while the owner sorts it out — but that reasoning is about a session someone is
+    // sitting in front of. A token is a credential that keeps working with nobody watching, so an
+    // owner who disables an account has to be able to assume it stopped working, reads included.
+    // Same body as every other miss below, for the reason the next comment gives.
+    if (tenant.DisabledAt) {
+      securityEvent('tenant_access_token_rejected', {
+        tenant: tenant.Slug,
+        ...requestContext(c.req),
+      });
+      return c.json({ error: 'Please sign in.' }, 401);
+    }
     const hash = await hashPersonalAccessToken(presented);
     const row = await findLiveTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, hash);
     if (!row) {
@@ -174,6 +202,12 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
       // misses with different strings; do not "finish the mirror" by copying that here — it is
       // pinned by a test.) The three of them together are the shape of someone walking a token
       // list, and that is worth seeing.
+      //
+      // The BODY is byte-identical; the TIMING is not. Reaching this line costs a SHA-256 and an
+      // indexed read that the JWT miss below does not pay, so a caller who measures carefully
+      // enough can tell a well-formed `pawsa_` string from a malformed one. That is accepted: the
+      // prefix is public and self-declared by the caller, so the timing confirms only what the
+      // caller already typed, not whether any particular token exists.
       securityEvent('tenant_access_token_rejected', {
         tenant: tenant.Slug,
         ...requestContext(c.req),
@@ -182,10 +216,23 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
     }
     c.set('adminUserId', row.TenantUserId);
     c.set('adminCredential', 'token');
+    // WHICH token this is. Read by exactly one route — the DELETE that lets a token revoke ITSELF
+    // (`routes/tenant-tokens.ts`) — and by nothing else: it is not part of the admin context, and
+    // a route that branched on it would be branching on the credential, which the carve-out
+    // forbids everywhere except credential management itself.
+    c.set('adminTokenId', row.Id);
+    await next();
     // Refreshed at most hourly and handed to waitUntil, for the reasons endUserAuth gives: a
     // recognition aid for the revoke list must not turn an automated client's every read into a
     // write. With no ExecutionContext (tests) the write is awaited so the stamp is deterministic.
-    if (shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
+    //
+    // Scheduled AFTER the handler and only for an authorized response: `LastUsedAt` is what the
+    // sitter reads to decide a token is idle and safe to revoke, so it must mean "this credential
+    // did something", not "someone waved it at a route it has no business on". A 403 from the
+    // carve-out or a 404 from a route that was never reached would otherwise keep a token looking
+    // alive forever. The write itself is still deferred, not awaited — the response is already
+    // built by the time this runs.
+    if (c.res.status < 400 && shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
       const task = touchTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, row.Id).catch((err) => {
         console.error('tenant access token touch failed', err);
       });
@@ -195,7 +242,6 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
         await task;
       }
     }
-    await next();
     return;
   }
 

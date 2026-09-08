@@ -434,6 +434,12 @@ export type AppEnv = {
      *  exception of token management itself, which requires the password session so a leaked
      *  token cannot mint its own replacement (`adminSessionOnly`). */
     adminCredential: 'password' | 'token';
+    /** Set by adminAuth ONLY on the tenant-access-token branch: `TenantAccessTokens.Id` of the
+     *  credential that was presented; unset for a password session. Read by exactly one route —
+     *  the DELETE that lets a token revoke ITSELF (`routes/tenant-tokens.ts`), which is
+     *  de-amplifying and so sits inside the carve-out rather than against it. Nothing else may
+     *  branch on it. */
+    adminTokenId: string;
     /** Set by ownerAuth: the authenticated platform-owner's email (OwnerClaims.sub). */
     ownerEmail: string;
   };

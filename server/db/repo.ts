@@ -4400,7 +4400,33 @@ export async function createTenantAccessToken(
     )
     .bind(id, tenantId, args.tenantUserId, args.name, args.tokenHash)
     .first<{ CreatedAt: string }>();
-  return { Id: id, Name: args.name, CreatedAt: row!.CreatedAt };
+  // A successful INSERT ... RETURNING always yields a row, so this never fires in practice. It is
+  // written out rather than asserted with `row!` because the failure a `!` produces is
+  // `undefined.CreatedAt` inside the caller, which reads as a bug in the route rather than as the
+  // write not having come back.
+  if (!row) throw new Error('TenantAccessTokens insert returned no row');
+  return { Id: id, Name: args.name, CreatedAt: row.CreatedAt };
+}
+
+/**
+ * How many of this sitter's tokens are still live. The mint route caps on this: an unbounded list
+ * is an unbounded number of live credentials for her whole book, and a list too long to read is
+ * one she cannot safely revoke from either.
+ */
+export async function countLiveTenantAccessTokens(
+  db: D1Database,
+  tenantId: string,
+  tenantUserId: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM TenantAccessTokens
+        WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL`,
+    )
+    .bind(tenantId, tenantUserId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 /** This sitter's LIVE tokens, newest first. A revoked token is gone from their list — the row
@@ -4415,7 +4441,7 @@ export async function listTenantAccessTokens(
       `SELECT Id, Name, CreatedAt, LastUsedAt
          FROM TenantAccessTokens
         WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL
-        ORDER BY CreatedAt DESC, Id`,
+        ORDER BY CreatedAt DESC, Id DESC`,
     )
     .bind(tenantId, tenantUserId)
     .all<TenantAccessTokenRow>();
@@ -4448,7 +4474,12 @@ export async function findLiveTenantAccessToken(
 
 /** Stamps a token as used now. Called only when the stamp is actually stale (see
  *  `shouldRefreshLastUsed`) and only off the response path, so the ordinary request writes nothing.
- *  Two concurrent uses may both write; they write the same minute, and last-writer-wins is right. */
+ *  Two concurrent uses may both write; they write the same minute, and last-writer-wins is right.
+ *
+ *  `RevokedAt IS NULL` is in the WHERE clause because the write is deferred: the request that
+ *  authenticated may have been the one that revoked this very token, and a touch landing after
+ *  that would move `LastUsedAt` forward on a dead row — a revoked credential appearing to have
+ *  been used after it was cut off is the one thing this column must never say. */
 export async function touchTenantAccessToken(
   db: D1Database,
   tenantId: string,
@@ -4457,7 +4488,7 @@ export async function touchTenantAccessToken(
   await db
     .prepare(
       `UPDATE TenantAccessTokens SET LastUsedAt = datetime('now')
-        WHERE TenantId = ? AND Id = ?`,
+        WHERE TenantId = ? AND Id = ? AND RevokedAt IS NULL`,
     )
     .bind(tenantId, id)
     .run();
@@ -4487,6 +4518,29 @@ export async function revokeTenantAccessToken(
     .bind(tenantId, tenantUserId, id)
     .run();
   return ((result.meta as { changes?: number }).changes ?? 0) > 0;
+}
+
+/**
+ * Revokes EVERY live token this sitter holds, in one statement. Called by the password reset
+ * (`routes/password-reset.ts`): a reset is what someone does when they believe their access is
+ * compromised, and a long-lived credential that survived it would mean the reset settled nothing —
+ * whoever held the token still has the whole book, and the sitter has no reason to suspect it.
+ *
+ * `COALESCE` for the same reason the single-token revoke uses it: an already-revoked row keeps its
+ * first revocation timestamp rather than having history rewritten by an unrelated reset.
+ */
+export async function revokeAllTenantAccessTokensForUser(
+  db: D1Database,
+  tenantId: string,
+  tenantUserId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE TenantAccessTokens SET RevokedAt = COALESCE(RevokedAt, datetime('now'))
+        WHERE TenantId = ? AND TenantUserId = ?`,
+    )
+    .bind(tenantId, tenantUserId)
+    .run();
 }
 
 export async function getEndUserByEmail(
