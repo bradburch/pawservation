@@ -716,7 +716,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>AI concierge: clients check availability and book by chat</li>
                 <li>Connect an AI assistant such as Claude to check availability and book for you</li>
                 <li>Back-office assistant: ask who owes you and what your week looks like</li>
-                <li>Card payments: deposits, saved cards, auto-charge</li>
+                <li>Card payments through your own Stripe account: deposits, saved cards, and the balance charged after each stay, at Stripe&rsquo;s published rate with no fee from Pawservation</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
               <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
@@ -1025,7 +1025,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="wf-aside">
             <h3 class="wf-h">Optional: keep track of payments</h3>
             <p>If you want to, log what each client has paid, by cash, Venmo, Zelle, PayPal, check or card, and Pawservation keeps a running balance per household. Upload the CSV Venmo gives you and a month of payments matches up at once.</p>
-            <p>Payment stays between you and your client. Card payments are part of Pro.</p>
+            <p>Payment stays between you and your client. Card payments are part of Pro, and they run through your own Stripe account.</p>
           </div>
         </div>
       </section>
@@ -1038,7 +1038,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p><strong>Ask for an invite.</strong> Pawservation is invite-only while it grows, so tell us about your business and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
             <p><strong>Paste one line on your website.</strong> Into a page on Squarespace, Wix or plain HTML, swapping in your own short name. The widget sizes itself to fit, and there is an iframe version if your host strips scripts.</p>
-            <p class="note">Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds card payments, extra sitters and booking by chat.</p>
+            <p class="note">Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
           </div>
           <div class="codecard">
             <div class="codecard-cap">
@@ -1160,7 +1160,7 @@ const PRIVACY_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h3>What we collect</h3>
-            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>On Solo we never collect card numbers.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check). Card payments are part of Pro.</p>
+            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount.</p>
           </div>
           <div class="feature">
             <h3>Who we share it with</h3>
@@ -1252,7 +1252,7 @@ const TERMS_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h3>Payments</h3>
-            <p>On Solo, Pawservation is not a payment processor. A sitter collects payment themselves, outside Pawservation, and logs the amount here so their records stay accurate. On Solo we never process, store, or guarantee any payment. Card payments are part of Pro. Any payment dispute is between the sitter and their customer.</p>
+            <p>Pawservation is not a payment processor. On Solo, a sitter collects payment themselves, outside Pawservation, and logs the amount here so their records stay accurate, and we never process, store, or guarantee any payment. On Pro, card payments are processed by Stripe under the sitter&rsquo;s own Stripe account: the sitter is the merchant, Stripe holds the card details and the funds and pays the sitter directly, and Pawservation is not a party to the payment, holds no funds, and takes no fee. Refunds and disputes are between the sitter, their customer and Stripe.</p>
           </div>
           <div class="feature">
             <h3>Acceptable use</h3>
@@ -1347,13 +1347,13 @@ const ABOUT_HTML = `<!doctype html>
           <div class="feature">
             <h3>Four rules the software will not break</h3>
             <p><strong>Nothing books itself.</strong> Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
-            <p><strong>Your money is yours.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. On Solo it does not process cards, hold funds, or take a cut. Card payments are part of Pro. You collect the way you already collect: cash, Venmo, Zelle, a check on the counter.</p>
+            <p><strong>Your money is yours.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. It never holds your funds or takes a cut, on either plan. On Solo it does not process cards at all, and you collect the way you already collect: cash, Venmo, Zelle, a check on the counter. On Pro, Stripe processes the card under your own Stripe account and pays you directly.</p>
             <p><strong>Your clients stay your clients.</strong> This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
             <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
           </div>
           <div class="feature">
             <h3>Where it is today</h3>
-            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. New sitters are added by invitation while the product grows. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
+            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment, and nothing more. New sitters are added by invitation while the product grows. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
           </div>
           <div class="feature">
             <h3>Who makes it</h3>

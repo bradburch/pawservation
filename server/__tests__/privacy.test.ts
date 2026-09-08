@@ -21,7 +21,7 @@ describe('GET /privacy', () => {
     const { env } = createTestEnv();
     const res = await app.request('/privacy', {}, env);
     const body = await res.text();
-    expect(body).toMatch(/never collect card numbers/i);
+    expect(body).toMatch(/never collect or store card numbers/i);
     expect(body).toContain('Resend');
     expect(body).toContain('Google');
     expect(body).toContain('Cloudflare');
