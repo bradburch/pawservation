@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { adminApi, type AdminAccessToken } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 
@@ -37,6 +37,7 @@ export function TokensPanel({ session }: { session: Session }) {
   const [created, setCreated] = useState<{ name: string; token: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState('');
+  const copiedTimeoutRef = useRef<number | null>(null);
 
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
@@ -58,9 +59,13 @@ export function TokensPanel({ session }: { session: Session }) {
 
   // Leaving the panel clears the plaintext too, so it never outlives the one screen it was
   // minted for — state alone would already be gone on unmount, but this makes that explicit
-  // rather than relying on it.
+  // rather than relying on it. The "Copied!" revert timer is cleared alongside it so it never
+  // fires a state update against an unmounted component.
   useEffect(() => {
-    return () => setCreated(null);
+    return () => {
+      setCreated(null);
+      if (copiedTimeoutRef.current !== null) window.clearTimeout(copiedTimeoutRef.current);
+    };
   }, []);
 
   const trimmedName = name.trim();
@@ -90,7 +95,8 @@ export function TokensPanel({ session }: { session: Session }) {
       await navigator.clipboard.writeText(created.token);
       setCopied(true);
       setCopyError('');
-      window.setTimeout(() => setCopied(false), 5000);
+      if (copiedTimeoutRef.current !== null) window.clearTimeout(copiedTimeoutRef.current);
+      copiedTimeoutRef.current = window.setTimeout(() => setCopied(false), 5000);
     } catch {
       setCopyError('Could not copy automatically. Select the token below and copy it yourself.');
     }
@@ -116,8 +122,8 @@ export function TokensPanel({ session }: { session: Session }) {
       <h3>Access tokens</h3>
       <p className="pb-hint">
         A token acts as your sign-in for this dashboard&apos;s API, so a script or another tool can
-        work as you. It cannot create or revoke tokens, only your password can do that. Revoke it
-        below if it ever leaks.
+        work as you. It cannot create, list or revoke tokens, only your password can do that. Revoke
+        it below if it ever leaks.
       </p>
       {created ? (
         <div>
@@ -145,7 +151,13 @@ export function TokensPanel({ session }: { session: Session }) {
           </p>
         </div>
       ) : (
-        <div className="pb-row">
+        <form
+          className="pb-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create();
+          }}
+        >
           <input
             type="text"
             value={name}
@@ -154,10 +166,10 @@ export function TokensPanel({ session }: { session: Session }) {
             aria-label="Token name"
             onChange={(e) => setName(e.target.value)}
           />
-          <button type="button" disabled={!canCreate} onClick={() => void create()}>
+          <button type="submit" disabled={!canCreate}>
             {creating ? 'Creating…' : 'Create token'}
           </button>
-        </div>
+        </form>
       )}
       {createError && <p className="pb-error">{createError}</p>}
       {tokens === null ? (
@@ -166,50 +178,57 @@ export function TokensPanel({ session }: { session: Session }) {
         ) : (
           <p className="pb-hint">Loading your tokens…</p>
         )
-      ) : tokens.length === 0 ? (
-        <p className="pb-hint">You have not created any access tokens yet.</p>
       ) : (
-        <ul>
-          {tokens.map((t) => (
-            <li key={t.id}>
-              <span>
-                <strong>{t.name}</strong>
-                <br />
-                <span className="pb-hint">
-                  Created {formatTimestamp(t.createdAt)}
-                  {' · '}
-                  Last used {t.lastUsedAt ? formatTimestamp(t.lastUsedAt) : 'never'}
-                </span>
-              </span>
-              {confirmingId === t.id ? (
-                <span>
-                  <button
-                    type="button"
-                    disabled={revokingId === t.id}
-                    onClick={() => void revoke(t.id)}
-                  >
-                    {revokingId === t.id ? 'Revoking…' : 'Really revoke?'}
-                  </button>{' '}
-                  <button
-                    type="button"
-                    disabled={revokingId === t.id}
-                    onClick={() => setConfirmingId(null)}
-                  >
-                    Cancel
-                  </button>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingId(t.id)}
-                  aria-label={`Revoke ${t.name}`}
-                >
-                  Revoke
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          {tokens.length === 0 ? (
+            <p className="pb-hint">You have not created any access tokens yet.</p>
+          ) : (
+            <ul>
+              {tokens.map((t) => (
+                <li key={t.id}>
+                  <span>
+                    <strong>{t.name}</strong>
+                    <br />
+                    <span className="pb-hint">
+                      Created {formatTimestamp(t.createdAt)}
+                      {' · '}
+                      Last used {t.lastUsedAt ? formatTimestamp(t.lastUsedAt) : 'never'}
+                    </span>
+                  </span>
+                  {confirmingId === t.id ? (
+                    <span>
+                      <button
+                        type="button"
+                        disabled={revokingId === t.id}
+                        onClick={() => void revoke(t.id)}
+                      >
+                        {revokingId === t.id ? 'Revoking…' : 'Really revoke?'}
+                      </button>{' '}
+                      <button
+                        type="button"
+                        disabled={revokingId === t.id}
+                        onClick={() => setConfirmingId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(t.id)}
+                      aria-label={`Revoke ${t.name}`}
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* A failed re-list after a create or revoke leaves the OLD list on screen — loud by
+              the same rule as everything else here: a stale list must never look current. */}
+          {listError && <p className="pb-error">{listError}</p>}
+        </>
       )}
       {revokeError && <p className="pb-error">{revokeError}</p>}
     </>
