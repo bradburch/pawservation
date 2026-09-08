@@ -170,6 +170,17 @@ export type Customer = {
   pets: Pet[];
 };
 
+/**
+ * A sitter's own API credential (`TenantAccessTokens`, 0016) — never carries the plaintext: that
+ * exists only in the one-time create response below, never in this list shape.
+ */
+export type AdminAccessToken = {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+
 /** One stored specific-pets rate (PetGroupPricing row), wire shape from the admin routes. */
 export type PetGroupRate = {
   id: string;
@@ -1234,6 +1245,27 @@ export const adminApi = {
       }),
     remove: (slug: string, token: string, id: string) =>
       request<unknown>(`/api/${slug}/admin/pet-group-rates/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+      }),
+  },
+  // The sitter's own API credentials (server/routes/tenant-tokens.ts). Password-session only —
+  // a token cannot mint, list, or revoke tokens, so these three calls only ever run with a real
+  // password JWT on `session.token`.
+  tokens: {
+    list: (slug: string, token: string) =>
+      request<{ tokens: AdminAccessToken[] }>(`/api/${slug}/admin/tokens`, {
+        headers: authHeaders(token),
+      }),
+    /** The plaintext is in this response and nowhere else — see `TokensPanel`. */
+    create: (slug: string, token: string, name: string) =>
+      request<{ id: string; token: string; name: string }>(`/api/${slug}/admin/tokens`, {
+        method: 'POST',
+        headers: { ...jsonHeaders, ...authHeaders(token) },
+        body: JSON.stringify({ name }),
+      }),
+    revoke: (slug: string, token: string, id: string) =>
+      request<{ revoked: true }>(`/api/${slug}/admin/tokens/${id}`, {
         method: 'DELETE',
         headers: authHeaders(token),
       }),

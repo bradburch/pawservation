@@ -2,6 +2,7 @@ import { DEFAULT_TIMEZONE } from '../../../src/shared/index.js';
 import { IconStore } from '../../shared-ui/icons';
 import type { Session, SettingsSectionProps } from '../shared.js';
 import { ExportPanel } from '../ExportPanel';
+import { TokensPanel } from '../TokensPanel';
 import { Hint } from '../Hint';
 import { TIMEZONES } from '../timezones.js';
 import { blockNegativeNumberKeys, clampNullableNumber } from './fields.js';
@@ -280,6 +281,9 @@ export function BusinessSection({
           comes for things that are true of her business as a whole. It saves nothing, so it sits
           past the save control rather than inside the staged-settings form. */}
       <ExportPanel session={session} />
+      {/* Past the export panel for the same reason the export panel is past the save bar: it
+          saves nothing of its own, so it belongs after the settings form rather than inside it. */}
+      <TokensPanel session={session} />
     </>
   );
 }
