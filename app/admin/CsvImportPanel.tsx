@@ -7,7 +7,7 @@ import {
   type CsvPreview,
   type CsvShape,
 } from '../shared-ui/api.js';
-import { formatFriendlyDate, type PaymentMethod } from '../../src/shared/index.js';
+import { formatCents, formatFriendlyDate, type PaymentMethod } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
@@ -71,8 +71,9 @@ export function CsvImportPanel({
   const [result, setResult] = useState<CsvImportResult | null>(null);
   // The server's skip list carries only a dedupeKey + reason. Snapshotted from `preview` right
   // before `record()` calls `reset()` (which nulls `preview` out) so a skipped row can still be
-  // shown as "$99 from Jess Demo — reason" instead of a bare dedupeKey-less reason.
-  const [chosenInfo, setChosenInfo] = useState<Map<string, { amount: number; payer: string }>>(
+  // shown as "$99.00 from Jess Demo — reason" instead of a bare dedupeKey-less reason. CENTS,
+  // like every figure this panel is handed (0015); `formatCents` is what turns one into text.
+  const [chosenInfo, setChosenInfo] = useState<Map<string, { amountCents: number; payer: string }>>(
     new Map(),
   );
 
@@ -92,14 +93,16 @@ export function CsvImportPanel({
   }));
   // What a chosen row is, whether the matcher placed it or the sitter did — the two lists are one
   // set of payments once a household is attached to each.
-  const chosenRow = (dedupeKey: string): { amount: number; payer: string } | undefined => {
+  const chosenRow = (dedupeKey: string): { amountCents: number; payer: string } | undefined => {
     const matched = preview?.matched.find((r) => r.dedupeKey === dedupeKey);
-    if (matched) return { amount: matched.amount, payer: matched.clientLabel };
+    if (matched) return { amountCents: matched.amountCents, payer: matched.clientLabel };
     const unmatched = preview?.unmatched.find((r) => r.dedupeKey === dedupeKey);
-    return unmatched ? { amount: unmatched.amount, payer: unmatched.payer } : undefined;
+    return unmatched ? { amountCents: unmatched.amountCents, payer: unmatched.payer } : undefined;
   };
-  const chosenTotal = chosen.reduce(
-    (sum, { dedupeKey }) => sum + (chosenRow(dedupeKey)?.amount ?? 0),
+  // A sum of the server's own cents figures — the only arithmetic this panel does, and exact
+  // because every term is an integer.
+  const chosenTotalCents = chosen.reduce(
+    (sum, { dedupeKey }) => sum + (chosenRow(dedupeKey)?.amountCents ?? 0),
     0,
   );
 
@@ -332,13 +335,15 @@ export function CsvImportPanel({
 
       {result && (
         <p className="pb-applies" role="status">
-          Recorded {result.imported} payment{result.imported === 1 ? '' : 's'} totalling $
-          {result.totalAmount}.
+          Recorded {result.imported} payment{result.imported === 1 ? '' : 's'} totalling{' '}
+          {formatCents(result.totalAmountCents)}.
           {result.skipped.length > 0
             ? ` ${result.skipped.length} skipped: ${result.skipped
                 .map((s) => {
                   const info = chosenInfo.get(s.dedupeKey);
-                  return info ? `$${info.amount} from ${info.payer} — ${s.reason}` : s.reason;
+                  return info
+                    ? `${formatCents(info.amountCents)} from ${info.payer} — ${s.reason}`
+                    : s.reason;
                 })
                 .join('; ')}.`
             : ''}
@@ -365,7 +370,8 @@ export function CsvImportPanel({
                         checked={choices.get(m.dedupeKey) === m.accountId}
                         onChange={() => toggle(m.dedupeKey, m.accountId)}
                       />{' '}
-                      ${m.amount} from {m.clientLabel} on {formatFriendlyDate(m.date)}
+                      {formatCents(m.amountCents)} from {m.clientLabel} on{' '}
+                      {formatFriendlyDate(m.date)}
                       {m.note ? ` — “${m.note}”` : ''}
                     </label>
                   </li>
@@ -385,9 +391,9 @@ export function CsvImportPanel({
                 {preview.unmatched.map((u) => (
                   <li key={u.dedupeKey}>
                     <label className="pb-inline">
-                      ${u.amount} from {u.payer} on {formatFriendlyDate(u.date)}
+                      {formatCents(u.amountCents)} from {u.payer} on {formatFriendlyDate(u.date)}
                       <select
-                        aria-label={`Client for $${u.amount} from ${u.payer} on ${u.date}`}
+                        aria-label={`Client for ${formatCents(u.amountCents)} from ${u.payer} on ${u.date}`}
                         value={choices.get(u.dedupeKey) ?? ''}
                         onChange={(e) => assign(u.dedupeKey, e.target.value)}
                         disabled={busy}
@@ -431,7 +437,7 @@ export function CsvImportPanel({
             <button onClick={() => void record()} disabled={busy || chosen.length === 0}>
               {busy
                 ? 'Recording…'
-                : `Record ${chosen.length} payment${chosen.length === 1 ? '' : 's'} ($${chosenTotal})`}
+                : `Record ${chosen.length} payment${chosen.length === 1 ? '' : 's'} (${formatCents(chosenTotalCents)})`}
             </button>
           </div>
         </>

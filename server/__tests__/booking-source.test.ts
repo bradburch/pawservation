@@ -12,7 +12,7 @@ describe('BookingRequests.Source', () => {
       endDate: '2028-09-03',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
       source: 'mcp',
     });
@@ -23,7 +23,7 @@ describe('BookingRequests.Source', () => {
       endDate: '2028-09-06',
       optionKey: 'standard',
       petCount: 1,
-      estCost: 50,
+      estCost: 5000,
       status: 'pending',
     });
     const rows = raw

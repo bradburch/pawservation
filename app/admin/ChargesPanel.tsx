@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { isValidRate } from '../../src/shared/index.js';
+import {
+  AMOUNT_RANGE_MESSAGE,
+  formatCents,
+  isValidAmountCents,
+  parseDollarsInput,
+} from '../../src/shared/index.js';
 import { adminApi, type BookingCharge } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
@@ -10,7 +15,7 @@ const MAX_LABEL = 60;
  * One booking's extra charges — the things that happened after the quote (a vet run, a bath).
  * Deliberately separate from the payment ledger next to it: a charge is money OWED, a payment is
  * money RECEIVED. Adding one never changes the booking's estimated cost; the row's balance is
- * recomputed from estCost + charges by `totalDue`.
+ * recomputed from estCostCents + charges by `totalDueCents`.
  */
 export function ChargesPanel({
   session,
@@ -32,10 +37,18 @@ export function ChargesPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const ADDING = '__add__';
 
-  const amountNum = Number(amount);
-  // Same predicates the server enforces — UX only; the server validates independently.
+  // Cents, from the one shared parser (0015): a charge may be $12.50 — the credit
+  // `keepBookingCredit` logs lands in this same column. Same predicates the server enforces —
+  // UX only; the server validates independently.
+  const amountCents = parseDollarsInput(amount);
+  // Same ceiling the route enforces (`MAX_AMOUNT_CENTS`), told here as its own complaint: the
+  // figure parsed fine, it is simply larger than any charge is allowed to be.
+  const amountOverCap = amountCents !== null && !isValidAmountCents(amountCents);
   const canSubmit =
-    label.trim() !== '' && label.trim().length <= MAX_LABEL && isValidRate(amountNum);
+    label.trim() !== '' &&
+    label.trim().length <= MAX_LABEL &&
+    amountCents !== null &&
+    !amountOverCap;
 
   const load = () =>
     adminApi.charges.list(session.slug, session.token, bookingId).then(({ charges: l }) => l);
@@ -52,12 +65,14 @@ export function ChargesPanel({
   }, [bookingId, session]);
 
   const add = async () => {
-    if (busyId) return;
+    // Same guard as PaymentsPanel: null is what disables the button, re-asserted so the request
+    // body carries cents and never an unparsed string.
+    if (busyId || amountCents === null || amountOverCap) return;
     setBusyId(ADDING);
     try {
       await adminApi.charges.add(session.slug, session.token, bookingId, {
         label: label.trim(),
-        amount: amountNum,
+        amountCents,
       });
       setLabel('');
       setAmount('');
@@ -74,7 +89,7 @@ export function ChargesPanel({
     if (busyId) return;
     // Money rows get a confirm — same rule as cancel-with-fee in BookingsSection.
     const ch = charges?.find((c) => c.id === chargeId);
-    const what = ch ? `"${ch.label}" ($${ch.amount})` : 'this charge';
+    const what = ch ? `"${ch.label}" (${formatCents(ch.amountCents)})` : 'this charge';
     if (!window.confirm(`Delete ${what}? This changes what the client owes.`)) return;
     setBusyId(chargeId);
     try {
@@ -97,6 +112,7 @@ export function ChargesPanel({
         <Hint label="Extra charges">
           Something that came up after you agreed the price — a vet visit, a bath, extra food. It is
           added to what this client owes; the original estimate stays exactly as it was quoted.
+          Cents are fine — type 12.50 if that is what it cost.
         </Hint>
       </h4>
       {charges === null ? (
@@ -108,7 +124,7 @@ export function ChargesPanel({
           {charges.map((ch) => (
             <li key={ch.id}>
               <span>
-                {ch.label} · ${ch.amount}
+                {ch.label} · {formatCents(ch.amountCents)}
               </span>
               <button
                 disabled={busyId === ch.id}
@@ -135,15 +151,18 @@ export function ChargesPanel({
           <label className="pb-inline">
             Amount ($)
             <input
-              type="number"
-              min={1}
-              step={1}
-              inputMode="numeric"
-              aria-invalid={amount !== '' && !isValidRate(amountNum)}
+              type="text"
+              inputMode="decimal"
+              aria-invalid={amount !== '' && (amountCents === null || amountOverCap)}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
           </label>
+          {amountOverCap && (
+            <p className="pb-error" role="alert">
+              {AMOUNT_RANGE_MESSAGE}
+            </p>
+          )}
           <button disabled={busyId === ADDING || !canSubmit} onClick={() => void add()}>
             Add charge
           </button>

@@ -58,7 +58,7 @@ function seedBooking(env: Env, status: 'pending' | 'confirmed' = 'confirmed') {
     endDate: addDays(TODAY, 13),
     optionKey: 'standard',
     petCount: 1,
-    estCost: 150,
+    estCost: 15000,
     status,
   });
 }
@@ -75,7 +75,7 @@ const syncInputFor = (id: string) => ({
   durationMinutes: null,
   petCount: 1,
   petNames: ['Bella'],
-  estCost: 150,
+  estCost: 15000,
   status: 'confirmed' as const,
 });
 
@@ -165,7 +165,7 @@ describe('calendar outbox — write side', () => {
       endDate: addDays(TODAY, 4),
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status: 'confirmed',
     });
     const rows = await listUnsyncedFutureBookings(env.PAWSERVATION_DB, TENANT_A, TODAY, 200);
@@ -292,7 +292,7 @@ describe('redriveCalendarOutbox', () => {
       endDate: addDays(TODAY, 22),
       optionKey: 'standard',
       petCount: 1,
-      estCost: 100,
+      estCost: 10000,
       status: 'pending',
     });
     let call = 0;
@@ -594,7 +594,7 @@ describe('a booking adopted from the calendar is never written back to Google', 
       endDate: addDays(TODAY, 13),
       optionKey: 'standard',
       petCount: 1,
-      estCost: 150,
+      estCost: 15000,
       status,
       gcalEventId: 'evt_the_sitters_own',
     });

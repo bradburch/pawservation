@@ -317,9 +317,11 @@ INSERT OR REPLACE INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, 
 -- accept, because confirming it would put three pets in a two-pet pool.
 --
 -- Every EstCost is nights x the option's stored Rate (boarding $50, house sitting $70, and the
--- flat option rate for single-day services), so nothing here is a price the server would not have
--- quoted. PetCount is always 1 in every seeded booking below, on purpose, so each EstCost is
--- unambiguous regardless of a service's PetRateMode — the 'linear' multiplier above only ever
+-- flat option rate for single-day services) EXPRESSED IN CENTS (migration 0015): a 7-night $350
+-- boarding is stored 35000. The Rate columns above are untouched and stay whole dollars — they are
+-- what the sitter typed; estimateCost is the one place a rate becomes a cost. So nothing here is a
+-- price the server would not have quoted. PetCount is always 1 in every seeded booking below, on
+-- purpose, so each EstCost is unambiguous regardless of a service's PetRateMode — the 'linear' multiplier above only ever
 -- fires for a pet SET (2+ distinct pets) a customer selects live in the widget, never for a
 -- seeded row.
 --
@@ -332,20 +334,20 @@ INSERT OR REPLACE INTO TenantServicePetRates (TenantId, ServiceType, OptionKey, 
 -- `validateAnswers`. '{}' appears only where a service asks nothing, or asks only optional
 -- questions the customer skipped — which is a real state and worth showing too.
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
-  ('seed_sp_board_a', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+5 days'), date('now', '+12 days'), 'standard', 1, NULL, 350, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken.","vet":"(555) 555-0190"}', 'confirmed'),
-  ('seed_sp_board_b', 'tnt_sunnypaws', 'eu_sp_marco', 'boarding', date('now', '+7 days'), date('now', '+11 days'), 'standard', 1, '16:00', 200, '{"vaccines":"yes","feeding":"One scoop at 8am, one at 7pm.","vet":"(555) 555-0177"}', 'confirmed'),
-  ('seed_sp_board_c', 'tnt_sunnypaws', 'eu_sp_priya', 'boarding', date('now', '+8 days'), date('now', '+10 days'), 'standard', 1, NULL, 100, '{"vaccines":"yes","feeding":"Half a cup three times a day."}', 'pending'),
-  ('seed_sp_house_a', 'tnt_sunnypaws', 'eu_sp_ana', 'housesitting', date('now', '+24 days'), date('now', '+29 days'), 'standard', 1, NULL, 350, '{"entry":"Lockbox","plants":"yes","mail":"yes"}', 'confirmed'),
-  ('seed_sp_day_a', 'tnt_sunnypaws', 'eu_sp_marco', 'daycare', date('now', '+3 days'), NULL, 'standard', 1, NULL, 40, '{"pickup":"5:30pm"}', 'confirmed'),
-  ('seed_sp_day_b', 'tnt_sunnypaws', 'eu_sp_priya', 'daycare', date('now', '+17 days'), NULL, 'standard', 1, NULL, 40, '{"pickup":"6pm"}', 'pending'),
-  ('seed_sp_walk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+2 days'), NULL, 'd60', 1, '08:30', 35, '{"leash":"Hook by the front door."}', 'confirmed'),
-  ('seed_sp_walk_b', 'tnt_sunnypaws', 'eu_sp_marco', 'walk', date('now', '+9 days'), NULL, 'd30', 1, '07:30', 20, '{}', 'confirmed'),
-  ('seed_sp_chk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+6 days'), NULL, 'd15', 1, '12:00', 12, '{"litter":"yes"}', 'confirmed'),
-  ('seed_sp_chk_b', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+20 days'), NULL, 'd30', 1, '17:00', 18, '{"litter":"yes"}', 'pending'),
+  ('seed_sp_board_a', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+5 days'), date('now', '+12 days'), 'standard', 1, NULL, 35000, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken.","vet":"(555) 555-0190"}', 'confirmed'),
+  ('seed_sp_board_b', 'tnt_sunnypaws', 'eu_sp_marco', 'boarding', date('now', '+7 days'), date('now', '+11 days'), 'standard', 1, '16:00', 20000, '{"vaccines":"yes","feeding":"One scoop at 8am, one at 7pm.","vet":"(555) 555-0177"}', 'confirmed'),
+  ('seed_sp_board_c', 'tnt_sunnypaws', 'eu_sp_priya', 'boarding', date('now', '+8 days'), date('now', '+10 days'), 'standard', 1, NULL, 10000, '{"vaccines":"yes","feeding":"Half a cup three times a day."}', 'pending'),
+  ('seed_sp_house_a', 'tnt_sunnypaws', 'eu_sp_ana', 'housesitting', date('now', '+24 days'), date('now', '+29 days'), 'standard', 1, NULL, 35000, '{"entry":"Lockbox","plants":"yes","mail":"yes"}', 'confirmed'),
+  ('seed_sp_day_a', 'tnt_sunnypaws', 'eu_sp_marco', 'daycare', date('now', '+3 days'), NULL, 'standard', 1, NULL, 4000, '{"pickup":"5:30pm"}', 'confirmed'),
+  ('seed_sp_day_b', 'tnt_sunnypaws', 'eu_sp_priya', 'daycare', date('now', '+17 days'), NULL, 'standard', 1, NULL, 4000, '{"pickup":"6pm"}', 'pending'),
+  ('seed_sp_walk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+2 days'), NULL, 'd60', 1, '08:30', 3500, '{"leash":"Hook by the front door."}', 'confirmed'),
+  ('seed_sp_walk_b', 'tnt_sunnypaws', 'eu_sp_marco', 'walk', date('now', '+9 days'), NULL, 'd30', 1, '07:30', 2000, '{}', 'confirmed'),
+  ('seed_sp_chk_a', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+6 days'), NULL, 'd15', 1, '12:00', 1200, '{"litter":"yes"}', 'confirmed'),
+  ('seed_sp_chk_b', 'tnt_sunnypaws', 'eu_sp_jess', 'checkin', date('now', '+20 days'), NULL, 'd30', 1, '17:00', 1800, '{"litter":"yes"}', 'pending'),
   -- Morning walk is WeekdaysOnly=1, so these use SQLite's `weekday N` modifier (0=Sun..6=Sat) to
   -- land on a real weekday however the seed is re-run: a Wednesday and a Tuesday, never a weekend.
-  ('seed_sp_mw_a', 'tnt_sunnypaws', 'eu_sp_marco', 'morning-walk', date('now', '+7 days', 'weekday 3'), NULL, 'd30', 1, '07:00', 18, '{}', 'confirmed'),
-  ('seed_sp_mw_b', 'tnt_sunnypaws', 'eu_sp_priya', 'morning-walk', date('now', '+14 days', 'weekday 2'), NULL, 'd30', 1, '07:00', 18, '{}', 'pending');
+  ('seed_sp_mw_a', 'tnt_sunnypaws', 'eu_sp_marco', 'morning-walk', date('now', '+7 days', 'weekday 3'), NULL, 'd30', 1, '07:00', 1800, '{}', 'confirmed'),
+  ('seed_sp_mw_b', 'tnt_sunnypaws', 'eu_sp_priya', 'morning-walk', date('now', '+14 days', 'weekday 2'), NULL, 'd30', 1, '07:00', 1800, '{}', 'pending');
 
 -- HAPPY TAILS — boarding (MaxConcurrentPets=4), daycare and walks. House sitting and check-in are
 -- disabled for this tenant, so they deliberately carry no bookings.
@@ -354,31 +356,31 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
 -- fifth is pending, so now+16..now+18 sits AT or OVER the 4-pet pool (five pets on now+17) and
 -- paints `unavailable`, while the shoulder days now+14/+15/+19/+20 paint `partial`.
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
-  ('seed_ht_board_a', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+14 days'), date('now', '+21 days'), 'standard', 1, NULL, 280, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed'),
-  ('seed_ht_board_b', 'tnt_happytails', 'eu_ht_marco', 'boarding', date('now', '+15 days'), date('now', '+20 days'), 'standard', 1, NULL, 200, '{"vaccines":"yes","crate":"yes","dogs":"yes"}', 'confirmed'),
-  ('seed_ht_board_c', 'tnt_happytails', 'eu_ht_devon', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, '18:00', 120, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed'),
-  ('seed_ht_board_d', 'tnt_happytails', 'eu_ht_kate', 'boarding', date('now', '+17 days'), date('now', '+18 days'), 'standard', 1, NULL, 40, '{"vaccines":"yes","dogs":"yes"}', 'confirmed'),
-  ('seed_ht_board_e', 'tnt_happytails', 'eu_ht_rosa', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, NULL, 120, '{"vaccines":"yes","crate":"yes","dogs":"no"}', 'pending'),
-  ('seed_ht_day_a', 'tnt_happytails', 'eu_ht_marco', 'daycare', date('now', '+4 days'), NULL, 'standard', 1, NULL, 35, '{}', 'confirmed'),
-  ('seed_ht_day_b', 'tnt_happytails', 'eu_ht_kate', 'daycare', date('now', '+11 days'), NULL, 'standard', 1, NULL, 35, '{}', 'pending'),
-  ('seed_ht_walk_a', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+3 days'), NULL, 'd30', 1, '16:00', 25, '{"gate":"1932","treats":"yes"}', 'confirmed'),
+  ('seed_ht_board_a', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+14 days'), date('now', '+21 days'), 'standard', 1, NULL, 28000, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_b', 'tnt_happytails', 'eu_ht_marco', 'boarding', date('now', '+15 days'), date('now', '+20 days'), 'standard', 1, NULL, 20000, '{"vaccines":"yes","crate":"yes","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_c', 'tnt_happytails', 'eu_ht_devon', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, '18:00', 12000, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_d', 'tnt_happytails', 'eu_ht_kate', 'boarding', date('now', '+17 days'), date('now', '+18 days'), 'standard', 1, NULL, 4000, '{"vaccines":"yes","dogs":"yes"}', 'confirmed'),
+  ('seed_ht_board_e', 'tnt_happytails', 'eu_ht_rosa', 'boarding', date('now', '+16 days'), date('now', '+19 days'), 'standard', 1, NULL, 12000, '{"vaccines":"yes","crate":"yes","dogs":"no"}', 'pending'),
+  ('seed_ht_day_a', 'tnt_happytails', 'eu_ht_marco', 'daycare', date('now', '+4 days'), NULL, 'standard', 1, NULL, 3500, '{}', 'confirmed'),
+  ('seed_ht_day_b', 'tnt_happytails', 'eu_ht_kate', 'daycare', date('now', '+11 days'), NULL, 'standard', 1, NULL, 3500, '{}', 'pending'),
+  ('seed_ht_walk_a', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+3 days'), NULL, 'd30', 1, '16:00', 2500, '{"gate":"1932","treats":"yes"}', 'confirmed'),
   -- THE SLOT CONFLICT: the 8-9am group walk holds three dogs (TenantServiceOptions.Capacity=3).
   -- Three confirmed bookings on one date fill it, so that date is unavailable for THAT option
   -- while the tenant's other walk options stay open — the per-slot conflict group services hit.
-  ('seed_ht_grp_a', 'tnt_happytails', 'eu_ht_marco', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, '{"treats":"yes"}', 'confirmed'),
-  ('seed_ht_grp_b', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, '{"treats":"no"}', 'confirmed'),
-  ('seed_ht_grp_c', 'tnt_happytails', 'eu_ht_kate', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 18, '{}', 'confirmed');
+  ('seed_ht_grp_a', 'tnt_happytails', 'eu_ht_marco', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 1800, '{"treats":"yes"}', 'confirmed'),
+  ('seed_ht_grp_b', 'tnt_happytails', 'eu_ht_devon', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 1800, '{"treats":"no"}', 'confirmed'),
+  ('seed_ht_grp_c', 'tnt_happytails', 'eu_ht_kate', 'walk', date('now', '+6 days'), NULL, 'group-8-9', 1, '08:00', 1800, '{}', 'confirmed');
 
 -- PAWS & RELAX — boarding, house sitting and walks (daycare and check-in are disabled). Its
 -- boarding pool is capped at 3 pets/day but the seeded stays never reach it, so its calendar is
 -- still closed only by the blocked row below — the "time off" mechanism, shown on a tenant whose
 -- pool never fills.
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
-  ('seed_pr_board_a', 'tnt_pawsandrelax', 'eu_pr_jess', 'boarding', date('now', '+9 days'), date('now', '+13 days'), 'standard', 1, NULL, 180, '{"weight":"45","vaccines":"yes"}', 'confirmed'),
-  ('seed_pr_board_b', 'tnt_pawsandrelax', 'eu_pr_omar', 'boarding', date('now', '+10 days'), date('now', '+12 days'), 'standard', 1, '15:30', 90, '{"weight":"22","vaccines":"yes"}', 'pending'),
-  ('seed_pr_house_a', 'tnt_pawsandrelax', 'eu_pr_nina', 'housesitting', date('now', '+19 days'), date('now', '+23 days'), 'standard', 1, NULL, 260, '{"entry":"Hidden key"}', 'confirmed'),
-  ('seed_pr_walk_a', 'tnt_pawsandrelax', 'eu_pr_omar', 'walk', date('now', '+2 days'), NULL, 'd30', 1, '17:30', 22, '{}', 'confirmed'),
-  ('seed_pr_walk_b', 'tnt_pawsandrelax', 'eu_pr_jess', 'walk', date('now', '+8 days'), NULL, 'd30', 1, '11:00', 22, '{}', 'pending');
+  ('seed_pr_board_a', 'tnt_pawsandrelax', 'eu_pr_jess', 'boarding', date('now', '+9 days'), date('now', '+13 days'), 'standard', 1, NULL, 18000, '{"weight":"45","vaccines":"yes"}', 'confirmed'),
+  ('seed_pr_board_b', 'tnt_pawsandrelax', 'eu_pr_omar', 'boarding', date('now', '+10 days'), date('now', '+12 days'), 'standard', 1, '15:30', 9000, '{"weight":"22","vaccines":"yes"}', 'pending'),
+  ('seed_pr_house_a', 'tnt_pawsandrelax', 'eu_pr_nina', 'housesitting', date('now', '+19 days'), date('now', '+23 days'), 'standard', 1, NULL, 26000, '{"entry":"Hidden key"}', 'confirmed'),
+  ('seed_pr_walk_a', 'tnt_pawsandrelax', 'eu_pr_omar', 'walk', date('now', '+2 days'), NULL, 'd30', 1, '17:30', 2200, '{}', 'confirmed'),
+  ('seed_pr_walk_b', 'tnt_pawsandrelax', 'eu_pr_jess', 'walk', date('now', '+8 days'), NULL, 'd30', 1, '11:00', 2200, '{}', 'pending');
 
 -- REBASING THE BASE FIXTURE'S SEVEN HARDCODED ROWS.
 --
@@ -399,14 +401,14 @@ INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, St
 -- statically-dated booking to seed.sql, re-stamp it here too -- server/__tests__/seed-demo.test.ts
 -- fails if any demo-database booking sits outside the relative window.
 INSERT OR REPLACE INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, EstCost, Answers, Status) VALUES
-  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+38 days'), NULL, 'd30', 1, '09:00', 20, '{"leash":"Hook by the front door."}', 'pending'),
-  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', date('now', '+39 days'), NULL, 'd60', 1, '15:00', 40, '{"gate":"4410","treats":"no"}', 'pending'),
-  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+40 days'), date('now', '+43 days'), 'standard', 1, NULL, 150, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken."}', 'pending'),
-  ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 250, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken.","vet":"(555) 555-0190"}', 'confirmed'),
+  ('seed_sp_pend1', 'tnt_sunnypaws', 'eu_sp_jess', 'walk', date('now', '+38 days'), NULL, 'd30', 1, '09:00', 2000, '{"leash":"Hook by the front door."}', 'pending'),
+  ('seed_ht_pend1', 'tnt_happytails', 'eu_ht_jess', 'walk', date('now', '+39 days'), NULL, 'd60', 1, '15:00', 4000, '{"gate":"4410","treats":"no"}', 'pending'),
+  ('seed_sp_pend2', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+40 days'), date('now', '+43 days'), 'standard', 1, NULL, 15000, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken."}', 'pending'),
+  ('seed_sp_board1', 'tnt_sunnypaws', 'eu_sp_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 25000, '{"vaccines":"yes","feeding":"Two cups at 7am and 6pm. No chicken.","vet":"(555) 555-0190"}', 'confirmed'),
   -- The base row books two pets for $400. In the DEMO database it becomes a 1-pet stay at 5 x $40,
   -- for the same reason nothing else here books a set: every seeded booking keeps PetCount at 1
   -- so its EstCost stays unambiguous (see the PetRateMode note above).
-  ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 200, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed');
+  ('seed_ht_board1', 'tnt_happytails', 'eu_ht_jess', 'boarding', date('now', '+50 days'), date('now', '+55 days'), 'standard', 1, NULL, 20000, '{"vaccines":"yes","crate":"no","dogs":"yes"}', 'confirmed');
 
 -- THE BLOCKED-DAY CONFLICT: time off (the 'blocked' sentinel; EndDate exclusive). A hard stop for
 -- EVERY service on those days — no bookend sharing, no pool math — so each tenant's calendar has

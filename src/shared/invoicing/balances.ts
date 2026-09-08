@@ -27,7 +27,7 @@
  * debt on another — that IS the household statement, the thing the sitter is asking for when she
  * asks "does Jennifer owe me anything?". ACROSS households nothing is ever netted: one client owing
  * $100 while another is owed $100 is not a settled book, so the two appear as two rows here and the
- * earnings tiles keep reporting `outstandingTotal` and `creditTotal` separately (see
+ * earnings tiles keep reporting `outstandingTotalCents` and `creditTotalCents` separately (see
  * `serializeAnalytics`). This module returns per-household figures only and computes no grand total,
  * so there is nothing here for a caller to net by accident.
  */
@@ -106,7 +106,15 @@ export function buildPaymentAnchors(
   return anchors;
 }
 
-/** One household's statement. `balance` negative means the household is IN CREDIT. */
+/**
+ * One household's statement. `balanceCents` negative means the household is IN CREDIT.
+ *
+ * Every total here is CENTS and says so (0015, design spec §2 "Wire"): the caller sums figures its
+ * own `CREDITABLE_AMOUNT_SQL` produced in cents, and a total that did not name its unit is exactly
+ * the field a reader picks up as dollars. The per-booking inputs (`HouseholdBooking.expected` /
+ * `.paid`) keep their names: they are this module's arguments, not anybody's wire, and the caller
+ * that fills them names the unit at the SQL it read them from.
+ */
 export type HouseholdBalance = {
   /** The account id `buildAccounts` produced: the lexicographically-first pet in the component. */
   accountId: string;
@@ -122,9 +130,9 @@ export type HouseholdBalance = {
   anchorPetIds: string[];
   /** Every booking rolled into this balance, in the order the caller supplied them. */
   bookingIds: string[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
 
 export type HouseholdBalances = {
@@ -244,9 +252,9 @@ export function buildHouseholdBalances(input: {
           .map(([petId]) => petId)
           .sort(),
         bookingIds: total.bookingIds,
-        expectedTotal: total.expected,
-        paidTotal: total.paid,
-        balance: total.expected - total.paid,
+        expectedTotalCents: total.expected,
+        paidTotalCents: total.paid,
+        balanceCents: total.expected - total.paid,
       };
     });
 

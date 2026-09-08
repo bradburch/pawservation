@@ -26,11 +26,11 @@ describe('booking edit cycle', () => {
       env,
     );
     expect(bookRes.status).toBe(201);
-    const { id, estCost: originalCost } = (await bookRes.json()) as {
+    const { id, estCostCents: originalCostCents } = (await bookRes.json()) as {
       id: string;
-      estCost: number;
+      estCostCents: number;
     };
-    expect(originalCost).toBe(250); // $50/night x 5 nights
+    expect(originalCostCents).toBe(25000); // $50/night x 5 nights
 
     const admin = await adminHeaders(TENANT_A);
     const confirm = await app.request(
@@ -59,9 +59,9 @@ describe('booking edit cycle', () => {
       env,
     );
     expect(edit.status).toBe(200);
-    const edited = (await edit.json()) as { id: string; estCost: number; status: string };
+    const edited = (await edit.json()) as { id: string; estCostCents: number; status: string };
     expect(edited.status).toBe('pending');
-    expect(edited.estCost).toBe(300); // 6 nights x $50 — re-quoted because dates moved
+    expect(edited.estCostCents).toBe(30000); // 6 nights x $50 — re-quoted because dates moved
 
     const mineAfterEdit = (await (
       await app.request(

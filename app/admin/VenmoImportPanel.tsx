@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { adminApi, type VenmoImportResult, type VenmoPreview } from '../shared-ui/api.js';
-import { formatFriendlyDate } from '../../src/shared/index.js';
+import { formatCents, formatFriendlyDate } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
@@ -33,8 +33,9 @@ export function VenmoImportPanel({
   const [result, setResult] = useState<VenmoImportResult | null>(null);
   // The server's skip list carries only a txnId + reason. Snapshotted from `preview` right before
   // `record()` calls `reset()` (which nulls `preview` out) so a skipped row can still be shown as
-  // "$99 from Jess Demo — reason" instead of a bare txnId-less reason.
-  const [chosenInfo, setChosenInfo] = useState<Map<string, { amount: number; from: string }>>(
+  // "$99.00 from Jess Demo — reason" instead of a bare txnId-less reason. CENTS, like every
+  // figure this panel is handed (0015) — `formatCents` is the only thing that turns one into text.
+  const [chosenInfo, setChosenInfo] = useState<Map<string, { amountCents: number; from: string }>>(
     new Map(),
   );
 
@@ -47,10 +48,12 @@ export function VenmoImportPanel({
   };
 
   const chosen = [...choices.entries()].map(([txnId, accountId]) => ({ txnId, accountId }));
-  const chosenTotal = preview
+  // A sum of the server's own cents figures, which is the one arithmetic this panel does: adding
+  // up what the sitter has ticked so the button can say it. Integers throughout, so it is exact.
+  const chosenTotalCents = preview
     ? chosen.reduce((sum, { txnId }) => {
         const row = preview.matched.find((r) => r.txnId === txnId);
-        return sum + (row?.amount ?? 0);
+        return sum + (row?.amountCents ?? 0);
       }, 0)
     : 0;
 
@@ -94,7 +97,9 @@ export function VenmoImportPanel({
         new Map(
           chosen.flatMap(({ txnId }) => {
             const row = rows.find((r) => r.txnId === txnId);
-            return row ? [[txnId, { amount: row.amount, from: row.clientLabel }] as const] : [];
+            return row
+              ? [[txnId, { amountCents: row.amountCents, from: row.clientLabel }] as const]
+              : [];
           }),
         ),
       );
@@ -148,13 +153,15 @@ export function VenmoImportPanel({
 
       {result && (
         <p className="pb-applies" role="status">
-          Recorded {result.imported} payment{result.imported === 1 ? '' : 's'} totalling $
-          {result.totalAmount}.
+          Recorded {result.imported} payment{result.imported === 1 ? '' : 's'} totalling{' '}
+          {formatCents(result.totalAmountCents)}.
           {result.skipped.length > 0
             ? ` ${result.skipped.length} skipped: ${result.skipped
                 .map((s) => {
                   const info = chosenInfo.get(s.txnId);
-                  return info ? `$${info.amount} from ${info.from} — ${s.reason}` : s.reason;
+                  return info
+                    ? `${formatCents(info.amountCents)} from ${info.from} — ${s.reason}`
+                    : s.reason;
                 })
                 .join('; ')}.`
             : ''}
@@ -181,7 +188,8 @@ export function VenmoImportPanel({
                         checked={choices.get(m.txnId) === m.accountId}
                         onChange={() => toggle(m.txnId, m.accountId)}
                       />{' '}
-                      ${m.amount} from {m.clientLabel} on {formatFriendlyDate(m.date)}
+                      {formatCents(m.amountCents)} from {m.clientLabel} on{' '}
+                      {formatFriendlyDate(m.date)}
                       {m.note ? ` — “${m.note}”` : ''}
                     </label>
                   </li>
@@ -196,8 +204,8 @@ export function VenmoImportPanel({
               <ul>
                 {preview.unmatched.map((u) => (
                   <li key={u.txnId} className="pb-hint">
-                    ${u.amount} from {u.from || 'an unnamed sender'} on {formatFriendlyDate(u.date)}{' '}
-                    &mdash; {u.reason}
+                    {formatCents(u.amountCents)} from {u.from || 'an unnamed sender'} on{' '}
+                    {formatFriendlyDate(u.date)} &mdash; {u.reason}
                   </li>
                 ))}
               </ul>
@@ -227,7 +235,7 @@ export function VenmoImportPanel({
             <button onClick={() => void record()} disabled={busy || chosen.length === 0}>
               {busy
                 ? 'Recording…'
-                : `Record ${chosen.length} payment${chosen.length === 1 ? '' : 's'} ($${chosenTotal})`}
+                : `Record ${chosen.length} payment${chosen.length === 1 ? '' : 's'} (${formatCents(chosenTotalCents)})`}
             </button>
           </div>
         </>

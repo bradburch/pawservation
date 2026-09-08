@@ -31,6 +31,7 @@ import {
   buildAccounts,
   buildHouseholdBalances,
   buildPaymentAnchors,
+  formatCents,
   parseMixKey,
   quarterlyBreakdown,
 } from '../../src/shared/index.js';
@@ -44,6 +45,20 @@ import { DEMO_EMAIL } from '../lib/demo';
  * tenant (getTenantBySlug) / a login (getTenantUserByEmail) or takes `tenantId` as its FIRST
  * parameter and scopes its SQL with `WHERE TenantId = ?`. Importing the D1 binding elsewhere
  * is a defect.
+ *
+ * MONEY IS INTEGER CENTS THROUGHOUT THIS MODULE (migration 0015). The four columns are
+ * `BookingRequests.EstCost`, `BookingRequests.CancellationFee`, `BookingCharges.Amount` and
+ * `Payments.Amount`; every function here takes them in cents and returns them in cents, and no
+ * expression below scales anything. RATES a sitter types are the exception and stay whole dollars
+ * (`TenantServices.*Rate`, `HolidayRate`, `EarlyArrivalFee`, `LateDepartureFee`, the pet-set rate
+ * tables) — TWO places turn one into cents, not one: `estimateCost` (a rate becomes a stay's
+ * COST) and `extraTimeSurcharges` in `server/lib/booking-times.ts` (the flat `EarlyArrivalFee`
+ * and `LateDepartureFee` become CHARGES). NOTHING divides these
+ * figures back: a stored amount reaches the wire as cents in a `*Cents` field and is formatted for
+ * display (`formatCents`) in the client. The `centsToWholeDollars` calls left in `server/` all
+ * divide a FRESH `dollarsToCents` result, never a column read here — availability's retained
+ * whole-dollar `estCost` twin, `booking-ops`' extra-time twin, and the backfill preview's
+ * classifier output.
  */
 
 const TENANT_COLS =
@@ -656,6 +671,7 @@ export async function insertBookingRequest(
     startTime?: string | null;
     /** Owner-set departure time (0008); undefined/null = none given. */
     departureTime?: string | null;
+    /** CENTS (0015), straight from `estimateCost`. NULL = never priced. */
     estCost: number | null;
     status: 'pending' | 'confirmed';
     answers?: Record<string, string>;
@@ -711,6 +727,7 @@ export async function insertBackfilledBooking(
     endDate: string | null;
     optionKey: string;
     petCount: number;
+    /** CENTS (0015) — the backfill converts the whole-dollar `Cost:` line it parsed. */
     estCost: number;
     status: 'confirmed' | 'cancelled';
     gcalEventId: string;
@@ -845,6 +862,7 @@ export async function updateBackfilledBookingCost(
   db: D1Database,
   tenantId: string,
   bookingId: string,
+  /** CENTS (0015) — the correction PATCH takes `estCostCents` and passes it straight through. */
   estCost: number,
 ): Promise<boolean> {
   const result = await db
@@ -915,7 +933,7 @@ export async function listBookingsForUser(
  * All non-blocked bookings for the sitter's admin list, newest-first, with the customer's
  * Email/Name joined in (NULL for a booking whose customer was later removed — EndUserId only
  * ever points at a row in the SAME tenant, enforced by how bookings are created), plus the
- * total paid so far (0 for bookings with no payments).
+ * total paid so far IN CENTS (0015; 0 for bookings with no payments).
  */
 export async function listBookingsForTenant(
   db: D1Database,
@@ -998,6 +1016,7 @@ export async function updateBookingStatus(
   tenantId: string,
   id: string,
   status: 'confirmed' | 'cancelled' | 'declined',
+  /** CENTS (0015). */
   cancellationFee?: number,
 ): Promise<boolean> {
   // Assessed cancellation: record the fee and cancel atomically. The `Status = 'confirmed'` guard
@@ -1082,6 +1101,7 @@ export async function cancelBookingForUser(
   tenantId: string,
   endUserId: string,
   id: string,
+  /** CENTS (0015) — always written, 0 included; see above. */
   cancellationFee: number,
   expectedStatus: 'pending' | 'confirmed',
 ): Promise<boolean> {
@@ -1127,6 +1147,7 @@ export async function updateBookingForEdit(
     startTime: string | null;
     departureTime: string | null;
     petCount: number;
+    /** CENTS (0015), re-stamped from `estimateCost` when something price-relevant moved. */
     estCost: number;
     answers: Record<string, string>;
     expectedStatus: 'pending' | 'confirmed';
@@ -1175,6 +1196,7 @@ export async function restoreBookingAfterEdit(
     startTime: string | null;
     departureTime: string | null;
     petCount: number;
+    /** CENTS (0015) — the value read off the row before the edit, put back verbatim. */
     estCost: number | null;
     answers: string;
     status: string;
@@ -1238,6 +1260,8 @@ export async function getBookingWithCustomer(
  *   2. A live BookingCharges total. Extra charges survive a cancellation by design (a charge is
  *      owed on a stay that happened whether or not it was later cancelled) and EstCost is never
  *      mutated to absorb them, so a fee-FREE cancel carrying $45 of extras is genuinely owed $45.
+ *      NOTHING IN THIS GUARD IS SCALED BY 0015: it compares stored cents against the literal 0,
+ *      and `OUTSTANDING_WHERE_SQL` — the predicate it must keep agreeing with — is unscaled too.
  * 'declined' gets neither exception, matching the earnings predicate: a declined row is never
  * billed, so it is never payable.
  *
@@ -1251,6 +1275,7 @@ export async function insertPayment(
   tenantId: string,
   payment: {
     bookingRequestId: string;
+    /** CENTS (0015) — the payment routes take `amountCents` and pass it straight through. */
     amount: number;
     method: PaymentMethod;
     paidDate: string;
@@ -1368,6 +1393,7 @@ export async function insertAccountPayment(
   tenantId: string,
   payment: {
     accountId: string;
+    /** CENTS (0015), like every other money value crossing this module. */
     amount: number;
     method: PaymentMethod;
     paidDate: string;
@@ -1613,7 +1639,7 @@ export async function deleteAccountPayment(
  *
  * THE SOURCE PAYMENT IS RE-READ HERE and its `Amount` is the only authority on how much money is
  * in play; a caller-supplied figure is never trusted. `sum(splits) + remainder` must equal it
- * EXACTLY — whole dollars, integer arithmetic, no rounding anywhere. That equation is
+ * EXACTLY — integer CENTS since 0015, integer arithmetic, no rounding anywhere. That equation is
  * CONSERVATION, and it is the reason attribution can never create or destroy money. Both figures
  * are named in the refusal, because "the split doesn't add up" is unactionable without them.
  *
@@ -1671,11 +1697,32 @@ export async function deleteAccountPayment(
  * twice in silence. Every refusal below names the split figure, the tip and the total, because "it
  * doesn't add up" is unactionable when three numbers can be the one at fault.
  *
- * THE TIP'S OWN THREE RULES: a whole number of dollars greater than zero; a booking of this
+ * THE TIP'S OWN THREE RULES: a positive whole number of cents; a booking of this
  * payment's household; and a booking THIS ATTRIBUTION'S OWN SPLITS ALREADY NAME — a tip is thanks
  * for a stay this money is settling, and one attached to any other stay is either malformed or an
  * unstated second attribution.
  */
+/**
+ * A money figure for one of `applyAttribution`'s three amount refusals — RAW when it is not an
+ * integer number of cents, formatted when it is.
+ *
+ * `formatCents` no longer dresses a fraction up as money (it hands `45.5` straight back rather
+ * than rendering `$0.45.5`), so this function is no longer the only thing standing between a
+ * sitter and a nonsense figure. It stays because it says WHICH of the two it is doing at the one
+ * place it matters — these three guards fire exactly when `Number.isInteger` has already failed,
+ * or the sign is wrong, and a sentence a sitter has to act on should quote the number she actually
+ * sent rather than a formatting of it.
+ *
+ * `formatCents` is also deliberately left un-throwing. This is a REFUSAL path — a throw would turn
+ * one bad row's per-item skip into a 500 for the whole batch the sitter approved. That is the same
+ * reason the apply route (`admin.ts`, `payments/attribute/apply`) applies only the `MAX_AMOUNT_CENTS`
+ * CEILING to an `amountCents` and leaves integrality and sign to these guards: an absurd figure is
+ * a malformed body, an unusable one is a per-item refusal, and they get different answers.
+ */
+function describeAmount(value: number): string {
+  return Number.isInteger(value) ? formatCents(value) : String(value);
+}
+
 export async function applyAttribution(
   db: D1Database,
   tenantId: string,
@@ -1701,23 +1748,24 @@ export async function applyAttribution(
   if (badSplit) {
     return {
       ok: false,
-      reason: `Split for booking ${badSplit.bookingId} is ${badSplit.amount}; every split must be a whole number of dollars greater than zero.`,
+      reason: `Split for booking ${badSplit.bookingId} is ${describeAmount(badSplit.amount)}; every split must be a positive amount of money.`,
     };
   }
   if (!Number.isInteger(remainder) || remainder < 0) {
     return {
       ok: false,
-      reason: `Remainder ${remainder} is not a whole, non-negative number of dollars.`,
+      reason: `Remainder ${describeAmount(remainder)} is not a whole, non-negative amount of money.`,
     };
   }
   // The same bar every split clears, and for the same reason: `BookingCharges.Amount` is
   // `INTEGER NOT NULL CHECK (Amount >= 1)`, so a zero, fractional or negative tip would either be
   // silently truncated or abort a batch that has already deleted the source. Refused here, before
-  // any read, on the figure alone.
+  // any read, on the figure alone. `Number.isInteger` is the CENTS integrality check since 0015 —
+  // the unit moved, the bar did not: a fraction of a cent is still not money this ledger holds.
   if (tip && (!Number.isInteger(tip.amount) || tip.amount <= 0)) {
     return {
       ok: false,
-      reason: `Tip for booking ${tip.bookingId} is ${tip.amount}; a tip must be a whole number of dollars greater than zero.`,
+      reason: `Tip for booking ${tip.bookingId} is ${describeAmount(tip.amount)}; a tip must be a positive amount of money.`,
     };
   }
 
@@ -1797,18 +1845,18 @@ export async function applyAttribution(
   const attributed = splitTotal + tipAmount + remainder;
   if (attributed !== source.Amount) {
     const parts = tip
-      ? `$${splitTotal} in splits, a $${tipAmount} tip and $${remainder} left over`
+      ? `${formatCents(splitTotal)} in splits, a ${formatCents(tipAmount)} tip and ${formatCents(remainder)} left over`
       : 'splits plus remainder';
     return {
       ok: false,
-      reason: `Attribution of payment ${paymentId} accounts for $${attributed} (${parts}) but the payment is $${source.Amount}; refusing rather than create or destroy money.`,
+      reason: `Attribution of payment ${paymentId} accounts for ${formatCents(attributed)} (${parts}) but the payment is ${formatCents(source.Amount)}; refusing rather than create or destroy money.`,
     };
   }
 
   // "Is this booking in this household, and what does it still owe RIGHT NOW" is asked of
   // `householdOutstandingByBooking` — the same money expressions, the same candidate predicate and
   // the same one-booking-one-household attachment rule `getHouseholdDetail` computes its own
-  // `expected - paidTotal` from, minus the statement's payments, charge rows and totals, which no
+  // `outstandingCents` from, minus the statement's payments, charge rows and totals, which no
   // guard here reads (see its doc comment for why that is a narrowing rather than a second rule).
   // A household this account id does not resolve to leaves the map empty and every split is refused,
   // exactly as a `null` detail did. The graph loaded above is handed back rather than re-read.
@@ -1836,7 +1884,7 @@ export async function applyAttribution(
   if (tip && !splits.some((s) => s.bookingId === tip.bookingId)) {
     return {
       ok: false,
-      reason: `Tip of $${tip.amount} names booking ${tip.bookingId}, which is not among this attribution's splits; a tip can only go on a stay this payment is settling.`,
+      reason: `Tip of ${formatCents(tip.amount)} names booking ${tip.bookingId}, which is not among this attribution's splits; a tip can only go on a stay this payment is settling.`,
     };
   }
 
@@ -1852,7 +1900,7 @@ export async function applyAttribution(
   // `expected` is `CREDITABLE_AMOUNT_SQL`, which is already 0 for a `declined` booking and
   // `CancellationFee` (defaulting to 0) for a `cancelled` one — so a split against a declined, or a
   // fee-free-cancelled, booking is refused here with no separate status check: its outstanding is
-  // already <= 0, and every split is a positive whole dollar amount (checked above), so it can never
+  // already <= 0, and every split is a positive whole number of cents (checked above), so it can never
   // clear this bar. A cancelled booking that DOES carry an assessed fee or a live charge is a genuine
   // receivable and is allowed exactly as far as that fee/charge still goes, matching the preview's
   // own `outstanding > 0` candidate filter.
@@ -1872,10 +1920,10 @@ export async function applyAttribution(
     const owed = outstandingByBooking.get(overpaid.bookingId)!;
     // Negative outstanding is stated as over-paid rather than rendered `$-50`, which reads as a
     // typo in a sitter-facing message; the figure itself is still reported exactly.
-    const standing = owed < 0 ? `is $${-owed} over-paid` : `owes $${owed}`;
+    const standing = owed < 0 ? `is ${formatCents(-owed)} over-paid` : `owes ${formatCents(owed)}`;
     return {
       ok: false,
-      reason: `Booking ${overpaid.bookingId} ${standing} but this split names $${overpaid.amount}; refusing rather than overpay it.`,
+      reason: `Booking ${overpaid.bookingId} ${standing} but this split names ${formatCents(overpaid.amount)}; refusing rather than overpay it.`,
     };
   }
 
@@ -2114,7 +2162,7 @@ export async function applyAttribution(
 export async function insertBookingCharge(
   db: D1Database,
   tenantId: string,
-  charge: { bookingRequestId: string; label: string; amount: number },
+  charge: { bookingRequestId: string; label: string; amount: number /* CENTS (0015) */ },
 ): Promise<string | null> {
   const id = crypto.randomUUID();
   const result = await db
@@ -2160,7 +2208,7 @@ export async function replaceExtraTimeCharges(
   db: D1Database,
   tenantId: string,
   bookingRequestId: string,
-  charges: { label: string; amount: number; origin: ExtraTimeOrigin }[],
+  charges: { label: string; amountCents: number; origin: ExtraTimeOrigin }[],
 ): Promise<void> {
   const origins = EXTRA_TIME_ORIGINS.map(() => '?').join(', ');
   const statements = [
@@ -2183,7 +2231,7 @@ export async function replaceExtraTimeCharges(
           tenantId,
           bookingRequestId,
           charge.label,
-          charge.amount,
+          charge.amountCents,
           charge.origin,
           tenantId,
           bookingRequestId,
@@ -2255,8 +2303,8 @@ export async function listChargesForTenant(
  * elsewhere.
  */
 /**
- * The base amount a booking is expected to bring in, on its own: EstCost normally, but the
- * assessed CancellationFee for a cancelled one — a cancelled-with-fee booking is a live
+ * The base amount a booking is expected to bring in, on its own, IN CENTS (0015): EstCost
+ * normally, but the assessed CancellationFee for a cancelled one — a cancelled-with-fee booking is a live
  * receivable. COALESCE'd to 0 so a booking with neither (never priced, or cancelled with no fee
  * assessed) resolves to a real number rather than NULLing out a sum it's added into. SQLite
  * cannot reference a SELECT alias inside an expression, so this is spliced into SELECT, WHERE and
@@ -2273,6 +2321,10 @@ const BASE_AMOUNT_SQL =
  * on (see `OUTSTANDING_WHERE_SQL` below), and `CREDITABLE_AMOUNT_SQL` reuses it too, so a charge
  * logged in the admin panel is never invisible to either. Expects a `chg` subquery
  * (SUM(BookingCharges.Amount) per booking) aliased in scope — see `CHARGES_JOIN_SQL`.
+ *
+ * EVERY TERM HERE — and in every constant below — IS CENTS, so none of them is scaled. That is the
+ * whole point of 0015: a balance expression is one-unit integer arithmetic, and a `* 100` or a
+ * `/ 100` appearing anywhere in this block would mean two units had been mixed.
  */
 const EXPECTED_AMOUNT_SQL = `(${BASE_AMOUNT_SQL} + COALESCE(chg.Total, 0))`;
 
@@ -2294,6 +2346,8 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
  * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
  * a non-zero CancellationFee OR a live charges total). It must keep agreeing with this predicate
  * in both directions, or the Earnings page shows a balance whose *Record payment* button 404s.
+ * NEITHER SIDE IS SCALED BY 0015 — both compare cents to cents, and scaling one would be exactly
+ * the drift this paragraph exists to prevent.
  *
  * 'blocked' AND 'external' rows are excluded: 'blocked' rows are never billed, and 'external'
  * rows (mirrored from a connected Google Calendar) always carry a NULL EstCost, so they could
@@ -2342,8 +2396,39 @@ const PAYMENTS_JOIN_SQL = `LEFT JOIN (
          FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
        ) paid ON paid.BookingRequestId = b.Id`;
 
-/** How much this booking is over-paid by, as the Earnings page displays it. */
+/** How much this booking is over-paid by, in CENTS; the Earnings page renders it with
+ *  `formatCents` — nothing divides it back. */
 const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`;
+
+/**
+ * WHAT ONE BOOKING STILL OWES, IN CENTS — `CREDITABLE_AMOUNT_SQL` minus the payments recorded
+ * against that booking, and NOTHING ELSE. One expression, in one place, because there are two
+ * readers of it and a second copy is a second answer:
+ *
+ *  - `assembleHouseholdDetail`, which publishes it as the statement's `outstandingCents`;
+ *  - `householdOutstandingByBooking`, whose map is the ceiling `applyAttribution` refuses a split
+ *    against.
+ *
+ * Both are handed the SAME two selected columns (`Expected`, `PaidTotal`), read by the same joins,
+ * so the figure on the sitter's statement and the figure the attribution guard enforces are the
+ * same number by construction rather than by two functions happening to agree today.
+ *
+ * IT IS RAW, AND MAY BE NEGATIVE: a booking holding more than it may keep — an over-payment, or a
+ * deposit on a request later declined — reads below zero here, and `householdOutstandingByBooking`
+ * needs that sign (a negative is what makes a split against such a booking refuse with no separate
+ * status check). The STATEMENT clamps at zero at its own emit site, where a reader can see it: a
+ * per-booking "still owes" figure never reports a debt of minus money, and the credit that negative
+ * names is a household-level fact the balance and the Earnings page's credit list already carry.
+ *
+ * A HOUSEHOLD-LEVEL PAYMENT MOVES NOTHING HERE. `PAYMENTS_JOIN_SQL` sums `Payments` by
+ * `BookingRequestId`, and a household payment carries `AccountId` instead (mutually exclusive by
+ * CHECK, 0011) — so it lowers the household's balance and leaves every booking's outstanding
+ * exactly where it was. That is the attribution semantics, not an oversight: splitting one payment
+ * across several stays is a decision only the sitter makes, through the attribution panel.
+ */
+function bookingOutstanding(row: { Expected: number; PaidTotal: number }): number {
+  return row.Expected - row.PaidTotal;
+}
 
 /** The label every kept-overpayment charge carries. One string, so the UI and the ledger agree. */
 export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
@@ -2363,6 +2448,9 @@ export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
 export const TIP_LABEL = 'Tip';
 
 export type KeepCreditResult =
+  /** `amount` is CENTS (0015) — computed by `CREDIT_AMOUNT_SQL` and returned by the INSERT, so it
+   *  is the same unit as the credit the Earnings page displays. The route publishes it unchanged
+   *  as `keptCents`; nothing divides it back. */
   { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };
 
 /**
@@ -2461,7 +2549,7 @@ export async function keepBookingCredit(
  *
  * NETTING happens WITHIN a household and never across households. A credit on one booking cancelling
  * a debt on another IS the household statement. Two different households are two rows, and the
- * earnings tiles keep reporting `outstandingTotal` and `creditTotal` separately (see
+ * earnings tiles keep reporting `outstandingTotalCents` and `creditTotalCents` separately (see
  * `serializeAnalytics`) — one client owing $100 while another is owed $100 is not a settled book.
  *
  * Six tenant-scoped reads, composed by the pure `buildHouseholdBalances`: the per-booking money,
@@ -2493,19 +2581,23 @@ export async function getHouseholdBalances(
  * Reported rather than guessed at, and rather than dropped. Guessing a household for money is the
  * one thing this codebase refuses to do anywhere (`buildAccounts` refuses it, the Venmo importer
  * refuses it); dropping it is worse still, because the analytics revenue line goes on counting it.
- * `Σ household paidTotal + Σ orphaned = revenue` is the invariant that makes the two views agree,
- * and it is only true because this list exists.
+ * `Σ household paidTotalCents + Σ orphaned = revenue` is the invariant that makes the two views
+ * agree, and it is only true because this list exists.
  */
 export async function getOrphanedAccountPayments(
   db: D1Database,
   tenantId: string,
-): Promise<{ accountId: string; total: number }[]> {
+): Promise<{ accountId: string; totalCents: number }[]> {
   return (await computeHouseholdRollup(db, tenantId)).orphanedPayments;
 }
 
 type HouseholdRollup = {
   households: HouseholdBalanceRow[];
-  orphanedPayments: { accountId: string; total: number }[];
+  /** CAMELCASE AND UNIT-NAMED, like `HouseholdBalanceRow` beside it and unlike the PascalCase
+   *  aggregate rows elsewhere in this module: both are COMPUTED here rather than selected, and a
+   *  computed money field states its unit in its name so the identity
+   *  `Σ households.paidTotalCents + Σ orphanedPayments.totalCents` reads in one unit end to end. */
+  orphanedPayments: { accountId: string; totalCents: number }[];
 };
 
 async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise<HouseholdRollup> {
@@ -2598,13 +2690,13 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
       petIds: h.petIds,
       anchorPetIds: h.anchorPetIds,
       bookingIds: h.bookingIds,
-      expectedTotal: h.expectedTotal,
-      paidTotal: h.paidTotal,
-      balance: h.balance,
+      expectedTotalCents: h.expectedTotalCents,
+      paidTotalCents: h.paidTotalCents,
+      balanceCents: h.balanceCents,
     })),
     orphanedPayments: unattachedPaymentAccountIds.map((accountId) => ({
       accountId,
-      total: orphanedTotals.get(accountId) ?? 0,
+      totalCents: orphanedTotals.get(accountId) ?? 0,
     })),
   };
 }
@@ -2617,14 +2709,16 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
  * Finds the household by asking `getHouseholdBalances` for the whole tenant and matching by
  * MEMBERSHIP (`petIds.includes(accountId)`), the same resolution every other household read uses —
  * deliberately NOT a second, narrower query, because a second query is a second place the account-id-
- * renaming rule (see the 0011 migration header) could be forgotten. `expectedTotal`/`paidTotal`/
- * `balance` are that household's own fields, passed through rather than recomputed, so this can
- * never print a number the balance above it disagrees with.
+ * renaming rule (see the 0011 migration header) could be forgotten.
+ * `expectedTotalCents`/`paidTotalCents`/`balanceCents` are that household's own fields, passed
+ * through rather than recomputed, so this can never print a number the balance above it
+ * disagrees with.
  *
  * Each booking's `cost` and `expected` are read with the SAME `BASE_AMOUNT_SQL`/
  * `CREDITABLE_AMOUNT_SQL` expressions the household sum is built from (declined zeroed, cancelled
- * reading its assessed fee), which is what makes `Σ(bookings[].expected) === expectedTotal` a fact
- * of the SQL rather than a coincidence two readers happen to agree on today.
+ * reading its assessed fee), which is what makes `Σ(bookings[].expectedCents) ===
+ * expectedTotalCents` a fact of the SQL rather than a coincidence two readers happen to agree on
+ * today.
  */
 type HouseholdDetailBookingRow = {
   BookingId: string;
@@ -2739,8 +2833,8 @@ async function householdDetailFor(
       )
       .bind(tenantId, tenantId, ...candidateArgs)
       .all<HouseholdDetailBookingRow & { EndUserId: string | null }>(),
-    // The household's own payments, read once and used twice: summed into `paidTotal` by the pure
-    // module and listed as `householdPayments`. Literally the same rows, so the statement can never
+    // The household's own payments, read once and used twice: summed into `paidTotalCents` by the
+    // pure module and listed as `householdPayments`. Literally the same rows, so the statement can never
     // list a payment the balance did not count.
     db
       .prepare(
@@ -2814,11 +2908,11 @@ async function householdDetailFor(
 /** `BookingCharges` rows keyed by their booking, in the order the query returned them. */
 function groupChargesByBooking(
   rows: BookingChargeRow[],
-): Map<string, { id: string; label: string; amount: number }[]> {
-  const byBooking = new Map<string, { id: string; label: string; amount: number }[]>();
+): Map<string, { id: string; label: string; amountCents: number }[]> {
+  const byBooking = new Map<string, { id: string; label: string; amountCents: number }[]>();
   for (const row of rows) {
     const list = byBooking.get(row.BookingRequestId) ?? [];
-    list.push({ id: row.Id, label: row.Label, amount: row.Amount });
+    list.push({ id: row.Id, label: row.Label, amountCents: row.Amount });
     byBooking.set(row.BookingRequestId, list);
   }
   return byBooking;
@@ -2838,12 +2932,12 @@ function assembleHouseholdDetail(
   household: {
     accountId: string;
     bookingIds: string[];
-    expectedTotal: number;
-    paidTotal: number;
-    balance: number;
+    expectedTotalCents: number;
+    paidTotalCents: number;
+    balanceCents: number;
   },
   bookingsById: Map<string, HouseholdDetailBookingRow>,
-  chargesByBooking: Map<string, { id: string; label: string; amount: number }[]>,
+  chargesByBooking: Map<string, { id: string; label: string; amountCents: number }[]>,
   payments: PaymentRow[],
 ): HouseholdDetailRow {
   return {
@@ -2860,23 +2954,27 @@ function assembleHouseholdDetail(
         startDate: row.StartDate,
         endDate: row.EndDate,
         status: row.Status,
-        cost: row.Cost,
+        costCents: row.Cost,
         charges: chargesByBooking.get(bookingId) ?? [],
-        chargesTotal: row.ChargesTotal,
-        paidTotal: row.PaidTotal,
-        expected: row.Expected,
+        chargesTotalCents: row.ChargesTotal,
+        paidTotalCents: row.PaidTotal,
+        expectedCents: row.Expected,
+        // Clamped HERE rather than in `bookingOutstanding`, which the attribution guard needs raw:
+        // a statement line never reads "owes -$50". An over-paid booking's credit is the
+        // household's balance, and the Earnings page lists it as a credit of its own.
+        outstandingCents: Math.max(0, bookingOutstanding(row)),
       };
     }),
     householdPayments: payments.map((p) => ({
       id: p.Id,
-      amount: p.Amount,
+      amountCents: p.Amount,
       method: p.Method,
       paidDate: p.PaidDate,
       note: p.Note,
     })),
-    expectedTotal: household.expectedTotal,
-    paidTotal: household.paidTotal,
-    balance: household.balance,
+    expectedTotalCents: household.expectedTotalCents,
+    paidTotalCents: household.paidTotalCents,
+    balanceCents: household.balanceCents,
   };
 }
 
@@ -3000,7 +3098,7 @@ async function bulkHouseholdDetails(
 /**
  * WHAT ONE HOUSEHOLD'S BOOKINGS STILL OWE, RIGHT NOW — and nothing else.
  *
- * The same question `getHouseholdDetail(...).bookings` answers with `expected - paidTotal`, asked
+ * The same question `getHouseholdDetail(...).bookings` answers with `outstandingCents`, asked
  * with two queries instead of six. `applyAttribution` is the caller, and it is the reason this
  * exists at all: it must re-read live outstanding ON EVERY CALL (that re-read is what refuses a
  * second credit landing on a booking the previous attribution in the same request already settled),
@@ -3105,7 +3203,7 @@ export async function householdOutstandingByBooking(
   return new Map(
     bookingRes.results
       .filter((r) => mine.has(r.BookingId))
-      .map((r) => [r.BookingId, r.Expected - r.PaidTotal]),
+      .map((r) => [r.BookingId, bookingOutstanding(r)]),
   );
 }
 
@@ -5753,7 +5851,11 @@ export type SitterRosterRow = {
   PremiumUntil: string | null; // null = free
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
-  Earned: number; // SUM(Payments.Amount), PaidDate >= sinceDate
+  // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
+  // is a raw PascalCase column row, and no raw row in this module names its unit (`EstCost`,
+  // `ChargesTotal`, `PaidTotal`, `Total` are all cents too). The unit is named where the figure
+  // becomes a payload — `earnedCents`, in server/routes/owner.ts.
+  Earned: number;
 };
 
 /**

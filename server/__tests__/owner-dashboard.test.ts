@@ -45,8 +45,10 @@ function seed(raw: DatabaseSync) {
   );
   raw.exec(
     'INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES ' +
-      "('p_a1','t_a','b_a1',100,'cash','2026-07-15')," + // recent
-      "('p_a2','t_a','b_a2',50,'cash','2026-01-05');", // old
+      // Payments.Amount is CENTS (0015): 10000 is $100. `Earned` below is the raw column sum,
+      // in cents, and the /owner/sitters route publishes it unchanged as `earnedCents`.
+      "('p_a1','t_a','b_a1',10000,'cash','2026-07-15')," + // recent
+      "('p_a2','t_a','b_a2',5000,'cash','2026-01-05');", // old
   );
   // Beta: ZERO activity (no EndUsers, no bookings, no payments) — must still appear (LEFT JOIN, earned $0)
 }
@@ -66,7 +68,8 @@ describe('listSitterRoster', () => {
     const all = await listSitterRoster(env.PAWSERVATION_DB, null);
     const alpha = all.find((r) => r.TenantId === 't_a')!;
     const beta = all.find((r) => r.TenantId === 't_b')!;
-    expect(alpha).toMatchObject({ Clients: 2, Bookings: 2, Earned: 150 }); // cancelled + blocked excluded; earned = payments only
+    // `Earned` is the repo's raw column sum, so cents.
+    expect(alpha).toMatchObject({ Clients: 2, Bookings: 2, Earned: 15000 }); // cancelled + blocked excluded; earned = payments only
     expect(beta).toMatchObject({ Clients: 0, Bookings: 0, Earned: 0 }); // zero-activity sitter present
   });
 
@@ -77,7 +80,7 @@ describe('listSitterRoster', () => {
 
     const recent = await listSitterRoster(env.PAWSERVATION_DB, '2026-06-23');
     const alphaR = recent.find((r) => r.TenantId === 't_a')!;
-    expect(alphaR).toMatchObject({ Clients: 2, Bookings: 1, Earned: 100 });
+    expect(alphaR).toMatchObject({ Clients: 2, Bookings: 1, Earned: 10000 });
   });
 
   it('platform totals equal the sum of the roster', async () => {
@@ -86,7 +89,7 @@ describe('listSitterRoster', () => {
     seed(raw);
 
     const all = await listSitterRoster(env.PAWSERVATION_DB, null);
-    expect(sum(all)).toEqual({ clients: 2, bookings: 2, earned: 150 });
+    expect(sum(all)).toEqual({ clients: 2, bookings: 2, earned: 15000 });
   });
 });
 
@@ -115,8 +118,8 @@ describe('owner sitter routes', () => {
     raw
       .prepare(
         `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES
-         ('p_a1','t_a','b_a1',100,'cash', ?),
-         ('p_a2','t_a','b_a2',50,'cash', ?)`,
+         ('p_a1','t_a','b_a1',10000,'cash', ?),
+         ('p_a2','t_a','b_a2',5000,'cash', ?)`,
       )
       .run(inWindow, outOfWindow);
   }
@@ -135,15 +138,15 @@ describe('owner sitter routes', () => {
     raw
       .prepare(
         `INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, Status, EstCost, CreatedAt) VALUES
-         ('b_a1','t_a','eu_a1','boarding','2026-07-20','confirmed',100, ? || ' 09:00:00'),
-         ('b_b1','t_b','eu_b1','boarding','2026-07-20','confirmed',100, ? || ' 09:00:00')`,
+         ('b_a1','t_a','eu_a1','boarding','2026-07-20','confirmed',10000, ? || ' 09:00:00'),
+         ('b_b1','t_b','eu_b1','boarding','2026-07-20','confirmed',10000, ? || ' 09:00:00')`,
       )
       .run(inWindow, inWindow);
     raw
       .prepare(
         `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES
-         ('p_a1','t_a','b_a1',80,'cash', ?),
-         ('p_b1','t_b','b_b1',80,'cash', ?)`,
+         ('p_a1','t_a','b_a1',8000,'cash', ?),
+         ('p_b1','t_b','b_b1',8000,'cash', ?)`,
       )
       .run(inWindow, inWindow);
   }
@@ -161,14 +164,14 @@ describe('owner sitter routes', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       window: string;
-      totals: { sitters: number; clients: number; bookings: number; earned: number };
+      totals: { sitters: number; clients: number; bookings: number; earnedCents: number };
       sitters: {
         tenantId: string;
         slug: string;
         displayName: string;
         clients: number;
         bookings: number;
-        earned: number;
+        earnedCents: number;
       }[];
     };
     const a = body.sitters.find((s) => s.tenantId === 't_a');
@@ -177,14 +180,17 @@ describe('owner sitter routes', () => {
       displayName: 'Alpha Pets',
       clients: 2,
       bookings: 2,
-      earned: 150,
+      earnedCents: 15000,
     });
+    // The dollar name is REMOVED, not aliased (design spec §2).
+    expect(a).not.toHaveProperty('earned');
+    expect(body.totals).not.toHaveProperty('earned');
     expect(body.sitters.some((s) => s.tenantId === 't_b')).toBe(true); // zero-activity sitter listed
     expect(body.totals).toEqual({
       sitters: body.sitters.length,
       clients: body.sitters.reduce((s, r) => s + r.clients, 0),
       bookings: body.sitters.reduce((s, r) => s + r.bookings, 0),
-      earned: body.sitters.reduce((s, r) => s + r.earned, 0),
+      earnedCents: body.sitters.reduce((s, r) => s + r.earnedCents, 0),
     });
     expect(body.window).toBe('all');
   });
@@ -218,13 +224,13 @@ describe('owner sitter routes', () => {
       await app.request('/api/owner/sitters?window=30d', { headers: await ownerHeaders() }, env)
     ).json()) as {
       window: string;
-      sitters: { tenantId: string; clients: number; bookings: number; earned: number }[];
+      sitters: { tenantId: string; clients: number; bookings: number; earnedCents: number }[];
     };
     const rAll = (await (
       await app.request('/api/owner/sitters?window=all', { headers: await ownerHeaders() }, env)
     ).json()) as {
       window: string;
-      sitters: { tenantId: string; clients: number; bookings: number; earned: number }[];
+      sitters: { tenantId: string; clients: number; bookings: number; earnedCents: number }[];
     };
 
     expect(r30.window).toBe('30d');
@@ -232,7 +238,7 @@ describe('owner sitter routes', () => {
     const a30 = r30.sitters.find((s) => s.tenantId === 't_a')!;
     const aAll = rAll.sitters.find((s) => s.tenantId === 't_a')!;
     expect(a30.bookings).toBeLessThan(aAll.bookings);
-    expect(a30.earned).toBeLessThan(aAll.earned);
+    expect(a30.earnedCents).toBeLessThan(aAll.earnedCents);
     expect(a30.clients).toBe(aAll.clients); // clients are always all-time
   });
 
@@ -244,19 +250,19 @@ describe('owner sitter routes', () => {
       await app.request('/api/owner/sitters?window=bogus', { headers: await ownerHeaders() }, env)
     ).json()) as {
       window: string;
-      sitters: { tenantId: string; bookings: number; earned: number }[];
+      sitters: { tenantId: string; bookings: number; earnedCents: number }[];
     };
     const none = (await (
       await app.request('/api/owner/sitters', { headers: await ownerHeaders() }, env)
     ).json()) as {
       window: string;
-      sitters: { tenantId: string; bookings: number; earned: number }[];
+      sitters: { tenantId: string; bookings: number; earnedCents: number }[];
     };
     const all = (await (
       await app.request('/api/owner/sitters?window=all', { headers: await ownerHeaders() }, env)
     ).json()) as {
       window: string;
-      sitters: { tenantId: string; bookings: number; earned: number }[];
+      sitters: { tenantId: string; bookings: number; earnedCents: number }[];
     };
 
     expect(bogus.window).toBe('all');
@@ -277,14 +283,20 @@ describe('owner sitter routes', () => {
     expect(detail.status).toBe(200);
     const dp = (await detail.json()) as {
       monthly: unknown;
+      tiles: Record<string, unknown>;
       topClients: { name: string | null; email: string | null }[];
       outstanding: { name: string | null; email: string | null }[];
     };
-    // AnalyticsPayload shape.
+    // AnalyticsPayload shape — the same `serializeAnalytics` output the sitter's own route
+    // returns, so this drill-down carries the cents names too and none of the dollar ones.
     expect(dp).toHaveProperty('monthly');
     expect(dp).toHaveProperty('byService');
     expect(dp).toHaveProperty('topClients');
     expect(dp).toHaveProperty('outstanding');
+    expect(dp).toHaveProperty('ytdCents');
+    expect(dp).not.toHaveProperty('ytd');
+    expect(dp.tiles).not.toHaveProperty('thisMonth');
+    expect(dp.topClients[0]).not.toHaveProperty('total');
 
     // Isolation, made concrete: only t_a's distinctly-named client appears, never t_b's.
     expect(dp.topClients.length).toBeGreaterThan(0);

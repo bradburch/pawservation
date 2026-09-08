@@ -1,5 +1,6 @@
 import {
   compactTime,
+  formatCents,
   nightsBetween,
   validateAnswers,
   validatePetTypeAcceptance,
@@ -314,7 +315,7 @@ export function BookTab({
     attemptKey.current ??= newAttemptKey();
     // What the customer was shown, so a stamp that disagrees can be said out loud rather than
     // silently replacing the number they read.
-    const quoted = quote && quote.available && quote.priced ? quote.estCost : null;
+    const quotedCents = quote && quote.available && quote.priced ? quote.estCostCents : null;
     setSubmitting(true);
     try {
       const body = {
@@ -334,20 +335,33 @@ export function BookTab({
         // stored row, and a replayed edit simply re-applies the same values.
         const saved = await api.editBooking(slug, token, editing.id, body);
         const moved =
-          quoted !== null && quoted !== saved.estCost ? ` (the estimate showed $${quoted})` : '';
+          quotedCents !== null && quotedCents !== saved.estCostCents
+            ? ` (the estimate showed ${formatCents(quotedCents)})`
+            : '';
         setConfirmation(
-          `Changes sent! $${saved.estCost}${moved} — ${config.displayName} confirms the new dates.`,
+          `Changes sent! ${formatCents(saved.estCostCents)}${moved} — ${config.displayName} confirms the new dates.`,
         );
         onEditSaved();
         return;
       }
       const res = await api.createBooking(slug, token, body, attemptKey.current);
       const changed =
-        quoted !== null && quoted !== res.estCost ? ` (the estimate showed $${quoted})` : '';
+        quotedCents !== null && quotedCents !== res.estCostCents
+          ? ` (the estimate showed ${formatCents(quotedCents)})`
+          : '';
+      // `estCostCents` is NULLABLE: a row the server stamped no estimate on comes back as `null`,
+      // not `0`. Say nothing about money in that case rather than confirming a "$0.00" booking.
+      const stamped =
+        res.estCostCents === null ? null : `${formatCents(res.estCostCents)}${changed}`;
+      const demoNote = res.note ?? 'This was a demo — no booking was created.';
       setConfirmation(
         res.demo
-          ? `Looks good! $${res.estCost}${changed}. ${res.note ?? 'This was a demo — no booking was created.'}`
-          : `Request sent! $${res.estCost}${changed} — your sitter confirms it. Track it under "My bookings".`,
+          ? stamped
+            ? `Looks good! ${stamped}. ${demoNote}`
+            : `Looks good! ${demoNote}`
+          : stamped
+            ? `Request sent! ${stamped} — your sitter confirms it. Track it under "My bookings".`
+            : `Request sent! Your sitter confirms it. Track it under "My bookings".`,
       );
       attemptKey.current = null;
       setStart('');
@@ -381,7 +395,7 @@ export function BookTab({
   if (!service) return <p>No services available yet.</p>;
 
   // The line beside the button: quantity and price, both straight from the server's answer.
-  // NOT hedged — `estCost` is literally the number stamped on the booking — and the noun comes
+  // NOT hedged — `estCostCents` is literally the number stamped on the booking — and the noun comes
   // from the quote's own `unit`, never from `service.rateUnit`, so a day-billed stay can never
   // show "4" next to "nights".
   const quoteLine = quoting
@@ -392,7 +406,7 @@ export function BookTab({
             quote.billedUnits != null && quote.unit != null
               ? `${quote.billedUnits} ${quote.unit}${quote.billedUnits === 1 ? '' : 's'}`
               : '',
-          cost: `$${quote.estCost}`,
+          cost: formatCents(quote.estCostCents),
         }
       : '';
 
@@ -422,7 +436,9 @@ export function BookTab({
    */
   const extraTimeNote =
     quote && quote.available && quote.priced && quote.extraTimeFees?.length
-      ? `Extra time: ${quote.extraTimeFees.map((f) => `${f.label} +$${f.amount}`).join(' · ')}`
+      ? `Extra time: ${quote.extraTimeFees
+          .map((f) => `${f.label} +${formatCents(f.amountCents)}`)
+          .join(' · ')}`
       : '';
 
   const policyNote = service.cancellationTiers
@@ -790,10 +806,10 @@ function srStatus(
         : '';
     // The surcharge is spoken with the price, not left to the visual line alone: a fee driven by a
     // time the customer chose has to reach them however they are reading the page.
-    const extra = quote.extraTimeTotal
-      ? ` Plus $${quote.extraTimeTotal} for extra time: ${quote.extraTimeFees?.map((f) => f.label).join(', ')}.`
+    const extra = quote.extraTimeTotalCents
+      ? ` Plus ${formatCents(quote.extraTimeTotalCents)} for extra time: ${quote.extraTimeFees?.map((f) => f.label).join(', ')}.`
       : '';
-    return `${units}$${quote.estCost}.${extra}`;
+    return `${units}${formatCents(quote.estCostCents)}.${extra}`;
   }
   return '';
 }

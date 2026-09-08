@@ -17,6 +17,7 @@ import {
   type UnpaidBooking,
 } from '../lib/payment-attribution';
 import { adminHeaders, createTestEnv, seedPets, TENANT_A } from './helpers';
+import { dollarsToCents } from '../../src/shared/index.js';
 
 /**
  * `Tenants.AttributionSpillDays` (migration 0014) — how far back ONE payment may reach to cover
@@ -299,14 +300,16 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
         endDate: null,
         optionKey: 'standard',
         petCount: 1,
-        estCost: 40,
+        // The DB half seeds CENTS (0015); the pure half above is unit-agnostic integers, and the
+        // preview response below is cents too, which is why the assertions convert.
+        estCost: dollarsToCents(40),
         status: 'confirmed',
       });
       await addBookingPets(env.PAWSERVATION_DB, TENANT_C, id, petIds);
     }
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: petIds[0],
-      amount: MONTHLY_TOTAL,
+      amount: dollarsToCents(MONTHLY_TOTAL),
       method: 'venmo',
       paidDate: MONTHLY_PAID,
       note: null,
@@ -314,7 +317,7 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
     });
   }
 
-  async function preview(env: Env): Promise<{ splits: number; remainder: number }> {
+  async function preview(env: Env): Promise<{ splits: number; remainderCents: number }> {
     const res = await app.request(
       `/api/${SLUG_C}/admin/payments/attribute/preview`,
       { method: 'POST', headers: await adminHeaders(TENANT_C), body: JSON.stringify({}) },
@@ -322,10 +325,13 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      proposals: { splits: unknown[]; remainder: number }[];
+      proposals: { splits: unknown[]; remainderCents: number }[];
     };
     expect(body.proposals).toHaveLength(1);
-    return { splits: body.proposals[0].splits.length, remainder: body.proposals[0].remainder };
+    return {
+      splits: body.proposals[0].splits.length,
+      remainderCents: body.proposals[0].remainderCents,
+    };
   }
 
   it('leaves most of a monthly payment as remainder under the default', async () => {
@@ -333,7 +339,7 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
     await monthlyHousehold(env, raw);
     expect(await preview(env)).toEqual({
       splits: FUNDED_AT_DEFAULT,
-      remainder: MONTHLY_TOTAL - FUNDED_AT_DEFAULT * 40,
+      remainderCents: dollarsToCents(MONTHLY_TOTAL - FUNDED_AT_DEFAULT * 40),
     });
   });
 
@@ -350,6 +356,6 @@ describe('the attribution preview reads the tenant’s stored spill window', () 
       env,
     );
     expect(res.status).toBe(204);
-    expect(await preview(env)).toEqual({ splits: MONTHLY_WALKS.length, remainder: 0 });
+    expect(await preview(env)).toEqual({ splits: MONTHLY_WALKS.length, remainderCents: 0 });
   });
 });

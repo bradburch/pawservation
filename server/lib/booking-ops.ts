@@ -90,6 +90,7 @@ import {
 import {
   addDays,
   cancellationFee,
+  centsToWholeDollars,
   DEFAULT_TIMEZONE,
   getPacificDateStr,
   isWeekend,
@@ -113,6 +114,36 @@ export type OpResult<T> = OpSuccess<T> | OpFailure;
 const ok = <T>(data: T, status: OpStatus = 200): OpSuccess<T> => ({ ok: true, status, data });
 const fail = (status: OpStatus, error: string, code?: string): OpFailure =>
   code === undefined ? { ok: false, status, error } : { ok: false, status, error, code };
+
+/**
+ * THE TWO WAYS A QUOTE CAN HAVE NO PRICE, told apart — in one place, so the booking POST and the
+ * edit PUT cannot drift about which sentence a customer reads.
+ *
+ * `unpriced-pet-set` is the ordinary one and the one this product is built around: the sitter has
+ * never priced this combination of pets, so the answer is to go and ask her (CLAUDE.md's
+ * unpriced-pet-set trap — never estimate, never extrapolate, never multiply).
+ *
+ * `cost-out-of-range` is arithmetic, not policy: the stored rate over this stay is too large to
+ * express exactly in cents, so the server declines rather than record a figure it cannot hold. It
+ * gets its OWN `code` and its OWN sentence because folding it into the other one would tell the
+ * customer to ask for a rate that already exists, and would tell an agent reading `code` that the
+ * sitter needs to add a price when what she needs is to fix one.
+ */
+const unpricedRefusal = (
+  reason: 'unpriced-pet-set' | 'cost-out-of-range',
+  sitterName: string,
+): OpFailure =>
+  reason === 'cost-out-of-range'
+    ? fail(
+        400,
+        `That stay comes to more than we can record — please contact ${sitterName} to book it.`,
+        'cost_out_of_range',
+      )
+    : fail(
+        400,
+        `Ask ${sitterName} for a price for this group of pets — they haven't set one yet.`,
+        'unpriced_pet_set',
+      );
 
 /**
  * Everything an operation needs that is not part of the request itself. `endUserId` is the
@@ -178,7 +209,8 @@ export function isCustomerEditable(
 }
 
 /**
- * What this customer would owe to cancel TODAY, in whole dollars. Computed here and nowhere else:
+ * What this customer would owe to cancel TODAY, in CENTS (0015) — `cancellationFee` takes cents
+ * and returns cents, still rounded to a whole dollar's worth. Computed here and nowhere else:
  * `/bookings/mine` sends it so the confirm step can state a figure, and the cancel route stamps
  * the same rule onto the row — the widget never computes money and never sends one.
  *
@@ -189,13 +221,43 @@ export function isCustomerEditable(
  */
 export function feeToCancelToday(
   status: BookingRow['Status'],
-  estCost: number | null,
+  estCostCents: number | null,
   startDate: string,
   tiers: CancellationTier[] | null,
   today: string,
 ): number {
-  if (status !== 'confirmed' || estCost == null || !tiers) return 0;
-  return cancellationFee(tiers, estCost, startDate, today);
+  if (status !== 'confirmed' || estCostCents == null || !tiers) return 0;
+  return cancellationFee(tiers, estCostCents, startDate, today);
+}
+
+/**
+ * `feeToCancelToday` FOR ONE ROW OF A LIST, where the answer is allowed to be "we can't say".
+ *
+ * `cancellationFee` throws a `RangeError` on a cost that is not a whole number of dollars, which
+ * is right for the pure function — the alternative is billing a percentage of a figure the booking
+ * never had — but it is the wrong blast radius here. `/bookings/mine` and the admin bookings list
+ * compute this preview for EVERY row, so one bad row (an un-migrated database, or a row written
+ * past both cost routes) would 500 the whole response and take away the customer's booking list
+ * along with it. The preview is a convenience; the list is not.
+ *
+ * So the throw is caught per row, that row reports `null` — the same value it already carries when
+ * the fee is not previewable — and the failure is logged with the booking id (never a name, an
+ * email, or the customer's own figures; the `RangeError` carries only the offending cents).
+ */
+export function feeToCancelTodayForList(
+  bookingId: string,
+  status: BookingRow['Status'],
+  estCostCents: number | null,
+  startDate: string,
+  tiers: CancellationTier[] | null,
+  today: string,
+): number | null {
+  try {
+    return feeToCancelToday(status, estCostCents, startDate, tiers, today);
+  } catch (err) {
+    console.error('cancellation fee preview failed', bookingId, err);
+    return null;
+  }
 }
 
 /**
@@ -233,10 +295,19 @@ function withExtraTimePreview(
   if (!(result.available && result.priced)) return result;
   const fees = extraTimeSurcharges(service, times);
   if (fees.length === 0) return result;
+  // `extraTimeSurcharges` returns cents (0015, it writes `BookingCharges.Amount`). The quote is
+  // the ONE payload that keeps whole-dollar twins beside its `*Cents` figures (design spec §2),
+  // so the total is summed in cents once and divided once — never a sum of divided terms.
+  const totalCents = fees.reduce((sum, fee) => sum + fee.amountCents, 0);
   return {
     ...result,
-    extraTimeFees: fees.map(({ label, amount }) => ({ label, amount })),
-    extraTimeTotal: fees.reduce((sum, fee) => sum + fee.amount, 0),
+    extraTimeFees: fees.map(({ label, amountCents }) => ({
+      label,
+      amountCents,
+      amount: centsToWholeDollars(amountCents),
+    })),
+    extraTimeTotalCents: totalCents,
+    extraTimeTotal: centsToWholeDollars(totalCents),
   };
 }
 
@@ -590,7 +661,9 @@ export type CreateBookingInput = {
 
 export type CreateBookingPayload = {
   id: string;
-  estCost: number | null;
+  /** CENTS (design spec §2). The stay's estimate exactly as it was stamped on the row — the
+   *  whole-dollar `estCost` this payload used to carry is gone, so no reader can misread it. */
+  estCostCents: number | null;
   status: string;
   demo?: true;
   note?: string;
@@ -626,7 +699,15 @@ export async function createBooking(
       endUserId,
       idemKey,
     );
-    if (prior) return ok({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
+    if (prior)
+      return ok(
+        {
+          id: prior.Id,
+          estCostCents: prior.EstCost,
+          status: prior.Status,
+        },
+        201,
+      );
   }
 
   const services = await listServices(env.PAWSERVATION_DB, tenant.Id);
@@ -740,14 +821,12 @@ export async function createBooking(
   if (!price.priced) {
     // Refused BEFORE the optimistic insert: an unpriced booking must not exist even briefly,
     // and there is no fallback number to write — a `?? 0` here would be the whole feature
-    // defeated in four characters.
-    return fail(
-      400,
-      `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
-      'unpriced_pet_set',
-    );
+    // defeated in four characters. TWO reasons reach here and they are told apart, because
+    // "your sitter hasn't priced these pets together" and "that stay's price is too large to
+    // record" call for completely different things from the customer.
+    return unpricedRefusal(price.reason, tenant.DisplayName);
   }
-  const estCost = price.cost;
+  const estCostCents = price.cost;
 
   if (isDemo) {
     // Zero-pollution demo: the FULL validation pipeline above already ran; now check capacity
@@ -770,7 +849,7 @@ export async function createBooking(
     return ok(
       {
         id: `demo_${crypto.randomUUID()}`,
-        estCost,
+        estCostCents,
         status: 'pending',
         demo: true as const,
         note: 'This was a demo — no booking was created.',
@@ -794,7 +873,7 @@ export async function createBooking(
       petCount: pets,
       startTime: bookingStartTime,
       departureTime: bookingDepartureTime,
-      estCost,
+      estCost: estCostCents,
       status: 'pending',
       answers,
       idempotencyKey: idemKey,
@@ -807,7 +886,15 @@ export async function createBooking(
         endUserId,
         idemKey,
       );
-      if (prior) return ok({ id: prior.Id, estCost: prior.EstCost, status: prior.Status }, 201);
+      if (prior)
+        return ok(
+          {
+            id: prior.Id,
+            estCostCents: prior.EstCost,
+            status: prior.Status,
+          },
+          201,
+        );
     }
     throw e;
   }
@@ -878,20 +965,22 @@ export async function createBooking(
       durationMinutes: option.DurationMinutes,
       petCount: pets,
       petNames: chosen.map((p) => p!.Name),
-      estCost,
+      estCost: estCostCents,
       status: 'pending',
     }).catch((err) => {
       console.error('calendar sync failed', err);
     }),
   );
 
-  return ok({ id, estCost, status: 'pending' }, 201);
+  return ok({ id, estCostCents, status: 'pending' }, 201);
 }
 
 // ─── Cancel ──────────────────────────────────────────────────────────────────
 
 export type CancelBookingInput = { bookingId: string };
-export type CancelBookingPayload = { status: 'cancelled'; cancellationFee: number };
+/** `cancellationFeeCents` is CENTS (design spec §2) — the figure actually stamped on the row,
+ *  never recomputed downstream. Zero when nothing was owed. */
+export type CancelBookingPayload = { status: 'cancelled'; cancellationFeeCents: number };
 
 /**
  * Owner-initiated cancellation. The booking row is NEVER deleted — `BookingRequestPets` has no
@@ -1013,7 +1102,9 @@ export async function cancelBooking(
     }),
   );
 
-  return ok({ status: 'cancelled' as const, cancellationFee: fee });
+  // `fee` is cents everywhere — stored, emailed via `formatCents`, handed to the calendar, and
+  // now said in the same unit on the wire.
+  return ok({ status: 'cancelled' as const, cancellationFeeCents: fee });
 }
 
 // ─── Edit ────────────────────────────────────────────────────────────────────
@@ -1028,7 +1119,8 @@ export type EditBookingInput = {
   departureTime: string | null;
 };
 
-export type EditBookingPayload = { id: string; estCost: number; status: 'pending' };
+/** `estCostCents` is CENTS (design spec §2) — the RE-QUOTED estimate now stamped on the row. */
+export type EditBookingPayload = { id: string; estCostCents: number; status: 'pending' };
 
 /**
  * Customer-initiated edit of an existing booking: DATES, WHICH PETS, ARRIVAL TIME and INTAKE
@@ -1228,19 +1320,13 @@ export async function editBooking(
     endDate === booking.EndDate &&
     samePets;
 
-  let estCost: number;
+  let estCostCents: number;
   if (priceRelevantUnchanged) {
-    estCost = booking.EstCost!;
+    estCostCents = booking.EstCost!;
   } else {
     const price = estimateCost(service, option, start, end, pricedPets, rates);
-    if (!price.priced) {
-      return fail(
-        400,
-        `Ask ${tenant.DisplayName} for a price for this group of pets — they haven't set one yet.`,
-        'unpriced_pet_set',
-      );
-    }
-    estCost = price.cost;
+    if (!price.priced) return unpricedRefusal(price.reason, tenant.DisplayName);
+    estCostCents = price.cost;
   }
 
   // Customer-scoped AND status-guarded in SQL: the guard is the status we read and priced from,
@@ -1252,7 +1338,7 @@ export async function editBooking(
     startTime: bookingStartTime,
     departureTime: bookingDepartureTime,
     petCount: pets,
-    estCost,
+    estCost: estCostCents,
     answers,
     expectedStatus: booking.Status as 'pending' | 'confirmed',
   });
@@ -1340,7 +1426,7 @@ export async function editBooking(
         durationMinutes: option.DurationMinutes,
         petCount: pets,
         petNames,
-        estCost,
+        estCost: estCostCents,
         status: 'pending' as const,
       };
       if (booking.GCalEventId)
@@ -1351,7 +1437,7 @@ export async function editBooking(
     }),
   );
 
-  return ok({ id, estCost, status: 'pending' as const });
+  return ok({ id, estCostCents, status: 'pending' as const });
 }
 
 // ─── The customer's own bookings ─────────────────────────────────────────────
@@ -1368,13 +1454,15 @@ export type MyBooking = {
   petCount: number;
   pets: string[];
   answers: Record<string, string>;
-  estCost: number | null;
-  charges: { label: string; amount: number }[];
-  chargesTotal: number;
-  cancellationFee: number | null;
+  /** CENTS, like every money field on this payload (design spec §2). No dollar-named twin is
+   *  kept: the widget formats these with `formatCents` and derives nothing from them. */
+  estCostCents: number | null;
+  charges: { label: string; amountCents: number }[];
+  chargesTotalCents: number;
+  cancellationFeeCents: number | null;
   cancellable: boolean;
   editable: boolean;
-  feeIfCancelledToday: number | null;
+  feeIfCancelledTodayCents: number | null;
   status: string;
 };
 
@@ -1450,17 +1538,26 @@ export async function listMyBookings(
         /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
          *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
         answers: parseAnswers(r.Answers, r.Id),
-        estCost: r.EstCost,
-        charges: chargesByBooking.get(r.Id) ?? [],
-        chargesTotal: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
-        cancellationFee: r.CancellationFee,
+        // Stored cents (0015) straight out onto a wire that now says so — no division anywhere on
+        // this payload, so nothing here can round, throw, or drift from the stored figure.
+        estCostCents: r.EstCost,
+        charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
+          label: ch.label,
+          amountCents: ch.amount,
+        })),
+        chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce(
+          (sum, ch) => sum + ch.amount,
+          0,
+        ),
+        cancellationFeeCents: r.CancellationFee,
         /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
         cancellable,
         /** Whether THIS customer may still change it — see `isCustomerEditable`. */
         editable: isCustomerEditable(r.Status, r.StartDate, today),
-        /** What cancelling today would cost, whole dollars; null when it isn't cancellable. */
-        feeIfCancelledToday: cancellable
-          ? feeToCancelToday(
+        /** What cancelling today would cost, in CENTS; null when it isn't cancellable. */
+        feeIfCancelledTodayCents: cancellable
+          ? feeToCancelTodayForList(
+              r.Id,
               r.Status,
               r.EstCost,
               r.StartDate,
@@ -1477,20 +1574,91 @@ export async function listMyBookings(
 // ─── The customer's own account balance ──────────────────────────────────────
 
 /**
- * Same shape `getHouseholdDetail` returns for the admin drill-down, `accountId` widened to
+ * The shape `getHouseholdDetail` returns for the admin drill-down, with `accountId` widened to
  * `null`: a caller with no live pet at all holds no edge in the owner<->pet graph
  * (`buildAccounts`), so no household names them — genuinely "nothing owed" rather than a lookup
  * failure, the same distinction `MatchClient.accountId` draws for the Venmo importer's first-ever
  * payment.
+ *
+ * THE WIDENING IS NOW THE ONLY DIFFERENCE. `HouseholdDetailRow`'s own money fields name their unit
+ * (design spec §2), so this type restates them rather than renaming them, and
+ * `toMyAccountBalance` below is a field-for-field passthrough — nothing is converted any more,
+ * which is why it no longer calls itself a conversion. Kept as its own type all the same: it is the CUSTOMER's
+ * published statement, and a field added to the sitter's row should have to be added here on
+ * purpose rather than arrive on a pet owner's wire by structural accident.
  */
 export type MyAccountBalance = {
   accountId: string | null;
-  bookings: HouseholdDetailRow['bookings'];
-  householdPayments: HouseholdDetailRow['householdPayments'];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  /** Every money field is CENTS and says so (design spec §2), matching `HouseholdDetailRow`
+   *  field for field. */
+  bookings: {
+    bookingId: string;
+    serviceType: string;
+    startDate: string;
+    endDate: string | null;
+    status: string;
+    costCents: number;
+    charges: { id: string; label: string; amountCents: number }[];
+    chargesTotalCents: number;
+    paidTotalCents: number;
+    expectedCents: number;
+    /** What THIS stay still owes: `max(0, expectedCents − paidTotalCents)`, the server's own
+     *  figure (`bookingOutstanding`, server/db/repo.ts) rather than a subtraction the client makes.
+     *  A payment recorded against the HOUSEHOLD lowers `balanceCents` and leaves this alone. */
+    outstandingCents: number;
+  }[];
+  householdPayments: {
+    id: string;
+    amountCents: number;
+    method: string;
+    paidDate: string;
+    note: string | null;
+  }[];
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
+
+/**
+ * `HouseholdDetailRow` → the customer's statement. Arithmetic-free, and now name-for-name as well:
+ * the sitter's drill-down (`GET /:slug/admin/accounts/:accountId`) serves the very same row, so
+ * the two statements are one computation published twice rather than two that agree.
+ *
+ * Written out field by field rather than spread, so adding a field to the sitter's row is a
+ * DECISION to publish it to pet owners too, not an accident of structural typing — the widened
+ * `accountId` is the only thing this function actually changes.
+ */
+function toMyAccountBalance(
+  accountId: string | null,
+  detail: HouseholdDetailRow,
+): MyAccountBalance {
+  return {
+    accountId,
+    bookings: detail.bookings.map((b) => ({
+      bookingId: b.bookingId,
+      serviceType: b.serviceType,
+      startDate: b.startDate,
+      endDate: b.endDate,
+      status: b.status,
+      costCents: b.costCents,
+      charges: b.charges.map((c) => ({ id: c.id, label: c.label, amountCents: c.amountCents })),
+      chargesTotalCents: b.chargesTotalCents,
+      paidTotalCents: b.paidTotalCents,
+      expectedCents: b.expectedCents,
+      outstandingCents: b.outstandingCents,
+    })),
+    householdPayments: detail.householdPayments.map((p) => ({
+      id: p.id,
+      amountCents: p.amountCents,
+      method: p.method,
+      paidDate: p.paidDate,
+      note: p.note,
+    })),
+    expectedTotalCents: detail.expectedTotalCents,
+    paidTotalCents: detail.paidTotalCents,
+    balanceCents: detail.balanceCents,
+  };
+}
 
 /** A statement with no activity yet: not an error, just nothing recorded either side. */
 function emptyAccount(accountId: string | null): MyAccountBalance {
@@ -1498,15 +1666,15 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
     accountId,
     bookings: [],
     householdPayments: [],
-    expectedTotal: 0,
-    paidTotal: 0,
-    balance: 0,
+    expectedTotalCents: 0,
+    paidTotalCents: 0,
+    balanceCents: 0,
   };
 }
 
 /**
  * "What do I owe?" — the one question `/bookings/mine` cannot answer, because a booking's own
- * `estCost` is what THAT stay costs, not what the household owes across every stay and payment.
+ * `estCostCents` is what THAT stay costs, not what the household owes across every stay and payment.
  * The household balance already existed (`buildHouseholdBalances`, Story 2.1) and was reachable
  * only from the admin dashboard; this is the same computation, unchanged, reached from the other
  * side of the same number.
@@ -1542,5 +1710,5 @@ export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyA
     tenant.Id,
     endUserId,
   );
-  return ok(detail ?? emptyAccount(accountId));
+  return ok(detail ? toMyAccountBalance(accountId, detail) : emptyAccount(accountId));
 }

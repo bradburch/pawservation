@@ -29,3 +29,6 @@ backup-pre-*.sql
 _bmad/
 _bmad-output/
 .claude/skills/bmad-*/
+
+# MCP Playwright scratch output (screenshots, traces) — never committed, never formatted.
+.playwright-mcp/

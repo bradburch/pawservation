@@ -5,8 +5,10 @@ import {
   buildCapacity,
   buildGroupKey,
   buildMixKey,
+  centsToWholeDollars,
   DEFAULT_TIMEZONE,
   dedupePets,
+  dollarsToCents,
   getPacificDateStr,
   isWellFormedCapacityEvent,
   mixFromPetTypes,
@@ -90,6 +92,17 @@ export type AvailabilityResult =
       /** Discriminant. `true` means the sitter has priced this exact pet set (or it is a single
        *  pet falling back to the option's own rate). See the `priced: false` arm. */
       priced: true;
+      /** CENTS — the unit everything is stored, summed and quoted in. This is the figure to read;
+       *  `estCost` below is the same money in whole dollars, kept only for out-of-tree readers. */
+      estCostCents: number;
+      /**
+       * WHOLE DOLLARS, and one of the design spec's TWO retained dollar names (§2), the other
+       * being `extraTimeTotal`. It survives the cents rename because rate × units is whole by
+       * construction — `centsToWholeDollars` throws rather than round, so a fractional quote
+       * would be a loud failure here, not a silently floored price — and because the out-of-tree
+       * booking MCP deployment reads it, for the same reason `nights` is retained just below.
+       * In-tree readers use `estCostCents`.
+       */
       estCost: number;
       /**
        * The quantity `estCost` was actually billed for, in `unit`s — the number the widget shows
@@ -120,9 +133,14 @@ export type AvailabilityResult =
       holidayRate?: number;
       /**
        * The extra-time surcharge the owner's chosen times attract (0009), and its total — DISPLAY
-       * ONLY, and deliberately NOT part of `estCost`. `estCost` is the price of the stay;
-       * `extraTimeTotal` is what will be added to it as `BookingCharges` rows when the booking is
+       * ONLY, and deliberately NOT part of the estimate. The estimate is the price of the stay;
+       * the surcharge is what will be added to it as `BookingCharges` rows when the booking is
        * created, so `totalDue` stays `EstCost + chargesTotal` at every read site.
+       *
+       * `amountCents`/`extraTimeTotalCents` are the figures to read; `amount`/`extraTimeTotal`
+       * are the same money in whole dollars, retained beside them for the same out-of-tree
+       * readers as `estCost` and on the same guarantee — a flat fee the sitter typed is whole,
+       * and `centsToWholeDollars` throws rather than round if one ever isn't.
        *
        * Both fields are absent unless a fee actually applies, so a quote for a service with no
        * standard hours (every service until a sitter sets some) is byte-identical to what it was
@@ -132,8 +150,9 @@ export type AvailabilityResult =
        * stamp. Attached OUTSIDE `estimateCost`/`checkAvailability` on purpose: the price formula
        * never sees a time, and a surcharge never passes through it.
        */
-      extraTimeFees?: { label: string; amount: number }[];
+      extraTimeFees?: { label: string; amount: number; amountCents: number }[];
       extraTimeTotal?: number;
+      extraTimeTotalCents?: number;
     }
   | {
       /**
@@ -146,7 +165,14 @@ export type AvailabilityResult =
        */
       available: true;
       priced: false;
-      reason: 'unpriced-pet-set';
+      /** WHY there is no price. `'unpriced-pet-set'` is the ordinary one described above.
+       *  `'cost-out-of-range'` is the arithmetic backstop: a stored rate so large that rate ×
+       *  units × pets could not survive the ×100 into cents as an exact integer. That is a
+       *  refusal, not a fault — the alternative is a `RangeError` out of the pricing engine and a
+       *  500 on a quote, which tells the customer nothing and pages the sitter for a number she
+       *  typed. Both arms carry NO cost field, which is what makes either impossible to coerce
+       *  into $0. */
+      reason: 'unpriced-pet-set' | 'cost-out-of-range';
       groupKey: string;
       mixKey: string;
     }
@@ -179,13 +205,22 @@ export type AvailabilityResult =
 export type PriceResult =
   | {
       priced: true;
+      /** CENTS (0015). `estimateCost` is the single ×100; `holidayRate` below stays whole dollars,
+       *  because it is the stored rate the sitter typed rather than a computed cost. */
       cost: number;
       billedUnits?: number;
       unit?: 'night' | 'day';
       holidayUnits?: number;
       holidayRate?: number;
     }
-  | { priced: false; reason: 'unpriced-pet-set'; groupKey: string; mixKey: string };
+  | {
+      priced: false;
+      /** See `AvailabilityResult`'s `priced: false` arm — the same two reasons, unchanged as they
+       *  pass through `checkAvailability`. */
+      reason: 'unpriced-pet-set' | 'cost-out-of-range';
+      groupKey: string;
+      mixKey: string;
+    };
 
 /**
  * The estimated cost of a booking — the ONE place the price formula lives, so the availability
@@ -295,7 +330,33 @@ export function estimateCost(
   // nights scale is a discontinuity nobody typed either. `holidayAwareCost` therefore still never
   // sees a pet count — the composition here does.
   const split = unitSplitFor(service, startDate, endDateExclusive);
-  const cost = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
+  const dollars = holidayAwareCost(rate, service.HolidayRate, split) * petMultiplier;
+  // EVERY input `dollarsToCents` would throw on, caught here as a refusal instead. Three of them,
+  // and all are reachable from stored data alone. The product may leave the safe-integer range:
+  // a stored rate is only bounded by `isValidRate` at the moment a sitter types it, and rate ×
+  // units × pets compounds, so a big enough rate over a long enough stay puts the ×100 past
+  // `Number.MAX_SAFE_INTEGER`, where it is a float and no longer exact money. `dollars` itself
+  // may be fractional — a legacy or hand-edited rate column, or one that arrived before
+  // `isValidRate` guarded it — which `dollarsToCents` refuses rather than round. Or it may be
+  // negative — legacy or hand-edited data; `TenantServiceOptions.Rate` has no CHECK constraint.
+  //
+  // All are REFUSED as a quote rather than thrown. A `RangeError` escaping the price formula
+  // 500s an availability check and a booking POST alike, and "the server broke" is a worse answer
+  // to bad data than "we can't price this" — which at least tells the customer to call the sitter,
+  // and tells the sitter which pet set to look at.
+  if (!Number.isSafeInteger(dollars) || !Number.isSafeInteger(dollars * 100) || dollars < 0)
+    return {
+      priced: false,
+      reason: 'cost-out-of-range',
+      groupKey: buildGroupKey(distinct.map((p) => p.id)),
+      mixKey: buildMixKey(mixFromPetTypes(distinct.map((p) => p.petType))),
+    };
+  // THE single ×100 of the whole price path. Every operand above is a whole-dollar rate the
+  // sitter typed; every consumer below stores or sums the result, and storage is cents (0015).
+  // `dollarsToCents` still throws rather than rounds — it is kept as the conversion rather than a
+  // bare `* 100` so the rule lives in one place — but the guard above means it cannot throw from
+  // here, so a truncated price is impossible in either direction.
+  const cost = dollarsToCents(dollars);
 
   if (service.Shape !== 'range') return { priced: true, cost, ...holidayFields(service, split) };
   return {
@@ -578,7 +639,10 @@ async function checkRange(
   return {
     available: true,
     priced: true,
-    estCost: price.cost,
+    estCostCents: price.cost,
+    // The retained whole-dollar twin (see `AvailabilityResult`). `centsToWholeDollars` throws on
+    // a non-whole figure, so a fractional quote is loud rather than a silently floored one.
+    estCost: centsToWholeDollars(price.cost),
     // The quantity the price was computed from — same unit, same `billableUnits` call as
     // `estimateCost`, so the widget's "4 days" can never sit next to a 3-night price.
     billedUnits: price.billedUnits,
@@ -677,7 +741,10 @@ async function checkSingle(
   return {
     available: true,
     priced: true,
-    estCost: price.cost,
+    estCostCents: price.cost,
+    // The retained whole-dollar twin (see `AvailabilityResult`). `centsToWholeDollars` throws on
+    // a non-whole figure, so a fractional quote is loud rather than a silently floored one.
+    estCost: centsToWholeDollars(price.cost),
     holidayUnits: price.holidayUnits,
     holidayRate: price.holidayRate,
   };

@@ -26,7 +26,7 @@ async function seedBooking(
     endDate: '2030-03-04',
     optionKey: null,
     petCount: 1,
-    estCost: 150,
+    estCost: 15000,
     status,
   });
   if (gcalEventId)
@@ -73,7 +73,7 @@ describe('POST /:slug/admin/bookings/:id/status — Google Calendar hooks (confi
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(spy).toHaveBeenCalledOnce();
     const [url, init] = spy.mock.calls[0] as [string, RequestInit];
@@ -96,7 +96,7 @@ describe('POST /:slug/admin/bookings/:id/status — Google Calendar hooks (confi
     expect(await res.json()).toEqual({
       status: 'declined',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect(spy).toHaveBeenCalledOnce();
     const [url, init] = spy.mock.calls[0] as [string, RequestInit];
@@ -151,7 +151,7 @@ describe('POST /:slug/admin/bookings/:id/status — Google Calendar hooks (confi
     expect(await res.json()).toEqual({
       status: 'cancelled',
       notified: false,
-      cancellationFee: null,
+      cancellationFeeCents: null,
     });
     expect((await bookingRow(env, id)).Status).toBe('cancelled');
   });

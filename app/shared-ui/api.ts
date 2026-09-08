@@ -87,8 +87,13 @@ export type Availability =
   | {
       available: true;
       priced: true;
+      /** CENTS — the figure to render (via `formatCents`). */
+      estCostCents: number;
+      /** WHOLE DOLLARS, the same money as `estCostCents`. The quote is the one payload that keeps
+       *  its dollar-named fields (design spec §2), for out-of-tree readers; in-tree code renders
+       *  `estCostCents` so nothing has to know which of the two it is holding. */
       estCost: number;
-      /** Quantity `estCost` was billed for, with its noun. Absent for single-day services
+      /** Quantity the estimate was billed for, with its noun. Absent for single-day services
        *  (flat per-booking charge, no quantity). Label from these, never from
        *  `ServiceConfig.rateUnit` — the number and its noun must share one source. */
       billedUnits?: number;
@@ -96,17 +101,19 @@ export type Availability =
       /** Wire-compat only; always a night count. Prefer `billedUnits`/`unit`. */
       nights?: number;
       /** How many billed units the SERVER charged at the sitter's holiday rate, and that rate.
-       *  Both absent unless a holiday actually applied. Display only — `estCost` already
+       *  Both absent unless a holiday actually applied. Display only — the estimate already
        *  includes them; the widget must never re-derive a total from these. */
       holidayUnits?: number;
       holidayRate?: number;
       /** The extra-time surcharge the chosen arrival/departure times attract (0009) and its total,
-       *  both absent unless a fee applies. NOT included in `estCost` — it becomes a separate charge
-       *  on the booking, so what the client will owe is `estCost + extraTimeTotal`. Render these
-       *  verbatim: the amounts are the server's, and the widget must never derive a fee from a time
-       *  of day (it is not sent the sitter's standard hours at all, precisely so it cannot). */
-      extraTimeFees?: { label: string; amount: number }[];
+       *  both absent unless a fee applies. NOT included in the estimate — it becomes a separate
+       *  charge on the booking, so what the client will owe is `estCostCents + extraTimeTotalCents`.
+       *  Render these verbatim: the amounts are the server's, and the widget must never derive a fee
+       *  from a time of day (it is not sent the sitter's standard hours at all, precisely so it
+       *  cannot). `amount`/`extraTimeTotal` are the retained whole-dollar twins, as `estCost` is. */
+      extraTimeFees?: { label: string; amount: number; amountCents: number }[];
       extraTimeTotal?: number;
+      extraTimeTotalCents?: number;
     }
   | {
       /** The dates are free but the sitter has never priced this set of pets. The widget shows
@@ -114,7 +121,10 @@ export type Availability =
        *  client does not do money. */
       available: true;
       priced: false;
-      reason: 'unpriced-pet-set';
+      /** `'cost-out-of-range'` is the same refusal for a different cause: the sitter's stored rate
+       *  over this stay is too large to express exactly in cents, so the server declines to quote
+       *  rather than 500. Either way there is no price, and the client still computes none. */
+      reason: 'unpriced-pet-set' | 'cost-out-of-range';
       groupKey: string;
       mixKey: string;
     }
@@ -136,15 +146,16 @@ export type Booking = {
   /** The pet ids on the booking, so an edit form can pre-select them without matching names. */
   petIds: string[];
   petCount: number;
-  estCost: number | null;
-  /** Extras the sitter added after the fact. `estCost` excludes them by design; what the client
-   *  owes is `estCost + chargesTotal`. */
-  charges: { label: string; amount: number }[];
-  chargesTotal: number;
+  /** CENTS, like every money field on this type. */
+  estCostCents: number | null;
+  /** Extras the sitter added after the fact. `estCostCents` excludes them by design; what the
+   *  client owes is `estCostCents + chargesTotalCents`. */
+  charges: { label: string; amountCents: number }[];
+  chargesTotalCents: number;
   /** What was answered ON THIS BOOKING, keyed by question id — not the saved pre-fill, which may
    *  since have moved on. The edit form opens showing these. */
   answers: Record<string, string>;
-  cancellationFee: number | null;
+  cancellationFeeCents: number | null;
   /** Whether the customer may still cancel this one. The SERVER's answer — the widget does no
    *  date math and never infers cancellability from `status` + dates itself. */
   cancellable: boolean;
@@ -152,9 +163,9 @@ export type Booking = {
    *  not the same question as `cancellable`: a stay already under way can be cancelled but not
    *  re-dated. */
   editable: boolean;
-  /** Whole dollars owed if cancelled today; null when it isn't cancellable. Server-computed from
-   *  the sitter's stored policy — the widget renders money, it never derives it. */
-  feeIfCancelledToday: number | null;
+  /** CENTS owed if cancelled today; null when it isn't cancellable. Server-computed from the
+   *  sitter's stored policy — the widget renders money, it never derives it. */
+  feeIfCancelledTodayCents: number | null;
   status: string;
   pets: string[];
 };
@@ -223,38 +234,43 @@ export type AdminBooking = {
   /** The Google event's title, for calendar display. Null unless external. */
   externalSummary: string | null;
   /** True for a booking adopted from the sitter's own calendar (`Source = 'calendar-backfill'`).
-   *  Its `estCost` was priced from TODAY's rate card for a stay that may predate it — an estimate,
-   *  not a figure any client saw or agreed to — so the UI must label it as one and offer the
-   *  correction PATCH (`adminApi.bookings.updateCost`), which only these rows accept. */
+   *  Its `estCostCents` was priced from TODAY's rate card for a stay that may predate it — an
+   *  estimate, not a figure any client saw or agreed to — so the UI must label it as one and offer
+   *  the correction PATCH (`adminApi.bookings.updateCost`), which only these rows accept. */
   isBackfilled: boolean;
   /** Intake answers keyed by question id; {} when the customer answered nothing. */
   answers: Record<string, string>;
-  estCost: number | null;
-  paidTotal: number;
+  /** CENTS (0015), like every money field below it. */
+  estCostCents: number | null;
+  paidTotalCents: number;
   charges: BookingCharge[];
-  /** SUM(charges). Total due is `estCost + chargesTotal` — estCost itself is never mutated. */
-  chargesTotal: number;
+  /** SUM(charges), CENTS. Total due is `estCostCents + chargesTotalCents` — the estimate itself is
+   *  never mutated. */
+  chargesTotalCents: number;
   status: string;
-  cancellationFee: number | null;
-  feeIfCancelledToday: number | null;
+  cancellationFeeCents: number | null;
+  feeIfCancelledTodayCents: number | null;
   createdAt: string;
 };
 
+/** One recorded payment, booking-level or household-level — the two ledgers emit one shape. */
 export type Payment = {
   id: string;
-  amount: number;
+  /** CENTS (0015): a payment is what a person actually sent, so $45.50 is 4550. */
+  amountCents: number;
   method: string;
   paidDate: string;
   note: string | null;
 };
 
-/** One extra charge on a booking — additive; it never changes the booking's estCost. */
-export type BookingCharge = { id: string; label: string; amount: number };
+/** One extra charge on a booking — additive; it never changes the booking's estimate. */
+export type BookingCharge = { id: string; label: string; amountCents: number };
 
 export type VenmoPreviewRow = {
   txnId: string;
   date: string;
-  amount: number;
+  /** CENTS (0015) — the server reads the file to the cent and reports it unchanged. */
+  amountCents: number;
   from: string;
   note: string;
 };
@@ -276,7 +292,8 @@ export type VenmoPreview = {
 };
 export type VenmoImportResult = {
   imported: number;
-  totalAmount: number;
+  /** CENTS (0015) — the sum of what was actually recorded, added up server-side. */
+  totalAmountCents: number;
   skipped: { txnId: string; reason: string }[];
 };
 
@@ -299,7 +316,8 @@ export type CsvPreviewRow = {
   dedupeKey: string;
   row: number;
   date: string;
-  amount: number;
+  /** CENTS (0015), as on the Venmo preview row above. */
+  amountCents: number;
   payer: string;
   method: PaymentMethod;
   reference: string | null;
@@ -320,7 +338,8 @@ export type CsvPreview = {
 };
 export type CsvImportResult = {
   imported: number;
-  totalAmount: number;
+  /** CENTS (0015), as on the Venmo import result above. */
+  totalAmountCents: number;
   skipped: { dedupeKey: string; reason: string }[];
 };
 
@@ -410,8 +429,8 @@ export type BackfillImportResult = {
 /** One booking a credit could land on — hand-mirrors the `splits`/`bookings` row shape both
  *  `server/routes/admin.ts` attribution routes emit: static booking facts plus its OWN live
  *  outstanding, computed at preview time (`server/lib/payment-attribution.ts`'s `UnpaidBooking`
- *  under a different name). `outstanding` is a snapshot for display only — `apply` re-reads it
- *  live and refuses a split that no longer fits.
+ *  under a different name). `outstandingCents` is a snapshot for display only — `apply` re-reads
+ *  it live and refuses a split that no longer fits.
  *
  *  Deliberately NOT decremented by any other credit proposed in the same preview response: a
  *  household can have several unattached credits, and the preview route simulates applying them
@@ -420,7 +439,7 @@ export type BackfillImportResult = {
  *  current outstanding, so a sitter who edits or excludes a credit (e.g. raises a later split to
  *  settle the booking outright) isn't capped against a number that was never really live. Two
  *  splits on the same booking, from two different credits in the same preview, can therefore both
- *  legitimately show the same `outstanding` — over-attributing across them is caught server-side
+ *  legitimately show the same `outstandingCents` — over-attributing across them is caught server-side
  *  by `applyAttribution` re-reading live state per attribution, not prevented here. */
 export type AttributionCandidateBooking = {
   bookingId: string;
@@ -430,23 +449,25 @@ export type AttributionCandidateBooking = {
   // checkout date here — the whole interval `proposeAttribution` measures proximity against.
   endDate: string | null;
   status: string;
-  outstanding: number;
+  /** CENTS (0015) — the server's own `max(0, expectedCents − paidTotalCents)`, never derived here. */
+  outstandingCents: number;
 };
 
 /** A resolved split, as `preview` proposed it — `proposeAttribution`'s own `Split` plus the
  *  static booking facts the route joins in for display. */
-export type AttributionProposalSplit = AttributionCandidateBooking & { amount: number };
+export type AttributionProposalSplit = AttributionCandidateBooking & { amountCents: number };
 
 /** One credit `proposeAttribution` could place unambiguously against this household's unpaid
- *  bookings. `remainder` is what's left of `amount` after every split — never negative, never
- *  computed here (see `payment-attribution.ts`'s conservation invariant). */
+ *  bookings. `remainderCents` is what's left of `amountCents` after every split — never negative,
+ *  never computed here (see `payment-attribution.ts`'s conservation invariant). */
 export type AttributionProposal = {
   accountId: string;
   paymentId: string;
-  amount: number;
+  /** CENTS (0015), like every other figure on this payload — the credit's face value. */
+  amountCents: number;
   paidDate: string;
   splits: AttributionProposalSplit[];
-  remainder: number;
+  remainderCents: number;
 };
 
 /** A credit `proposeAttribution` refused to place — `reason` is the closed union the pure
@@ -480,7 +501,8 @@ export type AttributionProposal = {
 export type AttributionUnresolved = {
   accountId: string;
   paymentId: string;
-  amount: number;
+  /** CENTS (0015). */
+  amountCents: number;
   paidDate: string;
   reason:
     | 'no-unpaid-bookings'
@@ -504,19 +526,24 @@ export type AttributionPreview = {
 export type AttributionInput = {
   paymentId: string;
   accountId: string;
-  splits: { bookingId: string; amount: number }[];
-  remainder: number;
+  /** CENTS (0015) on every figure here, the same unit the preview reported and the ledger holds.
+   *  The whole-dollar body this route used to take is gone: the server 400s it rather than read
+   *  `100` as $1.00. */
+  splits: { bookingId: string; amountCents: number }[];
+  remainderCents: number;
   /**
    * Part of this payment the client meant as thanks rather than as settlement — recorded server-
    * side as a `BookingCharges` row labelled "Tip" on the named booking, which must be one THIS
-   * attribution's own `splits` name. Without it the excess becomes `remainder`, an account-level
-   * credit, which says the sitter OWES the money back and then reappears in every future preview.
+   * attribution's own `splits` name. Without it the excess becomes `remainderCents`, an
+   * account-level credit, which says the sitter OWES the money back and then reappears in every
+   * future preview.
    *
-   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is `sum(splits) + tip + remainder === amount`,
-   * and the server writes `split + tip` against the booking (`applyAttribution`, server/db/repo.ts).
-   * Sending an already-inclusive split fails conservation rather than paying the tip twice.
+   * THE SPLIT IS SENT EXCLUSIVE OF IT. Conservation is
+   * `sum(splits) + tip + remainderCents === amountCents`, and the server writes `split + tip` against
+   * the booking (`applyAttribution`, server/db/repo.ts). Sending an already-inclusive split fails
+   * conservation rather than paying the tip twice.
    */
-  tip?: { bookingId: string; amount: number };
+  tip?: { bookingId: string; amountCents: number };
 };
 
 export type AttributionApplyResult = {
@@ -524,25 +551,32 @@ export type AttributionApplyResult = {
   skipped: { paymentId: string; reason: string }[];
 };
 
+/**
+ * The Earnings payload, mirroring `serializeAnalytics` (`server/lib/analytics.ts`) field for field.
+ * EVERY money figure is CENTS and named so (design spec §2); the dollar-named fields are gone, so
+ * a reader that still means dollars fails to compile rather than printing a 100x-wrong number.
+ * Render each one through `formatCents` — this page adds nothing up that the server has not.
+ */
 export type AnalyticsPayload = {
   tiles: {
-    thisMonth: number;
-    lastMonth: number;
-    outstandingTotal: number;
+    thisMonthCents: number;
+    lastMonthCents: number;
+    outstandingTotalCents: number;
     outstandingCount: number;
     /** Money paid on bookings that no longer owe it — see `credits`. Never netted against
-     *  `outstandingTotal`: one client owing $100 while another is owed $100 is not a settled book. */
-    creditTotal: number;
+     *  `outstandingTotalCents`: one client owing $100 while another is owed $100 is not a settled
+     *  book. */
+    creditTotalCents: number;
   };
-  monthly: { month: string; total: number }[];
-  ytd: number;
-  quarterly: { q: number; total: number }[];
-  byService: { serviceType: string; label: string; total: number }[];
+  monthly: { month: string; totalCents: number }[];
+  ytdCents: number;
+  quarterly: { q: number; totalCents: number }[];
+  byService: { serviceType: string; label: string; totalCents: number }[];
   topClients: {
     endUserId: string;
     name: string | null;
     email: string | null;
-    total: number;
+    totalCents: number;
     bookings: number;
   }[];
   outstanding: {
@@ -551,18 +585,19 @@ export type AnalyticsPayload = {
     email: string | null;
     serviceType: string;
     startDate: string;
-    estCost: number;
-    chargesTotal: number;
-    paidTotal: number;
-    balance: number;
+    estCostCents: number;
+    chargesTotalCents: number;
+    paidTotalCents: number;
+    balanceCents: number;
     isCancellationFee: boolean;
   }[];
   /**
    * The mirror of `outstanding`: bookings paid MORE than they may keep, which is where a booking
-   * edited down below what was already paid now shows up. `credit` is `paidTotal - keepable`. These
-   * rows deliberately carry no *Record payment* affordance — a credit is a negative balance, not a
-   * payable one. What they DO carry is the two ways to close one: keep it (`keepCredit`, when
-   * `canKeep`) or correct the payment ledger (the money went back).
+   * edited down below what was already paid now shows up. `creditCents` is
+   * `paidTotalCents - keepableCents`, computed server-side. These rows deliberately carry no
+   * *Record payment* affordance — a credit is a negative balance, not a payable one. What they DO
+   * carry is the two ways to close one: keep it (`keepCredit`, when `canKeep`) or correct the
+   * payment ledger (the money went back).
    */
   credits: {
     bookingId: string;
@@ -571,9 +606,9 @@ export type AnalyticsPayload = {
     serviceType: string;
     startDate: string;
     status: string;
-    keepable: number;
-    paidTotal: number;
-    credit: number;
+    keepableCents: number;
+    paidTotalCents: number;
+    creditCents: number;
     /**
      * Server-derived: may this credit be closed by KEEPING it? False for a declined request, which
      * may keep nothing at all — so the button is not offered rather than offered and refused. The
@@ -586,9 +621,10 @@ export type AnalyticsPayload = {
    * invoice number (two customers who share a single pet are one household), summed as
    * `Σ(booking costs + charges) − Σ(payments)` across every booking of that household.
    *
-   * Every figure arrives computed. The client adds nothing up: `balance` is money, money is
-   * server-side, and a total re-derived in the browser is a total that can disagree with the one
-   * the server would have printed. Negative `balance` = the household is in credit.
+   * Every figure arrives computed, in CENTS and named so (design spec §2). The client adds nothing
+   * up: `balanceCents` is money, money is server-side, and a total re-derived in the browser is a
+   * total that can disagree with the one the server would have printed. Negative `balanceCents` =
+   * the household is in credit.
    */
   households: {
     accountId: string;
@@ -599,9 +635,9 @@ export type AnalyticsPayload = {
      *  stays on this balance. Not part of the household's pets; never rendered as one. */
     anchorPetIds: string[];
     bookingIds: string[];
-    expectedTotal: number;
-    paidTotal: number;
-    balance: number;
+    expectedTotalCents: number;
+    paidTotalCents: number;
+    balanceCents: number;
   }[];
   /**
    * HOUSEHOLD PAYMENTS THAT BELONG TO NO HOUSEHOLD — the pet whose id the payment was filed under
@@ -610,14 +646,15 @@ export type AnalyticsPayload = {
    * here: shown, the sitter can re-record it against the right household and delete the stray;
    * unpublished, it would be revenue with no statement anywhere that accounts for it.
    */
-  orphanedPayments: { accountId: string; total: number }[];
+  orphanedPayments: { accountId: string; totalCents: number }[];
 };
 
 /**
  * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — mirrors `HouseholdDetailRow` in
- * `server/types.ts`. `expectedTotal`/`paidTotal`/`balance` are the same numbers the household row
- * in `AnalyticsPayload.households` already carries, repeated here so the detail view reconciles to
- * itself without the caller having to keep the summary row around.
+ * `server/types.ts`, field for field, in CENTS. `expectedTotalCents`/`paidTotalCents`/`balanceCents`
+ * are the same numbers the household row in `AnalyticsPayload.households` already carries, repeated
+ * here so the detail view reconciles to itself without the caller having to keep the summary row
+ * around.
  */
 export type HouseholdDetail = {
   accountId: string;
@@ -628,22 +665,26 @@ export type HouseholdDetail = {
     /** Exclusive checkout for a range-shaped stay; NULL for a single-day service. */
     endDate: string | null;
     status: string;
-    cost: number;
-    charges: { id: string; label: string; amount: number }[];
-    chargesTotal: number;
-    paidTotal: number;
-    expected: number;
+    costCents: number;
+    charges: { id: string; label: string; amountCents: number }[];
+    chargesTotalCents: number;
+    paidTotalCents: number;
+    expectedCents: number;
+    /** What this booking STILL OWES, `max(0, expectedCents − paidTotalCents)` as the server
+     *  computed it — never subtracted here. Zero, not negative, on an over-paid stay; a payment
+     *  recorded against the household lowers `balanceCents` and leaves this alone. */
+    outstandingCents: number;
   }[];
   householdPayments: {
     id: string;
-    amount: number;
+    amountCents: number;
     method: string;
     paidDate: string;
     note: string | null;
   }[];
-  expectedTotal: number;
-  paidTotal: number;
-  balance: number;
+  expectedTotalCents: number;
+  paidTotalCents: number;
+  balanceCents: number;
 };
 
 export type SitterWindow = '30d' | '90d' | 'quarter' | 'ytd' | 'all';
@@ -654,13 +695,15 @@ export type SitterRow = {
   createdAt: string;
   clients: number;
   bookings: number;
-  earned: number;
+  /** CENTS (design spec §2) — the raw `SUM(Payments.Amount)` for the window, undivided. */
+  earnedCents: number;
   disabled: boolean;
   premiumUntil: string | null;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;
-  totals: { sitters: number; clients: number; bookings: number; earned: number };
+  /** `earnedCents` is the sum of the rows' own `earnedCents`, computed server-side. */
+  totals: { sitters: number; clients: number; bookings: number; earnedCents: number };
   sitters: SitterRow[];
 };
 
@@ -740,25 +783,30 @@ export const api = {
       answers: Record<string, string>;
     },
     /**
-     * Dedupes a retried attempt: the server returns the ORIGINAL `{id, estCost, status}` with 201
+     * Dedupes a retried attempt: the server returns the ORIGINAL `{id, estCostCents, status}` with 201
      * instead of creating a second booking (≤128 chars, unique per tenant+customer). Generate one
      * per attempt and reuse it across retries of that same attempt — a changed selection is a new
      * attempt and must carry a new key, or the replay would return the booking for the old dates.
      */
     idempotencyKey?: string,
   ) =>
-    request<{ id: string; estCost: number; status: string; demo?: boolean; note?: string }>(
-      `/api/${slug}/bookings`,
-      {
-        method: 'POST',
-        headers: {
-          ...jsonHeaders,
-          ...authHeaders(token),
-          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
-        },
-        body: JSON.stringify(body),
+    request<{
+      id: string;
+      /** CENTS, and NULLABLE — matches `CreateBookingPayload` in `server/lib/booking-ops.ts`: a row
+       *  the server stamped no estimate on comes back with `null`, not `0`. */
+      estCostCents: number | null;
+      status: string;
+      demo?: boolean;
+      note?: string;
+    }>(`/api/${slug}/bookings`, {
+      method: 'POST',
+      headers: {
+        ...jsonHeaders,
+        ...authHeaders(token),
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       },
-    ),
+      body: JSON.stringify(body),
+    }),
 
   /**
    * The customer changes their own booking — dates, pets, arrival time, intake answers. There is
@@ -779,7 +827,7 @@ export const api = {
       answers: Record<string, string>;
     },
   ) =>
-    request<{ id: string; estCost: number; status: string }>(
+    request<{ id: string; estCostCents: number; status: string }>(
       `/api/${slug}/bookings/${encodeURIComponent(id)}`,
       {
         method: 'PUT',
@@ -825,7 +873,7 @@ export const api = {
    * wrong. The response echoes the amount actually stamped on the booking.
    */
   cancelBooking: (slug: string, token: string, id: string) =>
-    request<{ status: string; cancellationFee: number }>(
+    request<{ status: string; cancellationFeeCents: number }>(
       `/api/${slug}/bookings/${encodeURIComponent(id)}/cancel`,
       { method: 'POST', headers: authHeaders(token) },
     ),
@@ -940,9 +988,9 @@ export const adminApi = {
       slug: string,
       token: string,
       bookingId: string,
-      body: { amount: number; method: string; paidDate: string; note?: string },
+      body: { amountCents: number; method: string; paidDate: string; note?: string },
     ) =>
-      request<{ payment: Payment; paidTotal: number }>(
+      request<{ payment: Payment; paidTotalCents: number }>(
         `/api/${slug}/admin/bookings/${bookingId}/payments`,
         {
           method: 'POST',
@@ -961,7 +1009,7 @@ export const adminApi = {
      * logs can never differ from the figure she was shown.
      */
     keepCredit: (slug: string, token: string, bookingId: string) =>
-      request<{ kept: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
+      request<{ keptCents: number }>(`/api/${slug}/admin/bookings/${bookingId}/credit/keep`, {
         method: 'POST',
         headers: authHeaders(token),
       }),
@@ -979,9 +1027,9 @@ export const adminApi = {
       slug: string,
       token: string,
       accountId: string,
-      body: { amount: number; method: string; paidDate: string; note?: string },
+      body: { amountCents: number; method: string; paidDate: string; note?: string },
     ) =>
-      request<{ payment: Payment; balance: number }>(
+      request<{ payment: Payment; balanceCents: number }>(
         `/api/${slug}/admin/accounts/${accountId}/payments`,
         {
           method: 'POST',
@@ -1084,9 +1132,9 @@ export const adminApi = {
       slug: string,
       token: string,
       bookingId: string,
-      charge: { label: string; amount: number },
+      charge: { label: string; amountCents: number },
     ) =>
-      request<{ charge: BookingCharge; chargesTotal: number }>(
+      request<{ charge: BookingCharge; chargesTotalCents: number }>(
         `/api/${slug}/admin/bookings/${bookingId}/charges`,
         {
           method: 'POST',
@@ -1124,7 +1172,7 @@ export const adminApi = {
        */
       overrideCapacity?: boolean,
     ) =>
-      request<{ status: string; notified: boolean; cancellationFee: number | null }>(
+      request<{ status: string; notified: boolean; cancellationFeeCents: number | null }>(
         `/api/${slug}/admin/bookings/${id}/status`,
         {
           method: 'POST',
@@ -1137,15 +1185,16 @@ export const adminApi = {
         },
       ),
     /**
-     * Correct the price on a booking ADOPTED from the calendar (`isBackfilled`) — its `estCost`
-     * was invented from today's rate card, never a figure any client agreed to. Whole dollars
-     * only; the server 404s for anything that isn't `Source = 'calendar-backfill'`.
+     * Correct the price on a booking ADOPTED from the calendar (`isBackfilled`) — its
+     * `estCostCents` was invented from today's rate card, never a figure any client agreed to.
+     * CENTS on the wire (0015); the panel still asks the sitter for whole dollars and scales.
+     * The server 404s for anything that isn't `Source = 'calendar-backfill'`.
      */
-    updateCost: (slug: string, token: string, id: string, estCost: number) =>
-      request<{ estCost: number }>(`/api/${slug}/admin/bookings/${id}/cost`, {
+    updateCost: (slug: string, token: string, id: string, estCostCents: number) =>
+      request<{ estCostCents: number }>(`/api/${slug}/admin/bookings/${id}/cost`, {
         method: 'PATCH',
         headers: { ...jsonHeaders, ...authHeaders(token) },
-        body: JSON.stringify({ estCost }),
+        body: JSON.stringify({ estCostCents }),
       }),
   },
   /**
@@ -1167,7 +1216,12 @@ export const adminApi = {
       token: string,
       from: string,
       to: string,
-      events: { eventId: string; estCost?: number }[],
+      /** `estCostCents` is the sitter's own price for that event: CENTS (0015), like the column
+       *  and like the sibling cost PATCH, though still a WHOLE NUMBER OF DOLLARS expressed in
+       *  them — the box she typed it into is a whole-dollar box. Note the asymmetry with the
+       *  PREVIEW's `BackfillAdoptRow.estCost`, which stays whole dollars: that figure is what the
+       *  panel puts INTO that box, this one is what it sends back. */
+      events: { eventId: string; estCostCents?: number }[],
     ) =>
       request<BackfillImportResult>(`/api/${slug}/admin/calendar/backfill/import`, {
         method: 'POST',

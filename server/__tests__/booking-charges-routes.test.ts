@@ -11,7 +11,7 @@ const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed'
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: 100,
+    estCost: 10000, // repo seed: cents (0015), as the route bodies and responses now are too.
     status,
   });
 
@@ -26,7 +26,8 @@ const postCharge = async (env: Env, bookingId: string, body: unknown) =>
     env,
   );
 
-const goodBody = { label: 'Vet visit', amount: 45 };
+// CENTS on the wire (0015) — $45.00.
+const goodBody = { label: 'Vet visit', amountCents: 4500 };
 
 describe('admin booking-charge routes', () => {
   it('adds a charge and returns it with the new charges total', async () => {
@@ -35,21 +36,21 @@ describe('admin booking-charge routes', () => {
     const res = await postCharge(env, bookingId, goodBody);
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
-      charge: { id: string; label: string; amount: number };
-      chargesTotal: number;
+      charge: { id: string; label: string; amountCents: number };
+      chargesTotalCents: number;
     };
-    expect(body.charge).toMatchObject({ label: 'Vet visit', amount: 45 });
-    expect(body.chargesTotal).toBe(45);
+    expect(body.charge).toMatchObject({ label: 'Vet visit', amountCents: 4500 });
+    expect(body.chargesTotalCents).toBe(4500);
   });
 
-  it('a second charge sums into chargesTotal', async () => {
+  it('a second charge sums into chargesTotalCents', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
     await postCharge(env, bookingId, goodBody);
-    const res = await postCharge(env, bookingId, { label: 'Bath', amount: 20 });
+    const res = await postCharge(env, bookingId, { label: 'Bath', amountCents: 2000 });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { chargesTotal: number };
-    expect(body.chargesTotal).toBe(65);
+    const body = (await res.json()) as { chargesTotalCents: number };
+    expect(body.chargesTotalCents).toBe(6500);
   });
 
   it('deletes a charge (204) and the total drops', async () => {
@@ -58,7 +59,7 @@ describe('admin booking-charge routes', () => {
     const first = (await (await postCharge(env, bookingId, goodBody)).json()) as {
       charge: { id: string };
     };
-    await postCharge(env, bookingId, { label: 'Bath', amount: 20 });
+    await postCharge(env, bookingId, { label: 'Bath', amountCents: 2000 });
     const del = await app.request(
       `/api/sunny-paws/admin/bookings/${bookingId}/charges/${first.charge.id}`,
       { method: 'DELETE', headers: await adminHeaders(TENANT_A) },
@@ -70,17 +71,54 @@ describe('admin booking-charge routes', () => {
       { headers: await adminHeaders(TENANT_A) },
       env,
     );
-    const body = (await res.json()) as { charges: { amount: number }[] };
-    expect(body.charges.reduce((sum, ch) => sum + ch.amount, 0)).toBe(20);
+    const body = (await res.json()) as { charges: { amountCents: number }[] };
+    expect(body.charges.reduce((sum, ch) => sum + ch.amountCents, 0)).toBe(2000);
   });
 
-  it('400s on a zero, negative, or fractional amount', async () => {
+  it('400s on a zero, negative, or fractional amountCents, and on the old dollar body', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
-    for (const amount of [0, -1, 12.5, '40', undefined]) {
-      const res = await postCharge(env, bookingId, { ...goodBody, amount });
+    for (const amountCents of [0, -1, 12.5, '4000', undefined]) {
+      const res = await postCharge(env, bookingId, { ...goodBody, amountCents });
       expect(res.status).toBe(400);
     }
+    // The retired whole-dollar body is refused outright, never read as 45 cents.
+    const old = await postCharge(env, bookingId, { label: 'Vet visit', amount: 45 });
+    expect(old.status).toBe(400);
+  });
+
+  /**
+   * THE CEILING. `isValidCents` bounds nothing above, so a fat-fingered `9007199254740991` is a
+   * whole positive number of cents and passes every other check — and then poisons every balance,
+   * tile and export it lands in. `MAX_AMOUNT_CENTS` ($1,000,000) is the same figure the
+   * whole-dollar backfill ceiling has always used, so a sitter meets ONE limit wherever she types
+   * an amount, and the refusal speaks in dollars because dollars are what she typed.
+   */
+  it('400s on an amount over the $1,000,000 ceiling, and says the range in dollars', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A);
+    const over = await postCharge(env, bookingId, { ...goodBody, amountCents: 100_000_001 });
+    expect(over.status).toBe(400);
+    expect((await over.json()) as { error: string }).toEqual({
+      error: 'Enter an amount between $0.01 and $1,000,000.',
+    });
+    const at = await postCharge(env, bookingId, { ...goodBody, amountCents: 100_000_000 });
+    expect(at.status).toBe(201);
+  });
+
+  // A charge may now carry cents — the credit `keepBookingCredit` writes into this column is
+  // derived from payments, and a payment is what a person actually sent.
+  it('accepts a charge of amountCents that is not a whole dollar', async () => {
+    const { env } = createTestEnv();
+    const bookingId = await makeBooking(env, TENANT_A);
+    const res = await postCharge(env, bookingId, { label: 'Vet run', amountCents: 1250 });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      charge: { label: string; amountCents: number };
+      chargesTotalCents: number;
+    };
+    expect(body.charge).toMatchObject({ label: 'Vet run', amountCents: 1250 });
+    expect(body.chargesTotalCents).toBe(1250);
   });
 
   it('400s on an empty or whitespace-only label', async () => {
@@ -145,9 +183,9 @@ describe('admin booking-charge routes', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { charges: { label: string; amount: number }[] };
+    const body = (await res.json()) as { charges: { label: string; amountCents: number }[] };
     expect(body.charges).toHaveLength(1);
-    expect(body.charges[0]).toMatchObject({ label: 'Vet visit', amount: 45 });
+    expect(body.charges[0]).toMatchObject({ label: 'Vet visit', amountCents: 4500 });
   });
 
   it('401s without a token', async () => {
@@ -173,7 +211,7 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_A, {
       bookingRequestId: 'seed_sp_board1',
       label: 'Vet visit',
-      amount: 45,
+      amount: 4500, // repo seed: cents
     });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
@@ -184,13 +222,13 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
     const { bookings } = (await res.json()) as {
       bookings: {
         id: string;
-        charges: { label: string; amount: number }[];
-        chargesTotal: number;
+        charges: { label: string; amountCents: number }[];
+        chargesTotalCents: number;
       }[];
     };
     const row = bookings.find((b) => b.id === 'seed_sp_board1')!;
-    expect(row.chargesTotal).toBe(45);
-    expect(row.charges).toEqual([{ label: 'Vet visit', amount: 45 }]);
+    expect(row.chargesTotalCents).toBe(4500);
+    expect(row.charges).toEqual([{ label: 'Vet visit', amountCents: 4500 }]);
 
     // A second sunny-paws customer, with their own booking, must never see jess's charge.
     const other = await insertInvitedCustomer(
@@ -216,9 +254,9 @@ describe('GET /:slug/bookings/mine exposes charges', () => {
       env,
     );
     const { bookings: otherBookings } = (await otherRes.json()) as {
-      bookings: { id: string; charges: unknown[]; chargesTotal: number }[];
+      bookings: { id: string; charges: unknown[]; chargesTotalCents: number }[];
     };
     expect(otherBookings.find((b) => b.id === 'seed_sp_board1')).toBeUndefined();
-    expect(otherBookings.every((b) => b.chargesTotal === 0)).toBe(true);
+    expect(otherBookings.every((b) => b.chargesTotalCents === 0)).toBe(true);
   });
 });

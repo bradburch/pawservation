@@ -11,6 +11,7 @@
  */
 
 import { parseOwnerEmails } from './owners';
+import { formatCents } from '../../src/shared/index.js';
 
 export function isEmailConfigured(env: Env): boolean {
   return Boolean(env.RESEND_API_KEY && env.RESEND_FROM_NOREPLY && env.RESEND_FROM_BOOKING);
@@ -223,8 +224,9 @@ export type CancellationNotice = {
    * committed to, which is a materially different event and reads differently below.
    */
   wasConfirmed: boolean;
-  /** Whole dollars, as STORED on the booking. Never recomputed here — the template reports the
-   *  number the cancel already stamped, so the mail and the ledger cannot disagree. */
+  /** CENTS (0015), as STORED on the booking. Never recomputed here — the template reports the
+   *  number the cancel already stamped, so the mail and the ledger cannot disagree. The fee line
+   *  below prints it with `formatCents`, so a fractional fee reads as `$2.50`, not `$2`. */
   cancellationFee: number;
 };
 
@@ -253,7 +255,7 @@ export async function sendCancellationNoticeToSitter(
     : `${who} withdrew a request you hadn't confirmed yet.`;
   const feeLine = n.wasConfirmed
     ? n.cancellationFee > 0
-      ? `Cancellation fee: $${n.cancellationFee}. It's recorded on the booking and counts as outstanding until it's paid.`
+      ? `Cancellation fee: ${formatCents(n.cancellationFee)}. It's recorded on the booking and counts as outstanding until it's paid.`
       : 'No cancellation fee applies under your policy for these dates.'
     : 'No cancellation fee applies — you had not confirmed it.';
   const detail = [

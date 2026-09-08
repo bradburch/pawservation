@@ -22,7 +22,7 @@ async function connectCalendar(env: Env, expiresAt: string) {
 }
 function seedBooking(raw: { exec: (s: string) => void }, id: string) {
   raw.exec(`INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, EstCost, Status)
-            VALUES ('${id}', '${TENANT_A}', 'boarding', '2030-03-01', '2030-03-04', 1, 150, 'pending')`);
+            VALUES ('${id}', '${TENANT_A}', 'boarding', '2030-03-01', '2030-03-04', 1, 15000, 'pending')`);
 }
 
 describe('syncBookingToCalendar', () => {
@@ -47,7 +47,7 @@ describe('syncBookingToCalendar', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
     const row = raw.prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id='b1'`).get() as {
@@ -73,7 +73,7 @@ describe('syncBookingToCalendar', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
     expect(spy).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe('syncBookingToCalendar', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
     expect(spy).toHaveBeenCalledTimes(2);
@@ -140,7 +140,7 @@ describe('syncBookingToCalendar', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'pending',
     });
 
@@ -222,7 +222,7 @@ describe('updateBookingCalendarEvent', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'confirmed',
     });
 
@@ -261,7 +261,7 @@ describe('updateBookingCalendarEvent', () => {
         durationMinutes: null,
         petCount: 1,
         petNames: [],
-        estCost: 150,
+        estCost: 15000,
         status: 'confirmed',
       }),
     ).resolves.toBeUndefined();
@@ -305,7 +305,7 @@ describe('updateBookingCalendarEvent', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'confirmed',
     });
 
@@ -336,7 +336,7 @@ describe('updateBookingCalendarEvent', () => {
       durationMinutes: null,
       petCount: 1,
       petNames: [],
-      estCost: 150,
+      estCost: 15000,
       status: 'confirmed',
     });
     expect(spy).not.toHaveBeenCalled();
@@ -356,7 +356,7 @@ describe('backfillCalendarEvents', () => {
     const gcal = opts.gcal ? `'${opts.gcal}'` : 'NULL';
     raw.exec(
       `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, EstCost, GCalEventId, Status)
-       VALUES ('${id}', '${TENANT_A}', 'boarding', '${opts.startDate}', NULL, 1, 150, ${gcal}, '${opts.status}')`,
+       VALUES ('${id}', '${TENANT_A}', 'boarding', '${opts.startDate}', NULL, 1, 15000, ${gcal}, '${opts.status}')`,
     );
   }
 

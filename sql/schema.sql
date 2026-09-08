@@ -1,6 +1,24 @@
 -- pawservation schema (isolated D1: pawservation-db)
 -- Model A invariants: TenantId on every table, composite uniqueness, immutable Tenants.Id.
 
+-- FACTS ABOUT THE DATA IN THIS SCHEMA — NOT a migration ledger. Nothing here records which
+-- migration files have run; migrations/README.md is still the ledger, and applying them is still
+-- a hand step. What this table holds is the small number of facts a migration cannot infer by
+-- looking at the shape of the database, because the shape does not change: after 0015 an EstCost
+-- of 250 is either $2.50 in cents or $250 in dollars, and no `PRAGMA` can tell you which. A row
+-- here can, so the migration is inspectable before it runs and idempotent when it is run twice.
+--
+-- Instance-level, like OwnerUsers/AllowedSitters below: it describes the DATABASE, so it cannot
+-- be a tenant row. Add a key only for a fact of that kind — one that is true of the stored data,
+-- invisible in the schema, and needed by something that runs against the database from outside.
+CREATE TABLE IF NOT EXISTS SchemaMeta (
+  Key TEXT PRIMARY KEY,
+  Value TEXT NOT NULL
+);
+
+-- The `money_unit` row is seeded at the BOTTOM of this file, not here: the seed is conditional on
+-- the money tables being empty, so it cannot run before they exist. See the end of the file.
+
 CREATE TABLE IF NOT EXISTS Tenants (
   Id TEXT PRIMARY KEY,
   Slug TEXT NOT NULL UNIQUE,
@@ -135,6 +153,10 @@ CREATE TABLE IF NOT EXISTS TenantServices (
   -- The fee is NOT part of EstCost: it lands as a BookingCharges row (see BookingCharges.Origin
   -- below and server/lib/booking-times.ts), so estimateCost stays "units of time x a stored rate"
   -- and total due stays EstCost + SUM(charges).
+  --
+  -- BOTH FEES ARE WHOLE DOLLARS and stay that way (0015). They are RATES the sitter typed, like
+  -- every *Rate column here; server/lib/booking-times.ts multiplies by 100 on the way into
+  -- BookingCharges.Amount, which is cents.
   StandardArrivalTime TEXT,
   StandardDepartureTime TEXT,
   EarlyArrivalFee INTEGER CHECK (EarlyArrivalFee IS NULL OR EarlyArrivalFee >= 1),
@@ -373,8 +395,13 @@ CREATE TABLE IF NOT EXISTS BookingRequests (
   -- External rows are Google-owned mirrors (EndUserId NULL, Status 'confirmed', EstCost NULL,
   -- GCalEventId = the Google id): they block capacity like blocked days and are read-only here.
   ExternalSummary TEXT,
+  -- The quoted price of the stay, in INTEGER CENTS (0015). NULL = never priced. server/lib/
+  -- availability.ts's estimateCost is the ONE place a whole-dollar rate becomes this figure and
+  -- the ONE multiplication by 100 in the price path.
   EstCost INTEGER,
-  -- Fee assessed at cancel time, whole dollars, matches EstCost (added by 0016). NULL = none assessed.
+  -- Fee assessed at cancel time, in INTEGER CENTS like EstCost (added by 0016; unit moved by
+  -- 0015). Still always a whole number of dollars' worth of cents — cancellationFee rounds to the
+  -- dollar. NULL = none assessed.
   CancellationFee INTEGER,
   Answers TEXT NOT NULL DEFAULT '{}', -- JSON {questionId: answer}; questions defined on TenantServices
   -- 'declined' is the sitter's "no" to a still-pending request; a confirmed booking is
@@ -430,8 +457,8 @@ CREATE TABLE IF NOT EXISTS PetOwners (
 );
 CREATE INDEX IF NOT EXISTS idx_PetOwners_Tenant_User ON PetOwners (TenantId, EndUserId);
 
--- Recorded payments (earnings analytics). Multiple rows per booking (deposits/partials); whole
--- dollars matching EstCost/Rate. PaidDate is sitter-entered.
+-- Recorded payments (earnings analytics). Multiple rows per booking (deposits/partials); INTEGER
+-- CENTS matching EstCost/CancellationFee/BookingCharges.Amount (0015). PaidDate is sitter-entered.
 --
 -- A payment settles EITHER one booking OR one household — never both, never neither (0011). The
 -- household form exists because that is how clients actually pay: one cheque a month covering eight
@@ -453,7 +480,9 @@ CREATE TABLE IF NOT EXISTS Payments (
   -- stable across that renaming. Tenancy is enforced by the writer (`insertAccountPayment` inserts
   -- through a tenant-scoped SELECT over EndUserPets), like every other guarded write here.
   AccountId TEXT,
-  Amount INTEGER NOT NULL CHECK (Amount > 0), -- whole dollars, matching EstCost/Rate
+  -- INTEGER CENTS (0015). The CHECK is unchanged and says exactly what it always said: a payment
+  -- is a positive amount of money, which is true in either unit.
+  Amount INTEGER NOT NULL CHECK (Amount > 0),
   Method TEXT NOT NULL CHECK (Method IN ('cash', 'venmo', 'zelle', 'paypal', 'check', 'card', 'other')),
   PaidDate TEXT NOT NULL, -- 'YYYY-MM-DD', sitter-entered (defaults to today in the UI)
   Note TEXT,
@@ -483,7 +512,7 @@ CREATE TABLE IF NOT EXISTS BookingCharges (
   TenantId TEXT NOT NULL REFERENCES Tenants(Id),
   BookingRequestId TEXT NOT NULL REFERENCES BookingRequests(Id),
   Label TEXT NOT NULL,
-  Amount INTEGER NOT NULL CHECK (Amount >= 1), -- whole dollars, matching EstCost/Rate/Payments
+  Amount INTEGER NOT NULL CHECK (Amount >= 1), -- INTEGER CENTS (0015), matching EstCost/Payments
   -- PROVENANCE (0009). NULL = the sitter typed this charge herself, which is every row that
   -- existed before this column and every row the admin Charges panel writes. The two
   -- 'extra_time_*' values mark a charge DERIVED from the booking's own times, which is what lets a
@@ -534,3 +563,27 @@ CREATE TABLE IF NOT EXISTS AllowedSitters (
   ClaimedAt TEXT,
   TenantId TEXT REFERENCES Tenants(Id)
 );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SEED: the money unit, for a FRESH database only.
+--
+-- A fresh install is BORN in cents — this file creates the money columns for a database with no
+-- rows in them, so there is nothing for 0015 to convert and its guard should already read 'cents'.
+-- That keeps the test harness (which builds from this file) and every new database in the state an
+-- applied 0015 leaves behind, and makes running 0015 against one a no-op rather than a ×100.
+--
+-- CONDITIONAL, and that condition is the whole point. This file is not applied only to empty
+-- databases: `npm run seed:local` re-applies it over an existing one, and `seed:remote` has been
+-- pointed at production. Seeding 'cents' unconditionally would therefore stamp 'cents' onto a
+-- DOLLARS-era database and disarm 0015 permanently and silently — every guarded UPDATE would find
+-- the marker already flipped, do nothing, and report success, leaving every balance a hundred
+-- times too small with nothing left to say so.
+--
+-- So the seed asserts what it claims: there is no stored money here. A database with any of the
+-- three gets NO marker at all, which is exactly what an un-migrated database should look like —
+-- 0015's own `INSERT OR IGNORE … 'dollars'` then supplies it and the migration runs normally.
+INSERT OR IGNORE INTO SchemaMeta (Key, Value)
+  SELECT 'money_unit', 'cents'
+  WHERE NOT EXISTS (SELECT 1 FROM BookingRequests WHERE EstCost IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM Payments)
+    AND NOT EXISTS (SELECT 1 FROM BookingCharges);

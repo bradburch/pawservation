@@ -10,7 +10,7 @@ import {
   type BackfillPreview,
   type BackfillSkipRow,
 } from '../shared-ui/api.js';
-import { formatFriendlyDate, MAX_BACKFILL_EVENTS } from '../../src/shared/index.js';
+import { dollarsToCents, formatFriendlyDate, MAX_BACKFILL_EVENTS } from '../../src/shared/index.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
@@ -28,11 +28,22 @@ const FLAG_HEADINGS: Record<BackfillFlagReason, string> = {
   'no-pets': "Couldn't find a pet on your list in the title",
 };
 
-/** Whole dollars only, at least $1 — the same rule the server enforces on every price this panel
- *  sends. This copy is UX only (matches PaymentsPanel's `isValidRate` idiom); the server still
- *  validates independently and refuses a fraction with 400. */
+/** Mirrors `MAX_BACKFILL_EST_COST` in server/routes/admin.ts, and `MAX_EST_COST` in
+ *  sections/BookingsSection.tsx — the same ceiling on the same figure, typed into two different
+ *  boxes. UX only; the import route validates independently and answers with its own sentence. */
+const MAX_EST_COST = 1_000_000;
+
+/** Whole dollars only, at least $1, at most `MAX_EST_COST` — the same rule the server
+ *  enforces on every price this panel sends. This copy is UX only (matches PaymentsPanel's
+ *  `isValidRate` idiom); the server still validates independently and refuses a fraction with 400.
+ *
+ *  The CEILING is not cosmetic here: everything this predicate accepts is handed to
+ *  `dollarsToCents`, which THROWS rather than round on a figure whose ×100 leaves the safe-integer
+ *  range — inside a click handler, where a throw is a dead button. A typo with 300 digits in it is
+ *  refused before it can get that far. */
 function isWholeDollar(value: string): boolean {
-  return /^[1-9]\d*$/.test(value.trim());
+  const trimmed = value.trim();
+  return /^[1-9]\d*$/.test(trimmed) && Number(trimmed) <= MAX_EST_COST;
 }
 
 function eventWhen(startDate: string, endDate: string | null): string {
@@ -271,17 +282,22 @@ export function CalendarBackfillPanel({
   //
   // Scoped to the VISIBLE (post-filter) rows only — filtering to one pet and then hitting bulk
   // Adopt must never sweep in rows the sitter can't currently see.
-  const toImport = (): { eventId: string; estCost?: number }[] => {
-    const rows: { eventId: string; estCost?: number }[] = [];
+  const toImport = (): { eventId: string; estCostCents?: number }[] => {
+    const rows: { eventId: string; estCostCents?: number }[] = [];
     for (const r of visibleAdopt) {
       if (!checked.has(r.eventId)) continue;
       const raw = prices.get(r.eventId) ?? '';
-      rows.push({ eventId: r.eventId, ...(isWholeDollar(raw) ? { estCost: Number(raw) } : {}) });
+      rows.push({
+        eventId: r.eventId,
+        // The box is WHOLE DOLLARS and the wire is CENTS (0015) — converted here, once, by the
+        // shared converter, so the route can validate the body in the column's own unit.
+        ...(isWholeDollar(raw) ? { estCostCents: dollarsToCents(Number(raw)) } : {}),
+      });
     }
     for (const r of visibleNeedsPrice) {
       const raw = prices.get(r.eventId) ?? '';
       if (!isWholeDollar(raw)) continue;
-      rows.push({ eventId: r.eventId, estCost: Number(raw) });
+      rows.push({ eventId: r.eventId, estCostCents: dollarsToCents(Number(raw)) });
     }
     return rows;
   };
@@ -384,7 +400,7 @@ export function CalendarBackfillPanel({
   // row keeps its typed price and the sitter keeps their place in a long list). A price is sent
   // only when the row's own field currently holds a valid whole dollar amount; the caller (the
   // button's `disabled`) guarantees that's true whenever this runs.
-  const adoptOne = async (eventId: string, estCost: number) => {
+  const adoptOne = async (eventId: string, estCostCents: number) => {
     if (rowBusy.has(eventId) || busy) return;
     clearError();
     setRowBusy((prev) => new Set(prev).add(eventId));
@@ -400,7 +416,7 @@ export function CalendarBackfillPanel({
         session.token,
         from,
         to,
-        [{ eventId, estCost }],
+        [{ eventId, estCostCents }],
       );
       if (outcome.imported > 0) {
         setPreview((prev) =>
@@ -568,7 +584,7 @@ export function CalendarBackfillPanel({
                         />
                       </label>{' '}
                       <button
-                        onClick={() => void adoptOne(r.eventId, Number(raw))}
+                        onClick={() => void adoptOne(r.eventId, dollarsToCents(Number(raw)))}
                         disabled={busy || busyRow || priceInvalid}
                       >
                         {busyRow ? 'Adopting…' : 'Adopt'}
@@ -614,7 +630,7 @@ export function CalendarBackfillPanel({
                         />
                       </label>{' '}
                       <button
-                        onClick={() => void adoptOne(r.eventId, Number(raw))}
+                        onClick={() => void adoptOne(r.eventId, dollarsToCents(Number(raw)))}
                         disabled={busy || busyRow || priceInvalid}
                       >
                         {busyRow ? 'Adopting…' : 'Adopt'}

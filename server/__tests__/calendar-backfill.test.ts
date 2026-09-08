@@ -461,7 +461,7 @@ const CTX = {
   // charge. Stated here rather than left off so every test in this file that does not care about
   // the setting is nonetheless running under the reading a tenant who never touched it gets.
   costBasis: 'total' as const,
-  priceFor: () => ({ priced: true as const, cost: 25 }),
+  priceFor: () => ({ priced: true as const, cost: 2500 }),
 };
 
 const event = (
@@ -498,7 +498,7 @@ describe('classifyEvent', () => {
       serviceType: 'walk',
       optionKey: 'standard',
       petIds: ['p1'],
-      estCost: 25,
+      estCost: 2500,
       cancelled: false,
     });
   });
@@ -632,13 +632,13 @@ describe('classifyEvent — the description is preferred over the title', () => 
       ...CTX,
       // If the rate card were consulted it would answer 25 (CTX.priceFor) — the description's
       // Cost: 40 must win regardless.
-      priceFor: () => ({ priced: true as const, cost: 25 }),
+      priceFor: () => ({ priced: true as const, cost: 2500 }),
     });
     expect(out).toMatchObject({
       kind: 'adopt',
       serviceType: 'walk',
       optionKey: 'standard',
-      estCost: 40,
+      estCost: 4000,
     });
   });
 
@@ -659,7 +659,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
       costBasis: 'total' as const,
       // The rate card's linear two-pet answer — $40/pet — which is the wrong number this change
       // exists to stop using.
-      priceFor: () => ({ priced: true as const, cost: 80 }),
+      priceFor: () => ({ priced: true as const, cost: 8000 }),
     };
     const out = classifyEvent(
       event({
@@ -668,15 +668,15 @@ describe('classifyEvent — the description is preferred over the title', () => 
       }),
       summerChiaCtx,
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 40, cancelled: true });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 4000, cancelled: true });
   });
 
   it('still prices from the rate card when the description gives no Cost', () => {
     const out = classifyEvent(
       event({ summary: 'Sadie Walk', description: 'Owner: Lauren Kotin' }),
-      { ...CTX, priceFor: () => ({ priced: true as const, cost: 25 }) },
+      { ...CTX, priceFor: () => ({ priced: true as const, cost: 2500 }) },
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 25 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 2500 });
   });
 
   it('behaves exactly as before for an event with no description at all', () => {
@@ -690,7 +690,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
       serviceType: 'walk',
       optionKey: 'standard',
       petIds: ['p1'],
-      estCost: 25,
+      estCost: 2500,
       cancelled: false,
     });
   });
@@ -709,7 +709,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
       ],
       adoptedEventIds: new Set<string>(),
       costBasis: 'total' as const,
-      priceFor: () => ({ priced: true as const, cost: 20 }),
+      priceFor: () => ({ priced: true as const, cost: 2000 }),
     };
     const out = classifyEvent(
       event({
@@ -731,7 +731,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         mixKey: 'dog:1',
       }),
     });
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 40 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 4000 });
   });
 
   it('flags unknown-service when the description names a service the tenant does not offer, instead of silently falling back to the title', () => {
@@ -772,7 +772,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         ],
         adoptedEventIds: new Set<string>(),
         costBasis: 'total' as const,
-        priceFor: () => ({ priced: true as const, cost: 999 }),
+        priceFor: () => ({ priced: true as const, cost: 99900 }),
       };
       const out = classifyEvent(
         event({ summary: 'Sadie Walk', description: REAL_DESC_OWNER_IDS }),
@@ -784,7 +784,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
       expect(out).toMatchObject({
         kind: 'adopt',
         endUserId: `eu_ian_${OWNER_B}`,
-        estCost: 40,
+        estCost: 4000,
       });
     });
 
@@ -805,7 +805,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         ],
         adoptedEventIds: new Set<string>(),
         costBasis: 'total' as const,
-        priceFor: () => ({ priced: true as const, cost: 999 }),
+        priceFor: () => ({ priced: true as const, cost: 99900 }),
       };
       const out = classifyEvent(
         event({ summary: 'Sadie Walk', description: REAL_DESC_OWNER_IDS }),
@@ -828,7 +828,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         ],
         adoptedEventIds: new Set<string>(),
         costBasis: 'total' as const,
-        priceFor: () => ({ priced: true as const, cost: 999 }),
+        priceFor: () => ({ priced: true as const, cost: 99900 }),
       };
       const out = classifyEvent(
         event({
@@ -859,7 +859,7 @@ describe('classifyEvent — the description is preferred over the title', () => 
         ],
         adoptedEventIds: new Set<string>(),
         costBasis: 'total' as const,
-        priceFor: () => ({ priced: true as const, cost: 20 }),
+        priceFor: () => ({ priced: true as const, cost: 2000 }),
       };
       const out = classifyEvent(
         event({ summary: 'Sadie Walk', description: 'Owner ID: 1\nCost: 40\nBooking: walk' }),
@@ -900,7 +900,7 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
       ...boarding,
       priceFor: (_s, _p, startDate, endDateExclusive) => {
         priced.push({ startDate, endDateExclusive });
-        return { priced: true as const, cost: 50 * nightsBetween(startDate, endDateExclusive) };
+        return { priced: true as const, cost: 5000 * nightsBetween(startDate, endDateExclusive) };
       },
     });
     return { out, priced };
@@ -918,7 +918,7 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
     expect(out).toMatchObject({ kind: 'adopt', startDate: '2026-07-03', endDate: '2026-07-06' });
     // Pricing must see the SAME normalized span, not the raw end — three nights, not two.
     expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-06' }]);
-    expect(out).toMatchObject({ estCost: 150 });
+    expect(out).toMatchObject({ estCost: 15000 });
   });
 
   it('a single-day timed visit still occupies its one day', () => {
@@ -929,7 +929,7 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
       allDay: false,
     });
 
-    expect(out).toMatchObject({ endDate: '2026-07-04', estCost: 50 });
+    expect(out).toMatchObject({ endDate: '2026-07-04', estCost: 5000 });
     expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-04' }]);
   });
 
@@ -940,7 +940,7 @@ describe('classifyEvent — Google’s end date is inclusive on a TIMED event', 
       allDay: true,
     });
 
-    expect(out).toMatchObject({ endDate: '2026-07-05', estCost: 100 });
+    expect(out).toMatchObject({ endDate: '2026-07-05', estCost: 10000 });
     expect(priced).toEqual([{ startDate: '2026-07-03', endDateExclusive: '2026-07-05' }]);
   });
 });
@@ -974,7 +974,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
     ...CTX,
     services: [{ serviceType, label, optionKey: 'standard', shape: 'range' as const }],
     costBasis,
-    priceFor: () => ({ priced: true as const, cost: 999 }),
+    priceFor: () => ({ priced: true as const, cost: 99900 }),
   });
 
   it('a 3-night boarding described Cost: 100 adopts at 100 under the DEFAULT total basis', () => {
@@ -991,7 +991,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('boarding', 'Boarding', 'total'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 100 });
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 10000 });
   });
 
   it('a degenerate range span still adopts its stated TOTAL — there is nothing to multiply', () => {
@@ -1008,7 +1008,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('boarding', 'Boarding', 'total'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 100 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 10000 });
   });
 
   it('a 3-night boarding described Cost: 100 adopts at 300, not 100', () => {
@@ -1023,7 +1023,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('boarding', 'Boarding'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 300 });
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-20', estCost: 30000 });
   });
 
   it('a 3-night house sit described Cost: 110 adopts at 330', () => {
@@ -1037,7 +1037,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('house-sitting', 'House sitting'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 330 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 33000 });
   });
 
   it('a 23-night house sit described Cost: 110 adopts at 2530, across a month boundary', () => {
@@ -1053,7 +1053,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('house-sitting', 'House sitting'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 2530 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 253000 });
   });
 
   it('a 1-night stay described Cost: 100 adopts at 100 — the multiplier is not off by one', () => {
@@ -1070,7 +1070,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('boarding', 'Boarding'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 100 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 10000 });
   });
 
   it('multiplies over the NORMALIZED span of a timed event, not its raw inclusive end', () => {
@@ -1086,7 +1086,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       rangeCtx('boarding', 'Boarding'),
     );
-    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-06', estCost: 150 });
+    expect(out).toMatchObject({ kind: 'adopt', endDate: '2026-07-06', estCost: 15000 });
   });
 
   // A walk has no nights, so the setting must never reach it: BOTH values, same $40. Run as a
@@ -1100,7 +1100,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
         ...CTX,
         costBasis,
       });
-      expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 40 });
+      expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 4000 });
     });
 
     it(`a single-day service spanning several days STILL adopts its Cost: unchanged under ${costBasis}`, () => {
@@ -1117,7 +1117,7 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
         }),
         { ...CTX, costBasis },
       );
-      expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 40 });
+      expect(out).toMatchObject({ kind: 'adopt', endDate: null, estCost: 4000 });
     });
   }
 
@@ -1134,10 +1134,10 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
       }),
       {
         ...rangeCtx('boarding', 'Boarding'),
-        priceFor: () => ({ priced: true as const, cost: 150 }),
+        priceFor: () => ({ priced: true as const, cost: 15000 }),
       },
     );
-    expect(out).toMatchObject({ kind: 'adopt', estCost: 150 });
+    expect(out).toMatchObject({ kind: 'adopt', estCost: 15000 });
   });
 
   it('refuses a range span with no whole night rather than adopting a $0 stay', () => {
@@ -1157,5 +1157,30 @@ describe('classifyEvent — a description Cost: on a RANGE service, per the tena
     );
     expect(out).toMatchObject({ kind: 'needs-price', startDate: '2026-07-17' });
     expect(out).not.toHaveProperty('estCost');
+  });
+
+  it('refuses an absurd description Cost: instead of throwing out of the classifier', () => {
+    // `Cost:` is free text in the sitter's own calendar and `parseEventDescription` accepts ANY
+    // run of digits, so nothing upstream bounds it. Under 'total' the figure used to be adopted
+    // exactly as typed and handed straight to `dollarsToCents`, which throws a RangeError — out of
+    // `classifyEvent`, out of the preview route, taking every other event on that calendar with
+    // it, because of one line in one description. Both widths matter: fifteen digits is a safe
+    // integer of DOLLARS whose cents are not (so the conversion succeeds and stores an inexact
+    // number), eighteen is unsafe on its own (so the conversion throws). Both are the same
+    // answer — needs-price, with no cost field invented.
+    for (const digits of ['999999999999999', '999999999999999999']) {
+      const out = classifyEvent(
+        event({
+          summary: 'Sadie Boarding',
+          description: `Cost: ${digits}`,
+          start: '2026-07-17',
+          end: '2026-07-20',
+          allDay: true,
+        }),
+        rangeCtx('boarding', 'Boarding', 'total'),
+      );
+      expect(out).toMatchObject({ kind: 'needs-price', startDate: '2026-07-17' });
+      expect(out).not.toHaveProperty('estCost');
+    }
   });
 });

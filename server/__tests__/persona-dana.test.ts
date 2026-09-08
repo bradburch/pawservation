@@ -44,7 +44,7 @@ function seedBooking(
   const endDate = fields.endDate ? `'${fields.endDate}'` : 'NULL';
   const startTime = fields.startTime ? `'${fields.startTime}'` : 'NULL';
   raw.exec(`INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, StartTime, PetCount, EstCost, Status)
-            VALUES ('${id}', '${TENANT_B}', '${fields.serviceType}', '${fields.startDate}', ${endDate}, ${startTime}, 1, 35, 'pending')`);
+            VALUES ('${id}', '${TENANT_B}', '${fields.serviceType}', '${fields.startDate}', ${endDate}, ${startTime}, 1, 3500, 'pending')`);
 }
 
 describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
@@ -169,7 +169,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         durationMinutes: 60,
         petCount: 1,
         petNames: [],
-        estCost: 18,
+        estCost: 1800,
         status: 'pending',
       });
 
@@ -221,7 +221,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         durationMinutes: 60,
         petCount: 1,
         petNames: [],
-        estCost: 18,
+        estCost: 1800,
         status: 'pending',
       });
 
@@ -258,7 +258,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         durationMinutes: null,
         petCount: 1,
         petNames: [],
-        estCost: 120,
+        estCost: 12000,
         status: 'pending',
       });
 
@@ -293,7 +293,7 @@ describe('Persona: Dana (Happy Tails) — calendar sync absent/late', () => {
         durationMinutes: null,
         petCount: 1,
         petNames: [],
-        estCost: 35,
+        estCost: 3500,
         status: 'pending',
       });
 

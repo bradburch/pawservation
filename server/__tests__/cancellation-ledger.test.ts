@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getAnalytics, insertBookingRequest, insertPayment, updateBookingStatus } from '../db/repo';
 import { adminHeaders, createTestEnv, TENANT_A } from './helpers';
 import app from '../index';
@@ -27,7 +27,8 @@ const makeBooking = (
     endDate: '2030-01-03',
     optionKey: 'standard',
     petCount: 1,
-    estCost: over.estCost !== undefined ? over.estCost : 100,
+    // CENTS (0015) — `makeBooking` seeds the column directly.
+    estCost: over.estCost !== undefined ? over.estCost : 10000,
     status: over.status ?? 'confirmed',
   });
 
@@ -56,7 +57,12 @@ const postPayment = async (env: Env, bookingId: string) =>
     {
       method: 'POST',
       headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: 40, method: 'venmo', paidDate: '2026-07-11', note: null }),
+      body: JSON.stringify({
+        amountCents: 4000,
+        method: 'venmo',
+        paidDate: '2026-07-11',
+        note: null,
+      }),
     },
     env,
   );
@@ -80,9 +86,9 @@ describe('payment guard on cancelled bookings', () => {
       { headers: await adminHeaders(TENANT_A) },
       env,
     );
-    const body = (await list.json()) as { payments: { amount: number }[] };
+    const body = (await list.json()) as { payments: { amountCents: number }[] };
     expect(body.payments).toHaveLength(1);
-    expect(body.payments[0]).toMatchObject({ amount: 40 });
+    expect(body.payments[0]).toMatchObject({ amountCents: 4000 });
   });
 });
 
@@ -116,11 +122,11 @@ describe('getAnalytics outstanding includes cancelled-with-fee', () => {
 
   it('/admin/analytics marks cancelled-with-fee outstanding rows with isCancellationFee, confirmed rows without', async () => {
     const { env } = createTestEnv();
-    const cancelledWithFee = await makeBooking(env, TENANT_C, { estCost: 250 });
-    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledWithFee, 'cancelled', 100);
-    await pay(env, TENANT_C, cancelledWithFee, 40);
-    const confirmedUnderpaid = await makeBooking(env, TENANT_C, { estCost: 300 });
-    await pay(env, TENANT_C, confirmedUnderpaid, 50);
+    const cancelledWithFee = await makeBooking(env, TENANT_C, { estCost: 25000 });
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelledWithFee, 'cancelled', 10000);
+    await pay(env, TENANT_C, cancelledWithFee, 4000);
+    const confirmedUnderpaid = await makeBooking(env, TENANT_C, { estCost: 30000 });
+    await pay(env, TENANT_C, confirmedUnderpaid, 5000);
 
     const res = await app.request(
       '/api/paws-and-relax/admin/analytics',
@@ -140,7 +146,7 @@ describe('admin bookings payload carries cancellation fields', () => {
   const getBookings = async (env: Env) =>
     app.request('/api/sunny-paws/admin/bookings', { headers: await adminHeaders(TENANT_A) }, env);
 
-  it('cancelled row carries cancellationFee; confirmed on a tiers service carries numeric feeIfCancelledToday; no-tiers carries null', async () => {
+  it('cancelled row carries cancellationFeeCents; confirmed on a tiers service carries numeric feeIfCancelledTodayCents; no-tiers carries null', async () => {
     const { env, raw } = createTestEnv();
     seedBoardingTiers(raw);
 
@@ -149,31 +155,73 @@ describe('admin bookings payload carries cancellation fields', () => {
     const confirmedTiers = await makeBooking(env, TENANT_A, {
       serviceType: 'boarding',
       startDate: soon,
-      estCost: 100,
+      estCost: 10000,
     });
     // Confirmed on a service WITHOUT tiers (walk) -> feeIfCancelledToday null.
     const confirmedNoTiers = await makeBooking(env, TENANT_A, {
       serviceType: 'walk',
-      estCost: 60,
+      estCost: 6000,
     });
     // Cancelled boarding with a stored $55 fee.
-    const cancelled = await makeBooking(env, TENANT_A, { serviceType: 'boarding', estCost: 90 });
-    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, cancelled, 'cancelled', 55);
+    const cancelled = await makeBooking(env, TENANT_A, { serviceType: 'boarding', estCost: 9000 });
+    await updateBookingStatus(env.PAWSERVATION_DB, TENANT_A, cancelled, 'cancelled', 5500);
 
     const body = (await (await getBookings(env)).json()) as {
       bookings: {
         id: string;
-        cancellationFee: number | null;
-        feeIfCancelledToday: number | null;
+        cancellationFeeCents: number | null;
+        feeIfCancelledTodayCents: number | null;
       }[];
     };
     const byId = (id: string) => body.bookings.find((b) => b.id === id)!;
 
-    expect(byId(cancelled)).toMatchObject({ cancellationFee: 55, feeIfCancelledToday: null });
-    expect(byId(confirmedTiers)).toMatchObject({ cancellationFee: null, feeIfCancelledToday: 100 });
-    expect(byId(confirmedNoTiers)).toMatchObject({
-      cancellationFee: null,
-      feeIfCancelledToday: null,
+    expect(byId(cancelled)).toMatchObject({
+      cancellationFeeCents: 5500,
+      feeIfCancelledTodayCents: null,
     });
+    expect(byId(confirmedTiers)).toMatchObject({
+      cancellationFeeCents: null,
+      feeIfCancelledTodayCents: 10000,
+    });
+    expect(byId(confirmedNoTiers)).toMatchObject({
+      cancellationFeeCents: null,
+      feeIfCancelledTodayCents: null,
+    });
+  });
+
+  /**
+   * The sitter's side of the same guarantee `/bookings/mine` carries: `cancellationFee` throws on
+   * a cost it cannot round to a whole dollar, and this preview is computed for every row of her
+   * whole book. One un-roundable row (an un-migrated column, or one written past both cost
+   * routes) must report null for itself rather than 500 the list she runs her business from.
+   */
+  it("an un-roundable cost reports null for THAT row rather than 500ing the sitter's list", async () => {
+    const { env, raw } = createTestEnv();
+    seedBoardingTiers(raw);
+    const soon = addDays(getPacificDateStr(), 1);
+    const good = await makeBooking(env, TENANT_A, {
+      serviceType: 'boarding',
+      startDate: soon,
+      estCost: 10000,
+    });
+    // $455.50: whole cents, not whole dollars.
+    const fractional = await makeBooking(env, TENANT_A, {
+      serviceType: 'boarding',
+      startDate: soon,
+      estCost: 45550,
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await getBookings(env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      bookings: { id: string; feeIfCancelledTodayCents: number | null }[];
+    };
+    const byId = (id: string) => body.bookings.find((b) => b.id === id)!;
+    expect(byId(fractional).feeIfCancelledTodayCents).toBeNull();
+    expect(byId(good).feeIfCancelledTodayCents).toBe(10000);
+    expect(consoleError).toHaveBeenCalled();
+    expect(consoleError.mock.calls[0]).toContain(fractional);
+    consoleError.mockRestore();
   });
 });
