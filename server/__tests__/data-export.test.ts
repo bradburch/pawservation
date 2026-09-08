@@ -10,6 +10,7 @@ import {
   updateBookingStatus,
 } from '../db/repo';
 import { parseCsvRows, serializeCsvRows } from '../lib/csv';
+import { formatCentsPlain } from '../../src/shared/pricing/money';
 import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 /**
@@ -77,13 +78,13 @@ describe('CSV serializer', () => {
     // === 'number'` one. It survives unquoted only because it doesn't start with a `FORMULA_LEAD`
     // character, which every money cell in this codebase is guaranteed today (Payments.Amount
     // CHECK > 0, BookingCharges.Amount CHECK >= 1, EstCost/CancellationFee never negative).
-    expect(serializeCsvRows([['45.50']])).toBe('45.50');
+    expect(serializeCsvRows([[formatCentsPlain(4550)]])).toBe('45.50');
     // The fragility that guarantee is standing on: a negative amount, formatted as a string, DOES
     // get neutralised — `'-'` is a FORMULA_LEAD character and this is no longer the `number`
     // branch `csv.ts`'s docblock carves the exception out for. If a refund ever threads a negative
     // figure through `formatCentsPlain` into one of these cells, THIS is the line that fails —
     // the sign must be threaded through as a real `number` instead.
-    expect(serializeCsvRows([['-12.00']])).toBe(`"'-12.00"`);
+    expect(serializeCsvRows([[formatCentsPlain(-1200)]])).toBe(`"'-12.00"`);
   });
 });
 
