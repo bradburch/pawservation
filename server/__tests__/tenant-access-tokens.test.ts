@@ -63,16 +63,35 @@ describe('tenant access tokens — generator', () => {
   });
 });
 
+/**
+ * `createTenantAccessToken` at the real cap, unwrapped. It returns `null` when the sitter is
+ * already at `maxLive` (the cap lives in the INSERT), and every caller here is minting the first
+ * few tokens of an empty account — so a `null` means the statement stopped writing for a reason
+ * this fixture did not intend, and asserting that here is better than an `!` at each call site.
+ */
+async function createRow(
+  env: Env,
+  tenantId: string,
+  tenantUserId: string,
+  name: string,
+  tokenHash: string,
+): Promise<{ Id: string; Name: string; CreatedAt: string }> {
+  const created = await createTenantAccessToken(env.PAWSERVATION_DB, tenantId, {
+    tenantUserId,
+    name,
+    tokenHash,
+    maxLive: MAX_LIVE_TOKENS_PER_USER,
+  });
+  expect(created).not.toBeNull();
+  return created!;
+}
+
 describe('tenant access tokens — at rest', () => {
   it('stores only the hash: no pawsa_ token appears anywhere in its row', async () => {
     const { env, raw } = createTestEnv();
     const token = generateTenantAccessToken();
     const tokenHash = await hashPersonalAccessToken(token);
-    const created = await createTenantAccessToken(env.PAWSERVATION_DB, TENANT_A, {
-      tenantUserId: 'tu_sunny',
-      name: 'CI bot',
-      tokenHash,
-    });
+    const created = await createRow(env, TENANT_A, 'tu_sunny', 'CI bot', tokenHash);
     expect(created.Name).toBe('CI bot');
     expect(created.Id).toBeTruthy();
     expect(created.CreatedAt).toEqual(expect.any(String));
@@ -88,11 +107,7 @@ describe('tenant access tokens — at rest', () => {
     const { env } = createTestEnv();
     const token = generateTenantAccessToken();
     const tokenHash = await hashPersonalAccessToken(token);
-    const created = await createTenantAccessToken(env.PAWSERVATION_DB, TENANT_A, {
-      tenantUserId: 'tu_sunny',
-      name: 'Home laptop',
-      tokenHash,
-    });
+    const created = await createRow(env, TENANT_A, 'tu_sunny', 'Home laptop', tokenHash);
 
     const foundOwnTenant = await findLiveTenantAccessToken(
       env.PAWSERVATION_DB,
@@ -120,11 +135,7 @@ describe('tenant access tokens — at rest', () => {
     const { env } = createTestEnv();
     const token = generateTenantAccessToken();
     const tokenHash = await hashPersonalAccessToken(token);
-    const created = await createTenantAccessToken(env.PAWSERVATION_DB, TENANT_A, {
-      tenantUserId: 'tu_sunny',
-      name: 'Revoke me',
-      tokenHash,
-    });
+    const created = await createRow(env, TENANT_A, 'tu_sunny', 'Revoke me', tokenHash);
 
     // Another tenant user's id (belongs to a different tenant entirely) can neither revoke nor
     // probe for this token: the 404-shaped false the route above this will report.
@@ -158,11 +169,13 @@ async function mintTenantToken(
   opts?: { tenantId?: string; tenantUserId?: string; name?: string },
 ): Promise<{ token: string; id: string }> {
   const token = generateTenantAccessToken();
-  const created = await createTenantAccessToken(env.PAWSERVATION_DB, opts?.tenantId ?? TENANT_A, {
-    tenantUserId: opts?.tenantUserId ?? 'tu_sunny',
-    name: opts?.name ?? 'CI bot',
-    tokenHash: await hashPersonalAccessToken(token),
-  });
+  const created = await createRow(
+    env,
+    opts?.tenantId ?? TENANT_A,
+    opts?.tenantUserId ?? 'tu_sunny',
+    opts?.name ?? 'CI bot',
+    await hashPersonalAccessToken(token),
+  );
   return { token, id: created.Id };
 }
 
@@ -388,6 +401,18 @@ async function mintViaRoute(
   return (await res.json()) as { id: string; token: string; name: string };
 }
 
+/** POST /admin/tokens without asserting on the outcome — for the paths that are NOT a 201. */
+const postToken = (env: Env, credential: string, name: unknown, slug = 'sunny-paws') =>
+  app.request(
+    adminTokensPath(slug),
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    },
+    env,
+  );
+
 const listTokens = (env: Env, credential: string, slug = 'sunny-paws') =>
   app.request(adminTokensPath(slug), { headers: { Authorization: `Bearer ${credential}` } }, env);
 
@@ -462,7 +487,7 @@ describe('tenant access tokens — issuing', () => {
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { error: string }).error).toBe(
-        'Name your token (1–80 characters).',
+        'Name your token (letters, numbers, spaces and punctuation, 1–80 characters).',
       );
     }
   });
@@ -503,15 +528,7 @@ describe('tenant access tokens — issuing', () => {
     const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
     for (let i = 0; i < MAX_LIVE_TOKENS_PER_USER; i++) await mintViaRoute(env, jwt, `Bot ${i}`);
 
-    const over = await app.request(
-      adminTokensPath(),
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'One too many' }),
-      },
-      env,
-    );
+    const over = await postToken(env, jwt, 'One too many');
     expect(over.status).toBe(409);
     expect(((await over.json()) as { error: string }).error).toBe(
       'Revoke one first: you already have 25 access tokens.',
@@ -524,14 +541,34 @@ describe('tenant access tokens — issuing', () => {
     await mintViaRoute(env, jwt, 'Room again');
   });
 
-  it('refuses a name carrying control or bidi characters', async () => {
+  it('holds the cap when two mints race for the last slot', async () => {
+    const { env, raw } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    for (let i = 0; i < MAX_LIVE_TOKENS_PER_USER - 1; i++) await mintViaRoute(env, jwt, `Bot ${i}`);
+
+    // Both requests read "24 live, there is room" before either writes, which is the whole of the
+    // race. The cap is inside the INSERT for exactly this: a count in the route followed by an
+    // insert leaves a window as wide as the round trip between them, and both mints land.
+    const [a, b] = await Promise.all([
+      postToken(env, jwt, 'Racer A'),
+      postToken(env, jwt, 'Racer B'),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+    const { n } = raw
+      .prepare(
+        `SELECT COUNT(*) AS n FROM TenantAccessTokens
+          WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL`,
+      )
+      .get(TENANT_A, 'tu_sunny') as { n: number };
+    expect(n).toBe(MAX_LIVE_TOKENS_PER_USER);
+  });
+
+  it('refuses control and bidi characters in a name, but not the ones emoji are spelled with', async () => {
     const { env } = createTestEnv();
     const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
-    // A newline, a bidi override, and a zero-width joiner: each can make the revoke list read as
-    // something other than what is stored, and the list's only job is telling two live
-    // credentials apart.
-    for (const name of ['CI\nbot', 'CI ‮bot', 'CI‍bot', 'CI bot']) {
-      const res = await app.request(
+    const post = (name: unknown) =>
+      app.request(
         adminTokensPath(),
         {
           method: 'POST',
@@ -540,15 +577,33 @@ describe('tenant access tokens — issuing', () => {
         },
         env,
       );
+
+    // A newline, a NUL, a bidi override (U+202E, which can print the rest of the list backwards)
+    // and a private-use character that renders as whatever the reader's font decides. Written as
+    // escapes, not as literal bytes: a NUL pasted into this file makes the file itself binary to
+    // grep, which is a real cost for a test asserting on one character.
+    for (const name of ['CI\nbot', 'CI\u0000bot', 'CI \u202Ebot', 'CI\uE000bot']) {
+      const res = await post(name);
       expect(res.status).toBe(400);
       expect(((await res.json()) as { error: string }).error).toBe(
-        'Name your token (1–80 characters).',
+        'Name your token (letters, numbers, spaces and punctuation, 1–80 characters).',
       );
     }
-    // Accented letters, emoji and punctuation are ordinary names and must still pass — the rule is
-    // about characters that DISPLAY as something other than themselves, not about non-ASCII.
-    expect((await mintViaRoute(env, jwt, 'Café résumé 🐕 — laptop')).name).toBe(
-      'Café résumé 🐕 — laptop',
+
+    // U+200D (zero-width joiner) and U+FE0F (variation selector-16) are how ordinary emoji are
+    // SPELLED — "👩‍💻" is two emoji joined by a ZWJ, and "❤️" is a heart plus a selector. Both are
+    // format characters, so a blanket \p{C} rule refuses them and tells the sitter her name is the
+    // wrong LENGTH, which is neither true nor fixable. Accented letters and punctuation are
+    // ordinary names too: the rule is about characters that display as something other than
+    // themselves, not about non-ASCII.
+    expect((await mintViaRoute(env, jwt, 'CI bot \u{1F469}\u200D\u{1F4BB}')).name).toBe(
+      'CI bot \u{1F469}\u200D\u{1F4BB}',
+    );
+    expect((await mintViaRoute(env, jwt, 'Home \u2764\uFE0F laptop')).name).toBe(
+      'Home \u2764\uFE0F laptop',
+    );
+    expect((await mintViaRoute(env, jwt, 'Café résumé — laptop')).name).toBe(
+      'Café résumé — laptop',
     );
   });
 
@@ -604,6 +659,40 @@ describe('tenant access tokens — carve-out', () => {
     expect(((await del.json()) as { error: string }).error).toMatch(/password/i);
     // And it really did nothing: the sibling still authenticates.
     expect((await settings(env, sibling.token)).status).toBe(200);
+  });
+
+  it('defaults every path under /tokens/ to password-only, not just the ones that exist', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Prober');
+
+    // No route is mounted at either of these. That is the point: the gate is on the SUBTREE, so
+    // whatever is added under /tokens/ next is refused for a token by DEFAULT and has to be
+    // deliberately relaxed. A gate mounted per-route would answer 404 here today and whatever the
+    // next route does tomorrow.
+    for (const path of [
+      `/api/sunny-paws/admin/tokens/${created.id}/rename`,
+      '/api/sunny-paws/admin/tokens/anything/at/all',
+    ]) {
+      const res = await app.request(
+        path,
+        { method: 'POST', headers: { Authorization: `Bearer ${created.token}` } },
+        env,
+      );
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toMatch(/password/i);
+    }
+
+    // Its OWN id plus one more segment is not its own row either — the exception is exactly one
+    // segment wide, so it cannot be widened by appending to the path.
+    const passwordReaches404 = await app.request(
+      `/api/sunny-paws/admin/tokens/${created.id}/rename`,
+      { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } },
+      env,
+    );
+    // The password session passes the gate and finds nothing there, which is what proves the 403
+    // above came from the gate rather than from the route simply not existing.
+    expect(passwordReaches404.status).toBe(404);
   });
 
   it('lets a token revoke ITSELF, and stops working immediately afterwards', async () => {
@@ -808,22 +897,68 @@ describe('tenant access tokens — last used', () => {
     expect(lastUsed(raw, id)).not.toBeNull();
   });
 
-  it('stamps nothing when the request was refused', async () => {
+  it('stamps nothing when the credential was not ALLOWED to do the thing', async () => {
     const { env, raw } = createTestEnv();
     const { token, id } = await mintTenantToken(env);
 
-    // The carve-out's 403: authentication succeeded, the request did not. `LastUsedAt` is what the
-    // sitter reads to decide a token is idle and safe to revoke, so it has to mean "this
+    // The carve-out's 403: authentication succeeded, the authorization did not. `LastUsedAt` is
+    // what the sitter reads to decide a token is idle and safe to revoke, so it has to mean "this
     // credential did something", not "someone waved it at a route it has no business on" —
     // otherwise a token being probed looks busier than one doing real work.
     const refused = await listTokens(env, token);
     expect(refused.status).toBe(403);
     expect(lastUsed(raw, id)).toBeNull();
 
-    // The same token on a route it may use does stamp, so this is about the RESPONSE and not
+    // The same token on a route it may use does stamp, so this is about AUTHORIZATION and not
     // about the touch having been dropped altogether.
     expect((await settings(env, token)).status).toBe(200);
     expect(lastUsed(raw, id)).not.toBeNull();
+  });
+
+  /**
+   * Two routes `adminAuth` has to keep stamping for, mounted here because the real app has no
+   * admin GET that 404s and none that throws on purpose. Both are ordinary USES of the credential:
+   * the gate said yes and the handler ran.
+   */
+  function outcomeProbeApp(): Hono<AppEnv> {
+    const probe = new Hono<AppEnv>()
+      .use('/:slug/admin/*', adminAuth)
+      .get('/:slug/admin/gone', (c) => c.json({ error: 'Not found.' }, 404))
+      .get('/:slug/admin/boom', () => {
+        throw new Error('handler exploded');
+      });
+    const outer = new Hono<AppEnv>();
+    outer.use('/api/:slug/*', tenantMiddleware);
+    outer.route('/api', probe);
+    return outer;
+  }
+
+  it('stamps a use whose handler answered 404 or threw', async () => {
+    const { env, raw } = createTestEnv();
+
+    // A 404 is the credential working exactly as intended — a client asking after a customer who
+    // has been deleted. Gating the stamp on `status < 400` called that idle.
+    const gone = await mintTenantToken(env, { name: 'Asks for missing things' });
+    const notFound = await outcomeProbeApp().request(
+      '/api/sunny-paws/admin/gone',
+      { headers: { Authorization: `Bearer ${gone.token}` } },
+      env,
+    );
+    expect(notFound.status).toBe(404);
+    expect(lastUsed(raw, gone.id)).not.toBeNull();
+
+    // And a handler that throws is a token that was in use the whole time and hitting a bug. The
+    // touch is in a `finally` so the report does not read "idle all week" about it.
+    const boom = await mintTenantToken(env, { name: 'Finds bugs' });
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const thrown = await outcomeProbeApp().request(
+      '/api/sunny-paws/admin/boom',
+      { headers: { Authorization: `Bearer ${boom.token}` } },
+      env,
+    );
+    warn.mockRestore();
+    expect(thrown.status).toBe(500);
+    expect(lastUsed(raw, boom.id)).not.toBeNull();
   });
 
   it('stamps nothing on the request in which a token revoked itself', async () => {
@@ -900,5 +1035,44 @@ describe('tenant access tokens — password reset', () => {
     expect((await settings(env, first.token)).status).toBe(401);
     expect((await settings(env, second.token)).status).toBe(401);
     expect((await settings(env, colleague.token)).status).toBe(200);
+  });
+
+  it('still completes the reset when the revoke fails, and says so in the log', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    await mintViaRoute(env, jwt, 'Survivor');
+    const link = await resetLink(env);
+
+    // The password is ALREADY changed and the link's nonce already spent by the time the revoke
+    // runs, so a D1 hiccup there must not answer 500: that tells someone mid-recovery the reset
+    // failed when it did not, and their only move — ask for another link — cannot work either,
+    // because the old password they would need is gone.
+    const real = env.PAWSERVATION_DB;
+    (env as { PAWSERVATION_DB: D1Database }).PAWSERVATION_DB = {
+      ...real,
+      prepare: (sql: string) => {
+        if (sql.includes('SET RevokedAt')) throw new Error('D1_ERROR: simulated');
+        return real.prepare(sql);
+      },
+    } as unknown as D1Database;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const complete = await app.request(
+      '/api/password-reset/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: link, password: 'RiverStone2026' }),
+      },
+      env,
+    );
+    expect(complete.status).toBe(200);
+    expect((await complete.json()) as { role: string }).toMatchObject({ role: 'admin' });
+
+    // Not silent, though: the tokens are still live and only the log says so. The line names the
+    // failure and nothing about the person — no email, no token, no id.
+    const logged = errors.mock.calls.map((call) => String(call[0]));
+    expect(logged).toContain('tenant access token revoke on password reset failed');
+    errors.mockRestore();
   });
 });

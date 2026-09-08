@@ -4,7 +4,8 @@ import type { Session } from './shared.js';
 
 const MAX_NAME_LENGTH = 80;
 
-/** A trailing 'Z' or a '+HH:MM'/'-HH:MM' offset — the only two ways a stamp states its zone. */
+/** A trailing 'Z' or a '+HH:MM'/'-HH:MM' offset — the only two ways a stamp states its zone.
+ *  Tested after the normalising below, so any space in front of an offset is already gone. */
 const ZONED = /(?:Z|[+-]\d{2}:\d{2})$/;
 
 /**
@@ -19,7 +20,11 @@ const ZONED = /(?:Z|[+-]\d{2}:\d{2})$/;
  * would notice was wrong.
  */
 function formatTimestamp(sqlDatetime: string): string {
-  const withT = sqlDatetime.replace(' ', 'T');
+  // Only the date/time separator becomes a 'T'. A blanket `.replace(' ', 'T')` is the first space,
+  // which is the right one here — but a stamp can carry a SECOND space before its offset
+  // ("2026-09-07 12:00:00 +01:00"), and that one has to go away entirely rather than turn into
+  // anything, or `Date` reads the whole string as invalid and the sitter sees the raw text.
+  const withT = sqlDatetime.replace(/\s+(?=\d{2}:)/, 'T').replace(/\s+(?=[+-]\d{2}:\d{2}$)/, '');
   const d = new Date(ZONED.test(withT) ? withT : `${withT}Z`);
   return Number.isNaN(d.getTime()) ? sqlDatetime : d.toLocaleDateString();
 }

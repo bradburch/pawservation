@@ -172,7 +172,17 @@ export const passwordResetRoutes = new Hono<AppEnv>()
     // access token never expires, so whoever took the account keeps the whole book and the sitter
     // has no reason to suspect it. Awaited, not deferred — the sitter is told on the reset page
     // that this happened, and a promise that had not landed yet would make that a lie.
-    await revokeAllTenantAccessTokensForUser(c.env.PAWSERVATION_DB, user.TenantId, user.Id);
+    //
+    // CAUGHT, because the password has ALREADY changed by this line and the link's nonce is
+    // already spent. A 500 here would tell someone mid-recovery that the reset failed when it did
+    // not, and their only move — request another link — cannot succeed either, since the old
+    // password they would need is gone. So the failure is logged and the reset completes; the
+    // tokens are still revocable from the panel, and the sitter is signed in and able to do it.
+    try {
+      await revokeAllTenantAccessTokensForUser(c.env.PAWSERVATION_DB, user.TenantId, user.Id);
+    } catch (err) {
+      console.error('tenant access token revoke on password reset failed', err);
+    }
     const adminToken = await mintAdminToken(user.Id, user.TenantId, c.env.TOKEN_SECRET);
     return c.json({ token: adminToken, role: 'admin', email: payload.email });
   });

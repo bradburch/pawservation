@@ -8,6 +8,7 @@ import {
 } from '../db/repo';
 import { generateTenantAccessToken, hashPersonalAccessToken } from '../lib/personal-access-token';
 import { mintToken } from '../lib/token';
+import { MAX_LIVE_TOKENS_PER_USER } from '../routes/tenant-tokens';
 import { createTestEnv, endUserToken, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
 /** NFR1: explicit cross-tenant-leak attempts per surface — read, write, list. */
@@ -134,6 +135,7 @@ describe('tenant isolation', () => {
       tenantUserId: 'tu_sunny',
       name: 'Isolation',
       tokenHash: await hashPersonalAccessToken(token),
+      maxLive: MAX_LIVE_TOKENS_PER_USER,
     });
 
     const readB = await app.request(

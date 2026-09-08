@@ -221,25 +221,36 @@ export const adminAuth = createMiddleware<AppEnv>(async (c, next) => {
     // a route that branched on it would be branching on the credential, which the carve-out
     // forbids everywhere except credential management itself.
     c.set('adminTokenId', row.Id);
-    await next();
     // Refreshed at most hourly and handed to waitUntil, for the reasons endUserAuth gives: a
     // recognition aid for the revoke list must not turn an automated client's every read into a
     // write. With no ExecutionContext (tests) the write is awaited so the stamp is deterministic.
     //
-    // Scheduled AFTER the handler and only for an authorized response: `LastUsedAt` is what the
-    // sitter reads to decide a token is idle and safe to revoke, so it must mean "this credential
-    // did something", not "someone waved it at a route it has no business on". A 403 from the
-    // carve-out or a 404 from a route that was never reached would otherwise keep a token looking
-    // alive forever. The write itself is still deferred, not awaited — the response is already
-    // built by the time this runs.
-    if (c.res.status < 400 && shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
-      const task = touchTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, row.Id).catch((err) => {
-        console.error('tenant access token touch failed', err);
-      });
-      try {
-        c.executionCtx.waitUntil(task);
-      } catch {
-        await task;
+    // Scheduled AFTER the handler, and gated on AUTHORIZATION rather than on the outcome: 401 and
+    // 403 are the two answers that mean this credential was not allowed to do the thing, and those
+    // must not make a token look busy — a token being probed would otherwise read as more active
+    // than one doing real work, and `LastUsedAt` is what the sitter reads to decide a token is
+    // idle and safe to revoke. Every other status is a use: a 404 for a client that asked for a
+    // customer who has been deleted is the credential working exactly as intended, and a 500 is
+    // still the token having reached a route and run it.
+    //
+    // `finally`, so a handler that THROWS still stamps. The alternative reads as "your token was
+    // idle all week" about a token that was in use the whole time and hitting a bug. The write
+    // itself is still deferred, not awaited — the response is built before this runs.
+    try {
+      await next();
+    } finally {
+      const status = c.res.status;
+      if (status !== 401 && status !== 403 && shouldRefreshLastUsed(row.LastUsedAt, Date.now())) {
+        const task = touchTenantAccessToken(c.env.PAWSERVATION_DB, tenant.Id, row.Id).catch(
+          (err) => {
+            console.error('tenant access token touch failed', err);
+          },
+        );
+        try {
+          c.executionCtx.waitUntil(task);
+        } catch {
+          await task;
+        }
       }
     }
     return;

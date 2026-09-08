@@ -4383,50 +4383,51 @@ export async function revokePersonalAccessToken(
 // the end-user token, not forked) lives in server/lib/personal-access-token.ts.
 // Every query below binds TenantId: there is deliberately no way to look a token up globally.
 
-/** Stores a new token's hash and returns the created row (minus `TokenHash`). The plaintext never
- *  reaches this layer. `CreatedAt` comes back off the same INSERT via `RETURNING` so the caller
- *  never needs a second read to report it. */
+/**
+ * Stores a new token's hash and returns the created row (minus `TokenHash`). The plaintext never
+ * reaches this layer. `CreatedAt` comes back off the same INSERT via `RETURNING` so the caller
+ * never needs a second read to report it.
+ *
+ * THE PER-SITTER CAP IS IN THIS STATEMENT, not in the route, and that is the whole point of its
+ * shape. `INSERT … SELECT … WHERE (SELECT COUNT(*) …) < ?` counts and inserts as ONE statement, so
+ * two mints racing at `maxLive - 1` cannot both read "there is room" and both write: SQLite
+ * evaluates the subquery against the state the insert is applying to. A count in the route
+ * followed by an insert can, and the window is exactly as wide as the round trip between them.
+ *
+ * Returns `null` when the cap turned the insert away — nothing was written, and the caller answers
+ * 409. That is deliberately not an exception: being at the cap is an ordinary thing for a sitter's
+ * account to be, not a fault.
+ */
 export async function createTenantAccessToken(
   db: D1Database,
   tenantId: string,
-  args: { tenantUserId: string; name: string; tokenHash: string },
-): Promise<{ Id: string; Name: string; CreatedAt: string }> {
+  args: { tenantUserId: string; name: string; tokenHash: string; maxLive: number },
+): Promise<{ Id: string; Name: string; CreatedAt: string } | null> {
   const id = crypto.randomUUID();
   const row = await db
     .prepare(
       `INSERT INTO TenantAccessTokens (Id, TenantId, TenantUserId, Name, TokenHash)
-            VALUES (?, ?, ?, ?, ?)
+            SELECT ?, ?, ?, ?, ?
+             WHERE (SELECT COUNT(*)
+                      FROM TenantAccessTokens
+                     WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL) < ?
        RETURNING CreatedAt`,
     )
-    .bind(id, tenantId, args.tenantUserId, args.name, args.tokenHash)
-    .first<{ CreatedAt: string }>();
-  // A successful INSERT ... RETURNING always yields a row, so this never fires in practice. It is
-  // written out rather than asserted with `row!` because the failure a `!` produces is
-  // `undefined.CreatedAt` inside the caller, which reads as a bug in the route rather than as the
-  // write not having come back.
-  if (!row) throw new Error('TenantAccessTokens insert returned no row');
-  return { Id: id, Name: args.name, CreatedAt: row.CreatedAt };
-}
-
-/**
- * How many of this sitter's tokens are still live. The mint route caps on this: an unbounded list
- * is an unbounded number of live credentials for her whole book, and a list too long to read is
- * one she cannot safely revoke from either.
- */
-export async function countLiveTenantAccessTokens(
-  db: D1Database,
-  tenantId: string,
-  tenantUserId: string,
-): Promise<number> {
-  const row = await db
-    .prepare(
-      `SELECT COUNT(*) AS n
-         FROM TenantAccessTokens
-        WHERE TenantId = ? AND TenantUserId = ? AND RevokedAt IS NULL`,
+    .bind(
+      id,
+      tenantId,
+      args.tenantUserId,
+      args.name,
+      args.tokenHash,
+      tenantId,
+      args.tenantUserId,
+      args.maxLive,
     )
-    .bind(tenantId, tenantUserId)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
+    .first<{ CreatedAt: string }>();
+  // No row means the WHERE was false: the sitter is at her cap and nothing was inserted. Told
+  // apart from "the write came back empty" only by there being no other way for this statement to
+  // return nothing — which is why the cap is the ONLY condition in that WHERE.
+  return row ? { Id: id, Name: args.name, CreatedAt: row.CreatedAt } : null;
 }
 
 /** This sitter's LIVE tokens, newest first. A revoked token is gone from their list — the row
