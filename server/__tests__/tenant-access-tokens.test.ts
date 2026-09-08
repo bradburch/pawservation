@@ -423,6 +423,26 @@ const deleteToken = (env: Env, credential: string, id: string, slug = 'sunny-paw
     env,
   );
 
+/**
+ * DELETE …/admin/tokens/self — the alias route. Spelled out rather than routed through
+ * `deleteToken(env, cred, 'self')` so the tests below read as being about the WORD `self` and not
+ * about an id that happens to be four characters long.
+ */
+const deleteSelf = (env: Env, credential: string, slug = 'sunny-paws') =>
+  app.request(
+    `${adminTokensPath(slug)}/self`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${credential}` } },
+    env,
+  );
+
+/** The stored revocation stamp, or `undefined` when no such row exists. */
+function revokedAt(raw: ReturnType<typeof createTestEnv>['raw'], id: string): string | null {
+  const row = raw.prepare('SELECT RevokedAt FROM TenantAccessTokens WHERE Id = ?').get(id) as
+    { RevokedAt: string | null } | undefined;
+  expect(row).toBeDefined();
+  return row!.RevokedAt;
+}
+
 describe('tenant access tokens — issuing', () => {
   it('mints a token and returns the secret exactly once', async () => {
     const { env } = createTestEnv();
@@ -713,6 +733,103 @@ describe('tenant access tokens — carve-out', () => {
     // And the sitter's own list agrees it is gone.
     const { tokens } = (await (await listTokens(env, jwt)).json()) as { tokens: unknown[] };
     expect(tokens).toEqual([]);
+  });
+
+  /**
+   * The reason `…/tokens/self` exists at all: the self-revoke above needs an id, and the only
+   * route that reports one is `adminSessionOnly`. A client holding nothing but the secret could
+   * never name its own row, so the one hole in the carve-out was unreachable by exactly the caller
+   * it was cut for.
+   */
+  it('lets a token revoke itself by name, without ever learning its own id', async () => {
+    const { env, raw } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Knows only its secret');
+    expect((await settings(env, created.token)).status).toBe(200);
+    // The id the route resolves for itself is the one the mint handed the sitter — asserted here
+    // so the alias is pinned to THAT row and not merely to "some row of hers".
+    expect(revokedAt(raw, created.id)).toBeNull();
+
+    const del = await deleteSelf(env, created.token);
+    expect(del.status).toBe(200);
+    expect(await del.json()).toEqual({ revoked: true });
+    expect(revokedAt(raw, created.id)).toEqual(expect.any(String));
+
+    // Gone from the sitter's list, and dead on the very next request — no clock advanced.
+    const { tokens } = (await (await listTokens(env, jwt)).json()) as { tokens: unknown[] };
+    expect(tokens).toEqual([]);
+    expect((await settings(env, created.token)).status).toBe(401);
+  });
+
+  it('is idempotent the only way it can be: the second call is a 401, because the caller is dead', async () => {
+    const { env, raw } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Twice');
+    expect((await deleteSelf(env, created.token)).status).toBe(200);
+    const first = revokedAt(raw, created.id);
+
+    // `adminAuth` answers before the route runs, so a client that retries gets a refusal rather
+    // than a second success — and the first revocation's timestamp is not rewritten by the retry.
+    const second = await deleteSelf(env, created.token);
+    expect(second.status).toBe(401);
+    expect(revokedAt(raw, created.id)).toBe(first);
+  });
+
+  it('turns a PASSWORD session away with a 400: a session has no token to hand back', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Still live');
+
+    // Not a 403: nothing was refused. The password session is allowed here and simply does not
+    // name a thing that exists for it — its route is the list, which it can already read.
+    const res = await deleteSelf(env, jwt);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/list/i);
+    // And it revoked nothing on the way past.
+    expect((await settings(env, created.token)).status).toBe(200);
+  });
+
+  it('does not exist for another tenant’s token: 401 under the wrong slug, live under its own', async () => {
+    const { env } = createTestEnv();
+    const dana = await mintAdminToken('tu_dana', TENANT_B, TEST_SECRET);
+    const danaToken = await mintViaRoute(env, dana, 'Dana’s bot', 'happy-tails');
+
+    // `findLiveTenantAccessToken` binds TenantId, so under Sunny Paws this token does not exist
+    // rather than existing elsewhere — 401, the same answer an unknown string gets, and not a 403
+    // that would confirm it is real somewhere.
+    expect((await deleteSelf(env, danaToken.token)).status).toBe(401);
+    // Nothing was revoked: it still works where it belongs.
+    expect((await settings(env, danaToken.token, 'happy-tails')).status).toBe(200);
+    expect((await deleteSelf(env, danaToken.token, 'happy-tails')).status).toBe(200);
+  });
+
+  it('never writes the presented secret into a log line, on the way through or on the refusal', async () => {
+    const { env } = createTestEnv();
+    const jwt = await mintAdminToken('tu_sunny', TENANT_A, TEST_SECRET);
+    const created = await mintViaRoute(env, jwt, 'Quiet');
+    const lines: unknown[][] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => void lines.push(args));
+    const error = vi.spyOn(console, 'error').mockImplementation((...args) => void lines.push(args));
+    try {
+      expect((await deleteSelf(env, created.token)).status).toBe(200);
+      // The refusal path too: this one DOES log (`tenant_access_token_rejected`), which is the
+      // line worth checking — a route whose whole subject is a credential is the easiest place in
+      // the product to spill one.
+      expect((await deleteSelf(env, created.token)).status).toBe(401);
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+    const written = JSON.stringify(lines);
+    expect(written).not.toContain(created.token);
+    // Not even a prefix of it: eight "safe" characters of a token are eight characters of a token.
+    expect(written).not.toContain(created.token.slice(0, 12));
+    expect(written).not.toContain('pawsa_');
+    // The line that was written is the ordinary one, naming the sitter and the route and nothing
+    // else — so the assertions above passed because there is a line to inspect, not because the
+    // route stayed silent.
+    expect(written).toContain('tenant_access_token_rejected');
+    expect(written).toContain('/api/sunny-paws/admin/tokens/self');
   });
 
   it('is the gate, not a dead token — the same token still reaches an ordinary admin route', async () => {
