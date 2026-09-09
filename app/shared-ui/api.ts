@@ -41,6 +41,10 @@ export type TenantConfig = {
   // Published verbatim from `/config` (server/routes/public.ts) — presence/absence only. This
   // repo interprets none of it beyond reading these fields; see ServicesSection's premium embed.
   premium?: { assistant?: boolean; chat?: boolean; mcp?: boolean; origin?: string | null };
+  /** The published plan figures — dollars per month/year and the trial length. A property of the
+   *  PRODUCT, not of this tenant: `/config` publishes no plan state at all. Optional for the same
+   *  reason `premium` is: a dashboard bundle can outlive the worker that served it. */
+  pricing?: { soloMonthly: number; proMonthly: number; proAnnual: number; trialDays: number };
 };
 
 export type Pet = {

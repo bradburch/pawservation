@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { listPetTypes, listServiceOptions, listServices } from '../db/repo';
 import { isPremiumActive, premiumOrigin } from '../lib/premium';
+import { PRICING } from '../lib/plan-pricing';
 import type { AppEnv } from '../types';
 
 export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) => {
@@ -33,6 +34,21 @@ export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) =>
       // somebody else's host. Null means "no premium surface here", which is what an unentitled
       // tenant already renders.
       origin: premiumOrigin(c.env),
+    },
+    // THE PUBLISHED PLAN FIGURES — the same `PRICING` the landing page, llms.txt and the JSON-LD
+    // offers interpolate (server/lib/plan-pricing.ts), carried on the wire so that two consumers
+    // which cannot import a server module can still state them: the admin dashboard's plan panel,
+    // and whatever runs a checkout, which needs `trialDays` and must not hold a second copy of it.
+    //
+    // FIGURES ONLY. Nothing here is about THIS tenant, deliberately: this endpoint is
+    // unauthenticated and is fetched by every widget on every sitter's public website, so a plan,
+    // a renewal date or a processor id published here would be a business's commercial position in
+    // front of its own visitors. Plan state belongs on the admin settings read, behind a session.
+    pricing: {
+      soloMonthly: PRICING.soloMonthly,
+      proMonthly: PRICING.proMonthly,
+      proAnnual: PRICING.proAnnual,
+      trialDays: PRICING.trialDays,
     },
     displayName: tenant.DisplayName,
     accentColor: tenant.AccentColor,
