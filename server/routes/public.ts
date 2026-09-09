@@ -10,7 +10,9 @@ export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) =>
     listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
     listPetTypes(c.env.PAWSERVATION_DB, tenant.Id),
   ]);
-  // All three flags are the SAME derived boolean — `PremiumUntil > now`, computed server-side —
+  // All three flags are the SAME derived boolean — `isPremiumActive` (server/lib/premium.ts),
+  // computed server-side and never here: since 0017 it is an owner comp OR a paid Pro plan, and a
+  // route that spelled the comparison out would be a second copy of a rule that has two halves —
   // published under three names because a surface asks "should I mount?" about itself, not about
   // the subscription. They are separate keys so that if they ever stop being the same answer, the
   // shape does not have to change under a consumer that already reads them. Nothing here knows what

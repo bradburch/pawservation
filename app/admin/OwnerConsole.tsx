@@ -490,18 +490,25 @@ export function OwnerConsole({
                                 {s.disabled && (
                                   <span className="pb-chip pb-chip-warn">Disabled</span>
                                 )}
-                                {/* isPremiumActive's second clause (server/lib/premium.ts) is
-                                    DisabledAt == null AND PremiumUntil > now — a disabled tenant
-                                    is never premium however much of its subscription remains, so
-                                    the chip must not claim otherwise. */}
-                                {!s.disabled &&
-                                  s.premiumUntil != null &&
-                                  s.premiumUntil >
-                                    new Date().toISOString().slice(0, 19).replace('T', ' ') && (
-                                    <span className="pb-chip" title={`Until ${s.premiumUntil}`}>
-                                      Premium
-                                    </span>
-                                  )}
+                                {/* THE SERVER'S OWN ANSWER, not a second copy of the rule. This
+                                    chip used to re-derive `PremiumUntil > now` here in the browser.
+                                    Since 0017 a tenant is premium on the owner's comp OR on a paid
+                                    Pro plan (`isPremiumActive`, server/lib/premium.ts), and the
+                                    browser copy would have silently disagreed with the server for
+                                    every sitter who pays. `premiumUntil` is still published beside
+                                    it, because the owner is EDITING that date. */}
+                                {s.premiumActive && (
+                                  <span
+                                    className="pb-chip"
+                                    title={
+                                      s.premiumUntil
+                                        ? `Comped until ${s.premiumUntil}`
+                                        : 'On a paid plan'
+                                    }
+                                  >
+                                    Premium
+                                  </span>
+                                )}
                               </td>
                               <td>
                                 {premiumEditId === s.tenantId ? (

@@ -699,6 +699,10 @@ export type SitterRow = {
   earnedCents: number;
   disabled: boolean;
   premiumUntil: string | null;
+  /** The SERVER's own `isPremiumActive` answer. Since 0017 entitlement is a comp OR a paid Pro
+   *  plan, so `premiumUntil` alone no longer decides it — and this repo does not re-derive the
+   *  rule in the browser. */
+  premiumActive: boolean;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;

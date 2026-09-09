@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import { isPremiumActive } from '../lib/premium';
+import type { Tenant } from '../types';
 
 /**
  * MIGRATION 0017 APPLIED TO A PRE-MIGRATION DATABASE.
@@ -128,5 +130,58 @@ describe('migration 0017 applied to a pre-0017 database', () => {
     raw.exec("INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('tnt_x', 'x', 'X')");
     expect(() => raw.exec("UPDATE Tenants SET Plan = 'enterprise' WHERE Id = 'tnt_x'")).toThrow();
     raw.exec("UPDATE Tenants SET Plan = 'solo' WHERE Id = 'tnt_x'");
+  });
+});
+
+/**
+ * THE AC's WORD IS "bit-for-bit", and this is where it is cashed. Four tenants covering every state
+ * a real database holds today, their entitlement recorded before the migration and compared after —
+ * against the NEW expression, which is the only comparison worth making: the rule changed, and the
+ * claim is that it changed for nobody who has not subscribed.
+ */
+describe('no existing tenant’s entitlement moves by applying 0017', () => {
+  const SEED = `
+    INSERT INTO Tenants (Id, Slug, DisplayName, PremiumUntil, DisabledAt) VALUES
+      ('tnt_comped',   'comped',   'Comped',   '2099-01-01 00:00:00', NULL),
+      ('tnt_free',     'free',     'Free',      NULL,                 NULL),
+      ('tnt_lapsed',   'lapsed',   'Lapsed',   '2000-01-01 00:00:00', NULL),
+      ('tnt_off',      'off',      'Disabled', '2099-01-01 00:00:00', '2026-07-23 00:00:00');
+  `;
+
+  const entitlementByTenant = (raw: DatabaseSync): Record<string, boolean> =>
+    Object.fromEntries(
+      (raw.prepare('SELECT * FROM Tenants ORDER BY Id').all() as unknown as Tenant[]).map((t) => [
+        t.Id,
+        isPremiumActive(t),
+      ]),
+    );
+
+  const premiumUntilByTenant = (raw: DatabaseSync): Record<string, string | null> =>
+    Object.fromEntries(
+      (
+        raw.prepare('SELECT Id, PremiumUntil FROM Tenants ORDER BY Id').all() as unknown as {
+          Id: string;
+          PremiumUntil: string | null;
+        }[]
+      ).map((t) => [t.Id, t.PremiumUntil]),
+    );
+
+  it('reports the same four answers before and after, and touches no PremiumUntil', () => {
+    const raw = dbFrom(preMigrationSchema());
+    raw.exec(SEED);
+
+    const before = entitlementByTenant(raw);
+    const premiumBefore = premiumUntilByTenant(raw);
+    expect(before).toEqual({
+      tnt_comped: true,
+      tnt_free: false,
+      tnt_lapsed: false,
+      tnt_off: false,
+    });
+
+    raw.exec(MIGRATION);
+
+    expect(entitlementByTenant(raw)).toEqual(before);
+    expect(premiumUntilByTenant(raw)).toEqual(premiumBefore);
   });
 });

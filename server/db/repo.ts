@@ -5848,7 +5848,11 @@ export type SitterRosterRow = {
   DisplayName: string;
   CreatedAt: string;
   DisabledAt: string | null; // null = active
-  PremiumUntil: string | null; // null = free
+  PremiumUntil: string | null; // null = no comp
+  /** 0017. Carried so `isPremiumActive` can answer for a roster row without a second copy of the
+   *  rule living in the console — the console used to re-derive it in the browser. */
+  Plan: 'solo' | 'pro' | null;
+  BilledUntil: string | null;
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
   // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
@@ -5881,6 +5885,8 @@ export async function listSitterRoster(
          t.CreatedAt AS CreatedAt,
          t.DisabledAt AS DisabledAt,
          t.PremiumUntil AS PremiumUntil,
+         t.Plan AS Plan,
+         t.BilledUntil AS BilledUntil,
          (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'

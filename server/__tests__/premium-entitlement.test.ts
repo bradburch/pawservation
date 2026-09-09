@@ -1,15 +1,21 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { getTenantById, getTenantBySlug } from '../db/repo';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
+import { isPremiumActive, isSoloActive, type EntitlementFacts } from '../lib/premium';
 import { resolveTenant } from '../lib/tenant-resolve';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
 /**
- * `Tenants.PremiumUntil` (0010) — the whole of it. A nullable timestamp the platform owner sets
- * and clears, and one derived boolean published on the tenant's public config. There is no
- * enforcement here and there is deliberately nothing for it to enforce: the free product does not
- * know what "premium" buys, only whether this tenant has paid through a moment that has not passed.
+ * `Tenants.PremiumUntil` (0010) — the OWNER'S MANUAL GRANT, which since 0017 is one of the two
+ * things entitlement is decided from rather than the whole of it. A nullable timestamp the platform
+ * owner sets and clears, and one derived boolean published on the tenant's public config. There is
+ * no enforcement here and there is deliberately nothing for it to enforce: the free product does not
+ * know what "premium" buys, only whether this tenant is entitled right now. The combined expression
+ * — comp OR paid Pro plan — is exercised at the foot of this file, beside the scan that keeps it the
+ * only place the question is answered.
  *
  * Dates are deliberately absurd (2099 / 2000) rather than `now ± an hour`: a fixture that straddles
  * the clock is a fixture that fails on a slow CI box, and nothing in this feature is sensitive to
@@ -296,5 +302,128 @@ describe('premium is per tenant, like everything else', () => {
     expect((await configOf(env, 'sunny-paws')).premium.assistant).toBe(true);
     expect((await configOf(env, 'happy-tails')).premium.assistant).toBe(false);
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))?.PremiumUntil).toBeNull();
+  });
+});
+
+/**
+ * THE ONE EXPRESSION (0017, spine AD-13). Two ways to be premium — the platform owner's comp, or a
+ * paid Pro plan — and one way to be Solo, which is a paid subscription and nothing to do with the
+ * comp. They share exactly one condition, the disable, so it is written once as a single early
+ * return: two tiers that can drift on the one thing they agree about is the failure this shape
+ * exists to prevent.
+ */
+const facts = (over: Partial<EntitlementFacts>): EntitlementFacts => ({
+  DisabledAt: null,
+  PremiumUntil: null,
+  Plan: null,
+  BilledUntil: null,
+  ...over,
+});
+
+const FUTURE_STORED = '2099-01-01 00:00:00';
+const PAST_STORED = '2000-01-01 00:00:00';
+
+describe('entitlement combines the comp and the plan in one expression', () => {
+  it('a Pro plan paid into the future is premium with no comp at all', () => {
+    const t = facts({ Plan: 'pro', BilledUntil: FUTURE_STORED });
+    expect(isPremiumActive(t)).toBe(true);
+    expect(isSoloActive(t)).toBe(true); // she has a live paid subscription; Pro is one
+  });
+
+  it('an owner comp into the future is premium with BilledUntil null or past', () => {
+    expect(isPremiumActive(facts({ PremiumUntil: FUTURE_STORED }))).toBe(true);
+    expect(isPremiumActive(facts({ PremiumUntil: FUTURE_STORED, BilledUntil: PAST_STORED }))).toBe(
+      true,
+    );
+    // A comp is a PREMIUM grant. It confers no Solo subscription, because there isn't one.
+    expect(isSoloActive(facts({ PremiumUntil: FUTURE_STORED }))).toBe(false);
+  });
+
+  it('a disabled tenant is premium under neither, however much either has left', () => {
+    const t = facts({
+      DisabledAt: '2026-07-23 00:00:00',
+      PremiumUntil: FUTURE_STORED,
+      Plan: 'pro',
+      BilledUntil: FUTURE_STORED,
+    });
+    expect(isPremiumActive(t)).toBe(false);
+    expect(isSoloActive(t)).toBe(false);
+  });
+
+  it('SOLO IS NOT PREMIUM — a paid Solo plan buys the free product, and nothing else', () => {
+    const t = facts({ Plan: 'solo', BilledUntil: FUTURE_STORED });
+    expect(isSoloActive(t)).toBe(true);
+    expect(isPremiumActive(t)).toBe(false);
+  });
+
+  it('reads a missing column as "not that" rather than throwing — a stale cache entry fails closed', () => {
+    // What a v5 KV entry deserialises to: the field the type insists exists is simply absent.
+    const stale = { DisabledAt: null, PremiumUntil: null } as unknown as EntitlementFacts;
+    expect(isPremiumActive(stale)).toBe(false);
+    expect(isSoloActive(stale)).toBe(false);
+  });
+
+  /**
+   * WHY `normalizeBilledUntil` EXISTS, demonstrated rather than asserted in prose. The comparison is
+   * a plain string `>`; an ISO instant sorts above a space-separated `now` on the separator alone
+   * ('T' is 84, ' ' is 32). Both values below name the same instant, twelve hours in the past.
+   */
+  it('would grant a lapsed Pro plan a free day if a date were stored ISO-shaped', () => {
+    const now = new Date('2026-09-08T12:00:00Z');
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08T00:00:00Z' }), now)).toBe(
+      true,
+    );
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08 00:00:00' }), now)).toBe(
+      false,
+    );
+  });
+});
+
+/**
+ * ONE EXPRESSION MEANS ONE EXPRESSION, and this is the assertion that keeps it that way. AD-13's
+ * requirement is not "a helper exists" — it is that nowhere else answers the same question. A second
+ * copy does not announce itself: it is a `>` in a component that was right the day it was written
+ * and silently wrong the day a second grant existed, which is exactly what the owner console's
+ * browser-side chip did.
+ *
+ * Comments are stripped before scanning, because the prose in `repo.ts`, `public.ts` and this file
+ * legitimately QUOTES the comparison while describing where it lives. Only executable text counts.
+ */
+describe('nothing outside server/lib/premium.ts compares PremiumUntil itself', () => {
+  const ROOT = join(import.meta.dirname, '..', '..');
+  const EXEMPT = join(ROOT, 'server', 'lib', 'premium.ts');
+
+  /** Block comments, JSX braces-and-slash-star comments included, and line comments. A `://` in
+   *  a URL is not the start of one. */
+  const stripComments = (src: string): string =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  /** `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain. */
+  const COMPARISON = /(premiumuntil\s*[<>]|[<>]=?\s*[\w.?!]*premiumuntil)/i;
+
+  const sourcesUnder = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) return entry === 'node_modules' ? [] : sourcesUnder(path);
+      return /\.tsx?$/.test(path) && path !== EXEMPT ? [path] : [];
+    });
+
+  it('finds the comparison in no other module, test files included', () => {
+    const offenders = ['server', 'app']
+      .flatMap((top) => sourcesUnder(join(ROOT, top)))
+      .filter((path) => COMPARISON.test(stripComments(readFileSync(path, 'utf8'))))
+      .map((path) => path.slice(ROOT.length + 1));
+    expect(offenders).toEqual([]);
+  });
+
+  // The controls name the column through a variable rather than spelling it beside a `>`, so that
+  // the scanner does not report its own fixtures — a scan that has to exempt the file it lives in
+  // stops covering that file.
+  const COLUMN = 'PremiumUntil';
+
+  it('would catch one — the scanner is not vacuously green', () => {
+    expect(COMPARISON.test(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
+    expect(COMPARISON.test(`now < tenant.${COLUMN}`)).toBe(true);
+    expect(COMPARISON.test(stripComments(`// ${COLUMN} > now, merely described`))).toBe(false);
   });
 });
