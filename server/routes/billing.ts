@@ -59,32 +59,54 @@ const BillingEvent = v.object({
   eventCreated: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(4_102_444_800)),
 });
 
+/** What an UNSET slot is compared against. A NUL-delimited string is not a legal HTTP header value,
+ *  so no caller can present it — and `configured` below makes it unmatchable even if one could. */
+const UNSET_SLOT = '\u0000unset\u0000';
+
 /**
- * Is the presented secret one of the live values? Constant-time, over BOTH, fail-closed.
+ * Is the presented secret one of the live values? Constant-time, over BOTH SLOTS, fail-closed.
  *
  * The `|| accepted` ordering is the point: `accepted || constantTimeEqual(…)` would short-circuit
  * once the first value matched and leak, by timing, WHICH of the two matched — i.e. whether the
  * caller is on the old secret or the new one, during exactly the window when that is interesting.
- * Every candidate is compared, every time.
+ * Every slot is compared, every time.
+ *
+ * TWO SLOTS ALWAYS, configured or not, which is why there is no `.filter()` here: a candidate list
+ * built by dropping the unset slot is one comparison in steady state and two mid-rotation, so the
+ * response time answers "is a rotation in progress" to anyone who cares to ask. An unset slot is
+ * compared against `UNSET_SLOT` instead, and `&& configured` — evaluated AFTER the compare has
+ * already run, so it costs no time — keeps it from ever counting as a match.
  *
  * Neither value set ⇒ false. A deployment that sells nothing refuses everything rather than
  * accepting anything.
  */
 export function billingSecretAccepted(presented: string | undefined, env: Env): boolean {
   if (!presented) return false;
-  const live = [env.BILLING_SHARED_SECRET, env.BILLING_SHARED_SECRET_PREVIOUS].filter(
-    (s): s is string => typeof s === 'string' && s.length > 0,
-  );
-  if (live.length === 0) return false;
   let accepted = false;
-  for (const candidate of live) accepted = constantTimeEqual(presented, candidate) || accepted;
+  for (const slot of [env.BILLING_SHARED_SECRET, env.BILLING_SHARED_SECRET_PREVIOUS]) {
+    const configured = typeof slot === 'string' && slot.length > 0;
+    const candidate = configured ? slot : UNSET_SLOT;
+    accepted = (constantTimeEqual(presented, candidate) && configured) || accepted;
+  }
   return accepted;
 }
 
 export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/events', async (c) => {
+  /**
+   * NO TENANT RESOLVED, and it is reachable: `billing` is in `RESERVED_SLUGS`, so `tenantMiddleware`
+   * calls `next()` for `/api/billing/...` without setting one — the same hole `adminAuth` guards
+   * against (`lib/middleware.ts`), and for the same reason: the alternative is a TypeError on
+   * `tenant.Slug` below, which surfaces as a 500 and tells a prober that the word is special.
+   *
+   * BEFORE the secret comparison, deliberately. A reserved path is refused as a PATH, not as a
+   * credential: it is answered identically to an unknown slug whatever secret was presented, and it
+   * fires no `billing_secret_rejected` — that event carries a slug, and here there is no tenant to
+   * put in it. A line naming the wrong thing is worse than no line.
+   */
   const tenant = c.get('tenant');
-  const presented = c.req.header(SECRET_HEADER);
+  if (!tenant) return c.json(UNKNOWN_TENANT, 404);
 
+  const presented = c.req.header(SECRET_HEADER);
   if (!billingSecretAccepted(presented, c.env)) {
     /**
      * REFUSED AS AN UNKNOWN TENANT, byte for byte — status, body and all (`tenantMiddleware`'s
@@ -128,10 +150,11 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
       400,
     );
   }
-  const eventAt = normalizePremiumUntil(new Date(body.eventCreated * 1000).toISOString());
-  if (eventAt === null) {
-    return c.json({ error: 'eventCreated must be a Unix timestamp in seconds.' }, 400);
-  }
+  // TOTAL, so there is no null branch to write: the schema above has already bounded
+  // `eventCreated` to an integer in [0, 4_102_444_800], so the `Date` is valid, `toISOString()`
+  // cannot throw and `Date.parse` of what it returns cannot be NaN. An unreachable 400 is a branch
+  // no test can cover and no reader can check.
+  const eventAt = normalizePremiumUntil(new Date(body.eventCreated * 1000).toISOString())!;
 
   /**
    * Read the row FRESH rather than using the cached one `tenantMiddleware` resolved. The two

@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { getTenantById } from '../db/repo';
 import { normalizeBilledUntil } from '../lib/premium';
 import { mintOwnerToken } from '../lib/token';
 import { resolveTenant } from '../lib/tenant-resolve';
+import { billingSecretAccepted } from '../routes/billing';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 
 /**
@@ -154,14 +155,105 @@ describe('a bad secret is indistinguishable from an unknown tenant', () => {
     // loaded CI box would prove nothing, and the property is a property of the code.
     const SOURCE = readFileSync(join(import.meta.dirname, '..', 'routes', 'billing.ts'), 'utf8');
     expect(SOURCE).toContain("import { constantTimeEqual } from '../lib/timing'");
-    expect(SOURCE).toContain('accepted = constantTimeEqual(presented, candidate) || accepted;');
+    expect(SOURCE).toContain(
+      'accepted = (constantTimeEqual(presented, candidate) && configured) || accepted;',
+    );
     expect(SOURCE).not.toMatch(/presented ===/);
+  });
+
+  it('compares a FIXED pair of slots, so the time does not reveal a rotation in progress', () => {
+    // A candidate list built by filtering out the unset slot is one comparison when one secret is
+    // configured and two when two are — i.e. the response time says whether a rotation is under
+    // way, which is exactly the window in which that is worth knowing. Both slots are always
+    // compared; an unset one is compared against a sentinel that no caller can present and that
+    // `configured` makes unmatchable anyway.
+    const SOURCE = readFileSync(join(import.meta.dirname, '..', 'routes', 'billing.ts'), 'utf8');
+    // Executable text only — the docblock beside the loop legitimately names the `.filter()` this
+    // forbids, the way `premium-entitlement.test.ts` strips comments before its own scan.
+    const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(CODE).toContain(
+      'for (const slot of [env.BILLING_SHARED_SECRET, env.BILLING_SHARED_SECRET_PREVIOUS])',
+    );
+    expect(CODE).not.toContain('.filter(');
+    expect(CODE).not.toContain('live.length === 0');
+  });
+
+  it('never matches an unset slot, whatever is presented against it', () => {
+    // The sentinel is a NUL-delimited string, which is not a legal HTTP header value — but the
+    // function is exported, so the property is asserted directly rather than through a request.
+    const SENTINEL = '\u0000unset\u0000';
+    expect(billingSecretAccepted(SENTINEL, {} as Env)).toBe(false);
+    expect(billingSecretAccepted(SENTINEL, { BILLING_SHARED_SECRET: SECRET } as Env)).toBe(false);
+    expect(billingSecretAccepted(SECRET, { BILLING_SHARED_SECRET: SECRET } as Env)).toBe(true);
+    expect(
+      billingSecretAccepted(PREVIOUS, {
+        BILLING_SHARED_SECRET: SECRET,
+        BILLING_SHARED_SECRET_PREVIOUS: PREVIOUS,
+      } as Env),
+    ).toBe(true);
+    expect(billingSecretAccepted(undefined, { BILLING_SHARED_SECRET: SECRET } as Env)).toBe(false);
+    expect(billingSecretAccepted('', { BILLING_SHARED_SECRET: '' } as Env)).toBe(false);
+  });
+
+  it('refuses when the binding is ABSENT, not merely empty', async () => {
+    // `''` and a genuinely missing binding are different values and were not the same test. A
+    // deployment that sells nothing has no key at all.
+    const { env } = createTestEnv();
+    expect('BILLING_SHARED_SECRET' in env).toBe(false);
+    const absent = await post(env, 'sunny-paws', event());
+    expect(absent.status).toBe(404);
+    expect(await absent.text()).toBe('{"error":"Unknown tenant"}');
+    // And the explicitly-undefined shape a spread of a missing key produces.
+    const undef = await post(
+      { ...env, BILLING_SHARED_SECRET: undefined } as Env,
+      'sunny-paws',
+      event(),
+    );
+    expect(undef.status).toBe(404);
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.Plan).toBeNull();
   });
 
   it('imports no payment-processor SDK: it takes a date, not a processor object', () => {
     const SOURCE = readFileSync(join(import.meta.dirname, '..', 'routes', 'billing.ts'), 'utf8');
     expect(SOURCE).not.toMatch(/^import .*['"]stripe/im);
     expect(SOURCE).not.toMatch(/constructEvent|verifyHeader|webhooks\./);
+  });
+});
+
+describe('its own reserved slug is not a tenant', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * `billing` is in `RESERVED_SLUGS`, so `tenantMiddleware` calls `next()` for
+   * `/api/billing/...` WITHOUT resolving a tenant — the same hole `adminAuth` guards against at
+   * lib/middleware.ts. Dereferencing the unset tenant is a TypeError, which surfaces as a 500 and
+   * tells a prober that the word is special. The guard is the same shape and the same answer.
+   */
+  it('answers the unknown-tenant refusal, good secret or bad, and never 500s', async () => {
+    const { env } = createTestEnv();
+    for (const [label, slug, headers] of [
+      ['valid secret', 'billing', { 'X-Billing-Secret': SECRET }],
+      ['bad secret', 'billing', { 'X-Billing-Secret': 'not-the-secret' }],
+      ['no secret', 'billing', {}],
+      ['another reserved word', 'owner', { 'X-Billing-Secret': SECRET }],
+    ] as const) {
+      const res = await post(withSecrets(env), slug, event(), headers);
+      expect(res.status, label).toBe(404);
+      expect(await res.text(), label).toBe('{"error":"Unknown tenant"}');
+    }
+  });
+
+  it('fires no security event for it: there is no tenant to attribute one to', async () => {
+    // The guard sits BEFORE the secret comparison, so a reserved path is refused as a path and not
+    // as a credential — `securityEvent`'s detail has no slug to carry, and a line naming the
+    // wrong thing is worse than no line.
+    const { env } = createTestEnv();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await post(withSecrets(env), 'billing', event(), { 'X-Billing-Secret': 'not-the-secret' });
+    await post(withSecrets(env), 'billing', event());
+    expect(warn.mock.calls.map((call) => JSON.stringify(call)).join('\n')).not.toContain(
+      'billing_secret_rejected',
+    );
   });
 });
 
