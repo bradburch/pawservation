@@ -49,7 +49,7 @@ export const BRAND_ORIGIN = 'https://pawservation.com';
  * conflated here — the thanks page's fallback was a login identity being used as a public contact
  * — and they answer different questions: who may sign in, versus where the public writes.
  */
-export const SUPPORT_EMAIL = 'hello@pawservation.com';
+export const SUPPORT_EMAIL = 'brad@pawservation.com';
 
 /**
  * The brand lockup — the calendar mark plus the Boogaloo wordmark, i.e. exactly what the site's
