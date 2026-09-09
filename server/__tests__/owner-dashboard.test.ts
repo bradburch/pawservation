@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listSitterRoster, type SitterRosterRow } from '../db/repo';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TEST_SECRET } from './helpers';
+import { liveSource } from './helpers/live-source';
 import type { DatabaseSync } from 'node:sqlite';
 import app from '../index';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
@@ -216,6 +219,35 @@ describe('owner sitter routes', () => {
     expect(b?.premiumUntil).toBeNull();
   });
 
+  it('publishes the SERVER’s premiumActive, so the console never re-derives the rule', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    // One sitter comped by the owner, one paying for Pro, one paying for Solo. Only the first two
+    // are premium, and the console cannot tell that from `premiumUntil` alone any more.
+    raw.exec("UPDATE Tenants SET PremiumUntil = '2099-01-01 00:00:00' WHERE Id = 't_a';");
+    raw.exec(
+      "UPDATE Tenants SET Plan = 'pro', BilledUntil = '2099-01-01 00:00:00' WHERE Id = 't_b';",
+    );
+
+    const res = await app.request(
+      '/api/owner/sitters?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    const body = (await res.json()) as {
+      sitters: { tenantId: string; premiumActive: boolean; premiumUntil: string | null }[];
+    };
+    const a = body.sitters.find((s) => s.tenantId === 't_a');
+    const b = body.sitters.find((s) => s.tenantId === 't_b');
+    expect(a?.premiumActive).toBe(true);
+    expect(b?.premiumActive).toBe(true);
+    // The date the owner is EDITING still rides along, and is still hers alone: a Pro subscriber
+    // has no comp.
+    expect(a?.premiumUntil).toBe('2099-01-01 00:00:00');
+    expect(b?.premiumUntil).toBeNull();
+  });
+
   it('window=30d narrows bookings/earned vs all, while clients stay all-time', async () => {
     const { env, raw } = createTestEnv();
     seedWindowed(raw);
@@ -326,5 +358,32 @@ describe('owner sitter routes', () => {
       );
       expect((await app.request(path, {}, env)).status).toBe(401);
     }
+  });
+});
+
+describe('the owner console does not re-derive entitlement in the browser', () => {
+  const RAW = readFileSync(
+    join(import.meta.dirname, '..', '..', 'app', 'admin', 'OwnerConsole.tsx'),
+    'utf8',
+  );
+  /** Comments stripped: the chip's own docblock names the derivation it replaced, and a probe that
+   *  deleted the code and left that docblock behind survived this test once already. */
+  const SOURCE = liveSource(RAW, { keepLiterals: true });
+
+  it('renders the Premium chip from the server flag, not from a date comparison', () => {
+    expect(SOURCE).toContain('s.premiumActive');
+    // The old derivation, in the shape it had: a string compare against a hand-built `now`.
+    expect(SOURCE).not.toContain("new Date().toISOString().slice(0, 19).replace('T', ' ')");
+  });
+
+  it('titles the chip from a fact, never from an inferred reason', () => {
+    // `s.premiumUntil ? 'Comped until …' : 'On a paid plan'` tests the PRESENCE of a date, not
+    // which clause of `isPremiumActive` fired. A sitter whose comp lapsed years ago and who now
+    // pays reads "Comped until <a date in the past>", and the console's one job is to be right
+    // about who is on what. Both replacements state the column's own value and infer nothing.
+    expect(SOURCE).not.toContain('Comped until');
+    expect(SOURCE).not.toContain('On a paid plan');
+    expect(SOURCE).toContain('Owner comp set to');
+    expect(SOURCE).toContain('No owner comp set');
   });
 });

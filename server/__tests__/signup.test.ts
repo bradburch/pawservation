@@ -280,6 +280,17 @@ describe('POST /api/signup/complete — sitter', () => {
     expect(((await res.json()) as { slug: string }).slug).toBe('admin-2');
   });
 
+  it('skips reserved slugs ("Billing" → billing-2)', async () => {
+    const { env } = createTestEnv();
+    const t = await getSetupToken(env, ALLOWED_EMAIL);
+    const res = await complete(env, {
+      token: t,
+      password: 'RiverStone2026',
+      businessName: 'Billing',
+    });
+    expect(((await res.json()) as { slug: string }).slug).toBe('billing-2');
+  });
+
   it('rejects a short password (400) BEFORE consuming the link', async () => {
     const { env } = createTestEnv();
     const t = await getSetupToken(env, ALLOWED_EMAIL);

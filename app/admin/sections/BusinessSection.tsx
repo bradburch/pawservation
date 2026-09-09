@@ -2,6 +2,7 @@ import { DEFAULT_TIMEZONE } from '../../../src/shared/index.js';
 import { IconStore } from '../../shared-ui/icons';
 import type { Session, SettingsSectionProps } from '../shared.js';
 import { ExportPanel } from '../ExportPanel';
+import { PlanPanel } from '../PlanPanel';
 import { TokensPanel } from '../TokensPanel';
 import { Hint } from '../Hint';
 import { TIMEZONES } from '../timezones.js';
@@ -288,6 +289,11 @@ export function BusinessSection({
       {/* Past the export panel for the same reason the export panel is past the save bar: it
           saves nothing of its own, so it belongs after the settings form rather than inside it. */}
       <TokensPanel session={session} handleError={handleError} />
+      {/* Last, and past the save bar with the other two, for the same reason they are: it saves
+          nothing of its own. It renders nothing at all on a deployment that sells no plans, which is
+          absence rather than an error — see the panel's own docblock for why its gate is
+          `premium.origin` and not `premium.assistant`. */}
+      <PlanPanel session={session} handleError={handleError} />
     </>
   );
 }

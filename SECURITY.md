@@ -68,6 +68,36 @@ decision. Presenting an unknown, revoked, or another tenant's one is logged as
 `personal_access_token_rejected` or `tenant_access_token_rejected` — the credential kind, never
 the credential.
 
+A third credential is neither a session nor a token: `BILLING_SHARED_SECRET` guards
+`POST /api/:slug/admin/billing/events`, the endpoint by which a subscription's outcome is recorded
+against one tenant. What it grants is precisely that — setting one named tenant's `Plan` and
+`BilledUntil`, i.e. free access to the paid tier for that tenant, bounded by a ceiling of 400 days
+so a leak cannot buy a decade. What it does not grant: it is not a session, it reads no booking, no
+client and no pet, it mints no credential, and it cannot touch `PremiumUntil` (the platform owner's
+manual grant) or `DisabledAt`. It is compared in constant time against TWO live values at once —
+`BILLING_SHARED_SECRET` and `BILLING_SHARED_SECRET_PREVIOUS` — so a rotation is an ordered pair of
+deploys: accept both, switch the caller, delete the old one. A wrong, missing or expired secret is
+answered exactly as an unknown tenant is, `404 {"error":"Unknown tenant"}` — byte for byte for
+every slug **except one**: a tenant that exists and has been DISABLED gets the middleware's
+`403 {"error":"account_disabled"}` instead, because `tenantMiddleware` refuses every mutation for a
+disabled tenant before any handler runs. That 403 is not this endpoint's: it is the answer every
+route in `/api/:slug/*` has always given, and an unauthenticated caller can already read it off any
+of them, so the billing route is no more of an oracle than the rest of the surface. It is stated
+here rather than glossed because "byte for byte" without the exception is simply untrue. The
+`billing_secret_rejected` security event is the only place a bad secret and an unknown slug are
+distinguishable, and it carries the slug and the request context and never any part of either
+secret value. Repeated refusals from one caller are rate-limited, and the line is written once per
+window rather than once per attempt, so guessing the secret cannot also be a way to generate log.
+
+The sitter's dashboard starts a checkout by `fetch`ing the billing worker with her admin Bearer,
+and that call **does not leave the origin**: the dashboard is served from `pawservation.com` and
+the billing worker answers `pawservation.com/premium/*` — a more-specific zone route on the same
+host — so the request is same-origin, forces no preflight, and needs no CORS policy on either
+side. An anchor could not carry the header at all (the admin session is a JWT in `localStorage`),
+which is why it is a `fetch`. The one deployment where this is not true is a `*.workers.dev`
+staging host, where `PREMIUM_ORIGIN` genuinely names a different origin; the control is
+correspondingly not expected to work there, and `PLAN_SUBSCRIBE` is unset on such a stack.
+
 A tripped cap is reported once per window rather than once per refused request: the limiter exists
 to make abusive traffic cheap, and a line per refusal hands an unauthenticated caller a dial on how
 much log to generate. `email not configured` is the one line worth alerting on outright — it means

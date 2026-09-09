@@ -41,8 +41,14 @@ const TENANT_CACHE_TTL_SECONDS = 60;
  * sitter who has just chosen 45, for the remainder of the TTL, with the panel showing three
  * settled walks and a $360 remainder instead of a settled month. Silent and one-directional again:
  * the stale reading can only under-place money, never over-place it.
+ *
+ * v6: `Plan` and `BilledUntil` (migration 0017). Entitlement is now a comp OR a paid Pro plan, and
+ * `isPremiumActive` reads anything that is not a string as "not that", fail-closed and therefore
+ * silent — so a v5 entry, which has neither field, would report a sitter who has just PAID as free
+ * for the remainder of its TTL. Exactly the v3 failure again, one-directional and in the direction
+ * nobody notices, except that this time the sitter typed a card number a minute earlier.
  */
-const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v5`;
+const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v6`;
 
 export async function resolveTenant(slug: string, env: Env): Promise<Tenant | null> {
   const key = tenantCacheKey(slug);

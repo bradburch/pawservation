@@ -41,6 +41,19 @@ export type TenantConfig = {
   // Published verbatim from `/config` (server/routes/public.ts) — presence/absence only. This
   // repo interprets none of it beyond reading these fields; see ServicesSection's premium embed.
   premium?: { assistant?: boolean; chat?: boolean; mcp?: boolean; origin?: string | null };
+  /** The published plan figures — dollars per month/year and the trial length — plus `subscribe`,
+   *  which is not a figure: it is the DEPLOYMENT's switch for whether plans are being sold at all
+   *  (`PLAN_SUBSCRIBE`, unset = off), and the plan panel renders on it. Everything here is a
+   *  property of the product or the deployment, never of this tenant: `/config` publishes no plan
+   *  state at all. Optional for the same reason `premium` is: a dashboard bundle can outlive the
+   *  worker that served it. */
+  pricing?: {
+    soloMonthly: number;
+    proMonthly: number;
+    proAnnual: number;
+    trialDays: number;
+    subscribe?: boolean;
+  };
 };
 
 export type Pet = {
@@ -699,6 +712,10 @@ export type SitterRow = {
   earnedCents: number;
   disabled: boolean;
   premiumUntil: string | null;
+  /** The SERVER's own `isPremiumActive` answer. Since 0017 entitlement is a comp OR a paid Pro
+   *  plan, so `premiumUntil` alone no longer decides it — and this repo does not re-derive the
+   *  rule in the browser. */
+  premiumActive: boolean;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;

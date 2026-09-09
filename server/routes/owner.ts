@@ -13,7 +13,7 @@ import {
   setTenantPremiumUntil,
 } from '../db/repo';
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
-import { normalizePremiumUntil } from '../lib/premium';
+import { isPremiumActive, normalizePremiumUntil } from '../lib/premium';
 import { serializeAnalytics } from '../lib/analytics';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
@@ -162,6 +162,11 @@ export const ownerRoutes = new Hono<AppEnv>()
       // rationale as the detail route below: the owner is setting the date, so the date is what
       // they need to see.
       premiumUntil: r.PremiumUntil,
+      // …and the DERIVED answer beside it, because since 0017 the date is only half the rule. The
+      // console used to re-derive `PremiumUntil > now` in the browser, which would have reported
+      // every paying Pro sitter as free the moment this column existed. One rule, one place
+      // (`isPremiumActive`, server/lib/premium.ts).
+      premiumActive: isPremiumActive(r),
       clients: r.Clients,
       bookings: r.Bookings,
       // `Earned` is the raw column sum, in CENTS (0015), and the wire says so (design spec §2).
@@ -197,6 +202,7 @@ export const ownerRoutes = new Hono<AppEnv>()
       ...serializeAnalytics(data),
       disabled: tenant.DisabledAt != null,
       premiumUntil: tenant.PremiumUntil,
+      premiumActive: isPremiumActive(tenant),
     });
   })
 
@@ -255,6 +261,11 @@ export const ownerRoutes = new Hono<AppEnv>()
     return c.json({
       disabled: after?.DisabledAt != null,
       premiumUntil: after?.PremiumUntil ?? null,
+      // The same derived answer the roster and the detail read publish, from the same one
+      // expression — the row is already loaded, so the alternative is the console re-deriving it in
+      // the browser from the date beside it, which is exactly what AD-13 removed and what reports a
+      // Pro subscriber as free.
+      premiumActive: after != null && isPremiumActive(after),
     });
   })
 
