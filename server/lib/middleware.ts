@@ -21,8 +21,14 @@ import type { AppEnv } from '../types';
  * login), /api/signup/* (invite signup), /api/owner/* (owner console), /api/password-reset/*
  * (password recovery). Tenants can never claim these as slugs — enforced again at signup-time
  * slug generation (routes/signup.ts).
+ *
+ * `billing` is the fifth and is the odd one out: it shadows nothing TODAY, because the billing
+ * endpoint is `/api/:slug/admin/billing/events`, where `billing` is a later segment and a tenant
+ * whose slug were `billing` would simply own `/api/billing/admin/billing/events`. It is reserved
+ * anyway, and cheaply: what it actually buys is that moving that route to `/api/billing/*` can never
+ * collide with a sitter who already holds the word.
  */
-export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner', 'password-reset']);
+export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner', 'password-reset', 'billing']);
 
 /** Resolves the :slug param to a tenant (404 on unknown) and stores it on the context. */
 export const tenantMiddleware = createMiddleware<AppEnv>(async (c, next) => {
