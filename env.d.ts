@@ -63,6 +63,23 @@ interface Env {
    * that is not an absolute origin is refused exactly as unset is.
    */
   PREMIUM_ORIGIN?: string;
+  /**
+   * IS SELLING SWITCHED ON? A plain deployment var, published on `GET /api/:slug/config` as
+   * `pricing.subscribe`, and the only thing that puts a Subscribe control in a sitter's dashboard
+   * (`app/admin/PlanPanel.tsx`). Exactly `'true'` (trimmed, case-insensitive) is on; UNSET — the
+   * state every fork, every staging stack and this repo's own `wrangler.jsonc` are in — is OFF, and
+   * so is any other value.
+   *
+   * SEPARATE FROM `PREMIUM_ORIGIN` on purpose, and the pair is not redundant. The origin says a
+   * checkout worker exists to be reached and where; this says its checkout route is live. The
+   * origin is already set in production, so a panel gated on it alone would have shown every sitter
+   * a Subscribe button that 404s from the day the plan panel merged until Story 10.2 shipped.
+   * The operator sets this once that route answers.
+   *
+   * Not a secret, and it grants nothing: it decides whether a control is rendered, never whether a
+   * plan is honoured — that is `isPremiumActive` reading columns only the billing endpoint writes.
+   */
+  PLAN_SUBSCRIBE?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /**

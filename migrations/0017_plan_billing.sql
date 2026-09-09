@@ -12,6 +12,18 @@
 -- applied and un-applied states are indistinguishable and a second run is destructive. This one is
 -- purely additive — a second run dies loudly on `duplicate column name`, and
 -- `PRAGMA table_info(Tenants)` answers "has it been applied?" outright.
+-- BEFORE APPLYING, CHECK FOR A RESERVED-SLUG COLLISION. This branch adds 'billing' to
+-- RESERVED_SLUGS (server/lib/middleware.ts), and tenantMiddleware calls next() for a reserved slug
+-- WITHOUT resolving a tenant. A sitter provisioned before this branch could already hold the word,
+-- and from the deploy onwards her whole /api/billing/* surface would resolve nothing — a 404 on
+-- every request, silently. Signup has always refused the other four, so only 'billing' is new.
+--   npx wrangler d1 execute pawservation-db --remote --command \
+--     "SELECT Id, Slug FROM Tenants WHERE Slug IN ('admin','signup','owner','password-reset','billing')"
+-- Expect zero rows. IF A ROW COMES BACK, do not fix it here: renaming a sitter's slug breaks every
+-- embed on her own website and every link she has sent a customer, so it is a conversation with
+-- that sitter and a coordinated change to her embed, not a migration. Deal with it before this
+-- branch deploys; the reservation is what stops a NEW one from ever being created.
+-- This migration therefore changes no data — it is the five ALTER TABLEs and nothing else.
 -- This file must never wrap its statements in an explicit SQL transaction (see migrations/README.md
 -- and 0011's history) — D1's remote executor rejects that outright.
 ALTER TABLE Tenants ADD COLUMN Plan TEXT CHECK (Plan IS NULL OR Plan IN ('solo', 'pro'));

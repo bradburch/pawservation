@@ -5982,8 +5982,12 @@ export async function setTenantPremiumUntil(
  * THE TWO GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same two decisions in
  * order to report WHICH rule fired, but two redeliveries arriving at once would interleave a
  * read-then-write; here they cannot.
- *   - `LastBillingEventAt < ?` — an event created at or before the last one applied does nothing.
- *     This is the whole of NFR-13: the identical request twice is a no-op the second time.
+ *   - `LastBillingEventAt <= ?` — an event created STRICTLY BEFORE the last one applied does
+ *     nothing. Equality applies, deliberately: a processor emits several events for one action
+ *     inside a single second, and a rule that refused the ties threw away the ones carrying a
+ *     different payload. NFR-13 is bought by the SET semantics above instead — every column is
+ *     assigned, none is extended, so the identical request twice leaves a byte-identical row while
+ *     a genuinely different same-second event still lands.
  *   - the subscription clause — an event for a subscription that is not this tenant's current one
  *     does nothing, UNLESS `replacesSubscription` (a completed checkout), which is how a
  *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
@@ -6023,7 +6027,7 @@ export async function applyBillingEvent(
               StripeSubscriptionId = ?,
               LastBillingEventAt = ?
         WHERE Id = ?
-          AND (LastBillingEventAt IS NULL OR LastBillingEventAt < ?)
+          AND (LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
           AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)`,
     )
     .bind(

@@ -351,6 +351,13 @@ NOT EXISTS`). No `Tenants` column, so the KV tenant-config cache key needs **no*
   `BEGIN`/`COMMIT`/`SAVEPOINT` (D1 rejects them — see 0011).
   **NOT YET APPLIED to the remote DB** — hand-apply before this branch merges:
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0017_plan_billing.sql`.
+  **MIGRATE FIRST, THEN DEPLOY — the ordering is not a preference here.** `TENANT_COLS`
+  (`server/db/repo.ts`) selects all five of these columns, and every tenant resolution runs that
+  `SELECT`, so a worker deployed against an un-migrated database answers `no such column` on every
+  request — the sitter dashboard, the public config read and the booking widget together. The
+  reverse order costs nothing: the columns sit unread until the worker that reads them ships.
+  The file also opens with a **reserved-slug check to run before applying** (`billing` joins
+  `RESERVED_SLUGS` on this branch); it changes no data either way.
 
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,

@@ -500,10 +500,18 @@ export function OwnerConsole({
                                 {s.premiumActive && (
                                   <span
                                     className="pb-chip"
+                                    // THE TOOLTIP STATES A FACT, NOT A REASON. It used to read
+                                    // `premiumUntil ? 'Comped until …' : 'On a paid plan'`, which
+                                    // tests the PRESENCE of a comp date rather than which clause of
+                                    // `isPremiumActive` actually fired — so a sitter whose comp
+                                    // lapsed in 2024 and who now pays for Pro read "Comped until
+                                    // 2024-…". Which clause fired is the server's to say; until it
+                                    // says so, this reports the column the owner is editing and
+                                    // claims nothing about why the chip is lit.
                                     title={
                                       s.premiumUntil
-                                        ? `Comped until ${s.premiumUntil}`
-                                        : 'On a paid plan'
+                                        ? `Owner comp set to ${s.premiumUntil}`
+                                        : 'No owner comp set'
                                     }
                                   >
                                     Premium

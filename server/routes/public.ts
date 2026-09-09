@@ -1,11 +1,20 @@
 import { Hono } from 'hono';
 import { listPetTypes, listServiceOptions, listServices } from '../db/repo';
-import { isPremiumActive, premiumOrigin } from '../lib/premium';
+import { isPremiumActive, planSubscribeEnabled, premiumOrigin } from '../lib/premium';
 import { PRICING } from '../lib/plan-pricing';
+import { UNKNOWN_TENANT } from '../lib/middleware';
 import type { AppEnv } from '../types';
 
 export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) => {
+  /**
+   * NO TENANT RESOLVED, and it is reachable. `tenantMiddleware` calls `next()` for any word in
+   * `RESERVED_SLUGS` without setting one, so `/api/billing/config` — and `/api/owner/config`, and
+   * the other three — arrive here with nothing on the context. Dereferencing it is a TypeError,
+   * which surfaces as a 500 and tells a prober that the word is special. Answered as the unknown
+   * tenant it is, the same guard `adminAuth` and `routes/billing.ts` already carry.
+   */
   const tenant = c.get('tenant');
+  if (!tenant) return c.json(UNKNOWN_TENANT, 404);
   const [services, options, petTypes] = await Promise.all([
     listServices(c.env.PAWSERVATION_DB, tenant.Id),
     listServiceOptions(c.env.PAWSERVATION_DB, tenant.Id),
@@ -49,6 +58,12 @@ export const publicRoutes = new Hono<AppEnv>().get('/:slug/config', async (c) =>
       proMonthly: PRICING.proMonthly,
       proAnnual: PRICING.proAnnual,
       trialDays: PRICING.trialDays,
+      // NOT A FIGURE, and the one field here that is about this DEPLOYMENT rather than the product:
+      // is selling switched on (`PLAN_SUBSCRIBE`, unset = off). It rides on `pricing` because its
+      // only consumer is the one that reads the figures — the dashboard's plan panel, which renders
+      // a Subscribe control only when a checkout route is live to receive the press. It says
+      // nothing about this tenant, so it is as publishable as the figures beside it.
+      subscribe: planSubscribeEnabled(c.env),
     },
     displayName: tenant.DisplayName,
     accentColor: tenant.AccentColor,

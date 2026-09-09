@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { getTenantBySlug, listServices, setServiceConfig, updateTenantSettings } from '../db/repo';
 import { createTestEnv, TENANT_A } from './helpers';
+import { liveSource } from './helpers/live-source';
 import app from '../index';
 import { PRICING } from '../lib/plan-pricing';
 
@@ -140,7 +143,73 @@ describe('GET /:slug/config and the plan', () => {
       proMonthly: PRICING.proMonthly,
       proAnnual: PRICING.proAnnual,
       trialDays: PRICING.trialDays,
+      subscribe: false,
     });
+  });
+
+  it('reads each figure from PRICING at the call site, not as a typed number', () => {
+    // Comparing the RESPONSE to `PRICING` stays green when the route types `29` beside the import:
+    // the response and the constant would both say 29 and the "one place they live" claim in the
+    // title above would be untested. So the source is pinned too, over executable text only.
+    const SOURCE = liveSource(
+      readFileSync(join(import.meta.dirname, '..', 'routes', 'public.ts'), 'utf8'),
+    );
+    for (const field of ['soloMonthly', 'proMonthly', 'proAnnual', 'trialDays']) {
+      expect(SOURCE, field).toContain(`PRICING.${field}`);
+    }
+  });
+
+  it('publishes subscribe=false when PLAN_SUBSCRIBE is unset, which is every fork', async () => {
+    // Unset is OFF, and it is off for a reason: `PREMIUM_ORIGIN` is already set in production, so
+    // the panel gating on the origin alone would ship a live Subscribe button against a checkout
+    // route that does not exist yet.
+    const { env } = createTestEnv();
+    expect('PLAN_SUBSCRIBE' in env).toBe(false);
+    const body = (await (await app.request('/api/sunny-paws/config', {}, env)).json()) as {
+      pricing: { subscribe: boolean };
+    };
+    expect(body.pricing.subscribe).toBe(false);
+  });
+
+  it('publishes subscribe=true only for the exact opt-in value', async () => {
+    const { env } = createTestEnv();
+    const ask = async (over: Partial<Env>) =>
+      (
+        (await (
+          await app.request('/api/sunny-paws/config', {}, { ...env, ...over } as Env)
+        ).json()) as { pricing: { subscribe: boolean } }
+      ).pricing.subscribe;
+    expect(await ask({ PLAN_SUBSCRIBE: 'true' })).toBe(true);
+    expect(await ask({ PLAN_SUBSCRIBE: ' TRUE ' })).toBe(true);
+    // Everything else is off, fail-closed: a var set to the empty string, to `false`, or to
+    // somebody's idea of truthy sells nothing.
+    for (const value of ['', 'false', '1', 'yes', 'off']) {
+      expect(await ask({ PLAN_SUBSCRIBE: value }), value).toBe(false);
+    }
+  });
+
+  it('publishes the flag as a property of the DEPLOYMENT, for every tenant alike', async () => {
+    // Not derived from the tenant at all: a sitter who is disabled, comped or already paying gets
+    // the same answer, because the question is "does this deployment sell plans".
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET DisabledAt = '2026-07-23 00:00:00' WHERE Id = '${TENANT_A}'`);
+    const body = (await (
+      await app.request('/api/sunny-paws/config', {}, { ...env, PLAN_SUBSCRIBE: 'true' } as Env)
+    ).json()) as { disabled: boolean; pricing: { subscribe: boolean } };
+    expect(body.disabled).toBe(true);
+    expect(body.pricing.subscribe).toBe(true);
+  });
+
+  it('answers a reserved word as an unknown tenant rather than 500ing', async () => {
+    // `tenantMiddleware` calls `next()` for a reserved slug WITHOUT setting a tenant, so this
+    // handler's very first line dereferences `undefined` — a 500, which tells a prober the word is
+    // special. `adminAuth` and `routes/billing.ts` both already guard for exactly this.
+    const { env } = createTestEnv();
+    for (const slug of ['billing', 'owner', 'signup', 'admin', 'password-reset']) {
+      const res = await app.request(`/api/${slug}/config`, {}, env);
+      expect(res.status, slug).toBe(404);
+      expect(await res.text(), slug).toBe('{"error":"Unknown tenant"}');
+    }
   });
 
   it('publishes NO plan state — not the tier, not the renewal date, not the processor ids', async () => {

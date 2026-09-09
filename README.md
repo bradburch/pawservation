@@ -249,6 +249,8 @@ npx wrangler secret put BILLING_SHARED_SECRET      # guards POST /api/:slug/admi
 # the caller to the new one, then `npx wrangler secret delete BILLING_SHARED_SECRET_PREVIOUS`.
 # PREMIUM_ORIGIN is set in wrangler.jsonc as a plain var (not a secret); edit the value there if needed.
 # It is published on /config as premium.origin for clients that cannot resolve relative paths (*.workers.dev embeds).
+# PLAN_SUBSCRIBE is a plain var too, and is deliberately NOT set: unset means the dashboard offers no
+# Subscribe control. See "Plans and billing" below for when to add it.
 # Optional — Google Calendar sync:
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
@@ -280,6 +282,15 @@ exception — their seeded end user has no real inbox, so they always get the on
 regardless of email configuration (see `DEMO_TENANT_SLUGS` in `server/routes/auth.ts`).
 Merges to `main` auto-deploy via CI.
 
+**Apply a pending migration BEFORE the deploy that needs it, never after.** The worker resolves a
+tenant on essentially every request, and that `SELECT` names its columns explicitly
+(`TENANT_COLS`, `server/db/repo.ts`) — so a worker shipped against a database that has not had its
+migration applied answers `no such column` on the sitter dashboard, the public config read and the
+booking widget alike, which is a total outage rather than a missing feature. Applying first costs
+nothing: an added column sits unread until the worker that reads it ships. `0017_plan_billing.sql`
+is the pending one on this branch, and `migrations/README.md` carries the command and a
+reserved-slug check to run before it.
+
 ### Staging/preview URLs
 
 `wrangler.jsonc` sets `"preview_urls": true`, so every `npx wrangler versions upload` prints a
@@ -309,9 +320,27 @@ what guards the route instead of a session or an access token. `/config` publish
 to state them, but never a tenant's own plan state — that stays behind an authenticated read.
 
 The admin dashboard's Business section shows a Subscribe control (`app/admin/PlanPanel.tsx`) gated
-on the deployment publishing `premium.origin` on `/config` — i.e. whether a checkout exists to
-start at all — not on the tenant's own entitlement, which is false for exactly the sitter the
-control is for.
+on **two properties of the deployment**, and never on the tenant's own entitlement — which is false
+for exactly the sitter the control is for:
+
+- **`premium.origin`** — a checkout worker exists to be reached, and where.
+- **`pricing.subscribe`** — selling is switched on. This is the `PLAN_SUBSCRIBE` var
+  (`wrangler.jsonc`), where **unset means off** and exactly the string `"true"` means on.
+
+**Leave `PLAN_SUBSCRIBE` unset until the billing worker's checkout route is live**, then set it and
+deploy. `PREMIUM_ORIGIN` is already set in production, so a panel gated on the origin alone would
+put a Subscribe button in front of every sitter that 404s on every press. The flag is the
+operator's switch for "we are selling now", and it grants nothing: it decides whether a control
+renders, never whether a plan is honoured.
+
+A disabled sitter is never shown the panel at all — her account cannot take a booking, so asking
+her for a card would be worse than showing nothing.
+
+`BILLING_SHARED_SECRET` is **one value held identically on two workers**: this one, which checks
+it, and the billing worker, which presents it on every event. Rotating it is therefore an ordered
+pair of deploys, which is what `BILLING_SHARED_SECRET_PREVIOUS` exists for — set the outgoing value
+there, switch the caller to the new one, then delete it. Neither value ever appears in a log line.
+Applying `0017` before deploying this worker is not optional; see "Deploying" above.
 
 ## Provisioning the first sitter
 

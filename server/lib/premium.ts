@@ -28,6 +28,18 @@ function toStoredInstant(ms: number): string {
   return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/**
+ * EXACTLY the stored shape, and the reason the check is spelled out rather than assumed.
+ * `toISOString()` widens the year for a date outside ±271821 years — `new Date('+275760-09-13')`
+ * renders `'+275760-09-13T00:00:00.000Z'`, whose first 19 characters are `'+275760-09-13 00:00'`.
+ * That is not a truncated date, it is a DIFFERENT SHAPE, and every comparison in this module is a
+ * plain string compare: it sorts below the 400-day ceiling on its leading '+' and so is stored, and
+ * then sorts below `now` for the same reason and reads as lapsed. Fail-closed, but the one column
+ * whose homogeneity the docblock above calls load-bearing would be holding a value that is not an
+ * instant at all. Anything that does not render as `YYYY-MM-DD HH:MM:SS` is refused instead.
+ */
+const STORED_INSTANT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
 /** `now` in the stored shape, so it can be compared against a stored value directly. */
 export function premiumNow(now: Date = new Date()): string {
   return toStoredInstant(now.getTime());
@@ -50,7 +62,9 @@ export function premiumNow(now: Date = new Date()): string {
  */
 export function normalizePremiumUntil(raw: string): string | null {
   const ms = Date.parse(raw);
-  return Number.isNaN(ms) ? null : toStoredInstant(ms);
+  if (Number.isNaN(ms)) return null;
+  const stored = toStoredInstant(ms);
+  return STORED_INSTANT.test(stored) ? stored : null;
 }
 
 /**
@@ -160,6 +174,23 @@ export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): 
  * routing decision.
  */
 const ABSOLUTE_ORIGIN = /^https?:\/\/[^/?#\s]+$/;
+
+/**
+ * Is this deployment SELLING plans right now (`PLAN_SUBSCRIBE`)? Published on `/config` as
+ * `pricing.subscribe`, and the flag the dashboard's plan panel renders on alongside the origin.
+ *
+ * A property of the DEPLOYMENT, exactly like `premiumOrigin` beside it, and answered here for the
+ * same reason: an operator's switch is not a fact about any tenant, and no route should be spelling
+ * out what counts as "on".
+ *
+ * EXACTLY `'true'`, trimmed and case-folded. Unset is off, and so is every other value — `'1'`,
+ * `'yes'`, `''`. A var whose truthiness is the JavaScript kind turns a typo into a live Subscribe
+ * button, and this flag exists precisely because a button that renders before its checkout route
+ * does is the failure being avoided.
+ */
+export function planSubscribeEnabled(env: Env): boolean {
+  return env.PLAN_SUBSCRIBE?.trim().toLowerCase() === 'true';
+}
 
 export function premiumOrigin(env: Env): string | null {
   const configured = env.PREMIUM_ORIGIN?.trim().replace(/\/$/, '');

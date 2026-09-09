@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listSitterRoster, type SitterRosterRow } from '../db/repo';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TEST_SECRET } from './helpers';
+import { liveSource } from './helpers/live-source';
 import type { DatabaseSync } from 'node:sqlite';
 import app from '../index';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
@@ -361,14 +362,28 @@ describe('owner sitter routes', () => {
 });
 
 describe('the owner console does not re-derive entitlement in the browser', () => {
-  const SOURCE = readFileSync(
+  const RAW = readFileSync(
     join(import.meta.dirname, '..', '..', 'app', 'admin', 'OwnerConsole.tsx'),
     'utf8',
   );
+  /** Comments stripped: the chip's own docblock names the derivation it replaced, and a probe that
+   *  deleted the code and left that docblock behind survived this test once already. */
+  const SOURCE = liveSource(RAW, { keepLiterals: true });
 
   it('renders the Premium chip from the server flag, not from a date comparison', () => {
     expect(SOURCE).toContain('s.premiumActive');
     // The old derivation, in the shape it had: a string compare against a hand-built `now`.
     expect(SOURCE).not.toContain("new Date().toISOString().slice(0, 19).replace('T', ' ')");
+  });
+
+  it('titles the chip from a fact, never from an inferred reason', () => {
+    // `s.premiumUntil ? 'Comped until …' : 'On a paid plan'` tests the PRESENCE of a date, not
+    // which clause of `isPremiumActive` fired. A sitter whose comp lapsed years ago and who now
+    // pays reads "Comped until <a date in the past>", and the console's one job is to be right
+    // about who is on what. Both replacements state the column's own value and infer nothing.
+    expect(SOURCE).not.toContain('Comped until');
+    expect(SOURCE).not.toContain('On a paid plan');
+    expect(SOURCE).toContain('Owner comp set to');
+    expect(SOURCE).toContain('No owner comp set');
   });
 });

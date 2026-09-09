@@ -7,6 +7,7 @@ import { mintAdminToken, mintOwnerToken } from '../lib/token';
 import { isPremiumActive, isSoloActive, type EntitlementFacts } from '../lib/premium';
 import { resolveTenant } from '../lib/tenant-resolve';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
+import { liveSource } from './helpers/live-source';
 
 /**
  * `Tenants.PremiumUntil` (0010) — the OWNER'S MANUAL GRANT, which since 0017 is one of the two
@@ -408,11 +409,6 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   const ROOT = join(import.meta.dirname, '..', '..');
   const EXEMPT = join(ROOT, 'server', 'lib', 'premium.ts');
 
-  /** Block comments, JSX braces-and-slash-star comments included, and line comments. A `://` in
-   *  a URL is not the start of one. */
-  const stripComments = (src: string): string =>
-    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-
   /**
    * `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain — and `BilledUntil` the
    * same, because since 0017 the rule is TWO dated columns and a second copy of half of it is no
@@ -421,6 +417,35 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
    * to answer on the spot.
    */
   const COMPARISON = /((?:premium|billed)until\s*[<>]|[<>]=?\s*[\w.?!]*(?:premium|billed)until)/i;
+
+  /** The column named anywhere on the line, however far from the operator. */
+  const NAMED = /(?:premium|billed)until/i;
+  /** A comparison, spelled with the spaces a formatter puts around one. Spaced deliberately: a
+   *  `<` in `Record<string, …>` or in a JSX tag is not a comparison and reporting it would make
+   *  this scan the thing everyone deletes. */
+  const OPERATOR = /\s[<>]=?\s/;
+
+  /**
+   * `=>` IS NOT A COMPARISON. Neutralised before the scan, because an arrow function whose body is
+   * a call to `normalizeBilledUntil` on the next line otherwise reads as `> … BilledUntil` to the
+   * adjacency regex above — and a scanner that cries wolf at the module it is protecting is a
+   * scanner that gets deleted.
+   */
+  const scannable = (src: string): string => liveSource(src).replace(/=>/g, '  ');
+
+  /**
+   * AN ALIASED LOCAL IS THE SAME COPY. `const until = t.BilledUntil; until > stamp` re-derives the
+   * rule exactly, and the adjacency regex sees neither half: the column is never beside an
+   * operator. So the column name counts anywhere on a line that also compares — which catches the
+   * alias as it is actually written, on the line where it is used. Split across two lines it still
+   * escapes; that is a real limit of a regex scan, recorded here rather than papered over, and the
+   * control below pins the form that IS caught.
+   */
+  const offends = (src: string): boolean => {
+    const code = scannable(src);
+    if (COMPARISON.test(code)) return true;
+    return code.split('\n').some((line) => NAMED.test(line) && OPERATOR.test(line));
+  };
 
   const sourcesUnder = (dir: string): string[] =>
     readdirSync(dir).flatMap((entry) => {
@@ -432,7 +457,7 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   it('finds the comparison in no other module, test files included', () => {
     const offenders = ['server', 'app']
       .flatMap((top) => sourcesUnder(join(ROOT, top)))
-      .filter((path) => COMPARISON.test(stripComments(readFileSync(path, 'utf8'))))
+      .filter((path) => offends(readFileSync(path, 'utf8')))
       .map((path) => path.slice(ROOT.length + 1));
     expect(offenders).toEqual([]);
   });
@@ -444,11 +469,21 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   const BILLED = 'BilledUntil';
 
   it('would catch one — the scanner is not vacuously green', () => {
-    expect(COMPARISON.test(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
-    expect(COMPARISON.test(`now < tenant.${COLUMN}`)).toBe(true);
-    expect(COMPARISON.test(`row.${BILLED} > premiumNow()`)).toBe(true);
-    expect(COMPARISON.test(`stamp <= t?.${BILLED}`)).toBe(true);
-    expect(COMPARISON.test(stripComments(`// ${COLUMN} > now, merely described`))).toBe(false);
-    expect(COMPARISON.test(stripComments(`/* ${BILLED} > now, merely described */`))).toBe(false);
+    expect(offends(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
+    expect(offends(`now < tenant.${COLUMN}`)).toBe(true);
+    expect(offends(`row.${BILLED} > premiumNow()`)).toBe(true);
+    expect(offends(`stamp <= t?.${BILLED}`)).toBe(true);
+    // The aliased local, in the shape a probe actually wrote it.
+    expect(offends(`const until = t.${BILLED}; until > stamp;`)).toBe(true);
+    expect(offends(`const u = row.${COLUMN}; if (u > premiumNow()) mount();`)).toBe(true);
+    // And the things that are not a second copy of the rule.
+    expect(offends(`// ${COLUMN} > now, merely described`)).toBe(false);
+    expect(offends(`/* ${BILLED} > now, merely described */`)).toBe(false);
+    expect(offends(`const sql = 'UPDATE Tenants SET ${COLUMN} = ?';`)).toBe(false);
+    expect(offends(`const rows = raw.prepare('SELECT ${COLUMN} FROM Tenants').all();`)).toBe(false);
+    expect(offends(`const by = (r: R): Record<string, string> => ({ x: r.${COLUMN} });`)).toBe(
+      false,
+    );
+    expect(offends(`const d = (n: number) => normalize${BILLED}(iso, NOW);`)).toBe(false);
   });
 });
