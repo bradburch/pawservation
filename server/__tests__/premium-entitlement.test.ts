@@ -72,18 +72,20 @@ describe('Tenants.PremiumUntil — the column', () => {
 });
 
 describe('the tenant KV cache key is versioned for exactly this', () => {
-  it('caches under v5, so no entry from an earlier worker is ever read back', async () => {
+  it('caches under v6, so no entry from an earlier worker is ever read back', async () => {
     const { env } = createTestEnv();
 
     // Each older key is what some PREVIOUS worker left behind: the same row, minus the column its
     // migration added. Read either one and the field it lacks comes back `undefined` — a paying
     // sitter demoted to free (v2/0010), a sitter who chose per-night billed at a third of her
-    // rate (v3/0013), or a monthly invoicer whose payments reach back 14 days instead of the 45 she
-    // chose (v4/0014) — for a whole TTL, with the type insisting none of them can happen.
+    // rate (v3/0013), a monthly invoicer whose payments reach back 14 days instead of the 45 she
+    // chose (v4/0014), or a sitter who paid a minute ago reported free (v5/0017) — for a whole TTL,
+    // with the type insisting none of them can happen.
     for (const key of [
       'tenant:sunny-paws:config:v2',
       'tenant:sunny-paws:config:v3',
       'tenant:sunny-paws:config:v4',
+      'tenant:sunny-paws:config:v5',
     ]) {
       await env.PAWSERVATION_CACHE.put(
         key,
@@ -107,7 +109,7 @@ describe('the tenant KV cache key is versioned for exactly this', () => {
     expect(tenant?.AttributionSpillDays).toBe(14);
 
     // The new entry lands under the new key.
-    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v5')).not.toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v6')).not.toBeNull();
   });
 });
 

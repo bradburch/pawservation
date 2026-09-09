@@ -79,6 +79,13 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     HousesitBoardingOverlapDays: 1,
     DisabledAt: null,
     PremiumUntil: null, // free; availability has never had an opinion about entitlement
+    // 0017: billing state. Availability has no opinion about entitlement or plan either — the row
+    // must be complete.
+    Plan: null,
+    BilledUntil: null,
+    StripeCustomerId: null,
+    StripeSubscriptionId: null,
+    LastBillingEventAt: null,
     // The product default (0013). Availability never reads it — it is the calendar BACKFILL's
     // reading of a description Cost:, not a pricing input — but the row must be complete.
     CalendarCostBasis: 'total',

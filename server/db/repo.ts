@@ -62,7 +62,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CalendarCostBasis, AttributionSpillDays';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';

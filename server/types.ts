@@ -31,11 +31,25 @@ export type Tenant = {
   HousesitBoardingOverlapDays: number | null;
   DisabledAt: string | null; // null = active; timestamp = owner-disabled
   /** Paid-through instant in SQLite's `datetime('now')` shape ('YYYY-MM-DD HH:MM:SS', UTC), set
-   *  and cleared by the platform owner (0010). null = free. NOT a flag: entitlement is the
-   *  comparison `PremiumUntil > now`, made on every read by `isPremiumActive` — so a lapse takes
-   *  effect on its own, with nothing to run and nothing to flip. The free product publishes the
-   *  derived boolean on `/api/:slug/config`; it gates nothing on it. */
+   *  and cleared by the platform owner (0010). null = no comp. NOT a flag, and no longer the whole
+   *  of entitlement: since 0017 a tenant is premium on an owner comp OR on a paid Pro plan, and
+   *  `isPremiumActive` (server/lib/premium.ts) is the one expression that combines them. This
+   *  column keeps its shape and its meaning — the OWNER'S MANUAL GRANT — and billing never writes
+   *  it. */
   PremiumUntil: string | null;
+  /** Which plan this sitter is on (0017), written only by the billing endpoint. null = no plan. */
+  Plan: 'solo' | 'pro' | null;
+  /** What the SUBSCRIPTION has paid through, same stored shape as PremiumUntil and compared the
+   *  same way (0017). null = never subscribed. Solo entitlement is this column alone; premium
+   *  entitlement is this column AND `Plan === 'pro'`, or a live comp. */
+  BilledUntil: string | null;
+  /** The processor's customer id (0017). Recorded on first sight and never overwritten. */
+  StripeCustomerId: string | null;
+  /** The processor's subscription id (0017). Replaced when a new checkout completes. */
+  StripeSubscriptionId: string | null;
+  /** When the most recently applied billing event was created (0017), same stored shape. An event
+   *  created at or before this is ignored, which is what makes a redelivery a no-op. */
+  LastBillingEventAt: string | null;
   /** How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
    *  'total' = the whole charge for the stay; 'per-night' = a nightly rate, multiplied by the
    *  stay's nights. Never reaches a SINGLE-shaped service (a walk), which has no nights to bill.

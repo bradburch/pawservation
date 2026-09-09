@@ -24,11 +24,11 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
   `wrangler d1 execute … --file` instead (see "New schema changes" below).
 - **A migration that adds a `Tenants` column the request path reads must ALSO bump the KV
   tenant-config cache key in the same commit** (`server/lib/tenant-resolve.ts`, currently
-  `tenant:<slug>:config:v5`). That cache stores the whole `Tenants` row as JSON, so for one
+  `tenant:<slug>:config:v6`). That cache stores the whole `Tenants` row as JSON, so for one
   60-second TTL after deploy the new code reads the new field as `undefined` — with no error and no
-  log — and runs every cached tenant at whatever the code's fallback happens to be. 0010, 0013 and
-  0014 are each why the key is at v5 rather than v2; 0007, 0008, 0009, 0011 and 0012 add no
-  `Tenants` column and correctly needed no bump.
+  log — and runs every cached tenant at whatever the code's fallback happens to be.
+  0010, 0013, 0014 and 0017 are each why the key is at v6 rather than v2; 0007, 0008, 0009, 0011,
+  0012 and 0016 add no `Tenants` column and correctly needed no bump.
 - **No migration in this directory may contain a transaction statement** — no `BEGIN`, `COMMIT` or
   `SAVEPOINT`. Cloudflare D1's remote executor rejects explicit SQL transactions outright, and D1
   applies a `--file` execution atomically on its own. See 0011 below, which shipped a wrapper that
@@ -337,6 +337,20 @@ NOT EXISTS`). No `Tenants` column, so the KV tenant-config cache key needs **no*
   numbers are first-come by branch point, not by merge order — a gap is fine, a duplicate is not.
   **NOT YET APPLIED to the remote DB** — it must be hand-applied before this branch merges:
   `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0016_tenant_access_tokens.sql`.
+
+- **`0017_plan_billing.sql`** (`feat/plan-billing`) — adds `Tenants.Plan` (`'solo' | 'pro'`, with a
+  `CHECK` that admits NULL), `Tenants.BilledUntil`, `Tenants.StripeCustomerId`,
+  `Tenants.StripeSubscriptionId` and `Tenants.LastBillingEventAt`: what plan a sitter is on and what
+  her subscription has paid through, recorded by `POST /api/:slug/admin/billing/events`. Additive
+  only (five `ALTER TABLE … ADD COLUMN`), and **no DEFAULT on any of them** — every existing row
+  reads NULL, NULL is false on both clauses of the entitlement expression, so applying this file
+  moves no tenant's entitlement. It DOES add `Tenants` columns the request path reads, so the KV
+  tenant-config cache key moves to **v6** in the same commit. **No `SchemaMeta` marker**, unlike
+  0015: this migration is purely additive, a second run fails loudly on `duplicate column name`, and
+  `PRAGMA table_info(Tenants)` answers "has it run?" without one. It contains no
+  `BEGIN`/`COMMIT`/`SAVEPOINT` (D1 rejects them — see 0011).
+  **NOT YET APPLIED to the remote DB** — hand-apply before this branch merges:
+  `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0017_plan_billing.sql`.
 
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,
