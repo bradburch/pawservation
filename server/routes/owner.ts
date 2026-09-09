@@ -261,6 +261,11 @@ export const ownerRoutes = new Hono<AppEnv>()
     return c.json({
       disabled: after?.DisabledAt != null,
       premiumUntil: after?.PremiumUntil ?? null,
+      // The same derived answer the roster and the detail read publish, from the same one
+      // expression — the row is already loaded, so the alternative is the console re-deriving it in
+      // the browser from the date beside it, which is exactly what AD-13 removed and what reports a
+      // Pro subscriber as free.
+      premiumActive: after != null && isPremiumActive(after),
     });
   })
 

@@ -5967,6 +5967,81 @@ export async function setTenantPremiumUntil(
 }
 
 /**
+ * Billing-scope: record what a subscription paid for (0017). Writes `Plan`, `BilledUntil`, the two
+ * processor ids and `LastBillingEventAt` in ONE statement, because a partially-applied billing write
+ * would advance the stamp past a date that was never stored — and the next event would then be
+ * ignored as stale, leaving the tenant permanently on a figure nobody sent.
+ *
+ * `PremiumUntil` IS NOT IN THIS STATEMENT AND MUST NEVER BE. It is the platform owner's manual
+ * grant, written only by `setTenantPremiumUntil`, and a comp surviving a renewal, a cancellation and
+ * a redelivery is exactly what that separation buys (FR-63, spine AD-13). Neither is `DisabledAt`,
+ * in either direction: a disabled tenant is written like any other, because refusing her is the
+ * route's job (`tenantMiddleware` answers 403 before the handler runs, and `isPremiumActive` is
+ * already false while she is disabled) and because what she paid for is what re-enabling restores.
+ *
+ * THE TWO GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same two decisions in
+ * order to report WHICH rule fired, but two redeliveries arriving at once would interleave a
+ * read-then-write; here they cannot.
+ *   - `LastBillingEventAt < ?` — an event created at or before the last one applied does nothing.
+ *     This is the whole of NFR-13: the identical request twice is a no-op the second time.
+ *   - the subscription clause — an event for a subscription that is not this tenant's current one
+ *     does nothing, UNLESS `replacesSubscription` (a completed checkout), which is how a
+ *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
+ *     live plan.
+ *
+ * The two ids behave differently on purpose, so they are written as two clauses rather than one
+ * clever one: `StripeCustomerId` is `COALESCE`d, recorded on first sight and never overwritten,
+ * because a sitter is one customer forever; `StripeSubscriptionId` is assigned, because she may hold
+ * several over time and only one at a time is current.
+ *
+ * `billedUntil` and `eventAt` must ALREADY be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC) —
+ * `normalizeBilledUntil` / `normalizePremiumUntil` (server/lib/premium.ts) are the only places that
+ * shape is produced, so `BilledUntil > now` stays a comparison of like with like.
+ *
+ * Returns whether a row changed: `false` is "no such tenant, or a guard refused it", which the route
+ * distinguishes for its own answer — a caller whose own read said both rules were satisfied has been
+ * overtaken by a concurrent delivery. Caller must `invalidateTenantCache`.
+ */
+export async function applyBillingEvent(
+  db: D1Database,
+  tenantId: string,
+  event: {
+    plan: 'solo' | 'pro';
+    billedUntil: string;
+    stripeCustomerId: string;
+    stripeSubscriptionId: string;
+    eventAt: string;
+    replacesSubscription: boolean;
+  },
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE Tenants
+          SET Plan = ?,
+              BilledUntil = ?,
+              StripeCustomerId = COALESCE(StripeCustomerId, ?),
+              StripeSubscriptionId = ?,
+              LastBillingEventAt = ?
+        WHERE Id = ?
+          AND (LastBillingEventAt IS NULL OR LastBillingEventAt < ?)
+          AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)`,
+    )
+    .bind(
+      event.plan,
+      event.billedUntil,
+      event.stripeCustomerId,
+      event.stripeSubscriptionId,
+      event.eventAt,
+      tenantId,
+      event.eventAt,
+      event.replacesSubscription ? 1 : 0,
+      event.stripeSubscriptionId,
+    )
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
  * Owner-scope: irreversibly delete a tenant and ALL its data. One child-first batch (D1 enforces
  * FKs with no ON DELETE CASCADE, so leaves must go before parents; the single batch means a
  * failure leaves every table untouched together). Covers all tenant-keyed tables — including

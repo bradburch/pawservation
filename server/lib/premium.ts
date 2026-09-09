@@ -54,6 +54,34 @@ export function normalizePremiumUntil(raw: string): string | null {
 }
 
 /**
+ * The furthest ahead a BILLING event may claim a tenant is paid through (NFR-14) — the containment
+ * on what a leaked shared secret can buy. 400 days is annual (366 in a leap year) plus a few days of
+ * grace plus clock skew, and the longest period this product sells is `PRICING.proAnnual`. Revisit
+ * only if something longer than a year is ever sold.
+ *
+ * A FIXED ceiling rather than one derived from a caller-supplied interval, deliberately: a caller
+ * who can send `interval: 'year'` has already defeated the tighter bound, so the field would buy
+ * nothing in the threat model it exists for, while adding a second thing to get right.
+ */
+export const MAX_BILLED_AHEAD_DAYS = 400;
+
+/**
+ * Normalise a billing event's paid-through date into the stored shape, or `null` if it is not a date
+ * or is further ahead than the ceiling. `null` is a 400 at the route, never a stored value: a
+ * `BilledUntil` in any other shape inverts the comparison that decides entitlement.
+ *
+ * A PAST date is accepted, exactly as `normalizePremiumUntil` accepts one. "Paid through last
+ * March" is a true statement about a lapsed subscription, and a cancellation legitimately writes
+ * one.
+ */
+export function normalizeBilledUntil(raw: string, now: Date = new Date()): string | null {
+  const stored = normalizePremiumUntil(raw);
+  if (stored === null) return null;
+  const ceiling = toStoredInstant(now.getTime() + MAX_BILLED_AHEAD_DAYS * 86_400_000);
+  return stored > ceiling ? null : stored;
+}
+
+/**
  * THE FOUR COLUMNS ENTITLEMENT IS DECIDED FROM, and nothing else. Narrower than `Tenant` on purpose:
  * the owner console's roster row is not a tenant row, and the alternative to this type was a second
  * copy of the rule in `routes/owner.ts` — which is the exact thing spine AD-13 forbids.

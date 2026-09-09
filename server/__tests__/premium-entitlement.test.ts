@@ -180,6 +180,21 @@ describe('the platform owner sets and clears premium', () => {
     const { env } = createTestEnv();
     expect((await patchPremium(env, 'nope', FUTURE, await ownerHeaders())).status).toBe(404);
   });
+
+  it('echoes the DERIVED flag beside the date, so the console never re-derives it', async () => {
+    // The echo is the third place the console learns a sitter's premium state, after the roster and
+    // the detail read, and it is the one that answers a WRITE — so an echo carrying the date alone
+    // sends the browser straight back to the comparison AD-13 removed. This sitter is the case that
+    // comparison gets wrong: her comp is being cleared to null in this very request, and she is
+    // still premium, because she pays for Pro.
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE Tenants SET Plan='pro', BilledUntil='2099-01-01 00:00:00' WHERE Id='${TENANT_A}';`,
+    );
+    const res = await patchPremium(env, TENANT_A, null, await ownerHeaders());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ disabled: false, premiumUntil: null, premiumActive: true });
+  });
 });
 
 describe('a sitter cannot grant herself premium', () => {
@@ -389,7 +404,7 @@ describe('entitlement combines the comp and the plan in one expression', () => {
  * Comments are stripped before scanning, because the prose in `repo.ts`, `public.ts` and this file
  * legitimately QUOTES the comparison while describing where it lives. Only executable text counts.
  */
-describe('nothing outside server/lib/premium.ts compares PremiumUntil itself', () => {
+describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledUntil', () => {
   const ROOT = join(import.meta.dirname, '..', '..');
   const EXEMPT = join(ROOT, 'server', 'lib', 'premium.ts');
 
@@ -398,8 +413,14 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil itself', (
   const stripComments = (src: string): string =>
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-  /** `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain. */
-  const COMPARISON = /(premiumuntil\s*[<>]|[<>]=?\s*[\w.?!]*premiumuntil)/i;
+  /**
+   * `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain — and `BilledUntil` the
+   * same, because since 0017 the rule is TWO dated columns and a second copy of half of it is no
+   * better than a second copy of all of it. `BilledUntil` is the likelier one to be re-derived, too:
+   * it arrives with a subscription, and "is she still paying" is a question a route feels entitled
+   * to answer on the spot.
+   */
+  const COMPARISON = /((?:premium|billed)until\s*[<>]|[<>]=?\s*[\w.?!]*(?:premium|billed)until)/i;
 
   const sourcesUnder = (dir: string): string[] =>
     readdirSync(dir).flatMap((entry) => {
@@ -420,10 +441,14 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil itself', (
   // the scanner does not report its own fixtures — a scan that has to exempt the file it lives in
   // stops covering that file.
   const COLUMN = 'PremiumUntil';
+  const BILLED = 'BilledUntil';
 
   it('would catch one — the scanner is not vacuously green', () => {
     expect(COMPARISON.test(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
     expect(COMPARISON.test(`now < tenant.${COLUMN}`)).toBe(true);
+    expect(COMPARISON.test(`row.${BILLED} > premiumNow()`)).toBe(true);
+    expect(COMPARISON.test(`stamp <= t?.${BILLED}`)).toBe(true);
     expect(COMPARISON.test(stripComments(`// ${COLUMN} > now, merely described`))).toBe(false);
+    expect(COMPARISON.test(stripComments(`/* ${BILLED} > now, merely described */`))).toBe(false);
   });
 });
