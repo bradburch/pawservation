@@ -68,6 +68,19 @@ decision. Presenting an unknown, revoked, or another tenant's one is logged as
 `personal_access_token_rejected` or `tenant_access_token_rejected` — the credential kind, never
 the credential.
 
+A third credential is neither a session nor a token: `BILLING_SHARED_SECRET` guards
+`POST /api/:slug/admin/billing/events`, the endpoint by which a subscription's outcome is recorded
+against one tenant. What it grants is precisely that — setting one named tenant's `Plan` and
+`BilledUntil`, i.e. free access to the paid tier for that tenant, bounded by a ceiling of 400 days
+so a leak cannot buy a decade. What it does not grant: it is not a session, it reads no booking, no
+client and no pet, it mints no credential, and it cannot touch `PremiumUntil` (the platform owner's
+manual grant) or `DisabledAt`. It is compared in constant time against TWO live values at once —
+`BILLING_SHARED_SECRET` and `BILLING_SHARED_SECRET_PREVIOUS` — so a rotation is an ordered pair of
+deploys: accept both, switch the caller, delete the old one. A wrong, missing or expired secret is
+answered exactly as an unknown tenant is, `404 {"error":"Unknown tenant"}`, byte for byte; the
+`billing_secret_rejected` security event is the only place the two cases are distinguishable, and it
+carries the slug and the request context and never any part of either secret value.
+
 A tripped cap is reported once per window rather than once per refused request: the limiter exists
 to make abusive traffic cheap, and a line per refusal hands an unauthenticated caller a dial on how
 much log to generate. `email not configured` is the one line worth alerting on outright — it means

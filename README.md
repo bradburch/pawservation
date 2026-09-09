@@ -244,6 +244,9 @@ npx wrangler secret put OWNER_EMAILS               # comma-separated platform-ow
 npx wrangler secret put RESEND_API_KEY             # from https://resend.com — required for login codes & signup links
 npx wrangler secret put RESEND_FROM_NOREPLY        # e.g. "Pawservation <no_reply@pawservation.com>" — account access (login codes, password resets, signup links)
 npx wrangler secret put RESEND_FROM_BOOKING        # e.g. "Pawservation <booking@pawservation.com>" — booking mail (invites, confirm/decline/cancel)
+npx wrangler secret put BILLING_SHARED_SECRET      # guards POST /api/:slug/admin/billing/events — unset means that endpoint refuses everything
+# BILLING_SHARED_SECRET_PREVIOUS exists only DURING a rotation: set it to the outgoing value, switch
+# the caller to the new one, then `npx wrangler secret delete BILLING_SHARED_SECRET_PREVIOUS`.
 # PREMIUM_ORIGIN is set in wrangler.jsonc as a plain var (not a secret); edit the value there if needed.
 # It is published on /config as premium.origin for clients that cannot resolve relative paths (*.workers.dev embeds).
 # Optional — Google Calendar sync:
@@ -283,6 +286,32 @@ Merges to `main` auto-deploy via CI.
 shareable `https://<version>-pawservation.<subdomain>.workers.dev` URL for that exact worker version —
 useful for reviewing a change before promoting it to the `pawservation.com` route. `workers_dev`
 stays `true` too — it's what makes that staging URL work — don't touch it.
+
+## Plans and billing
+
+Every joined sitter is on Solo or Pro; a plan decides what her account can do, not whether she was
+allowed to join (see "Provisioning the first sitter" below — signup stays invite-only either way).
+`isPremiumActive` (`server/lib/premium.ts`) is the one expression that decides whether a tenant gets
+the paid surface, from two independent flags on `Tenants`:
+
+- **`PremiumUntil`** — the platform owner's manual comp, set and cleared by hand from the owner
+  console. Unrelated to billing, and billing never touches it.
+- **`Plan` + `BilledUntil`** — a paid plan (`'solo' | 'pro'`), written only by the billing endpoint
+  below. `Plan === 'pro'` with `BilledUntil` in the future is the paid route to the same surface the
+  comp grants; `Plan === 'solo'` buys the free product's own paid tier and is never itself premium.
+
+`POST /api/:slug/admin/billing/events` records a subscription's outcome against one tenant — a
+plan, a paid-through date, and the processor's customer/subscription ids, nothing else. It calls no
+payment processor, verifies no signature, and mints no credential; whatever talks to a processor is
+on the other end of the shared secret (`BILLING_SHARED_SECRET`, see "Deploying" above), which is
+what guards the route instead of a session or an access token. `/config` publishes the current
+`pricing` figures (`soloMonthly`, `proMonthly`, `proAnnual`, `trialDays`) for any surface that needs
+to state them, but never a tenant's own plan state — that stays behind an authenticated read.
+
+The admin dashboard's Business section shows a Subscribe control (`app/admin/PlanPanel.tsx`) gated
+on the deployment publishing `premium.origin` on `/config` — i.e. whether a checkout exists to
+start at all — not on the tenant's own entitlement, which is false for exactly the sitter the
+control is for.
 
 ## Provisioning the first sitter
 
