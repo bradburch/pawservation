@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import * as v from 'valibot';
 import { applyBillingEvent, getTenantById } from '../db/repo';
 import { requestContext, securityEvent } from '../lib/log';
+import { UNKNOWN_TENANT } from '../lib/middleware';
 import { normalizeBilledUntil, normalizePremiumUntil } from '../lib/premium';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
 import { constantTimeEqual } from '../lib/timing';
@@ -27,9 +28,6 @@ import type { AppEnv } from '../types';
  *  an access token, and reusing it is how a billing secret ends up presented, by accident, to
  *  `adminAuth`. A bare value with no scheme, because it is not a scheme. */
 const SECRET_HEADER = 'X-Billing-Secret';
-
-/** Byte-for-byte what `tenantMiddleware` answers for a slug it cannot resolve — see `refuse`. */
-const UNKNOWN_TENANT = { error: 'Unknown tenant' } as const;
 
 const BillingEvent = v.object({
   /**
