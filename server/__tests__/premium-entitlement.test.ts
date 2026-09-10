@@ -396,6 +396,28 @@ describe('entitlement combines the comp and the plan in one expression', () => {
 });
 
 /**
+ * AND THE SCAN SEES THE WHOLE FILE, which is a separate claim from "the regex is right" and was
+ * false for the biggest route file in the repo. `liveSource` used to strip comments with two regexes
+ * that knew nothing about string literals, so the quoted route pattern in `adminRoutes`' own
+ * `.use('/:slug/admin/*', adminAuth)` read as the start of a block comment and swallowed everything
+ * up to the next comment terminator anywhere below it — 880 lines, the whole settings handler
+ * included. A scanner reporting no offenders in text it never looked at is worse than no scanner,
+ * because it is also green.
+ */
+describe('the scanner reads the WHOLE of every file it walks', () => {
+  it('sees the settings handler in admin.ts, past the quoted route pattern above it', () => {
+    const code = liveSource(
+      readFileSync(join(import.meta.dirname, '..', 'routes', 'admin.ts'), 'utf8'),
+    );
+    // Every one of these is executable text in the plan block of the settings GET, a hundred lines
+    // below that `.use()`. All four were invisible.
+    for (const name of ['planActive', 'hasBillingAccount', 'billedUntil', 'StripeCustomerId']) {
+      expect(code, name).toContain(name);
+    }
+  });
+});
+
+/**
  * ONE EXPRESSION MEANS ONE EXPRESSION, and this is the assertion that keeps it that way. AD-13's
  * requirement is not "a helper exists" — it is that nowhere else answers the same question. A second
  * copy does not announce itself: it is a `>` in a component that was right the day it was written
@@ -470,6 +492,15 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
 
   it('would catch one — the scanner is not vacuously green', () => {
     expect(offends(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
+    // A QUOTED `/*` IS NOT A COMMENT, and this is the case that proves the scan reaches the file's
+    // second half at all. `.use('/:slug/admin/*', adminAuth)` (server/routes/admin.ts) used to open
+    // a pseudo-comment that ran to the next `*/` anywhere below it — 880 lines, the whole settings
+    // handler included — so a comparison injected after that line survived every test in the suite.
+    expect(
+      offends(`app.use('/:slug/admin/*', adminAuth);\nif (t.${BILLED} > premiumNow()) grant();`),
+    ).toBe(true);
+    // The same bug in its line-comment spelling: a `//` inside a string ends no line.
+    expect(offends(`const p = "a//b"; if (r.${COLUMN} > premiumNow()) grant();`)).toBe(true);
     expect(offends(`now < tenant.${COLUMN}`)).toBe(true);
     expect(offends(`row.${BILLED} > premiumNow()`)).toBe(true);
     expect(offends(`stamp <= t?.${BILLED}`)).toBe(true);
