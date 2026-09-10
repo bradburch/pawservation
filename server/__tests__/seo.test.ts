@@ -374,7 +374,12 @@ describe('SEO surface', () => {
   });
 
   it.each([
-    ['/about', 'Booking software that stays out of the way'],
+    // The owner moved /about to a first-person founder story on 2026-09-09; the landing page's
+    // product voice is unchanged, and this is the one page that speaks as "I".
+    [
+      '/about',
+      'I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.',
+    ],
     ['/contact', 'Talk to a person'],
   ])('serves %s as a real trust-anchor page', async (path, heading) => {
     const { env } = createTestEnv();

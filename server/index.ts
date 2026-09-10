@@ -1223,7 +1223,7 @@ const ABOUT_HTML = `<!doctype html>
     ${pageHead(
       '/about',
       'About | Pawservation',
-      'Who makes Pawservation, why it exists, and the four rules the software will not break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
+      'Pawservation is built by Brad Burch, a dog walker and pet sitter who needed it for his own business, and it keeps four rules that never break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1245,7 +1245,7 @@ const ABOUT_HTML = `<!doctype html>
       <section class="hero">
         <div class="wrap">
           <p class="chip">About</p>
-          <h1>Booking software that stays out of the way.</h1>
+          <h1>I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.</h1>
           <p class="sub">
             Pawservation is booking software for pet sitters and dog walkers. It puts a booking
             page on the website you already have, with your services, your rates and your
@@ -1257,8 +1257,28 @@ const ABOUT_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>Why it exists</h3>
-            <p>Every booking a small pet-care business takes starts the same way: a text message asking whether you&rsquo;re free. Answering it means checking a calendar, remembering your own rules, quoting a price from memory, and doing it again four messages later. That thread is the job before the job, and it happens while you have a dog on a lead. Pawservation answers it from the caps, notice periods and days off you set once, and then gets out of the way. Everything else about how you work stays exactly as it is: the same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
+            <h3>Why I built it</h3>
+            <div class="founder">
+              <img
+                class="founder-photo"
+                src="/img/brad.jpg"
+                width="360"
+                height="480"
+                alt="Brad Burch with a small black dog resting across his shoulders"
+              />
+              <div>
+                <p>I&rsquo;m Brad Burch. I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business, and Pawservation started as the thing I needed for it. I got tired of running my business through a mess of texts, emails and payment records.</p>
+                <p>The questions I kept getting were the same three:</p>
+                <ul class="founder-qs">
+                  <li>&ldquo;Are you available to watch Lucie in 2 weeks?&rdquo;</li>
+                  <li>&ldquo;Which days did I ask you to watch Fido in November?&rdquo;</li>
+                  <li>&ldquo;Did I pay you for last week?&rdquo;</li>
+                </ul>
+                <p>Every one of those answers was already written down somewhere. Finding it meant scrolling back through a thread with a dog on the lead. So I built Pawservation to keep scheduling, bookings and payments in one place. It does not replace your updates or your relationship with your clients. It makes the back office transparent and frees up time for you to spend doing what you love, which is spending time with the pets.</p>
+                <p>Everything else about how you work stays as it is. The same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
+                <p>I&rsquo;m looking for a handful of pet sitters and dog walkers to try it while it&rsquo;s still early and help me work out what to improve. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person, and the person is me.</p>
+              </div>
+            </div>
           </div>
           <div class="feature">
             <h3>Four rules the software will not break</h3>
@@ -1270,10 +1290,6 @@ const ABOUT_HTML = `<!doctype html>
           <div class="feature">
             <h3>Where it is today</h3>
             <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment, and nothing more. New sitters are added by invitation while the product grows. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
-          </div>
-          <div class="feature">
-            <h3>Who makes it</h3>
-            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person.</p>
           </div>
           <div class="feature">
             <h3>Try it yourself</h3>

@@ -492,6 +492,38 @@ export const PAGE_STYLE = /* css */ `
          no .features grid wrapper (that grid goes multi-column at wider viewports, which is
          wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
       .legal .feature + .feature { margin-top: 28px; }
+      /* .feature p zeroes every margin for the three-across cards, which leaves a legal or
+         /about block's stacked paragraphs with no gap at all. Put it back for the single-column
+         prose only, where a .feature really is several paragraphs of one answer. */
+      .legal .feature p + p { margin-top: 12px; }
+
+      /* ── /about founder portrait ────────────────────────────────── */
+      /* The photo carries a claim the words can't (a dog walker wrote this), so it is content
+         with real alt text, and its intrinsic 360x480 is declared on the tag so nothing reflows
+         around it while it loads. It stacks above the copy on a phone and moves beside it at the
+         780px breakpoint the rest of the page turns two-column at. */
+      .founder { display: grid; gap: 20px; align-items: start; }
+      .founder-photo {
+        width: 200px;
+        max-width: 100%;
+        height: auto;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+      }
+      .founder > div > * + * { margin-top: 12px; }
+      /* The three questions are quotes from real clients, so they are set apart as quotes and
+         given no bullet: the point is the wording, not that there happen to be three. */
+      .founder-qs {
+        margin: 0;
+        padding: 0 0 0 14px;
+        list-style: none;
+        border-left: 2px solid var(--line);
+      }
+      .founder-qs li { font-size: 0.9rem; color: var(--ink); }
+      .founder-qs li + li { margin-top: 6px; }
+      @media (min-width: 780px) {
+        .founder { grid-template-columns: 200px 1fr; gap: 30px; }
+      }
 
       /* ── wf-* label/pair layout (pricing note, how-it-works page) ── */
       .wf-h {
