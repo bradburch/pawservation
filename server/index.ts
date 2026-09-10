@@ -1328,20 +1328,20 @@ const ABOUT_HTML = `<!doctype html>
                 alt="Brad Burch with a small black dog resting across his shoulders"
               />
               <div>
-                <p>I&rsquo;m Brad. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business. Pawservation started as the thing I needed for it. I got tired of running my own business through a mess of texts, emails and payment records.</p>
+                <p>Hi, I&rsquo;m Brad. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>. I got tired of running my own business through a mess of texts, emails and payment records. Pawservation is the solution I needed for it.</p>
                 <p>I kept getting questions like:</p>
                 <ul class="founder-qs">
                   <li>&ldquo;Are you available to watch Lucie in 2 weeks?&rdquo;</li>
                   <li>&ldquo;Which days did I ask you to watch Fido in November?&rdquo;</li>
                   <li>&ldquo;Did I pay you for last week?&rdquo;</li>
                 </ul>
-                <p>Every one of those answers was already written down somewhere. Finding it meant scrolling back through a thread with a dog on the lead. So I built Pawservation to keep scheduling, bookings and payments in one place. It does not replace your updates or your relationship with your clients. It makes the back office transparent and frees up time for you to spend doing what you love, which is spending time with the pets.</p>
+                <p>Every one of those answers was already written down somewhere. Finding it meant scrolling back through a text thread, looking at my calendar, and most of the time while I was out walking dogs. So I built Pawservation to help other dog walkers also keep scheduling, bookings and payments in one place. It does not replace your updates or your relationship with your clients. It makes the back office transparent and frees up time for you to spend doing what you love, which is spending time with the pets.</p>
                 <p>Everything else about how you work stays as it is. The same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
               </div>
             </div>
           </div>
           <div class="feature">
-            <p>If you would rather see it than read about it, the <a href="/demo">demo</a> is a made-up sitter&rsquo;s account you can poke at without signing up for anything, and the <a href="/how-it-works">full tour</a> is the long version of what it does.</p>
+            <p>If you would rather see it than read about it, the <a href="/demo">demo</a> is there so you can poke around without signing up for anything, and the <a href="/how-it-works">full tour</a> is the long version of what it does.</p>
           </div>
         </div>
       </section>
