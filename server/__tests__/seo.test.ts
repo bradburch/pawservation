@@ -397,6 +397,28 @@ describe('SEO surface', () => {
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
+  /**
+   * 2026-09-09: the owner narrowed /about to two things, why this exists and who made it, and
+   * took the product off it. "Four rules the software will not break" MOVED to /how-it-works,
+   * where how-it-works.test.ts pins all four; the plans block was deleted outright because the
+   * landing page's #pricing section and the product llms.txt already state those numbers, and a
+   * fourth surface stating them is a fourth chance for two of them to disagree. What is pinned
+   * here is the narrowing: the founder story is the page, and neither the prices nor the rules
+   * may drift back onto it without the surfaces that own them being touched too.
+   */
+  it('keeps /about to the creator, with no plans, prices or product rules on it', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/about', {}, env)).text();
+    // The three things the owner supplied, and the whole of what the page may claim about him.
+    expect(body).toContain('I&rsquo;m Brad Burch.');
+    expect(body).toContain('https://bradpaws.com/');
+    expect(body).toContain('Did I pay you for last week?');
+    expect(body).not.toMatch(/\$\d/);
+    expect(body).not.toContain('per sitter per month');
+    expect(body).not.toContain('free trial');
+    expect(body).not.toContain('Four rules the software will not break');
+  });
+
   it('tells a pet owner on /contact to go to their sitter, not to us', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/contact', {}, env)).text();

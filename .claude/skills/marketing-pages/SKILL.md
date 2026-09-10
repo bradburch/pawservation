@@ -119,11 +119,13 @@ render-free-read reason.
 `server/lib/plan-pricing.ts` holds `soloMonthly` (15), `proMonthly` (29), `proAnnual` (290) and
 `trialDays` (30). Solo is $15 per sitter per month with a 30-day free trial; Pro is $29 per sitter
 per month, or $290 per year. Every figure on the landing page (hero chip, pricing heading, both
-cards), on `/how-it-works`, on `/about`, in the product `llms.txt` Status section and in the
-homepage `SoftwareApplication` offers is interpolated from it. Never hardcode one at a call site:
-five surfaces state these numbers, and any two of them disagreeing is a pricing lie. The sixth
-surface cannot interpolate anything: `public/img/og-card.png` bakes the price into the image, so a
-change to `soloMonthly` means regenerating that card by the recipe in `docs/og-card.md`.
+cards), on `/how-it-works`, in the product `llms.txt` Status section and in the homepage
+`SoftwareApplication` offers is interpolated from it. Never hardcode one at a call site: four
+surfaces state these numbers, and any two of them disagreeing is a pricing lie. `/about` was a
+fifth until 2026-09-09 and is now none of them, deliberately: it is the creator's page and states
+no price at all. The one surface that cannot interpolate anything is `public/img/og-card.png`, which
+bakes the price into the image, so a change to `soloMonthly` means regenerating that card by the
+recipe in `docs/og-card.md`.
 
 The invite form is the only call to action either card carries. There is no billing code in this
 repo, so the copy says a trial exists and says nothing about how it is entered or ended, and it
@@ -131,12 +133,26 @@ claims nothing about whether a card is required.
 
 ## `/about` and `/contact` are the trust-anchor pages
 
-They are what an agent reads to decide a business is real, so **every claim on them is behavior this
-codebase enforces or a status the landing page already states** — nothing about headcount, funding,
-or founding date, since none of it is knowable from this repo and a fabricated detail on the
-legitimacy page is worse than an absent one.
+They are what an agent reads to decide a business is real, so **nothing on them may be invented** —
+no headcount, funding, founding date or address, since none of it is knowable from this repo and a
+fabricated detail on the legitimacy page is worse than an absent one.
 
-That rule governs claims **about the software**. `/about` also carries claims **about its owner** —
+`/about` carries **two things and no third: why this exists, and who made it.** The owner narrowed
+it on 2026-09-09 ("the about is just a 'why this exists' or 'about the creator', not necessarily
+about the website or product itself"), and the narrowing is a doctrine change rather than a trim:
+the page is no longer where the product's behavior or its status is stated, so anything describing
+what the software does, what it costs or what tier it is in belongs on the landing page or the tour
+and is a defect here. The four rules it used to carry ("Nothing books itself", "Your money is
+yours", "Your clients stay your clients", "No price you didn't type") **moved to `/how-it-works`**,
+into the `#limits` honesty section beside the plain limits, and are pinned there by
+`how-it-works.test.ts` — they were stated on `/about` alone and had almost no coverage, which is
+exactly how a page trim carries off four promises with nothing failing. The plans block was deleted
+outright rather than moved: `/#pricing` and the product `llms.txt` already state those numbers, and
+a fourth surface stating them is a fourth chance for two to disagree. What is left is the founder
+story, so the owner-bio rules below are now the whole of what the page may claim.
+
+Those product claims went to the pages that own them; what `/about` keeps is claims
+**about its owner** —
 his prior career as a software engineer, his own pet-sitting business at bradpaws.com, a photo of
 him — and those are a different kind of claim by nature, not an exception carved out of the rule
 above: they are first-hand facts he supplied about himself, not something derived from what this

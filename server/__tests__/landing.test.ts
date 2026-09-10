@@ -126,11 +126,12 @@ describe('GET / — landing page', () => {
     // The client-and-pet line ("You add each client, and their pets") lived in the "What you do"
     // column of "You and your clients". The owner cut that whole two-column grid on 2026-09-09,
     // so the landing page no longer states who adds a client at all and there is nothing here to
-    // pin. The WHO half survives elsewhere and is pinned there — /about's "You add each client
-    // before they can book" and the tour's "Only clients you have added can book"
-    // (how-it-works.test.ts) — but the AND-THEIR-PETS half is now stated on no marketing page at
-    // all. That is a gap in disclosure, not a false claim: no page says a client adds her own
-    // pets either, so there is nothing here for a ban to protect.
+    // pin. The WHO half survives elsewhere and is pinned there — the tour's "Only clients you
+    // have added can book", and since the four rules moved off /about on 2026-09-09, its "You add
+    // each client before they can book" as well, both in how-it-works.test.ts — but the
+    // AND-THEIR-PETS half is now stated on no marketing page at all. That is a gap in disclosure,
+    // not a false claim: no page says a client adds her own pets either, so there is nothing here
+    // for a ban to protect.
     // MAX_IMPORT_ROWS=500 stays in code (server/routes/admin.ts); marketing stops quoting it.
     expect(body).not.toContain('up to 500');
   });

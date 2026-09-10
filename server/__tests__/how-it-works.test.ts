@@ -376,6 +376,42 @@ describe('GET /how-it-works — the tour page', () => {
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
+  /**
+   * The four rules moved here from /about on 2026-09-09, when the owner narrowed that page to why
+   * the product exists and who made it. They were stated on that page ALONE and had almost no test
+   * coverage, which is how a page trim can carry off four promises without a single failure, so
+   * they are pinned here now: the headline of each rule, and for each one the clause that carries
+   * the claim a sitter would hold the product to. VERIFIED against the invariants they describe:
+   * createBooking writes Status = 'pending' and capacity counts pending rows; there is no billing
+   * code in this repo and Payments only ever RECORDS; a client is added by the sitter
+   * (POST /:slug/admin/customers) and nothing in this product lists sitters to a stranger; and
+   * estimateCost refuses an unpriced pet set (code 'unpriced_pet_set') rather than inferring a
+   * rate for it.
+   */
+  it('carries the four rules the software will not break', async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('Four rules the software will not break');
+    expect(body).toContain('Nothing books itself.');
+    expect(body).toContain('waits for you to confirm or decline');
+    expect(body).toContain('Your money is yours.');
+    expect(body).toContain('It never holds your funds or takes a cut, on either plan.');
+    expect(body).toContain('Your clients stay your clients.');
+    expect(body).toContain('This is not a marketplace and not a directory.');
+    expect(body).toContain('You add each client before they can book');
+    expect(body).toContain('No price you didn&rsquo;t type.');
+    expect(body).toContain('The software will not invent a rate.');
+    expect(body).toContain('refuse to quote a combination you never priced');
+    // They sit in the honesty section, which is where a sitter is already being told what this
+    // will and will not do, rather than in a band of their own bolted onto the tour.
+    expect(body.indexOf('Four rules the software will not break')).toBeGreaterThan(
+      body.indexOf('id="limits"'),
+    );
+    // The money rule was shortened where the Services aside above it already says the same thing
+    // (see the test on that aside); what it must never do is state Pro's Stripe arrangement a
+    // second time in different words, which is how two surfaces start disagreeing.
+    expect(body.match(/own Stripe account/g)?.length).toBe(1);
+  });
+
   it('offers the demo without jargon or a signup scare, everywhere it offers it', async () => {
     const body = await howItWorksBody();
     expect(body.match(/nothing to sign up for/g)?.length ?? 0).toBeGreaterThanOrEqual(2);

@@ -1007,6 +1007,33 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p>Under Business in your dashboard, Export your data gives you four downloads: clients, pets, bookings and payments, as ordinary CSVs that open in Excel, Numbers or Google Sheets. Cancelled bookings, declined requests and pets who have died are all there with their status in a column.</p>
             <p>These are your records. Your settings stay here, meaning your services, rates, cancellation policies and questions, and so does your time off, which is in none of the four files. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
           </div>
+          <!-- The four rules moved here from /about on 2026-09-09, when the owner narrowed that
+               page to why it exists and who made it. They are stated on no other page, so this was
+               a move and not a delete, and the honesty section is where a sitter is already being
+               told what the software will and will not do. The money rule is the one sentence-level
+               edit: the Services aside above it already says, in words how-it-works.test.ts pins,
+               that payment stays between her and her client and where a Pro card is processed, so
+               the rule states what that aside does not (no cut, no funds held, on either plan) and
+               stops. -->
+          <div class="wf-math">
+            <h3 class="wf-h">Four rules the software will not break</h3>
+            <div class="wf-pair">
+              <p class="wf-keep">Nothing books itself.</p>
+              <p>Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Your money is yours.</p>
+              <p>Pawservation records what a booking is worth and what you&rsquo;ve been paid. It never holds your funds or takes a cut, on either plan. On Solo it does not process cards at all, and you collect the way you already collect. On Pro, Stripe pays you directly.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Your clients stay your clients.</p>
+              <p>This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">No price you didn&rsquo;t type.</p>
+              <p>The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1209,11 +1236,13 @@ const TERMS_HTML = `<!doctype html>
  * reader is expected to CALL, so it has to keep working on whichever host they arrived at.
  */
 /**
- * /about — one of the two "trust anchor" pages a person (or an agent vetting a tool) looks for
- * before trusting a business. Every claim here is either behaviour this codebase enforces or a
- * status the landing page already states; nothing about headcount, funding, founding date or
- * customer numbers, because none of that is knowable from this repo and a fabricated detail on the
- * page whose whole job is legitimacy is worse than an absent one.
+ * /about — the creator's page, narrowed to that on 2026-09-09 on the owner's instruction: why this
+ * exists and who made it, and nothing about the product, its plans or its behaviour. Those belong
+ * to the landing page and the tour, which are already the only place any of them was stated twice;
+ * the four rules that used to sit here now live in /how-it-works' honesty section. It is still a
+ * trust anchor, so the fabrication rule is unchanged and tighter for being personal: the prior
+ * career, the business name and the three client questions are what the owner supplied, and no
+ * year, client count, headcount, employer or address may be added to them.
  */
 const ABOUT_HTML = `<!doctype html>
 <html lang="en">
@@ -1223,7 +1252,7 @@ const ABOUT_HTML = `<!doctype html>
     ${pageHead(
       '/about',
       'About | Pawservation',
-      'Pawservation is built by Brad Burch, a software engineer turned dog walker and pet sitter who needed it for his own business, and it keeps four rules that never break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
+      'Pawservation is built by Brad Burch, a software engineer turned dog walker and pet sitter who got tired of running his own business out of a text thread.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1247,9 +1276,8 @@ const ABOUT_HTML = `<!doctype html>
           <p class="chip">About</p>
           <h1>I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.</h1>
           <p class="sub">
-            Pawservation is booking software for pet sitters and dog walkers. It puts a booking
-            page on the website you already have, with your services, your rates and your
-            rules, so the question &ldquo;are you free the 12th to the 15th?&rdquo; answers itself.
+            I needed this for my own dog walking and pet sitting business before it was ever a
+            product anyone else could buy. This page is why it exists and who is behind it.
           </p>
         </div>
       </section>
@@ -1281,19 +1309,7 @@ const ABOUT_HTML = `<!doctype html>
             </div>
           </div>
           <div class="feature">
-            <h3>Four rules the software will not break</h3>
-            <p><strong>Nothing books itself.</strong> Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
-            <p><strong>Your money is yours.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. It never holds your funds or takes a cut, on either plan. On Solo it does not process cards at all, and you collect the way you already collect: cash, Venmo, Zelle, a check on the counter. On Pro, Stripe processes the card under your own Stripe account and pays you directly.</p>
-            <p><strong>Your clients stay your clients.</strong> This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
-            <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
-          </div>
-          <div class="feature">
-            <h3>Where it is today</h3>
-            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment, and nothing more. New sitters are added by invitation while the product grows. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
-          </div>
-          <div class="feature">
-            <h3>Try it yourself</h3>
-            <p>The <a href="/demo">demo</a> is a made-up sitter&rsquo;s account with real data behind it: pick a service, pick dates, watch it refuse the days that are full. Nothing to sign up for, no details asked for, nothing you can break. The <a href="/how-it-works">full tour</a> is the long version, and it says plainly what the software does and doesn&rsquo;t do.</p>
+            <p>If you would rather see it than read about it, the <a href="/demo">demo</a> is a made-up sitter&rsquo;s account you can poke at without signing up for anything, and the <a href="/how-it-works">full tour</a> is the long version of what it does.</p>
           </div>
         </div>
       </section>
