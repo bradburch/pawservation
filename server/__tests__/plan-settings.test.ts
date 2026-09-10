@@ -121,6 +121,24 @@ describe('the settings read publishes the sitter’s own plan', () => {
     expect(body.hasBillingAccount).toBe(true);
   });
 
+  it('reports a billing account for a sitter the processor knows but no plan yet', async () => {
+    const { env, raw } = createTestEnv();
+    // A checkout that reached the processor and stopped: she has a customer record and no
+    // subscription. This is the ONE row that tells `hasBillingAccount`'s derivation apart from
+    // the plan's — every other case here seeds `Plan` and `StripeCustomerId` together or neither,
+    // so a `Plan != null` reading would satisfy all of them.
+    raw.prepare('UPDATE Tenants SET StripeCustomerId = ? WHERE Id = ?').run('cus_sunny', TENANT_A);
+
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.plan).toBeNull();
+    expect(body.billedUntil).toBeNull();
+    expect(body.planActive).toBe(false);
+    // TRUE with no plan at all. The Manage-plan control gates on this field ALONE, so a derivation
+    // that read the plan instead would hide the portal from the sitter who most needs to reach it.
+    expect(body.hasBillingAccount).toBe(true);
+    expect(body.stripeCustomerId).toBe('cus_sunny');
+  });
+
   it('follows isSoloActive across the boundary, including the instant itself', async () => {
     const { env: ahead, raw: rawAhead } = createTestEnv();
     seedPlan(rawAhead, TENANT_A, {

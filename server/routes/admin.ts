@@ -907,7 +907,8 @@ export const adminRoutes = new Hono<AppEnv>()
       // HER OWN PLAN (0017), on the read the dashboard already makes. Five fields and no new
       // route: this one is already authenticated, already scoped to the slug in its path, and
       // already fetched once per dashboard load. `tenant` is `resolveTenant`'s row and TENANT_COLS
-      // selects all five 0017 columns, so nothing here reads the database a second time.
+      // already selects the three columns this reads, so nothing here reads the database a second
+      // time.
       plan: tenant.Plan,
       // VERBATIM, in the stored 'YYYY-MM-DD HH:MM:SS' shape (server/lib/premium.ts). The panel
       // renders it through the dashboard's own formatter; this route must not invent a second
