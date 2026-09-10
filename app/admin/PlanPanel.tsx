@@ -28,8 +28,11 @@ import { Hint } from './Hint';
  *
  * It fetches `/config` itself, exactly as SettingsReviewEmbed does: one more read of a cached public
  * endpoint is cheaper than threading new state through App.tsx, and it keeps the panel
- * self-contained. A failed read renders NOTHING — absence, not an error — because a dashboard that
- * shows a broken plan box is worse than one that shows no plan box.
+ * self-contained. A failed read hides THE OFFERS — absence, not an error — because a dashboard
+ * that shows a broken Subscribe button is worse than one that shows none. It does NOT hide the
+ * panel: `config` stays null, so `offersHidden` is true and the status below renders anyway, off
+ * the settings payload, which is the whole of NFR-2. Do not read this paragraph as an argument for
+ * putting the early return back.
  *
  * PLAN STATUS RENDERS ABOVE THAT GATE (NFR-2). What she is on, and what it is paid through, are
  * columns in this product's OWN database, arriving on the settings payload the dashboard has

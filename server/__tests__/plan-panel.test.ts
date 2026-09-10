@@ -145,13 +145,27 @@ describe('where the panel sits', () => {
 
 describe('the plan status line', () => {
   it('reads the three status fields from the settings payload, and no others', () => {
-    expect(PANEL).toContain('settings.plan');
+    // Through the NAME LOOKUP, not a bare `settings.plan`: `toContain('settings.plan')` is
+    // satisfied by `settings.planActive` on the line below it, so the plan-name read could be
+    // deleted outright and this case would stay green on the strength of a different field.
+    expect(PANEL).toContain('PLAN_NAMES[settings.plan]');
     expect(PANEL).toContain('settings.billedUntil');
     expect(PANEL).toContain('settings.planActive');
     // The processor's ids are not status. Neither is needed to say what she is on and until when,
     // and both would be ids handed to a browser for nothing.
     expect(PANEL).not.toContain('stripeSubscriptionId');
     expect(PANEL).not.toContain('settings.stripeCustomerId');
+  });
+
+  it('says all three states in words, not just in fields', () => {
+    // PANEL strips string and template literals, so every pin above is blind to the text a sitter
+    // actually reads — the status could render three empty strings and stay green. PANEL_TEXT is
+    // the tool that sees it (comments are still stripped, so a docblock cannot satisfy this).
+    // `null` is a sitter who never subscribed and must not read as an error or as "free"; and the
+    // live/lapsed pair is the only place `planActive` reaches her, so both words are pinned.
+    for (const word of ['No plan yet', 'paid through', 'lapsed']) {
+      expect(PANEL_TEXT).toContain(word);
+    }
   });
 
   it('renders the stored instant through the dashboard’s own formatter', () => {
