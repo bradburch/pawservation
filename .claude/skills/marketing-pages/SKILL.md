@@ -136,6 +136,27 @@ codebase enforces or a status the landing page already states** — nothing abou
 or founding date, since none of it is knowable from this repo and a fabricated detail on the
 legitimacy page is worse than an absent one.
 
+That rule governs claims **about the software**. `/about` also carries claims **about its owner** —
+his prior career as a software engineer, his own pet-sitting business at bradpaws.com, a photo of
+him — and those are a different kind of claim by nature, not an exception carved out of the rule
+above: they are first-hand facts he supplied about himself, not something derived from what this
+codebase does, so "is this behavior the codebase enforces" is the wrong question to ask of them. They
+are the page's credibility rather than a violation of it — the photo and the link to a real, running
+business are load-bearing *because* a reader can check them, which is exactly what a stock photo and
+an unlinked claim could not offer. That said, the fabrication ban still applies to this material, and
+bites hardest here precisely because it reads as personal and is therefore the easiest place to
+"round up": no invented founding year, client count, headcount, employer or education, no invented
+street address. The test is unchanged from the rule above — whether the owner stated it, not whether
+it sounds plausible — it just now has a second kind of claim to apply to.
+
+The founder story leading `/about` is also why the page's voice splits from the rest of the site:
+`/about` speaks in the first person ("I built this…") while the landing page and `/how-it-works` keep
+the second-person product voice ("your clients", "you confirm it"). That split was a deliberate,
+explicit choice by the owner on 2026-09-09, not an inconsistency to "harmonise" in a later pass —
+leave it. `public/img/brad.jpg` is a content image inside the page body, not a link-preview asset: it
+is unrelated to the two og-cards this skill tabulates below and is not produced by the og-card
+recipe in `docs/og-card.md`.
+
 The published contact address is **`SUPPORT_EMAIL` in `server/lib/email.ts`**, declared beside
 `BRAND_ORIGIN` because it is the same class of thing: a public constant several modules state (the
 `/contact` page, the homepage `Organization` graph, the invite-request thanks page's fallback) and
