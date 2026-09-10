@@ -38,15 +38,32 @@ import { Hint } from './Hint';
  * columns in this product's OWN database, arriving on the settings payload the dashboard has
  * already fetched — so they are still shown when the checkout worker is unreachable, when selling
  * is switched off, and when the plan has lapsed, which is exactly when a sitter goes looking. Only
- * the OFFERS sit behind the gate. NOTHING HERE PROMISES A CANCELLATION CONTROL — FR-62's
- * Manage-plan surface is Story 10.3, and the moment a sitter is asked for a card is the expensive
- * place to promise a thing that is not built.
+ * the OFFERS sit behind the gate.
+ *
+ * MANAGE PLAN SITS BELOW BOTH (Story 10.3, FR-62), on the published origin and a billing account —
+ * never on `planActive`, because a sitter whose card died is precisely who needs the portal, and
+ * never on `pricing.subscribe`, because that switch is about selling and she has already bought.
+ * It and Subscribe are mutually exclusive on the billing account. Cancelling happens on the hosted
+ * page it opens: this panel states no notice period, no refund position and no proration of its
+ * own, and shows no price, card form or invoice of its own (FR-60, FR-64).
  */
 
 /** The one message this panel is willing to put in front of a sitter for a failure it does not
  *  recognise. The browser's own `TypeError: Failed to fetch` is not a plan problem and must not be
  *  rendered as one. */
 const CHECKOUT_FAILED = 'Could not start checkout — try again.';
+
+/** The sibling of CHECKOUT_FAILED, for the other hosted page. Same rule: this is the ONE message
+ *  this panel is willing to show for a failure it does not recognise — the browser's own
+ *  "Failed to fetch" is not a plan problem and must not be rendered as one. */
+const PORTAL_FAILED = 'Could not open plan management — try again.';
+
+/** When this deployment publishes no paid surface at all, there is nothing to press and nothing
+ *  to retry — so the panel says so once, in a sentence that is about the CONTROL and never about
+ *  her account. Everything else on her dashboard, her booking page and her clients are unaffected,
+ *  because every fact on the status line above came from this product's own row. */
+const PORTAL_UNAVAILABLE =
+  'Changing your plan is unavailable right now. Your bookings, clients and pets are unaffected.';
 
 /**
  * Open a hosted checkout at the TOP level, because a checkout page sets its own `frame-ancestors`
@@ -200,6 +217,44 @@ export function PlanPanel({
   };
 
   /**
+   * The hosted billing portal — change a card, switch a plan, cancel. A `fetch` and never an
+   * anchor, for the reason `app/shared-ui/api.ts`'s `exportCsv` docblock already gives: the admin
+   * session is a JWT in localStorage and an anchor carries no Authorization header. Everything
+   * else is `startCheckout`'s machinery deliberately unchanged — the `navigated` latch, the
+   * string-and-https check on the returned URL, the top-level navigation, and an ApiError so a
+   * 401 signs her out instead of reading as "the button is broken".
+   *
+   * No body and no Content-Type: the server resolves which subscription this is from the slug in
+   * the path and the credential in the header, and a request that carried a plan here would be a
+   * client telling the server what it already knows better.
+   */
+  const openPortal = async () => {
+    if (busy || !origin) return;
+    setError('');
+    setBusy('portal');
+    let navigated = false;
+    try {
+      const res = await fetch(`${origin}/premium/billing/${session.slug}/portal`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new ApiError(res.status, body.error ?? PORTAL_FAILED);
+      }
+      const { url } = (await res.json()) as { url?: unknown };
+      if (typeof url !== 'string' || !url.startsWith('https://')) throw new Error(PORTAL_FAILED);
+      navigated = true;
+      openAtTopLevel(url);
+    } catch (e) {
+      if (isAuthExpired(e)) return handleError(e);
+      setError(e instanceof ApiError ? e.message : PORTAL_FAILED);
+    } finally {
+      if (!navigated) setBusy(null);
+    }
+  };
+
+  /**
    * THE OFFERS keep the gate they have always had — a checkout worker exists to be reached, the
    * deployment is selling, the tenant is not switched off, and the figures are published. What
    * has changed is that this no longer hides the PANEL: a sitter whose plan lapsed, whose
@@ -208,6 +263,17 @@ export function PlanPanel({
    * database, answered by the same request that drew the rest of her dashboard (NFR-2).
    */
   const offersHidden = !origin || !sellingIsOn || disabled || !pricing;
+
+  /**
+   * MANAGE PLAN renders on the published origin and a billing account, and on neither of the other
+   * two flags. Not `pricing.subscribe`: that switch is about SELLING, and a sitter who already
+   * pays must be able to change her card and cancel after a deployment stops taking new
+   * subscriptions. Not `premium.assistant`: that is the tenant's entitlement, false for a Solo
+   * subscriber who nonetheless has a plan to manage — the same distinction the Subscribe half
+   * above already draws. And `hasBillingAccount` rather than `planActive`, because a sitter whose
+   * card died is precisely who needs the portal.
+   */
+  const canManage = origin !== null && settings.hasBillingAccount;
 
   return (
     <>
@@ -224,7 +290,11 @@ export function PlanPanel({
         <strong>{planName}</strong>
         {paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
       </p>
-      {!offersHidden && pricing && (
+      {/* SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on the billing account. This is the UI half
+          of the double-subscription question; the other half is a server-side refusal on the
+          checkout route, which is the paid surface's to build — a UI is not a guard, because that
+          route is reachable with curl and an admin token. */}
+      {!offersHidden && !settings.hasBillingAccount && pricing && (
         <>
           <ul>
             {OFFERS.map((offer) => (
@@ -252,6 +322,16 @@ export function PlanPanel({
             are switched on.
           </p>
         </>
+      )}
+      {canManage && (
+        <p>
+          <button type="button" disabled={busy !== null} onClick={() => void openPortal()}>
+            {busy === 'portal' ? 'Opening…' : 'Manage plan'}
+          </button>
+        </p>
+      )}
+      {settings.hasBillingAccount && origin === null && (
+        <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
       )}
       {error && <p className="pb-error">{error}</p>}
     </>

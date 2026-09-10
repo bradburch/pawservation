@@ -51,9 +51,16 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).toContain('config?.disabled === true');
   });
 
-  // Replaced in the next commit; the panel no longer returns null at all, and its replacement pin
-  // lands with the Manage control.
-  it.todo('renders nothing unless all three hold');
+  it('no longer renders nothing — the status line survives every one of those conditions', () => {
+    // This replaces the pin that required `return null` when any of the three failed. NFR-2: a
+    // sitter whose plan lapsed, whose deployment stopped selling, or whose paid surface is
+    // unreachable must still be told what she is on and when it runs out.
+    expect(PANEL).not.toContain('return null');
+  });
+
+  it('keeps the offers behind exactly the conditions they always had', () => {
+    expect(PANEL).toMatch(/!origin\s*\|\|\s*!sellingIsOn\s*\|\|\s*disabled\s*\|\|\s*!pricing/);
+  });
 
   it('starts checkout with a fetch carrying the admin Bearer, never an anchor', () => {
     expect(PANEL_TEXT).toContain('/premium/billing/');
@@ -101,11 +108,16 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).not.toContain('e instanceof Error ? e.message');
   });
 
-  it('promises no cancellation control, because there is not one yet', () => {
-    // FR-62's Manage-plan surface is Story 10.3. Promising it at the moment she is asked for a card
-    // is the one place the promise is expensive.
-    expect(PANEL_TEXT).not.toContain('cancel from here');
-    expect(PANEL_TEXT).not.toMatch(/you can cancel/i);
+  it('sends her somewhere to cancel, and states no terms of its own', () => {
+    // The old pin here said this panel promised NO cancellation control, which was true until
+    // Story 10.3 and is not after it. What must stay true is that it promises it ELSEWHERE: the
+    // control opens a hosted page, and the panel states no notice period, no refund position and
+    // no proration of its own. Those belong on the terms page (FR-60, FR-64).
+    expect(PANEL_TEXT).toContain('/portal');
+    expect(PANEL_TEXT).not.toMatch(/refund/i);
+    expect(PANEL_TEXT).not.toMatch(/pro-?rat/i);
+    expect(PANEL_TEXT).not.toMatch(/notice period/i);
+    expect(PANEL_TEXT).not.toMatch(/end of (?:the |your )?(?:billing )?period/i);
   });
 
   it('states the figures from the published pricing rather than restating them', () => {
@@ -173,5 +185,66 @@ describe('the plan status line', () => {
     // every engine parses the same way unlabelled. Rendering the date is fine; DECIDING from it is
     // what AD-13 forbids, which is why `planActive` arrives already answered.
     expect(PANEL).toContain('formatTimestamp(settings.billedUntil)');
+  });
+});
+
+describe('the Manage plan control', () => {
+  it('renders on a billing account and the published origin, and on neither other flag', () => {
+    // `hasBillingAccount`, NOT `planActive`: a sitter whose card died is precisely who needs the
+    // portal, and gating on "is the plan live" locks the control at the moment it is most needed.
+    expect(PANEL).toContain('settings.hasBillingAccount');
+    expect(PANEL).toMatch(/origin !== null && (?:settings\.)?hasBillingAccount/);
+    // Not `pricing.subscribe`: that switch is about SELLING, and a sitter who already pays must
+    // be able to change her card and cancel after a deployment stops taking new subscriptions.
+    // Not `premium.assistant`: that is the tenant's entitlement, false for a Solo subscriber who
+    // nonetheless has a plan to manage.
+    expect(PANEL).not.toMatch(/canManage[^\n]*sellingIsOn/);
+    expect(PANEL).not.toContain('premium?.assistant');
+    expect(PANEL).not.toContain('premium.assistant');
+    // And that the control is RENDERED on that condition, with the sitter's own word for it. A
+    // mutation that deleted the button and left `canManage` computed-and-unused kept every other
+    // pin here green, and neither typecheck nor lint objected.
+    expect(PANEL).toMatch(/\{canManage && \(/);
+    expect(PANEL_TEXT).toContain('Manage plan');
+  });
+
+  it('opens the portal with a POST carrying the admin Bearer, and no body', () => {
+    expect(PANEL_TEXT).toContain('`${origin}/premium/billing/${session.slug}/portal`');
+    expect(PANEL_TEXT).toContain('Authorization: `Bearer ${session.token}`');
+    // An anchor carries no Authorization header, and there must not be one anywhere in this file.
+    expect(PANEL_TEXT).not.toMatch(/<a\s[^>]*href/);
+  });
+
+  it('reuses the checkout path’s own safety, rather than a second, looser copy of it', () => {
+    // Two navigations built from a response body, and only one of them scheme-checked, is how the
+    // second one navigates a sitter's TOP-LEVEL window to `javascript:`.
+    expect(PANEL_TEXT.match(/url\.startsWith\('https:\/\/'\)/g)).toHaveLength(2);
+    expect(PANEL_TEXT.match(/typeof url !== 'string'/g)).toHaveLength(2);
+    expect(PANEL.match(/let navigated = false/g)).toHaveLength(2);
+    expect(PANEL.match(/if \(!navigated\) setBusy\(null\)/g)).toHaveLength(2);
+    expect(PANEL).toContain('e instanceof ApiError ? e.message : PORTAL_FAILED');
+    expect(PANEL).not.toContain('e instanceof Error ? e.message');
+  });
+
+  it('hides Subscribe once she has a billing account', () => {
+    // The UI half of the double-subscription question. The other half is a server-side refusal on
+    // the checkout route, which is the paid surface's to build: a UI is not a guard, because the
+    // route is reachable with curl and an admin token.
+    expect(PANEL).toMatch(/!offersHidden && !settings\.hasBillingAccount && pricing/);
+  });
+
+  it('says one sentence when the paid surface is not there, and offers no retry', () => {
+    expect(PANEL).toContain('PORTAL_UNAVAILABLE');
+    expect(PANEL_TEXT).toMatch(/unavailable right now/);
+    // And that it is RENDERED, on the narrower condition. A mutation that deleted the markup and
+    // left the constant standing kept both pins above green — a sentence declared and never shown
+    // is the failure this case exists for. The condition is narrower than the spec's literal
+    // `origin === null` on purpose: a sitter who never subscribed is not told that changing a plan
+    // she does not have is unavailable.
+    expect(PANEL).toMatch(/settings\.hasBillingAccount && origin === null/);
+    // No retry, no spinner, no second control: her booking page, her clients and the rest of her
+    // dashboard are unaffected, which is the whole of NFR-2's claim.
+    expect(PANEL_TEXT).not.toMatch(/\bretry\b/i);
+    expect(PANEL).not.toContain('setInterval');
   });
 });
