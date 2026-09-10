@@ -119,11 +119,13 @@ render-free-read reason.
 `server/lib/plan-pricing.ts` holds `soloMonthly` (15), `proMonthly` (29), `proAnnual` (290) and
 `trialDays` (30). Solo is $15 per sitter per month with a 30-day free trial; Pro is $29 per sitter
 per month, or $290 per year. Every figure on the landing page (hero chip, pricing heading, both
-cards), on `/how-it-works`, on `/about`, in the product `llms.txt` Status section and in the
-homepage `SoftwareApplication` offers is interpolated from it. Never hardcode one at a call site:
-five surfaces state these numbers, and any two of them disagreeing is a pricing lie. The sixth
-surface cannot interpolate anything: `public/img/og-card.png` bakes the price into the image, so a
-change to `soloMonthly` means regenerating that card by the recipe in `docs/og-card.md`.
+cards), on `/how-it-works`, in the product `llms.txt` Status section and in the homepage
+`SoftwareApplication` offers is interpolated from it. Never hardcode one at a call site: four
+surfaces state these numbers, and any two of them disagreeing is a pricing lie. `/about` was a
+fifth until 2026-09-09 and is now none of them, deliberately: it is the creator's page and states
+no price at all. The one surface that cannot interpolate anything is `public/img/og-card.png`, which
+bakes the price into the image, so a change to `soloMonthly` means regenerating that card by the
+recipe in `docs/og-card.md`.
 
 The invite form is the only call to action either card carries. There is no billing code in this
 repo, so the copy says a trial exists and says nothing about how it is entered or ended, and it
@@ -131,10 +133,80 @@ claims nothing about whether a card is required.
 
 ## `/about` and `/contact` are the trust-anchor pages
 
-They are what an agent reads to decide a business is real, so **every claim on them is behavior this
-codebase enforces or a status the landing page already states** — nothing about headcount, funding,
-or founding date, since none of it is knowable from this repo and a fabricated detail on the
-legitimacy page is worse than an absent one.
+They are what an agent reads to decide a business is real, so **nothing on them may be invented** —
+no headcount, funding, founding date or address, since none of it is knowable from this repo and a
+fabricated detail on the legitimacy page is worse than an absent one.
+
+`/about` carries **two things and no third: why this exists, and who made it.** The owner narrowed
+it on 2026-09-09 ("the about is just a 'why this exists' or 'about the creator', not necessarily
+about the website or product itself"), and the narrowing is a doctrine change rather than a trim:
+the page is no longer where the product's behavior or its status is stated, so anything describing
+what the software does, what it costs or what tier it is in belongs on the landing page or the tour
+and is a defect here. The four rules it used to carry ("Nothing books itself", "Your money is
+yours", "Your clients stay your clients", "No price you didn't type") **moved to `/how-it-works`**,
+into the `#limits` honesty section beside the plain limits, and are pinned there by
+`how-it-works.test.ts` — they were stated on `/about` alone and had almost no coverage, which is
+exactly how a page trim carries off four promises with nothing failing. The plans block was deleted
+outright rather than moved: `/#pricing` and the product `llms.txt` already state those numbers, and
+a fourth surface stating them is a fourth chance for two to disagree. What is left is the founder
+story, so the owner-bio rules below are now the whole of what the page may claim.
+
+Those product claims went to the pages that own them; what `/about` keeps is claims
+**about its owner** —
+his prior career as a software engineer, his own pet-sitting business at bradpaws.com, a photo of
+him — and those are a different kind of claim by nature, not an exception carved out of the rule
+above: they are first-hand facts he supplied about himself, not something derived from what this
+codebase does, so "is this behavior the codebase enforces" is the wrong question to ask of them. They
+are the page's credibility rather than a violation of it — the photo and the link to a real, running
+business are load-bearing _because_ a reader can check them, which is exactly what a stock photo and
+an unlinked claim could not offer. That said, the fabrication ban still applies to this material, and
+bites hardest here precisely because it reads as personal and is therefore the easiest place to
+"round up": no invented founding year, client count, headcount, employer or education, no invented
+street address. The test is unchanged from the rule above — whether the owner stated it, not whether
+it sounds plausible — it just now has a second kind of claim to apply to.
+
+**The intro introduces a first name; the attribution keeps the surname.** The founder story opens
+"I'm Brad." as of 2026-09-10, on the owner's instruction ("remove my last name from the intro"),
+and the same instruction deliberately left "Brad Burch" standing everywhere it is ATTRIBUTION
+rather than introduction: the photo's alt text, this page's meta description, `pageFooter()`'s
+"Created by", and the homepage JSON-LD's `founder`. The distinction is the point — a person
+introduces himself by first name and is credited by full name — so stripping the surname from those
+four is not finishing the job, it is deleting the attribution. `seo.test.ts` pins the surviving
+intro text and the alt text together for that reason. The same date cut the `.sub`'s second
+sentence ("This page is why it exists and who is behind it"), which told the reader what the page
+was instead of being it.
+
+The page is also not a call to action. Its founder story used to close by asking sitters to try
+the product "while it's still early", and the owner cut that on 2026-09-09 for the same reason he
+narrowed the page: `/about` states why the thing exists, and recruiting is the landing page's
+invite form, already the only call to action this site carries. The demo-and-tour line that now
+ends the page stays, because it is wayfinding for a reader who has finished it. That deletion also
+took the page's only statements that this is a small independent product with no sales team and
+that questions reach a person; `/contact` makes both in its own words ("There is no support desk
+and no sales team", "messages reach the person who builds it"), and `seo.test.ts` asserts the ban
+and the surviving `/contact` copy in the same test, so the pair cannot be lost by a later trim
+there either. The three client questions on the page are TYPES of question and the copy may not
+put a count on them: "I kept getting questions like:", never "the same three", which claimed a
+number the owner never gave.
+
+`/about` is in the landing header's `.nav-links` row as of 2026-09-09 and deliberately not in
+`.nav-right`: that group exists to re-show the links `.nav-links` hides below 780px, and `/about`
+is already in the shared footer's Company block at every width, so a copy in both rows would print
+the link twice on one screen. The other five pages carry no link row at all, only a bare
+`.nav-right` (or, on `/how-it-works`, a row of its own in-page section anchors), so they reach
+`/about` through the footer alone. A fifth link cost the landing row 57px, so three breakpoints in
+`PAGE_STYLE` are cut to measured widths rather than round ones (`.nav-links-5`: the row needs
+773px bare, 880px with "Try the demo", 944px with sign-in as well), and `.nav-inner` stays
+`flex-wrap: wrap` underneath all of it so a miss degrades to two rows rather than a sideways
+scroll.
+
+The founder story leading `/about` is also why the page's voice splits from the rest of the site:
+`/about` speaks in the first person ("I built this…") while the landing page and `/how-it-works` keep
+the second-person product voice ("your clients", "you confirm it"). That split was a deliberate,
+explicit choice by the owner on 2026-09-09, not an inconsistency to "harmonise" in a later pass —
+leave it. `public/img/brad.jpg` is a content image inside the page body, not a link-preview asset: it
+is unrelated to the two og-cards this skill tabulates below and is not produced by the og-card
+recipe in `docs/og-card.md`.
 
 The published contact address is **`SUPPORT_EMAIL` in `server/lib/email.ts`**, declared beside
 `BRAND_ORIGIN` because it is the same class of thing: a public constant several modules state (the
@@ -148,6 +220,52 @@ different questions: who may sign in, versus where the public writes. The thanks
 `pageFooter()` is the shared footer, extracted when `/about` and `/contact` would have made it a
 sixth hand-kept copy — the four that existed had already drifted into two variants differing in one
 link's label and one anchor's href.
+
+## Layout rules a browser enforces and a diff does not
+
+These properties of these pages are invisible in the markup and were each a live defect measured in
+a real browser on 2026-09-09 (the last one on 2026-09-10). All but one are pinned by `seo.test.ts`,
+and most are a single declaration, which is the size of thing a tidy-up deletes.
+
+- **The header is ONE row at every width.** `.nav-inner` is `flex-wrap: wrap` on purpose, as the
+  safety valve that keeps a narrow phone from scrolling the DOCUMENT sideways instead — so a header
+  that no longer fits does not break, it silently doubles in height. Measure it (merge the nav
+  items' vertical spans into bands; do not compare `offsetTop`, since `.nav-right` centres children
+  of different heights and their tops legitimately differ on one row). **`.nav-links-5` is the
+  tuning for a five-link row** — 20px gaps and the plain sign-in link dropped below 890px — and BOTH
+  five-link headers (`/` and `/how-it-works`) carry it; `/how-it-works` wrapped from 780px to 829px
+  until it did. A sixth link in either row needs new measurements, not a sixth `<a>`. The one
+  remaining wrap is the landing's own at 320-350px, which the CSS documents as deliberate.
+- **Heading levels never skip.** `.feature` is a landing-page CARD, where `h3` is right because a
+  `.section-head` `h2` sits above it. The four prose pages carry no `.section-head`, so the same
+  block there must be `h2` or the page reads h1 straight to h3. PAGE_STYLE lists `.feature h2`
+  beside `.feature h3` so the LEVEL is corrected without changing the LOOK.
+- **The focus ring is `--green`, which disappears on the one dark ground.** `.cta-panel
+:focus-visible` overrides the COLOR alone to `#fff` (1.83:1 becomes ~14:1). That band holds the
+  invite form's submit button, so this is the page's primary action.
+- **Prose gets a reading measure.** `.legal p`/`.legal li` are capped at **52ch**, the figure
+  `.section-head p` already uses, roughly 72 characters a line. Uncapped they ran the full 1072px
+  `.wrap` at about 130 characters, under a hero whose own `h1` is 15ch and whose `.sub` is 48ch — a
+  heading in a half column above a body at full width. Body links in that prose share the `.note a`
+  declarations rather than a second set; before that they were browser-default `#0000EE`.
+- **`/about` is the one page with no second column, so it overrides three shared defaults — each
+  through markup only it carries.** Everything in PAGE_STYLE was measured for a page that has a
+  hero-visual, a CTA row or a `.section-head`, and on `/about` those defaults compose into a tall
+  left gutter beside a void: the shared `.hero h1`'s 15ch put a 74-character sentence into FOUR
+  lines of a 540px column with the right half of the wrap empty; `.feature h2` at 0.98rem made the
+  page's ONLY heading read as a bold label under a 3.35rem `h1`; and the founder grid's 200px photo
+  column left a 232px hole under the picture beside prose capped at 52ch. The fixes are
+  `.hero-flush h1` (full measure plus `text-wrap: balance`, placed BELOW `.hero h1` since the two
+  have equal specificity), `.hero-flush + .section .feature h2` (borrowing `.section h2`'s own
+  clamp rather than inventing a fourth scale), and a `.founder` grid from 920px that puts the prose
+  first and the portrait in the width the 52ch measure leaves over, at up to its natural 360px.
+  **The scoping is the load-bearing part**: every selector needs `.hero-flush` or `.founder`, which
+  no other page has, so widening any of them to `.hero h1`, `.feature h2` or `.legal` would
+  silently re-scale the landing cards and the three other prose pages. `seo.test.ts` pins both
+  halves together — the rules exist, AND no other page carries anything they can match.
+- Not a rule, but the same class of thing: `.btn` sets `font-family: inherit; line-height: inherit`
+  because one `.btn` on this site is a `<button>` and the rest are `<a>`s, and a `<button>` inherits
+  neither.
 
 ## The em-dash budget
 

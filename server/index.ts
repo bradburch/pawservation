@@ -354,14 +354,19 @@ const LANDING_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
-        <nav class="nav-links" aria-label="Sections">
+        <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="#how">How it works</a>
           <a href="#dashboard">Dashboard</a>
           <a href="#pricing">Pricing</a>
           <a href="/how-it-works">Full tour</a>
+          <a href="/about">About</a>
         </nav>
         <div class="nav-right">
-          <!-- .nav-links is display:none below 780px, which left the tour reachable only from
+          <!-- About joined the .nav-links row above and is deliberately NOT repeated here: it
+               is in the shared footer's Company block, so it stays reachable below 780px without
+               this row printing it a second time. Adding a fifth link did move one breakpoint;
+               see .nav-links-5 in PAGE_STYLE.
+               .nav-links is display:none below 780px, which left the tour reachable only from
                the footer on a phone. This copy sits OUTSIDE that row and shows only where the
                row is hidden, so the link exists at every width and is never printed twice. The
                two plain links beside it drop out at the same width, which is what keeps the
@@ -388,15 +393,15 @@ const LANDING_HTML = `<!doctype html>
             <p class="sub">
               Pawservation is pet sitting and dog walking software. Your clients ask for the dates
               they want on your own site, with your services and your rates, and you confirm each
-              request from your phone. It also keeps track of what every client owes you.
+              request. It also keeps track of what every client owes you.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
-              The demo is a made-up sitter&rsquo;s account, so there is nothing to sign up for and
-              nothing you can break. Pawservation itself is invite-only while it grows, and you can
+              The demo is there so you can poke around without signing up for anything.
+              Pawservation itself is invite-only while it grows, and you can
               <a href="/admin">sign in</a> if you already have an account.
             </p>
           </div>
@@ -477,61 +482,40 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- The relationship section: the two sides of one booking, side by side. It was the ninth
+      <!-- The relationship section: one booking read from the client's side. It was the ninth
            FAQ answer for two rounds, which is the last place a reader looking for "what is this
-           like for my clients" would find it. Everything the page says about a client changing or
-           cancelling their own booking lives HERE and nowhere else, so the rule is read once,
-           whole, rather than three times in fragments. -->
+           like for my clients" would find it. It ran as a two-column "what they see / what you do"
+           grid until the owner cut it on 2026-09-09 for reading as filler. What is here is that
+           cut copy's own sentences, unchanged, re-laid as the .features cards #dashboard already
+           uses: the section had shrunk to a .section-head alone, which is a centred 60ch intro
+           block, so it read narrow and half-height beside its neighbours. The fix was the layout
+           and NOT the word count, and no claim was added to fill the row. Everything the page says
+           about a client changing or cancelling their own booking still lives HERE and nowhere
+           else, so the rule is read once, whole, rather than three times in fragments. -->
       <section class="section" id="clients" aria-labelledby="clients-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">You and your clients</span>
-            <h2 id="clients-h">Your clients get their answer on the page</h2>
+            <h2 id="clients-h">Your clients see what you see</h2>
             <p>
-              The dates question stops being a text.
-              Those messages were most of what your clients sent you.
-              They were about dates and prices, not about the dog.
-              Pawservation doesn&rsquo;t do visit reports or photos, so that relationship is still yours to maintain.
+              Your clients see which dates you have open and what the stay costs before they ask for it.
             </p>
           </div>
-          <div class="wf-grid">
-            <div>
-              <h3 class="wf-h">What your client sees</h3>
-              <div class="wf-pair">
-                <p class="wf-keep">They get an answer while they are looking.</p>
-                <p>The page shows which dates you can take, worked out from your own limits, so nobody is left waiting on a text back.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">They see the price before they send anything.</p>
-                <p>Your rates are added up on the page for the pets they picked.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">They know it isn&rsquo;t booked yet.</p>
-                <p>Every request is still pending until you say yes, and their own screen says awaiting confirmation until then. The email telling them it&rsquo;s booked goes out when you confirm, not when they press send.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">They change or cancel it themselves.</p>
-                <p>New dates, a different pet or a cancellation happen on the page, and it takes effect the moment they save it.</p>
-              </div>
+          <!-- .features-3 rather than bare .features: three cards in the grid's 640-959px
+               two-column band leave the third alone with an empty cell beside it. See PAGE_STYLE;
+               it reflows one-or-three like the .steps row further up this same page. -->
+          <div class="features features-3">
+            <div class="feature">
+              <h3>Pending until you confirm</h3>
+              <p>Every request waits as pending until you confirm it, and their screen says so.</p>
             </div>
-            <div>
-              <h3 class="wf-h">What you do</h3>
-              <div class="wf-pair">
-                <p class="wf-keep">Only your clients can book.</p>
-                <p>You add each client, and their pets, before they can book, one at a time or from the list you already have.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You confirm it or you decline it.</p>
-                <p>The request carries the dates, the pets, your questions answered and a price, so you can settle it in one tap from your phone. A new request waits in your dashboard, and on your Google Calendar if you&rsquo;ve connected it.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You see a change after it happens.</p>
-                <p>A change takes effect straight away and the booking drops back to pending, so you see what changed and you can decline it, because your approval comes after the change, not before it.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You never work out a cancellation fee yourself.</p>
-                <p>A cancellation emails you with the fee your own policy sets. A change doesn&rsquo;t email you and waits in your dashboard with the new requests.</p>
-              </div>
+            <div class="feature">
+              <h3>Changes and cancellations</h3>
+              <p>When they need to change dates or cancel they do it on the page, and your own cancellation policy sets the fee, so nobody has to raise it in a text.</p>
+            </div>
+            <div class="feature">
+              <h3>Updates stay yours</h3>
+              <p>What they send you now is about the dog. Pawservation doesn&rsquo;t do visit reports or photos, so that part of the relationship stays yours.</p>
             </div>
           </div>
           <div class="cta-row mid-cta">
@@ -621,57 +605,7 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <section class="section" id="workflow" aria-labelledby="workflow-h">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="label">Alongside your workflow</span>
-            <h2 id="workflow-h">It goes in front of what you already do</h2>
-            <p>
-              Pawservation takes the &ldquo;are you free?&rdquo; question off your phone and leaves
-              the rest of how you work exactly where it is.
-            </p>
-          </div>
-          <div class="wf-grid">
-            <div>
-              <h3 class="wf-h">What stays the same</h3>
-              <p class="note">Nothing about how you work has to change.</p>
-              <div class="wf-pair">
-                <p class="wf-keep">You keep collecting money your own way.</p>
-                <p>Cash, Venmo, Zelle or a check on the counter. Pawservation never touches the money.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You keep your calendar.</p>
-                <p>Bookings appear on the Google Calendar you already keep, and what you put there by hand blocks requests. If you don&rsquo;t use it, nothing changes.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You keep the website you already have.</p>
-                <p>One line goes on a page you already publish.</p>
-              </div>
-            </div>
-            <div>
-              <h3 class="wf-h">What it takes off your plate</h3>
-              <p class="note">Whether you board or walk, the same few jobs eat the day.</p>
-              <div class="wf-pair">
-                <p class="wf-keep">Boarding and house sitting: a few long threads.</p>
-                <p>&ldquo;Are you free the 12th to the 15th?&rdquo; takes four or five messages, which is a quarter of an hour of your attention, in pieces, for every request. The page answers it, so the thread never starts.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">Walks and drop-ins: a lot of short ones.</p>
-                <p>The changes are what cost you, and a cancelled Wednesday, a swapped Thursday, an extra dog on Friday all arrive while you are out with someone else&rsquo;s dog. Your clients make those on the page.</p>
-              </div>
-            </div>
-          </div>
-          <p class="note wf-more">
-            <a href="/how-it-works">The full tour</a> walks through every rule and setting in detail.
-          </p>
-          <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
-            <a class="btn btn-ghost" href="/demo">Try the demo</a>
-          </div>
-        </div>
-      </section>
-
-      <section class="section band" id="pricing" aria-labelledby="pricing-h">
+      <section class="section" id="pricing" aria-labelledby="pricing-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Pricing</span>
@@ -729,7 +663,7 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <section class="section" id="install" aria-labelledby="install-h">
+      <section class="section band" id="install" aria-labelledby="install-h">
         <div class="wrap install-grid">
           <div class="install-copy">
             <span class="label">Install</span>
@@ -807,7 +741,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
-        <nav class="nav-links" aria-label="Sections">
+        <!-- .nav-links-5: this row carries five links and the same right-hand pair the landing
+             does, and it wrapped onto a second line from 780px to 829px. The class is the row
+             tuning that already exists for a five-link header rather than a second copy of it;
+             its measurements are in PAGE_STYLE. -->
+        <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="#booking">Requests</a>
           <a href="#confirm">Confirming</a>
           <a href="#calendar">Calendar</a>
@@ -1091,6 +1029,33 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p>Under Business in your dashboard, Export your data gives you four downloads: clients, pets, bookings and payments, as ordinary CSVs that open in Excel, Numbers or Google Sheets. Cancelled bookings, declined requests and pets who have died are all there with their status in a column.</p>
             <p>These are your records. Your settings stay here, meaning your services, rates, cancellation policies and questions, and so does your time off, which is in none of the four files. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
           </div>
+          <!-- The four rules moved here from /about on 2026-09-09, when the owner narrowed that
+               page to why it exists and who made it. They are stated on no other page, so this was
+               a move and not a delete, and the honesty section is where a sitter is already being
+               told what the software will and will not do. The money rule is the one sentence-level
+               edit: the Services aside above it already says, in words how-it-works.test.ts pins,
+               that payment stays between her and her client and where a Pro card is processed, so
+               the rule states what that aside does not (no cut, no funds held, on either plan) and
+               stops. -->
+          <div class="wf-math">
+            <h3 class="wf-h">Four rules the software will not break</h3>
+            <div class="wf-pair">
+              <p class="wf-keep">Nothing books itself.</p>
+              <p>Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Your money is yours.</p>
+              <p>Pawservation records what a booking is worth and what you&rsquo;ve been paid. It never holds your funds or takes a cut, on either plan. On Solo it does not process cards at all, and you collect the way you already collect. On Pro, Stripe pays you directly.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">Your clients stay your clients.</p>
+              <p>This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
+            </div>
+            <div class="wf-pair">
+              <p class="wf-keep">No price you didn&rsquo;t type.</p>
+              <p>The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1159,35 +1124,35 @@ const PRIVACY_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>What we collect</h3>
+            <h2>What we collect</h2>
             <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount.</p>
           </div>
           <div class="feature">
-            <h3>Who we share it with</h3>
+            <h2>Who we share it with</h2>
             <p><strong>Resend</strong> sends our transactional email (login codes, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and your client&rsquo;s email address. <strong>Cloudflare</strong> is our hosting and database provider: everything above lives on Cloudflare&rsquo;s infrastructure.</p>
           </div>
           <div class="feature">
-            <h3>Cookies</h3>
+            <h2>Cookies</h2>
             <p>We set exactly one cookie, for ten minutes, only while a sitter is connecting Google Calendar, to stop a cross-site request forgery attack during that one step. There are no cookies for signing in or for tracking you. Customers, sitters and the platform owner all sign in without one.</p>
           </div>
           <div class="feature">
-            <h3>How long we keep it</h3>
+            <h2>How long we keep it</h2>
             <p>Cancelled and declined bookings stay on the record as part of your sitter&rsquo;s booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can&rsquo;t be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account&rsquo;s data.</p>
           </div>
           <div class="feature">
-            <h3>Children</h3>
+            <h2>Children</h2>
             <p>Pawservation is not directed at children, and we don&rsquo;t knowingly collect data from them.</p>
           </div>
           <div class="feature">
-            <h3>No tracking</h3>
+            <h2>No tracking</h2>
             <p>We run no analytics, no ad pixels, and no fingerprinting, on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
           </div>
           <div class="feature">
-            <h3>Where your data lives</h3>
+            <h2>Where your data lives</h2>
             <p>Everything is stored on Cloudflare&rsquo;s global network. We don&rsquo;t currently commit to a specific country or region.</p>
           </div>
           <div class="feature">
-            <h3>Questions</h3>
+            <h2>Questions</h2>
             <p>Reach us at <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>.</p>
           </div>
         </div>
@@ -1243,39 +1208,39 @@ const TERMS_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>What Pawservation is</h3>
+            <h2>What Pawservation is</h2>
             <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and their customer.</p>
           </div>
           <div class="feature">
-            <h3>Accounts</h3>
+            <h2>Accounts</h2>
             <p>Sitters and the platform owner sign in with an email and password; customers sign in with a one-time code sent to their email. Each person is responsible for keeping their own credentials secure.</p>
           </div>
           <div class="feature">
-            <h3>Payments</h3>
+            <h2>Payments</h2>
             <p>Pawservation is not a payment processor. On Solo, a sitter collects payment themselves, outside Pawservation, and logs the amount here so their records stay accurate, and we never process, store, or guarantee any payment. On Pro, card payments are processed by Stripe under the sitter&rsquo;s own Stripe account: the sitter is the merchant, Stripe holds the card details and the funds and pays the sitter directly, and Pawservation is not a party to the payment, holds no funds, and takes no fee. Refunds and disputes are between the sitter, their customer and Stripe.</p>
           </div>
           <div class="feature">
-            <h3>Acceptable use</h3>
+            <h2>Acceptable use</h2>
             <p>Don&rsquo;t attempt to abuse the booking or intake system, or to work around tenant isolation, rate limits, or any other technical safeguard.</p>
           </div>
           <div class="feature">
-            <h3>Your data</h3>
+            <h2>Your data</h2>
             <p>A sitter owns their business&rsquo;s client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
           </div>
           <div class="feature">
-            <h3>Availability</h3>
+            <h2>Availability</h2>
             <p>Pawservation is provided &ldquo;as is,&rdquo; without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
           </div>
           <div class="feature">
-            <h3>Termination</h3>
+            <h2>Termination</h2>
             <p>The platform owner may disable or remove an account that violates these terms.</p>
           </div>
           <div class="feature">
-            <h3>Governing law</h3>
+            <h2>Governing law</h2>
             <p>These terms are governed by the laws of the State of California, and any dispute will be brought in the state or federal courts located in San Francisco County, California.</p>
           </div>
           <div class="feature">
-            <h3>Changes</h3>
+            <h2>Changes</h2>
             <p>We may update these terms from time to time; check back periodically.</p>
           </div>
         </div>
@@ -1293,11 +1258,21 @@ const TERMS_HTML = `<!doctype html>
  * reader is expected to CALL, so it has to keep working on whichever host they arrived at.
  */
 /**
- * /about — one of the two "trust anchor" pages a person (or an agent vetting a tool) looks for
- * before trusting a business. Every claim here is either behaviour this codebase enforces or a
- * status the landing page already states; nothing about headcount, funding, founding date or
- * customer numbers, because none of that is knowable from this repo and a fabricated detail on the
- * page whose whole job is legitimacy is worse than an absent one.
+ * /about — the creator's page, narrowed to that on 2026-09-09 on the owner's instruction: why this
+ * exists and who made it, and nothing about the product, its plans or its behaviour. Those belong
+ * to the landing page and the tour, which are already the only place any of them was stated twice;
+ * the four rules that used to sit here now live in /how-it-works' honesty section. It is still a
+ * trust anchor, so the fabrication rule is unchanged and tighter for being personal: the prior
+ * career, the business name and the three client questions are what the owner supplied, and no
+ * year, client count, headcount, employer or address may be added to them.
+ *
+ * It is also not a call to action. The founder story's closing paragraph ("I'm looking for a
+ * handful of pet sitters and dog walkers to try it while it's still early") was removed on the
+ * owner's instruction the same week: the page states why the thing exists, and recruiting belongs
+ * to the landing page's invite form. The closing line pointing at the demo and the tour stays,
+ * because it is wayfinding for a reader who has finished this page rather than a pitch. That
+ * removal also took the page's only statements that this is a small independent product with no
+ * sales team and that questions reach a person; /contact still says both, in its own words.
  */
 const ABOUT_HTML = `<!doctype html>
 <html lang="en">
@@ -1307,7 +1282,7 @@ const ABOUT_HTML = `<!doctype html>
     ${pageHead(
       '/about',
       'About | Pawservation',
-      'Who makes Pawservation, why it exists, and the four rules the software will not break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
+      'Pawservation is built by Brad Burch, a software engineer turned dog walker and pet sitter who got tired of running his own business out of a text thread.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1318,6 +1293,20 @@ const ABOUT_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
+        <!-- .nav-links-5: the same five-link row the landing header carries, with the same
+             row-tuning class, because it is a third row measured at five links plus "Sign in"
+             plus "Try the demo": the .how-it-works shape, not the landing page's four-item
+             .nav-right. The first three hrefs are absolute (/#how, /#dashboard, /#pricing)
+             rather than the landing header's bare fragments, because a fragment link on this
+             page would scroll nowhere: there is no #how/#dashboard/#pricing section here, only
+             on /. -->
+        <nav class="nav-links nav-links-5" aria-label="Sections">
+          <a href="/#how">How it works</a>
+          <a href="/#dashboard">Dashboard</a>
+          <a href="/#pricing">Pricing</a>
+          <a href="/how-it-works">Full tour</a>
+          <a href="/about">About</a>
+        </nav>
         <div class="nav-right">
           <a class="signin" href="/admin">Sign in</a>
           <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>
@@ -1326,14 +1315,16 @@ const ABOUT_HTML = `<!doctype html>
     </header>
 
     <main>
-      <section class="hero">
+      <!-- .hero-flush: this hero is the top of one continuous page rather than the first of
+           several bands, so the hero's bottom padding and the next section's top padding are both
+           dropped and the .sub's own margin becomes the gap. -->
+      <section class="hero hero-flush">
         <div class="wrap">
           <p class="chip">About</p>
-          <h1>Booking software that stays out of the way.</h1>
+          <h1>I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.</h1>
           <p class="sub">
-            Pawservation is booking software for pet sitters and dog walkers. It puts a booking
-            page on the website you already have, with your services, your rates and your
-            rules, so the question &ldquo;are you free the 12th to the 15th?&rdquo; answers itself.
+            I needed this for my own dog walking and pet sitting business before it was ever a
+            product anyone else could buy.
           </p>
         </div>
       </section>
@@ -1341,27 +1332,30 @@ const ABOUT_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>Why it exists</h3>
-            <p>Every booking a small pet-care business takes starts the same way: a text message asking whether you&rsquo;re free. Answering it means checking a calendar, remembering your own rules, quoting a price from memory, and doing it again four messages later. That thread is the job before the job, and it happens while you have a dog on a lead. Pawservation answers it from the caps, notice periods and days off you set once, and then gets out of the way. Everything else about how you work stays exactly as it is: the same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
+            <h2>Why I built it</h2>
+            <div class="founder">
+              <img
+                class="founder-photo"
+                src="/img/brad.jpg"
+                width="360"
+                height="480"
+                alt="Brad Burch with a small black dog resting across his shoulders"
+              />
+              <div>
+                <p>Hi, I&rsquo;m Brad. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>. I got tired of running my own business through a mess of texts, emails and payment records. Pawservation is the solution I needed for it.</p>
+                <p>I kept getting questions like:</p>
+                <ul class="founder-qs">
+                  <li>&ldquo;Are you available to watch Lucie in 2 weeks?&rdquo;</li>
+                  <li>&ldquo;Which days did I ask you to watch Fido in November?&rdquo;</li>
+                  <li>&ldquo;Did I pay you for last week?&rdquo;</li>
+                </ul>
+                <p>Every one of those answers was already written down somewhere. Finding it meant scrolling back through a text thread, looking at my calendar, and most of the time while I was out walking dogs. So I built Pawservation to help other dog walkers also keep scheduling, bookings and payments in one place. It does not replace your updates or your relationship with your clients. It makes the back office transparent and frees up time for you to spend doing what you love, which is spending time with the pets.</p>
+                <p>Everything else about how you work stays as it is. The same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
+              </div>
+            </div>
           </div>
           <div class="feature">
-            <h3>Four rules the software will not break</h3>
-            <p><strong>Nothing books itself.</strong> Every request arrives as a request and waits for you to confirm or decline. A pending request holds its space so it can&rsquo;t be taken twice, but it is never a commitment you didn&rsquo;t make.</p>
-            <p><strong>Your money is yours.</strong> Pawservation records what a booking is worth and what you&rsquo;ve been paid. It never holds your funds or takes a cut, on either plan. On Solo it does not process cards at all, and you collect the way you already collect: cash, Venmo, Zelle, a check on the counter. On Pro, Stripe processes the card under your own Stripe account and pays you directly.</p>
-            <p><strong>Your clients stay your clients.</strong> This is not a marketplace and not a directory. Nobody browses for a sitter here. You add each client before they can book, and their details are yours.</p>
-            <p><strong>No price you didn&rsquo;t type.</strong> The software will not invent a rate. It multiplies the hours or nights you sold by the rate you stored, and where you&rsquo;ve told it to, by the number of pets. It will refuse to quote a combination you never priced rather than guess at one, because a rate you didn&rsquo;t type is a price you didn&rsquo;t agree to.</p>
-          </div>
-          <div class="feature">
-            <h3>Where it is today</h3>
-            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. It covers the booking page, your availability rules, client and pet records, payment tracking and Google Calendar sync. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment, and nothing more. New sitters are added by invitation while the product grows. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.</p>
-          </div>
-          <div class="feature">
-            <h3>Who makes it</h3>
-            <p>Pawservation is built and run by <a href="https://bradburch.github.io/">Brad Burch</a>. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person.</p>
-          </div>
-          <div class="feature">
-            <h3>Try it yourself</h3>
-            <p>The <a href="/demo">demo</a> is a made-up sitter&rsquo;s account with real data behind it: pick a service, pick dates, watch it refuse the days that are full. Nothing to sign up for, no details asked for, nothing you can break. The <a href="/how-it-works">full tour</a> is the long version, and it says plainly what the software does and doesn&rsquo;t do.</p>
+            <p>If you would rather see it than read about it, the <a href="/demo">demo</a> is there so you can poke around without signing up for anything, and the <a href="/how-it-works">full tour</a> is the long version of what it does.</p>
           </div>
         </div>
       </section>
@@ -1419,23 +1413,23 @@ const CONTACT_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>You&rsquo;re a pet owner looking for your sitter</h3>
+            <h2>You&rsquo;re a pet owner looking for your sitter</h2>
             <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we can&rsquo;t reach your sitter for you. Pawservation is the software your sitter uses, so we can&rsquo;t see, change, or cancel your booking. Your sitter&rsquo;s own booking page, the one you booked on, is where a booking can be changed or cancelled. Every email you&rsquo;ve had about a booking was sent by Pawservation on your sitter&rsquo;s behalf and names their business, and replying to it does not reach them. Contact your sitter the way you normally do.</p>
           </div>
           <div class="feature">
-            <h3>You run a pet-care business and want an account</h3>
+            <h2>You run a pet-care business and want an account</h2>
             <p>Use the <a href="/#invite-h">invite form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
           </div>
           <div class="feature">
-            <h3>You already have an account and something is wrong</h3>
+            <h2>You already have an account and something is wrong</h2>
             <p>Email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}?subject=Pawservation%20support">${htmlEscape(SUPPORT_EMAIL)}</a> and say which business you run; that&rsquo;s enough to find your account. Include what you expected to happen and what happened instead; if it involves a specific booking, the dates and the client&rsquo;s first name are enough to locate it. Your dashboard is at <a href="/admin">the sign-in page</a> if you just need to get back in; it will email you a reset link.</p>
           </div>
           <div class="feature">
-            <h3>Press, partnerships, or anything else</h3>
+            <h2>Press, partnerships, or anything else</h2>
             <p>Same address: <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>. A person reads these and there is no ticket system behind it, so a plain description of what you want beats a formal one.</p>
           </div>
           <div class="feature">
-            <h3>Security</h3>
+            <h2>Security</h2>
             <p>If you believe you&rsquo;ve found a vulnerability, write to the same address with &ldquo;security&rdquo; in the subject and please give us a chance to fix it before publishing. See our <a href="/privacy">Privacy Policy</a> for what data exists to be at risk in the first place.</p>
           </div>
         </div>

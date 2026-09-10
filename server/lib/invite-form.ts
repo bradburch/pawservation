@@ -7,15 +7,16 @@ import { htmlEscape } from './email';
  * module (no imports from index.ts or routes/*) so both can import it without a circular import
  * — the same reason PAGE_STYLE lives in its own file.
  *
- * The honeypot field is named "fax" (not "website" — a classic non-autofilled decoy name) and is
- * never prefilled, even on a re-render: a submission only reaches renderErrorPage after the
- * honeypot check already passed, so there is nothing legitimate to echo there.
+ * The honeypot field is named "fax", never "website": "website" is the classic decoy name, but
+ * this form collects a REAL website, so the decoy has to be something a visitor is never asked
+ * for. It is never prefilled, even on a re-render: a submission only reaches renderErrorPage
+ * after the honeypot check already passed, so there is nothing legitimate to echo there.
  */
 export type InviteFormValues = Partial<{
   business: string;
   name: string;
   email: string;
-  phone: string;
+  website: string;
   city: string;
   neighborhoods: string;
   services: string;
@@ -54,8 +55,8 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
                 <input id="inv-email" name="email" type="email" maxlength="254" required autocomplete="email" value="${esc(values.email)}" />
               </div>
               <div class="invite-field">
-                <label for="inv-phone">Phone <span class="invite-optional">(optional)</span></label>
-                <input id="inv-phone" name="phone" type="tel" maxlength="40" autocomplete="tel" value="${esc(values.phone)}" />
+                <label for="inv-website">Website or social page</label>
+                <input id="inv-website" name="website" type="text" maxlength="200" required autocomplete="url" placeholder="bradpaws.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-city">City</label>
