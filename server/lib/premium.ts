@@ -142,9 +142,11 @@ export function isPremiumActive(tenant: EntitlementFacts, now: Date = new Date()
  * not of a subscription. A Pro subscriber satisfies this too: the question is "is she paying", and
  * she is.
  *
- * NOTHING IN THIS REPO CALLS THIS YET, and it is exported and tested anyway. AD-13 asks for the rule
- * in one expression in one file; a rule written down in half is the thing that requirement is
- * defending against, and the half left unwritten is the half that gets re-derived somewhere else.
+ * ITS ONE CALLER is `GET /:slug/admin/settings` (server/routes/admin.ts), which publishes the
+ * answer as `planActive` so that neither that route nor the dashboard's plan panel re-derives it.
+ * It was exported and tested before it had any caller, deliberately: AD-13 asks for the rule in
+ * one expression in one file, and the half of a rule left unwritten is the half that gets
+ * re-derived somewhere else.
  */
 export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
   if (tenant.DisabledAt != null) return false;

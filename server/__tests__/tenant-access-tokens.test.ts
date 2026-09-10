@@ -223,7 +223,17 @@ describe('tenant access tokens — authenticating', () => {
     const viaJwt = await settings(env, jwt);
     expect(viaToken.status).toBe(200);
     const body = (await viaToken.json()) as { adminEmail: string | null };
-    expect(body).toEqual(await viaJwt.json());
+    // IDENTICAL AUTHORITY, MINUS THE ONE FIELD POLICY WITHHOLDS. Story 10.3 publishes
+    // `stripeCustomerId` on this payload for a password session only, and OMITS the key entirely
+    // for a token — so the two bodies differ by exactly that key and must still match on every
+    // other. Deleting it from the JWT body rather than loosening the comparison keeps this a
+    // whole-payload assertion: a sixth field appearing on one credential and not the other still
+    // fails here, which is the property this test exists for.
+    const viaJwtBody = (await viaJwt.json()) as Record<string, unknown>;
+    expect('stripeCustomerId' in viaJwtBody).toBe(true);
+    expect('stripeCustomerId' in (body as Record<string, unknown>)).toBe(false);
+    delete viaJwtBody.stripeCustomerId;
+    expect(body).toEqual(viaJwtBody);
     expect(body.adminEmail).toBe('admin@sunnypaws.example');
     // The MINTING user, and specifically not the other login under this same sitter.
     expect(body.adminEmail).not.toBe(ADMIN_TWO.email);
