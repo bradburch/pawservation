@@ -530,17 +530,16 @@ describe('the landing page claims only what ships', () => {
     // change-and-cancel rule into the "You and your clients" section, which is where a reader
     // looking for "what is this like for my clients" actually looks, and made that the ONE place
     // on the page it is stated (it had been in a feature card, the workflow block and this FAQ
-    // answer at once). The promise itself is unchanged and still pinned, word for word.
-    // The two facts that make it safe for the sitter: re-approval, and a fee she never negotiates.
-    expect(body).toContain('A change takes effect straight away');
-    expect(body).toContain('your approval comes after the change, not before it');
+    // answer at once). The owner cut that section's two-column grid on 2026-09-09, so the
+    // re-approval mechanic ("a change takes effect straight away, your approval comes after it")
+    // is no longer on this page at all and is stated on the tour instead; the promise the sitter
+    // is being sold here - her clients do this themselves - is what stays pinned.
+    expect(body).toContain('they do it on the page');
     expect(body).not.toMatch(/comes back to you as pending, so you re-approve/i);
     // The fee is the sitter's stored policy applied server-side (feeToCancelToday), and the
-    // cancel route reads NO request body at all, so the client cannot name a figure. The page
-    // said that as "worked out here and not typed in by them"; the copy pass replaced the
-    // negative half with the positive claim, which asserts the same fact about the same code.
+    // cancel route reads NO request body at all, so the client cannot name a figure.
     // What must never appear is the opposite: a client choosing or proposing what she owes.
-    expect(body).toMatch(/the fee your own policy sets/i);
+    expect(body).toMatch(/your own cancellation policy sets the fee/i);
     for (const lie of ['they enter the fee', 'they choose the fee', 'agree a fee'])
       expect(body.toLowerCase(), lie).not.toContain(lie);
   });

@@ -121,12 +121,12 @@ describe('GET / — landing page', () => {
     expect(answer).toContain('no way to load one of these files back in');
   });
 
-  it('tells the client-AND-pet truth and drops the CSV row cap from copy', async () => {
+  it('drops the CSV row cap from copy', async () => {
     const body = await landingBody();
-    // Post-#73 a client is a client-and-pet record; the page must say pets are added too. The
-    // owner removed the landing FAQ on 2026-09-04 and this line moved into the "What you do"
-    // column of "You and your clients", which is where it is now pinned from.
-    expect(body).toContain('and their pets');
+    // The client-and-pet line ("You add each client, and their pets") lived in the "What you do"
+    // column of "You and your clients". The owner cut that whole two-column grid on 2026-09-09,
+    // so the landing page no longer states who adds a client at all and there is nothing here to
+    // pin; /about still carries it under "Your clients stay your clients".
     // MAX_IMPORT_ROWS=500 stays in code (server/routes/admin.ts); marketing stops quoting it.
     expect(body).not.toContain('up to 500');
   });
@@ -181,48 +181,42 @@ describe('GET / — landing page', () => {
     }
   });
 
-  it('carries the relationship framing: care conversations for the sitter, an immediate answer for the owner', async () => {
+  it('carries the relationship framing: care conversations stay the sitter\u2019s', async () => {
     const body = await landingBody();
-    // The workflow "texts" pair leads with the win, and the win is LATENCY, not an absolute about
-    // what is left on the thread. Round 1 wrote "The only texts left are about the pets.", which
-    // three readers called an overclaim: there is no messaging, no photo and no visit report in
-    // this product, so every care conversation still happens on her phone — the thread loses the
-    // booking part, it does not become about care.
-    expect(body).toContain('The dates question stops being a text.');
-    expect(body).not.toContain('The only texts left are about the pets.');
-    // …and the page must NAME the category feature it doesn't have. Time To Pet's headline is the
-    // visit report; a page arguing that software improves the client relationship, which never
-    // mentions the one incumbent feature actually about the animal, argues against itself.
+    // The two-column grid this section used to carry was cut by the owner on 2026-09-09 ("a lot of
+    // text and it reads as AI slop"), taking the "dates question stops being a text" pair and the
+    // "not about the dog" line with it. What survives is the claim that mattered and the bans that
+    // protected it: the page must NAME the category feature it doesn't have. Time To Pet's
+    // headline is the visit report; a page arguing that software improves the client relationship,
+    // which never mentions the one incumbent feature actually about the animal, argues against
+    // itself.
     expect(body).toContain('doesn&rsquo;t do visit reports or photos');
-    // The sharpest sentence on the page, promoted out of the sum box (which a skimmer never
-    // reaches) into the pair a skimmer actually reads.
-    expect(body).toContain('They were about dates and prices, not about the dog.');
+    // Round 1 wrote "The only texts left are about the pets.", which three readers called an
+    // overclaim: there is no messaging, no photo and no visit report in this product, so every
+    // care conversation still happens on her phone. The replacement is narrower on purpose.
+    expect(body).toContain('What they send you now is about the dog.');
+    expect(body).not.toContain('The only texts left are about the pets.');
     // The owner removed the "more of what's left is about the animal" sentence on 2026-09-04, so
     // its pin goes with it; the ban it protected stays, because gate codes and "running late"
     // still arrive by text and "what reaches you is a care question" was falsifiable in week one.
     expect(body).not.toContain('a care question');
-    // The owner's half survives exactly once — restating it was the third pass at one idea.
-    expect(body.match(/which dates you can take/g) ?? []).toHaveLength(1);
-    expect(body).toContain('waiting on a text back');
-    // The "pills at six" examples went with that sentence on 2026-09-04 (owner's edit).
-    // …and it must never read as instant confirmation. The sitter's yes is still the gate, and
+    // ...and it must never read as instant confirmation. The sitter's yes is still the gate, and
     // the client's OWN screen says so too, so nobody tells their spouse it's booked at 11pm.
-    expect(body).toContain('still pending until you say yes');
-    expect(body).toContain('their own screen says awaiting confirmation until then');
-    expect(body).toContain('goes out when you confirm, not when they press send');
+    expect(body).toContain('Every request waits as pending until you confirm it');
+    expect(body).toContain('their screen says so');
     for (const lie of ['confirmed instantly', 'instant confirmation', 'confirms automatically'])
       expect(body, lie).not.toContain(lie);
   });
 
-  it('separates what a cancellation does from what a change does, and both from silence', async () => {
+  it('never claims a change notifies her, and never claims silence either', async () => {
     const body = await landingBody();
     // VERIFIED: cancelBooking fires sendCancellationNoticeToSitter (server/lib/booking-ops.ts:1000)
-    // — the only send*() call in that whole file — while editBooking's only side effects are the
+    // - the only send*() call in that whole file - while editBooking's only side effects are the
     // saved-answer write and the calendar push. So a cancellation DOES email her and a change does
-    // not, and round 2's blanket "Nothing pings you" sat directly under a list that opens with "a
-    // cancelled Wednesday". They must be described apart.
-    expect(body).toContain('A cancellation emails you');
-    expect(body).toContain('A change doesn&rsquo;t email you');
+    // not. The two sentences that said so out loud ("A cancellation emails you" / "A change
+    // doesn't email you") were in the two-column grid the owner cut on 2026-09-09, so the page now
+    // says neither; the bans are what must survive that cut, because round 2's blanket "Nothing
+    // pings you" sat directly under a list that opened with "a cancelled Wednesday".
     expect(body).not.toContain('Nothing pings you');
     // The old ambiguous clause read as "a change or a cancellation emails you"; only the second
     // one does, and only that one may be claimed.
@@ -231,7 +225,7 @@ describe('GET / — landing page', () => {
       expect(body, lie).not.toContain(lie);
   });
 
-  it('says a change has ALREADY taken effect when she reads it — approval is retroactive', async () => {
+  it('never gets the direction of an edit backwards; approval is retroactive', async () => {
     const body = await landingBody();
     // VERIFIED in updateBookingForEdit (server/db/repo.ts:1134): ONE statement writes the new
     // StartDate/EndDate/StartTime/DepartureTime/PetCount/EstCost/Answers together with
@@ -239,14 +233,11 @@ describe('GET / — landing page', () => {
     // (booking-ops.ts:1249, "apply optimistically") and then moves + retitles the Google event.
     // From that moment the new dates are the ones listCapacityRows counts. Nothing waits for the
     // sitter, so round 2's "you re-approve it rather than discovering it" was exactly backwards:
-    // discovering it is precisely what she does. Two of the three places that said so are on this
-    // page (the walks pair and the FAQ), and they must agree with the tour.
-    expect(body).toContain('A change takes effect straight away');
-    expect(body).toContain('it takes effect the moment they save it');
-    expect(body).toContain('your approval comes after the change, not before it');
-    // She can still decline — but a decline writes only Status (repo.ts:1016), so it does NOT
-    // restore the old dates. The page may therefore offer declining, never reverting.
-    expect(body).toContain('can decline it');
+    // discovering it is precisely what she does. The three sentences that stated it lived in the
+    // two-column grid the owner cut on 2026-09-09; /how-it-works still carries the mechanic, and
+    // what must survive here is the ban, since the section still tells a client she can change
+    // her own booking.
+    expect(body).toContain('they do it on the page');
     for (const backwards of [
       're-approve it rather than discovering it',
       'comes back to you as pending, so you re-approve',
@@ -255,6 +246,10 @@ describe('GET / — landing page', () => {
       'before it takes effect',
     ])
       expect(body, backwards).not.toContain(backwards);
+    // The tour is where the mechanic is still spelled out in full.
+    const { env } = createTestEnv();
+    const tour = await (await app.request('/how-it-works', {}, env)).text();
+    expect(tour).toContain('takes effect');
   });
 
   it('never offers a repeating booking, and keeps that disclosure on the tour', async () => {

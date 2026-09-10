@@ -321,6 +321,9 @@ export const PAGE_STYLE = /* css */ `
         margin: 0 0 12px;
       }
       .section-head p { margin: 0; color: var(--body-c); max-width: 52ch; }
+      /* A section head may run to two paragraphs; the first rule zeroes every margin, so the
+         gap between them has to be put back here rather than inherited. */
+      .section-head p + p { margin-top: 14px; }
       /* Section headings and the column headings inside them are two or three words past one
          line at most widths, and the default break leaves the last word alone under a full line.
          Balance splits the lines evenly instead. Unsupported browsers wrap as before. */
@@ -490,12 +493,7 @@ export const PAGE_STYLE = /* css */ `
          wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
       .legal .feature + .feature { margin-top: 28px; }
 
-      /* ── wf-* label/pair layout (clients section, pricing note, how-it-works page) ── */
-      .wf-grid {
-        display: grid;
-        gap: 44px;
-        align-items: start;
-      }
+      /* ── wf-* label/pair layout (pricing note, how-it-works page) ── */
       .wf-h {
         font-size: 1.02rem;
         font-weight: 700;
@@ -550,9 +548,6 @@ export const PAGE_STYLE = /* css */ `
         font-size: 0.95rem;
         font-weight: 700;
         color: var(--ink);
-      }
-      @media (min-width: 780px) {
-        .wf-grid { grid-template-columns: 1fr 1fr; gap: 56px; }
       }
       /* The closing line under a section's columns: the invite line under the two price cards. */
       .wf-more { margin-top: 24px; }

@@ -477,62 +477,28 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- The relationship section: the two sides of one booking, side by side. It was the ninth
+      <!-- The relationship section: one booking read from the client's side. It was the ninth
            FAQ answer for two rounds, which is the last place a reader looking for "what is this
-           like for my clients" would find it. Everything the page says about a client changing or
-           cancelling their own booking lives HERE and nowhere else, so the rule is read once,
-           whole, rather than three times in fragments. -->
+           like for my clients" would find it. It ran as a two-column "what they see / what you do"
+           grid until the owner cut it on 2026-09-09 for reading as filler; the same ground is
+           covered in two paragraphs now. Everything the page says about a client changing or
+           cancelling their own booking still lives HERE and nowhere else, so the rule is read
+           once, whole, rather than three times in fragments. -->
       <section class="section" id="clients" aria-labelledby="clients-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">You and your clients</span>
-            <h2 id="clients-h">Your clients get their answer on the page</h2>
+            <h2 id="clients-h">Your clients see what you see</h2>
             <p>
-              The dates question stops being a text.
-              Those messages were most of what your clients sent you.
-              They were about dates and prices, not about the dog.
-              Pawservation doesn&rsquo;t do visit reports or photos, so that relationship is still yours to maintain.
+              Your clients see which dates you have open and what the stay costs before they ask for it.
+              Every request waits as pending until you confirm it, and their screen says so.
+              When they need to change dates or cancel they do it on the page, and your own cancellation policy sets the fee, so nobody has to raise it in a text.
             </p>
-          </div>
-          <div class="wf-grid">
-            <div>
-              <h3 class="wf-h">What your client sees</h3>
-              <div class="wf-pair">
-                <p class="wf-keep">They get an answer while they are looking.</p>
-                <p>The page shows which dates you can take, worked out from your own limits, so nobody is left waiting on a text back.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">They see the price before they send anything.</p>
-                <p>Your rates are added up on the page for the pets they picked.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">They know it isn&rsquo;t booked yet.</p>
-                <p>Every request is still pending until you say yes, and their own screen says awaiting confirmation until then. The email telling them it&rsquo;s booked goes out when you confirm, not when they press send.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">They change or cancel it themselves.</p>
-                <p>New dates, a different pet or a cancellation happen on the page, and it takes effect the moment they save it.</p>
-              </div>
-            </div>
-            <div>
-              <h3 class="wf-h">What you do</h3>
-              <div class="wf-pair">
-                <p class="wf-keep">Only your clients can book.</p>
-                <p>You add each client, and their pets, before they can book, one at a time or from the list you already have.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You confirm it or you decline it.</p>
-                <p>The request carries the dates, the pets, your questions answered and a price, so you can settle it in one tap from your phone. A new request waits in your dashboard, and on your Google Calendar if you&rsquo;ve connected it.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You see a change after it happens.</p>
-                <p>A change takes effect straight away and the booking drops back to pending, so you see what changed and you can decline it, because your approval comes after the change, not before it.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You never work out a cancellation fee yourself.</p>
-                <p>A cancellation emails you with the fee your own policy sets. A change doesn&rsquo;t email you and waits in your dashboard with the new requests.</p>
-              </div>
-            </div>
+            <p>
+              What they send you now is about the dog.
+              Pawservation doesn&rsquo;t do visit reports or photos,
+              so that part of the relationship stays yours.
+            </p>
           </div>
           <div class="cta-row mid-cta">
             <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
