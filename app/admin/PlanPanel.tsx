@@ -139,6 +139,15 @@ export function PlanPanel({
   handleError: (e: unknown) => void;
 }) {
   const [config, setConfig] = useState<TenantConfig | null>(null);
+  /**
+   * The `/config` request has FINISHED, however it finished. Not the same question as
+   * `config !== null`: a read that failed is a deployment whose paid surface this panel cannot
+   * reach, and the unavailable notice below belongs on screen for it. What must stay silent is
+   * "not asked yet" — `origin` is null until this effect resolves and `settings` is already in
+   * hand when the panel paints, so without this flag every paying sitter was told her plan could
+   * not be changed for as long as one request took, on every dashboard load.
+   */
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -147,10 +156,16 @@ export function PlanPanel({
     api
       .config(session.slug)
       .then((c) => {
-        if (active) setConfig(c);
+        if (active) {
+          setConfig(c);
+          setConfigLoaded(true);
+        }
       })
       .catch(() => {
-        /* absence, not an error — the section just renders without this panel */
+        // Absence, not an error — the offers just do not render. The flag still flips: a read that
+        // failed is one of the states the notice below is FOR, and flipping it only on success
+        // would trade a false sentence for silence in the one case the sentence is true.
+        if (active) setConfigLoaded(true);
       });
     return () => {
       active = false;
@@ -279,7 +294,10 @@ export function PlanPanel({
     <>
       <h3>
         Your plan
-        {!offersHidden && pricing && (
+        {/* The Hint is SUBSCRIBE'S OWN COPY — it promises a free trial that starts when she
+            subscribes — so it hides on the same condition as the offers grid below, and not on the
+            offers condition alone, which left it standing beside the Manage plan button. */}
+        {!offersHidden && !settings.hasBillingAccount && pricing && (
           <Hint label="Your plan">
             Payment is handled by Stripe on their own page — we never see your card. Your{' '}
             {pricing.trialDays}-day free trial starts when you subscribe.
@@ -330,7 +348,7 @@ export function PlanPanel({
           </button>
         </p>
       )}
-      {settings.hasBillingAccount && origin === null && (
+      {configLoaded && settings.hasBillingAccount && origin === null && (
         <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
       )}
       {error && <p className="pb-error">{error}</p>}

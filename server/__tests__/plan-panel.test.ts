@@ -213,6 +213,18 @@ describe('the Manage plan control', () => {
     expect(PANEL_TEXT).toContain('Authorization: `Bearer ${session.token}`');
     // An anchor carries no Authorization header, and there must not be one anywhere in this file.
     expect(PANEL_TEXT).not.toMatch(/<a\s[^>]*href/);
+    // THE METHOD AND THE BODY, pinned distinctly. The `method: 'POST'` pin in the checkout case
+    // above is satisfied by `startCheckout` alone, so a portal call switched to GET — or given a
+    // body and a Content-Type — left this whole suite green. Anchored on the `/portal` template so
+    // it is THIS call's init object being read, and closed on `});` so a `body:` line cannot hide
+    // behind the headers.
+    expect(PANEL_TEXT).toMatch(
+      /\/portal`, \{\s*method: 'POST',\s*headers: \{ Authorization: `Bearer \$\{session\.token\}` \},\s*\}\);/,
+    );
+    // A Content-Type here would mean a body, and the server resolves which subscription this is
+    // from the slug in the path and the credential in the header. One occurrence in the file, and
+    // it belongs to the checkout.
+    expect(PANEL_TEXT.match(/'Content-Type'/g)).toHaveLength(1);
   });
 
   it('reuses the checkout path’s own safety, rather than a second, looser copy of it', () => {
@@ -231,6 +243,12 @@ describe('the Manage plan control', () => {
     // the checkout route, which is the paid surface's to build: a UI is not a guard, because the
     // route is reachable with curl and an admin token.
     expect(PANEL).toMatch(/!offersHidden && !settings\.hasBillingAccount && pricing/);
+    // TWICE: the offers grid and the Hint above it. That Hint is Subscribe's own copy — "your
+    // N-day free trial starts when you subscribe" — and on the offers condition alone it stayed on
+    // screen beside the Manage plan button, promising a trial to a sitter who is already paying.
+    expect(PANEL.match(/!offersHidden && !settings\.hasBillingAccount && pricing/g)).toHaveLength(
+      2,
+    );
   });
 
   it('says one sentence when the paid surface is not there, and offers no retry', () => {
@@ -242,6 +260,18 @@ describe('the Manage plan control', () => {
     // `origin === null` on purpose: a sitter who never subscribed is not told that changing a plan
     // she does not have is unavailable.
     expect(PANEL).toMatch(/settings\.hasBillingAccount && origin === null/);
+    // AND on the request having FINISHED. `origin` is null until the `/config` effect resolves and
+    // `settings` is already in hand when the panel paints, so without this every paying sitter was
+    // told "changing your plan is unavailable right now" on every dashboard load, for as long as
+    // that request took. Absence-until-loaded is harmless for a control; a positive false sentence
+    // is not.
+    expect(PANEL).toMatch(/configLoaded && settings\.hasBillingAccount && origin === null/);
+    // A `/config` that FAILED is not "not asked yet": it is a deployment whose paid surface this
+    // panel cannot reach, which is exactly when the notice belongs on screen. So the flag flips on
+    // both arms of the effect — a `setConfigLoaded` only in the success arm would trade the flash
+    // for silence in the one state the sentence is true.
+    expect(PANEL.match(/setConfigLoaded\(true\)/g)).toHaveLength(2);
+    expect(PANEL).toMatch(/\.catch\([\s\S]{0,160}setConfigLoaded\(true\)/);
     // No retry, no spinner, no second control: her booking page, her clients and the rest of her
     // dashboard are unaffected, which is the whole of NFR-2's claim.
     expect(PANEL_TEXT).not.toMatch(/\bretry\b/i);
