@@ -393,15 +393,15 @@ const LANDING_HTML = `<!doctype html>
             <p class="sub">
               Pawservation is pet sitting and dog walking software. Your clients ask for the dates
               they want on your own site, with your services and your rates, and you confirm each
-              request from your phone. It also keeps track of what every client owes you.
+              request. It also keeps track of what every client owes you.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
-              The demo is a made-up sitter&rsquo;s account, so there is nothing to sign up for and
-              nothing you can break. Pawservation itself is invite-only while it grows, and you can
+              The demo is there so you can poke around without signing up for anything.
+              Pawservation itself is invite-only while it grows, and you can
               <a href="/admin">sign in</a> if you already have an account.
             </p>
           </div>

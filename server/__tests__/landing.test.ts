@@ -157,7 +157,10 @@ describe('GET / — landing page', () => {
 
   it('tells visitors the demo costs them nothing to try', async () => {
     const body = await landingBody();
-    expect(body).toContain('nothing to sign up for');
+    // 2026-09-10: the owner replaced "a made-up sitter's account...nothing to sign up for and
+    // nothing you can break" with the same framing /about's wayfinding line moved to first, so
+    // the two surfaces agree. Pinned on the surviving wording rather than the retired phrase.
+    expect(body).toContain('without signing up for anything');
   });
 
   it('states the Solo price in the hero, above the fold', async () => {
