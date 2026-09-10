@@ -206,3 +206,46 @@ describe('the customer id goes only to a password session', () => {
     expect(body.hasBillingAccount).toBe(true);
   });
 });
+
+describe('two tenants, because a cross-tenant read looks completely ordinary doing it', () => {
+  it('answers each sitter her own customer id, and never the other’s, anywhere', async () => {
+    const { env, raw } = createTestEnv();
+    // DIFFERENT ids, deliberately. Two tenants both seeded `cus_x` would satisfy every assertion
+    // below against a handler that read the wrong row.
+    seedPlan(raw, TENANT_A, {
+      plan: 'pro',
+      billedUntil: minutesFromNow(60),
+      customerId: 'cus_sunny_only',
+    });
+    seedPlan(raw, TENANT_B, {
+      plan: 'solo',
+      billedUntil: minutesFromNow(60),
+      customerId: 'cus_happy_only',
+    });
+
+    const credential = await adminToken(TENANT_A);
+    const own = await settings(env, SLUG[TENANT_A], credential);
+    expect(own.status).toBe(200);
+    const ownBody = await own.text();
+    expect(JSON.parse(ownBody).stripeCustomerId).toBe('cus_sunny_only');
+    // Not "not equal to B's" — B's id must appear NOWHERE in the bytes A can obtain. The whole
+    // payload is searched, not the one field, because a leak that mattered would be a leak into
+    // some other field nobody thought to name.
+    expect(ownBody).not.toContain('cus_happy_only');
+
+    // Her own valid credential, at the other business's path. `tenantMiddleware` resolves the slug
+    // before any auth and `adminAuth` binds the credential to that tenant, so this is the existing
+    // chain's refusal and not a new check.
+    const crossed = await settings(env, SLUG[TENANT_B], credential);
+    expect(crossed.status).toBe(403);
+    expect(await crossed.text()).not.toContain('cus_happy_only');
+
+    // And the other direction, so "A can't read B" is not satisfied by a handler that simply
+    // always answers A. B's own admin gets B's id and never A's.
+    const hers = await settings(env, SLUG[TENANT_B], await adminToken(TENANT_B));
+    expect(hers.status).toBe(200);
+    const hersBody = await hers.text();
+    expect(JSON.parse(hersBody).stripeCustomerId).toBe('cus_happy_only');
+    expect(hersBody).not.toContain('cus_sunny_only');
+  });
+});
