@@ -129,6 +129,7 @@ const TEMPLATES: [string, (send: typeof env) => Promise<void>, boolean][] = [
         business: HOSTILE,
         name: HOSTILE,
         email: 'a@b.test',
+        website: HOSTILE,
         city: HOSTILE,
         services: 'Boarding',
         customerCount: '10',
