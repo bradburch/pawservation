@@ -148,6 +148,12 @@ describe('GET /how-it-works — the tour page', () => {
     // the stored tiers (feeToCancelToday), so the client can never name a figure.
     expect(body).toMatch(/worked out here from the windows you wrote/i);
     expect(body).toContain('free to withdraw');
+    // VERIFIED: cancelBooking fires sendCancellationNoticeToSitter (server/lib/booking-ops.ts) —
+    // the only send*() call in that file — while editBooking sends nothing. The landing page said
+    // this out loud until the owner cut its two-column grid on 2026-09-09, which left the promise
+    // stated here and pinned nowhere. It is pinned here now, because a sitter who is told she
+    // will be emailed and is not has been sold a notification the code does not send.
+    expect(body).toContain('you get an email saying what is owed');
     for (const lie of ['they enter the fee', 'they choose the fee', 'agree a fee'])
       expect(body.toLowerCase(), lie).not.toContain(lie);
   });
@@ -590,6 +596,17 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toContain('no services, no dates, no prices');
     for (const overclaim of ['nobody else sees', 'your rates stay private', 'nothing is visible'])
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
+  });
+
+  it('never labels a list of unchanging things with a count', async () => {
+    const body = await landingBody();
+    // The column these guarded ("Five things that don't change") once counted an item that DID
+    // change, which is why the label had to be corrected twice before it stopped counting at all.
+    // The owner deleted the whole workflow section on 2026-09-09, so the positive pins went with
+    // it — but the ban is not about that section: a label that counts is a claim about the list
+    // beneath it, and it goes stale the moment an item moves. Neither form may come back.
+    expect(body).not.toContain('Five things that don&rsquo;t change');
+    expect(body).not.toContain('Four things that don&rsquo;t change');
   });
 
   it('presents both tiers as products, and neither as a checkout', async () => {

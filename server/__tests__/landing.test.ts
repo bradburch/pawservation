@@ -126,7 +126,11 @@ describe('GET / — landing page', () => {
     // The client-and-pet line ("You add each client, and their pets") lived in the "What you do"
     // column of "You and your clients". The owner cut that whole two-column grid on 2026-09-09,
     // so the landing page no longer states who adds a client at all and there is nothing here to
-    // pin; /about still carries it under "Your clients stay your clients".
+    // pin. The WHO half survives elsewhere and is pinned there — /about's "You add each client
+    // before they can book" and the tour's "Only clients you have added can book"
+    // (how-it-works.test.ts) — but the AND-THEIR-PETS half is now stated on no marketing page at
+    // all. That is a gap in disclosure, not a false claim: no page says a client adds her own
+    // pets either, so there is nothing here for a ban to protect.
     // MAX_IMPORT_ROWS=500 stays in code (server/routes/admin.ts); marketing stops quoting it.
     expect(body).not.toContain('up to 500');
   });
@@ -206,6 +210,25 @@ describe('GET / — landing page', () => {
     expect(body).toContain('their screen says so');
     for (const lie of ['confirmed instantly', 'instant confirmation', 'confirms automatically'])
       expect(body, lie).not.toContain(lie);
+  });
+
+  it('never re-acquires the time-audit arithmetic the owner cut', async () => {
+    const body = await landingBody();
+    // These bans were written against a "do the sum yourself" block that invited a sitter to
+    // multiply an invented request count by an invented per-request cost. Five of seven readers
+    // objected ("two hours a month is not why anyone changes software", "eight requests a month
+    // tells me who you think your customer is, I run thirty"), and the "these are illustrative"
+    // disclaimer only ever existed to prop the number up. The block's own positive pins went with
+    // the workflow section the owner deleted on 2026-09-09, but the BANS are not about that
+    // section: they are about a fabricated measurement, which is exactly the kind of claim that
+    // comes back one convenient parenthetical at a time. Nothing on this page may state a
+    // measured saving, because nothing in this repo measures one.
+    expect(body).not.toContain('the sum comes out somewhere else');
+    expect(body).not.toContain('class="wf-sum"');
+    expect(body).not.toContain('do the sum yourself');
+    expect(body).not.toContain('illustrative numbers rather than a measured finding');
+    for (const sum of ['At eight requests a month', 'a couple of hours back'])
+      expect(body, sum).not.toContain(sum);
   });
 
   it('never claims a change notifies her, and never claims silence either', async () => {
