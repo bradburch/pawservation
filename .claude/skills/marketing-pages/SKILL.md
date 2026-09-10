@@ -158,7 +158,7 @@ him — and those are a different kind of claim by nature, not an exception carv
 above: they are first-hand facts he supplied about himself, not something derived from what this
 codebase does, so "is this behavior the codebase enforces" is the wrong question to ask of them. They
 are the page's credibility rather than a violation of it — the photo and the link to a real, running
-business are load-bearing *because* a reader can check them, which is exactly what a stock photo and
+business are load-bearing _because_ a reader can check them, which is exactly what a stock photo and
 an unlinked claim could not offer. That said, the fabrication ban still applies to this material, and
 bites hardest here precisely because it reads as personal and is therefore the easiest place to
 "round up": no invented founding year, client count, headcount, employer or education, no invented
@@ -241,7 +241,7 @@ and most are a single declaration, which is the size of thing a tidy-up deletes.
   block there must be `h2` or the page reads h1 straight to h3. PAGE_STYLE lists `.feature h2`
   beside `.feature h3` so the LEVEL is corrected without changing the LOOK.
 - **The focus ring is `--green`, which disappears on the one dark ground.** `.cta-panel
-  :focus-visible` overrides the COLOR alone to `#fff` (1.83:1 becomes ~14:1). That band holds the
+:focus-visible` overrides the COLOR alone to `#fff` (1.83:1 becomes ~14:1). That band holds the
   invite form's submit button, so this is the page's primary action.
 - **Prose gets a reading measure.** `.legal p`/`.legal li` are capped at **52ch**, the figure
   `.section-head p` already uses, roughly 72 characters a line. Uncapped they ran the full 1072px
