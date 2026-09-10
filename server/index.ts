@@ -1223,7 +1223,7 @@ const ABOUT_HTML = `<!doctype html>
     ${pageHead(
       '/about',
       'About | Pawservation',
-      'Pawservation is built by Brad Burch, a dog walker and pet sitter who needed it for his own business, and it keeps four rules that never break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
+      'Pawservation is built by Brad Burch, a software engineer turned dog walker and pet sitter who needed it for his own business, and it keeps four rules that never break: nothing books itself, your money is yours, your clients stay yours, and no price is charged that you did not type.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1267,7 +1267,7 @@ const ABOUT_HTML = `<!doctype html>
                 alt="Brad Burch with a small black dog resting across his shoulders"
               />
               <div>
-                <p>I&rsquo;m Brad Burch. I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business, and Pawservation started as the thing I needed for it. I got tired of running my business through a mess of texts, emails and payment records.</p>
+                <p>I&rsquo;m Brad Burch. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business. Pawservation started as the thing I needed for it. I got tired of running my own business through a mess of texts, emails and payment records.</p>
                 <p>The questions I kept getting were the same three:</p>
                 <ul class="founder-qs">
                   <li>&ldquo;Are you available to watch Lucie in 2 weeks?&rdquo;</li>
@@ -1276,7 +1276,7 @@ const ABOUT_HTML = `<!doctype html>
                 </ul>
                 <p>Every one of those answers was already written down somewhere. Finding it meant scrolling back through a thread with a dog on the lead. So I built Pawservation to keep scheduling, bookings and payments in one place. It does not replace your updates or your relationship with your clients. It makes the back office transparent and frees up time for you to spend doing what you love, which is spending time with the pets.</p>
                 <p>Everything else about how you work stays as it is. The same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
-                <p>I&rsquo;m looking for a handful of pet sitters and dog walkers to try it while it&rsquo;s still early and help me work out what to improve. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person, and the person is me.</p>
+                <p>I write the software and I keep the book of clients it holds, so anything about it that would annoy you has usually annoyed me first. I&rsquo;m looking for a handful of pet sitters and dog walkers to try it while it&rsquo;s still early and help me work out what to improve. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person, and the person is me.</p>
               </div>
             </div>
           </div>
