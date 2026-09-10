@@ -165,6 +165,17 @@ bites hardest here precisely because it reads as personal and is therefore the e
 street address. The test is unchanged from the rule above — whether the owner stated it, not whether
 it sounds plausible — it just now has a second kind of claim to apply to.
 
+**The intro introduces a first name; the attribution keeps the surname.** The founder story opens
+"I'm Brad." as of 2026-09-10, on the owner's instruction ("remove my last name from the intro"),
+and the same instruction deliberately left "Brad Burch" standing everywhere it is ATTRIBUTION
+rather than introduction: the photo's alt text, this page's meta description, `pageFooter()`'s
+"Created by", and the homepage JSON-LD's `founder`. The distinction is the point — a person
+introduces himself by first name and is credited by full name — so stripping the surname from those
+four is not finishing the job, it is deleting the attribution. `seo.test.ts` pins the surviving
+intro text and the alt text together for that reason. The same date cut the `.sub`'s second
+sentence ("This page is why it exists and who is behind it"), which told the reader what the page
+was instead of being it.
+
 The page is also not a call to action. Its founder story used to close by asking sitters to try
 the product "while it's still early", and the owner cut that on 2026-09-09 for the same reason he
 narrowed the page: `/about` states why the thing exists, and recruiting is the landing page's
@@ -212,9 +223,9 @@ link's label and one anchor's href.
 
 ## Layout rules a browser enforces and a diff does not
 
-Four properties of these pages are invisible in the markup and were each a live defect measured in a
-real browser on 2026-09-09. Three are pinned by `seo.test.ts`; all four are one declaration, which is
-the size of thing a tidy-up deletes.
+These properties of these pages are invisible in the markup and were each a live defect measured in
+a real browser on 2026-09-09 (the last one on 2026-09-10). All but one are pinned by `seo.test.ts`,
+and most are a single declaration, which is the size of thing a tidy-up deletes.
 
 - **The header is ONE row at every width.** `.nav-inner` is `flex-wrap: wrap` on purpose, as the
   safety valve that keeps a narrow phone from scrolling the DOCUMENT sideways instead — so a header
@@ -237,6 +248,21 @@ the size of thing a tidy-up deletes.
   `.wrap` at about 130 characters, under a hero whose own `h1` is 15ch and whose `.sub` is 48ch — a
   heading in a half column above a body at full width. Body links in that prose share the `.note a`
   declarations rather than a second set; before that they were browser-default `#0000EE`.
+- **`/about` is the one page with no second column, so it overrides three shared defaults — each
+  through markup only it carries.** Everything in PAGE_STYLE was measured for a page that has a
+  hero-visual, a CTA row or a `.section-head`, and on `/about` those defaults compose into a tall
+  left gutter beside a void: the shared `.hero h1`'s 15ch put a 74-character sentence into FOUR
+  lines of a 540px column with the right half of the wrap empty; `.feature h2` at 0.98rem made the
+  page's ONLY heading read as a bold label under a 3.35rem `h1`; and the founder grid's 200px photo
+  column left a 232px hole under the picture beside prose capped at 52ch. The fixes are
+  `.hero-flush h1` (full measure plus `text-wrap: balance`, placed BELOW `.hero h1` since the two
+  have equal specificity), `.hero-flush + .section .feature h2` (borrowing `.section h2`'s own
+  clamp rather than inventing a fourth scale), and a `.founder` grid from 920px that puts the prose
+  first and the portrait in the width the 52ch measure leaves over, at up to its natural 360px.
+  **The scoping is the load-bearing part**: every selector needs `.hero-flush` or `.founder`, which
+  no other page has, so widening any of them to `.hero h1`, `.feature h2` or `.legal` would
+  silently re-scale the landing cards and the three other prose pages. `seo.test.ts` pins both
+  halves together — the rules exist, AND no other page carries anything they can match.
 - Not a rule, but the same class of thing: `.btn` sets `font-family: inherit; line-height: inherit`
   because one `.btn` on this site is a `<button>` and the rest are `<a>`s, and a `<button>` inherits
   neither.

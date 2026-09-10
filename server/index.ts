@@ -1310,7 +1310,7 @@ const ABOUT_HTML = `<!doctype html>
           <h1>I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.</h1>
           <p class="sub">
             I needed this for my own dog walking and pet sitting business before it was ever a
-            product anyone else could buy. This page is why it exists and who is behind it.
+            product anyone else could buy.
           </p>
         </div>
       </section>
@@ -1328,7 +1328,7 @@ const ABOUT_HTML = `<!doctype html>
                 alt="Brad Burch with a small black dog resting across his shoulders"
               />
               <div>
-                <p>I&rsquo;m Brad Burch. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business. Pawservation started as the thing I needed for it. I got tired of running my own business through a mess of texts, emails and payment records.</p>
+                <p>I&rsquo;m Brad. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business. Pawservation started as the thing I needed for it. I got tired of running my own business through a mess of texts, emails and payment records.</p>
                 <p>I kept getting questions like:</p>
                 <ul class="founder-qs">
                   <li>&ldquo;Are you available to watch Lucie in 2 weeks?&rdquo;</li>

@@ -410,13 +410,70 @@ describe('SEO surface', () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/about', {}, env)).text();
     // The three things the owner supplied, and the whole of what the page may claim about him.
-    expect(body).toContain('I&rsquo;m Brad Burch.');
+    // The intro is first-name-only from 2026-09-10 on the owner's instruction ("remove my last
+    // name from the intro"). The full name is untouched everywhere it is ATTRIBUTION rather than
+    // introduction: the photo's alt text, this page's meta description, the shared footer's
+    // "Created by", and the homepage JSON-LD's founder. Pinned on the surviving text, so the
+    // sentence cannot quietly grow a surname back or lose the introduction altogether.
+    expect(body).toContain('I&rsquo;m Brad.');
+    expect(body).toContain('Brad Burch with a small black dog');
     expect(body).toContain('https://bradpaws.com/');
     expect(body).toContain('Did I pay you for last week?');
     expect(body).not.toMatch(/\$\d/);
     expect(body).not.toContain('per sitter per month');
     expect(body).not.toContain('free trial');
     expect(body).not.toContain('Four rules the software will not break');
+  });
+
+  /**
+   * /about's three composition rules, and the proof they cannot reach another page.
+   *
+   * The page is one column of prose with no second column anywhere in its markup, and every
+   * default it inherits was measured for a page that HAS one: the shared `.hero h1` caps at 15ch
+   * so a hero-visual can sit beside it, and `.feature h2` is 0.98rem because a `.section-head`
+   * h2 normally sits above it. On /about those two produced a four-line headline in a 540px
+   * gutter with the right half of the wrap empty, and a section heading that read as a bold
+   * label; the founder grid's 200px photo column left a 232px hole under the picture beside
+   * prose capped at 52ch. All three were measured in a real browser on 2026-09-10.
+   *
+   * Each override is scoped through markup only /about carries, which is the half of this test
+   * that matters: `.hero-flush` (the hero class and its adjacent sibling, the pattern already
+   * used to close this page's hero padding) and `.founder`. A future tidy-up that widened any of
+   * these to `.hero h1`, `.feature h2` or `.legal` would silently re-scale the landing page's
+   * cards and the three other prose pages, which no test on those pages would catch, because
+   * they assert on markup and this is a stylesheet. So both halves are pinned together: the
+   * rules exist, AND no page but /about carries anything they can match.
+   */
+  it("scopes /about's composition overrides to /about", async () => {
+    const { env } = createTestEnv();
+    const about = await (await app.request('/about', {}, env)).text();
+    // 1. The headline uses the width it is standing in instead of a 15ch column with an empty
+    //    half beside it.
+    expect(about).toContain('.hero-flush h1 {');
+    expect(about).toContain('max-width: none;');
+    // 2. "Why I built it" is this page's only heading, at the size a section heading is
+    //    everywhere else here rather than at the 0.98rem label size the prose pages want.
+    expect(about).toContain('.hero-flush + .section .feature h2 {');
+    // 3. The portrait moved into the width the 52ch prose leaves over, which closed the hole
+    //    under it. Both the placement and the breakpoint it happens at are load-bearing.
+    expect(about).toContain('@media (min-width: 920px) {');
+    expect(about).toContain('.founder-photo { grid-column: 2; grid-row: 1; width: 100%; }');
+    // The base .feature h2 size the other prose pages and the landing cards read at survives.
+    expect(about).toContain('font-size: 0.98rem;');
+    // The scoping proof. Every selector above needs `.hero-flush` or `.founder` in the markup,
+    // and only /about has either, so the rules are unreachable from the other five pages even
+    // though the stylesheet is inlined into all of them.
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/contact']) {
+      const body = await (await app.request(path, {}, env)).text();
+      const markup = body.replace(/<style>[\s\S]*?<\/style>/g, '');
+      const classes = new Set(
+        [...markup.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)),
+      );
+      expect(
+        [...classes].filter((c) => c === 'hero-flush' || c.startsWith('founder')),
+        path,
+      ).toEqual([]);
+    }
   });
 
   /**

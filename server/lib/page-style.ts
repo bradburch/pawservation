@@ -242,6 +242,18 @@ export const PAGE_STYLE = /* css */ `
         margin: 0 0 20px;
         max-width: 15ch;
       }
+      /* The other heroes cap their h1 at 15ch because a hero-visual or a CTA row sits beside or
+         under it and the short measure is what leaves room for it. /about's hero has no second
+         column at all, so 15ch put a 74-character sentence into FOUR lines of a 540px gutter with
+         the whole right half of a 1072px wrap empty beside it. Letting the sentence use the width
+         it is standing in wraps it to two lines and the emptiness goes with it. balance splits
+         those two lines evenly instead of leaving a short tail; browsers without it wrap as
+         before. Scoped through .hero-flush, which only /about carries, and placed BELOW the rule
+         it overrides: the two selectors have equal specificity, so source order is what decides. */
+      .hero-flush h1 {
+        max-width: none;
+        text-wrap: balance;
+      }
       .hero .sub {
         margin: 0 0 30px;
         max-width: 48ch;
@@ -527,7 +539,9 @@ export const PAGE_STYLE = /* css */ `
          must be h2 or the document skips a level. They keep this size, which is the point of
          listing both here rather than letting .section h2's clamp() blow them up: correcting the
          LEVEL must not change the LOOK. Source order matters, since .section h2 above has equal
-         specificity. */
+         specificity. /about overrides the SIZE back up further down, on its own hook and for its
+         own reason (it has exactly one heading, not a run of them); that override is the
+         exception this rule states, not a repeal of it. */
       .feature h2,
       .feature h3 {
         font-size: 0.98rem;
@@ -561,20 +575,38 @@ export const PAGE_STYLE = /* css */ `
          .section-head p already sets, so every section intro on the landing and the tour is
          already read at it and this borrows the number rather than inventing a second one; it
          works out at roughly 72 characters a line. It caps the TEXT and not the .feature block,
-         which is what lets /about's founder grid keep its 200px photo column beside prose set to
-         the same measure as every other page here. */
+         which is what lets /about's founder grid set its prose to the same measure as every other
+         page here and hand the width left over to the portrait beside it. */
       .legal p,
       .legal li { max-width: 52ch; }
       /* .feature p zeroes every margin for the three-across cards, which leaves a legal or
          /about block's stacked paragraphs with no gap at all. Put it back for the single-column
          prose only, where a .feature really is several paragraphs of one answer. */
       .legal .feature p + p { margin-top: 12px; }
+      /* /about's ONE heading, at the size a section heading is on every other page here.
+         0.98rem is right for a .feature wherever a .section-head h2 already carries the
+         section (the landing cards) or where a page is a long run of equal blocks (/privacy,
+         /terms, /contact, which is why this cannot be a change to .feature h2 itself). /about
+         is neither: "Why I built it" is the only heading between a 3.35rem h1 and the footer, and
+         at 0.98rem it read as a bold label rather than the head of the section it opens. The
+         declarations are .section h2's own, copied rather than re-tuned, so this page's heading
+         is the same size as every other section heading on the site instead of a fourth scale;
+         only the bottom margin is the block-spacing one rather than the label's 5px. Scoped by
+         the adjacent sibling of the hero only /about carries, the .hero-flush + .section
+         pattern above. */
+      .hero-flush + .section .feature h2 {
+        font-size: clamp(1.65rem, 3.4vw, 2.15rem);
+        font-weight: 750;
+        letter-spacing: -0.025em;
+        line-height: 1.15;
+        margin: 0 0 18px;
+      }
 
       /* ── /about founder portrait ────────────────────────────────── */
       /* The photo carries a claim the words can't (a dog walker wrote this), so it is content
          with real alt text, and its intrinsic 360x480 is declared on the tag so nothing reflows
-         around it while it loads. It stacks above the copy on a phone and moves beside it at the
-         780px breakpoint the rest of the page turns two-column at. */
+         around it while it loads. It stacks above the copy on a phone at the 200px this rule sets
+         and moves beside it, larger, at the breakpoint below. */
       .founder { display: grid; gap: 20px; align-items: start; }
       .founder-photo {
         width: 200px;
@@ -594,8 +626,35 @@ export const PAGE_STYLE = /* css */ `
       }
       .founder-qs li { font-size: 0.9rem; color: var(--ink); }
       .founder-qs li + li { margin-top: 6px; }
-      @media (min-width: 780px) {
-        .founder { grid-template-columns: 200px 1fr; gap: 30px; }
+      /* Two columns, prose first and the portrait beside it, from 920px.
+
+         The old shape was a 200px photo column then 1fr of prose from 780px, and it had two
+         holes rather than one. The prose is capped at 52ch by .legal p above, so the 1fr
+         column was 842px wide carrying a 473px paragraph: 371px of the wrap was empty to the
+         RIGHT of the copy, while the 200px photo bottomed out 232px above it and left a hole
+         UNDER the picture. Both are the same measurement problem, so both are fixed by the same
+         swap: the prose keeps its 52ch measure in the first column and the picture moves into the
+         width that was going spare, displayed at up to its natural 360px (never above it, so it
+         is never upscaled) where it stands 480px tall against roughly 500px of copy. The photo
+         holds the tag's own width/height attributes, so the aspect box is still reserved and
+         nothing reflows while it loads.
+
+         align-items: center is the belt: where the two columns still differ at a middling
+         width, the difference splits above and below the picture and reads as an optical centre
+         rather than as a hole under it.
+
+         The breakpoint moved 780px -> 920px because below that the second column has to be
+         narrow enough to squeeze the prose under its measure, and one stacked column is honest
+         where two cramped ones are not. .founder is markup only /about has, so this rule cannot
+         reach another page even though it names no page-level hook. */
+      @media (min-width: 920px) {
+        .founder {
+          grid-template-columns: minmax(0, 1fr) clamp(260px, 30vw, 360px);
+          gap: 40px;
+          align-items: center;
+        }
+        .founder > div { grid-column: 1; grid-row: 1; }
+        .founder-photo { grid-column: 2; grid-row: 1; width: 100%; }
       }
 
       /* ── wf-* label/pair layout (pricing note, how-it-works page) ── */
