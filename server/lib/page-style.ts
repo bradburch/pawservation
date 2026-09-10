@@ -126,12 +126,27 @@ export const PAGE_STYLE = /* css */ `
          hero's own second button and the second link on both mid-page invitations. */
       @media (max-width: 779px) { .nav-right .signin:not(.nav-tour) { display: none; } }
       /* Sign in comes back later than the other plain link, at the width where the whole row
-         genuinely fits: with the .nav-links row back from 780px, seven items already fill the
+         genuinely fits: with the .nav-links row back from 780px, eight items already fill the
          header, and letting sign-in return before there was room for it made the row wrap again
          further up, so the header went from one line to two and back as the window widened. It is
          the one item here a visitor can reach from somewhere else on the same screen: the hero
-         note links it, and so does the footer. */
-      @media (max-width: 939px) { .nav-right .nav-signin { display: none; } }
+         note links it, and so does the footer. The threshold is measured, not chosen: the full
+         landing row needs 944px, and 960 is that with slack. .nav-signin exists on the landing
+         header alone, so this rule is already landing-only. */
+      @media (max-width: 959px) { .nav-right .nav-signin { display: none; } }
+      /* The landing row went from four links to five when About joined it, which is 16px of extra
+         gap and 41px of extra link at the width where the row first appears, and the header wrapped
+         onto a second line from 780px up. Three measurements set what follows, taken from the
+         rendered header: the row without either plain link needs 773px, with "Try the demo" 880px,
+         and with sign-in as well 944px. So this row closes its own gaps by 4px each, and the demo
+         link returns at 890px rather than at 780px with the row itself, for the reason it is
+         absent below 780px at all: it is the hero's own second button and the second link on both
+         mid-page invitations. Both are scoped by a class on the row, because the legal pages carry
+         no link row and have room for sign-in the whole way down. */
+      .nav-links-5 { gap: 20px; }
+      @media (max-width: 889px) {
+        .nav-links-5 ~ .nav-right .signin:not(.nav-tour) { display: none; }
+      }
       /* The gaps, the wordmark and the button tighten below 560px, which is what keeps the header
          to one row on most phones. Where they are not enough the row WRAPS: .nav-inner is
          flex-wrap: wrap at every width (above), and that is what actually guarantees the page
@@ -179,6 +194,15 @@ export const PAGE_STYLE = /* css */ `
 
       /* ── Hero ───────────────────────────────────────────────────── */
       .hero { padding: 72px 0 88px; }
+      /* Every other page's hero ends where a new band begins, so its 88px bottom padding stacks
+         with the next section's 88px top padding and reads as the join between two blocks.
+         /about's hero runs straight into the founder story on the same background, with no label
+         or heading to reintroduce it, so those 176px read as a hole between the page's own
+         subheading and its first paragraph. One class on that hero closes both halves and leaves
+         the .sub's own 30px margin as the gap. The adjacent-sibling half is what keeps this off
+         /, /how-it-works, /privacy, /terms and /contact, none of which carry the class. */
+      .hero-flush { padding-bottom: 0; }
+      .hero-flush + .section { padding-top: 0; }
       .hero-grid {
         display: grid;
         gap: 56px;

@@ -354,14 +354,19 @@ const LANDING_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
-        <nav class="nav-links" aria-label="Sections">
+        <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="#how">How it works</a>
           <a href="#dashboard">Dashboard</a>
           <a href="#pricing">Pricing</a>
           <a href="/how-it-works">Full tour</a>
+          <a href="/about">About</a>
         </nav>
         <div class="nav-right">
-          <!-- .nav-links is display:none below 780px, which left the tour reachable only from
+          <!-- About joined the .nav-links row above and is deliberately NOT repeated here: it
+               is in the shared footer's Company block, so it stays reachable below 780px without
+               this row printing it a second time. Adding a fifth link did move one breakpoint;
+               see .nav-links-5 in PAGE_STYLE.
+               .nav-links is display:none below 780px, which left the tour reachable only from
                the footer on a phone. This copy sits OUTSIDE that row and shows only where the
                row is hidden, so the link exists at every width and is never printed twice. The
                two plain links beside it drop out at the same width, which is what keeps the
@@ -480,10 +485,13 @@ const LANDING_HTML = `<!doctype html>
       <!-- The relationship section: one booking read from the client's side. It was the ninth
            FAQ answer for two rounds, which is the last place a reader looking for "what is this
            like for my clients" would find it. It ran as a two-column "what they see / what you do"
-           grid until the owner cut it on 2026-09-09 for reading as filler; the same ground is
-           covered in two paragraphs now. Everything the page says about a client changing or
-           cancelling their own booking still lives HERE and nowhere else, so the rule is read
-           once, whole, rather than three times in fragments. -->
+           grid until the owner cut it on 2026-09-09 for reading as filler. What is here is that
+           cut copy's own sentences, unchanged, re-laid as the .features cards #dashboard already
+           uses: the section had shrunk to a .section-head alone, which is a centred 60ch intro
+           block, so it read narrow and half-height beside its neighbours. The fix was the layout
+           and NOT the word count, and no claim was added to fill the row. Everything the page says
+           about a client changing or cancelling their own booking still lives HERE and nowhere
+           else, so the rule is read once, whole, rather than three times in fragments. -->
       <section class="section" id="clients" aria-labelledby="clients-h">
         <div class="wrap">
           <div class="section-head">
@@ -491,14 +499,21 @@ const LANDING_HTML = `<!doctype html>
             <h2 id="clients-h">Your clients see what you see</h2>
             <p>
               Your clients see which dates you have open and what the stay costs before they ask for it.
-              Every request waits as pending until you confirm it, and their screen says so.
-              When they need to change dates or cancel they do it on the page, and your own cancellation policy sets the fee, so nobody has to raise it in a text.
             </p>
-            <p>
-              What they send you now is about the dog.
-              Pawservation doesn&rsquo;t do visit reports or photos,
-              so that part of the relationship stays yours.
-            </p>
+          </div>
+          <div class="features">
+            <div class="feature">
+              <h3>Pending until you confirm</h3>
+              <p>Every request waits as pending until you confirm it, and their screen says so.</p>
+            </div>
+            <div class="feature">
+              <h3>Changes and cancellations</h3>
+              <p>When they need to change dates or cancel they do it on the page, and your own cancellation policy sets the fee, so nobody has to raise it in a text.</p>
+            </div>
+            <div class="feature">
+              <h3>Updates stay yours</h3>
+              <p>What they send you now is about the dog. Pawservation doesn&rsquo;t do visit reports or photos, so that part of the relationship stays yours.</p>
+            </div>
           </div>
           <div class="cta-row mid-cta">
             <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
@@ -1243,6 +1258,14 @@ const TERMS_HTML = `<!doctype html>
  * trust anchor, so the fabrication rule is unchanged and tighter for being personal: the prior
  * career, the business name and the three client questions are what the owner supplied, and no
  * year, client count, headcount, employer or address may be added to them.
+ *
+ * It is also not a call to action. The founder story's closing paragraph ("I'm looking for a
+ * handful of pet sitters and dog walkers to try it while it's still early") was removed on the
+ * owner's instruction the same week: the page states why the thing exists, and recruiting belongs
+ * to the landing page's invite form. The closing line pointing at the demo and the tour stays,
+ * because it is wayfinding for a reader who has finished this page rather than a pitch. That
+ * removal also took the page's only statements that this is a small independent product with no
+ * sales team and that questions reach a person; /contact still says both, in its own words.
  */
 const ABOUT_HTML = `<!doctype html>
 <html lang="en">
@@ -1271,7 +1294,10 @@ const ABOUT_HTML = `<!doctype html>
     </header>
 
     <main>
-      <section class="hero">
+      <!-- .hero-flush: this hero is the top of one continuous page rather than the first of
+           several bands, so the hero's bottom padding and the next section's top padding are both
+           dropped and the .sub's own margin becomes the gap. -->
+      <section class="hero hero-flush">
         <div class="wrap">
           <p class="chip">About</p>
           <h1>I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.</h1>
@@ -1296,7 +1322,7 @@ const ABOUT_HTML = `<!doctype html>
               />
               <div>
                 <p>I&rsquo;m Brad Burch. I was a software engineer before I started walking dogs, and these days I run <a href="https://bradpaws.com/">Brad Paws</a>, a dog walking and pet sitting business. Pawservation started as the thing I needed for it. I got tired of running my own business through a mess of texts, emails and payment records.</p>
-                <p>The questions I kept getting were the same three:</p>
+                <p>I kept getting questions like:</p>
                 <ul class="founder-qs">
                   <li>&ldquo;Are you available to watch Lucie in 2 weeks?&rdquo;</li>
                   <li>&ldquo;Which days did I ask you to watch Fido in November?&rdquo;</li>
@@ -1304,7 +1330,6 @@ const ABOUT_HTML = `<!doctype html>
                 </ul>
                 <p>Every one of those answers was already written down somewhere. Finding it meant scrolling back through a thread with a dog on the lead. So I built Pawservation to keep scheduling, bookings and payments in one place. It does not replace your updates or your relationship with your clients. It makes the back office transparent and frees up time for you to spend doing what you love, which is spending time with the pets.</p>
                 <p>Everything else about how you work stays as it is. The same website, the same calendar, the same way of taking money, the same conversations with the clients who&rsquo;d rather text you anyway.</p>
-                <p>I write the software and I keep the book of clients it holds, so anything about it that would annoy you has usually annoyed me first. I&rsquo;m looking for a handful of pet sitters and dog walkers to try it while it&rsquo;s still early and help me work out what to improve. It is a small, independent product. The invite list is short, the tour is plain about the limits, and there is no sales team to get past. Questions go to a person, and the person is me.</p>
               </div>
             </div>
           </div>

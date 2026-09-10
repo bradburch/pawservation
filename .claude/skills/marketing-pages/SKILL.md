@@ -165,6 +165,30 @@ bites hardest here precisely because it reads as personal and is therefore the e
 street address. The test is unchanged from the rule above — whether the owner stated it, not whether
 it sounds plausible — it just now has a second kind of claim to apply to.
 
+The page is also not a call to action. Its founder story used to close by asking sitters to try
+the product "while it's still early", and the owner cut that on 2026-09-09 for the same reason he
+narrowed the page: `/about` states why the thing exists, and recruiting is the landing page's
+invite form, already the only call to action this site carries. The demo-and-tour line that now
+ends the page stays, because it is wayfinding for a reader who has finished it. That deletion also
+took the page's only statements that this is a small independent product with no sales team and
+that questions reach a person; `/contact` makes both in its own words ("There is no support desk
+and no sales team", "messages reach the person who builds it"), and `seo.test.ts` asserts the ban
+and the surviving `/contact` copy in the same test, so the pair cannot be lost by a later trim
+there either. The three client questions on the page are TYPES of question and the copy may not
+put a count on them: "I kept getting questions like:", never "the same three", which claimed a
+number the owner never gave.
+
+`/about` is in the landing header's `.nav-links` row as of 2026-09-09 and deliberately not in
+`.nav-right`: that group exists to re-show the links `.nav-links` hides below 780px, and `/about`
+is already in the shared footer's Company block at every width, so a copy in both rows would print
+the link twice on one screen. The other five pages carry no link row at all, only a bare
+`.nav-right` (or, on `/how-it-works`, a row of its own in-page section anchors), so they reach
+`/about` through the footer alone. A fifth link cost the landing row 57px, so three breakpoints in
+`PAGE_STYLE` are cut to measured widths rather than round ones (`.nav-links-5`: the row needs
+773px bare, 880px with "Try the demo", 944px with sign-in as well), and `.nav-inner` stays
+`flex-wrap: wrap` underneath all of it so a miss degrades to two rows rather than a sideways
+scroll.
+
 The founder story leading `/about` is also why the page's voice splits from the rest of the site:
 `/about` speaks in the first person ("I built this…") while the landing page and `/how-it-works` keep
 the second-person product voice ("your clients", "you confirm it"). That split was a deliberate,

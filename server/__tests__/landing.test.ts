@@ -211,6 +211,15 @@ describe('GET / — landing page', () => {
     expect(body).toContain('their screen says so');
     for (const lie of ['confirmed instantly', 'instant confirmation', 'confirms automatically'])
       expect(body, lie).not.toContain(lie);
+    // 2026-09-09: cutting the two-column grid left this section as a .section-head and nothing
+    // else, which is a centred 60ch intro block, so it rendered half the height and half the
+    // width of every section around it. It gets a body again, and the body is the .features grid
+    // #dashboard already uses rather than new markup. Pinned because the fix is the layout: the
+    // three claims above are still the WHOLE of what this section says, and a future edit that
+    // drops the grid takes the section back to reading unfinished.
+    const clients = body.slice(body.indexOf('id="clients"'), body.indexOf('id="dashboard"'));
+    expect(clients).toContain('<div class="features">');
+    expect(clients.match(/<div class="feature">/g)?.length).toBe(3);
   });
 
   it('never re-acquires the time-audit arithmetic the owner cut', async () => {

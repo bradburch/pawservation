@@ -419,12 +419,63 @@ describe('SEO surface', () => {
     expect(body).not.toContain('Four rules the software will not break');
   });
 
+  /**
+   * 2026-09-09, the same narrowing one step further: the page is the REASON the product exists,
+   * so it does not also recruit. The founder story's closing paragraph asked sitters to try it
+   * "while it's still early", which is the landing page's invite form stated a second time on the
+   * page a reader reaches for who is behind this. Deleting it also took this page's only
+   * statements that the product is small and independent and that questions reach a person;
+   * /contact makes both in its own words, and the second assertion here is what stops the pair
+   * from being lost outright rather than merely moved. The closing demo/tour line stays: it is
+   * wayfinding for a reader who has finished the page.
+   */
+  it('keeps /about off recruiting, and leaves the trust claims standing on /contact', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/about', {}, env)).text();
+    for (const pitch of [
+      'looking for a handful of pet sitters',
+      'help me work out what to improve',
+      'The invite list is short',
+      'there is no sales team to get past',
+    ])
+      expect(body, pitch).not.toContain(pitch);
+    // The one client-question line is a list of TYPES of question, so it may not put a count on
+    // them: there were not exactly three, and three is only how many are quoted.
+    expect(body).toContain('I kept getting questions like:');
+    expect(body).not.toContain('the same three');
+    // Wayfinding survives the cut.
+    expect(body).toContain('href="/demo"');
+    expect(body).toContain('href="/how-it-works"');
+    // The claims the deletion carried off, still made where they were always also made.
+    const contact = await (await app.request('/contact', {}, env)).text();
+    expect(contact).toContain('no sales team');
+    expect(contact).toContain('messages reach the person who builds it');
+  });
+
   it('tells a pet owner on /contact to go to their sitter, not to us', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/contact', {}, env)).text();
     // The most common reason someone reaches a pet-care product's contact page is that they want
     // their SITTER. Saying so first is worth more than a form nobody can answer.
     expect(body).toContain('contact your sitter directly');
+  });
+
+  /**
+   * The owner asked for /about in the header on 2026-09-09 ("the about page should be part of the
+   * header links"). It goes in the .nav-links row and NOT in .nav-right, because .nav-right is
+   * where that row's links are duplicated for the widths .nav-links is hidden at, and /about is
+   * already in the shared footer's Company block at every width. A copy in both rows would print
+   * the link twice on one screen, which is the exact thing the "Full tour" pair is arranged to
+   * avoid.
+   */
+  it('puts /about in the landing header without printing it twice', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/', {}, env)).text();
+    const nav = body.slice(body.indexOf('<header class="nav">'), body.indexOf('</header>'));
+    expect(nav).toContain('<a href="/about">About</a>');
+    expect(nav.match(/href="\/about"/g)?.length).toBe(1);
+    // The row carrying five links is the one the measured breakpoints in PAGE_STYLE are cut for.
+    expect(nav).toContain('class="nav-links nav-links-5"');
   });
 
   it('links every page to the trust anchors through one shared footer', async () => {
