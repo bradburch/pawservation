@@ -4,48 +4,53 @@ import { formatTimestamp, type Session, type Settings } from './shared.js';
 import { Hint } from './Hint';
 
 /**
- * SUBSCRIBE TO A PLAN. Two plans, the published figures, and one control per plan that starts a
- * hosted checkout.
+ * HER PLAN: what she is on, and the two controls that change it.
  *
- * THE GATE IS TWO PROPERTIES OF THE DEPLOYMENT, and never the entitlement flag published beside
- * them. `assistant` is the tenant's entitlement — false for exactly the sitter who has not bought
- * yet, which is everyone this panel is for. The audit card in ServicesSection gates on it because
- * it embeds a paid surface; this one sells one, so it must not. Do not make them match.
+ * THREE THINGS RENDER HERE, on three different conditions, and the difference between them is the
+ * whole design of this file:
  *
- *   - `premium.origin` — a checkout worker EXISTS to be reached at all, and where.
- *   - `pricing.subscribe` — selling is switched ON (`PLAN_SUBSCRIBE`, unset = off). `PREMIUM_ORIGIN`
- *     is already set in production, so `origin` alone would put a live Subscribe button in front of
- *     every sitter the day this merges and every press would 404 against a checkout route Story
- *     10.2 has not shipped. The operator flips the flag when that route is live.
+ *   - THE STATUS LINE renders unconditionally. The plan, the paid-through date and live/lapsed are
+ *     columns in this product's own database, answered by the same request that drew the rest of
+ *     the dashboard — so an outage of the paid surface, an unset `PREMIUM_ORIGIN`, a deployment
+ *     that has stopped selling and a lapsed subscription all still show it (NFR-2). It says
+ *     nothing about ENTITLEMENT: this repo records who has paid and publishes the fact, and
+ *     deciding what a plan buys belongs to whatever consumes it.
  *
- * And a DISABLED tenant is never offered a plan: her account cannot take a booking, so asking her
- * for a card is worse than showing nothing.
+ *   - SUBSCRIBE renders on TWO PROPERTIES OF THE DEPLOYMENT, and never on the entitlement flag
+ *     published beside them. `assistant` is the tenant's entitlement — false for exactly the
+ *     sitter who has not bought yet, which is everyone that control is for. The audit card in
+ *     ServicesSection gates on it because it embeds a paid surface; this one sells one, so it must
+ *     not. Do not make them match.
+ *       - `premium.origin` — a checkout worker EXISTS to be reached at all, and where.
+ *       - `pricing.subscribe` — selling is switched ON (`PLAN_SUBSCRIBE`, unset = off).
+ *     And a DISABLED tenant is never offered a plan: her account cannot take a booking, so asking
+ *     her for a card is worse than showing nothing.
  *
- * A `fetch` AND NOT AN ANCHOR: the admin session is a JWT in localStorage and an anchor carries no
- * Authorization header — `app/shared-ui/api.ts`'s `exportCsv` docblock is where this repo already
- * writes that down. The returned URL is then opened on `window.top`, because a hosted checkout sets
- * its own frame-ancestors and will not render inside a frame.
+ *   - MANAGE PLAN renders on `premium.origin` and `settings.hasBillingAccount`, and on NEITHER of
+ *     the other two. Not `pricing.subscribe`, because a sitter who already pays must be able to
+ *     change her card and cancel after a deployment stops taking new subscriptions. Not
+ *     `hasBillingAccount`'s tempting neighbour `planActive`, because a sitter whose card died is
+ *     precisely who needs the portal, and gating on "is the plan live" locks the control at the
+ *     moment it is most needed.
  *
- * It fetches `/config` itself, exactly as SettingsReviewEmbed does: one more read of a cached public
- * endpoint is cheaper than threading new state through App.tsx, and it keeps the panel
- * self-contained. A failed read hides THE OFFERS — absence, not an error — because a dashboard
- * that shows a broken Subscribe button is worse than one that shows none. It does NOT hide the
- * panel: `config` stays null, so `offersHidden` is true and the status below renders anyway, off
- * the settings payload, which is the whole of NFR-2. Do not read this paragraph as an argument for
- * putting the early return back.
+ * SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on the billing account — the UI half of the
+ * double-subscription question. The other half is a server-side refusal on the checkout route,
+ * which is the paid surface's to build: a UI is not a guard, because that route is reachable with
+ * curl and an admin token.
  *
- * PLAN STATUS RENDERS ABOVE THAT GATE (NFR-2). What she is on, and what it is paid through, are
- * columns in this product's OWN database, arriving on the settings payload the dashboard has
- * already fetched — so they are still shown when the checkout worker is unreachable, when selling
- * is switched off, and when the plan has lapsed, which is exactly when a sitter goes looking. Only
- * the OFFERS sit behind the gate.
+ * BOTH CONTROLS ARE A `fetch` AND NOT AN ANCHOR: the admin session is a JWT in localStorage and an
+ * anchor carries no Authorization header — `app/shared-ui/api.ts`'s `exportCsv` docblock is where
+ * this repo already writes that down. Each returned URL is opened on `window.top`, because a
+ * hosted checkout and a hosted billing page both set their own frame-ancestors and will not render
+ * inside a frame. Two path templates on the published origin, and this file states no price, no
+ * trial length, no invoice, no cancellation terms and no refund position of its own: the figures
+ * come from `/config` and the terms belong on the terms page.
  *
- * MANAGE PLAN SITS BELOW BOTH (Story 10.3, FR-62), on the published origin and a billing account —
- * never on `planActive`, because a sitter whose card died is precisely who needs the portal, and
- * never on `pricing.subscribe`, because that switch is about selling and she has already bought.
- * It and Subscribe are mutually exclusive on the billing account. Cancelling happens on the hosted
- * page it opens: this panel states no notice period, no refund position and no proration of its
- * own, and shows no price, card form or invoice of its own (FR-60, FR-64).
+ * IT FETCHES `/config` ITSELF, exactly as SettingsReviewEmbed does: one more read of a cached
+ * public endpoint is cheaper than threading new state through App.tsx. A failed read now costs the
+ * two controls and NOT the status line, which comes from the settings payload the dashboard passed
+ * in — plan state is deliberately not on `/config`, because that endpoint is unauthenticated and
+ * embedded on every sitter's public site.
  */
 
 /** The one message this panel is willing to put in front of a sitter for a failure it does not
