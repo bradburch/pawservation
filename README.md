@@ -343,12 +343,15 @@ settings read above. An outage of the paid surface, an unset `PREMIUM_ORIGIN`, a
 has stopped selling and a lapsed subscription all still show it: every fact on that line is a
 column in this product's own database. It says nothing about entitlement.
 
-**Subscribe** is gated on **two properties of the deployment**, and never on the tenant's own
-entitlement — which is false for exactly the sitter the control is for:
+**Subscribe** is gated on **two properties of the deployment** plus one fact about her plan, and
+never on the tenant's own entitlement — which is false for exactly the sitter the control is for:
 
 - **`premium.origin`** — a checkout worker exists to be reached, and where.
 - **`pricing.subscribe`** — selling is switched on. This is the `PLAN_SUBSCRIBE` var
   (`wrangler.jsonc`), where **unset means off** and exactly the string `"true"` means on.
+- **`!planActive`** — she has no live plan. Deliberately **not** `!hasBillingAccount`:
+  `StripeCustomerId` is written once and never cleared, so a sitter who cancelled keeps a billing
+  account for good, and gating on it hid Subscribe from the one sitter who wanted to press it.
 
 **Leave `PLAN_SUBSCRIBE` unset until the billing worker's checkout route is live**, then set it and
 deploy. `PREMIUM_ORIGIN` is already set in production, so a panel gated on the origin alone would
@@ -356,18 +359,33 @@ put a Subscribe button in front of every sitter that 404s on every press. The fl
 operator's switch for "we are selling now", and it grants nothing: it decides whether a control
 renders, never whether a plan is honoured.
 
-A disabled sitter is never offered a plan — her account cannot take a booking, so asking her for a
-card would be worse than showing nothing. She still sees her status line.
+A disabled sitter gets **neither control** — her account cannot take a booking, so asking her for a
+card would be worse than showing nothing, and there is nothing she could usefully do in a portal
+either. She sees her plan's name and one line saying the account is switched off; no paid-through
+date and no live/lapsed word, because neither means anything while the account is off. The
+`disabled` flag both gates read comes from the settings payload, the same source as the dashboard's
+own disabled banner — it is in hand before the panel paints, so no control flashes on for her while
+a `/config` request is in flight.
 
-**Manage plan** is gated on `premium.origin` and `hasBillingAccount`, and on neither of the other
-two: a sitter who already pays must be able to change her card and cancel after a deployment stops
-selling, and a sitter whose card died and whose plan lapsed is precisely who needs the portal, so
-it is deliberately not gated on `planActive`. It `POST`s to
-`<premium.origin>/premium/billing/<slug>/portal` with the admin Bearer and no body, and navigates
-the top-level window to the `url` it gets back — a `fetch` and never an anchor, because an anchor
-carries no `Authorization` header. Subscribe and Manage plan are mutually exclusive, on
-`hasBillingAccount`. Where no origin is published, the status line renders alone with one sentence
-saying the control is unavailable.
+**Manage plan** is gated on `premium.origin`, `hasBillingAccount`, `planActive` and a tenant that is
+switched on, and on neither of the deployment's other two flags: a sitter who already pays must be
+able to change her card and cancel after a deployment stops selling, so it is not gated on
+`pricing.subscribe`. **It IS gated on `planActive`**, and the earlier argument for leaving it out
+("a sitter whose card died is precisely who needs the portal") does not survive the fact that
+`StripeCustomerId` is never cleared: on `hasBillingAccount` alone, a sitter who cancelled long ago
+kept a button pointed at a subscription that no longer existed and never saw Subscribe again. A
+dying card is not an instant lapse either — the processor retries for days, and `BilledUntil` is
+paid-through, not last-charged. It `POST`s to `<premium.origin>/premium/billing/<slug>/portal` with
+the admin Bearer and no body, and navigates the top-level window to the `url` it gets back — a
+`fetch` and never an anchor, because an anchor carries no `Authorization` header. Subscribe and
+Manage plan are mutually exclusive **by construction**, on `planActive`: negated on one side, plain
+on the other.
+
+Where no origin is published, the status line renders alone with one sentence saying plan changes
+are unavailable — shown on `configLoaded && hasBillingAccount && planActive && origin === null`, so
+it reaches exactly the sitter the Manage control was for, and not a sitter who has no plan to
+change. It waits for the `/config` read to FINISH rather than to succeed: a read that failed is one
+of the states the sentence is true for.
 
 The panel states no price, trial length, invoice, cancellation term or refund position of its own:
 the figures come from `/config` and the terms belong on the terms page. It knows an **origin** it

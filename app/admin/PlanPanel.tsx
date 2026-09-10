@@ -16,27 +16,33 @@ import { Hint } from './Hint';
  *     nothing about ENTITLEMENT: this repo records who has paid and publishes the fact, and
  *     deciding what a plan buys belongs to whatever consumes it.
  *
- *   - SUBSCRIBE renders on TWO PROPERTIES OF THE DEPLOYMENT, and never on the entitlement flag
- *     published beside them. `assistant` is the tenant's entitlement — false for exactly the
- *     sitter who has not bought yet, which is everyone that control is for. The audit card in
- *     ServicesSection gates on it because it embeds a paid surface; this one sells one, so it must
- *     not. Do not make them match.
+ *   - SUBSCRIBE renders on TWO PROPERTIES OF THE DEPLOYMENT and one fact about her plan, and never
+ *     on the entitlement flag published beside them. `assistant` is the tenant's entitlement —
+ *     false for exactly the sitter who has not bought yet, which is everyone that control is for.
+ *     The audit card in ServicesSection gates on it because it embeds a paid surface; this one
+ *     sells one, so it must not. Do not make them match.
  *       - `premium.origin` — a checkout worker EXISTS to be reached at all, and where.
  *       - `pricing.subscribe` — selling is switched ON (`PLAN_SUBSCRIBE`, unset = off).
+ *       - `!settings.planActive` — she has no live plan. NOT `!hasBillingAccount`: a cancelled
+ *         sitter keeps her customer record at the processor forever, and hiding Subscribe from her
+ *         hid the only control she wanted.
  *     And a DISABLED tenant is never offered a plan: her account cannot take a booking, so asking
  *     her for a card is worse than showing nothing.
  *
- *   - MANAGE PLAN renders on `premium.origin` and `settings.hasBillingAccount`, and on NEITHER of
- *     the other two. Not `pricing.subscribe`, because a sitter who already pays must be able to
- *     change her card and cancel after a deployment stops taking new subscriptions. Not
- *     `hasBillingAccount`'s tempting neighbour `planActive`, because a sitter whose card died is
- *     precisely who needs the portal, and gating on "is the plan live" locks the control at the
- *     moment it is most needed.
+ *   - MANAGE PLAN renders on `premium.origin`, `settings.hasBillingAccount`,
+ *     `settings.planActive` and a tenant that is switched on — and on NEITHER of the deployment's
+ *     other two flags. Not `pricing.subscribe`, because a sitter who already pays must be able to
+ *     change her card and cancel after a deployment stops taking new subscriptions. `planActive`
+ *     IS in the gate, and the argument for leaving it out ("a sitter whose card died is precisely
+ *     who needs the portal") does not survive the fact that `StripeCustomerId` is never cleared:
+ *     on `hasBillingAccount` alone the button stood for years after a cancellation, pointed at a
+ *     subscription that no longer existed. A dying card is not an instant lapse either — the
+ *     processor retries for days and `BilledUntil` is paid-through, not last-charged.
  *
- * SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on the billing account — the UI half of the
- * double-subscription question. The other half is a server-side refusal on the checkout route,
- * which is the paid surface's to build: a UI is not a guard, because that route is reachable with
- * curl and an admin token.
+ * SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION, on `planActive` — negated on one
+ * side, plain on the other — which is the UI half of the double-subscription question. The other
+ * half is a server-side refusal on the checkout route, which is the paid surface's to build: a UI
+ * is not a guard, because that route is reachable with curl and an admin token.
  *
  * BOTH CONTROLS ARE A `fetch` AND NOT AN ANCHOR: the admin session is a JWT in localStorage and an
  * anchor carries no Authorization header — `app/shared-ui/api.ts`'s `exportCsv` docblock is where
@@ -181,7 +187,6 @@ export function PlanPanel({
   const pricing = config?.pricing ?? null;
   /** Selling is switched on for this DEPLOYMENT (`PLAN_SUBSCRIBE`), not for this tenant. */
   const sellingIsOn = pricing?.subscribe === true;
-  const disabled = config?.disabled === true;
   /** What the row says, in the sitter's own terms. `null` is not "free" and not an error — it is a
    *  sitter who has never subscribed, which is most of them. */
   const planName = settings.plan === null ? 'No plan yet' : PLAN_NAMES[settings.plan];
@@ -275,25 +280,37 @@ export function PlanPanel({
   };
 
   /**
-   * THE OFFERS keep the gate they have always had — a checkout worker exists to be reached, the
-   * deployment is selling, the tenant is not switched off, and the figures are published. What
-   * has changed is that this no longer hides the PANEL: a sitter whose plan lapsed, whose
-   * deployment stopped selling, or whose paid surface is down must still be told what she is on
-   * and when it runs out, because every fact on that line is a column in this product's own
-   * database, answered by the same request that drew the rest of her dashboard (NFR-2).
+   * THE DEPLOYMENT'S HALF of the Subscribe gate — a checkout worker exists to be reached, the
+   * deployment is selling, the tenant is not switched off, and the figures are published. Her own
+   * half (`!settings.planActive`) is applied at each of the two render sites, so this name stays
+   * about the deployment. It does not hide the PANEL: a sitter whose plan lapsed, whose deployment
+   * stopped selling, or whose paid surface is down must still be told what she is on and when it
+   * runs out, because every fact on that line is a column in this product's own database, answered
+   * by the same request that drew the rest of her dashboard (NFR-2).
    */
-  const offersHidden = !origin || !sellingIsOn || disabled || !pricing;
+  const offersHidden = !origin || !sellingIsOn || settings.disabled || !pricing;
 
   /**
-   * MANAGE PLAN renders on the published origin and a billing account, and on neither of the other
-   * two flags. Not `pricing.subscribe`: that switch is about SELLING, and a sitter who already
-   * pays must be able to change her card and cancel after a deployment stops taking new
-   * subscriptions. Not `premium.assistant`: that is the tenant's entitlement, false for a Solo
-   * subscriber who nonetheless has a plan to manage — the same distinction the Subscribe half
-   * above already draws. And `hasBillingAccount` rather than `planActive`, because a sitter whose
-   * card died is precisely who needs the portal.
+   * MANAGE PLAN renders on the published origin, a billing account, a LIVE plan and an account that
+   * is switched on — and on neither of the deployment's other two flags. Not `pricing.subscribe`:
+   * that switch is about SELLING, and a sitter who already pays must be able to change her card and
+   * cancel after a deployment stops taking new subscriptions. Not `premium.assistant`: that is the
+   * tenant's entitlement, false for a Solo subscriber who nonetheless has a plan to manage — the
+   * same distinction the Subscribe half above draws.
+   *
+   * `planActive` AS WELL AS `hasBillingAccount`, and that pair is the whole of the gate ruling. The
+   * earlier reading was `hasBillingAccount` alone, on the argument that a sitter whose card died is
+   * precisely who needs the portal. The flaw is that `StripeCustomerId` is never cleared once
+   * written — `applyBillingEvent` COALESCEs it and no route in this product clears it — so a billing
+   * account outlives every subscription it ever had. A sitter who cancelled a year ago therefore
+   * kept a Manage-plan button pointed at a subscription that no longer exists, AND never saw
+   * Subscribe again, which is the one control she actually wanted. A live plan is the thing there is
+   * something to manage; a lapsed one is something to buy, and `planActive` is what tells them
+   * apart. Her card dying is not a lapse on the instant either: the processor retries for days, and
+   * `BilledUntil` is paid-through, not last-charged.
    */
-  const canManage = origin !== null && settings.hasBillingAccount;
+  const canManage =
+    origin !== null && settings.hasBillingAccount && settings.planActive && !settings.disabled;
 
   return (
     <>
@@ -302,7 +319,7 @@ export function PlanPanel({
         {/* The Hint is SUBSCRIBE'S OWN COPY — it promises a free trial that starts when she
             subscribes — so it hides on the same condition as the offers grid below, and not on the
             offers condition alone, which left it standing beside the Manage plan button. */}
-        {!offersHidden && !settings.hasBillingAccount && pricing && (
+        {!offersHidden && !settings.planActive && pricing && (
           <Hint label="Your plan">
             Payment is handled by Stripe on their own page — we never see your card. Your{' '}
             {pricing.trialDays}-day free trial starts when you subscribe.
@@ -313,11 +330,14 @@ export function PlanPanel({
         <strong>{planName}</strong>
         {paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
       </p>
-      {/* SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on the billing account. This is the UI half
-          of the double-subscription question; the other half is a server-side refusal on the
-          checkout route, which is the paid surface's to build — a UI is not a guard, because that
-          route is reachable with curl and an admin token. */}
-      {!offersHidden && !settings.hasBillingAccount && pricing && (
+      {/* SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on `planActive` — negated here, plain in
+          `canManage` — so there is no state in which both render and none in which neither does for
+          a sitter a deployment is selling to. This is the UI half of the double-subscription
+          question; the other half is a server-side refusal on the checkout route, which is the paid
+          surface's to build — a UI is not a guard, because that route is reachable with curl and an
+          admin token. A LAPSED sitter is offered Subscribe whether or not she has an old billing
+          account, because a customer record at the processor is not a subscription. */}
+      {!offersHidden && !settings.planActive && pricing && (
         <>
           <ul>
             {OFFERS.map((offer) => (
@@ -353,7 +373,7 @@ export function PlanPanel({
           </button>
         </p>
       )}
-      {configLoaded && settings.hasBillingAccount && origin === null && (
+      {configLoaded && settings.hasBillingAccount && settings.planActive && origin === null && (
         <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
       )}
       {error && <p className="pb-error">{error}</p>}
