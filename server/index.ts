@@ -1293,6 +1293,20 @@ const ABOUT_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
+        <!-- .nav-links-5: the same five-link row the landing header carries, with the same
+             row-tuning class, because it is a third row measured at five links plus "Sign in"
+             plus "Try the demo": the .how-it-works shape, not the landing page's four-item
+             .nav-right. The first three hrefs are absolute (/#how, /#dashboard, /#pricing)
+             rather than the landing header's bare fragments, because a fragment link on this
+             page would scroll nowhere: there is no #how/#dashboard/#pricing section here, only
+             on /. -->
+        <nav class="nav-links nav-links-5" aria-label="Sections">
+          <a href="/#how">How it works</a>
+          <a href="/#dashboard">Dashboard</a>
+          <a href="/#pricing">Pricing</a>
+          <a href="/how-it-works">Full tour</a>
+          <a href="/about">About</a>
+        </nav>
         <div class="nav-right">
           <a class="signin" href="/admin">Sign in</a>
           <a class="btn btn-primary btn-sm" href="/demo">Try the demo</a>

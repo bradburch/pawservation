@@ -576,18 +576,21 @@ describe('SEO surface', () => {
   });
 
   /**
-   * The header is ONE row at every width, and the two five-link rows say so the same way.
+   * The header is ONE row at every width, and all three five-link rows say so the same way.
    *
    * /how-it-works carries five section anchors plus "Sign in" plus the demo button, which needs
    * 782px of content box: it wrapped onto a second line from 780px (where `.nav-links` appears at
    * all) to 829px, measured in a real browser. `.nav-links-5` is the tuning that already existed
    * for the landing's five-link row — 4px off each gap, and the plain sign-in link dropped below
-   * 890px — and it is exactly the 80px that band was short by. Pinned on BOTH rows together,
-   * because the failure mode is one of them being edited and the other left behind.
+   * 890px — and it is exactly the 80px that band was short by. /about joined this pair on
+   * 2026-09-10 with the landing's own five links (How it works, Dashboard, Pricing, Full tour,
+   * About) and the same "Sign in" + "Try the demo" shape /how-it-works carries, so it needs the
+   * identical tuning for the identical reason. Pinned on all three rows together, because the
+   * failure mode is one of them being edited and the others left behind.
    */
-  it('gives both five-link headers the row tuning cut for five links', async () => {
+  it('gives all three five-link headers the row tuning cut for five links', async () => {
     const { env } = createTestEnv();
-    for (const path of ['/', '/how-it-works']) {
+    for (const path of ['/', '/how-it-works', '/about']) {
       const body = await (await app.request(path, {}, env)).text();
       const nav = body.slice(body.indexOf('<header class="nav">'), body.indexOf('</header>'));
       expect(nav, path).toContain('class="nav-links nav-links-5"');
