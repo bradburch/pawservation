@@ -593,21 +593,6 @@ describe('the landing page claims only what ships', () => {
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
-  it('does not label the workflow column five unchanging things when one of them changes', async () => {
-    const body = await landingBody();
-    // The fifth item WAS "The dates question stops being a text." — the one thing that does
-    // change — which is why the label had to carry "and one that does". In the September 2026
-    // trim that item was promoted out of the column into the "You and your clients" section it
-    // had always been the argument for, so the column holds only things that genuinely stay put
-    // and the label stopped counting them at all. The miscount it existed to prevent is what
-    // stays pinned: a label that counts must never count an item the column no longer holds.
-    expect(body).toContain('Nothing about how you work has to change.');
-    expect(body).not.toContain('Five things that don&rsquo;t change');
-    expect(body).not.toContain('Four things that don&rsquo;t change');
-    // …and the promoted line is still on the page, once, where landing.test.ts pins it.
-    expect(body).toContain('The dates question stops being a text.');
-  });
-
   it('presents both tiers as products, and neither as a checkout', async () => {
     const body = await landingBody();
     // Owner repriced on 2026-09-04: Solo replaced the free tier and Pro is sold, so the unbuilt

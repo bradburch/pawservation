@@ -214,30 +214,6 @@ describe('GET / — landing page', () => {
       expect(body, lie).not.toContain(lie);
   });
 
-  it('sets the two business shapes side by side instead of correcting one with the other', async () => {
-    const body = await landingBody();
-    // Round 1 led the block with a boarding time-audit and made the walk/drop-in case its
-    // CORRECTION ("the sum comes out somewhere else") — so a walker was invited to do arithmetic
-    // that argues against the product and only then told it was the wrong arithmetic. The two
-    // shapes are now peers, each in its own wf-pair.
-    expect(body).toContain('Boarding and house sitting: a few long threads.');
-    expect(body).toContain('Walks and drop-ins: a lot of short ones.');
-    expect(body).not.toContain('the sum comes out somewhere else');
-    // The strongest sentence in the block was buried third; it now leads the walker's pair.
-    expect(body).toContain('a cancelled Wednesday, a swapped Thursday, an extra dog on Friday');
-    // The pull-quote went in round 2; round 3 took the arithmetic itself. Five of seven readers
-    // objected to it — "two hours a month is not why anyone changes software", "eight requests a
-    // month tells me who you think your customer is, I run thirty" — and the "these are
-    // illustrative" disclaimer only ever existed to prop the number up, so it goes with it. What
-    // survives is the felt cost of ONE request, which is the part a reader recognises.
-    expect(body).toContain('a quarter of an hour of your attention, in pieces, for every request');
-    expect(body).not.toContain('class="wf-sum"');
-    expect(body).not.toContain('do the sum yourself');
-    expect(body).not.toContain('illustrative numbers rather than a measured finding');
-    for (const sum of ['At eight requests a month', 'a couple of hours back'])
-      expect(body, sum).not.toContain(sum);
-  });
-
   it('separates what a cancellation does from what a change does, and both from silence', async () => {
     const body = await landingBody();
     // VERIFIED: cancelBooking fires sendCancellationNoticeToSitter (server/lib/booking-ops.ts:1000)

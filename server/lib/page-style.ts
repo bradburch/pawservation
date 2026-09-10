@@ -490,7 +490,7 @@ export const PAGE_STYLE = /* css */ `
          wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
       .legal .feature + .feature { margin-top: 28px; }
 
-      /* ── Alongside your workflow ────────────────────────────────── */
+      /* ── wf-* label/pair layout (clients section, pricing note, how-it-works page) ── */
       .wf-grid {
         display: grid;
         gap: 44px;
@@ -554,8 +554,7 @@ export const PAGE_STYLE = /* css */ `
       @media (min-width: 780px) {
         .wf-grid { grid-template-columns: 1fr 1fr; gap: 56px; }
       }
-      /* The closing line under a section's columns, used twice: the link out to the long-form
-         tour under the workflow columns, and the invite line under the two price cards. */
+      /* The closing line under a section's columns: the invite line under the two price cards. */
       .wf-more { margin-top: 24px; }
       /* Two mid-page invitations, under the client section and under the dashboard: the page
          exists to get a sitter to ask for an invite, and the hero and the closing panel were the

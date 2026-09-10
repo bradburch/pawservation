@@ -621,57 +621,7 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <section class="section" id="workflow" aria-labelledby="workflow-h">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="label">Alongside your workflow</span>
-            <h2 id="workflow-h">It goes in front of what you already do</h2>
-            <p>
-              Pawservation takes the &ldquo;are you free?&rdquo; question off your phone and leaves
-              the rest of how you work exactly where it is.
-            </p>
-          </div>
-          <div class="wf-grid">
-            <div>
-              <h3 class="wf-h">What stays the same</h3>
-              <p class="note">Nothing about how you work has to change.</p>
-              <div class="wf-pair">
-                <p class="wf-keep">You keep collecting money your own way.</p>
-                <p>Cash, Venmo, Zelle or a check on the counter. Pawservation never touches the money.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You keep your calendar.</p>
-                <p>Bookings appear on the Google Calendar you already keep, and what you put there by hand blocks requests. If you don&rsquo;t use it, nothing changes.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">You keep the website you already have.</p>
-                <p>One line goes on a page you already publish.</p>
-              </div>
-            </div>
-            <div>
-              <h3 class="wf-h">What it takes off your plate</h3>
-              <p class="note">Whether you board or walk, the same few jobs eat the day.</p>
-              <div class="wf-pair">
-                <p class="wf-keep">Boarding and house sitting: a few long threads.</p>
-                <p>&ldquo;Are you free the 12th to the 15th?&rdquo; takes four or five messages, which is a quarter of an hour of your attention, in pieces, for every request. The page answers it, so the thread never starts.</p>
-              </div>
-              <div class="wf-pair">
-                <p class="wf-keep">Walks and drop-ins: a lot of short ones.</p>
-                <p>The changes are what cost you, and a cancelled Wednesday, a swapped Thursday, an extra dog on Friday all arrive while you are out with someone else&rsquo;s dog. Your clients make those on the page.</p>
-              </div>
-            </div>
-          </div>
-          <p class="note wf-more">
-            <a href="/how-it-works">The full tour</a> walks through every rule and setting in detail.
-          </p>
-          <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
-            <a class="btn btn-ghost" href="/demo">Try the demo</a>
-          </div>
-        </div>
-      </section>
-
-      <section class="section band" id="pricing" aria-labelledby="pricing-h">
+      <section class="section" id="pricing" aria-labelledby="pricing-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Pricing</span>
@@ -729,7 +679,7 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <section class="section" id="install" aria-labelledby="install-h">
+      <section class="section band" id="install" aria-labelledby="install-h">
         <div class="wrap install-grid">
           <div class="install-copy">
             <span class="label">Install</span>
