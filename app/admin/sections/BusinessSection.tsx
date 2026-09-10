@@ -290,10 +290,12 @@ export function BusinessSection({
           saves nothing of its own, so it belongs after the settings form rather than inside it. */}
       <TokensPanel session={session} handleError={handleError} />
       {/* Last, and past the save bar with the other two, for the same reason they are: it saves
-          nothing of its own. It renders nothing at all on a deployment that sells no plans, which is
-          absence rather than an error — see the panel's own docblock for why its gate is
-          `premium.origin` and not `premium.assistant`. */}
-      <PlanPanel session={session} handleError={handleError} />
+          nothing of its own. Its plan STATUS renders everywhere — those are columns of this
+          product's own database, riding down on the settings payload handed in here — while its
+          OFFERS are hidden on a deployment that sells no plans, which is absence rather than an
+          error; see the panel's own docblock for why that gate is `premium.origin` and not
+          `premium.assistant`. */}
+      <PlanPanel session={session} settings={settings} handleError={handleError} />
     </>
   );
 }

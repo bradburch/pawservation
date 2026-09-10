@@ -51,9 +51,9 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).toContain('config?.disabled === true');
   });
 
-  it('renders nothing unless all three hold', () => {
-    expect(PANEL).toMatch(/!origin\s*\|\|\s*!sellingIsOn\s*\|\|\s*disabled[^\n]*return null/);
-  });
+  // Replaced in the next commit; the panel no longer returns null at all, and its replacement pin
+  // lands with the Manage control.
+  it.todo('renders nothing unless all three hold');
 
   it('starts checkout with a fetch carrying the admin Bearer, never an anchor', () => {
     expect(PANEL_TEXT).toContain('/premium/billing/');
@@ -132,5 +132,32 @@ describe('where the panel sits', () => {
   it('is rendered by BusinessSection, after TokensPanel', () => {
     expect(BUSINESS).toContain('<PlanPanel');
     expect(BUSINESS.indexOf('<PlanPanel')).toBeGreaterThan(BUSINESS.indexOf('<TokensPanel'));
+  });
+
+  it('is handed the settings payload it reads plan state from', () => {
+    // The dashboard fetches `/api/:slug/admin/settings` once per load and BusinessSection already
+    // holds it — so plan status costs the panel zero extra requests, and is already loaded before
+    // the panel paints. A panel that fetched it again would be a second authenticated read for
+    // four fields the page has in hand.
+    expect(BUSINESS).toMatch(/<PlanPanel[^>]*settings=\{settings\}/);
+  });
+});
+
+describe('the plan status line', () => {
+  it('reads the three status fields from the settings payload, and no others', () => {
+    expect(PANEL).toContain('settings.plan');
+    expect(PANEL).toContain('settings.billedUntil');
+    expect(PANEL).toContain('settings.planActive');
+    // The processor's ids are not status. Neither is needed to say what she is on and until when,
+    // and both would be ids handed to a browser for nothing.
+    expect(PANEL).not.toContain('stripeSubscriptionId');
+    expect(PANEL).not.toContain('settings.stripeCustomerId');
+  });
+
+  it('renders the stored instant through the dashboard’s own formatter', () => {
+    // The column's shape is "YYYY-MM-DD HH:MM:SS" UTC, with no 'T' and no 'Z' — not something
+    // every engine parses the same way unlabelled. Rendering the date is fine; DECIDING from it is
+    // what AD-13 forbids, which is why `planActive` arrives already answered.
+    expect(PANEL).toContain('formatTimestamp(settings.billedUntil)');
   });
 });

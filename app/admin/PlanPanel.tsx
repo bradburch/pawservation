@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError, isAuthExpired, type TenantConfig } from '../shared-ui/api.js';
-import type { Session } from './shared.js';
+import { formatTimestamp, type Session, type Settings } from './shared.js';
 import { Hint } from './Hint';
 
 /**
@@ -31,11 +31,13 @@ import { Hint } from './Hint';
  * self-contained. A failed read renders NOTHING — absence, not an error — because a dashboard that
  * shows a broken plan box is worse than one that shows no plan box.
  *
- * No plan STATE is shown here yet: what she is on, when it renews, and what to do when it lapses are
- * later stories, and they read an authenticated route rather than this public one. NOTHING HERE
- * PROMISES A CANCELLATION CONTROL for the same reason — FR-62's Manage-plan surface is Story 10.3,
- * and the moment a sitter is asked for a card is the expensive place to promise a thing that is not
- * built.
+ * PLAN STATUS RENDERS ABOVE THAT GATE (NFR-2). What she is on, and what it is paid through, are
+ * columns in this product's OWN database, arriving on the settings payload the dashboard has
+ * already fetched — so they are still shown when the checkout worker is unreachable, when selling
+ * is switched off, and when the plan has lapsed, which is exactly when a sitter goes looking. Only
+ * the OFFERS sit behind the gate. NOTHING HERE PROMISES A CANCELLATION CONTROL — FR-62's
+ * Manage-plan surface is Story 10.3, and the moment a sitter is asked for a card is the expensive
+ * place to promise a thing that is not built.
  */
 
 /** The one message this panel is willing to put in front of a sitter for a failure it does not
@@ -92,11 +94,25 @@ const OFFERS: PlanOffer[] = [
   },
 ];
 
+/** The two plan names, as the sitter sees them. Names, not figures — the figures are published on
+ *  `/config` and this panel states none of its own. */
+const PLAN_NAMES: Record<'solo' | 'pro', string> = { solo: 'Solo', pro: 'Pro' };
+
 export function PlanPanel({
   session,
+  settings,
   handleError,
 }: {
   session: Session;
+  /**
+   * The settings payload the dashboard has already fetched — plan status costs this panel zero
+   * extra requests, and it is loaded before the panel paints. The five plan fields on it are
+   * READ-ONLY: `save()` builds its PUT body field by field rather than spreading this object, so
+   * they never travel back, and the sticky-save `dirty` check compares whole objects, so fields
+   * that change only on a reload can never make the save bar appear. That pair is the answer to
+   * "why does a read-only field live on the settings type".
+   */
+  settings: Settings;
   /** The dashboard's own failure path (App.tsx's `handle`). A 401 or 403 from the checkout call
    *  means the session this panel needs has gone, and signing her out is the only response that
    *  leads anywhere. */
@@ -126,6 +142,18 @@ export function PlanPanel({
   /** Selling is switched on for this DEPLOYMENT (`PLAN_SUBSCRIBE`), not for this tenant. */
   const sellingIsOn = pricing?.subscribe === true;
   const disabled = config?.disabled === true;
+  /** What the row says, in the sitter's own terms. `null` is not "free" and not an error — it is a
+   *  sitter who has never subscribed, which is most of them. */
+  const planName = settings.plan === null ? 'No plan yet' : PLAN_NAMES[settings.plan];
+  /** RENDERED, never compared. `planActive` is the server's answer to "is it live"; this string is
+   *  only ever the date beside it. */
+  const paidThrough = settings.billedUntil === null ? null : formatTimestamp(settings.billedUntil);
+  /** The word beside that date, and the panel's ONLY reading of `planActive` — the server's own
+   *  answer to "is it live", never re-derived here. Hoisted out of the template literal below
+   *  rather than written inline in it, because the source pin in `plan-panel.test.ts` reads
+   *  executable text with literals stripped: a promise pinned only inside a literal is not pinned,
+   *  which is the evasion `liveSource` exists to close. */
+  const paidThroughWord = settings.planActive ? 'paid through' : 'lapsed';
 
   const startCheckout = async (offer: PlanOffer) => {
     if (busy || !origin) return;
@@ -168,43 +196,61 @@ export function PlanPanel({
     }
   };
 
-  if (!origin || !sellingIsOn || disabled || !pricing) return null;
+  /**
+   * THE OFFERS keep the gate they have always had — a checkout worker exists to be reached, the
+   * deployment is selling, the tenant is not switched off, and the figures are published. What
+   * has changed is that this no longer hides the PANEL: a sitter whose plan lapsed, whose
+   * deployment stopped selling, or whose paid surface is down must still be told what she is on
+   * and when it runs out, because every fact on that line is a column in this product's own
+   * database, answered by the same request that drew the rest of her dashboard (NFR-2).
+   */
+  const offersHidden = !origin || !sellingIsOn || disabled || !pricing;
 
   return (
     <>
       <h3>
         Your plan
-        <Hint label="Your plan">
-          Payment is handled by Stripe on their own page — we never see your card. Your{' '}
-          {pricing.trialDays}-day free trial starts when you subscribe.
-        </Hint>
+        {!offersHidden && pricing && (
+          <Hint label="Your plan">
+            Payment is handled by Stripe on their own page — we never see your card. Your{' '}
+            {pricing.trialDays}-day free trial starts when you subscribe.
+          </Hint>
+        )}
       </h3>
-      <ul>
-        {OFFERS.map((offer) => (
-          <li key={`${offer.key}-${offer.interval}`}>
-            <span>
-              <strong>
-                {offer.name} — {offer.price(pricing)}
-              </strong>
-              <br />
-              <span className="pb-hint">{offer.blurb}</span>
-            </span>
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => void startCheckout(offer)}
-            >
-              {busy === `${offer.key}-${offer.interval}` ? 'Opening…' : 'Subscribe'}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {error && <p className="pb-error">{error}</p>}
-      <p className="pb-hint">
-        Every plan starts with a {pricing.trialDays}-day free trial. Nothing about your bookings,
-        clients or pets changes when you subscribe — a plan only decides which extras are switched
-        on.
+      <p>
+        <strong>{planName}</strong>
+        {paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
       </p>
+      {!offersHidden && pricing && (
+        <>
+          <ul>
+            {OFFERS.map((offer) => (
+              <li key={`${offer.key}-${offer.interval}`}>
+                <span>
+                  <strong>
+                    {offer.name} — {offer.price(pricing)}
+                  </strong>
+                  <br />
+                  <span className="pb-hint">{offer.blurb}</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void startCheckout(offer)}
+                >
+                  {busy === `${offer.key}-${offer.interval}` ? 'Opening…' : 'Subscribe'}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="pb-hint">
+            Every plan starts with a {pricing.trialDays}-day free trial. Nothing about your
+            bookings, clients or pets changes when you subscribe — a plan only decides which extras
+            are switched on.
+          </p>
+        </>
+      )}
+      {error && <p className="pb-error">{error}</p>}
     </>
   );
 }
