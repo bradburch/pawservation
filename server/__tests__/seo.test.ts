@@ -478,6 +478,94 @@ describe('SEO surface', () => {
     expect(nav).toContain('class="nav-links nav-links-5"');
   });
 
+  /**
+   * Heading levels, on every worker-served page at once.
+   *
+   * /about, /contact, /privacy and /terms all went h1 straight to h3: their prose blocks are
+   * `.feature`s, and `.feature` was a landing-page CARD component, where h3 is right because a
+   * `.section-head` h2 sits above it. On a page with no `.section-head` there is no h2, so a
+   * screen reader hears "heading level 3" with nothing at level 2 to hang it on, on the four pages
+   * a wary reader or an agent opens to decide whether this is a real business.
+   *
+   * The fix was the LEVEL and not the look: PAGE_STYLE lists `.feature h2` beside `.feature h3` so
+   * those headings keep their 0.98rem size rather than inheriting `.section h2`'s clamp(). This
+   * test is why the two halves cannot drift apart again, and it is deliberately a sweep rather
+   * than four assertions, so a page added later is covered the day it is added.
+   */
+  it('never skips a heading level on any page', async () => {
+    const { env } = createTestEnv();
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/about',
+      '/contact',
+      '/privacy',
+      '/terms',
+      '/request-invite/thanks',
+    ]) {
+      const body = await (await app.request(path, {}, env)).text();
+      const levels = [...body.matchAll(/<h([1-6])[\s>]/g)].map((m) => Number(m[1]));
+      expect(levels[0], `${path} must open at h1`).toBe(1);
+      expect(levels.filter((l) => l === 1).length, `${path} h1 count`).toBe(1);
+      let deepest = 0;
+      for (const level of levels) {
+        expect(
+          level,
+          `${path} jumps to h${level} with no h${level - 1} above it`,
+        ).toBeLessThanOrEqual(deepest + 1);
+        deepest = Math.max(deepest, level);
+      }
+    }
+  });
+
+  /**
+   * The header is ONE row at every width, and the two five-link rows say so the same way.
+   *
+   * /how-it-works carries five section anchors plus "Sign in" plus the demo button, which needs
+   * 782px of content box: it wrapped onto a second line from 780px (where `.nav-links` appears at
+   * all) to 829px, measured in a real browser. `.nav-links-5` is the tuning that already existed
+   * for the landing's five-link row — 4px off each gap, and the plain sign-in link dropped below
+   * 890px — and it is exactly the 80px that band was short by. Pinned on BOTH rows together,
+   * because the failure mode is one of them being edited and the other left behind.
+   */
+  it('gives both five-link headers the row tuning cut for five links', async () => {
+    const { env } = createTestEnv();
+    for (const path of ['/', '/how-it-works']) {
+      const body = await (await app.request(path, {}, env)).text();
+      const nav = body.slice(body.indexOf('<header class="nav">'), body.indexOf('</header>'));
+      expect(nav, path).toContain('class="nav-links nav-links-5"');
+      expect(nav.match(/<a href="#|<a href="\//g)?.length, path).toBeGreaterThan(0);
+      // Five links in the row is what the breakpoints are measured against. A sixth needs new
+      // measurements, not a sixth <a>.
+      const row = nav.slice(nav.indexOf('nav-links-5'), nav.indexOf('</nav>'));
+      expect(row.match(/<a /g)?.length, `${path} link count`).toBe(5);
+    }
+  });
+
+  /**
+   * Three rules in the shared stylesheet whose absence is INVISIBLE in review and only shows up
+   * to a keyboard user, on a dark band, or in a browser's default palette. Each was a live defect
+   * measured in a real browser on 2026-09-09; each is one declaration, which is exactly the kind
+   * of line a tidy-up deletes. Asserting on the served CSS is the only reach a unit test has here,
+   * since these pages carry no script and the stylesheet is inlined into every one of them.
+   */
+  it('keeps the three shared-stylesheet rules whose absence is invisible', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/', {}, env)).text();
+    // 1. The focus ring is --green, which is 1.83:1 against the CTA panel's dark gradient and
+    //    reads as no ring at all. The panel holds the invite form's submit button.
+    expect(body).toContain('.cta-panel :focus-visible { outline-color: #fff; }');
+    // 2. A <button> inherits neither font-family nor line-height from body, and the invite form's
+    //    submit is the one .btn on this site that is not an <a>. Without these it rendered in
+    //    Arial at 39px beside a 46px .btn-inverse doing the same job on /how-it-works.
+    expect(body).toContain('font-family: inherit;');
+    expect(body).toContain('line-height: inherit;');
+    // 3. Body links in the prose pages. Until /about and /contact existed, every link on this
+    //    site sat in a .note, a button, the nav or the footer, so running copy had no link style
+    //    and ten links rendered in the browser default #0000EE.
+    expect(body).toContain('.legal p a,');
+  });
+
   it('links every page to the trust anchors through one shared footer', async () => {
     const { env } = createTestEnv();
     for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact']) {

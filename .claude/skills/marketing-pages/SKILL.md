@@ -210,6 +210,37 @@ different questions: who may sign in, versus where the public writes. The thanks
 sixth hand-kept copy — the four that existed had already drifted into two variants differing in one
 link's label and one anchor's href.
 
+## Layout rules a browser enforces and a diff does not
+
+Four properties of these pages are invisible in the markup and were each a live defect measured in a
+real browser on 2026-09-09. Three are pinned by `seo.test.ts`; all four are one declaration, which is
+the size of thing a tidy-up deletes.
+
+- **The header is ONE row at every width.** `.nav-inner` is `flex-wrap: wrap` on purpose, as the
+  safety valve that keeps a narrow phone from scrolling the DOCUMENT sideways instead — so a header
+  that no longer fits does not break, it silently doubles in height. Measure it (merge the nav
+  items' vertical spans into bands; do not compare `offsetTop`, since `.nav-right` centres children
+  of different heights and their tops legitimately differ on one row). **`.nav-links-5` is the
+  tuning for a five-link row** — 20px gaps and the plain sign-in link dropped below 890px — and BOTH
+  five-link headers (`/` and `/how-it-works`) carry it; `/how-it-works` wrapped from 780px to 829px
+  until it did. A sixth link in either row needs new measurements, not a sixth `<a>`. The one
+  remaining wrap is the landing's own at 320-350px, which the CSS documents as deliberate.
+- **Heading levels never skip.** `.feature` is a landing-page CARD, where `h3` is right because a
+  `.section-head` `h2` sits above it. The four prose pages carry no `.section-head`, so the same
+  block there must be `h2` or the page reads h1 straight to h3. PAGE_STYLE lists `.feature h2`
+  beside `.feature h3` so the LEVEL is corrected without changing the LOOK.
+- **The focus ring is `--green`, which disappears on the one dark ground.** `.cta-panel
+  :focus-visible` overrides the COLOR alone to `#fff` (1.83:1 becomes ~14:1). That band holds the
+  invite form's submit button, so this is the page's primary action.
+- **Prose gets a reading measure.** `.legal p`/`.legal li` are capped at **52ch**, the figure
+  `.section-head p` already uses, roughly 72 characters a line. Uncapped they ran the full 1072px
+  `.wrap` at about 130 characters, under a hero whose own `h1` is 15ch and whose `.sub` is 48ch — a
+  heading in a half column above a body at full width. Body links in that prose share the `.note a`
+  declarations rather than a second set; before that they were browser-default `#0000EE`.
+- Not a rule, but the same class of thing: `.btn` sets `font-family: inherit; line-height: inherit`
+  because one `.btn` on this site is a `<button>` and the rest are `<a>`s, and a `<button>` inherits
+  neither.
+
 ## The em-dash budget
 
 `seo.test.ts`'s em-dash budget matches the **raw U+2014 character and both numeric entity forms**

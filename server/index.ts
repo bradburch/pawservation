@@ -501,7 +501,10 @@ const LANDING_HTML = `<!doctype html>
               Your clients see which dates you have open and what the stay costs before they ask for it.
             </p>
           </div>
-          <div class="features">
+          <!-- .features-3 rather than bare .features: three cards in the grid's 640-959px
+               two-column band leave the third alone with an empty cell beside it. See PAGE_STYLE;
+               it reflows one-or-three like the .steps row further up this same page. -->
+          <div class="features features-3">
             <div class="feature">
               <h3>Pending until you confirm</h3>
               <p>Every request waits as pending until you confirm it, and their screen says so.</p>
@@ -738,7 +741,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
-        <nav class="nav-links" aria-label="Sections">
+        <!-- .nav-links-5: this row carries five links and the same right-hand pair the landing
+             does, and it wrapped onto a second line from 780px to 829px. The class is the row
+             tuning that already exists for a five-link header rather than a second copy of it;
+             its measurements are in PAGE_STYLE. -->
+        <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="#booking">Requests</a>
           <a href="#confirm">Confirming</a>
           <a href="#calendar">Calendar</a>
@@ -1117,35 +1124,35 @@ const PRIVACY_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>What we collect</h3>
+            <h2>What we collect</h2>
             <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount.</p>
           </div>
           <div class="feature">
-            <h3>Who we share it with</h3>
+            <h2>Who we share it with</h2>
             <p><strong>Resend</strong> sends our transactional email (login codes, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and your client&rsquo;s email address. <strong>Cloudflare</strong> is our hosting and database provider: everything above lives on Cloudflare&rsquo;s infrastructure.</p>
           </div>
           <div class="feature">
-            <h3>Cookies</h3>
+            <h2>Cookies</h2>
             <p>We set exactly one cookie, for ten minutes, only while a sitter is connecting Google Calendar, to stop a cross-site request forgery attack during that one step. There are no cookies for signing in or for tracking you. Customers, sitters and the platform owner all sign in without one.</p>
           </div>
           <div class="feature">
-            <h3>How long we keep it</h3>
+            <h2>How long we keep it</h2>
             <p>Cancelled and declined bookings stay on the record as part of your sitter&rsquo;s booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can&rsquo;t be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account&rsquo;s data.</p>
           </div>
           <div class="feature">
-            <h3>Children</h3>
+            <h2>Children</h2>
             <p>Pawservation is not directed at children, and we don&rsquo;t knowingly collect data from them.</p>
           </div>
           <div class="feature">
-            <h3>No tracking</h3>
+            <h2>No tracking</h2>
             <p>We run no analytics, no ad pixels, and no fingerprinting, on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
           </div>
           <div class="feature">
-            <h3>Where your data lives</h3>
+            <h2>Where your data lives</h2>
             <p>Everything is stored on Cloudflare&rsquo;s global network. We don&rsquo;t currently commit to a specific country or region.</p>
           </div>
           <div class="feature">
-            <h3>Questions</h3>
+            <h2>Questions</h2>
             <p>Reach us at <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>.</p>
           </div>
         </div>
@@ -1201,39 +1208,39 @@ const TERMS_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>What Pawservation is</h3>
+            <h2>What Pawservation is</h2>
             <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and their customer.</p>
           </div>
           <div class="feature">
-            <h3>Accounts</h3>
+            <h2>Accounts</h2>
             <p>Sitters and the platform owner sign in with an email and password; customers sign in with a one-time code sent to their email. Each person is responsible for keeping their own credentials secure.</p>
           </div>
           <div class="feature">
-            <h3>Payments</h3>
+            <h2>Payments</h2>
             <p>Pawservation is not a payment processor. On Solo, a sitter collects payment themselves, outside Pawservation, and logs the amount here so their records stay accurate, and we never process, store, or guarantee any payment. On Pro, card payments are processed by Stripe under the sitter&rsquo;s own Stripe account: the sitter is the merchant, Stripe holds the card details and the funds and pays the sitter directly, and Pawservation is not a party to the payment, holds no funds, and takes no fee. Refunds and disputes are between the sitter, their customer and Stripe.</p>
           </div>
           <div class="feature">
-            <h3>Acceptable use</h3>
+            <h2>Acceptable use</h2>
             <p>Don&rsquo;t attempt to abuse the booking or intake system, or to work around tenant isolation, rate limits, or any other technical safeguard.</p>
           </div>
           <div class="feature">
-            <h3>Your data</h3>
+            <h2>Your data</h2>
             <p>A sitter owns their business&rsquo;s client and booking data. See our <a href="/privacy">Privacy Policy</a> for how long we keep it and how to have it deleted.</p>
           </div>
           <div class="feature">
-            <h3>Availability</h3>
+            <h2>Availability</h2>
             <p>Pawservation is provided &ldquo;as is,&rdquo; without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
           </div>
           <div class="feature">
-            <h3>Termination</h3>
+            <h2>Termination</h2>
             <p>The platform owner may disable or remove an account that violates these terms.</p>
           </div>
           <div class="feature">
-            <h3>Governing law</h3>
+            <h2>Governing law</h2>
             <p>These terms are governed by the laws of the State of California, and any dispute will be brought in the state or federal courts located in San Francisco County, California.</p>
           </div>
           <div class="feature">
-            <h3>Changes</h3>
+            <h2>Changes</h2>
             <p>We may update these terms from time to time; check back periodically.</p>
           </div>
         </div>
@@ -1311,7 +1318,7 @@ const ABOUT_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>Why I built it</h3>
+            <h2>Why I built it</h2>
             <div class="founder">
               <img
                 class="founder-photo"
@@ -1392,23 +1399,23 @@ const CONTACT_HTML = `<!doctype html>
       <section class="section">
         <div class="wrap legal">
           <div class="feature">
-            <h3>You&rsquo;re a pet owner looking for your sitter</h3>
+            <h2>You&rsquo;re a pet owner looking for your sitter</h2>
             <p><strong>Please contact your sitter directly.</strong> This is the most common reason people land here, and we can&rsquo;t reach your sitter for you. Pawservation is the software your sitter uses, so we can&rsquo;t see, change, or cancel your booking. Your sitter&rsquo;s own booking page, the one you booked on, is where a booking can be changed or cancelled. Every email you&rsquo;ve had about a booking was sent by Pawservation on your sitter&rsquo;s behalf and names their business, and replying to it does not reach them. Contact your sitter the way you normally do.</p>
           </div>
           <div class="feature">
-            <h3>You run a pet-care business and want an account</h3>
+            <h2>You run a pet-care business and want an account</h2>
             <p>Use the <a href="/#invite-h">invite form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
           </div>
           <div class="feature">
-            <h3>You already have an account and something is wrong</h3>
+            <h2>You already have an account and something is wrong</h2>
             <p>Email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}?subject=Pawservation%20support">${htmlEscape(SUPPORT_EMAIL)}</a> and say which business you run; that&rsquo;s enough to find your account. Include what you expected to happen and what happened instead; if it involves a specific booking, the dates and the client&rsquo;s first name are enough to locate it. Your dashboard is at <a href="/admin">the sign-in page</a> if you just need to get back in; it will email you a reset link.</p>
           </div>
           <div class="feature">
-            <h3>Press, partnerships, or anything else</h3>
+            <h2>Press, partnerships, or anything else</h2>
             <p>Same address: <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>. A person reads these and there is no ticket system behind it, so a plain description of what you want beats a formal one.</p>
           </div>
           <div class="feature">
-            <h3>Security</h3>
+            <h2>Security</h2>
             <p>If you believe you&rsquo;ve found a vulnerability, write to the same address with &ldquo;security&rdquo; in the subject and please give us a chance to fix it before publishing. See our <a href="/privacy">Privacy Policy</a> for what data exists to be at risk in the first place.</p>
           </div>
         </div>

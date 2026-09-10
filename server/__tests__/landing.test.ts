@@ -218,7 +218,10 @@ describe('GET / — landing page', () => {
     // three claims above are still the WHOLE of what this section says, and a future edit that
     // drops the grid takes the section back to reading unfinished.
     const clients = body.slice(body.indexOf('id="clients"'), body.indexOf('id="dashboard"'));
-    expect(clients).toContain('<div class="features">');
+    // .features-3, not bare .features: the shared grid's 640-959px band is two columns, which
+    // left the third of these three cards alone with an empty cell beside it. Same defect
+    // .features-4 already exists for, and pinned for the same reason the grid itself is.
+    expect(clients).toContain('<div class="features features-3">');
     expect(clients.match(/<div class="feature">/g)?.length).toBe(3);
   });
 

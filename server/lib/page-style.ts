@@ -142,7 +142,13 @@ export const PAGE_STYLE = /* css */ `
          link returns at 890px rather than at 780px with the row itself, for the reason it is
          absent below 780px at all: it is the hero's own second button and the second link on both
          mid-page invitations. Both are scoped by a class on the row, because the legal pages carry
-         no link row and have room for sign-in the whole way down. */
+         no link row and have room for sign-in the whole way down.
+         /how-it-works carries this class too, and for the same measured reason rather than by
+         analogy: its own five-link row plus "Sign in" plus the demo button needs 782px of content
+         box, so the header wrapped onto a second line from 780px (where .nav-links appears) to
+         829px. The 4px-per-gap tightening and the sign-in drop below 890px are exactly the 80px
+         that band was short by, and above 890px the full row fits with room. Sign in stays in the
+         shared footer at every width, which is why it is the item that gives way. */
       .nav-links-5 { gap: 20px; }
       @media (max-width: 889px) {
         .nav-links-5 ~ .nav-right .signin:not(.nav-tour) { display: none; }
@@ -173,6 +179,14 @@ export const PAGE_STYLE = /* css */ `
         text-decoration: none;
         white-space: nowrap;
         transition: background-color 0.15s ease, color 0.15s ease;
+        /* Every .btn here is an <a> except one: the invite form's submit control. A <button>
+           inherits neither font-family nor line-height from body, so that one rendered in the
+           UA's Arial at line-height:normal and stood 39px tall next to the 46px .btn-inverse on
+           /how-it-works doing the identical job under the identical label. These two longhands
+           change nothing for an <a> (which already inherits both) and make the element the
+           button is built from stop mattering. */
+        font-family: inherit;
+        line-height: inherit;
       }
       .btn-primary {
         background: var(--green);
@@ -246,7 +260,15 @@ export const PAGE_STYLE = /* css */ `
         color: var(--soft);
         max-width: 46ch;
       }
-      .note a {
+      /* Also the four prose pages' body links. Nothing had ever styled a link inside running
+         copy, because until /about and /contact existed every link on this site sat in a .note, a
+         button, the nav or the footer, all of which are styled. So ten links across /about,
+         /contact, /privacy and /terms rendered in the browser default #0000EE, on the pages a
+         reader opens to judge whether this is a real business. Same declarations, not a second
+         set, so the two can never drift into two shades of underline. */
+      .note a,
+      .legal p a,
+      .legal li a {
         color: var(--ink);
         text-decoration: underline;
         text-decoration-color: var(--green);
@@ -500,6 +522,13 @@ export const PAGE_STYLE = /* css */ `
         display: grid;
         gap: 28px 40px;
       }
+      /* h2 as well as h3: the four prose pages (/about, /contact, /privacy, /terms) carry no
+         .section-head, so their .feature headings are the first heading under the page h1 and
+         must be h2 or the document skips a level. They keep this size, which is the point of
+         listing both here rather than letting .section h2's clamp() blow them up: correcting the
+         LEVEL must not change the LOOK. Source order matters, since .section h2 above has equal
+         specificity. */
+      .feature h2,
       .feature h3 {
         font-size: 0.98rem;
         font-weight: 700;
@@ -512,10 +541,30 @@ export const PAGE_STYLE = /* css */ `
       /* Four short cards read as one row or not at all: in the three-column default the
          fourth sits alone on a second row with three empty columns beside it. */
       @media (min-width: 960px) { .features-4 { grid-template-columns: repeat(4, 1fr); } }
+      /* THREE cards have the same problem in the 640-959px band, where the default is two columns
+         and the third card sits alone with an empty cell beside it: measured at 900px on #clients,
+         a visible hole halfway down the landing page. Three cards reflow one-or-three, which is
+         also what .steps (the OTHER three-card row on that same page) already does at the same
+         780px breakpoint, so the landing stops running two three-card rows on two different
+         reflows. Later in source than the .features rules above, which it overrides at equal
+         specificity. */
+      .features-3 { grid-template-columns: 1fr; }
+      @media (min-width: 780px) { .features-3 { grid-template-columns: 1fr 1fr 1fr; } }
       /* Single-column legal prose (Privacy/Terms): .feature blocks sit directly in .wrap with
          no .features grid wrapper (that grid goes multi-column at wider viewports, which is
          wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
       .legal .feature + .feature { margin-top: 28px; }
+      /* A reading measure. Without one this prose runs the full 1072px .wrap, which is about 130
+         characters a line at 1280px, sitting under a hero whose h1 is capped at 15ch and whose
+         .sub is capped at 48ch: a heading in a half column above a body at full width, on the four
+         pages a wary reader opens to decide whether this is a real business. 52ch is the measure
+         .section-head p already sets, so every section intro on the landing and the tour is
+         already read at it and this borrows the number rather than inventing a second one; it
+         works out at roughly 72 characters a line. It caps the TEXT and not the .feature block,
+         which is what lets /about's founder grid keep its 200px photo column beside prose set to
+         the same measure as every other page here. */
+      .legal p,
+      .legal li { max-width: 52ch; }
       /* .feature p zeroes every margin for the three-across cards, which leaves a legal or
          /about block's stacked paragraphs with no gap at all. Put it back for the single-column
          prose only, where a .feature really is several paragraphs of one answer. */
@@ -795,6 +844,13 @@ export const PAGE_STYLE = /* css */ `
         outline-offset: 3px;
         border-radius: 4px;
       }
+      /* The ring above is --green because every ground on this site is light, with one exception:
+         the CTA panel's dark gradient, where #2e6440 on #1d3826 is 1.83:1 and reads as no ring at
+         all. That band holds the invite button, the "already have an account" link and the tour's
+         demo/pricing links, so a keyboard visitor loses the page's primary action. Only the COLOR
+         is overridden, so width, offset and radius stay one rule; the panel's own form fields
+         already focus white, which is the shape this follows. */
+      .cta-panel :focus-visible { outline-color: #fff; }
       @media (prefers-reduced-motion: reduce) {
         html { scroll-behavior: auto; }
         .btn { transition: none; }
