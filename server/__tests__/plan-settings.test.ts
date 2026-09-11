@@ -127,6 +127,12 @@ describe('the settings read publishes the sitter’s own plan', () => {
     // subscription. This is the ONE row that tells `hasBillingAccount`'s derivation apart from
     // the plan's — every other case here seeds `Plan` and `StripeCustomerId` together or neither,
     // so a `Plan != null` reading would satisfy all of them.
+    //
+    // HAND-WRITTEN SQL IS THE ONLY THING IN THIS REPO THAT PRODUCES IT. `applyBillingEvent` writes
+    // the plan, the paid-through date and the customer id in one statement, so no row the billing
+    // endpoint creates looks like this. That does not make the state hypothetical — whatever talks to
+    // the processor is on the other end of a shared secret and may well create a customer before it
+    // has a subscription to report — but it is why this fixture reaches past `seedPlan`.
     raw.prepare('UPDATE Tenants SET StripeCustomerId = ? WHERE Id = ?').run('cus_sunny', TENANT_A);
 
     const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));

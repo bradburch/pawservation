@@ -326,13 +326,21 @@ beside everything else the dashboard loads: `plan`, `billedUntil` (the stored in
 the slug in its path, and already fetched once per dashboard load. **`stripeCustomerId` goes only
 to a password session** and its key is _absent_ — not null — for a `pawsa_` tenant access token, so
 a consumer can tell "withheld by policy" from "no customer yet"; the other four are the tenant's
-own plan, told to the tenant's own admin. `StripeSubscriptionId` and `LastBillingEventAt` are on
-the wire nowhere: neither consumer needs them, and the second is this endpoint's own ordering state.
+own plan, told to the tenant's own admin. `StripeSubscriptionId` and `LastBillingEventAt` are **off
+THIS payload**: neither consumer needs them, and the second is the billing endpoint's own ordering
+state. Not off the wire altogether — `POST /api/:slug/admin/billing/events` echoes the subscription
+id it replaced as `replaced`, to the shared-secret caller that sent it and to nothing else.
 
-`isSoloActive` and `isPremiumActive` (`server/lib/premium.ts`) are the ONLY expressions in this
-repo that compare `BilledUntil` or `PremiumUntil` to anything, and
-`server/__tests__/premium-entitlement.test.ts` walks every `.ts`/`.tsx` under `server/` and `app/`
-— test files included — to keep it that way. Anything that needs "is her plan live" calls the
+`isSoloActive` and `isPremiumActive` (`server/lib/premium.ts`) are the only expressions that
+compare `BilledUntil` or `PremiumUntil` to anything, and what keeps it that way is a scan with a
+stated reach: `server/__tests__/premium-entitlement.test.ts` walks every `.ts`/`.tsx` under
+**`server/` and `app/`** — test files included, `server/lib/premium.ts` alone exempt. Those two trees
+are every module that can read a tenant row or render one, which is why they are the two; `src/`,
+`test/` and `scripts/` are outside it, so "nowhere in the repo" is a claim about those two trees and
+not about every file in the checkout. The scan reads each file through `liveSource`
+(`server/__tests__/helpers/live-source.ts`), which strips comments and literals — so the prose in
+`repo.ts` and in the suite may quote the comparison while describing it, and a quoted route pattern
+can no longer blind the scan to the rest of a file. Anything that needs "is her plan live" calls the
 helper and publishes the boolean.
 
 The admin dashboard's Business section (`app/admin/PlanPanel.tsx`) shows three things on three
@@ -397,10 +405,11 @@ pair of deploys, which is what `BILLING_SHARED_SECRET_PREVIOUS` exists for — s
 there, switch the caller to the new one, then delete it. Neither value ever appears in a log line.
 Applying `0017` before deploying this worker is not optional; see "Deploying" above.
 
-**This half deploys first.** The paid surface reads those five plan fields from `GET
-/api/:slug/admin/settings`, and its portal route fails closed on a settings read that does not
-carry them — so deploying that surface ahead of this worker answers 503 to every plan change. The
-order is: apply `0017`, deploy this worker, then whatever answers the two paths on `premium.origin`.
+**This half deploys first**, and the requirement is stated as one on the CALLER rather than as a
+claim about its internals, which this repo cannot see. Whatever serves the two paths on
+`premium.origin` reads those five plan fields from `GET /api/:slug/admin/settings`, so it must not be
+deployed before this worker publishes them, and it must fail closed — not guess — on a settings read
+that does not carry them. The order is: apply `0017`, deploy this worker, then that surface.
 
 ## Provisioning the first sitter
 

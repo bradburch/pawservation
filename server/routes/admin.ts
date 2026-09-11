@@ -907,8 +907,9 @@ export const adminRoutes = new Hono<AppEnv>()
       // HER OWN PLAN (0017), on the read the dashboard already makes. Five fields and no new
       // route: this one is already authenticated, already scoped to the slug in its path, and
       // already fetched once per dashboard load. `tenant` is `resolveTenant`'s row and TENANT_COLS
-      // already selects the three columns this reads, so nothing here reads the database a second
-      // time.
+      // already selects all FOUR columns these five fields are derived from — `Plan`,
+      // `BilledUntil`, `StripeCustomerId` and the `DisabledAt` that `isSoloActive` refuses on — so
+      // nothing here reads the database a second time.
       plan: tenant.Plan,
       // VERBATIM, in the stored 'YYYY-MM-DD HH:MM:SS' shape (server/lib/premium.ts). The panel
       // renders it through the dashboard's own formatter; this route must not invent a second
@@ -930,8 +931,11 @@ export const adminRoutes = new Hono<AppEnv>()
       // here the same rule costs one line rather than a second middleware. The customer id is the
       // join key at the processor to a business's name, email and card — not a secret, and not
       // public either — and a `pawsa_` token that could read it would widen every long-lived
-      // sitter credential in the product for nothing: nothing that needs this field can present
-      // one, because the session check that gates the caller refuses a `pawsa_` token outright.
+      // sitter credential in the product for nothing. THE REQUIREMENT IS ON THE CALLER, not a
+      // claim about one: anything that needs this field must present a password session, and what
+      // the consumer does to obtain one is its own business. (The sentence here used to assert how
+      // the caller authenticates, which is an internal of another codebase that this repo cannot
+      // see and must not describe.)
       ...(c.get('adminCredential') === 'password'
         ? { stripeCustomerId: tenant.StripeCustomerId }
         : {}),

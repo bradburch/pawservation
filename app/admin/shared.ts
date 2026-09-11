@@ -112,14 +112,24 @@ export type Settings = {
   billedUntil: string | null;
   /** `isSoloActive`'s answer, computed on the server. The dashboard must not re-derive it. */
   planActive: boolean;
-  /** She has an account at the processor. This — and NOT `planActive` — is what the Manage-plan
-   *  control renders on: a sitter whose card died is precisely who needs the portal. */
+  /**
+   * She has an account at the processor: a non-empty `StripeCustomerId`. One HALF of the Manage-plan
+   * gate, never the whole of it — `planActive` is the other half, because this column is written
+   * once and never cleared, so it stays true for a sitter who cancelled years ago.
+   *
+   * True with `plan: null` is a real state (a checkout that reached the processor and stopped), and
+   * in THIS repo only hand-written SQL produces it: `applyBillingEvent` writes the plan, the date and
+   * the customer id in one statement, so every row the billing endpoint creates carries all three.
+   */
   hasBillingAccount: boolean;
   /** OPTIONAL because the key is ABSENT, not null, for a `pawsa_` tenant access token: the server
    *  publishes it only to a password session. Absent means withheld by policy; null means no
    *  customer yet. Nothing in this repo reads it — it is mirrored so the type describes the
    *  payload it is a mirror of. */
   stripeCustomerId?: string | null;
+  /** `Tenants.DisabledAt != null`, published by the same settings read. The plan panel's own source
+   *  for it — not `/config`'s copy — because it arrives with the payload the panel already has, so
+   *  no control can flash on for a switched-off sitter while a request is in flight. */
   disabled: boolean;
 };
 
