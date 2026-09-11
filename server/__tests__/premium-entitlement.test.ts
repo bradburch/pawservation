@@ -379,6 +379,27 @@ describe('entitlement combines the comp and the plan in one expression', () => {
     expect(isSoloActive(stale)).toBe(false);
   });
 
+  it('is a STRICT `>` at the boundary, with the clock injected rather than raced', () => {
+    // PAID THROUGH THIS VERY INSTANT IS NOT LIVE, and this is the case that kills a `>` loosened to
+    // `>=`. Over the wire (`plan-settings.test.ts`) the same kill depends on the route re-reading the
+    // clock inside the same wall-clock second as the fixture, which is a coin toss on a slow machine;
+    // here `now` is an argument, so it fails every time. All three readings of the boundary are
+    // asserted, because the rule is two dated columns and a loosened operator would not announce
+    // which one it was loosened on.
+    const stamp = '2026-09-08 12:00:00';
+    const now = new Date('2026-09-08T12:00:00Z');
+    expect(isSoloActive(facts({ Plan: 'solo', BilledUntil: stamp }), now)).toBe(false);
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: stamp }), now)).toBe(false);
+    expect(isPremiumActive(facts({ PremiumUntil: stamp }), now)).toBe(false);
+
+    // One second further on, and every one of them is live — so the case is not green on a helper
+    // that simply always refuses.
+    const ahead = '2026-09-08 12:00:01';
+    expect(isSoloActive(facts({ Plan: 'solo', BilledUntil: ahead }), now)).toBe(true);
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: ahead }), now)).toBe(true);
+    expect(isPremiumActive(facts({ PremiumUntil: ahead }), now)).toBe(true);
+  });
+
   /**
    * WHY `normalizeBilledUntil` EXISTS, demonstrated rather than asserted in prose. The comparison is
    * a plain string `>`; an ISO instant sorts above a space-separated `now` on the separator alone

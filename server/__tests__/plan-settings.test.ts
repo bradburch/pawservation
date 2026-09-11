@@ -139,6 +139,23 @@ describe('the settings read publishes the sitter’s own plan', () => {
     expect(body.stripeCustomerId).toBe('cus_sunny');
   });
 
+  it('answers planActive TRUE for a live SOLO plan, which is not premium', async () => {
+    // `isSoloActive` against `isPremiumActive`: the second requires `Plan === 'pro'`, so swapping
+    // this route's call for it survived every case in this file — every LIVE row seeded `pro`, and
+    // the only `solo` row was a lapsed one, where both helpers answer false for the same reason. A
+    // Solo subscriber is paying; her plan line has to say so, and what she is entitled to is a
+    // different question this repo has no opinion about.
+    const { env, raw } = createTestEnv();
+    const paidThrough = minutesFromNow(60);
+    seedPlan(raw, TENANT_A, { plan: 'solo', billedUntil: paidThrough, customerId: 'cus_sunny' });
+
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.plan).toBe('solo');
+    expect(body.billedUntil).toBe(paidThrough);
+    expect(body.planActive).toBe(true);
+    expect(body.hasBillingAccount).toBe(true);
+  });
+
   it('reports NO billing account for an empty-string customer id', async () => {
     const { env, raw } = createTestEnv();
     // `''` is not a customer record. It is what a caller writing the column from an empty form
@@ -154,10 +171,13 @@ describe('the settings read publishes the sitter’s own plan', () => {
     expect(body.stripeCustomerId).toBe('');
   });
 
-  it('follows isSoloActive across the boundary, including the instant itself', async () => {
+  it('follows isSoloActive across the boundary, on a plan that is not premium', async () => {
+    // `solo` ON BOTH ARMS, deliberately: seeded `pro`, this case follows `isPremiumActive` exactly as
+    // well as the helper it is named for, and so cannot tell them apart. It is `isSoloActive` that
+    // this route publishes.
     const { env: ahead, raw: rawAhead } = createTestEnv();
     seedPlan(rawAhead, TENANT_A, {
-      plan: 'pro',
+      plan: 'solo',
       billedUntil: minutesFromNow(1),
       customerId: 'cus_sunny',
     });
@@ -165,18 +185,22 @@ describe('the settings read publishes the sitter’s own plan', () => {
 
     const { env: behind, raw: rawBehind } = createTestEnv();
     seedPlan(rawBehind, TENANT_A, {
-      plan: 'pro',
+      plan: 'solo',
       billedUntil: minutesFromNow(-1),
       customerId: 'cus_sunny',
     });
     expect((await read(behind, SLUG[TENANT_A], await adminToken(TENANT_A))).planActive).toBe(false);
 
-    // The boundary itself. `isSoloActive` is a STRICT `>`, so "paid through this very instant" is
-    // not live — and by the time the request lands the stamp is already in the past, so this
-    // assertion is the one that can be made about the boundary without racing the clock.
+    // The boundary itself, and THIS ARM CLAIMS NOTHING ABOUT THE OPERATOR. A stamp equal to now can
+    // only get further into the past while the test runs, so the assertion is stable — but it kills a
+    // `>` loosened to `>=` only when the route happens to re-read the clock inside the same
+    // wall-clock second, which is a coin toss on a slow box. The deterministic kill is at the unit
+    // level, where `now` is an argument: see `premium-entitlement.test.ts`, "a STRICT `>` at the
+    // boundary". Kept here because "paid through an instant already gone is not live" is still the
+    // route's own answer to assert.
     const { env: exact, raw: rawExact } = createTestEnv();
     seedPlan(rawExact, TENANT_A, {
-      plan: 'pro',
+      plan: 'solo',
       billedUntil: premiumNow(),
       customerId: 'cus_sunny',
     });

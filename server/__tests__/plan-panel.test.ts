@@ -34,6 +34,29 @@ const FLAT = PANEL.replace(/\s+/g, ' ');
 /** `PANEL_TEXT` collapsed the same way, for the wrapped conditions whose subject IS a literal. */
 const FLAT_TEXT = PANEL_TEXT.replace(/\s+/g, ' ');
 const BUSINESS = liveSource(readFileSync(join(ADMIN, 'sections', 'BusinessSection.tsx'), 'utf8'));
+
+/**
+ * The source span of every JSX block in `FLAT` that opens with `needle`, found by matching braces
+ * from it. This is what lets a pin say "that markup is not INSIDE this condition" rather than
+ * "that markup comes before this condition" — position in the file is not the claim, nesting is,
+ * and the Subscribe Hint legitimately opens an offers block above the status line.
+ */
+function blocksOpeningWith(needle: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (let at = FLAT.indexOf(needle); at !== -1; at = FLAT.indexOf(needle, at + 1)) {
+    let depth = 0;
+    let end = at;
+    for (; end < FLAT.length; end += 1) {
+      if (FLAT[end] === '{') depth += 1;
+      else if (FLAT[end] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    spans.push([at, end]);
+  }
+  return spans;
+}
 const RAW_APP = readFileSync(join(ADMIN, 'App.tsx'), 'utf8');
 const APP = liveSource(RAW_APP);
 /** Comments stripped, literals kept — for the one App.tsx pin whose subject is a key name. */
@@ -68,11 +91,31 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).not.toContain('config?.disabled');
   });
 
-  it('no longer renders nothing — the status line survives every one of those conditions', () => {
-    // This replaces the pin that required `return null` when any of the three failed. NFR-2: a
-    // sitter whose plan lapsed, whose deployment stopped selling, or whose paid surface is
-    // unreachable must still be told what she is on and when it runs out.
-    expect(PANEL).not.toContain('return null');
+  it('keeps the status line OUTSIDE every condition — NFR-2, pinned structurally', () => {
+    // THE PIN THIS REPLACES was `not.toContain('return null')`, which is a check on one SPELLING of
+    // one regression. Two independent probes hid the whole status line and stayed green: one wrapped
+    // the status `<p>` in `{!offersHidden && ( … )}`, the other put `return <></>` above the real
+    // return. `return false`, `return undefined` and a wrapper all evaded it too. NFR-2 is that a
+    // sitter whose plan lapsed, whose deployment stopped selling, whose account is switched off or
+    // whose paid surface is unreachable is still told what she is on — so what has to be pinned is
+    // the POSITION of that markup, not the absence of one keyword.
+    const statusAt = FLAT.indexOf('<strong>{planName}</strong>');
+    expect(statusAt).toBeGreaterThan(-1);
+
+    // Not nested inside any `{!offersHidden …}` block, wherever in the markup that block sits — the
+    // Hint legitimately opens one above the status line, so ordering alone would not say this.
+    for (const [start, end] of blocksOpeningWith('{!offersHidden')) {
+      expect(statusAt < start || statusAt > end, `offers block ${start}..${end}`).toBe(true);
+    }
+    // Nor inside the switched-off block, which withholds the DATE from her and not her plan's name.
+    for (const [start, end] of blocksOpeningWith('{settings.disabled')) {
+      expect(statusAt < start || statusAt > end, `disabled block ${start}..${end}`).toBe(true);
+    }
+
+    // And reached by the component's single JSX return, with no early exit of any spelling above it.
+    const returnAt = FLAT.lastIndexOf('return (');
+    expect(statusAt).toBeGreaterThan(returnAt);
+    expect(FLAT.slice(0, returnAt)).not.toMatch(/\breturn (?:null|undefined|false|<)/);
   });
 
   it('keeps the offers behind the four conditions of the deployment and the account', () => {
@@ -103,6 +146,13 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).not.toContain('window.top!');
     expect(PANEL).toContain('window.top ?? window');
     expect(PANEL_TEXT).toContain("window.open(url, '_blank', 'noopener')");
+    // AND THAT BOTH NAVIGATIONS GO THROUGH IT. Every assertion above reads the helper's DEFINITION;
+    // replacing either call site with `window.location.assign(url)` left the helper standing unused
+    // and the suite green, with both navigations happening inside the dashboard's own iframe — which
+    // is the exact failure the helper exists to prevent, since Stripe's hosted pages set their own
+    // `frame-ancestors` and will not render there. The definition reads `(url: string)`, so this
+    // count is the two CALLS.
+    expect(PANEL.match(/openAtTopLevel\(url\)/g)).toHaveLength(2);
   });
 
   it('navigates only to an https URL it was actually given a string for', () => {
@@ -155,6 +205,10 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     // control opens a hosted page, and the panel states no notice period, no refund position and
     // no proration of its own. Those belong on the terms page (FR-60, FR-64).
     expect(PANEL_TEXT).toContain('/portal');
+    // ELSEWHERE is the half that was unpinned: a "Cancel plan" button added to this panel kept every
+    // assertion here green, and an in-app cancellation control is a cancellation flow this product
+    // would then own — the terms, the proration and the refund position with it.
+    expect(PANEL_TEXT).not.toMatch(/Cancel (?:plan|subscription)/i);
     expect(PANEL_TEXT).not.toMatch(/refund/i);
     expect(PANEL_TEXT).not.toMatch(/pro-?rat/i);
     expect(PANEL_TEXT).not.toMatch(/notice period/i);
@@ -178,6 +232,11 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
       /\b\d+\s*(?:-day|\/month|\/mo\b|\/year|\/yr\b| a month| a year)/,
     );
     expect(PANEL_TEXT).not.toMatch(/\b(?:15|29|290|30)\b\s*(?:dollars|a month|a year|per month)/i);
+    // AND ONE POSITIVE ASSERTION, because every line above this one is green against an EMPTY file.
+    // Measured: stubbing the panel to `return null` failed 22 of this file's cases and left three
+    // standing, of which this was one. A wholly-negative case is not harmful beside positive pins,
+    // but it is the one assertion here that would pass with the production code deleted.
+    expect(PANEL_TEXT).toMatch(/pricing\.(?:soloMonthly|proMonthly|proAnnual|trialDays)/);
   });
 });
 
@@ -219,6 +278,21 @@ describe('the plan status line', () => {
     for (const word of ['No plan yet', 'paid through', 'lapsed']) {
       expect(PANEL_TEXT).toContain(word);
     }
+  });
+
+  it('hangs the live word on planActive and the lapsed word on its negation', () => {
+    // SWAPPING THE TWO WORDS was green: a paying sitter read "lapsed" and a lapsed one read "paid
+    // through". The case above asserts only that both words are PRESENT, and no text pin can see
+    // which branch they hang off — so the ternary is pinned verbatim instead. This is the one
+    // sentence `planActive` reaches her through, and the structural ceiling of a file with no DOM
+    // harness lands exactly on it.
+    expect(FLAT_TEXT).toContain("settings.planActive ? 'paid through' : 'lapsed'");
+  });
+
+  it('prints no date at all for a sitter who has none', () => {
+    // DROPPING THE `paidThrough !== null &&` GUARD was green, and a sitter who never subscribed read
+    // "No plan yet — lapsed null".
+    expect(FLAT).toContain('paidThrough !== null &&');
   });
 
   it('matches the plan name rather than indexing the lookup blind', () => {
@@ -289,9 +363,18 @@ describe('the Manage plan control', () => {
     // to hide behind the Subscribe gate. It is the sentence that makes pressing an unfamiliar button
     // into a hosted page reasonable, and the sitter being sent there is the one who HAS a card on
     // file. Stated beside the control rather than in it, because the panel states no terms.
-    expect(PANEL).toContain('MANAGE_ON_STRIPE');
     expect(PANEL_TEXT).toMatch(/never see your card/);
     expect(PANEL_TEXT).toMatch(/on Stripe’s own page/);
+    // AND RENDERED, inside the Manage block. Deleting the markup and leaving the constant standing
+    // kept both pins above green — a sentence declared and never shown is the failure, and this file
+    // has already lost that exact mutation twice. `{MANAGE_ON_STRIPE}` is the interpolation, never
+    // the declaration.
+    expect(FLAT).toContain('{MANAGE_ON_STRIPE}');
+    const assuranceAt = FLAT.indexOf('{MANAGE_ON_STRIPE}');
+    const manage = blocksOpeningWith('{canManage');
+    expect(manage).toHaveLength(1);
+    expect(assuranceAt).toBeGreaterThan(manage[0][0]);
+    expect(assuranceAt).toBeLessThan(manage[0][1]);
   });
 
   it('opens the portal with a POST carrying the admin Bearer, and no body', () => {
