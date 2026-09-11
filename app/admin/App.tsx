@@ -433,6 +433,26 @@ function SettingsMenu({ activeSection }: { activeSection: SectionKey }) {
   );
 }
 
+/**
+ * The five READ-ONLY plan fields of a settings payload (0017), named one by one.
+ *
+ * A function rather than a spread of the whole fresh payload, for the same reason `save()` builds its
+ * PUT body field by field: a field added to `Settings` must not silently join a merge, and the
+ * mid-session re-read below is allowed to carry exactly these and `calendar` and nothing else — every
+ * other field may be a staged edit the sitter has not saved.
+ *
+ * `stripeCustomerId` is spread CONDITIONALLY, because the key is absent — not null — for a `pawsa_`
+ * credential: writing it unconditionally would turn "withheld by policy" into an `undefined`, and
+ * make the client type lie about the payload it mirrors.
+ */
+const planFieldsOf = (s: Settings) => ({
+  plan: s.plan,
+  billedUntil: s.billedUntil,
+  planActive: s.planActive,
+  hasBillingAccount: s.hasBillingAccount,
+  ...('stripeCustomerId' in s ? { stripeCustomerId: s.stripeCustomerId } : {}),
+});
+
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
   const { token, slug } = session;
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -584,15 +604,25 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
    * field into both `settings` and `savedSnapshot` (the latter so this fetch doesn't itself make
    * the page look dirty — see `dirty`'s definition above). Used by the calendar-connect popup
    * poll below, which used to call the full `refresh()` and blow away staged edits.
+   *
+   * PLUS THE FIVE PLAN FIELDS (0017), which are merged for the opposite reason to the one that makes
+   * everything else here off limits. They are not staged edits and cannot be: they are read-only,
+   * they change only on the server, and `save()` never sends them. Discarding them meant the plan
+   * panel's gates were right on a fresh load and then went stale for the rest of the session — a
+   * sitter who completed a checkout in the hosted tab and came back to a dashboard she had left open
+   * was still being offered Subscribe. Merged into the snapshot as well as the state, because a field
+   * that moves in one and not the other is what puts the save bar up with nothing to save.
    */
   const refreshCalendarStatus = () =>
     run(async () => {
       const fresh = await loadSettings();
-      setSettings((prev) => (prev ? { ...prev, calendar: fresh.calendar } : prev));
+      setSettings((prev) =>
+        prev ? { ...prev, calendar: fresh.calendar, ...planFieldsOf(fresh) } : prev,
+      );
       setSavedSnapshot((prev) => {
         if (!prev) return prev;
         const parsed = JSON.parse(prev) as Settings;
-        return JSON.stringify({ ...parsed, calendar: fresh.calendar });
+        return JSON.stringify({ ...parsed, calendar: fresh.calendar, ...planFieldsOf(fresh) });
       });
     });
 

@@ -139,6 +139,21 @@ describe('the settings read publishes the sitter’s own plan', () => {
     expect(body.stripeCustomerId).toBe('cus_sunny');
   });
 
+  it('reports NO billing account for an empty-string customer id', async () => {
+    const { env, raw } = createTestEnv();
+    // `''` is not a customer record. It is what a caller writing the column from an empty form
+    // field, a trimmed header or a `?? ''` default leaves behind, and `!= null` reads it as a
+    // sitter the processor knows — which under the panel's gate would offer her a portal session
+    // against a customer that does not exist. A non-empty STRING is the question being asked.
+    raw.prepare('UPDATE Tenants SET StripeCustomerId = ? WHERE Id = ?').run('', TENANT_A);
+
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.hasBillingAccount).toBe(false);
+    // Still PUBLISHED verbatim, because the field is the column and the route invents nothing: the
+    // derivation is what this case is about, not the echo.
+    expect(body.stripeCustomerId).toBe('');
+  });
+
   it('follows isSoloActive across the boundary, including the instant itself', async () => {
     const { env: ahead, raw: rawAhead } = createTestEnv();
     seedPlan(rawAhead, TENANT_A, {
@@ -184,6 +199,57 @@ describe('the settings read publishes the sitter’s own plan', () => {
     expect(body.planActive).toBe(false);
     expect(body.plan).toBe('pro');
     expect(body.hasBillingAccount).toBe(true);
+  });
+});
+
+describe('the settings PUT cannot write plan state', () => {
+  it('ignores all five plan fields in the body and leaves every column untouched', async () => {
+    // THE FIVE FIELDS ARE READ-ONLY ON THE WIRE, and that is a property of the WRITE path rather
+    // than of the client that happens to build its body field by field today. The settings PUT is
+    // the one authenticated write a sitter's own dashboard makes against her tenant row, so if it
+    // honoured these keys a sitter could grant herself a plan — or a paid-through date — with one
+    // `curl` and her own admin token. Nothing in `SettingsBody` names them; this case is what keeps
+    // it that way.
+    const { env, raw } = createTestEnv();
+    const paidThrough = minutesFromNow(60);
+    seedPlan(raw, TENANT_A, { plan: 'solo', billedUntil: paidThrough, customerId: 'cus_sunny' });
+
+    const res = await app.request(
+      `/api/${SLUG[TENANT_A]}/admin/settings`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${await adminToken(TENANT_A)}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          plan: 'pro',
+          billedUntil: minutesFromNow(60 * 24 * 365 * 50),
+          planActive: true,
+          hasBillingAccount: true,
+          stripeCustomerId: 'cus_attacker',
+        }),
+      },
+      env,
+    );
+    // Not a 400: the keys are not rejected, they are simply not read — the route resolves every
+    // column it writes from a field it knows, so an unknown key is inert rather than refused.
+    expect(res.status).toBe(204);
+
+    const row = raw
+      .prepare('SELECT Plan, BilledUntil, StripeCustomerId FROM Tenants WHERE Id = ?')
+      .get(TENANT_A) as {
+      Plan: string | null;
+      BilledUntil: string | null;
+      StripeCustomerId: string | null;
+    };
+    expect(row).toEqual({ Plan: 'solo', BilledUntil: paidThrough, StripeCustomerId: 'cus_sunny' });
+
+    // And the read still answers the seeded plan, not the one the body asked for.
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.plan).toBe('solo');
+    expect(body.billedUntil).toBe(paidThrough);
+    expect(body.stripeCustomerId).toBe('cus_sunny');
   });
 });
 

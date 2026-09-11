@@ -31,7 +31,13 @@ const PANEL_TEXT = liveSource(RAW, { keepLiterals: true });
  * because a clause moved to the next line is a pin that gets deleted for crying wolf.
  */
 const FLAT = PANEL.replace(/\s+/g, ' ');
+/** `PANEL_TEXT` collapsed the same way, for the wrapped conditions whose subject IS a literal. */
+const FLAT_TEXT = PANEL_TEXT.replace(/\s+/g, ' ');
 const BUSINESS = liveSource(readFileSync(join(ADMIN, 'sections', 'BusinessSection.tsx'), 'utf8'));
+const RAW_APP = readFileSync(join(ADMIN, 'App.tsx'), 'utf8');
+const APP = liveSource(RAW_APP);
+/** Comments stripped, literals kept — for the one App.tsx pin whose subject is a key name. */
+const APP_TEXT = liveSource(RAW_APP, { keepLiterals: true });
 
 describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () => {
   it('renders on premium.origin and never on premium.assistant', () => {
@@ -119,6 +125,30 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).not.toContain('e instanceof Error ? e.message');
   });
 
+  it('checks res.ok on BOTH calls, and throws on a non-2xx rather than reading the body', () => {
+    // DELETING THE WHOLE `if (!res.ok)` BLOCK was green on either path. Three things went with it:
+    // the server's own sentence was never shown, and a non-2xx body that happened to carry an https
+    // `url` was navigated to. `res.ok` and `res.status` appeared nowhere in this file.
+    expect(PANEL.match(/if \(!res\.ok\)/g)).toHaveLength(2);
+    expect(PANEL.match(/throw new ApiError\(res\.status,/g)).toHaveLength(2);
+    expect(PANEL.match(/body\.error \?\?/g)).toHaveLength(2);
+  });
+
+  it('never lets a CROSS-ORIGIN 401 or 403 sign her out of this dashboard', () => {
+    // `isAuthExpired` (app/shared-ui/api.ts) reads any 401 or 403 as THIS session having expired,
+    // and the dashboard's answer to that is to sign her out. But these two statuses come from
+    // another worker judging its own credential: a shared secret rotated there, a tenant it does not
+    // know, or a refusal of its own answers 401/403 with the sitter's dashboard session perfectly
+    // good. So those two throw a plain Error carrying this panel's copy, which cannot reach
+    // `isAuthExpired` at all — and the panel therefore holds no sign-out path and takes no
+    // `handleError`. BOTH paths, counted, because one of them missing is the whole bug.
+    expect(PANEL.match(/res\.status === 401 \|\| res\.status === 403/g)).toHaveLength(2);
+    expect(PANEL.match(/throw new Error\(CHECKOUT_FAILED\)/g)).toHaveLength(2);
+    expect(PANEL.match(/throw new Error\(PORTAL_FAILED\)/g)).toHaveLength(2);
+    expect(PANEL).not.toContain('isAuthExpired');
+    expect(PANEL).not.toContain('handleError');
+  });
+
   it('sends her somewhere to cancel, and states no terms of its own', () => {
     // The old pin here said this panel promised NO cancellation control, which was true until
     // Story 10.3 and is not after it. What must stay true is that it promises it ELSEWHERE: the
@@ -191,6 +221,34 @@ describe('the plan status line', () => {
     }
   });
 
+  it('matches the plan name rather than indexing the lookup blind', () => {
+    // A `Plan` value this bundle does not know — a column that grew a third tier, a cached row from
+    // a newer worker — must read as "No plan yet". `PLAN_NAMES[settings.plan]` on an unmatched key
+    // is `undefined`, React renders nothing for it, and the line says only a date with no plan in
+    // front of it. A render on a stale bundle/API pair must degrade, never throw and never lie.
+    expect(FLAT_TEXT).toContain("settings.plan === 'solo' || settings.plan === 'pro'");
+  });
+
+  it('renders no date at all for a billedUntil that is not a non-empty string', () => {
+    // `formatTimestamp` takes a string and calls `.replace` on it. A stale bundle against a newer
+    // API — or the other way round — can hand this panel a null, a number or `''`, and a throw in
+    // render takes her whole dashboard down rather than this one line.
+    expect(FLAT_TEXT).toContain(
+      "typeof settings.billedUntil === 'string' && settings.billedUntil !== ''",
+    );
+  });
+
+  it('tells a switched-off account it is switched off, and says nothing about a date', () => {
+    // Neither "paid through" nor "lapsed" is true of an account that cannot take a booking, and a
+    // paid-through date printed beside a switched-off account reads as a promise. One line, the plan
+    // name, and no controls. She would otherwise have read "lapsed": `planActive` is false for her
+    // whatever the date says, because `isSoloActive` refuses a `DisabledAt` before it looks at one.
+    expect(FLAT).toContain('{!settings.disabled && paidThrough !== null &&');
+    expect(FLAT).toContain('{settings.disabled &&');
+    expect(PANEL).toContain('ACCOUNT_OFF');
+    expect(PANEL_TEXT).toMatch(/switched off/);
+  });
+
   it('renders the stored instant through the dashboard’s own formatter', () => {
     // The column's shape is "YYYY-MM-DD HH:MM:SS" UTC, with no 'T' and no 'Z' — not something
     // every engine parses the same way unlabelled. Rendering the date is fine; DECIDING from it is
@@ -223,6 +281,17 @@ describe('the Manage plan control', () => {
     // pin here green, and neither typecheck nor lint objected.
     expect(PANEL).toMatch(/\{canManage && \(/);
     expect(PANEL_TEXT).toContain('Manage plan');
+  });
+
+  it('says beside it where a card is changed, and that this product never sees one', () => {
+    // The assurance the Subscribe Hint carries for every sitter — "Payment is handled by Stripe on
+    // their own page — we never see your card" — stopped reaching her the moment that Hint learned
+    // to hide behind the Subscribe gate. It is the sentence that makes pressing an unfamiliar button
+    // into a hosted page reasonable, and the sitter being sent there is the one who HAS a card on
+    // file. Stated beside the control rather than in it, because the panel states no terms.
+    expect(PANEL).toContain('MANAGE_ON_STRIPE');
+    expect(PANEL_TEXT).toMatch(/never see your card/);
+    expect(PANEL_TEXT).toMatch(/on Stripe’s own page/);
   });
 
   it('opens the portal with a POST carrying the admin Bearer, and no body', () => {
@@ -322,5 +391,31 @@ describe('the Manage plan control', () => {
     // dashboard are unaffected, which is the whole of NFR-2's claim.
     expect(PANEL_TEXT).not.toMatch(/\bretry\b/i);
     expect(PANEL).not.toContain('setInterval');
+  });
+});
+
+describe('plan state survives a mid-session settings re-read', () => {
+  it('merges the plan fields beside calendar, into both the state and the saved snapshot', () => {
+    // `refreshCalendarStatus` re-reads the WHOLE settings payload and keeps one field of it, because
+    // it must not blow away a sitter's staged edits elsewhere on the page. The plan fields are not
+    // staged edits — they are read-only and change only on the server — so discarding them meant the
+    // panel's gates held on a fresh load and then went stale for the rest of the session: a sitter
+    // who subscribed in the hosted checkout and came back to a dashboard left open kept being
+    // offered Subscribe. TWO sites, and the snapshot is the one that is easy to forget: merging into
+    // the state alone would make the page look dirty and put the save bar up on its own.
+    expect(APP.match(/\.\.\.planFieldsOf\(fresh\)/g)).toHaveLength(2);
+  });
+
+  it('names the five fields explicitly, rather than spreading the fresh payload', () => {
+    // Field by field, which is the same discipline `save()` uses for the PUT body: a field added to
+    // `Settings` does not silently join this merge, and spreading `fresh` wholesale would be the
+    // staged-edit bug `refreshCalendarStatus` exists to avoid.
+    for (const field of ['plan:', 'billedUntil:', 'planActive:', 'hasBillingAccount:']) {
+      expect(APP, field).toContain(`  ${field} s.${field.slice(0, -1)},`);
+    }
+    // `stripeCustomerId` is spread conditionally, because the key is ABSENT — not null — for a
+    // `pawsa_` credential, and turning that absence into an `undefined` would make the client type
+    // lie about the payload it mirrors.
+    expect(APP_TEXT).toContain("'stripeCustomerId' in s");
   });
 });

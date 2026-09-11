@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError, isAuthExpired, type TenantConfig } from '../shared-ui/api.js';
+import { api, ApiError, type TenantConfig } from '../shared-ui/api.js';
 import { formatTimestamp, type Session, type Settings } from './shared.js';
 import { Hint } from './Hint';
 
@@ -61,13 +61,28 @@ import { Hint } from './Hint';
 
 /** The one message this panel is willing to put in front of a sitter for a failure it does not
  *  recognise. The browser's own `TypeError: Failed to fetch` is not a plan problem and must not be
- *  rendered as one. */
+ *  rendered as one — and neither is a 401 or 403 from the other worker, for the reason the `!res.ok`
+ *  branch below gives. */
 const CHECKOUT_FAILED = 'Could not start checkout — try again.';
 
 /** The sibling of CHECKOUT_FAILED, for the other hosted page. Same rule: this is the ONE message
  *  this panel is willing to show for a failure it does not recognise — the browser's own
  *  "Failed to fetch" is not a plan problem and must not be rendered as one. */
 const PORTAL_FAILED = 'Could not open plan management — try again.';
+
+/** Beside Manage plan. The assurance the Subscribe Hint carries for every sitter who has not bought
+ *  yet — and which stopped reaching the sitter who HAS, the moment that Hint learned to hide behind
+ *  the Subscribe gate. She is the one with a card on file, so she is the one the sentence is for: it
+ *  is what makes pressing an unfamiliar button into somebody else's page reasonable. A statement of
+ *  FACT about where the card lives, and not a term: no notice, no refund position, no proration. */
+const MANAGE_ON_STRIPE = 'Card changes happen on Stripe’s own page — we never see your card.';
+
+/** The whole of what a switched-off account is told here. Her plan's NAME still renders above it —
+ *  it is a column in this product's own database and NFR-2 does not stop applying to her — but
+ *  neither "paid through" nor "lapsed" is true of an account that cannot take a booking, and a
+ *  paid-through date beside one reads as a promise. The dashboard's own banner has already said why
+ *  the account is off and who to ask; this line says only what it means for the plan. */
+const ACCOUNT_OFF = 'This account is switched off, so its plan cannot be changed here.';
 
 /** When this deployment publishes no paid surface at all, there is nothing to press and nothing
  *  to retry — so the panel says so once, in a sentence that is about the CONTROL and never about
@@ -132,7 +147,6 @@ const PLAN_NAMES: Record<'solo' | 'pro', string> = { solo: 'Solo', pro: 'Pro' };
 export function PlanPanel({
   session,
   settings,
-  handleError,
 }: {
   session: Session;
   /**
@@ -144,10 +158,14 @@ export function PlanPanel({
    * "why does a read-only field live on the settings type".
    */
   settings: Settings;
-  /** The dashboard's own failure path (App.tsx's `handle`). A 401 or 403 from the checkout call
-   *  means the session this panel needs has gone, and signing her out is the only response that
-   *  leads anywhere. */
-  handleError: (e: unknown) => void;
+  /**
+   * NO `handleError`, deliberately, and this panel is the one place in the dashboard that takes
+   * none. Every other panel hands its failures to App.tsx's `handle`, which signs the sitter out on
+   * a 401 or 403 — the right answer when the refusal came from THIS product judging her session.
+   * Both of this panel's calls go to another origin judging its own credential, where those two
+   * statuses say nothing about her dashboard session, so there is no failure here that signing her
+   * out would answer. The `!res.ok` branches below are where that is enforced.
+   */
 }) {
   const [config, setConfig] = useState<TenantConfig | null>(null);
   /**
@@ -187,12 +205,30 @@ export function PlanPanel({
   const pricing = config?.pricing ?? null;
   /** Selling is switched on for this DEPLOYMENT (`PLAN_SUBSCRIBE`), not for this tenant. */
   const sellingIsOn = pricing?.subscribe === true;
-  /** What the row says, in the sitter's own terms. `null` is not "free" and not an error — it is a
-   *  sitter who has never subscribed, which is most of them. */
-  const planName = settings.plan === null ? 'No plan yet' : PLAN_NAMES[settings.plan];
-  /** RENDERED, never compared. `planActive` is the server's answer to "is it live"; this string is
-   *  only ever the date beside it. */
-  const paidThrough = settings.billedUntil === null ? null : formatTimestamp(settings.billedUntil);
+  /**
+   * What the row says, in the sitter's own terms. `null` is not "free" and not an error — it is a
+   * sitter who has never subscribed, which is most of them.
+   *
+   * MATCHED, not indexed blind. A `Plan` this bundle does not know — a column that grew a third
+   * tier, a cached row written by a newer worker — would index to `undefined`, which React renders
+   * as nothing at all: the line would show a date with no plan in front of it. A render on a stale
+   * bundle/API pair must degrade to the honest answer, never throw and never print a blank.
+   */
+  const planName =
+    settings.plan === 'solo' || settings.plan === 'pro' ? PLAN_NAMES[settings.plan] : 'No plan yet';
+  /**
+   * RENDERED, never compared. `planActive` is the server's answer to "is it live"; this string is
+   * only ever the date beside it.
+   *
+   * A NON-EMPTY STRING OR NOTHING. `formatTimestamp` takes a string and calls `.replace` on it, so a
+   * null, a number or a `''` from a stale bundle/API pair would throw inside render — which unmounts
+   * her whole dashboard, not this one line. No date is a worse answer than a date; a blank page is
+   * worse than both.
+   */
+  const paidThrough =
+    typeof settings.billedUntil === 'string' && settings.billedUntil !== ''
+      ? formatTimestamp(settings.billedUntil)
+      : null;
   /** The word beside that date, and the panel's ONLY reading of `planActive` — the server's own
    *  answer to "is it live", never re-derived here. Hoisted out of the template literal below
    *  rather than written inline in it, because the source pin in `plan-panel.test.ts` reads
@@ -219,8 +255,15 @@ export function PlanPanel({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        // An ApiError rather than a plain one, so a 401 reaches `isAuthExpired` below and signs her
-        // out instead of reading as "the button is broken".
+        // A 401 OR 403 FROM THE OTHER WORKER IS NOT THIS SESSION EXPIRING, and a plain Error is how
+        // it is kept from saying so. `isAuthExpired` (`app/shared-ui/api.ts`) reads either status on
+        // an ApiError as "the dashboard session has gone" and the dashboard's answer is to sign her
+        // out — but this response came from a DIFFERENT origin judging its OWN credential: a secret
+        // rotated there, a tenant it has no record of, or any refusal of its own answers 401/403
+        // with her dashboard session perfectly good. Signing her out of the product she is using
+        // because a billing worker said no is the failure; the panel's own sentence is the answer.
+        if (res.status === 401 || res.status === 403) throw new Error(CHECKOUT_FAILED);
+        // Anything else keeps the server's own words, which are worth more than ours.
         throw new ApiError(res.status, body.error ?? CHECKOUT_FAILED);
       }
       const { url } = (await res.json()) as { url?: unknown };
@@ -231,10 +274,10 @@ export function PlanPanel({
       navigated = true;
       openAtTopLevel(url);
     } catch (e) {
-      if (isAuthExpired(e)) return handleError(e);
       // ONLY an ApiError's message, which is the free product's or the billing worker's own words.
       // Anything else is the browser's — "Failed to fetch", "NetworkError when attempting to fetch
-      // resource" — and rendering it tells a sitter her plan is broken when her wifi is.
+      // resource" — or this panel's own copy for a 401/403, and rendering the browser's tells a
+      // sitter her plan is broken when her wifi is.
       setError(e instanceof ApiError ? e.message : CHECKOUT_FAILED);
     } finally {
       if (!navigated) setBusy(null);
@@ -265,6 +308,9 @@ export function PlanPanel({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
+        // Same refusal as the checkout path, for the same reason: a cross-origin 401/403 must not
+        // reach `isAuthExpired` and sign her out of this dashboard.
+        if (res.status === 401 || res.status === 403) throw new Error(PORTAL_FAILED);
         throw new ApiError(res.status, body.error ?? PORTAL_FAILED);
       }
       const { url } = (await res.json()) as { url?: unknown };
@@ -272,7 +318,6 @@ export function PlanPanel({
       navigated = true;
       openAtTopLevel(url);
     } catch (e) {
-      if (isAuthExpired(e)) return handleError(e);
       setError(e instanceof ApiError ? e.message : PORTAL_FAILED);
     } finally {
       if (!navigated) setBusy(null);
@@ -326,10 +371,15 @@ export function PlanPanel({
           </Hint>
         )}
       </h3>
+      {/* THE STATUS LINE, outside every condition on this page — NFR-2, and the one structural fact
+          about this file's markup. The plan's NAME renders for every sitter there is, including a
+          switched-off one; only the date and the word beside it are withheld from her, because
+          neither is true of an account that cannot take a booking. */}
       <p>
         <strong>{planName}</strong>
-        {paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
+        {!settings.disabled && paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
       </p>
+      {settings.disabled && <p className="pb-hint">{ACCOUNT_OFF}</p>}
       {/* SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on `planActive` — negated here, plain in
           `canManage` — so there is no state in which both render and none in which neither does for
           a sitter a deployment is selling to. This is the UI half of the double-subscription
@@ -367,11 +417,16 @@ export function PlanPanel({
         </>
       )}
       {canManage && (
-        <p>
-          <button type="button" disabled={busy !== null} onClick={() => void openPortal()}>
-            {busy === 'portal' ? 'Opening…' : 'Manage plan'}
-          </button>
-        </p>
+        <>
+          <p>
+            <button type="button" disabled={busy !== null} onClick={() => void openPortal()}>
+              {busy === 'portal' ? 'Opening…' : 'Manage plan'}
+            </button>
+          </p>
+          {/* The Subscribe Hint's assurance, for the sitter that Hint no longer reaches. A fact
+              about where her card lives, not a term — the terms belong on the terms page. */}
+          <p className="pb-hint">{MANAGE_ON_STRIPE}</p>
+        </>
       )}
       {configLoaded && settings.hasBillingAccount && settings.planActive && origin === null && (
         <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>

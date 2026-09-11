@@ -918,7 +918,12 @@ export const adminRoutes = new Hono<AppEnv>()
       // file, and `server/__tests__/premium-entitlement.test.ts` fails any line outside
       // `server/lib/premium.ts` that compares either dated column.
       planActive: isSoloActive(tenant),
-      hasBillingAccount: tenant.StripeCustomerId != null,
+      // A NON-EMPTY STRING, not `!= null`. `''` is not a customer record — it is what a caller
+      // writing this column from an empty form field, a trimmed header or a `?? ''` default leaves
+      // behind — and reading it as "the processor knows her" hands the dashboard a Manage-plan
+      // control pointed at a customer that does not exist.
+      hasBillingAccount:
+        typeof tenant.StripeCustomerId === 'string' && tenant.StripeCustomerId.length > 0,
       // PASSWORD SESSION ONLY, and OMITTED rather than nulled for a `pawsa_` token, so a consumer
       // can tell "withheld by policy" from "no customer yet". The precedent is `adminSessionOnly`
       // (server/lib/middleware.ts), already used to keep a token off the token-management routes;

@@ -344,6 +344,15 @@ describe('booking flow', () => {
     expect(api.headers.get('Content-Security-Policy') ?? '').toContain(
       "frame-src 'self' https://premium.example",
     );
+    // AND connect-src, beside it and for the same origin. The dashboard does not only FRAME the
+    // paid surface: the plan panel POSTs to it for a checkout session and for a billing portal
+    // session (`app/admin/PlanPanel.tsx`). With no `connect-src` the policy falls back to
+    // `default-src 'self'` and the browser blocks both requests before they leave the page — on any
+    // deployment whose paid surface is on a different host from the dashboard. Production happens to
+    // publish the dashboard's own origin, which is why nothing caught it.
+    expect(api.headers.get('Content-Security-Policy') ?? '').toContain(
+      "connect-src 'self' https://premium.example",
+    );
 
     // The embed page's own CSP is unaffected by PREMIUM_ORIGIN — it stays the same permissive
     // policy either way, since it is already framable by design.
@@ -351,10 +360,15 @@ describe('booking flow', () => {
     expect(embed.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
   });
 
-  it('omits frame-src entirely when no PREMIUM_ORIGIN is configured', async () => {
+  it('omits frame-src and connect-src entirely when no PREMIUM_ORIGIN is configured', async () => {
     const { env } = createTestEnv();
     const api = await app.request('/api/sunny-paws/config', {}, env);
+    // Neither directive is added, so the page frames nothing and talks to nothing but itself —
+    // exactly what `default-src 'self'` already said. A `connect-src 'self'` spelled out for a
+    // deployment with no paid surface would be a directive that changes nothing, and the next reader
+    // would have to work out whether it was load-bearing.
     expect(api.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
+    expect(api.headers.get('Content-Security-Policy') ?? '').not.toContain('connect-src');
   });
 
   it('creates a calendar event when the tenant calendar is connected', async () => {

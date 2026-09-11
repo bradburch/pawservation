@@ -82,8 +82,17 @@ app.use('*', async (c, next) => {
     // configures, if any — and nothing else, so the allowance is the configured origin itself,
     // never '*'. Unset (a fork, a self-hoster, no PREMIUM_ORIGIN) leaves LOCKED_CSP with no
     // frame-src at all, i.e. this page frames nothing, exactly as before this existed.
+    //
+    // AND `connect-src`, for the same origin and in the same breath, because the dashboard does not
+    // only FRAME that surface: the plan panel POSTs to it for a checkout session and for a billing
+    // portal session (`app/admin/PlanPanel.tsx`). With no `connect-src` the policy falls back to
+    // `default-src 'self'` and the browser blocks both requests before they leave the page — on any
+    // deployment whose paid surface is on a different host. The commercial deployment happens to
+    // publish the dashboard's own origin, which is the only reason nothing noticed.
     const origin = premiumOrigin(c.env);
-    const csp = origin ? `${LOCKED_CSP}; frame-src 'self' ${origin}` : LOCKED_CSP;
+    const csp = origin
+      ? `${LOCKED_CSP}; frame-src 'self' ${origin}; connect-src 'self' ${origin}`
+      : LOCKED_CSP;
     c.header('Content-Security-Policy', csp);
     c.header('X-Frame-Options', 'DENY');
   }

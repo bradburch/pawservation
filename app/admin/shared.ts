@@ -206,6 +206,13 @@ const ZONED = /(?:Z|[+-]\d{2}:\d{2})$/;
  * exactly that shape unlabelled and shifted by the viewer's offset, which is the reading nobody
  * would notice was wrong.
  *
+ * RENDERED IN UTC, which is the other half of labelling it UTC. The stored instant IS a UTC one, so
+ * the date a sitter reads has to be its own calendar day rather than the viewer's: 00:30 on the 8th
+ * is the 7th for everyone west of Greenwich, so "paid through Oct 7" for a plan that runs to the 8th
+ * is a day of her plan rendered away — and the nearer the stamp sits to midnight, the smaller and
+ * more confused the group of people who ever see it. `CalendarSection.tsx`'s `monthTitle` is the
+ * precedent for the option.
+ *
  * Shared rather than copied: the access-token panel and the plan panel render the same column
  * shape, and two formatters is one of them being wrong the day the shape moves.
  */
@@ -216,7 +223,9 @@ export function formatTimestamp(sqlDatetime: string): string {
   // anything, or `Date` reads the whole string as invalid and the sitter sees the raw text.
   const withT = sqlDatetime.replace(/\s+(?=\d{2}:)/, 'T').replace(/\s+(?=[+-]\d{2}:\d{2}$)/, '');
   const d = new Date(ZONED.test(withT) ? withT : `${withT}Z`);
-  return Number.isNaN(d.getTime()) ? sqlDatetime : d.toLocaleDateString();
+  return Number.isNaN(d.getTime())
+    ? sqlDatetime
+    : d.toLocaleDateString(undefined, { timeZone: 'UTC' });
 }
 
 export function adminFetch<T>(token: string, path: string, init?: RequestInit): Promise<T> {
