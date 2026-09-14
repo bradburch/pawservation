@@ -29,20 +29,25 @@ import { Hint } from './Hint';
  *     And a DISABLED tenant is never offered a plan: her account cannot take a booking, so asking
  *     her for a card is worse than showing nothing.
  *
- *   - MANAGE PLAN renders on `premium.origin`, `settings.hasBillingAccount`,
- *     `settings.planActive` and a tenant that is switched on — and on NEITHER of the deployment's
- *     other two flags. Not `pricing.subscribe`, because a sitter who already pays must be able to
- *     change her card and cancel after a deployment stops taking new subscriptions. `planActive`
- *     IS in the gate, and the argument for leaving it out ("a sitter whose card died is precisely
- *     who needs the portal") does not survive the fact that `StripeCustomerId` is never cleared:
- *     on `hasBillingAccount` alone the button stood for years after a cancellation, pointed at a
- *     subscription that no longer existed. A dying card is not an instant lapse either — the
- *     processor retries for days and `BilledUntil` is paid-through, not last-charged.
+ *   - MANAGE PLAN renders on `premium.origin`, `settings.hasBillingAccount` and a tenant that is
+ *     switched on — and on NEITHER of the deployment's other two flags. Not `pricing.subscribe`,
+ *     because a sitter who already pays must be able to change her card and cancel after a
+ *     deployment stops taking new subscriptions. And NOT `planActive`: a lapsed sitter with a
+ *     billing account may be in the processor's dunning — the subscription still exists and the
+ *     retries are still running — and the hosted portal is the only place she can put a working
+ *     card on it. `planActive` in this gate shut her out of the fix at the moment she needed it.
+ *     `hasBillingAccount` is the question that matches the control: is there an account at the
+ *     processor to open at all.
  *
- * SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION, on `planActive` — negated on one
- * side, plain on the other — which is the UI half of the double-subscription question. The other
- * half is a server-side refusal on the checkout route, which is the paid surface's to build: a UI
- * is not a guard, because that route is reachable with curl and an admin token.
+ * SUBSCRIBE AND MANAGE ARE NOT ONE FLAG NEGATED. They ask two different questions — "is there an
+ * account at the processor" and "is there no live plan" — and the states fall out of the pair:
+ * a sitter who never subscribed gets SUBSCRIBE alone; a live plan (a cancelled-in-grace one
+ * included, since it is still live) gets MANAGE alone; a LAPSED sitter with a billing account gets
+ * BOTH, with one line beneath saying which is which; a switched-off account gets NEITHER. A paying
+ * sitter is still never offered a second subscription, which is the UI half of the
+ * double-subscription question — the other half is a server-side refusal on the checkout route,
+ * which is the paid surface's to build: a UI is not a guard, because that route is reachable with
+ * curl and an admin token.
  *
  * BOTH CONTROLS ARE A `fetch` AND NOT AN ANCHOR: the admin session is a JWT in localStorage and an
  * anchor carries no Authorization header — `app/shared-ui/api.ts`'s `exportCsv` docblock is where
@@ -76,6 +81,19 @@ const PORTAL_FAILED = 'Could not open plan management — try again.';
  *  is what makes pressing an unfamiliar button into somebody else's page reasonable. A statement of
  *  FACT about where the card lives, and not a term: no notice, no refund position, no proration. */
 const MANAGE_ON_STRIPE = 'Card changes happen on Stripe’s own page — we never see your card.';
+
+/** The one state in which both controls stand together — a lapsed plan with a billing account
+ *  still at the processor — and the only state in which two buttons could read as one choice made
+ *  twice. It says which is which and nothing else: no price, no card form, no invoice of this
+ *  product's own and no cancellation control, because both controls lead to a page that is not
+ *  this product's and the terms belong on the terms page.
+ *
+ *  IT WRAPS BETWEEN CLAUSES, NEVER INSIDE ONE. `plan-panel.test.ts` pins this sentence at the
+ *  SOURCE — there is no DOM harness — so a `+` that falls inside a pinned phrase splits it in two
+ *  and the pin goes red against copy that reads perfectly on screen. */
+const LAPSED_WITH_ACCOUNT =
+  'Your plan has lapsed — fix your card or see past invoices under Manage plan, ' +
+  'or start a new plan with Subscribe.';
 
 /** The whole of what a switched-off account is told here. Her plan's NAME still renders above it —
  *  it is a column in this product's own database and NFR-2 does not stop applying to her — but
@@ -337,26 +355,32 @@ export function PlanPanel({
   const offersHidden = !origin || !sellingIsOn || settings.disabled || !pricing;
 
   /**
-   * MANAGE PLAN renders on the published origin, a billing account, a LIVE plan and an account that
-   * is switched on — and on neither of the deployment's other two flags. Not `pricing.subscribe`:
-   * that switch is about SELLING, and a sitter who already pays must be able to change her card and
-   * cancel after a deployment stops taking new subscriptions. Not `premium.assistant`: that is the
+   * MANAGE PLAN renders on the published origin, a billing account and an account that is switched
+   * on — and on neither of the deployment's other two flags. Not `pricing.subscribe`: that switch
+   * is about SELLING, and a sitter who already pays must be able to change her card and cancel
+   * after a deployment stops taking new subscriptions. Not `premium.assistant`: that is the
    * tenant's entitlement, false for a Solo subscriber who nonetheless has a plan to manage — the
    * same distinction the Subscribe half above draws.
    *
-   * `planActive` AS WELL AS `hasBillingAccount`, and that pair is the whole of the gate ruling. The
-   * earlier reading was `hasBillingAccount` alone, on the argument that a sitter whose card died is
-   * precisely who needs the portal. The flaw is that `StripeCustomerId` is never cleared once
-   * written — `applyBillingEvent` COALESCEs it and no route in this product clears it — so a billing
-   * account outlives every subscription it ever had. A sitter who cancelled a year ago therefore
-   * kept a Manage-plan button pointed at a subscription that no longer exists, AND never saw
-   * Subscribe again, which is the one control she actually wanted. A live plan is the thing there is
-   * something to manage; a lapsed one is something to buy, and `planActive` is what tells them
-   * apart. Her card dying is not a lapse on the instant either: the processor retries for days, and
-   * `BilledUntil` is paid-through, not last-charged.
+   * `hasBillingAccount` WITHOUT `planActive`, and that is the whole of the gate ruling. The earlier
+   * reading paired the two, on the argument that `StripeCustomerId` is never cleared — it is
+   * COALESCEd by `applyBillingEvent` and no route in this product clears it — so a billing account
+   * outlives every subscription it ever had, and the button stood after a cancellation pointed at a
+   * subscription that no longer existed. What that reading cost is the sitter this control matters
+   * most to: a LAPSED plan is very often a subscription in the processor's dunning, still alive and
+   * still retrying, and the hosted portal is the only place she can put a working card on it. She
+   * now gets the portal AND Subscribe, with one line beneath saying which is which — a stale button
+   * beside a live one she can read is a smaller failure than no way to fix a card at all.
    */
-  const canManage =
-    origin !== null && settings.hasBillingAccount && settings.planActive && !settings.disabled;
+  const canManage = origin !== null && settings.hasBillingAccount && !settings.disabled;
+
+  /**
+   * THE ONE STATE IN WHICH BOTH CONTROLS STAND TOGETHER: a lapsed plan with a billing account. It
+   * is derived from the two gates rather than restating either, so it cannot drift from what is
+   * actually on screen, and it names no `pricing` because `offersHidden` already does — `!pricing`
+   * is one of its four terms, so `!offersHidden` is exactly where the offers grid renders.
+   */
+  const bothControls = canManage && !offersHidden && !settings.planActive;
 
   return (
     <>
@@ -381,13 +405,13 @@ export function PlanPanel({
         {!settings.disabled && paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
       </p>
       {settings.disabled && <p className="pb-hint">{ACCOUNT_OFF}</p>}
-      {/* SUBSCRIBE AND MANAGE ARE MUTUALLY EXCLUSIVE, on `planActive` — negated here, plain in
-          `canManage` — so there is no state in which both render and none in which neither does for
-          a sitter a deployment is selling to. This is the UI half of the double-subscription
-          question; the other half is a server-side refusal on the checkout route, which is the paid
-          surface's to build — a UI is not a guard, because that route is reachable with curl and an
-          admin token. A LAPSED sitter is offered Subscribe whether or not she has an old billing
-          account, because a customer record at the processor is not a subscription. */}
+      {/* SUBSCRIBE HIDES ON A LIVE PLAN, which is the UI half of the double-subscription question;
+          the other half is a server-side refusal on the checkout route, which is the paid surface's
+          to build — a UI is not a guard, because that route is reachable with curl and an admin
+          token. It does NOT hide on `hasBillingAccount`: a customer record at the processor is not
+          a subscription, so a LAPSED sitter is offered Subscribe whether or not she has an old one
+          — and since the Manage gate no longer reads `planActive`, she is offered the portal too.
+          `bothControls` below is that overlap, stated once. */}
       {!offersHidden && !settings.planActive && pricing && (
         <>
           <ul>
@@ -429,7 +453,11 @@ export function PlanPanel({
           <p className="pb-hint">{MANAGE_ON_STRIPE}</p>
         </>
       )}
-      {configLoaded && settings.hasBillingAccount && settings.planActive && origin === null && (
+      {/* ONLY where both controls are on screen. Beside Manage alone it would tell a paying sitter
+          her plan had lapsed; beside Subscribe alone it would point her at a button that is not
+          there. */}
+      {bothControls && <p className="pb-hint">{LAPSED_WITH_ACCOUNT}</p>}
+      {configLoaded && settings.hasBillingAccount && origin === null && (
         <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
       )}
       {error && <p className="pb-error">{error}</p>}

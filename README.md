@@ -375,24 +375,40 @@ date and no live/lapsed word, because neither means anything while the account i
 own disabled banner — it is in hand before the panel paints, so no control flashes on for her while
 a `/config` request is in flight.
 
-**Manage plan** is gated on `premium.origin`, `hasBillingAccount`, `planActive` and a tenant that is
-switched on, and on neither of the deployment's other two flags: a sitter who already pays must be
-able to change her card and cancel after a deployment stops selling, so it is not gated on
-`pricing.subscribe`. **It IS gated on `planActive`**, and the earlier argument for leaving it out
-("a sitter whose card died is precisely who needs the portal") does not survive the fact that
-`StripeCustomerId` is never cleared: on `hasBillingAccount` alone, a sitter who cancelled long ago
-kept a button pointed at a subscription that no longer existed and never saw Subscribe again. A
-dying card is not an instant lapse either — the processor retries for days, and `BilledUntil` is
-paid-through, not last-charged. It `POST`s to `<premium.origin>/premium/billing/<slug>/portal` with
-the admin Bearer and no body, and navigates the top-level window to the `url` it gets back — a
-`fetch` and never an anchor, because an anchor carries no `Authorization` header. Subscribe and
-Manage plan are mutually exclusive **by construction**, on `planActive`: negated on one side, plain
-on the other.
+**Manage plan** is gated on `premium.origin`, `hasBillingAccount` and a tenant that is switched on,
+and on neither of the deployment's other two flags: a sitter who already pays must be able to
+change her card and cancel after a deployment stops selling, so it is not gated on
+`pricing.subscribe`. **It is deliberately NOT gated on `planActive`.** A lapsed plan is very often
+a subscription in the processor's dunning — still alive, still retrying — and the hosted portal is
+the only place she can put a working card on it, so `planActive` here shut her out of the fix at
+the moment she needed it. `hasBillingAccount` is the question that matches the control: is there an
+account at the processor to open at all. It `POST`s to
+`<premium.origin>/premium/billing/<slug>/portal` with the admin Bearer and no body, and navigates
+the top-level window to the `url` it gets back — a `fetch` and never an anchor, because an anchor
+carries no `Authorization` header.
+
+**The two controls are not one flag negated**, so which of them a sitter sees falls out of the
+pair of questions they ask:
+
+| Her state                                           | Subscribe | Manage plan |
+| --------------------------------------------------- | --------- | ----------- |
+| Never subscribed — no billing account, no live plan | yes       | no          |
+| Live plan                                           | no        | yes         |
+| **Lapsed, with a billing account**                  | yes       | **yes**     |
+| Cancelled but still in the paid-through window      | no        | yes         |
+| Switched off (disabled)                             | no        | no          |
+
+The lapsed-with-an-account row is the only state that shows both, and it shows one extra line
+beneath them saying which is which — fix a card or read an invoice under Manage plan, start again
+under Subscribe. A paying sitter is still never offered a second subscription (`planActive` is
+plain on the Subscribe side and appears in neither Manage condition); that is the UI half of the
+double-subscription question, and the other half is a server-side refusal on the checkout route,
+because a UI is not a guard.
 
 Where no origin is published, the status line renders alone with one sentence saying plan changes
-are unavailable — shown on `configLoaded && hasBillingAccount && planActive && origin === null`, so
-it reaches exactly the sitter the Manage control was for, and not a sitter who has no plan to
-change. It waits for the `/config` read to FINISH rather than to succeed: a read that failed is one
+are unavailable — shown on `configLoaded && hasBillingAccount && origin === null`, so it tracks the
+Manage control exactly, minus the origin, and never reaches a sitter who has no billing account to
+manage. It waits for the `/config` read to FINISH rather than to succeed: a read that failed is one
 of the states the sentence is true for.
 
 The panel states no price, trial length, invoice, cancellation term or refund position of its own:

@@ -337,17 +337,18 @@ describe('the plan status line', () => {
 });
 
 describe('the Manage plan control', () => {
-  it('renders on a LIVE plan with a billing account, and on neither other flag', () => {
-    // `planActive` as well as `hasBillingAccount`, and that pairing is the ruling this gate was
-    // changed by. `StripeCustomerId` is never cleared once written (`applyBillingEvent` COALESCEs
-    // it), so "she has a billing account" outlives every subscription she ever had: on
-    // `hasBillingAccount` alone, a sitter who cancelled kept a Manage-plan button pointed at a
-    // subscription that no longer exists AND never saw Subscribe again. A live plan is the thing
-    // there is something to manage.
+  it('renders on a BILLING ACCOUNT, live plan or lapsed, and on neither other flag', () => {
+    // `hasBillingAccount` WITHOUT `planActive`, which reverses the pairing this case used to pin.
+    // The sitter whose card died is in the processor's dunning: the subscription still exists, the
+    // retries are still running, and the Billing Portal is the only place she can put a working
+    // card on it — so `planActive` in this gate locked her out of the fix at exactly the moment
+    // she needed it. `hasBillingAccount` is the honest question for this control, because it asks
+    // whether there is an account at the processor to open at all.
     expect(PANEL).toContain('settings.hasBillingAccount');
-    expect(FLAT).toContain(
-      'origin !== null && settings.hasBillingAccount && settings.planActive && !settings.disabled',
-    );
+    expect(FLAT).toContain('origin !== null && settings.hasBillingAccount && !settings.disabled');
+    // NOT the old pairing. Re-adding `planActive` here is a silent regression: the control simply
+    // stops rendering for the one sitter it was reopened for.
+    expect(FLAT).not.toContain('settings.hasBillingAccount && settings.planActive');
     // Not `pricing.subscribe`: that switch is about SELLING, and a sitter who already pays must
     // be able to change her card and cancel after a deployment stops taking new subscriptions.
     // Not `premium.assistant`: that is the tenant's entitlement, false for a Solo subscriber who
@@ -433,21 +434,58 @@ describe('the Manage plan control', () => {
     expect(FLAT).not.toContain('!offersHidden && !settings.hasBillingAccount');
   });
 
-  it('keeps Subscribe and Manage mutually exclusive BY CONSTRUCTION', () => {
-    // Not by two conditions that happen to disagree today: `planActive` decides, negated on one
-    // side and plain on the other, so there is no state in which both render and none in which a
-    // paying sitter is offered a second subscription.
-    expect(FLAT).toContain('!settings.planActive && pricing');
-    expect(FLAT).toContain('settings.hasBillingAccount && settings.planActive');
+  it('shows each state exactly the controls that state has something to press', () => {
+    // THE TWO GATES ARE NO LONGER ONE FLAG NEGATED. They are two different questions — "is there
+    // an account at the processor" and "is there no live plan" — and the five states a sitter can
+    // be in (deployment selling, origin published) fall out of that pair:
+    //
+    //   never subscribed (no account, no live plan) → SUBSCRIBE alone
+    //   live plan (account, live plan)              → MANAGE alone
+    //   lapsed with an account (account, no plan)   → BOTH, plus the line below
+    //   cancelled-in-grace (account, still live)    → MANAGE alone, as the live plan is
+    //   disabled                                    → NEITHER
+    //
+    // So exclusivity now holds through the COMBINATION and not through one flag: Manage is hidden
+    // from the sitter with no billing account, Subscribe from the sitter whose plan is live, and
+    // the one state both answer is the lapsed sitter who has an account — which is deliberate,
+    // because fixing a card and starting a new plan are both real answers for her.
+    expect(FLAT).toContain('origin !== null && settings.hasBillingAccount && !settings.disabled');
+    expect(FLAT).toContain('!offersHidden && !settings.planActive && pricing');
+    // A PAYING SITTER IS STILL NEVER OFFERED A SECOND SUBSCRIPTION — `planActive` is plain on the
+    // Subscribe side and appears nowhere in the Manage gate, so nothing here re-opens the
+    // double-subscription question the server-side refusal on the checkout route answers.
+    expect(FLAT).not.toContain('settings.hasBillingAccount && settings.planActive');
   });
 
   it('gives a switched-off account neither control', () => {
     // Both gates name it, from the settings payload: Subscribe through `offersHidden`, Manage in
     // its own condition. A disabled account cannot take a booking, so neither asking her for a card
     // nor sending her to a portal is something this panel should do — and the dashboard's own
-    // banner has already told her why.
+    // banner has already told her why. This is the one state the gate ruling did NOT widen: a
+    // switched-off sitter has a billing account and a lapsed plan too, and she still gets nothing.
     expect(FLAT).toContain('!origin || !sellingIsOn || settings.disabled || !pricing');
-    expect(FLAT).toContain('settings.planActive && !settings.disabled');
+    expect(FLAT).toContain('settings.hasBillingAccount && !settings.disabled');
+  });
+
+  it('tells the lapsed sitter what the two controls in front of her are for', () => {
+    // The state that did not exist before the ruling: two controls at once, one of which sends her
+    // to a page that belongs to another company. One line says which is which — fix a card or read
+    // an invoice under Manage plan, start again under Subscribe — and it states no price, no card
+    // form, no invoice and no cancellation control of this product's own, which the whole-file
+    // pins above already enforce over this constant too.
+    expect(PANEL).toContain('LAPSED_WITH_ACCOUNT');
+    // PHRASES ONLY THIS SENTENCE HAS. `Manage plan` alone is the button's own label and `lapsed` is
+    // the status line's word, so either would stay green against a constant emptied to `''` —
+    // which is a sentence declared and never read, the mutation this file has already lost twice.
+    expect(PANEL_TEXT).toMatch(/under Manage plan/);
+    expect(PANEL_TEXT).toMatch(/start a new plan/);
+    // RENDERED, and rendered ONLY where both controls are. A line that appears beside Manage alone
+    // tells a paying sitter her plan has lapsed; beside Subscribe alone it points her at a button
+    // that is not on the page. Both halves of the condition, and the markup that uses it.
+    expect(FLAT).toContain(
+      'const bothControls = canManage && !offersHidden && !settings.planActive',
+    );
+    expect(FLAT).toContain('{bothControls && ');
   });
 
   it('says one sentence when the paid surface is not there, and offers no retry', () => {
@@ -456,19 +494,17 @@ describe('the Manage plan control', () => {
     // And that it is RENDERED, on the narrower condition. A mutation that deleted the markup and
     // left the constant standing kept both pins above green — a sentence declared and never shown
     // is the failure this case exists for. The condition is narrower than the spec's literal
-    // `origin === null` on purpose, and in the same two ways the control above it is: a sitter who
-    // never subscribed, and a sitter whose plan has lapsed, are not told that changing a plan they
-    // do not have is unavailable. It says what the MANAGE control would have said, so it renders
-    // for exactly the sitter that control was for, minus the origin.
-    expect(FLAT).toContain('settings.hasBillingAccount && settings.planActive && origin === null');
+    // `origin === null` on purpose: a sitter who never subscribed is not told that changing a plan
+    // she does not have is unavailable. It says what the MANAGE control would have said, so it
+    // tracks that control exactly, minus the origin — which is why `planActive` left this
+    // condition in the same ruling that took it out of the gate above.
+    expect(FLAT).toContain('settings.hasBillingAccount && origin === null');
     // AND on the request having FINISHED. `origin` is null until the `/config` effect resolves and
     // `settings` is already in hand when the panel paints, so without this every paying sitter was
     // told "changing your plan is unavailable right now" on every dashboard load, for as long as
     // that request took. Absence-until-loaded is harmless for a control; a positive false sentence
     // is not.
-    expect(FLAT).toContain(
-      'configLoaded && settings.hasBillingAccount && settings.planActive && origin === null',
-    );
+    expect(FLAT).toContain('configLoaded && settings.hasBillingAccount && origin === null');
     // A `/config` that FAILED is not "not asked yet": it is a deployment whose paid surface this
     // panel cannot reach, which is exactly when the notice belongs on screen. So the flag flips on
     // both arms of the effect — a `setConfigLoaded` only in the success arm would trade the flash
