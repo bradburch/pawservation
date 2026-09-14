@@ -9,10 +9,15 @@
  * now defends four non-obvious decisions — zone labelling, the separator insertion, the
  * second-space offset strip and the fallback — none of which anything checked.
  *
- * THE ZONE IS FORCED for this file, before the import that reads it. The claim under test is that a
- * stored instant renders as its own UTC calendar day rather than the viewer's, and on a machine
- * whose clock is already UTC that claim is true of every implementation — so a test that took the
- * ambient zone would be green on a UTC CI box against the bug it exists to catch.
+ * THE ZONE IS FORCED for this file — not "before the import that reads it": ESM imports are
+ * hoisted, so the `import` below actually runs before this assignment does. It works anyway
+ * because `formatTimestamp` reads `Intl`'s ambient zone at CALL time, not at import time, so
+ * setting `TZ` any time before the first call is enough. The claim under test is that a stored
+ * instant renders as its own UTC calendar day rather than the viewer's, and on a machine whose
+ * clock is already UTC that claim is true of every implementation — so a test that took the
+ * ambient zone would be green on a UTC CI box against the bug it exists to catch. The first case
+ * below asserts the forcing actually took effect, so a host where `TZ` is silently ignored fails
+ * loudly here instead of passing every other assertion for the wrong reason.
  */
 process.env.TZ = 'America/Los_Angeles';
 
@@ -24,6 +29,11 @@ const STORED = '2026-10-08 00:30:00';
 
 describe('formatTimestamp renders a stored instant as a date', () => {
   it('reads the unlabelled stored shape as UTC rather than as local time', () => {
+    // The forcing above actually took effect: America/Los_Angeles is 480 minutes behind UTC at
+    // the epoch (standard time, no DST question in January). A host that ignores `TZ` would read
+    // its own ambient offset here instead — 0 on a UTC CI box — and every assertion below would
+    // then be passing in the wrong zone for the wrong reason.
+    expect(new Date(0).getTimezoneOffset()).toBe(480);
     // 00:30 UTC on the 8th is 17:30 on the 7th in the forced zone. The column is UTC, so the date a
     // sitter reads must be the 8th — "paid through Oct 7" for a subscription that runs to the 8th
     // is a day of her plan rendered away, and the nearer the stored instant is to midnight the more

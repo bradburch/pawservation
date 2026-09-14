@@ -113,8 +113,9 @@ describe('the settings read publishes the sitter’s own plan', () => {
     seedPlan(raw, TENANT_A, { plan: 'solo', billedUntil: lapsed, customerId: 'cus_sunny' });
 
     const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
-    // This is the sitter for whom the Manage-plan control must render: her card died, her plan
-    // lapsed, and the portal is what fixes it. `hasBillingAccount` is what stays true for her.
+    // This is the sitter who gets Subscribe, not Manage: her plan lapsed, so `planActive` is
+    // false and the gate hides the portal from her — `hasBillingAccount` alone is not enough.
+    // `hasBillingAccount` is what stays true for her.
     expect(body.plan).toBe('solo');
     expect(body.billedUntil).toBe(lapsed);
     expect(body.planActive).toBe(false);
@@ -139,8 +140,9 @@ describe('the settings read publishes the sitter’s own plan', () => {
     expect(body.plan).toBeNull();
     expect(body.billedUntil).toBeNull();
     expect(body.planActive).toBe(false);
-    // TRUE with no plan at all. The Manage-plan control gates on this field ALONE, so a derivation
-    // that read the plan instead would hide the portal from the sitter who most needs to reach it.
+    // TRUE with no plan at all. The Manage-plan control gates on this field AND `planActive`
+    // together, never on this field alone — but a derivation that read the plan instead of this
+    // field would still be wrong, hiding the portal from a sitter who does have a billing account.
     expect(body.hasBillingAccount).toBe(true);
     expect(body.stripeCustomerId).toBe('cus_sunny');
   });

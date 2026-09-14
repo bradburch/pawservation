@@ -289,8 +289,9 @@ export function PlanPanel({
    * anchor, for the reason `app/shared-ui/api.ts`'s `exportCsv` docblock already gives: the admin
    * session is a JWT in localStorage and an anchor carries no Authorization header. Everything
    * else is `startCheckout`'s machinery deliberately unchanged — the `navigated` latch, the
-   * string-and-https check on the returned URL, the top-level navigation, and an ApiError so a
-   * 401 signs her out instead of reading as "the button is broken".
+   * string-and-https check on the returned URL, the top-level navigation, and a plain `Error` on
+   * a cross-origin 401/403 so it does NOT sign her out — the same refusal `startCheckout` throws,
+   * for the same reason the props docblock above gives.
    *
    * No body and no Content-Type: the server resolves which subscription this is from the slug in
    * the path and the credential in the header, and a request that carried a plan here would be a

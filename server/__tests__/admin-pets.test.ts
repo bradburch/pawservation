@@ -124,8 +124,8 @@ describe('admin customer pets', () => {
         body: JSON.stringify({
           type: 'boarding',
           optionKey: 'standard',
-          startDate: '2026-09-10',
-          endDate: '2026-09-12',
+          startDate: addDays(TODAY, 30),
+          endDate: addDays(TODAY, 32),
           petIds: ['pet_ht_otis'],
         }),
       },

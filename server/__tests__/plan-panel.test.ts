@@ -113,9 +113,14 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     }
 
     // And reached by the component's single JSX return, with no early exit of any spelling above it.
+    // The optional `\(?` closes a gap a parenthesised early return evaded: `return (<></>);` and
+    // `return (null);` both read as a plain `return` followed by `(` to a naive reader but are
+    // exactly the kind of hidden exit this pin exists to catch, and neither is the real, final
+    // `return (` that opens the component's JSX (that one is excluded by `returnAt` itself, since
+    // the slice below stops before it).
     const returnAt = FLAT.lastIndexOf('return (');
     expect(statusAt).toBeGreaterThan(returnAt);
-    expect(FLAT.slice(0, returnAt)).not.toMatch(/\breturn (?:null|undefined|false|<)/);
+    expect(FLAT.slice(0, returnAt)).not.toMatch(/\breturn\s*\(?\s*(?:null|undefined|false|<)/);
   });
 
   it('keeps the offers behind the four conditions of the deployment and the account', () => {
