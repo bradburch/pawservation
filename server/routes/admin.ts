@@ -923,12 +923,13 @@ export const adminRoutes = new Hono<AppEnv>()
       templates: TEMPLATE_IDS.map((id) => ({ id, label: SERVICE_TEMPLATES[id].label })),
       blocked: blocked.map((b) => ({ id: b.Id, startDate: b.StartDate, endDate: b.EndDate })),
       calendar: calendarView(connections),
-      // HER OWN PLAN (0017, 0018), on the read the dashboard already makes. Six fields and no new
+      // HER OWN PLAN (0017, 0018), on the read the dashboard already makes. Seven fields and no new
       // route: this one is already authenticated, already scoped to the slug in its path, and
       // already fetched once per dashboard load. `tenant` is `resolveTenant`'s row and TENANT_COLS
-      // already selects all FIVE columns these six fields are derived from — `Plan`, `BilledUntil`,
-      // `CompedUntil`, `StripeCustomerId` and the `DisabledAt` both predicates refuse on — so
-      // nothing here reads the database a second time.
+      // already selects all SIX columns these fields are derived from — `Plan`, `BilledUntil`,
+      // `CompedUntil`, `PremiumUntil`, `StripeCustomerId` and the `DisabledAt` both predicates
+      // refuse on — so nothing here reads the database a second time; the seventh field is the
+      // deployment's flag, not a column.
       plan: tenant.Plan,
       // VERBATIM, in the stored 'YYYY-MM-DD HH:MM:SS' shape (server/lib/premium.ts). The panel
       // renders it through the dashboard's own formatter; this route must not invent a second

@@ -361,7 +361,8 @@ NOT EXISTS`). No `Tenants` column, so the KV tenant-config cache key needs **no*
 
 - **`0018_plan_comp.sql`** (`feat/plan-lapse`) — adds `Tenants.CompedUntil`: the instant the
   platform owner has declared a business paid up through WITHOUT her paying, set and cleared by hand
-  from the owner console and written only by `setTenantCompedUntil`. Additive only (one
+  from the owner console (`applyOwnerSwitches`) and set to the trial by signup
+  (`createTenantFromSignup`) — the two writers, and billing is neither. Additive only (one
   `ALTER TABLE … ADD COLUMN`) and **no DEFAULT** — every existing row reads NULL, NULL is false on
   every clause of `isPlanCurrent`, so applying this file moves nobody's plan state. **A second
   column rather than a hand-set `BilledUntil`**, because that one is bounded by a 400-day ceiling
