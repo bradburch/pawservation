@@ -204,12 +204,14 @@ export const ownerRoutes = new Hono<AppEnv>()
     // 12-month breakdown, anchored to the sitter's own timezone.
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     const data = await getAnalytics(c.env.PAWSERVATION_DB, tenantId, today);
-    // `premiumUntil` rides along beside `disabled` for the same reason it does: the console's two
-    // owner switches both need to render their CURRENT value. This is one of two reads that carry
-    // it — the other is the roster list above — so both surfaces stay in sync with the tenant row.
-    // Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean — the owner is
-    // setting the date, so the date is what they need to see, and whether it has passed is a
-    // comparison the console can make for itself.
+    // `premiumUntil` and `compedUntil` ride along beside `disabled` for the same reason it does:
+    // the console's three owner switches each need to render their CURRENT value. This is one of
+    // two reads that carry them — the other is the roster list above — so both surfaces stay in
+    // sync with the tenant row. The DATES are published raw ('YYYY-MM-DD HH:MM:SS', UTC) because
+    // the owner is setting them and a date is what she needs to see; whether one has PASSED is
+    // never the console's comparison to make — it is `premiumActive` and `planCurrent` below, from
+    // the one expression each (spine AD-13), because a browser-side `> now` reports a paying
+    // business as free and the scanner walks `app/` for exactly that.
     return c.json({
       ...serializeAnalytics(data),
       disabled: tenant.DisabledAt != null,
@@ -229,7 +231,7 @@ export const ownerRoutes = new Hono<AppEnv>()
    * comped through, and how long the BASIC plan is. One PATCH rather than three endpoints because
    * they are the same kind of thing — an owner-only edit of a column on the tenant row — and each
    * needs the same 404 and the same cache invalidation; a second endpoint would be a second place
-   * to forget either.
+   * to forget any of them.
    *
    * Every field is OPTIONAL and applied only when PRESENT, which is what keeps them independent:
    * `{ disabled: true }` must not silently revoke a subscription, and `{ premiumUntil: … }` must

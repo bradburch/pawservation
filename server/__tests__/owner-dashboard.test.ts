@@ -438,6 +438,11 @@ describe('the owner console does not re-derive entitlement in the browser', () =
   /** Comments stripped: the chip's own docblock names the derivation it replaced, and a probe that
    *  deleted the code and left that docblock behind survived this test once already. */
   const SOURCE = liveSource(RAW, { keepLiterals: true });
+  /** The same live source with every run of whitespace collapsed, so a pin can name a chip's whole
+   *  shape — gate AND element — in one readable string instead of carrying prettier's indentation
+   *  around. `{s.compedUntil != null && (` alone is NOT that shape: the comp editor's Clear button
+   *  is gated on the same expression, so the gate by itself survives the chip being deleted. */
+  const FLAT = SOURCE.replace(/\s+/g, ' ');
 
   it('renders the Premium chip from the server flag, not from a date comparison', () => {
     expect(SOURCE).toContain('s.premiumActive');
@@ -456,12 +461,34 @@ describe('the owner console does not re-derive entitlement in the browser', () =
     expect(SOURCE).toContain('No owner comp set');
   });
 
-  it('renders the Basic chip from the server’s planCurrent, not from a date comparison', () => {
-    // The same lesson the Premium chip was fixed for, applied before it can be learned twice: the
-    // rule is three grants now, and a browser-side `CompedUntil > now` would report a paying
-    // business as holding no plan. The AD-13 scanner walks `app/` too, so a comparison here is a
-    // red suite rather than a wrong chip — this pin is what keeps the POSITIVE half honest.
-    expect(SOURCE).toContain('s.planCurrent');
-    expect(SOURCE).toContain('Basic');
+  /**
+   * ONE CHIP PER GRANT SOURCE, and each pin names that chip's own shape rather than a word that
+   * occurs somewhere in the file. The first version of this pin asserted `'s.planCurrent'` and
+   * `'Basic'` independently — both of which survive the chip being deleted outright, because the
+   * comp editor's aria-label says "Basic comp" and `s.planCurrent` would live on in any other use.
+   * The Premium pin above pins both halves of its chip; these do the same, and each was proved by
+   * deleting its chip and watching exactly this test go red.
+   */
+  it('labels the plan chip from the plan COLUMN, never a tier inferred from a boolean', () => {
+    // `isPlanCurrent` is billed OR comped OR premium-comped and its own docblock calls itself
+    // TIER-BLIND, so a chip labelled from it told a paying Pro sitter she was on Basic. Which tier
+    // she is on is a column; the label is a lookup on that column's own value.
+    expect(FLAT).toContain('{s.plan && ( <span');
+    expect(FLAT).toContain('{PLAN_NAMES[s.plan]}');
+    expect(FLAT).toContain('`Paid through ${s.billedUntil}`');
+    // The retired shape: the tier-blind boolean may gate the LAPSE chip below, never a tier label.
+    expect(FLAT).not.toContain('{s.planCurrent && (');
+  });
+
+  it('renders the basic-comp chip from the comp date’s PRESENCE, not from a comparison', () => {
+    expect(FLAT).toContain('{s.compedUntil != null && ( <span');
+    expect(FLAT).toContain('`Comped through ${s.compedUntil}`');
+  });
+
+  it('renders the Lapsed chip from the server’s planCurrent', () => {
+    // The AD-13 scanner walks `app/` too, so a browser-side `CompedUntil > now` here is a red suite
+    // rather than a wrong chip — this pin is what keeps the POSITIVE half honest: the answer is
+    // fetched, not re-derived.
+    expect(FLAT).toContain('{!s.planCurrent && ( <span className="pb-chip pb-chip-warn">Lapsed<');
   });
 });

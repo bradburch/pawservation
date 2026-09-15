@@ -34,6 +34,11 @@ type AddResult = {
   prototypeLink?: string;
 };
 
+/** The plan column's own two values, spelled for a human. The SAME map `PlanPanel` renders the
+ *  sitter's own plan from — a label, never a rule: the chip is gated on the column being set and
+ *  says only what the column says. */
+const PLAN_NAMES: Record<'solo' | 'pro', string> = { solo: 'Solo', pro: 'Pro' };
+
 const WINDOW_OPTIONS: { key: SitterWindow; label: string }[] = [
   { key: '30d', label: '30 days' },
   { key: '90d', label: '90 days' },
@@ -565,23 +570,44 @@ export function OwnerConsole({
                                     Premium
                                   </span>
                                 )}
-                                {/* THE SERVER'S OWN ANSWER, for the same reason the chip above it
-                                    reads one: "does she hold a current plan" is three grants OR-ed
-                                    (`isPlanCurrent`, server/lib/premium.ts), and a browser-side
-                                    date comparison would report a paying business as holding none.
-                                    The DATE the owner is editing rides in the tooltip, which states
-                                    a column's value and infers nothing about which clause fired. */}
-                                {s.planCurrent && (
+                                {/* ONE CHIP PER GRANT SOURCE, never a tier inferred from a
+                                    boolean. The first version of this row read a single `Basic`
+                                    chip off `s.planCurrent` — but `isPlanCurrent`
+                                    (server/lib/premium.ts) is billed OR comped OR premium-comped
+                                    and its own docblock calls itself TIER-BLIND, so a paying Pro
+                                    sitter read "Basic" beside a tooltip denying she had one. Which
+                                    tier she is on is a COLUMN (`s.plan`), what she is comped
+                                    through is a COLUMN (`s.compedUntil`), and whether any of it is
+                                    still live is the SERVER's one expression (`s.planCurrent`).
+                                    Three facts, three chips, and the console compares no date to
+                                    decide any of them. */}
+                                {s.plan && (
                                   <span
                                     className="pb-chip"
                                     title={
-                                      s.compedUntil
-                                        ? `Basic comp set to ${s.compedUntil}`
-                                        : 'No basic comp set'
+                                      s.billedUntil
+                                        ? `Paid through ${s.billedUntil}`
+                                        : 'No paid-through date'
                                     }
                                   >
-                                    Basic
+                                    {PLAN_NAMES[s.plan]}
                                   </span>
+                                )}
+                                {s.compedUntil != null && (
+                                  <span
+                                    className="pb-chip"
+                                    title={`Comped through ${s.compedUntil}`}
+                                  >
+                                    Basic comp
+                                  </span>
+                                )}
+                                {/* The lapse itself, so "why is her dashboard read-only" is answered
+                                    on the roster rather than inferred from the dates beside it. The
+                                    SERVER's answer again: a disabled business is not current either,
+                                    which is `isPlanCurrent`'s own shared early return and not a
+                                    second rule stated here. */}
+                                {!s.planCurrent && (
+                                  <span className="pb-chip pb-chip-warn">Lapsed</span>
                                 )}
                               </td>
                               <td>
