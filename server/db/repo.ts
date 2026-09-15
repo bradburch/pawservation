@@ -6147,6 +6147,15 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
  *
  * Dog + cat pet-type REGISTRY rows are seeded (spec F1): without them a sitter who skips the
  * wizard could never take a booking.
+ *
+ * `compedUntil` IS THE TRIAL (Story 10.4). Written into `CompedUntil` on the same INSERT, so the
+ * new business holds a current plan from her first login: without it, a tenant created after the
+ * platform owner's comp sweep would be read-only the moment `PLAN_ENFORCE` is set. The caller
+ * produces it with `trialCompUntil` (server/lib/premium.ts) — already in the stored shape, and the
+ * length read from `PRICING.trialDays` rather than typed — and this function binds it as-is, like
+ * `setTenantCompedUntil` does. A THIRD writer of the column, and the only one that is not the
+ * owner's hand: signup grants what the landing page promised, and the owner console is where it is
+ * extended or cleared afterwards.
  */
 export async function createTenantFromSignup(
   db: D1Database,
@@ -6157,6 +6166,7 @@ export async function createTenantFromSignup(
     userId: string;
     email: string;
     passwordHash: string;
+    compedUntil: string;
     claimedAtIso?: string;
   },
 ): Promise<boolean> {
@@ -6167,8 +6177,10 @@ export async function createTenantFromSignup(
       // still applies to every OTHER insert path — this is a signup-time default, not a schema
       // DEFAULT, so it can't silently change behavior elsewhere). A sitter can widen or clear it
       // from the wizard's profile step or Business settings.
-      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths) VALUES (?, ?, ?, ?)')
-      .bind(args.tenantId, args.slug, args.displayName, 12),
+      .prepare(
+        'INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths, CompedUntil) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind(args.tenantId, args.slug, args.displayName, 12, args.compedUntil),
     db
       .prepare('INSERT INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES (?, ?, ?, ?)')
       .bind(args.userId, args.tenantId, args.email, args.passwordHash),

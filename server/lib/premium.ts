@@ -1,4 +1,5 @@
 import type { Tenant } from '../types';
+import { PRICING } from './plan-pricing';
 
 /**
  * WHAT THIS REPO KNOWS ABOUT PREMIUM, and the one place it is decided. `Tenants.PremiumUntil` (0010)
@@ -65,6 +66,18 @@ export function normalizePremiumUntil(raw: string): string | null {
   if (Number.isNaN(ms)) return null;
   const stored = toStoredInstant(ms);
   return STORED_INSTANT.test(stored) ? stored : null;
+}
+
+/**
+ * THE TRIAL IS A BASIC COMP, and this is where its length becomes a stored instant. Signup
+ * (`routes/signup.ts`) writes it into `CompedUntil` through `createTenantFromSignup`, so a business
+ * created after the owner's comp sweep holds a grant from her first login rather than being refused
+ * her first save the moment `PLAN_ENFORCE` is set. The length is `PRICING.trialDays` — the number
+ * the landing page promises — read from the one constant and never typed here, so the page and the
+ * row cannot disagree. Exactly `trialDays` × 24 h from `now`, in the stored shape.
+ */
+export function trialCompUntil(now: Date = new Date()): string {
+  return toStoredInstant(now.getTime() + PRICING.trialDays * 86_400_000);
 }
 
 /**

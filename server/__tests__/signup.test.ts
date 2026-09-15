@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
+import { PRICING } from '../lib/plan-pricing';
+import { premiumNow } from '../lib/premium';
 import { SIGNUP_NONCE_KEY, signSignupLink } from '../lib/signup-link';
+import { mintOwnerToken } from '../lib/token';
 import { ALREADY_SET_UP_ERROR, RATE_LIMIT_TTL_SECONDS } from '../routes/signup';
 import { ALLOWED_EMAIL, createTestEnv, OWNER_EMAIL, TEST_SECRET } from './helpers';
 
@@ -225,6 +228,81 @@ describe('POST /api/signup/complete — sitter', () => {
     );
     expect(login.status).toBe(200);
     expect(((await login.json()) as { slug: string }).slug).toBe(body.slug);
+  });
+
+  it('comps the new business through the trial, so she is not read-only from her first login', async () => {
+    // THE TRIAL IS A BASIC COMP, set at signup. Migration 0017 seeded no plan and this route used
+    // to write none either, so once `PLAN_ENFORCE` is set a business created AFTER the owner's comp
+    // sweep would hold no grant and be refused her very first save. The landing page promises a
+    // trial of `PRICING.trialDays`; the same number, read from the same constant, is what lands in
+    // `CompedUntil` — never typed here, so the page and the row cannot disagree.
+    const { env, raw } = createTestEnv();
+    const t = await getSetupToken(env, ALLOWED_EMAIL);
+    // The clock is pinned so "exactly trialDays ahead" is an equality, not a window. Pinned to the
+    // CURRENT second rather than a fixed date: the admin token the route mints carries an 8-hour
+    // expiry from the faked clock and is verified below against the real one. Only `Date` is
+    // faked; the route's own timers and the harness's crypto keep running for real.
+    const NOW = new Date(Math.floor(Date.now() / 1000) * 1000);
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    let slug: string;
+    let token: string;
+    try {
+      const res = await complete(env, {
+        token: t,
+        password: 'RiverStone2026',
+        businessName: 'Rex Walks',
+      });
+      expect(res.status).toBe(200);
+      ({ slug, token } = (await res.json()) as { slug: string; token: string });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const row = raw
+      .prepare('SELECT CompedUntil, PremiumUntil FROM Tenants WHERE Slug = ?')
+      .get(slug) as {
+      CompedUntil: string | null;
+      PremiumUntil: string | null;
+    };
+    expect(row.CompedUntil).toBe(
+      premiumNow(new Date(NOW.getTime() + PRICING.trialDays * 86_400_000)),
+    );
+    // The BASIC comp and nothing else: the paid tier is not part of the trial.
+    expect(row.PremiumUntil).toBeNull();
+
+    // …and the settings read says so, which is what keeps the banner off her first dashboard.
+    const settings = await app.request(
+      `/api/${slug}/admin/settings`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      env,
+    );
+    expect(settings.status).toBe(200);
+    expect(((await settings.json()) as { planCurrent: boolean }).planCurrent).toBe(true);
+    // A write is honoured under enforcement, on the day the comp is the only grant she holds.
+    const put = await app.request(
+      `/api/${slug}/admin/settings`,
+      {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      },
+      { ...env, PLAN_ENFORCE: 'true' } as Env,
+    );
+    expect(put.status).not.toBe(402);
+
+    // The owner console's roster sees the same comp on the same row, so the chip lights.
+    const roster = await app.request(
+      '/api/owner/sitters',
+      { headers: { Authorization: `Bearer ${await mintOwnerToken(OWNER_EMAIL, TEST_SECRET)}` } },
+      env,
+    );
+    const mine = (
+      (await roster.json()) as {
+        sitters: { slug: string; compedUntil: string | null; planCurrent: boolean }[];
+      }
+    ).sitters.find((s) => s.slug === slug)!;
+    expect(mine.compedUntil).toBe(row.CompedUntil);
+    expect(mine.planCurrent).toBe(true);
   });
 
   it('never publishes the signup email — it is a login credential, not a public contact', async () => {
