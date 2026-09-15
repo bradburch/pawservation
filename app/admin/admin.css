@@ -578,6 +578,22 @@ body {
   font-size: 0.92rem;
 }
 
+/* Persistent "your plan has lapsed" notice, in the same slot and the same shape as
+   .pb-disabled-banner above — the two states are mutually exclusive, so they never stack. Its OWN
+   class rather than a second user of that one, for the reason .pb-warn-note states just below: a
+   class whose name says "disabled" carrying a state that is not disabled is how a restyle of one
+   notice silently restyles the other. */
+.pb-lapsed-banner {
+  margin: 0 0 16px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  color: var(--warn);
+  background: var(--warn-wash);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
 /* Persistent "you're syncing to your personal calendar" notice on Connected apps. Same warn tokens
    and same shape as .pb-disabled-banner above — a standing block, not a chip and not a toast,
    because it stays true for as long as the target is a personal calendar. Not merged with that

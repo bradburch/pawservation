@@ -9,10 +9,13 @@ import {
 } from 'react';
 import {
   adminApi,
+  api,
   ApiError,
   isAuthExpired,
+  isPlanLapsed,
   type AdminBooking,
   type Customer,
+  type TenantConfig,
 } from '../shared-ui/api.js';
 import {
   IconCalendar,
@@ -41,6 +44,8 @@ import { SetupWizard } from './SetupWizard';
 import { TimeOffSection } from './sections/TimeOffSection';
 import {
   adminFetch,
+  PLAN_LAPSED,
+  PLAN_LAPSED_CONTACT,
   type AnySession,
   type ServiceOptionForm,
   type ServicePayload,
@@ -434,7 +439,7 @@ function SettingsMenu({ activeSection }: { activeSection: SectionKey }) {
 }
 
 /**
- * The five READ-ONLY plan fields of a settings payload (0017), named one by one.
+ * The seven READ-ONLY plan fields of a settings payload (0017, 0018), named one by one.
  *
  * A function rather than a spread of the whole fresh payload, for the same reason `save()` builds its
  * PUT body field by field: a field added to `Settings` must not silently join a merge, and the
@@ -450,12 +455,39 @@ const planFieldsOf = (s: Settings) => ({
   billedUntil: s.billedUntil,
   planActive: s.planActive,
   hasBillingAccount: s.hasBillingAccount,
+  planCurrent: s.planCurrent,
+  planEnforced: s.planEnforced,
   ...('stripeCustomerId' in s ? { stripeCustomerId: s.stripeCustomerId } : {}),
 });
 
 function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
   const { token, slug } = session;
   const [settings, setSettings] = useState<Settings | null>(null);
+  /**
+   * The public `/config`, for ONE reading: whether the plan panel's offers are on the page, so the
+   * lapse banner's second sentence can name Subscribe only where it exists. The same request the
+   * plan panel makes for itself (`PlanPanel.tsx`), read here rather than lifted out of it, because
+   * the panel's gate is pinned at its own source and the banner is not the panel. Absence is "not
+   * on the page": a failed read, or one not back yet, gets the "contact us" sentence, which is
+   * true either way.
+   */
+  const [config, setConfig] = useState<TenantConfig | null>(null);
+  useEffect(() => {
+    let active = true;
+    api
+      .config(slug)
+      .then((c) => {
+        if (active) setConfig(c);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [slug]);
+  /** THE DEPLOYMENT'S HALF of `PlanPanel`'s `offersHidden`, negated: a published paid surface and
+   *  selling switched on. The panel's other two terms — `settings.disabled` and `!pricing` — are
+   *  already excluded by the banner's own condition and implied by `subscribe === true`. */
+  const offersOn = config?.premium?.origin != null && config?.pricing?.subscribe === true;
   // JSON snapshot of the last server-loaded/saved settings; edits compare against it to
   // decide whether the sticky save bar shows. Only the settings PUT is deferred — the
   // other sections apply immediately and refresh both state and snapshot together.
@@ -557,6 +589,23 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
     return () => window.clearTimeout(timer);
   }, [message]);
 
+  /**
+   * THE 402 IS NEWS ABOUT HER PLAN, not only about this save. The settings read said current at
+   * load; the plan lapsed while the tab sat open; the next save is refused. Flipping `planCurrent`
+   * here is what puts the banner up mid-session instead of leaving the sentence in the error slot
+   * and the banner down until she reloads. Into BOTH the state and the saved snapshot, for the
+   * reason `refreshCalendarStatus` gives: a field changed in one and not the other puts the save
+   * bar up on its own.
+   */
+  const markPlanLapsed = useCallback(() => {
+    setSettings((prev) => (prev ? { ...prev, planCurrent: false } : prev));
+    setSavedSnapshot((prev) => {
+      if (!prev) return prev;
+      const parsed = JSON.parse(prev) as Settings;
+      return JSON.stringify({ ...parsed, planCurrent: false });
+    });
+  }, []);
+
   const handle = useCallback(
     (e: unknown) => {
       // account_disabled is also a 403 (isAuthExpired's own trigger), so it must be checked
@@ -564,13 +613,20 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       // sitter out instead of surfacing the real reason the save was rejected.
       if (e instanceof ApiError && e.message === 'account_disabled') {
         setError('Your account is disabled — contact the platform owner.');
+      } else if (isPlanLapsed(e)) {
+        // A 402, which `isAuthExpired` cannot mistake for an expired session — so forgetting this
+        // branch would have shown her a raw `plan_lapsed`, not signed her out. That asymmetry is
+        // why the server answers 402 rather than a second 403. Ordered above `isAuthExpired`
+        // anyway, because the next literal added here might not have that protection.
+        setError(PLAN_LAPSED);
+        markPlanLapsed();
       } else if (isAuthExpired(e)) {
         onSignOut();
       } else {
         setError(e instanceof Error ? e.message : 'Try again.');
       }
     },
-    [onSignOut],
+    [onSignOut, markPlanLapsed],
   );
 
   /** Clear the error, run `fn`, and route any failure (including expired auth) through `handle`. */
@@ -605,7 +661,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
    * the page look dirty — see `dirty`'s definition above). Used by the calendar-connect popup
    * poll below, which used to call the full `refresh()` and blow away staged edits.
    *
-   * PLUS THE FIVE PLAN FIELDS (0017), which are merged for the opposite reason to the one that makes
+   * PLUS THE PLAN FIELDS (0017, 0018), which are merged for the opposite reason to the one that makes
    * everything else here off limits. They are not staged edits and cannot be: they are read-only,
    * they change only on the server, and `save()` never sends them. Discarding them meant the plan
    * panel's gates were right on a fresh load and then went stale for the rest of the session — a
@@ -1017,6 +1073,24 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       {settings.disabled && (
         <p className="pb-disabled-banner" role="status">
           Your account is disabled — contact the platform owner.
+        </p>
+      )}
+
+      {/* Same model as the banner above it: this is UX, and the server's non-GET guard is the
+          actual enforcement. `!settings.disabled` keeps the two from stacking — a switched-off
+          account holds no current plan either, and she has already been told why her account is
+          off and who to ask, which is the more useful of the two sentences.
+
+          BOTH HALVES, and `=== false`. `planEnforced` is the deployment's half: on the shipped
+          default every save succeeds, and "read-only" over a dashboard that is not is a sentence
+          nobody believes on the day it is true. `=== false` rather than `!`: this is a stale-pair
+          read — a newer bundle against an older worker's payload has neither field — and it
+          DEGRADES TO SILENCE, deliberately: `undefined === false` is false, so a deploy in progress
+          shows nothing rather than "read-only" to every sitter for its length. The second sentence
+          names Subscribe only where the plan panel actually renders it (`offersOn`). */}
+      {settings.planCurrent === false && settings.planEnforced && !settings.disabled && (
+        <p className="pb-lapsed-banner" role="status">
+          {offersOn ? PLAN_LAPSED : PLAN_LAPSED_CONTACT}
         </p>
       )}
 

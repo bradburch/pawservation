@@ -83,6 +83,8 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
     // must be complete.
     Plan: null,
     BilledUntil: null,
+    // 0018: the basic comp. Same story — availability never reads it, and the row must be complete.
+    CompedUntil: null,
     StripeCustomerId: null,
     StripeSubscriptionId: null,
     LastBillingEventAt: null,

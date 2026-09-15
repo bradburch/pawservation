@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { PLAN_LAPSED, writeFailureMessage } from '../../app/admin/shared.js';
+import { ApiError, isAuthExpired, isPlanLapsed } from '../../app/shared-ui/api.js';
 import { liveSource } from './helpers/live-source';
 
 /**
@@ -59,8 +61,44 @@ function blocksOpeningWith(needle: string): [number, number][] {
 }
 const RAW_APP = readFileSync(join(ADMIN, 'App.tsx'), 'utf8');
 const APP = liveSource(RAW_APP);
+/** `APP` collapsed like `FLAT`, for the banner pin that binds condition, markup and class. */
+const FLAT_APP = APP.replace(/\s+/g, ' ');
 /** Comments stripped, literals kept — for the one App.tsx pin whose subject is a key name. */
 const APP_TEXT = liveSource(RAW_APP, { keepLiterals: true });
+/**
+ * `app/shared-ui/api.ts`, literals kept: the 402 PREDICATE lives there, beside `isAuthExpired`,
+ * because it is status logic and both dashboards' error routers read it.
+ */
+const API_TEXT = liveSource(
+  readFileSync(join(import.meta.dirname, '..', '..', 'app', 'shared-ui', 'api.ts'), 'utf8'),
+  { keepLiterals: true },
+);
+/**
+ * `app/admin/shared.ts`, literals kept: the lapse SENTENCES and the write-failure mapper live HERE
+ * and not in `api.ts`, because `api.ts` is in the EMBED bundle's import graph — the dashboard's
+ * "your dashboard is read-only" sentence was shipping to every booking widget (verified in
+ * `dist/assets/icons-*.js`). `shared.ts` is the admin app's own module and nothing under
+ * `app/embed` imports it. Still not `App.tsx`: `handle` is not the only place a write can fail —
+ * TokensPanel keeps its failures beside the control that caused them and SetupWizard is a modal
+ * with no `handleError` prop at all, so a constant private to `App.tsx` could only have been copied.
+ */
+const SHARED_TEXT = liveSource(readFileSync(join(ADMIN, 'shared.ts'), 'utf8'), {
+  keepLiterals: true,
+});
+/** The three write surfaces that do NOT share `handle`, collapsed like `FLAT` — their sinks are long
+ *  enough that Prettier wraps them, and where it wraps is not the claim. */
+const TOKENS = liveSource(readFileSync(join(ADMIN, 'TokensPanel.tsx'), 'utf8')).replace(
+  /\s+/g,
+  ' ',
+);
+const RAW_WIZARD = readFileSync(join(ADMIN, 'SetupWizard.tsx'), 'utf8');
+const WIZARD = liveSource(RAW_WIZARD).replace(/\s+/g, ' ');
+/** Literals kept, for the one wizard sink that lives INSIDE a template literal. */
+const WIZARD_TEXT = liveSource(RAW_WIZARD, { keepLiterals: true }).replace(/\s+/g, ' ');
+const BACKFILL = liveSource(readFileSync(join(ADMIN, 'CalendarBackfillPanel.tsx'), 'utf8')).replace(
+  /\s+/g,
+  ' ',
+);
 
 describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () => {
   it('renders on premium.origin and never on premium.assistant', () => {
@@ -255,7 +293,7 @@ describe('where the panel sits', () => {
     // The dashboard fetches `/api/:slug/admin/settings` once per load and BusinessSection already
     // holds it — so plan status costs the panel zero extra requests, and is already loaded before
     // the panel paints. A panel that fetched it again would be a second authenticated read for
-    // five fields the page has in hand.
+    // seven fields the page has in hand.
     expect(BUSINESS).toMatch(/<PlanPanel[^>]*settings=\{settings\}/);
   });
 });
@@ -530,16 +568,245 @@ describe('plan state survives a mid-session settings re-read', () => {
     expect(APP.match(/\.\.\.planFieldsOf\(fresh\)/g)).toHaveLength(2);
   });
 
-  it('names the five fields explicitly, rather than spreading the fresh payload', () => {
+  it('names the seven fields explicitly, rather than spreading the fresh payload', () => {
     // Field by field, which is the same discipline `save()` uses for the PUT body: a field added to
     // `Settings` does not silently join this merge, and spreading `fresh` wholesale would be the
-    // staged-edit bug `refreshCalendarStatus` exists to avoid.
-    for (const field of ['plan:', 'billedUntil:', 'planActive:', 'hasBillingAccount:']) {
+    // staged-edit bug `refreshCalendarStatus` exists to avoid. `planCurrent` joined the list in
+    // the same commit that added it, and `planEnforced` in the one that made the banner require
+    // it — or the banner is right on a fresh load and stale for the rest of the session, the
+    // exact failure the first five were added to fix.
+    for (const field of [
+      'plan:',
+      'billedUntil:',
+      'planActive:',
+      'hasBillingAccount:',
+      'planCurrent:',
+      'planEnforced:',
+    ]) {
       expect(APP, field).toContain(`  ${field} s.${field.slice(0, -1)},`);
     }
     // `stripeCustomerId` is spread conditionally, because the key is ABSENT — not null — for a
     // `pawsa_` credential, and turning that absence into an `undefined` would make the client type
     // lie about the payload it mirrors.
     expect(APP_TEXT).toContain("'stripeCustomerId' in s");
+  });
+});
+
+describe('a lapsed plan is a read-only dashboard, and the dashboard says so', () => {
+  it('puts the banner on planCurrent === false AND planEnforced, never beside the disabled one', () => {
+    // The disabled banner's own slot, whose comment already establishes the right model: this is
+    // UX, and the server's non-GET guard is the actual enforcement. `!settings.disabled` is what
+    // keeps the two from stacking — a switched-off account is `planCurrent: false` too, and she has
+    // already been told why her account is off and who to ask.
+    //
+    // CONDITION, MARKUP AND CLASS IN ONE STRING, so a banner rendered unconditionally beside a
+    // condition that still guards something else cannot pass — three independent `toContain`s
+    // could. `=== false` and not `!`: an older worker's payload has no such field, and the banner
+    // must show NOTHING on a stale bundle/API pair rather than "read-only" to every sitter for the
+    // length of a deploy. And `planEnforced`: on the shipped default every save succeeds, and a
+    // banner about a refusal that does not happen is one nobody believes on the day it is true.
+    expect(FLAT_APP).toContain(
+      '{settings.planCurrent === false && settings.planEnforced && !settings.disabled && ( ' +
+        '<p className="" role=""> {offersOn ? PLAN_LAPSED : PLAN_LAPSED_CONTACT} </p> )}',
+    );
+    expect(APP_TEXT).toContain('pb-lapsed-banner');
+    // The retired shapes, so neither term can be dropped back out.
+    expect(APP).not.toContain('{!settings.planCurrent && !settings.disabled');
+    expect(APP).not.toContain('settings.planCurrent === false && !settings.disabled && (');
+  });
+
+  it('names Subscribe only where the offers render, and says "contact us" where they do not', () => {
+    // The panel's own `offersHidden` narrowing, applied to the banner's second sentence: on a
+    // deployment that is not selling, or one with no paid surface, "start a plan under Business"
+    // points at a control that is not there. `offersOn` is the deployment's half of that condition
+    // — the published origin and `pricing.subscribe` — read from the same `/config` the panel
+    // reads; `disabled` is already excluded by the banner's own condition.
+    expect(FLAT_APP).toContain(
+      'const offersOn = config?.premium?.origin != null && config?.pricing?.subscribe === true',
+    );
+    const contact = /const PLAN_LAPSED_CONTACT =([\s\S]*?);/.exec(SHARED_TEXT)?.[1] ?? '';
+    expect(contact).toMatch(/read-only/);
+    expect(contact).toMatch(/contact us/i);
+    expect(contact).not.toMatch(/Subscribe|Start a plan/);
+  });
+
+  it('flips planCurrent to false on the 402 itself, so the banner appears mid-session', () => {
+    // The settings read said current at load; the plan lapsed while the tab sat open; the next save
+    // is refused. Without this the sentence is in the error slot and the banner is not, and the two
+    // disagree until she reloads. Into BOTH the state and the saved snapshot, for the reason
+    // `refreshCalendarStatus` gives: a field changed in one and not the other puts the save bar up.
+    expect(FLAT_APP).toContain('markPlanLapsed()');
+    expect(FLAT_APP).toContain('prev ? { ...prev, planCurrent: false } : prev');
+    expect(FLAT_APP).toContain('JSON.stringify({ ...parsed, planCurrent: false })');
+  });
+
+  it('routes a 402 plan_lapsed BEFORE isAuthExpired, so it can never sign her out', () => {
+    // 402 cannot be mistaken for an expired session by any client, which is why the status is 402
+    // and not 403 — but the branch order is still pinned, because the cost of getting it wrong for
+    // the NEXT literal is ejecting a sitter from the dashboard she is trying to read. The
+    // `account_disabled` branch already carries that lesson one line above.
+    expect(APP_TEXT).toContain('isPlanLapsed(e)');
+    const lapsedAt = APP_TEXT.indexOf('isPlanLapsed(e)');
+    const authAt = APP_TEXT.indexOf('isAuthExpired(e)');
+    expect(lapsedAt).toBeGreaterThan(-1);
+    expect(authAt).toBeGreaterThan(-1);
+    expect(lapsedAt).toBeLessThan(authAt);
+    // AND THE PREDICATE ACCEPTS A BARE 402 as well as the code — the status is the gate's own
+    // answer, and a client that needed the body word too would print a raw code at a sitter the
+    // day a route answered 402 with a sentence. The code is matched from `ApiError.code` when the
+    // response carries one and from the message otherwise, never from the message alone.
+    expect(API_TEXT).toContain("e.status === 402 || (e.code ?? e.message) === 'plan_lapsed'");
+    // And it is NOT folded into `isAuthExpired`: her session is fine.
+    expect(API_TEXT).toContain(
+      'return e instanceof ApiError && (e.status === 401 || e.status === 403);',
+    );
+  });
+
+  it('says it on the write surfaces that do not share `handle`, in the same words', () => {
+    // `handle` is the error router nine panels are handed. These are not among them: TokensPanel
+    // keeps a failure beside the control that caused it, SetupWizard is a modal that takes no
+    // `handleError` at all, and CalendarBackfillPanel reports per row — so each printed the wire's
+    // bare `plan_lapsed` at a sitter. One mapper, reading the one constant, rather than a second
+    // sentence per surface.
+    expect(TOKENS).toContain('setCreateError(writeFailureMessage(e,');
+    expect(TOKENS).toContain('setRevokeError(writeFailureMessage(e,');
+    expect(WIZARD.match(/setError\(writeFailureMessage\(e,/g)).toHaveLength(3);
+    // THE SIXTH SINK, inside the per-preset catch that strips the `ApiError` before the aggregate
+    // ever sees it: `new Error(`${label}: ${e.message}`)` printed "Dog boarding: plan_lapsed". The
+    // mapper is applied INSIDE that catch, where the ApiError still is — not at the aggregate,
+    // which only ever sees plain Errors.
+    expect(WIZARD_TEXT).toContain(
+      "`${ps.preset.label}: ${writeFailureMessage(e, 'could not be created')}`",
+    );
+    expect(BACKFILL).toContain('const message = writeFailureMessage(e,');
+    // AND THE RAW SINKS ARE GONE from each, which is the half a bare `toContain` leaves open: adding
+    // the mapper somewhere and leaving the old branch beside it satisfies every line above. The
+    // earlier pin said "the raw sink is gone" of the wizard while the per-preset catch still read
+    // `e.message`; this one names that shape too.
+    expect(TOKENS).not.toContain('setCreateError(e instanceof Error');
+    expect(TOKENS).not.toContain('setRevokeError(e instanceof Error');
+    expect(WIZARD).not.toContain('setError(e instanceof Error');
+    expect(WIZARD_TEXT).not.toContain('e instanceof Error ? e.message :');
+    expect(BACKFILL).not.toContain('e instanceof ApiError ? e.message :');
+  });
+
+  it('maps a 402 plan_lapsed to the sentence and everything else to its own words', () => {
+    // The MAPPING itself, as a unit, beside the call-site pins above: an `ApiError` 402 with the
+    // gate's body code is the sentence; a bare 402 is the sentence too; any other error keeps the
+    // server's own words, and a non-Error gets the fallback the sink named.
+    expect(writeFailureMessage(new ApiError(402, 'plan_lapsed'), 'fallback')).toBe(PLAN_LAPSED);
+    expect(writeFailureMessage(new ApiError(402, 'Payment required.'), 'fallback')).toBe(
+      PLAN_LAPSED,
+    );
+    expect(writeFailureMessage(new ApiError(400, 'Provide a valid date range.'), 'x')).toBe(
+      'Provide a valid date range.',
+    );
+    expect(writeFailureMessage(new Error('boom'), 'fallback')).toBe('boom');
+    expect(writeFailureMessage('not an error', 'fallback')).toBe('fallback');
+    // `isPlanLapsed` on its own: a 403 carrying the code is the session predicate's, not this one's
+    // — and `isAuthExpired` does NOT accept a 402.
+    expect(isPlanLapsed(new ApiError(402, 'anything'))).toBe(true);
+    expect(isPlanLapsed(new ApiError(400, 'plan_lapsed'))).toBe(true);
+    expect(isPlanLapsed(new ApiError(400, 'Something else.', 'plan_lapsed'))).toBe(true);
+    expect(isPlanLapsed(new ApiError(400, 'plan_lapsed', 'other_code'))).toBe(false);
+    expect(isPlanLapsed(new ApiError(403, 'account_disabled'))).toBe(false);
+    expect(isAuthExpired(new ApiError(402, 'plan_lapsed'))).toBe(false);
+    expect(isAuthExpired(new ApiError(401, 'x'))).toBe(true);
+  });
+
+  it('holds the banner’s sentences to the copy rules the panel’s is held to', () => {
+    // Every no-figure / no-terms pin in this file reads `PANEL_TEXT`, which is `PlanPanel.tsx`. The
+    // lapse sentences live in `shared.ts`, so each was covered by one positive match and nothing
+    // else — "for the next 3 days" or a price could have joined it and stayed green. Scoped to the
+    // constant's own text, which is where a bare `\d` is exactly right and over a whole file is
+    // not. The negatives each ride on the positive guard beside them: an extraction that matched
+    // nothing would pass every `not.toMatch`, and the positive is what makes them bite.
+    for (const name of ['PLAN_LAPSED', 'PLAN_LAPSED_CONTACT']) {
+      const sentence = new RegExp(`const ${name} =([\\s\\S]*?);`).exec(SHARED_TEXT)?.[1] ?? '';
+      // NOT VACUOUS: the sentence says what it is for, and how to get back.
+      expect(sentence, name).toMatch(/read-only/);
+      expect(sentence, name).toMatch(/bring it back/);
+      expect(sentence, name).not.toMatch(/\d/);
+      expect(sentence, name).not.toMatch(/\$/);
+      expect(sentence, name).not.toMatch(/Cancel (?:plan|subscription)/i);
+      expect(sentence, name).not.toMatch(/refund|pro-?rat|notice period/i);
+      expect(sentence, name).not.toMatch(/end of (?:the |your )?(?:billing )?period/i);
+      // No "again": a never-subscribed business is not starting a plan AGAIN, and once signup
+      // comps the trial that is exactly who a lapsed business often is.
+      expect(sentence, name).not.toMatch(/\bagain\b/);
+    }
+    // AND NOT IN THE EMBED GRAPH: `api.ts` is imported by the booking widget, and the sentence was
+    // shipping to every widget from there. The predicate stays; the copy does not.
+    expect(API_TEXT).not.toContain('PLAN_LAPSED');
+    expect(API_TEXT).not.toMatch(/read-only/);
+    expect(API_TEXT).not.toContain('writeFailureMessage');
+    // The sentence that names the control names WHERE it is: the plan panel is under Business.
+    expect(PLAN_LAPSED).toBe(
+      'Your plan has lapsed and your dashboard is read-only. Start a plan under Business to bring it back.',
+    );
+  });
+
+  it('has a stylesheet rule of its own, so the class the banner names is not a bare word', () => {
+    // THE REPO'S FIRST CSS PIN, and a deliberately small one. No test reads `admin.css`, so the
+    // banner's own class — pinned above so it cannot share the disabled banner's — could be named
+    // in the markup and defined nowhere, and a banner with no rule is an unstyled paragraph nobody
+    // reads as a banner. One assertion that the block exists; what it looks like is not a claim.
+    const css = readFileSync(join(ADMIN, 'admin.css'), 'utf8');
+    expect(css).toContain('.pb-lapsed-banner {');
+  });
+
+  it('says the lapse beside the portal-unavailable notice on a lapsed tenant', () => {
+    // A lapsed sitter with a billing account on a deployment whose paid surface is down read only
+    // "changing your plan is unavailable right now" — true, and not the half that explains her
+    // read-only dashboard. The notice names the lapse for her, on the same condition as the
+    // banner's tenant half, and says nothing about a lapse to a sitter who is current.
+    expect(PANEL).toContain('PORTAL_UNAVAILABLE_LAPSED');
+    expect(FLAT).toContain(
+      '{settings.planCurrent === false && !settings.disabled ? PORTAL_UNAVAILABLE_LAPSED : PORTAL_UNAVAILABLE}',
+    );
+    const sentence = /const PORTAL_UNAVAILABLE_LAPSED =([\s\S]*?);/.exec(PANEL_TEXT)?.[1] ?? '';
+    expect(sentence).toMatch(/lapsed/);
+    expect(sentence).toMatch(/unavailable right now/);
+    expect(sentence).not.toMatch(/Subscribe/);
+  });
+
+  it('keys the lapsed-with-account sentence on planCurrent, not on planActive', () => {
+    // A comped ex-subscriber has an account and no live subscription, so she sees both controls —
+    // and she is NOT lapsed. The sentence that says "your plan has lapsed" hangs on the server's
+    // `planCurrent`, the way `LAPSED_NO_ACCOUNT` already did; `bothControls` stays about the
+    // controls.
+    expect(FLAT).toContain('{bothControls && settings.planCurrent === false && ');
+    expect(FLAT).not.toContain('{bothControls && <p');
+  });
+
+  it('tells the lapsed sitter with NO billing account what Subscribe does for her', () => {
+    // The sitter `LAPSED_WITH_ACCOUNT` does not reach: lapsed on a comp that ran out, or never
+    // subscribed at all. She has no portal to open, so the sentence names the one control she has.
+    expect(PANEL).toContain('LAPSED_NO_ACCOUNT');
+    // A PHRASE ONLY THIS SENTENCE HAS. `Subscribe` is the button's own label and `lapsed` is the
+    // status line's word, so either would stay green against a constant emptied to `''` — a
+    // sentence declared and never read is the mutation this file has already lost twice.
+    expect(PANEL_TEXT).toMatch(/brings it back/);
+    // RENDERED, and only where it is true — condition and markup in ONE string, the way the
+    // `bothControls` case above binds them, so a sentence rendered unconditionally beside a
+    // condition that still guards something else cannot pass. `!offersHidden` is the term that
+    // makes the copy honest: it is exactly where the offers grid renders, so the Subscribe the
+    // sentence names is on the page. Without it she read "Subscribe starts a plan and brings it
+    // back" on a deployment that is not selling, on one with no paid surface at all, and — every
+    // load — for as long as the `/config` request took, which is the flash `configLoaded` exists
+    // to prevent one element below. `=== false`, like the banner: a stale pair shows nothing.
+    expect(FLAT).toContain(
+      '{!offersHidden && settings.planCurrent === false && !settings.hasBillingAccount && ' +
+        '!settings.disabled && <p className="">{LAPSED_NO_ACCOUNT}</p>}',
+    );
+    // AND IT STATES NO LENGTH FOR THE GRACE, in numerals or in words, beside the no-figure and
+    // no-terms pins above that already cover this constant too. Scoped to a period noun rather
+    // than a bare `\d`: `PANEL_TEXT` keeps executable literals, and this panel's own `401`/`403`
+    // are two of them — a pin that reads an HTTP status as a grace length is the crying-wolf pin
+    // the dollar-figure case above is already scoped to avoid.
+    expect(PANEL_TEXT).not.toMatch(/\b\d+\s*-?\s*(?:hour|day|week|month|year)s?\b/i);
+    expect(PANEL_TEXT).not.toMatch(
+      /\b(?:one|two|three|four|five|six|seven|ten|fourteen|thirty)\s*-?\s*(?:\w+\s+)?(?:hour|day|week|month|year)s?\b/i,
+    );
   });
 });

@@ -33,6 +33,13 @@
   // exactly the string "true" means on. PREMIUM_ORIGIN above is already set in production, so a
   // plan panel gated on the origin alone would show every sitter a button that 404s until the
   // billing worker's checkout route is live. Add `"PLAN_SUBSCRIBE": "true"` here when it is.
+  //
+  // PLAN_ENFORCE is deliberately NOT set here either. It is the switch for whether a business
+  // holding no current plan gets a read-only dashboard; UNSET MEANS OFF, and exactly the STRING
+  // "true" means on — a JSON `true` is read as off. Both flags live in this file rather than in the
+  // dashboard so the flip and the unflip are each a deploy that the repo records. Add
+  // `"PLAN_ENFORCE": "true"` only after PLAN_SUBSCRIBE is on and the README's pre-flip check
+  // returns zero rows.
   "vars": {
     "PREMIUM_ORIGIN": "https://pawservation.com",
   },

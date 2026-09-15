@@ -2,9 +2,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { getTenantById, getTenantBySlug } from '../db/repo';
+import { applyOwnerSwitches, getTenantById, getTenantBySlug } from '../db/repo';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
-import { isPremiumActive, isSoloActive, type EntitlementFacts } from '../lib/premium';
+import { isPremiumActive, isSoloActive, premiumNow, type EntitlementFacts } from '../lib/premium';
 import { resolveTenant } from '../lib/tenant-resolve';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 import { liveSource } from './helpers/live-source';
@@ -59,6 +59,18 @@ const patchPremium = (
     env,
   );
 
+const patchOwner = (
+  env: Env,
+  tenantId: string,
+  body: Record<string, unknown>,
+  headers: Record<string, string>,
+) =>
+  app.request(
+    `/api/owner/sitters/${tenantId}`,
+    { method: 'PATCH', headers, body: JSON.stringify(body) },
+    env,
+  );
+
 describe('Tenants.PremiumUntil — the column', () => {
   it('exists on every tenant and starts NULL, which is what "free" is', async () => {
     const { env, raw } = createTestEnv();
@@ -79,20 +91,22 @@ describe('Tenants.PremiumUntil — the column', () => {
 });
 
 describe('the tenant KV cache key is versioned for exactly this', () => {
-  it('caches under v6, so no entry from an earlier worker is ever read back', async () => {
+  it('caches under v7, so no entry from an earlier worker is ever read back', async () => {
     const { env } = createTestEnv();
 
     // Each older key is what some PREVIOUS worker left behind: the same row, minus the column its
     // migration added. Read either one and the field it lacks comes back `undefined` — a paying
     // sitter demoted to free (v2/0010), a sitter who chose per-night billed at a third of her
     // rate (v3/0013), a monthly invoicer whose payments reach back 14 days instead of the 45 she
-    // chose (v4/0014), or a sitter who paid a minute ago reported free (v5/0017) — for a whole TTL,
-    // with the type insisting none of them can happen.
+    // chose (v4/0014), or a sitter who paid a minute ago reported free (v5/0017), or a business the
+    // owner comped a minute ago reported as holding no plan (v6/0018) — for a whole TTL, with the
+    // type insisting none of them can happen.
     for (const key of [
       'tenant:sunny-paws:config:v2',
       'tenant:sunny-paws:config:v3',
       'tenant:sunny-paws:config:v4',
       'tenant:sunny-paws:config:v5',
+      'tenant:sunny-paws:config:v6',
     ]) {
       await env.PAWSERVATION_CACHE.put(
         key,
@@ -116,7 +130,7 @@ describe('the tenant KV cache key is versioned for exactly this', () => {
     expect(tenant?.AttributionSpillDays).toBe(14);
 
     // The new entry lands under the new key.
-    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v6')).not.toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v7')).not.toBeNull();
   });
 });
 
@@ -194,7 +208,14 @@ describe('the platform owner sets and clears premium', () => {
     );
     const res = await patchPremium(env, TENANT_A, null, await ownerHeaders());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ disabled: false, premiumUntil: null, premiumActive: true });
+    expect(await res.json()).toEqual({
+      disabled: false,
+      premiumUntil: null,
+      compedUntil: null,
+      premiumActive: true,
+      compActive: false,
+      planCurrent: true,
+    });
   });
 });
 
@@ -333,6 +354,7 @@ const facts = (over: Partial<EntitlementFacts>): EntitlementFacts => ({
   PremiumUntil: null,
   Plan: null,
   BilledUntil: null,
+  CompedUntil: null,
   ...over,
 });
 
@@ -404,14 +426,32 @@ describe('entitlement combines the comp and the plan in one expression', () => {
    * WHY `normalizeBilledUntil` EXISTS, demonstrated rather than asserted in prose. The comparison is
    * a plain string `>`; an ISO instant sorts above a space-separated `now` on the separator alone
    * ('T' is 84, ' ' is 32). Both values below name the same instant, twelve hours in the past.
+   *
+   * THIS CASE USED TO ASSERT THE INVERSION THROUGH THE PREDICATE — `isPremiumActive` said `true`
+   * for the ISO-shaped value — as the demonstration. Since Story 10.4's fix round the reader
+   * refuses any value not in the stored shape (`isAhead`, server/lib/premium.ts), so the predicate
+   * now says `false` for it: fail-closed, and the inversion is demonstrated on the bare string
+   * compare the predicate is built on instead. Both halves are still here — the hazard, and the
+   * reader's answer to it.
    */
   it('would grant a lapsed Pro plan a free day if a date were stored ISO-shaped', () => {
     const now = new Date('2026-09-08T12:00:00Z');
+    // The bare compare, which is what the column's homogeneity makes honest: the ISO spelling of
+    // an instant twelve hours in the past sorts ABOVE `now`.
+    const stamp = premiumNow(now);
+    expect('2026-09-08T00:00:00Z' > stamp).toBe(true);
+    expect('2026-09-08 00:00:00' > stamp).toBe(false);
+    // And the reader refuses the shape rather than trusting the compare on it, so a row that
+    // bypassed the normaliser reads as lapsed and not as a free day.
     expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08T00:00:00Z' }), now)).toBe(
-      true,
+      false,
     );
     expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08 00:00:00' }), now)).toBe(
       false,
+    );
+    // NOT VACUOUS: the same instant, stored-shaped and ahead of `now`, is live.
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08 12:00:01' }), now)).toBe(
+      true,
     );
   });
 });
@@ -453,16 +493,18 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   const EXEMPT = join(ROOT, 'server', 'lib', 'premium.ts');
 
   /**
-   * `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain — and `BilledUntil` the
-   * same, because since 0017 the rule is TWO dated columns and a second copy of half of it is no
-   * better than a second copy of all of it. `BilledUntil` is the likelier one to be re-derived, too:
-   * it arrives with a subscription, and "is she still paying" is a question a route feels entitled
-   * to answer on the spot.
+   * `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain — and `BilledUntil` and
+   * `CompedUntil` the same, because the rule is now THREE dated columns and a second copy of a third
+   * of it is no better than a second copy of all of it. `BilledUntil` is the likeliest to be
+   * re-derived (it arrives with a subscription, and "is she still paying" is a question a route
+   * feels entitled to answer on the spot); `CompedUntil` is the likeliest to be MISSED, because it
+   * is the newest and reads like a field rather than like a rule.
    */
-  const COMPARISON = /((?:premium|billed)until\s*[<>]|[<>]=?\s*[\w.?!]*(?:premium|billed)until)/i;
+  const COMPARISON =
+    /((?:premium|billed|comped)until\s*[<>]|[<>]=?\s*[\w.?!]*(?:premium|billed|comped)until)/i;
 
   /** The column named anywhere on the line, however far from the operator. */
-  const NAMED = /(?:premium|billed)until/i;
+  const NAMED = /(?:premium|billed|comped)until/i;
   /** A comparison, spelled with the spaces a formatter puts around one. Spaced deliberately: a
    *  `<` in `Record<string, …>` or in a JSX tag is not a comparison and reporting it would make
    *  this scan the thing everyone deletes. */
@@ -510,6 +552,7 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   // stops covering that file.
   const COLUMN = 'PremiumUntil';
   const BILLED = 'BilledUntil';
+  const COMPED = 'CompedUntil';
 
   it('would catch one — the scanner is not vacuously green', () => {
     expect(offends(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
@@ -525,6 +568,12 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
     expect(offends(`now < tenant.${COLUMN}`)).toBe(true);
     expect(offends(`row.${BILLED} > premiumNow()`)).toBe(true);
     expect(offends(`stamp <= t?.${BILLED}`)).toBe(true);
+    // THE WIDENING, SHOWN TO FIRE. A regex that learned a third column and was never run against
+    // one is a widened CLAIM, not a widened check — and this column is the one a reader is most
+    // likely to treat as an ordinary field, because it is the newest of the three.
+    expect(offends(`row.${COMPED} > premiumNow()`)).toBe(true);
+    expect(offends(`now < tenant.${COMPED}`)).toBe(true);
+    expect(offends(`const c = t.${COMPED}; if (c > stamp) allow();`)).toBe(true);
     // The aliased local, in the shape a probe actually wrote it.
     expect(offends(`const until = t.${BILLED}; until > stamp;`)).toBe(true);
     expect(offends(`const u = row.${COLUMN}; if (u > premiumNow()) mount();`)).toBe(true);
@@ -532,10 +581,153 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
     expect(offends(`// ${COLUMN} > now, merely described`)).toBe(false);
     expect(offends(`/* ${BILLED} > now, merely described */`)).toBe(false);
     expect(offends(`const sql = 'UPDATE Tenants SET ${COLUMN} = ?';`)).toBe(false);
+    expect(offends(`const sql = 'UPDATE Tenants SET ${COMPED} = ?';`)).toBe(false);
     expect(offends(`const rows = raw.prepare('SELECT ${COLUMN} FROM Tenants').all();`)).toBe(false);
     expect(offends(`const by = (r: R): Record<string, string> => ({ x: r.${COLUMN} });`)).toBe(
       false,
     );
     expect(offends(`const d = (n: number) => normalize${BILLED}(iso, NOW);`)).toBe(false);
+  });
+});
+
+describe('the platform owner comps the BASIC plan', () => {
+  it('sets a comp, reports her current, and leaves PremiumUntil untouched', async () => {
+    const { env } = createTestEnv();
+    const res = await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      disabled: false,
+      premiumUntil: null,
+      compedUntil: '2099-01-01 00:00:00',
+      // A basic comp buys the free product's plan and NOT the paid surface — two comps, one per
+      // tier, and the whole reason this is a second column rather than a reused one.
+      premiumActive: false,
+      compActive: true,
+      planCurrent: true,
+    });
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(t.PremiumUntil).toBeNull();
+  });
+
+  it('clears it with an explicit null, distinguished from omission', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = '${TENANT_A}';`);
+    const res = await patchOwner(env, TENANT_A, { compedUntil: null }, await ownerHeaders());
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { compedUntil: string | null }).compedUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.CompedUntil).toBeNull();
+  });
+
+  it('refuses a date it cannot store, and writes nothing at all', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = '${TENANT_A}';`);
+    const res = await patchOwner(
+      env,
+      TENANT_A,
+      { disabled: true, compedUntil: 'next tuesday-ish' },
+      await ownerHeaders(),
+    );
+    expect(res.status).toBe(400);
+    // NORMALISED BEFORE THE LOOKUP AND BEFORE ANY WRITE, which is what makes "writes nothing" true
+    // of the OTHER field in the same body rather than only of this one.
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(t.DisabledAt).toBeNull();
+  });
+
+  it('accepts a body naming only compedUntil, and still 400s one naming none of the three', async () => {
+    const { env } = createTestEnv();
+    expect(
+      (await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders())).status,
+    ).toBe(200);
+    const empty = await patchOwner(env, TENANT_A, {}, await ownerHeaders());
+    expect(empty.status).toBe(400);
+    // The sentence names all three fields, or it is a lie told by the same commit that made it one.
+    expect(((await empty.json()) as { error: string }).error).toBe(
+      'Expected { disabled?: boolean, premiumUntil?: string | null, compedUntil?: string | null }.',
+    );
+  });
+
+  it('keeps the two comps independent, in both directions', async () => {
+    const { env } = createTestEnv();
+    await patchOwner(env, TENANT_A, { premiumUntil: FUTURE }, await ownerHeaders());
+    await patchOwner(env, TENANT_A, { compedUntil: PAST }, await ownerHeaders());
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    // Applied only when PRESENT: a comp of one tier must not silently revoke the other, which is
+    // the same independence `disabled` and `premiumUntil` have had since 0010.
+    expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');
+    expect(t.CompedUntil).toBe('2000-01-01 00:00:00');
+
+    // THE OTHER DIRECTION, with the roles swapped — and it is a different mutation: a writer that
+    // cleared `CompedUntil` whenever `premiumUntil` was present survived the order above, because
+    // the comp was written second. Here it is written first.
+    const { env: swapped } = createTestEnv();
+    await patchOwner(swapped, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    await patchOwner(swapped, TENANT_A, { premiumUntil: PAST }, await ownerHeaders());
+    const u = (await getTenantById(swapped.PAWSERVATION_DB, TENANT_A))!;
+    expect(u.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(u.PremiumUntil).toBe('2000-01-01 00:00:00');
+
+    // And `disabled` alone leaves the comp untouched too — the three switches share one PATCH and
+    // none may be a hidden side effect of another.
+    await patchOwner(swapped, TENANT_A, { disabled: true }, await ownerHeaders());
+    const v = (await getTenantById(swapped.PAWSERVATION_DB, TENANT_A))!;
+    expect(v.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(v.PremiumUntil).toBe('2000-01-01 00:00:00');
+    expect(v.DisabledAt).not.toBeNull();
+  });
+
+  it('echoes compActive beside compedUntil, from the server and not from the date', async () => {
+    // The console's Basic comp chip lights on this boolean, never on `compedUntil != null` alone:
+    // a comp that ran out in 2024 is a date on the row and not a grant, and a chip lit from the
+    // date's presence told the owner a lapsed business was comped.
+    const { env } = createTestEnv();
+    const live = await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    expect(await live.json()).toMatchObject({ compActive: true, planCurrent: true });
+    const past = await patchOwner(env, TENANT_A, { compedUntil: PAST }, await ownerHeaders());
+    expect(await past.json()).toMatchObject({ compActive: false, planCurrent: false });
+    // Disabled: not comped either, by the shared early return.
+    await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    const off = await patchOwner(env, TENANT_A, { disabled: true }, await ownerHeaders());
+    expect(await off.json()).toMatchObject({
+      disabled: true,
+      compedUntil: '2099-01-01 00:00:00',
+      compActive: false,
+      planCurrent: false,
+    });
+  });
+
+  it('applies all three switches in ONE batch, and 404s a tenant that vanished', async () => {
+    const { env } = createTestEnv();
+    const res = await patchOwner(
+      env,
+      TENANT_A,
+      { disabled: true, premiumUntil: FUTURE, compedUntil: PAST },
+      await ownerHeaders(),
+    );
+    expect(res.status).toBe(200);
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.DisabledAt).not.toBeNull();
+    expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');
+    expect(t.CompedUntil).toBe('2000-01-01 00:00:00');
+    // A tenant deleted between the lookup and the write matches zero rows, and the answer is the
+    // same 404 the lookup gives — not a 200 assembled from `after?.` optionals over a row that is
+    // no longer there. Driven through the repo's own return value, since the window itself cannot
+    // be opened from a test.
+    expect(await applyOwnerSwitches(env.PAWSERVATION_DB, 'tnt_gone', { disabled: true })).toBe(
+      false,
+    );
+    expect(
+      await applyOwnerSwitches(env.PAWSERVATION_DB, TENANT_A, {
+        disabled: false,
+        premiumUntil: null,
+        compedUntil: null,
+      }),
+    ).toBe(true);
+    const cleared = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(cleared.DisabledAt).toBeNull();
+    expect(cleared.PremiumUntil).toBeNull();
+    expect(cleared.CompedUntil).toBeNull();
   });
 });

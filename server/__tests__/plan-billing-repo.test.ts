@@ -5,6 +5,7 @@ import {
   MAX_BILLED_AHEAD_DAYS,
   normalizeBilledUntil,
   normalizePremiumUntil,
+  premiumNow,
 } from '../lib/premium';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -27,7 +28,7 @@ const event = (over: Partial<Parameters<typeof applyBillingEvent>[2]> = {}) => (
   stripeCustomerId: 'cus_A',
   stripeSubscriptionId: 'sub_A',
   eventAt: AT.first,
-  replacesSubscription: true,
+  kind: 'checkout' as const,
   ...over,
 });
 
@@ -53,7 +54,7 @@ describe('applyBillingEvent — what one event does to a tenant row', () => {
       event({
         billedUntil: '2026-09-20 00:00:00',
         eventAt: AT.later,
-        replacesSubscription: false,
+        kind: 'ordinary' as const,
       }),
     );
     // Lower than what was there, and it is what is there now. The processor's date is the truth;
@@ -70,22 +71,68 @@ describe('applyBillingEvent — what one event does to a tenant row', () => {
     await applyBillingEvent(
       env.PAWSERVATION_DB,
       TENANT_A,
-      event({ billedUntil: '2026-09-20 00:00:00', eventAt: AT.later, replacesSubscription: false }),
+      event({ billedUntil: '2026-09-20 00:00:00', eventAt: AT.later, kind: 'ordinary' as const }),
     );
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.PremiumUntil).toBe(
       '2099-01-01 00:00:00',
     );
   });
 
-  it('records the customer id on first sight only, and never overwrites it', async () => {
+  it('coalesces the customer id on an ordinary event, and never overwrites it', async () => {
     const { env } = createTestEnv();
     await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event());
     await applyBillingEvent(
       env.PAWSERVATION_DB,
       TENANT_A,
-      event({ stripeCustomerId: 'cus_OTHER', eventAt: AT.later, replacesSubscription: false }),
+      event({ stripeCustomerId: 'cus_OTHER', eventAt: AT.later, kind: 'ordinary' as const }),
     );
+    // AN INVOICE MERELY SAYS THAT SUBSCRIPTION WAS PAID. It does not say which customer this
+    // business now is, and one arriving late for a subscription that has been displaced must not
+    // move the id out from under the live one.
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe('cus_A');
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeCustomerId).toBeNull();
+  });
+
+  it('ASSIGNS the customer id when the event establishes identity', async () => {
+    const { env } = createTestEnv();
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event());
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({
+        stripeCustomerId: 'cus_NEW',
+        stripeSubscriptionId: 'sub_NEW',
+        eventAt: AT.later,
+        kind: 'checkout' as const,
+      }),
+    );
+    // THE DEAD-CUSTOMER LOOP, CLOSED WITHOUT A NEW ROUTE. A business whose customer record the
+    // processor no longer has presses Subscribe, the checkout retries once without the stored id,
+    // the processor mints a fresh customer, and the completed checkout that follows now ASSIGNS it
+    // — so her Manage-plan button works again with no human in the loop.
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.StripeCustomerId).toBe('cus_NEW');
+    expect(t.StripeSubscriptionId).toBe('sub_NEW');
+    const b = (await getTenantById(env.PAWSERVATION_DB, TENANT_B))!;
+    expect(b.StripeCustomerId).toBeNull();
+    expect(b.StripeSubscriptionId).toBeNull();
+  });
+
+  it('never names CompedUntil, so a BASIC comp survives a renewal and a cancellation', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = '${TENANT_A}'`);
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event());
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({ billedUntil: '2026-09-20 00:00:00', eventAt: AT.later, kind: 'ordinary' as const }),
+    );
+    // The same separation `PremiumUntil` has had since 0017, inherited for free by being a second
+    // column: two comps, two owner-written columns, and one statement that names neither.
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.CompedUntil).toBe(
+      '2099-01-01 00:00:00',
+    );
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.CompedUntil).toBeNull();
   });
 
   /**
@@ -162,7 +209,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
           stripeSubscriptionId: 'sub_OLD',
           billedUntil: '2020-01-01 00:00:00',
           eventAt: AT.later,
-          replacesSubscription: false,
+          kind: 'ordinary' as const,
         }),
       ),
     ).toBe(false);
@@ -182,7 +229,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
           stripeSubscriptionId: 'sub_B',
           billedUntil: '2026-11-08 00:00:00',
           eventAt: AT.later,
-          replacesSubscription: true,
+          kind: 'checkout' as const,
         }),
       ),
     ).toBe(true);
@@ -207,7 +254,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
         stripeSubscriptionId: 'sub_B',
         billedUntil: '2026-11-08 00:00:00',
         eventAt: AT.later,
-        replacesSubscription: true,
+        kind: 'checkout' as const,
       }),
     );
     // `customer.subscription.deleted` for sub_A, and genuinely newer than everything applied.
@@ -219,7 +266,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
           stripeSubscriptionId: 'sub_A',
           billedUntil: '2026-10-09 00:00:00',
           eventAt: '2026-11-08 12:00:00',
-          replacesSubscription: false,
+          kind: 'ordinary' as const,
         }),
       ),
     ).toBe(false);
@@ -266,7 +313,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
       await applyBillingEvent(
         env.PAWSERVATION_DB,
         TENANT_A,
-        event({ eventAt: AT.later, replacesSubscription: false }),
+        event({ eventAt: AT.later, kind: 'ordinary' as const }),
       ),
     ).toBe(true);
     const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
@@ -282,6 +329,114 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
     expect(b.BilledUntil).toBeNull();
     expect(b.StripeCustomerId).toBeNull();
     expect(b.PremiumUntil).toBeNull();
+  });
+
+  /**
+   * THE RESYNC RULES (Story 10.4 fix round). A resync's `eventAt` is the subscription's period
+   * start, not a wall clock, so it can legitimately be OLDER than the last webhook applied — and
+   * the frozen row it exists to repair is exactly the row whose stamp is newer than that. So a
+   * resync is exempt from the stale rule. A CHECKOUT IS NOT: its stamp is the processor's own
+   * `created`, honest to order by, and exempting it would let a redelivered old checkout regress a
+   * row to the subscription a newer checkout replaced (the next case).
+   */
+  it('applies a RESYNC older than the stamp, and leaves the stamp where it was', async () => {
+    const { env } = createTestEnv();
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event({ eventAt: AT.later }));
+    expect(
+      await applyBillingEvent(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        event({
+          plan: 'solo',
+          billedUntil: '2026-12-08 00:00:00',
+          eventAt: AT.earlier,
+          kind: 'resync',
+        }),
+      ),
+    ).toBe(true);
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    // The payload landed — SET semantics, the current period from the processor's own mouth…
+    expect(t.Plan).toBe('solo');
+    expect(t.BilledUntil).toBe('2026-12-08 00:00:00');
+    // …and the stamp is MONOTONIC: it is the high-water mark of applied stamps, not the last one
+    // written. Rewinding it to the period start would re-open the door to every ordinary webhook
+    // redelivered from between the two, and the stale rule is the only thing that closes it.
+    expect(t.LastBillingEventAt).toBe(AT.later);
+    // Proof of that: an ORDINARY event from between the two is still stale.
+    expect(
+      await applyBillingEvent(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        event({ billedUntil: '2020-01-01 00:00:00', eventAt: AT.first, kind: 'ordinary' }),
+      ),
+    ).toBe(false);
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.BilledUntil).toBe(
+      '2026-12-08 00:00:00',
+    );
+  });
+
+  it('refuses a CHECKOUT older than the stamp, so a redelivered old one cannot regress the row', async () => {
+    const { env } = createTestEnv();
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event()); // sub_A at AT.first
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({
+        stripeSubscriptionId: 'sub_B',
+        billedUntil: '2026-11-08 00:00:00',
+        eventAt: AT.later,
+      }),
+    ); // sub_B, newer
+    // The first checkout, delivered again: establishing, and still refused as stale.
+    expect(await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event())).toBe(false);
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.StripeSubscriptionId).toBe('sub_B');
+    expect(t.BilledUntil).toBe('2026-11-08 00:00:00');
+    expect(t.LastBillingEventAt).toBe(AT.later);
+  });
+
+  it('lets a RESYNC replace the subscription only for the SAME customer', async () => {
+    const { env } = createTestEnv();
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event()); // cus_A / sub_A
+    // Same customer, new subscription: the repair a resync exists for.
+    expect(
+      await applyBillingEvent(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        event({ stripeSubscriptionId: 'sub_B', eventAt: AT.later, kind: 'resync' }),
+      ),
+    ).toBe(true);
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeSubscriptionId).toBe(
+      'sub_B',
+    );
+    // A DIFFERENT customer: declined, whatever the subscription says. A resync says "this is what
+    // the processor says about THIS customer"; one naming another customer is talking about
+    // somebody else's subscription, and the shared secret alone must not be enough to move a
+    // business onto it. A CHECKOUT may still assign the customer over — that is the dead-customer
+    // loop, and it is the case above this describe.
+    expect(
+      await applyBillingEvent(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        event({
+          stripeCustomerId: 'cus_OTHER',
+          stripeSubscriptionId: 'sub_C',
+          billedUntil: '2026-12-08 00:00:00',
+          eventAt: '2026-11-08 12:00:00',
+          kind: 'resync',
+        }),
+      ),
+    ).toBe(false);
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.StripeCustomerId).toBe('cus_A');
+    expect(t.StripeSubscriptionId).toBe('sub_B');
+    expect(t.BilledUntil).toBe('2026-10-08 00:00:00');
+    // A row with NO customer yet is filled by a resync — nothing to disagree with.
+    const { env: fresh } = createTestEnv();
+    expect(
+      await applyBillingEvent(fresh.PAWSERVATION_DB, TENANT_A, event({ kind: 'resync' })),
+    ).toBe(true);
+    expect((await getTenantById(fresh.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe('cus_A');
   });
 
   it('reports false for a tenant that does not exist', async () => {
@@ -308,11 +463,17 @@ describe('normalizeBilledUntil — one shape in, and a ceiling on what a leaked 
       PremiumUntil: null,
       Plan: 'pro' as const,
       BilledUntil: billedUntil,
+      CompedUntil: null,
     });
     expect(isPremiumActive(facts(past), NOW)).toBe(false);
-    // The same instant left in the shape it arrived in says the opposite: 'T' sorts above the
-    // space in a space-separated `now`, so a tenant paid through this morning reads as premium.
-    expect(isPremiumActive(facts('2026-09-08T00:00:00Z'), NOW)).toBe(true);
+    // The same instant left in the shape it arrived in sorts the OPPOSITE way on the bare compare:
+    // 'T' sorts above the space in a space-separated `now`, so a tenant paid through this morning
+    // would read as premium — which is why the reader now refuses the shape outright (`isAhead`,
+    // server/lib/premium.ts) rather than trusting the compare on it. This line used to assert
+    // `true` through the predicate as the demonstration; the demonstration is the compare, and the
+    // predicate's answer is the fail-closed one.
+    expect('2026-09-08T00:00:00Z' > premiumNow(NOW)).toBe(true);
+    expect(isPremiumActive(facts('2026-09-08T00:00:00Z'), NOW)).toBe(false);
   });
 
   it('refuses an expanded-year instant, which walks straight past the ceiling', () => {

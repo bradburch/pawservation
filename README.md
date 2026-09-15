@@ -251,6 +251,11 @@ npx wrangler secret put BILLING_SHARED_SECRET      # guards POST /api/:slug/admi
 # It is published on /config as premium.origin for clients that cannot resolve relative paths (*.workers.dev embeds).
 # PLAN_SUBSCRIBE is a plain var too, and is deliberately NOT set: unset means the dashboard offers no
 # Subscribe control. See "Plans and billing" below for when to add it.
+# PLAN_ENFORCE is the same shape and is also deliberately NOT set: unset means a business holding no
+# current plan still has a writable dashboard. Set it to exactly "true" only after the pre-flip check
+# in "Plans and billing" returns zero rows. Both are `vars` entries in wrangler.jsonc — a STRING, never
+# a JSON boolean — so the flip and the unflip are each a deploy, and a value set in the dashboard is
+# overwritten by the next deploy unless that deploy passes `--keep-vars`. Use the file.
 # Optional — Google Calendar sync:
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
@@ -302,14 +307,144 @@ stays `true` too — it's what makes that staging URL work — don't touch it.
 
 Every joined sitter is on Solo or Pro; a plan decides what her account can do, not whether she was
 allowed to join (see "Provisioning the first sitter" below — signup stays invite-only either way).
-`isPremiumActive` (`server/lib/premium.ts`) is the one expression that decides whether a tenant gets
-the paid surface, from two independent flags on `Tenants`:
+`server/lib/premium.ts` holds **four** one-expression predicates over the same handful of columns,
+and they answer four different questions:
 
-- **`PremiumUntil`** — the platform owner's manual comp, set and cleared by hand from the owner
-  console. Unrelated to billing, and billing never touches it.
+- **`isPremiumActive`** — does she get the PAID surface? The platform owner's comp (`PremiumUntil`)
+  OR a paid Pro plan (`Plan === 'pro'` with a live `BilledUntil`).
+- **`isSoloActive`** — does she have a LIVE PAID SUBSCRIPTION? `BilledUntil` in the future, whichever
+  tier. Published as `planActive`, and what the Subscribe control hides on.
+- **`isPlanCurrent`** — does she hold a CURRENT PLAN at all, by any of the three grants?
+  `BilledUntil` OR `CompedUntil` OR `PremiumUntil` in the future. Tier-blind on purpose: the thing
+  that lapses is the plan, not a tier. Published as `planCurrent`, and what the lapse gate refuses
+  on.
+- **`isCompActive`** — is the BASIC COMP itself live? One clause of the predicate above, published
+  on its own as `compActive` so the owner console's "Basic comp" chip lights on the server's word
+  and not on the date's presence: a comp that ran out is a date on the row, not a grant.
+
+All four refuse a **disabled** business before looking at any date — `isDisabled`, a non-empty
+`DisabledAt`, which `tenantMiddleware` reads the same way — which is one shared early return and is
+what stops them drifting on the one condition they agree about. And each column is read through one
+shape check: a value not in the stored `YYYY-MM-DD HH:MM:SS` shape is "not that", so a row
+hand-written with an ISO `T` cannot read as current on the strength of a separator character. The
+columns they read:
+
+- **`PremiumUntil`** — the platform owner's comp of the PAID tier, set and cleared by hand from the
+  owner console. Unrelated to billing, and billing never touches it.
+- **`CompedUntil`** (0018) — the platform owner's comp of the BASIC plan, set the same way from the
+  same console. A second column rather than a hand-set `BilledUntil`: that one carries a 400-day
+  ceiling written for a leaked shared secret and is assigned by every billing event, so a comp
+  written there would be refused when long and overwritten when short. Billing never touches this
+  one either. **The trial IS a basic comp, set at signup**: `createTenantFromSignup` writes
+  `CompedUntil = now + PRICING.trialDays` — the same number the landing page promises, read from the
+  same constant — so a business created after the owner's comp sweep holds a grant from her first
+  login rather than a read-only dashboard, and the pre-flip check below covers new signups by
+  construction.
 - **`Plan` + `BilledUntil`** — a paid plan (`'solo' | 'pro'`), written only by the billing endpoint
   below. `Plan === 'pro'` with `BilledUntil` in the future is the paid route to the same surface the
-  comp grants; `Plan === 'solo'` buys the free product's own paid tier and is never itself premium.
+  comp grants; `Plan === 'solo'` buys this product's own paid tier and is never itself premium.
+
+**A lapsed plan is a read-only dashboard — except for answering requests and blocking dates.**
+`planGate` (`server/lib/middleware.ts`) is one `.use()` line declared immediately after `adminAuth`,
+so it covers exactly `adminAuth`'s flattened scope — every write under `/:slug/admin/*`, including
+the routes declared in `accounts.ts` and `tenant-tokens.ts` — and answers
+**`402 { error: 'plan_lapsed' }`**. 402 rather than 403 because `isAuthExpired` treats 401 and 403
+as an expired session, and a second 403 literal is a second chance to eject a sitter from the
+dashboard she is trying to read. A **read** — `GET`, `HEAD` or `OPTIONS`, the one `READ_METHODS` set
+the disabled guard shares — is never refused. **Her booking page is untouched:** the gate is in
+`adminRoutes` and not in `tenantMiddleware`, so `POST /:slug/bookings` is outside it by prefix, and
+so is `POST /:slug/admin/billing/events`, which is outside by mount order and is how she un-lapses.
+
+**Four writes are exempt, by a marker on the route and not a path list in the middleware.**
+`planExempt` is a no-op middleware a route places in its own handler chain, and the gate finds it
+among the request's matched routes — so the exemption is declared on the route's own line, the gate
+names no path, and a route that wants out has to say so where its reviewer is. The set:
+
+- **answering a booking request** (`POST /:slug/admin/bookings/:id/status`) and **blocking or
+  unblocking dates** (`/:slug/admin/blocked`). A-17 promises that her clients keep booking while her
+  dashboard goes quiet — but a request her clients keep submitting is one she must be able to
+  answer, on dates she must be able to close, or the requests pile up unanswered against a calendar
+  she cannot block. So the whole request loop keeps working; what she loses is everything else —
+  settings, services, rates, minting tokens, connecting a calendar, exports, imports;
+- **revoking a credential** (`DELETE /:slug/admin/tokens/*`, by id or a token revoking itself) — a
+  leaked `pawsa_` token on a lapsed business would otherwise be a leak she cannot stop; minting
+  stays refused;
+- **disconnecting the calendar** (`POST …/providers/calendar/disconnect`) — she must be able to stop
+  the product writing her calendar; connecting one stays refused.
+
+"Read-only except answering requests and blocking dates" is what shipped; the owner can widen or
+narrow it, and the PR asks him to.
+
+**The cron and the dashboard's reads stop writing her calendar, while the deployment enforces.** The
+two admin reads that run a calendar self-heal (`/admin/bookings`, `/admin/analytics`) skip it for a
+lapsed business exactly as they do for a disabled one, and the fifteen-minute sweep's
+`listConnectedCalendarTenants` leaves her out — the predicate applied in code over the rows, never
+in SQL. **The booking page's own pull does not stop**: it keeps her clients' availability honest,
+which is A-17's promise, but that same pull also redrives her outbox — her own blocked-date writes
+and anything else queued — to Google, up to once every ten minutes (the widget's own throttle)
+whenever a client opens the month grid. That is deliberate — it is also how a block she just set
+through the one exempt write reaches Google at all while she is otherwise read-only — but it means
+"stops writing her calendar" is true of the cron and the two admin reads only, not of the product as
+a whole.
+
+**A guard-order note, not a gap.** `GET …/providers/calendar/oauth/start` guards the lapse by hand
+(the one GET that starts a sitter-initiated write), and the global `/oauth/google/callback` carries
+the same guard beside its disabled one — a state signed by `oauth/start` before the lapse, or before
+the flip, is valid for 600 seconds and would otherwise reach the callback outside both gates, but
+that window is closed by the callback's own guard. What remains is ordering, not exposure:
+`oauth/start` answers "not configured" (503) before "lapsed" (402), because the first is true of
+every business on the server and the second would send her to buy a plan for a control that will
+503 the moment she has one.
+
+**It ships dark, and that is not caution for its own sake.** `PLAN_ENFORCE` (unset = off, exactly
+`"true"` = on, read with `typeof === 'string'` so a JSON boolean is off rather than a TypeError on
+every request) is what the gate reads. It is a `vars` entry in `wrangler.jsonc`, so the flip and
+the unflip are each a deploy — a value set in the dashboard is overwritten by the next deploy
+unless that deploy passes `--keep-vars`, so use the file. It presupposes `PLAN_SUBSCRIBE`: a
+deployment that refuses writes for a lapsed plan while offering no way to start one has built a
+trap, so set the selling switch first. Migration 0017 seeded nothing and, until this branch,
+tenant creation wrote no plan — there is no free tier left to fall back to — so on the day the
+gate deploys, every business created before it reads as holding none. The order is:
+
+1. hand-apply `migrations/0018_plan_comp.sql` to the remote database — **migrate, then deploy**;
+2. merge, which is the deploy, **with `PLAN_ENFORCE` unset**. `planCurrent` starts answering, no
+   write is refused, and the only visible change is the banner for un-comped businesses;
+3. **comp the existing book** from the owner console, in the same sitting;
+4. run the pre-flip check, and only then set the var.
+
+**The pre-flip check, and it is the step no test can perform.** Every row it returns is a business
+whose dashboard goes read-only the moment the var is set:
+
+```
+npx wrangler d1 execute pawservation-db --remote --command \
+  "SELECT Slug FROM Tenants WHERE DisabledAt IS NULL
+     AND (BilledUntil IS NULL OR BilledUntil <= datetime('now'))
+     AND (CompedUntil IS NULL OR CompedUntil <= datetime('now'))
+     AND (PremiumUntil IS NULL OR PremiumUntil <= datetime('now'))"
+```
+
+**Expect zero rows before flipping.** If it returns any, comp them or do not flip. The demo
+tenants show up in it like any other row — they hold no grant either — so comp them too, or accept
+that the demo dashboards go read-only. The same command is the rollback diagnosis, and the rollback
+itself is one line — unset `PLAN_ENFORCE`. No data is written by the flip and none is undone by the
+unflip. `server/__tests__/plan-preflip-sql.test.ts` reads this exact statement out of this file and
+runs it over every combination of the three dated columns, asserting it agrees with `isPlanCurrent`
+row for row — so editing the SQL here, or the predicate there, is caught by the suite. **That
+agreement assumes every dated column is already in the STORED shape** ('YYYY-MM-DD HH:MM:SS'). A
+hand-written ISO instant (say, `2027-01-01T00:00:00Z` typed during an incident) sorts ABOVE any
+stored-shape `now` as plain text, so this SELECT reads it as current and will not warn about it —
+while `isPlanCurrent` reads the same value as not current, because `isAhead` fails closed on
+anything that is not the exact stored shape, and refuses. Normalize it before relying on a clean
+pre-flip check: `UPDATE Tenants SET BilledUntil = strftime('%Y-%m-%d %H:%M:%S', BilledUntil) WHERE
+BilledUntil IS NOT NULL` (repeat for `CompedUntil`/`PremiumUntil` as needed).
+
+**One state the runbook cannot fix from here: a disabled business with a live subscription.**
+`adminAuth` refuses her `pawsa_` credential outright, and her password session still reaches a
+dashboard whose plan panel withholds Manage plan — `canManage` is gated on `!settings.disabled` —
+so she cannot reach a hosted portal to stop a card that keeps being charged. Cancel it in the Stripe
+Dashboard by hand: the owner console's roster links each row with a customer id straight to that
+customer's page there. The alternative is this repo holding a processor secret and a cancel call,
+which it may not.
 
 `POST /api/:slug/admin/billing/events` records a subscription's outcome against one tenant — a
 plan, a paid-through date, and the processor's customer/subscription ids, nothing else. It calls no
@@ -319,22 +454,53 @@ what guards the route instead of a session or an access token. `/config` publish
 `pricing` figures (`soloMonthly`, `proMonthly`, `proAnnual`, `trialDays`) for any surface that needs
 to state them, but never a tenant's own plan state — that stays behind an authenticated read.
 
-That authenticated read is `GET /api/:slug/admin/settings`, which publishes five plan fields
+Its `eventType` is a **five-value closed set**, so it can never become a free-text channel. Four are
+a processor's own event names; the fifth is **`resync`** — the caller saying "this is what the
+processor says right now", after a delivery was lost or a row was frozen against a subscription it
+no longer holds. It exists for a route on the paid surface's origin; this repo does not call that
+route, knows nothing else about it, and gains no control that presses it. A completed checkout and
+a `resync` are the **two events that ESTABLISH** which customer and which subscription a business
+now is, and they differ from each other in two ways:
+
+- **a `resync` is exempt from the staleness rule, and only a resync.** Its `eventCreated` is the
+  subscription's period start rather than a wall clock, so it is routinely older than the last
+  webhook applied — and a frozen row is exactly a row whose stamp is newer than that. A checkout is
+  NOT exempt: its stamp is the processor's own `created`, honest to order by, and a redelivered old
+  checkout must not regress a row to the subscription a newer one replaced. `LastBillingEventAt`
+  is therefore a **high-water mark**, never lowered, so an older resync applies its payload without
+  re-opening the stale window to every ordinary webhook redelivered from between;
+- **a `resync` may replace the subscription only within the same customer.** One naming a
+  different `stripeCustomerId` than the row holds is declined `not_current_subscription`: it is
+  talking about somebody else's subscription, and the shared secret alone must not be enough to
+  move a business onto it. A checkout may assign a fresh customer over a stored one — that is the
+  dead-customer loop it closes — so `StripeCustomerId` is **reassigned only by an establishing
+  event**, and `invoice.paid` only fills it in when it is missing: an invoice says that a
+  subscription was paid, not which one this business now holds.
+
+That authenticated read is `GET /api/:slug/admin/settings`, which publishes seven plan fields
 beside everything else the dashboard loads: `plan`, `billedUntil` (the stored instant, verbatim),
 `planActive` (`isSoloActive`'s answer, never a comparison — see below), `hasBillingAccount`, and
-`stripeCustomerId`. There is no second route: this one is already authenticated, already scoped to
-the slug in its path, and already fetched once per dashboard load. **`stripeCustomerId` goes only
-to a password session** and its key is _absent_ — not null — for a `pawsa_` tenant access token, so
-a consumer can tell "withheld by policy" from "no customer yet"; the other four are the tenant's
-own plan, told to the tenant's own admin. `StripeSubscriptionId` and `LastBillingEventAt` are **off
-THIS payload**: neither consumer needs them, and the second is the billing endpoint's own ordering
-state. Not off the wire altogether — `POST /api/:slug/admin/billing/events` echoes the subscription
-id it replaced as `replaced`, to the shared-secret caller that sent it and to nothing else.
+`stripeCustomerId`, plus `planCurrent` (`isPlanCurrent`'s answer) and `planEnforced` (whether this
+deployment enforces the plan). `planActive` and `planCurrent` are two different questions and both
+are published deliberately: a comped business is `planCurrent: true` and `planActive: false`, and
+must still be offered Subscribe. `planCurrent` is the **tenant's** state and not the gate's answer
+— the deployment's half is the separate `planEnforced` field, and the dashboard's read-only banner
+requires both, so between a deploy and the comp sweep it stays down rather than early. There is no
+second route: this one is already authenticated, already scoped to the slug in its path, and
+already fetched once per dashboard load. **`stripeCustomerId` goes only to a password session** and
+its key is _absent_ — not null — for a `pawsa_` tenant access token, so a consumer can tell
+"withheld by policy" from "no customer yet"; the other six are the tenant's own plan, told to the
+tenant's own admin. `StripeSubscriptionId` and `LastBillingEventAt` are **off THIS payload**:
+neither consumer needs them, and the second is the billing endpoint's own ordering state. Not off
+the wire altogether — `POST /api/:slug/admin/billing/events` echoes the subscription id it replaced
+as `replaced`, to the shared-secret caller that sent it and to nothing else; and the **owner
+console's roster** carries `stripeCustomerId` to the owner, verbatim, as the key to the customer's
+page in the Stripe Dashboard (the link is the owner's, on that console only).
 
-`isSoloActive` and `isPremiumActive` (`server/lib/premium.ts`) are the only expressions that
-compare `BilledUntil` or `PremiumUntil` to anything, and what keeps it that way is a scan with a
-stated reach: `server/__tests__/premium-entitlement.test.ts` walks every `.ts`/`.tsx` under
-**`server/` and `app/`** — test files included, `server/lib/premium.ts` alone exempt. Those two trees
+`isPremiumActive`, `isSoloActive`, `isPlanCurrent` and `isCompActive` (`server/lib/premium.ts`) are
+the only expressions that compare `BilledUntil`, `CompedUntil` or `PremiumUntil` to anything, and what keeps
+it that way is a scan with a stated reach: `server/__tests__/premium-entitlement.test.ts` walks
+every `.ts`/`.tsx` under **`server/` and `app/`** — test files included, `server/lib/premium.ts` alone exempt. Those two trees
 are every module that can read a tenant row or render one, which is why they are the two; `src/`,
 `test/` and `scripts/` are outside it, so "nowhere in the repo" is a claim about those two trees and
 not about every file in the checkout. The scan reads each file through `liveSource`
@@ -358,8 +524,9 @@ never on the tenant's own entitlement — which is false for exactly the sitter 
 - **`pricing.subscribe`** — selling is switched on. This is the `PLAN_SUBSCRIBE` var
   (`wrangler.jsonc`), where **unset means off** and exactly the string `"true"` means on.
 - **`!planActive`** — she has no live plan. Deliberately **not** `!hasBillingAccount`:
-  `StripeCustomerId` is written once and never cleared, so a sitter who cancelled keeps a billing
-  account for good, and gating on it hid Subscribe from the one sitter who wanted to press it.
+  `StripeCustomerId` is reassigned only by an establishing event and never cleared, so a sitter who
+  cancelled keeps a billing account for good, and gating on it hid Subscribe from the one sitter who
+  wanted to press it.
 
 **Leave `PLAN_SUBSCRIBE` unset until the billing worker's checkout route is live**, then set it and
 deploy. `PREMIUM_ORIGIN` is already set in production, so a panel gated on the origin alone would
@@ -400,7 +567,11 @@ pair of questions they ask:
 
 The lapsed-with-an-account row is the only state that shows both, and it shows one extra line
 beneath them saying which is which — fix a card or read an invoice under Manage plan, start again
-under Subscribe. A paying sitter is still never offered a second subscription (`planActive` is
+under Subscribe. That line, like every "your plan has lapsed" sentence on the dashboard, hangs on
+the server's `planCurrent` and not on `planActive`: a comped ex-subscriber sees both controls and is
+not lapsed. The dashboard's own read-only banner requires `planCurrent === false` AND
+`planEnforced`, and its second sentence names the plan panel only where the panel's offers actually
+render — elsewhere it says to contact us. A paying sitter is still never offered a second subscription (`planActive` is
 plain on the Subscribe side and appears in neither Manage condition); that is the UI half of the
 double-subscription question, and the other half is a server-side refusal on the checkout route,
 because a UI is not a guard.
@@ -409,7 +580,7 @@ Where no origin is published, the status line renders alone with one sentence sa
 are unavailable — shown on `configLoaded && hasBillingAccount && origin === null`, so it tracks the
 Manage control exactly, minus the origin, and never reaches a sitter who has no billing account to
 manage. It waits for the `/config` read to FINISH rather than to succeed: a read that failed is one
-of the states the sentence is true for.
+of the states the sentence is true for. On a lapsed tenant the sentence names the lapse as well.
 
 The panel states no price, trial length, invoice, cancellation term or refund position of its own:
 the figures come from `/config` and the terms belong on the terms page. It knows an **origin** it
@@ -419,13 +590,15 @@ was published and two path templates on it, and nothing else about whatever serv
 it, and the billing worker, which presents it on every event. Rotating it is therefore an ordered
 pair of deploys, which is what `BILLING_SHARED_SECRET_PREVIOUS` exists for — set the outgoing value
 there, switch the caller to the new one, then delete it. Neither value ever appears in a log line.
-Applying `0017` before deploying this worker is not optional; see "Deploying" above.
+Applying `0017` and `0018` before deploying this worker is not optional; see "Deploying" above.
 
 **This half deploys first**, and the requirement is stated as one on the CALLER rather than as a
 claim about its internals, which this repo cannot see. Whatever serves the two paths on
-`premium.origin` reads those five plan fields from `GET /api/:slug/admin/settings`, so it must not be
+`premium.origin` reads those plan fields from `GET /api/:slug/admin/settings`, so it must not be
 deployed before this worker publishes them, and it must fail closed — not guess — on a settings read
-that does not carry them. The order is: apply `0017`, deploy this worker, then that surface.
+that does not carry them. The order is: apply `0017` and `0018`, deploy this worker with
+`PLAN_ENFORCE` unset, then that surface, then the comp sweep and the pre-flip check above before the
+var is set.
 
 ## Provisioning the first sitter
 

@@ -58,6 +58,7 @@ describe('owner-scope repo: AllowedSitters', () => {
       userId: 'tu_kept',
       email: 'kept@x.test',
       passwordHash: 'h',
+      compedUntil: '2099-01-01 00:00:00',
     });
     expect(await deleteUnclaimedAllowedSitter(env.PAWSERVATION_DB, 'kept@x.test')).toBe(false);
     expect((await getAllowedSitter(env.PAWSERVATION_DB, 'kept@x.test'))?.ClaimedAt).toBeTruthy();
@@ -73,6 +74,7 @@ describe('owner-scope repo: AllowedSitters', () => {
       userId: 'tu_new',
       email: 'claimed@x.test',
       passwordHash: 'h',
+      compedUntil: '2099-01-01 00:00:00',
     });
     const rows = await listAllowedSitters(env.PAWSERVATION_DB);
     const claimed = rows.find((r) => r.Email === 'claimed@x.test');
@@ -95,6 +97,7 @@ describe('createTenantFromSignup (atomic batch)', () => {
       userId: 'tu_x',
       email: 'new@x.test',
       passwordHash: 'pbkdf2$1$aa$bb',
+      compedUntil: '2099-01-01 00:00:00',
       claimedAtIso: '2026-07-19T00:00:00.000Z',
     });
     const tenant = await getTenantBySlug(env.PAWSERVATION_DB, 'x-biz');
@@ -112,6 +115,11 @@ describe('createTenantFromSignup (atomic batch)', () => {
     // before the sitter ever saw a prompt. The wizard prefills the field from `adminEmail`
     // instead, so publication needs the sitter to look at it and press Next.
     expect(tenant?.ContactEmail).toBeNull();
+    // The trial comp, bound AS-IS on the same INSERT (Story 10.4): the route produces the instant
+    // with `trialCompUntil` and this function neither computes nor normalises it, like the owner
+    // console's writer. The paid tier's column is untouched — the trial is a BASIC comp.
+    expect(tenant?.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(tenant?.PremiumUntil).toBeNull();
     const user = await getTenantUserByEmail(env.PAWSERVATION_DB, 'new@x.test');
     expect(user?.TenantId).toBe('tnt_x');
     const claim = await getAllowedSitter(env.PAWSERVATION_DB, 'new@x.test');
@@ -129,6 +137,7 @@ describe('createTenantFromSignup (atomic batch)', () => {
       userId: 'tu_dup',
       email: 'dup@x.test',
       passwordHash: 'h',
+      compedUntil: '2099-01-01 00:00:00',
     });
     const before = (raw.prepare('SELECT COUNT(*) AS n FROM Tenants').get() as { n: number }).n;
     await expect(
@@ -139,6 +148,7 @@ describe('createTenantFromSignup (atomic batch)', () => {
         userId: 'tu_dup2',
         email: 'dup@x.test', // TenantUsers.Email UNIQUE fires on statement 2 of the batch
         passwordHash: 'h',
+        compedUntil: '2099-01-01 00:00:00',
       }),
     ).rejects.toThrow();
     const after = (raw.prepare('SELECT COUNT(*) AS n FROM Tenants').get() as { n: number }).n;

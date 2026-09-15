@@ -80,6 +80,30 @@ interface Env {
    * plan is honoured — that is `isPremiumActive` reading columns only the billing endpoint writes.
    */
   PLAN_SUBSCRIBE?: string;
+  /**
+   * IS THE PLAN ENFORCED? A plain deployment var, read by `planGate` (`server/lib/middleware.ts`),
+   * which refuses writes under `/:slug/admin/*` for a business holding no current plan, and by the
+   * three places that would otherwise write her calendar for her. Exactly `'true'` (trimmed,
+   * case-insensitive) is on; UNSET is OFF, and so is any other value — including a JSON boolean
+   * `true`, which `wrangler.jsonc` can bind and which is read as off rather than as a TypeError on
+   * every request (`typeof === 'string'` first, on both flags).
+   *
+   * A `vars` ENTRY IN `wrangler.jsonc`, like `PLAN_SUBSCRIBE`, so the flip and the unflip are each a
+   * deploy; a value set in the dashboard is overwritten by the next deploy unless it passes
+   * `--keep-vars`. It presupposes `PLAN_SUBSCRIBE`: refusing writes for a lapsed plan while offering
+   * no way to start one is a trap.
+   *
+   * IT SHIPS UNSET, and that is not caution for its own sake. Every row created before this branch
+   * reads as holding no plan until the platform owner comps it, because 0017 seeded nothing and
+   * tenant creation wrote no plan (it now writes the trial as a basic comp) — so the deploy that
+   * ships the gate would otherwise be the outage. The owner sweeps the book from the owner console,
+   * checks that the pre-flip query returns zero rows (see README), and sets this last.
+   *
+   * Not a secret, and it grants nothing: it decides whether a refusal is issued, never who is
+   * entitled — that is `isPlanCurrent` reading three columns written by the owner console, the
+   * billing endpoint, and (CompedUntil only, the trial) signup.
+   */
+  PLAN_ENFORCE?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /**

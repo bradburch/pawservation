@@ -202,6 +202,7 @@ describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
       userId: 'tu_fresh',
       email: ALLOWED_EMAIL,
       passwordHash: 'x',
+      compedUntil: '2099-01-01 00:00:00',
     });
     expect(ok).toBe(true);
     const rows = await listPetTypes(env.PAWSERVATION_DB, 'tnt_fresh');
@@ -220,6 +221,7 @@ describe('signup provisioning seeds dog + cat registry rows (spec F1)', () => {
       userId: 'tu_gone',
       email: 'not-on-the-allowlist@example.com', // claim matches 0 rows -> caller compensates
       passwordHash: 'x',
+      compedUntil: '2099-01-01 00:00:00',
     });
     await rollbackUnclaimedTenant(env.PAWSERVATION_DB, 'tnt_gone', 'tu_gone');
     expect(await listPetTypes(env.PAWSERVATION_DB, 'tnt_gone')).toEqual([]);

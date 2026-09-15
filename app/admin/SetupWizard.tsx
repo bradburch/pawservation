@@ -4,7 +4,12 @@ import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
 import { ApiError } from '../shared-ui/api.js';
 import { SERVICE_PRESETS, type ServicePreset } from './presets.js';
 import { blockNegativeNumberKeys } from './sections/fields.js';
-import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
+import {
+  adminFetch,
+  writeFailureMessage,
+  type ServiceOptionForm,
+  type Settings,
+} from './shared.js';
 import {
   makeProfileDraft,
   profilePutBody,
@@ -92,7 +97,7 @@ export function SetupWizard({
       // A 503 means the server has no Google OAuth env — degrade to the disabled note. Any
       // other failure is transient; surface it inline and let the sitter retry or skip.
       if (e instanceof ApiError && e.status === 503) setCalendarDisabled(true);
-      else setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+      else setError(writeFailureMessage(e, 'Something went wrong — try again.'));
     } finally {
       setConnecting(false);
     }
@@ -216,7 +221,9 @@ export function SetupWizard({
       setProfileInitial(profileDraft);
       setStep(2);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+      // The wizard takes no `handleError`, so its own sink is where the plan gate's refusal is
+      // said in words — every step past the first writes through the settings PUT.
+      setError(writeFailureMessage(e, 'Something went wrong — try again.'));
     } finally {
       setApplying(false);
     }
@@ -259,8 +266,11 @@ export function SetupWizard({
             // what a re-run should do. Anything else fails the run, named per preset.
             if (e instanceof Error && e.message.includes('already exists'))
               return { ps, type: ps.preset.createdSlug };
+            // INSIDE this catch, where the `ApiError` still is: the aggregate below only ever sees
+            // the plain Error thrown here, so a lapse mapped there would already read
+            // "Dog boarding: plan_lapsed". The label stays, the wire's code does not.
             throw new Error(
-              `${ps.preset.label}: ${e instanceof Error ? e.message : 'could not be created'}`,
+              `${ps.preset.label}: ${writeFailureMessage(e, 'could not be created')}`,
             );
           }
         }),
@@ -295,7 +305,7 @@ export function SetupWizard({
       await onApplied();
       goTo(mode === 'services' ? 5 : 4);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+      setError(writeFailureMessage(e, 'Something went wrong — try again.'));
     } finally {
       setApplying(false);
     }

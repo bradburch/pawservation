@@ -24,6 +24,7 @@ import type {
   TenantUser,
 } from '../types';
 import { EXTRA_TIME_ORIGINS } from '../types';
+import { isPlanCurrent } from '../lib/premium';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { Account, CalendarCostBasis, ServiceQuestion } from '../../src/shared/index.js';
@@ -62,7 +63,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CompedUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -5762,8 +5763,20 @@ export async function listBookingPetsForUser(
 /** INSTANCE SCOPE — the one calendar-sync exemption to the tenantId-first rule, same class as
  * the owner-scope functions above: the cron sweep must discover WHICH tenants to sync before any
  * tenant context exists. Read-only, and every row it returns is then processed through the
- * ordinary tenant-scoped path. Disabled tenants are excluded — read-only tenants must not sync. */
-export async function listConnectedCalendarTenants(db: D1Database): Promise<Tenant[]> {
+ * ordinary tenant-scoped path. Disabled tenants are excluded — read-only tenants must not sync.
+ *
+ * AND A LAPSED PLAN IS EXCLUDED WHILE THE DEPLOYMENT ENFORCES (`planEnforced`, which the caller
+ * reads from `PLAN_ENFORCE`): the sweep is the one writer of a business's calendar that needs no
+ * request from her, so a lapse that made her dashboard read-only and left this pushing events to
+ * Google every fifteen minutes would be a lapse in name only. Applied IN CODE over the rows the
+ * SQL returns, not in the `WHERE`: the query compares no date, because `isPlanCurrent`
+ * (server/lib/premium.ts) is the one expression allowed to (AD-13), and a second copy of the rule
+ * in SQL is exactly what the scanner exists to refuse. Under the shipped default the flag is off
+ * and the list is what it always was. */
+export async function listConnectedCalendarTenants(
+  db: D1Database,
+  planEnforced: boolean,
+): Promise<Tenant[]> {
   // Table-qualified TENANT_COLS (same pattern as BOOKING_COLS_QUALIFIED above): the join against
   // ProviderConnections shares no column names with Tenants today, but qualifying defensively
   // avoids a silent ambiguous-column break if that ever changes.
@@ -5778,7 +5791,7 @@ export async function listConnectedCalendarTenants(db: D1Database): Promise<Tena
        ORDER BY t.Id`,
     )
     .all<Tenant>();
-  return results;
+  return planEnforced ? results.filter((t) => isPlanCurrent(t)) : results;
 }
 
 export async function getOwnerUserByEmail(
@@ -5848,11 +5861,16 @@ export type SitterRosterRow = {
   DisplayName: string;
   CreatedAt: string;
   DisabledAt: string | null; // null = active
-  PremiumUntil: string | null; // null = no comp
-  /** 0017. Carried so `isPremiumActive` can answer for a roster row without a second copy of the
-   *  rule living in the console — the console used to re-derive it in the browser. */
+  PremiumUntil: string | null; // null = no paid-tier comp
+  /** 0017/0018. Carried so `isPremiumActive` AND `isPlanCurrent` can each answer for a roster row
+   *  without a second copy of either rule living in the console — the console used to re-derive the
+   *  first one in the browser. Two rules now, and neither is re-derived. */
   Plan: 'solo' | 'pro' | null;
   BilledUntil: string | null;
+  CompedUntil: string | null; // null = no basic comp
+  /** The processor's customer id, verbatim, for the OWNER's link to the customer's page in the
+   *  Stripe Dashboard (FR-63's "see why", answered where the facts are). Owner console only. */
+  StripeCustomerId: string | null;
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
   // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
@@ -5887,6 +5905,8 @@ export async function listSitterRoster(
          t.PremiumUntil AS PremiumUntil,
          t.Plan AS Plan,
          t.BilledUntil AS BilledUntil,
+         t.CompedUntil AS CompedUntil,
+         t.StripeCustomerId AS StripeCustomerId,
          (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
@@ -5924,47 +5944,109 @@ export async function deleteUnclaimedAllowedSitter(
 
 /**
  * Owner-scope: flip a tenant's disabled state. `true` → DisabledAt = now (widget dark + admin
- * read-only via the tenantMiddleware guard); `false` → NULL (active). Returns whether a row
- * changed (false = no such tenant, so the route can 404). Caller must invalidateTenantCache.
+ * read-only via the tenantMiddleware guard); `false` → NULL (active). The statement, so the owner
+ * PATCH can batch it with the two comp writers below; `setTenantDisabled` runs it alone.
  */
-export async function setTenantDisabled(
+function tenantDisabledStatement(
   db: D1Database,
   tenantId: string,
   disabled: boolean,
-): Promise<boolean> {
-  const result = await db
+): D1PreparedStatement {
+  return db
     .prepare(
       disabled
         ? "UPDATE Tenants SET DisabledAt = datetime('now') WHERE Id = ?"
         : 'UPDATE Tenants SET DisabledAt = NULL WHERE Id = ?',
     )
-    .bind(tenantId)
-    .run();
+    .bind(tenantId);
+}
+
+/** Returns whether a row changed (false = no such tenant, so the route can 404). Caller must
+ *  invalidateTenantCache. */
+export async function setTenantDisabled(
+  db: D1Database,
+  tenantId: string,
+  disabled: boolean,
+): Promise<boolean> {
+  const result = await tenantDisabledStatement(db, tenantId, disabled).run();
   return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**
  * Owner-scope: set or clear a tenant's paid-through instant (0010). `null` clears it, which is
- * "free" — the same value every tenant carries until an owner grants premium. Returns whether a
- * row changed (false = no such tenant, so the route can 404). Caller must invalidateTenantCache,
- * or the change sits behind the tenant cache's TTL — for a REVOCATION that is a minute of access
- * already paid for and stopped, which is the direction that matters.
- *
- * `until` is bound as-is and must already be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC);
- * `normalizePremiumUntil` (server/lib/premium.ts) is the one place that shape is produced, so the
- * comparison `PremiumUntil > now` stays a comparison of like with like.
+ * "free" — the same value every tenant carries until an owner grants premium. `until` is bound
+ * as-is and must already be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC); `normalizePremiumUntil`
+ * (server/lib/premium.ts) is the one place that shape is produced, so the comparison
+ * `PremiumUntil > now` stays a comparison of like with like. THE ONLY WRITER of the column, run
+ * through `applyOwnerSwitches` below.
  */
-export async function setTenantPremiumUntil(
+function tenantPremiumUntilStatement(
   db: D1Database,
   tenantId: string,
   until: string | null,
-): Promise<boolean> {
-  const result = await db
-    .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
-    .bind(until, tenantId)
-    .run();
-  return (result.meta as { changes?: number }).changes !== 0;
+): D1PreparedStatement {
+  return db.prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?').bind(until, tenantId);
 }
+
+/**
+ * Owner-scope: set or clear the BASIC comp (0018). A byte-for-byte mirror of the premium statement
+ * above, and deliberately a SECOND writer rather than a parameter: two columns, two writers, and
+ * billing writes neither. `until` is bound as-is and must already be in the stored shape;
+ * `normalizePremiumUntil` (server/lib/premium.ts) is the one place that shape is produced, so
+ * `CompedUntil > now` stays a comparison of like with like. The column's other writer is
+ * `createTenantFromSignup` — the trial is a basic comp — and that is the whole list.
+ */
+function tenantCompedUntilStatement(
+  db: D1Database,
+  tenantId: string,
+  until: string | null,
+): D1PreparedStatement {
+  return db.prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?').bind(until, tenantId);
+}
+
+/**
+ * THE OWNER'S SWITCHES ON A TENANT, applied together: whether the account is switched off, how long
+ * the PAID tier is comped through, and how long the BASIC plan is. ONE `db.batch` rather than three
+ * awaited writes, so a PATCH naming two of them cannot land one and not the other (the test shim's
+ * batch is transactional, and so is D1's). Each switch is applied only when PRESENT — `'key' in` —
+ * which is what keeps them independent: `{ disabled: true }` touches neither comp, and neither comp
+ * touches the other. `null` on a comp CLEARS it, distinguished from omission.
+ *
+ * Returns whether the tenant row was there to change: every statement names the same `Id`, so the
+ * batch matches all-or-none, and `false` is "no such tenant" — deleted between the caller's lookup
+ * and this write — which the route answers as the 404 the lookup would have given. A body naming
+ * no switch is the route's 400, never an empty batch here. Caller must `invalidateTenantCache`.
+ */
+export async function applyOwnerSwitches(
+  db: D1Database,
+  tenantId: string,
+  switches: { disabled?: boolean; premiumUntil?: string | null; compedUntil?: string | null },
+): Promise<boolean> {
+  const statements: D1PreparedStatement[] = [];
+  if (switches.disabled !== undefined)
+    statements.push(tenantDisabledStatement(db, tenantId, switches.disabled));
+  if ('premiumUntil' in switches)
+    statements.push(tenantPremiumUntilStatement(db, tenantId, switches.premiumUntil ?? null));
+  if ('compedUntil' in switches)
+    statements.push(tenantCompedUntilStatement(db, tenantId, switches.compedUntil ?? null));
+  if (statements.length === 0) return false;
+  const results = await db.batch(statements);
+  return results.every((r) => ((r.meta as { changes?: number }).changes ?? 0) > 0);
+}
+
+/**
+ * WHICH KIND OF BILLING EVENT this is, for the guards below. Three, not five: the route's
+ * picklist has five names, but the statement only cares which of three sets of rules apply.
+ *   - `'checkout'` — a completed checkout ESTABLISHES which customer and which subscription this
+ *     business now is: it may replace the subscription and assign the customer over a stored one
+ *     (the dead-customer loop), and it is ordered by the processor's own `created`.
+ *   - `'resync'` — the caller saying "this is what the processor says right now". It establishes
+ *     the subscription too, but only for the SAME customer, and its stamp is a period start rather
+ *     than a wall clock — so it is exempt from the stale rule, and it alone is.
+ *   - `'ordinary'` — an invoice, an update, a cancellation: says something about the CURRENT
+ *     subscription and nothing about identity.
+ */
+export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
 
 /**
  * Billing-scope: record what a subscription paid for (0017). Writes `Plan`, `BilledUntil`, the two
@@ -5973,13 +6055,13 @@ export async function setTenantPremiumUntil(
  * ignored as stale, leaving the tenant permanently on a figure nobody sent.
  *
  * `PremiumUntil` IS NOT IN THIS STATEMENT AND MUST NEVER BE. It is the platform owner's manual
- * grant, written only by `setTenantPremiumUntil`, and a comp surviving a renewal, a cancellation and
+ * grant, written only by `applyOwnerSwitches`, and a comp surviving a renewal, a cancellation and
  * a redelivery is exactly what that separation buys (FR-63, spine AD-13). Neither is `DisabledAt`,
  * in either direction: a disabled tenant is written like any other, because refusing her is the
  * route's job (`tenantMiddleware` answers 403 before the handler runs, and `isPremiumActive` is
  * already false while she is disabled) and because what she paid for is what re-enabling restores.
  *
- * THE TWO GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same two decisions in
+ * THE THREE GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same decisions in
  * order to report WHICH rule fired, but two redeliveries arriving at once would interleave a
  * read-then-write; here they cannot.
  *   - `LastBillingEventAt <= ?` — an event created STRICTLY BEFORE the last one applied does
@@ -5987,23 +6069,48 @@ export async function setTenantPremiumUntil(
  *     inside a single second, and a rule that refused the ties threw away the ones carrying a
  *     different payload. NFR-13 is bought by the SET semantics above instead — every column is
  *     assigned, none is extended, so the identical request twice leaves a byte-identical row while
- *     a genuinely different same-second event still lands.
+ *     a genuinely different same-second event still lands. A `'resync'` IS EXEMPT from this rule,
+ *     and only a resync: its stamp is the subscription's period start, which can be months older
+ *     than the last webhook, and the frozen row it exists to repair is exactly the row whose stamp
+ *     is newer. A `'checkout'` is NOT exempt — its stamp is the processor's own `created`, honest
+ *     to order by, and exempting it would let a redelivered old checkout regress a row to the
+ *     subscription a newer checkout had replaced.
  *   - the subscription clause — an event for a subscription that is not this tenant's current one
- *     does nothing, UNLESS `replacesSubscription` (a completed checkout), which is how a
+ *     does nothing, UNLESS it establishes (a completed checkout, or a resync), which is how a
  *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
  *     live plan.
+ *   - the customer clause — a `'resync'` may replace the subscription ONLY when the row's
+ *     `StripeCustomerId` is null or matches the event's. A resync says "this is what the processor
+ *     says about THIS customer"; one naming a different customer is talking about somebody else's
+ *     subscription, and the shared secret alone must not be enough to move a business onto it. A
+ *     checkout is unconstrained here on purpose: assigning a fresh customer over a dead one is the
+ *     loop it closes.
  *
- * The two ids behave differently on purpose, so they are written as two clauses rather than one
- * clever one: `StripeCustomerId` is `COALESCE`d, recorded on first sight and never overwritten,
- * because a sitter is one customer forever; `StripeSubscriptionId` is assigned, because she may hold
- * several over time and only one at a time is current.
+ * `LastBillingEventAt` IS A HIGH-WATER MARK, not "the last one written": `MAX(existing, eventAt)`.
+ * For every non-exempt event the `WHERE` already guarantees `eventAt` is the max, so this changes
+ * nothing for them; for a resync older than the stamp it keeps the stamp where it was. Rewinding it
+ * to the period start would re-open the door to every ordinary webhook redelivered from between
+ * the two, and the stale rule is the only thing that closes it.
+ *
+ * `PremiumUntil` AND `CompedUntil` ARE BOTH ABSENT FROM THIS STATEMENT AND MUST STAY ABSENT — the
+ * paragraph above is written of the first and holds identically of the second. Two comps, one per
+ * tier, each written only by its own owner-console writer.
+ *
+ * THE TWO IDS ON THE ESTABLISHING EVENTS: `StripeSubscriptionId` is always assigned;
+ * `StripeCustomerId` is assigned when the event establishes and `COALESCE`d otherwise. A completed
+ * checkout and a resync are the two events that say WHICH CUSTOMER AND WHICH SUBSCRIPTION this
+ * tenant now is (a resync's "assign" is a no-op or a fill, by the customer clause above); an
+ * invoice merely says that subscription was paid, and one arriving late for a displaced
+ * subscription must not move the id. The old unconditional `COALESCE` is why a re-subscribe under
+ * a new customer left the row naming subscription B against customer A — a state the route could
+ * only log.
  *
  * `billedUntil` and `eventAt` must ALREADY be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC) —
  * `normalizeBilledUntil` / `normalizePremiumUntil` (server/lib/premium.ts) are the only places that
  * shape is produced, so `BilledUntil > now` stays a comparison of like with like.
  *
  * Returns whether a row changed: `false` is "no such tenant, or a guard refused it", which the route
- * distinguishes for its own answer — a caller whose own read said both rules were satisfied has been
+ * distinguishes for its own answer — a caller whose own read said every rule was satisfied has been
  * overtaken by a concurrent delivery. Caller must `invalidateTenantCache`.
  */
 export async function applyBillingEvent(
@@ -6015,31 +6122,40 @@ export async function applyBillingEvent(
     stripeCustomerId: string;
     stripeSubscriptionId: string;
     eventAt: string;
-    replacesSubscription: boolean;
+    kind: BillingEventKind;
   },
 ): Promise<boolean> {
+  const establishes = event.kind !== 'ordinary' ? 1 : 0;
+  const staleExempt = event.kind === 'resync' ? 1 : 0;
+  const sameCustomerOnly = event.kind === 'resync' ? 1 : 0;
   const result = await db
     .prepare(
       `UPDATE Tenants
           SET Plan = ?,
               BilledUntil = ?,
-              StripeCustomerId = COALESCE(StripeCustomerId, ?),
+              StripeCustomerId = CASE WHEN ? = 1 THEN ? ELSE COALESCE(StripeCustomerId, ?) END,
               StripeSubscriptionId = ?,
-              LastBillingEventAt = ?
+              LastBillingEventAt = MAX(COALESCE(LastBillingEventAt, ''), ?)
         WHERE Id = ?
-          AND (LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
-          AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)`,
+          AND (? = 1 OR LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
+          AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)
+          AND (? = 0 OR StripeCustomerId IS NULL OR StripeCustomerId = ?)`,
     )
     .bind(
       event.plan,
       event.billedUntil,
+      establishes,
+      event.stripeCustomerId,
       event.stripeCustomerId,
       event.stripeSubscriptionId,
       event.eventAt,
       tenantId,
+      staleExempt,
       event.eventAt,
-      event.replacesSubscription ? 1 : 0,
+      establishes,
       event.stripeSubscriptionId,
+      sameCustomerOnly,
+      event.stripeCustomerId,
     )
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
@@ -6115,6 +6231,15 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
  *
  * Dog + cat pet-type REGISTRY rows are seeded (spec F1): without them a sitter who skips the
  * wizard could never take a booking.
+ *
+ * `compedUntil` IS THE TRIAL (Story 10.4). Written into `CompedUntil` on the same INSERT, so the
+ * new business holds a current plan from her first login: without it, a tenant created after the
+ * platform owner's comp sweep would be read-only the moment `PLAN_ENFORCE` is set. The caller
+ * produces it with `trialCompUntil` (server/lib/premium.ts) — already in the stored shape, and the
+ * length read from `PRICING.trialDays` rather than typed — and this function binds it as-is, like
+ * the owner console's writer (`applyOwnerSwitches`) does. The SECOND writer of the column, and the
+ * only one that is not the owner's hand: signup grants what the landing page promised, and the
+ * owner console is where it is extended or cleared afterwards.
  */
 export async function createTenantFromSignup(
   db: D1Database,
@@ -6125,6 +6250,7 @@ export async function createTenantFromSignup(
     userId: string;
     email: string;
     passwordHash: string;
+    compedUntil: string;
     claimedAtIso?: string;
   },
 ): Promise<boolean> {
@@ -6135,8 +6261,10 @@ export async function createTenantFromSignup(
       // still applies to every OTHER insert path — this is a signup-time default, not a schema
       // DEFAULT, so it can't silently change behavior elsewhere). A sitter can widen or clear it
       // from the wizard's profile step or Business settings.
-      .prepare('INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths) VALUES (?, ?, ?, ?)')
-      .bind(args.tenantId, args.slug, args.displayName, 12),
+      .prepare(
+        'INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths, CompedUntil) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind(args.tenantId, args.slug, args.displayName, 12, args.compedUntil),
     db
       .prepare('INSERT INTO TenantUsers (Id, TenantId, Email, PasswordHash) VALUES (?, ?, ?, ?)')
       .bind(args.userId, args.tenantId, args.email, args.passwordHash),

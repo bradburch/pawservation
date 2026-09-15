@@ -716,6 +716,24 @@ export type SitterRow = {
    *  plan, so `premiumUntil` alone no longer decides it — and this repo does not re-derive the
    *  rule in the browser. */
   premiumActive: boolean;
+  /** Which plan she is on, verbatim; null = no plan. */
+  plan: 'solo' | 'pro' | null;
+  /** What her subscription has paid through, in the stored 'YYYY-MM-DD HH:MM:SS' UTC shape,
+   *  verbatim. Rendered, never compared. */
+  billedUntil: string | null;
+  /** The BASIC comp the owner grants by hand (0018), same stored shape. The date this console
+   *  EDITS, which is why it rides raw beside the derived boolean below. */
+  compedUntil: string | null;
+  /** The SERVER's own `isCompActive` answer — that comp live, and not disabled. The chip lights on
+   *  this and not on the date's presence: a comp that ran out is a date, not a grant. */
+  compActive: boolean;
+  /** The SERVER's own `isPlanCurrent` answer — billed OR comped OR premium-comped, and not
+   *  disabled. Three grants now, and the console re-derives none of them. */
+  planCurrent: boolean;
+  /** The processor's customer id, verbatim — the key to the customer's page in the Stripe
+   *  Dashboard, which is where "why is she lapsed" is actually answered. Published to the OWNER
+   *  only, on this roster; the sitter's own settings read keeps its own policy for it. */
+  stripeCustomerId: string | null;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;
@@ -742,6 +760,25 @@ export class ApiError extends Error {
 /** True for a 401/403 ApiError — the token is missing, expired, or wrong-tenant. */
 export function isAuthExpired(e: unknown): boolean {
   return e instanceof ApiError && (e.status === 401 || e.status === 403);
+}
+
+/**
+ * True for the plan gate's refusal. A 402 ALONE is enough: the status is the gate's own answer
+ * (`planGate`, server/lib/middleware.ts answers nothing else with it), and a client that needed the
+ * body word too would print a raw code at a sitter the day a route answered 402 with a sentence.
+ * The body code is accepted as well, from `ApiError.code` when the response carried one and from
+ * the message otherwise — never from the message when a code is present, so a response that says
+ * `plan_lapsed` in prose under some other code is not mistaken for the gate.
+ *
+ * Deliberately NOT folded into `isAuthExpired`: her session is fine, and signing her out of a
+ * dashboard she can still read would be the worse failure of the two.
+ *
+ * STATUS LOGIC ONLY. The SENTENCE that answers it, and the mapper the write sinks call, live in
+ * `app/admin/shared.ts`: this module is in the EMBED bundle's import graph, and the dashboard's
+ * "your dashboard is read-only" copy was shipping to every booking widget from here.
+ */
+export function isPlanLapsed(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 402 || (e.code ?? e.message) === 'plan_lapsed');
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1364,6 +1401,12 @@ export const owner = {
       method: 'PATCH',
       headers: { ...jsonHeaders, ...authHeaders(token) },
       body: JSON.stringify({ premiumUntil }),
+    }),
+  setSitterComped: (token: string, tenantId: string, compedUntil: string | null) =>
+    request<{ compedUntil: string | null }>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {
+      method: 'PATCH',
+      headers: { ...jsonHeaders, ...authHeaders(token) },
+      body: JSON.stringify({ compedUntil }),
     }),
   removeSitter: (token: string, tenantId: string) =>
     request<unknown>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {

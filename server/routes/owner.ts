@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import * as v from 'valibot';
 import {
   addAllowedSitter,
+  applyOwnerSwitches,
   deleteTenantCompletely,
   deleteUnclaimedAllowedSitter,
   getAllowedSitter,
@@ -9,11 +10,15 @@ import {
   getTenantById,
   listAllowedSitters,
   listSitterRoster,
-  setTenantDisabled,
-  setTenantPremiumUntil,
 } from '../db/repo';
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
-import { isPremiumActive, normalizePremiumUntil } from '../lib/premium';
+import {
+  isCompActive,
+  isDisabled,
+  isPlanCurrent,
+  isPremiumActive,
+  normalizePremiumUntil,
+} from '../lib/premium';
 import { serializeAnalytics } from '../lib/analytics';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
@@ -157,7 +162,7 @@ export const ownerRoutes = new Hono<AppEnv>()
       slug: r.Slug,
       displayName: r.DisplayName,
       createdAt: r.CreatedAt,
-      disabled: r.DisabledAt != null,
+      disabled: isDisabled(r),
       // Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean, same
       // rationale as the detail route below: the owner is setting the date, so the date is what
       // they need to see.
@@ -167,6 +172,26 @@ export const ownerRoutes = new Hono<AppEnv>()
       // every paying Pro sitter as free the moment this column existed. One rule, one place
       // (`isPremiumActive`, server/lib/premium.ts).
       premiumActive: isPremiumActive(r),
+      // FR-63's "an owner who can see why", and it costs four fields of this product's own
+      // database: three verbatim columns and one derived boolean. Deliberately no amount, no
+      // invoice, no processor identifier and no subscription id — those stay off this payload as
+      // they already are, and FR-63's prohibition is on a revenue surface, not on this console
+      // knowing which plan its own businesses are on.
+      plan: r.Plan,
+      billedUntil: r.BilledUntil,
+      compedUntil: r.CompedUntil,
+      // Whether that comp is LIVE, from the server: the chip lights on this and not on the date's
+      // presence, because a comp that ran out is a date on the row and not a grant.
+      compActive: isCompActive(r),
+      // The DERIVED answer again, from the one expression. A console that compared a date here
+      // would be the browser-side copy AD-13 removed, one rule later.
+      planCurrent: isPlanCurrent(r),
+      // THE CUSTOMER ID, verbatim, to the OWNER and on this console only: FR-63's "an owner who can
+      // see why", with the seeing done on the processor's own page — the console links the row to
+      // the Stripe Dashboard customer page, where the invoice, the card and the dunning state all
+      // are. The owner has that dashboard already; the id is its key. Still no amount, no invoice
+      // and no subscription id on this payload.
+      stripeCustomerId: r.StripeCustomerId,
       clients: r.Clients,
       bookings: r.Bookings,
       // `Earned` is the raw column sum, in CENTS (0015), and the wire says so (design spec §2).
@@ -192,34 +217,46 @@ export const ownerRoutes = new Hono<AppEnv>()
     // 12-month breakdown, anchored to the sitter's own timezone.
     const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
     const data = await getAnalytics(c.env.PAWSERVATION_DB, tenantId, today);
-    // `premiumUntil` rides along beside `disabled` for the same reason it does: the console's two
-    // owner switches both need to render their CURRENT value. This is one of two reads that carry
-    // it — the other is the roster list above — so both surfaces stay in sync with the tenant row.
-    // Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean — the owner is
-    // setting the date, so the date is what they need to see, and whether it has passed is a
-    // comparison the console can make for itself.
+    // `premiumUntil` and `compedUntil` ride along beside `disabled` for the same reason it does:
+    // the console's three owner switches each need to render their CURRENT value. This is one of
+    // two reads that carry them — the other is the roster list above — so both surfaces stay in
+    // sync with the tenant row. The DATES are published raw ('YYYY-MM-DD HH:MM:SS', UTC) because
+    // the owner is setting them and a date is what she needs to see; whether one has PASSED is
+    // never the console's comparison to make — it is `premiumActive` and `planCurrent` below, from
+    // the one expression each (spine AD-13), because a browser-side `> now` reports a paying
+    // business as free and the scanner walks `app/` for exactly that.
     return c.json({
       ...serializeAnalytics(data),
-      disabled: tenant.DisabledAt != null,
+      disabled: isDisabled(tenant),
       premiumUntil: tenant.PremiumUntil,
       premiumActive: isPremiumActive(tenant),
+      // The same four the roster publishes, because the drill-down and the list must not disagree
+      // about who is on what.
+      plan: tenant.Plan,
+      billedUntil: tenant.BilledUntil,
+      compedUntil: tenant.CompedUntil,
+      compActive: isCompActive(tenant),
+      planCurrent: isPlanCurrent(tenant),
     });
   })
 
   /**
-   * The two owner switches on a tenant: whether the account is switched off, and how long they
-   * have paid through. One PATCH rather than two endpoints because they are the same kind of
-   * thing — an owner-only edit of a column on the tenant row — and both need the same 404 and the
-   * same cache invalidation; a second endpoint would be a second place to forget either.
+   * The owner switches on a tenant: whether the account is switched off, how long the PAID tier is
+   * comped through, and how long the BASIC plan is. One PATCH rather than three endpoints because
+   * they are the same kind of thing — an owner-only edit of a column on the tenant row — and each
+   * needs the same 404 and the same cache invalidation; a second endpoint would be a second place
+   * to forget any of them.
    *
-   * Both fields are OPTIONAL and applied only when PRESENT, which is what keeps them independent:
+   * Every field is OPTIONAL and applied only when PRESENT, which is what keeps them independent:
    * `{ disabled: true }` must not silently revoke a subscription, and `{ premiumUntil: … }` must
-   * not silently re-enable a disabled account. A body naming neither is a 400 rather than a
+   * not silently re-enable a disabled account. A body naming none of them is a 400 rather than a
    * do-nothing 200, because the only way to send one is by mistake.
    *
-   * `premiumUntil: null` is meaningfully different from omitting it — it is how premium is
-   * CLEARED — so the field is `v.optional(v.nullable(…))` and the two cases are distinguished by
-   * `in`, never by falsiness.
+   * `premiumUntil: null` and `compedUntil: null` are meaningfully different from omitting them —
+   * they are how a comp is CLEARED — so each field is `v.optional(v.nullable(…))` and the two cases
+   * are distinguished by `in`, never by falsiness. The two comps are independent: one is the PAID
+   * tier's grant and one is this product's own plan, and setting either must not silently revoke
+   * the other.
    */
   .patch('/owner/sitters/:tenantId', async (c) => {
     const tenantId = c.req.param('tenantId');
@@ -228,44 +265,75 @@ export const ownerRoutes = new Hono<AppEnv>()
       v.object({
         disabled: v.optional(v.boolean()),
         premiumUntil: v.optional(v.nullable(v.string())),
+        compedUntil: v.optional(v.nullable(v.string())),
       }),
       raw,
     );
-    if (!parsed.success || (!('disabled' in parsed.output) && !('premiumUntil' in parsed.output)))
+    if (
+      !parsed.success ||
+      (!('disabled' in parsed.output) &&
+        !('premiumUntil' in parsed.output) &&
+        !('compedUntil' in parsed.output))
+    )
       return c.json(
-        { error: 'Expected { disabled?: boolean, premiumUntil?: string | null }.' },
+        {
+          error:
+            'Expected { disabled?: boolean, premiumUntil?: string | null, compedUntil?: string | null }.',
+        },
         400,
       );
-    const { disabled, premiumUntil } = parsed.output;
+    const { disabled, premiumUntil, compedUntil } = parsed.output;
 
     // Normalise BEFORE the tenant lookup and before any write: an unparseable date must not leave
     // a half-applied PATCH behind, and this is the last point at which nothing has happened yet.
+    // BOTH dates go through `normalizePremiumUntil` — no ceiling, past dates accepted ("paid
+    // through last March" is a true statement) — and deliberately NOT through
+    // `normalizeBilledUntil`, whose 400-day bound is the containment on what a leaked shared secret
+    // can buy and would refuse a legitimate two-year comp.
     let storedUntil: string | null = null;
     if (premiumUntil != null) {
       storedUntil = normalizePremiumUntil(premiumUntil);
       if (storedUntil === null)
         return c.json({ error: 'premiumUntil must be a date, or null to clear it.' }, 400);
     }
+    let storedComped: string | null = null;
+    if (compedUntil != null) {
+      storedComped = normalizePremiumUntil(compedUntil);
+      if (storedComped === null)
+        return c.json({ error: 'compedUntil must be a date, or null to clear it.' }, 400);
+    }
 
     const tenant = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
-    if (disabled !== undefined) await setTenantDisabled(c.env.PAWSERVATION_DB, tenantId, disabled);
-    if ('premiumUntil' in parsed.output)
-      await setTenantPremiumUntil(c.env.PAWSERVATION_DB, tenantId, storedUntil);
+    // ONE BATCH for whichever switches are present, then the cache drop — so a body naming two of
+    // them cannot land one and not the other, and the widget never sees a half-applied row. A
+    // batch that matched no row is a tenant deleted between the lookup above and here, and is
+    // answered as the lookup would have answered it.
+    const applied = await applyOwnerSwitches(c.env.PAWSERVATION_DB, tenantId, {
+      ...(disabled !== undefined ? { disabled } : {}),
+      ...('premiumUntil' in parsed.output ? { premiumUntil: storedUntil } : {}),
+      ...('compedUntil' in parsed.output ? { compedUntil: storedComped } : {}),
+    });
+    if (!applied) return c.json({ error: 'Not found.' }, 404);
     await invalidateTenantCache(tenant.Slug, c.env); // widget/dashboard sees the change at once
 
     // Report the tenant's state as it now IS, read back rather than assembled from the request:
-    // a PATCH that touched one field still answers for both, so the console never has to guess
-    // what the field it did not send is currently set to.
+    // a PATCH that touched one field still answers for all of them, so the console never has to
+    // guess what the fields it did not send are currently set to. A row that is gone by now is a
+    // 404 too, not a 200 assembled from optionals over nothing.
     const after = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
+    if (!after) return c.json({ error: 'Not found.' }, 404);
     return c.json({
-      disabled: after?.DisabledAt != null,
-      premiumUntil: after?.PremiumUntil ?? null,
-      // The same derived answer the roster and the detail read publish, from the same one
-      // expression — the row is already loaded, so the alternative is the console re-deriving it in
-      // the browser from the date beside it, which is exactly what AD-13 removed and what reports a
-      // Pro subscriber as free.
-      premiumActive: after != null && isPremiumActive(after),
+      disabled: isDisabled(after),
+      premiumUntil: after.PremiumUntil,
+      compedUntil: after.CompedUntil,
+      // The same derived answers the roster and the detail read publish, from the same
+      // expressions — the row is already loaded, so the alternative is the console re-deriving them
+      // in the browser from the dates beside them, which is exactly what AD-13 removed and what
+      // reports a paying business as free.
+      premiumActive: isPremiumActive(after),
+      compActive: isCompActive(after),
+      planCurrent: isPlanCurrent(after),
     });
   })
 

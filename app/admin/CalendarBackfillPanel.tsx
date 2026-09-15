@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   adminApi,
-  ApiError,
   type BackfillAdoptRow,
   type BackfillFlagReason,
   type BackfillFlagRow,
@@ -11,7 +10,7 @@ import {
   type BackfillSkipRow,
 } from '../shared-ui/api.js';
 import { dollarsToCents, formatFriendlyDate, MAX_BACKFILL_EVENTS } from '../../src/shared/index.js';
-import type { Session } from './shared.js';
+import { writeFailureMessage, type Session } from './shared.js';
 import { Hint } from './Hint';
 
 /** What the sitter should actually DO about each flag reason — see the design doc's flag table.
@@ -440,7 +439,11 @@ export function CalendarBackfillPanel({
         setRowErrors((prev) => new Map(prev).set(eventId, reason));
       }
     } catch (e) {
-      const message = e instanceof ApiError ? e.message : 'Could not adopt that event.';
+      // Per-row, beside the event it was about — so the lapse gate's refusal is said in words here
+      // too, and not printed as the wire's bare `plan_lapsed` in a table cell. The server's own
+      // sentence is still what every other failure shows, the same mapper TokensPanel and the
+      // wizard read.
+      const message = writeFailureMessage(e, 'Could not adopt that event.');
       setRowErrors((prev) => new Map(prev).set(eventId, message));
     } finally {
       setRowBusy((prev) => {

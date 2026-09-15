@@ -12,6 +12,7 @@ import { isEmailConfigured, sendSignupLink } from '../lib/email';
 import { RESERVED_SLUGS } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
 import { hashPassword, validatePassword } from '../lib/password';
+import { trialCompUntil } from '../lib/premium';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
 import { slugifyServiceLabel } from '../lib/services';
 import {
@@ -210,6 +211,10 @@ export const signupRoutes = new Hono<AppEnv>()
         userId,
         email: payload.email,
         passwordHash: await hashPassword(password),
+        // The trial the landing page promises, as a BASIC comp on the new row — so she holds a
+        // current plan from her first login rather than a read-only dashboard once `PLAN_ENFORCE`
+        // is set. The length is `PRICING.trialDays`, read where `trialCompUntil` reads it.
+        compedUntil: trialCompUntil(),
       });
     } catch (err) {
       console.error('sitter signup insert failed', err);

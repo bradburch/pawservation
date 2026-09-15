@@ -24,11 +24,11 @@ reset (see `docs/superpowers/plans/2026-07-27-schema-config-ops.md`).
   `wrangler d1 execute … --file` instead (see "New schema changes" below).
 - **A migration that adds a `Tenants` column the request path reads must ALSO bump the KV
   tenant-config cache key in the same commit** (`server/lib/tenant-resolve.ts`, currently
-  `tenant:<slug>:config:v6`). That cache stores the whole `Tenants` row as JSON, so for one
+  `tenant:<slug>:config:v7`). That cache stores the whole `Tenants` row as JSON, so for one
   60-second TTL after deploy the new code reads the new field as `undefined` — with no error and no
   log — and runs every cached tenant at whatever the code's fallback happens to be.
-  0010, 0013, 0014 and 0017 are each why the key is at v6 rather than v2; 0007, 0008, 0009, 0011,
-  0012 and 0016 add no `Tenants` column and correctly needed no bump.
+  0010, 0013, 0014, 0017 and 0018 are each why the key is at v7 rather than v2; 0007, 0008, 0009,
+  0011, 0012 and 0016 add no `Tenants` column and correctly needed no bump.
 - **No migration in this directory may contain a transaction statement** — no `BEGIN`, `COMMIT` or
   `SAVEPOINT`. Cloudflare D1's remote executor rejects explicit SQL transactions outright, and D1
   applies a `--file` execution atomically on its own. See 0011 below, which shipped a wrapper that
@@ -358,6 +358,28 @@ NOT EXISTS`). No `Tenants` column, so the KV tenant-config cache key needs **no*
   reverse order costs nothing: the columns sit unread until the worker that reads them ships.
   The file also opens with a **reserved-slug check to run before applying** (`billing` joins
   `RESERVED_SLUGS` on this branch); it changes no data either way.
+
+- **`0018_plan_comp.sql`** (`feat/plan-lapse`) — adds `Tenants.CompedUntil`: the instant the
+  platform owner has declared a business paid up through WITHOUT her paying, set and cleared by hand
+  from the owner console (`applyOwnerSwitches`) and set to the trial by signup
+  (`createTenantFromSignup`) — the two writers, and billing is neither. Additive only (one
+  `ALTER TABLE … ADD COLUMN`) and **no DEFAULT** — every existing row reads NULL, NULL is false on
+  every clause of `isPlanCurrent`, so applying this file moves nobody's plan state. **A second
+  column rather than a hand-set `BilledUntil`**, because that one is bounded by a 400-day ceiling
+  written as the containment on a leaked shared secret (which would refuse a legitimate two-year
+  comp) and is ASSIGNED unconditionally by `applyBillingEvent` (so the next invoice would overwrite
+  a comp). It DOES add a `Tenants` column the request path reads, so the KV tenant-config cache key
+  moves to **v7** in the same commit. **No `SchemaMeta` marker**, for 0017's reason: purely
+  additive, a second run fails loudly on `duplicate column name`, and `PRAGMA table_info(Tenants)`
+  answers "has it run?" without one. It contains no `BEGIN`/`COMMIT`/`SAVEPOINT` (D1 rejects them —
+  see 0011).
+  **NOT YET APPLIED to the remote DB** — hand-apply before this branch merges:
+  `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0018_plan_comp.sql`.
+  **MIGRATE FIRST, THEN DEPLOY**, for the reason 0017's entry gives: `TENANT_COLS`
+  (`server/db/repo.ts`) selects this column, every tenant resolution runs that `SELECT`, and a
+  worker deployed against an un-migrated database answers `no such column` on every request.
+  **AND DEPLOY WITH `PLAN_ENFORCE` UNSET** — see README's _Plans and billing_ for the comp sweep
+  and the pre-flip check, which are the two steps between this file and a read-only dashboard.
 
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,

@@ -248,6 +248,133 @@ describe('owner sitter routes', () => {
     expect(b?.premiumUntil).toBeNull();
   });
 
+  it('publishes the plan, both dates and the server’s planCurrent on every roster row', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    raw.exec(
+      "UPDATE Tenants SET Plan = 'solo', BilledUntil = '2099-01-01 00:00:00' WHERE Id = 't_a';",
+    );
+    raw.exec("UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = 't_b';");
+
+    const res = await app.request(
+      '/api/owner/sitters?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sitters: {
+        tenantId: string;
+        plan: string | null;
+        billedUntil: string | null;
+        compedUntil: string | null;
+        planCurrent: boolean;
+      }[];
+    };
+    const a = body.sitters.find((s) => s.tenantId === 't_a');
+    const b = body.sitters.find((s) => s.tenantId === 't_b');
+    // FR-63's "an owner who can see why": columns of this product's own database, all derived or
+    // verbatim. No amount, no invoice, no subscription id. The CUSTOMER id IS published — to the
+    // owner, on the owner console only — because it is the key to the Stripe Dashboard page where
+    // "why" actually lives, and the owner has that dashboard already; the subscription id and the
+    // endpoint's own ordering stamp stay off. (This pin used to forbid the customer id too; that
+    // half is replaced, deliberately, by the link case below.)
+    expect(a).toMatchObject({
+      plan: 'solo',
+      billedUntil: '2099-01-01 00:00:00',
+      compedUntil: null,
+      compActive: false,
+      planCurrent: true,
+      stripeCustomerId: null,
+    });
+    expect(b).toMatchObject({
+      plan: null,
+      billedUntil: null,
+      compedUntil: '2099-01-01 00:00:00',
+      compActive: true,
+      planCurrent: true,
+      stripeCustomerId: null,
+    });
+    for (const row of body.sitters) {
+      for (const forbidden of ['stripeSubscriptionId', 'lastBillingEventAt']) {
+        expect(forbidden in row).toBe(false);
+      }
+    }
+  });
+
+  it('publishes compActive from the server, false for a past comp and for a disabled one', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    // t_a: comp ran out. t_b: comp live but the account is switched off.
+    raw.exec("UPDATE Tenants SET CompedUntil = '2000-01-01 00:00:00' WHERE Id = 't_a';");
+    raw.exec(
+      "UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00', DisabledAt = '2026-07-23 00:00:00' WHERE Id = 't_b';",
+    );
+    const res = await app.request(
+      '/api/owner/sitters?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    const body = (await res.json()) as {
+      sitters: { tenantId: string; compedUntil: string | null; compActive: boolean }[];
+    };
+    // The date is on both rows; the grant is on neither. A chip lit from `compedUntil != null`
+    // alone would light both.
+    expect(body.sitters.find((s) => s.tenantId === 't_a')).toMatchObject({
+      compedUntil: '2000-01-01 00:00:00',
+      compActive: false,
+    });
+    expect(body.sitters.find((s) => s.tenantId === 't_b')).toMatchObject({
+      compedUntil: '2099-01-01 00:00:00',
+      compActive: false,
+    });
+  });
+
+  it('publishes the customer id verbatim on the roster, and only to the owner', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    raw.exec("UPDATE Tenants SET StripeCustomerId = 'cus_alpha' WHERE Id = 't_a';");
+    const res = await app.request(
+      '/api/owner/sitters?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    const body = (await res.json()) as {
+      sitters: { tenantId: string; stripeCustomerId: string | null }[];
+    };
+    expect(body.sitters.find((s) => s.tenantId === 't_a')?.stripeCustomerId).toBe('cus_alpha');
+    expect(body.sitters.find((s) => s.tenantId === 't_b')?.stripeCustomerId).toBeNull();
+    // An admin credential cannot read the roster at all (the ISOLATION case below), so "only to
+    // the owner" is the route's own gate; pinned here on the one row an admin could otherwise
+    // reach through her own settings read, which withholds nothing new by this change.
+  });
+
+  it('publishes the same four on the per-sitter detail read', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    raw.exec("UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = 't_a';");
+
+    const res = await app.request(
+      '/api/owner/sitters/t_a?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+    // Both surfaces or neither: the console's roster and its drill-down must not disagree about who
+    // is on what, which is why the four fields are added to the two reads in one commit.
+    expect(await res.json()).toMatchObject({
+      plan: null,
+      billedUntil: null,
+      compedUntil: '2099-01-01 00:00:00',
+      compActive: true,
+      planCurrent: true,
+    });
+  });
+
   it('window=30d narrows bookings/earned vs all, while clients stay all-time', async () => {
     const { env, raw } = createTestEnv();
     seedWindowed(raw);
@@ -369,6 +496,11 @@ describe('the owner console does not re-derive entitlement in the browser', () =
   /** Comments stripped: the chip's own docblock names the derivation it replaced, and a probe that
    *  deleted the code and left that docblock behind survived this test once already. */
   const SOURCE = liveSource(RAW, { keepLiterals: true });
+  /** The same live source with every run of whitespace collapsed, so a pin can name a chip's whole
+   *  shape — gate AND element — in one readable string instead of carrying prettier's indentation
+   *  around. `{s.compedUntil != null && (` alone is NOT that shape: the comp editor's Clear button
+   *  is gated on the same expression, so the gate by itself survives the chip being deleted. */
+  const FLAT = SOURCE.replace(/\s+/g, ' ');
 
   it('renders the Premium chip from the server flag, not from a date comparison', () => {
     expect(SOURCE).toContain('s.premiumActive');
@@ -385,5 +517,96 @@ describe('the owner console does not re-derive entitlement in the browser', () =
     expect(SOURCE).not.toContain('On a paid plan');
     expect(SOURCE).toContain('Owner comp set to');
     expect(SOURCE).toContain('No owner comp set');
+  });
+
+  /**
+   * ONE CHIP PER GRANT SOURCE, and each pin names that chip's own shape rather than a word that
+   * occurs somewhere in the file. The first version of this pin asserted `'s.planCurrent'` and
+   * `'Basic'` independently — both of which survive the chip being deleted outright, because the
+   * comp editor's aria-label says "Basic comp" and `s.planCurrent` would live on in any other use.
+   * The Premium pin above pins both halves of its chip; these do the same, and each was proved by
+   * deleting its chip and watching exactly this test go red.
+   */
+  it('labels the plan chip from the plan COLUMN, never a tier inferred from a boolean', () => {
+    // `isPlanCurrent` is billed OR comped OR premium-comped and its own docblock calls itself
+    // TIER-BLIND, so a chip labelled from it told a paying Pro sitter she was on Basic. Which tier
+    // she is on is a column; the label is a lookup on that column's own value.
+    expect(FLAT).toContain('{s.plan && ( <span');
+    expect(FLAT).toContain('{PLAN_NAMES[s.plan]}');
+    expect(FLAT).toContain('`Paid through ${s.billedUntil}`');
+    // The retired shape: the tier-blind boolean may gate the LAPSE chip below, never a tier label.
+    expect(FLAT).not.toContain('{s.planCurrent && (');
+  });
+
+  it('renders the basic-comp chip only while the comp is CURRENT, on the server’s own boolean', () => {
+    // The date's presence AND the server's `compActive`: a comp that ran out in 2024 is a date on
+    // the row and not a grant, and a chip lit from the date alone told the owner a lapsed business
+    // was comped. No browser comparison — the AD-13 scanner walks this file for one.
+    expect(FLAT).toContain('{s.compedUntil != null && s.compActive && ( <span');
+    expect(FLAT).toContain('`Comped through ${s.compedUntil}`');
+    // The retired shape, so the boolean cannot be dropped back out of the gate.
+    expect(FLAT).not.toContain('{s.compedUntil != null && ( <span');
+  });
+
+  it('renders the Lapsed chip from the server’s planCurrent, and never beside Disabled', () => {
+    // The AD-13 scanner walks `app/` too, so a browser-side `CompedUntil > now` here is a red suite
+    // rather than a wrong chip — this pin is what keeps the POSITIVE half honest: the answer is
+    // fetched, not re-derived. `=== false` and not `!`: an older worker's payload has no such
+    // field, and `!undefined` would light every row Lapsed for the length of a deploy. And not
+    // beside Disabled — a switched-off account is not current by the shared early return, and the
+    // owner has one chip for that already.
+    expect(FLAT).toContain(
+      '{s.planCurrent === false && !s.disabled && ( <span className="pb-chip pb-chip-warn">Lapsed<',
+    );
+    expect(FLAT).not.toContain('{!s.planCurrent && (');
+  });
+
+  it('links the row to the Stripe Dashboard customer page when there is a customer', () => {
+    // FR-63's "an owner who can see why", with the seeing done where the facts are — on the
+    // processor's own page, which the owner already has access to. The link is the OWNER's, on the
+    // owner console only; nothing on a sitter's dashboard renders it. Built from the published id
+    // verbatim, and absent when there is none.
+    expect(FLAT).toContain('{s.stripeCustomerId && (');
+    expect(FLAT).toContain('href={`https://dashboard.stripe.com/customers/${s.stripeCustomerId}`}');
+    expect(FLAT).toContain('rel="noopener noreferrer"');
+  });
+
+  it('opens one editor at a time — starting one closes the others', () => {
+    // Three inline editors on one row (comp, premium, remove) and each replaced the row's actions
+    // when open; starting a second while the first was open left the first's state behind, so a
+    // Cancel on one could surface the other's half-typed date. Each start closes the other two.
+    expect(FLAT).toContain(
+      "const startCompEdit = (s: SitterRow) => { setDashError(''); cancelPremiumEdit(); cancelRemove();",
+    );
+    expect(FLAT).toContain(
+      "const startPremiumEdit = (s: SitterRow) => { setDashError(''); cancelCompEdit(); cancelRemove();",
+    );
+    expect(FLAT).toContain(
+      "const startRemove = (s: SitterRow) => { setDashError(''); cancelCompEdit(); cancelPremiumEdit();",
+    );
+  });
+
+  it('saves the comp through setSitterComped, which sends compedUntil — the whole chain', () => {
+    // MONEY. Swapping the comp editor's call to `setSitterPremium` grants the PAID tier from the
+    // basic-comp button, for free, and survived every test in the suite: nothing pinned which API
+    // call the editor makes. Both links of the chain, pinned on their own source — the console
+    // source that `saveComp` calls `setSitterComped` (and `clearComp` too), and the api module
+    // that `setSitterComped` puts `compedUntil` on the wire and not `premiumUntil`.
+    const save = /const saveComp = async \(s: SitterRow\) => \{[\s\S]*?\};/.exec(FLAT)?.[0] ?? '';
+    expect(save).toContain('await owner.setSitterComped(session.token, s.tenantId, compDateInput)');
+    expect(save).not.toContain('setSitterPremium');
+    const clear = /const clearComp = async \(s: SitterRow\) => \{[\s\S]*?\};/.exec(FLAT)?.[0] ?? '';
+    expect(clear).toContain('await owner.setSitterComped(session.token, s.tenantId, null)');
+    expect(clear).not.toContain('setSitterPremium');
+    const api = liveSource(
+      readFileSync(join(import.meta.dirname, '..', '..', 'app', 'shared-ui', 'api.ts'), 'utf8'),
+      { keepLiterals: true },
+    ).replace(/\s+/g, ' ');
+    const comped =
+      /setSitterComped: \(token: string, tenantId: string, compedUntil: string \| null\) =>[\s\S]*?\}\),/.exec(
+        api,
+      )?.[0] ?? '';
+    expect(comped).toContain('body: JSON.stringify({ compedUntil })');
+    expect(comped).not.toContain('premiumUntil');
   });
 });

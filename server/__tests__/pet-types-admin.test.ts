@@ -317,6 +317,7 @@ describe('settings GET/PUT — rows drive pet types', () => {
       userId: 'tu_fresh',
       email: ALLOWED_EMAIL,
       passwordHash: 'x',
+      compedUntil: '2099-01-01 00:00:00',
     });
     const settings = await getSettings(env, 'fresh-paws', 'tnt_fresh');
     expect(settings.petTypes).toEqual([

@@ -9,7 +9,7 @@ import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 /**
  * PLAN STATE ON THE READ THE DASHBOARD ALREADY MAKES (Story 10.3).
  *
- * Five fields on `GET /:slug/admin/settings` and no new route: this one is already authenticated,
+ * Six fields on `GET /:slug/admin/settings` and no new route: this one is already authenticated,
  * already tenant-scoped by the slug in its path, and already fetched once per dashboard load. A
  * second route for two fields is a second thing to authenticate, rate-limit, cache and contract.
  *
@@ -23,6 +23,8 @@ type PlanFields = {
   billedUntil: string | null;
   planActive: boolean;
   hasBillingAccount: boolean;
+  planCurrent: boolean;
+  planEnforced: boolean;
   stripeCustomerId?: string | null;
 };
 
@@ -50,6 +52,16 @@ function seedPlan(
   raw
     .prepare('UPDATE Tenants SET Plan = ?, BilledUntil = ?, StripeCustomerId = ? WHERE Id = ?')
     .run(row.plan, row.billedUntil, row.customerId, tenantId);
+}
+
+/** A basic comp written straight onto the row, the way the owner console would have. The column the
+ *  owner console owns and billing never writes. */
+function seedComp(
+  raw: ReturnType<typeof createTestEnv>['raw'],
+  tenantId: string,
+  compedUntil: string | null,
+): void {
+  raw.prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?').run(compedUntil, tenantId);
 }
 
 const settings = (env: Env, slug: string, credential: string) =>
@@ -236,8 +248,8 @@ describe('the settings read publishes the sitter’s own plan', () => {
 });
 
 describe('the settings PUT cannot write plan state', () => {
-  it('ignores all five plan fields in the body and leaves every column untouched', async () => {
-    // THE FIVE FIELDS ARE READ-ONLY ON THE WIRE, and that is a property of the WRITE path rather
+  it('ignores all seven plan fields in the body and leaves every column untouched', async () => {
+    // THE SEVEN FIELDS ARE READ-ONLY ON THE WIRE, and that is a property of the WRITE path rather
     // than of the client that happens to build its body field by field today. The settings PUT is
     // the one authenticated write a sitter's own dashboard makes against her tenant row, so if it
     // honoured these keys a sitter could grant herself a plan — or a paid-through date — with one
@@ -261,6 +273,12 @@ describe('the settings PUT cannot write plan state', () => {
           planActive: true,
           hasBillingAccount: true,
           stripeCustomerId: 'cus_attacker',
+          // The self-comp: a lapsed business granting herself the grant the owner console hands
+          // out, through the one write her own credential can make. Inert, or the gate is a
+          // suggestion.
+          compedUntil: minutesFromNow(60 * 24 * 365 * 50),
+          planCurrent: true,
+          planEnforced: false,
         }),
       },
       env,
@@ -270,19 +288,26 @@ describe('the settings PUT cannot write plan state', () => {
     expect(res.status).toBe(204);
 
     const row = raw
-      .prepare('SELECT Plan, BilledUntil, StripeCustomerId FROM Tenants WHERE Id = ?')
+      .prepare('SELECT Plan, BilledUntil, CompedUntil, StripeCustomerId FROM Tenants WHERE Id = ?')
       .get(TENANT_A) as {
       Plan: string | null;
       BilledUntil: string | null;
+      CompedUntil: string | null;
       StripeCustomerId: string | null;
     };
-    expect(row).toEqual({ Plan: 'solo', BilledUntil: paidThrough, StripeCustomerId: 'cus_sunny' });
+    expect(row).toEqual({
+      Plan: 'solo',
+      BilledUntil: paidThrough,
+      CompedUntil: null,
+      StripeCustomerId: 'cus_sunny',
+    });
 
     // And the read still answers the seeded plan, not the one the body asked for.
     const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
     expect(body.plan).toBe('solo');
     expect(body.billedUntil).toBe(paidThrough);
     expect(body.stripeCustomerId).toBe('cus_sunny');
+    expect(body.planEnforced).toBe(false);
   });
 });
 
@@ -354,5 +379,123 @@ describe('two tenants, because a cross-tenant read looks completely ordinary doi
     expect(JSON.parse(hersBody).billedUntil).toBe(happyBilledUntil);
     expect(hersBody).not.toContain('cus_sunny_only');
     expect(hersBody).not.toContain(sunnyBilledUntil);
+  });
+});
+
+describe('the settings read publishes whether her plan is current', () => {
+  it('says true for a comped business who is not paying, and offers her Subscribe still', async () => {
+    const { env, raw } = createTestEnv();
+    seedComp(raw, TENANT_A, minutesFromNow(60));
+
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.planCurrent).toBe(true);
+    // TWO DIFFERENT QUESTIONS, both published deliberately. She holds a current plan and she holds
+    // no subscription, so the banner stays down and the Subscribe control stays up.
+    expect(body.planActive).toBe(false);
+    expect(body.plan).toBeNull();
+    expect(body.hasBillingAccount).toBe(false);
+  });
+
+  it('says true for a paying business and false for one whose subscription lapsed', async () => {
+    const { env: live, raw: rawLive } = createTestEnv();
+    seedPlan(rawLive, TENANT_A, {
+      plan: 'solo',
+      billedUntil: minutesFromNow(60),
+      customerId: 'cus_sunny',
+    });
+    expect((await read(live, SLUG[TENANT_A], await adminToken(TENANT_A))).planCurrent).toBe(true);
+
+    const { env: lapsed, raw: rawLapsed } = createTestEnv();
+    seedPlan(rawLapsed, TENANT_A, {
+      plan: 'solo',
+      billedUntil: minutesFromNow(-60),
+      customerId: 'cus_sunny',
+    });
+    const body = await read(lapsed, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.planCurrent).toBe(false);
+    // And her billing account survives the lapse, which is what keeps Manage plan on screen for
+    // the business whose card died.
+    expect(body.hasBillingAccount).toBe(true);
+  });
+
+  it('says true for a business comped on the PAID tier, holding no subscription at all', async () => {
+    const { env, raw } = createTestEnv();
+    // `PremiumUntil` ALONE — the owner console's other comp, and the fourth grant source this
+    // route can be reached through. It is in `isPlanCurrent` deliberately: were the rule written
+    // as `!isSoloActive`, this business would be told her dashboard is read-only while the paid
+    // assistant her comp bought kept writing to it through her own forwarded credential. Seeded
+    // through a raw UPDATE because no plan column is involved at all.
+    raw
+      .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
+      .run(minutesFromNow(60), TENANT_A);
+
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.planCurrent).toBe(true);
+    // And every field that describes a SUBSCRIPTION still says she has none, so she is offered
+    // Subscribe exactly as the basic-comp case above is.
+    expect(body.planActive).toBe(false);
+    expect(body.plan).toBeNull();
+    expect(body.billedUntil).toBeNull();
+    expect(body.hasBillingAccount).toBe(false);
+  });
+
+  it('says false for a disabled business, however far ahead every date is', async () => {
+    const { env, raw } = createTestEnv();
+    seedPlan(raw, TENANT_A, {
+      plan: 'pro',
+      billedUntil: minutesFromNow(60 * 24 * 365),
+      customerId: 'cus_sunny',
+    });
+    seedComp(raw, TENANT_A, minutesFromNow(60 * 24 * 365));
+    raw.prepare(`UPDATE Tenants SET DisabledAt = datetime('now') WHERE Id = ?`).run(TENANT_A);
+
+    // A GET still reads for a disabled business — that is `tenantMiddleware`'s deliberate
+    // allowance — so this is a 200 with a false, not a refusal. The dashboard's own disabled
+    // banner is what she sees, and the lapse banner must not stack under it.
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.planCurrent).toBe(false);
+  });
+
+  it('goes to a pawsa_ token as well as to a password session', async () => {
+    const { env, raw } = createTestEnv();
+    seedComp(raw, TENANT_A, minutesFromNow(60));
+    const token = await mintTenantToken(env, TENANT_A, 'tu_sunny');
+
+    // UNLIKE `stripeCustomerId`, which is withheld from a token by policy. This is not a processor
+    // identifier — it is the business's own state, told to her own admin — and a client that could
+    // not see it would discover the refusal by being refused.
+    const body = await read(env, SLUG[TENANT_A], token);
+    expect(body.planCurrent).toBe(true);
+    expect('stripeCustomerId' in body).toBe(false);
+  });
+
+  it('answers each business her own, because a cross-tenant read looks ordinary doing it', async () => {
+    const { env, raw } = createTestEnv();
+    seedComp(raw, TENANT_A, minutesFromNow(60));
+    // B gets nothing at all, which is the state every row in the book is in today.
+    const a = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    const b = await read(env, SLUG[TENANT_B], await adminToken(TENANT_B));
+    expect(a.planCurrent).toBe(true);
+    expect(b.planCurrent).toBe(false);
+  });
+
+  it('publishes whether the DEPLOYMENT is enforcing, beside it and not folded into it', async () => {
+    // `planCurrent` is the tenant's state and must stay one thing. But the banner that reads it
+    // says "your dashboard is read-only", and on the shipped default — `PLAN_ENFORCE` unset — every
+    // save succeeds; a sentence about a refusal that does not happen is a sentence nobody believes
+    // the day it is true. So the deployment's half is published as its own field, `planEnforced`,
+    // and the banner requires both. Same value to both credentials: it is a fact about the
+    // deployment, not about her.
+    const { env } = createTestEnv(); // no grant, so planCurrent is false either way
+    const dark = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(dark.planCurrent).toBe(false);
+    expect(dark.planEnforced).toBe(false);
+    const enforcing = { ...env, PLAN_ENFORCE: 'true' } as Env;
+    const lit = await read(enforcing, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(lit.planCurrent).toBe(false);
+    expect(lit.planEnforced).toBe(true);
+    // And through a `pawsa_` token, as `planCurrent` is.
+    const token = await mintTenantToken(env, TENANT_A, 'tu_sunny');
+    expect((await read(enforcing, SLUG[TENANT_A], token)).planEnforced).toBe(true);
   });
 });

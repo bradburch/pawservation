@@ -34,6 +34,11 @@ type AddResult = {
   prototypeLink?: string;
 };
 
+/** The plan column's own two values, spelled for a human. The SAME map `PlanPanel` renders the
+ *  sitter's own plan from — a label, never a rule: the chip is gated on the column being set and
+ *  says only what the column says. */
+const PLAN_NAMES: Record<'solo' | 'pro', string> = { solo: 'Solo', pro: 'Pro' };
+
 const WINDOW_OPTIONS: { key: SitterWindow; label: string }[] = [
   { key: '30d', label: '30 days' },
   { key: '90d', label: '90 days' },
@@ -176,6 +181,11 @@ export function OwnerConsole({
   // The row currently mid premium-date edit; its inline date input replaces the row's actions.
   const [premiumEditId, setPremiumEditId] = useState<string | null>(null);
   const [premiumDateInput, setPremiumDateInput] = useState('');
+  // The row currently mid BASIC-comp edit. A second piece of state rather than one shared with the
+  // premium editor: two comps, two columns, and one date input serving both would make "which am I
+  // editing" a thing the reader has to hold in their head.
+  const [compEditId, setCompEditId] = useState<string | null>(null);
+  const [compDateInput, setCompDateInput] = useState('');
 
   const toggleDisabled = async (s: SitterRow) => {
     if (busyId) return;
@@ -191,8 +201,14 @@ export function OwnerConsole({
     }
   };
 
+  // ONE EDITOR OPEN AT A TIME. Three inline editors share a row's action cell (comp, premium,
+  // remove) and each replaced the actions when open; starting a second while the first was open
+  // left the first's state behind, so a Cancel on one could surface the other's half-typed date.
+  // Each start closes the other two first.
   const startPremiumEdit = (s: SitterRow) => {
     setDashError('');
+    cancelCompEdit();
+    cancelRemove();
     setPremiumEditId(s.tenantId);
     // premiumUntil is stored as 'YYYY-MM-DD HH:MM:SS'; <input type="date"> needs just the date part.
     // Truncation risk: if PremiumUntil ever carries a non-midnight time (only reachable via a
@@ -237,8 +253,55 @@ export function OwnerConsole({
     }
   };
 
+  const startCompEdit = (s: SitterRow) => {
+    setDashError('');
+    cancelPremiumEdit();
+    cancelRemove();
+    setCompEditId(s.tenantId);
+    // Same truncation caveat as the premium editor above: `<input type="date">` holds a date and
+    // the column holds an instant, so pressing Save with no change re-submits midnight.
+    setCompDateInput(s.compedUntil ? s.compedUntil.slice(0, 10) : '');
+  };
+
+  const cancelCompEdit = () => {
+    setCompEditId(null);
+    setCompDateInput('');
+  };
+
+  const saveComp = async (s: SitterRow) => {
+    if (busyId || !compDateInput) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterComped(session.token, s.tenantId, compDateInput);
+      cancelCompEdit();
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const clearComp = async (s: SitterRow) => {
+    if (busyId) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterComped(session.token, s.tenantId, null);
+      cancelCompEdit();
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const startRemove = (s: SitterRow) => {
     setDashError('');
+    cancelCompEdit();
+    cancelPremiumEdit();
     setRemovingId(s.tenantId);
     setRemoveInput('');
   };
@@ -517,9 +580,100 @@ export function OwnerConsole({
                                     Premium
                                   </span>
                                 )}
+                                {/* ONE CHIP PER GRANT SOURCE, never a tier inferred from a
+                                    boolean. The first version of this row read a single `Basic`
+                                    chip off `s.planCurrent` — but `isPlanCurrent`
+                                    (server/lib/premium.ts) is billed OR comped OR premium-comped
+                                    and its own docblock calls itself TIER-BLIND, so a paying Pro
+                                    sitter read "Basic" beside a tooltip denying she had one. Which
+                                    tier she is on is a COLUMN (`s.plan`), what she is comped
+                                    through is a COLUMN (`s.compedUntil`), and whether any of it is
+                                    still live is the SERVER's one expression (`s.planCurrent`).
+                                    Three facts, three chips, and the console compares no date to
+                                    decide any of them. */}
+                                {s.plan && (
+                                  <span
+                                    className="pb-chip"
+                                    title={
+                                      s.billedUntil
+                                        ? `Paid through ${s.billedUntil}`
+                                        : 'No paid-through date'
+                                    }
+                                  >
+                                    {PLAN_NAMES[s.plan]}
+                                  </span>
+                                )}
+                                {/* The date's presence AND the server's `compActive`: a comp that
+                                    ran out is a date on the row and not a grant, and a chip lit from
+                                    the date alone said "comped" of a lapsed business. The console
+                                    compares no date to decide it. */}
+                                {s.compedUntil != null && s.compActive && (
+                                  <span
+                                    className="pb-chip"
+                                    title={`Comped through ${s.compedUntil}`}
+                                  >
+                                    Basic comp
+                                  </span>
+                                )}
+                                {/* The lapse itself, so "why is her dashboard read-only" is answered
+                                    on the roster rather than inferred from the dates beside it. The
+                                    SERVER's answer again, and `=== false` rather than `!`: an older
+                                    worker's payload has no such field, and `!undefined` would light
+                                    every row Lapsed for the length of a deploy. Not beside Disabled
+                                    — a switched-off account is not current by the shared early
+                                    return, and the owner has one chip for that already. */}
+                                {s.planCurrent === false && !s.disabled && (
+                                  <span className="pb-chip pb-chip-warn">Lapsed</span>
+                                )}
+                                {/* FR-63's "an owner who can see why", with the seeing done where the
+                                    facts are: the customer's page in the Stripe Dashboard, which the
+                                    owner already has. The OWNER's link, on this console only. This is
+                                    the LIVE-mode dashboard URL; a test-mode `cus_` id opened here
+                                    relies on the Dashboard's own mode redirect, not on anything this
+                                    link does. */}
+                                {s.stripeCustomerId && (
+                                  <a
+                                    className="pb-chip"
+                                    href={`https://dashboard.stripe.com/customers/${s.stripeCustomerId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Stripe ↗
+                                  </a>
+                                )}
                               </td>
                               <td>
-                                {premiumEditId === s.tenantId ? (
+                                {compEditId === s.tenantId ? (
+                                  <span className="pb-row">
+                                    <input
+                                      type="date"
+                                      aria-label={`Basic comp until date for ${s.displayName}`}
+                                      title="Expires at the start of this date, UTC"
+                                      value={compDateInput}
+                                      onChange={(e) => setCompDateInput(e.target.value)}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId || !compDateInput}
+                                      onClick={() => void saveComp(s)}
+                                    >
+                                      {busyId === s.tenantId ? '…' : 'Save'}
+                                    </button>
+                                    {s.compedUntil != null && (
+                                      <button
+                                        type="button"
+                                        className="pb-danger"
+                                        disabled={busyId === s.tenantId}
+                                        onClick={() => void clearComp(s)}
+                                      >
+                                        Clear
+                                      </button>
+                                    )}
+                                    <button type="button" onClick={cancelCompEdit}>
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : premiumEditId === s.tenantId ? (
                                   <span className="pb-row">
                                     <input
                                       type="date"
@@ -592,6 +746,13 @@ export function OwnerConsole({
                                       onClick={() => startPremiumEdit(s)}
                                     >
                                       Premium…
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId}
+                                      onClick={() => startCompEdit(s)}
+                                    >
+                                      Comp basic…
                                     </button>
                                     <button
                                       type="button"

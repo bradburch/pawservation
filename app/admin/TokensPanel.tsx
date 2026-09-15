@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminApi, ApiError, isAuthExpired, type AdminAccessToken } from '../shared-ui/api.js';
-import { formatTimestamp, type Session } from './shared.js';
+import { formatTimestamp, writeFailureMessage, type Session } from './shared.js';
 
 const MAX_NAME_LENGTH = 80;
 
@@ -88,7 +88,10 @@ export function TokensPanel({
       await load();
     } catch (e) {
       if (isAuthExpired(e)) handleError(e);
-      else setCreateError(e instanceof Error ? e.message : 'Could not create a token. Try again.');
+      // `writeFailureMessage` rather than `e.message`: the plan gate refuses every non-GET under
+      // /admin/* with a bare `plan_lapsed`, and this sink reports beside the button rather than
+      // through the dashboard's router, so it is the one that would have printed the code.
+      else setCreateError(writeFailureMessage(e, 'Could not create a token. Try again.'));
     } finally {
       setCreating(false);
     }
@@ -126,7 +129,7 @@ export function TokensPanel({
         setConfirmingId(null);
         await load();
       } else {
-        setRevokeError(e instanceof Error ? e.message : 'Could not revoke that token. Try again.');
+        setRevokeError(writeFailureMessage(e, 'Could not revoke that token. Try again.'));
       }
     } finally {
       setRevokingId(null);

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runCalendarSweep } from '../lib/calendar-cron';
-import { insertBookingRequest, setProviderTokens } from '../db/repo';
+import { insertBookingRequest, listConnectedCalendarTenants, setProviderTokens } from '../db/repo';
+import { premiumNow } from '../lib/premium';
 import { encryptToken } from '../lib/token-crypto';
 import { addDays, getPacificDateStr, DEFAULT_TIMEZONE } from '../../src/shared/index.js';
 import { createTestEnv, TENANT_A, TEST_SECRET } from './helpers';
@@ -66,5 +67,66 @@ describe('runCalendarSweep — backfill for pre-existing rows', () => {
       .prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id = '${blockedId}'`)
       .get() as { GCalEventId: string | null };
     expect(after.GCalEventId).toMatch(/^evt_sweep_/);
+  });
+});
+
+/**
+ * THE SWEEP SKIPS A LAPSED BUSINESS, under enforcement only. The cron is the one writer of her
+ * calendar that needs no request from her at all, so a lapse that made her dashboard read-only and
+ * left the sweep pushing events to Google every fifteen minutes would be a lapse in name only.
+ * Through `repo.ts`, with the predicate applied IN CODE over the rows the SQL returns: the query
+ * itself compares no date, because `isPlanCurrent` is the one expression allowed to (AD-13).
+ */
+describe('runCalendarSweep — a lapsed business is not swept while the deployment enforces', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('lists a connected tenant while not enforcing, and drops her once enforcing finds no grant', async () => {
+    const { env, raw } = createTestEnv(); // TENANT_A holds no grant of any kind
+    await connectCalendar(env);
+    expect(
+      (await listConnectedCalendarTenants(env.PAWSERVATION_DB, false)).map((t) => t.Id),
+    ).toEqual([TENANT_A]);
+    expect(await listConnectedCalendarTenants(env.PAWSERVATION_DB, true)).toEqual([]);
+    // …and back in the list the moment she holds a comp, so the exclusion is the predicate and
+    // not the flag.
+    raw
+      .prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?')
+      .run(premiumNow(new Date(Date.now() + 3_600_000)), TENANT_A);
+    expect(
+      (await listConnectedCalendarTenants(env.PAWSERVATION_DB, true)).map((t) => t.Id),
+    ).toEqual([TENANT_A]);
+  });
+
+  it('makes no Google call for her under enforcement, and the same rows are swept when not', async () => {
+    const { env, raw } = createTestEnv();
+    await connectCalendar(env);
+    const blockedId = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'blocked',
+      startDate: addDays(TODAY, 5),
+      endDate: addDays(TODAY, 7),
+      optionKey: null,
+      petCount: 1,
+      estCost: null,
+      status: 'confirmed',
+    });
+    raw.exec(
+      `UPDATE BookingRequests SET SyncPending = 0, GCalEventId = NULL WHERE Id = '${blockedId}'`,
+    );
+    const google = mockGoogle();
+    await runCalendarSweep({ ...env, PLAN_ENFORCE: 'true' } as Env);
+    expect(google).not.toHaveBeenCalled();
+    const untouched = raw
+      .prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id = '${blockedId}'`)
+      .get() as { GCalEventId: string | null };
+    expect(untouched.GCalEventId).toBeNull();
+
+    // The control: the shipped default sweeps her exactly as before.
+    await runCalendarSweep(env);
+    expect(google).toHaveBeenCalled();
+    const swept = raw
+      .prepare(`SELECT GCalEventId FROM BookingRequests WHERE Id = '${blockedId}'`)
+      .get() as { GCalEventId: string | null };
+    expect(swept.GCalEventId).toMatch(/^evt_sweep_/);
   });
 });

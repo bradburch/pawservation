@@ -1,4 +1,5 @@
 import { listConnectedCalendarTenants } from '../db/repo';
+import { planEnforceEnabled } from './premium';
 import {
   backfillCalendarEvents,
   CALENDAR_SYNC_TTL_SECONDS,
@@ -28,7 +29,10 @@ import {
  * applied to the sibling row type.
  */
 export async function runCalendarSweep(env: Env): Promise<void> {
-  const tenants = await listConnectedCalendarTenants(env.PAWSERVATION_DB);
+  // A lapsed business is left out while the deployment enforces — the repo applies `isPlanCurrent`
+  // in code over the connected rows, and this is where the deployment's half of that question is
+  // read. Under the shipped default (`PLAN_ENFORCE` unset) the list is what it always was.
+  const tenants = await listConnectedCalendarTenants(env.PAWSERVATION_DB, planEnforceEnabled(env));
   for (const tenant of tenants) {
     try {
       await redriveCalendarOutbox(env, tenant);
