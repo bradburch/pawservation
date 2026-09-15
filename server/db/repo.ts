@@ -62,7 +62,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CalendarCostBasis, AttributionSpillDays';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -5848,7 +5848,11 @@ export type SitterRosterRow = {
   DisplayName: string;
   CreatedAt: string;
   DisabledAt: string | null; // null = active
-  PremiumUntil: string | null; // null = free
+  PremiumUntil: string | null; // null = no comp
+  /** 0017. Carried so `isPremiumActive` can answer for a roster row without a second copy of the
+   *  rule living in the console — the console used to re-derive it in the browser. */
+  Plan: 'solo' | 'pro' | null;
+  BilledUntil: string | null;
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
   // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
@@ -5881,6 +5885,8 @@ export async function listSitterRoster(
          t.CreatedAt AS CreatedAt,
          t.DisabledAt AS DisabledAt,
          t.PremiumUntil AS PremiumUntil,
+         t.Plan AS Plan,
+         t.BilledUntil AS BilledUntil,
          (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
@@ -5956,6 +5962,85 @@ export async function setTenantPremiumUntil(
   const result = await db
     .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
     .bind(until, tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Billing-scope: record what a subscription paid for (0017). Writes `Plan`, `BilledUntil`, the two
+ * processor ids and `LastBillingEventAt` in ONE statement, because a partially-applied billing write
+ * would advance the stamp past a date that was never stored — and the next event would then be
+ * ignored as stale, leaving the tenant permanently on a figure nobody sent.
+ *
+ * `PremiumUntil` IS NOT IN THIS STATEMENT AND MUST NEVER BE. It is the platform owner's manual
+ * grant, written only by `setTenantPremiumUntil`, and a comp surviving a renewal, a cancellation and
+ * a redelivery is exactly what that separation buys (FR-63, spine AD-13). Neither is `DisabledAt`,
+ * in either direction: a disabled tenant is written like any other, because refusing her is the
+ * route's job (`tenantMiddleware` answers 403 before the handler runs, and `isPremiumActive` is
+ * already false while she is disabled) and because what she paid for is what re-enabling restores.
+ *
+ * THE TWO GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same two decisions in
+ * order to report WHICH rule fired, but two redeliveries arriving at once would interleave a
+ * read-then-write; here they cannot.
+ *   - `LastBillingEventAt <= ?` — an event created STRICTLY BEFORE the last one applied does
+ *     nothing. Equality applies, deliberately: a processor emits several events for one action
+ *     inside a single second, and a rule that refused the ties threw away the ones carrying a
+ *     different payload. NFR-13 is bought by the SET semantics above instead — every column is
+ *     assigned, none is extended, so the identical request twice leaves a byte-identical row while
+ *     a genuinely different same-second event still lands.
+ *   - the subscription clause — an event for a subscription that is not this tenant's current one
+ *     does nothing, UNLESS `replacesSubscription` (a completed checkout), which is how a
+ *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
+ *     live plan.
+ *
+ * The two ids behave differently on purpose, so they are written as two clauses rather than one
+ * clever one: `StripeCustomerId` is `COALESCE`d, recorded on first sight and never overwritten,
+ * because a sitter is one customer forever; `StripeSubscriptionId` is assigned, because she may hold
+ * several over time and only one at a time is current.
+ *
+ * `billedUntil` and `eventAt` must ALREADY be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC) —
+ * `normalizeBilledUntil` / `normalizePremiumUntil` (server/lib/premium.ts) are the only places that
+ * shape is produced, so `BilledUntil > now` stays a comparison of like with like.
+ *
+ * Returns whether a row changed: `false` is "no such tenant, or a guard refused it", which the route
+ * distinguishes for its own answer — a caller whose own read said both rules were satisfied has been
+ * overtaken by a concurrent delivery. Caller must `invalidateTenantCache`.
+ */
+export async function applyBillingEvent(
+  db: D1Database,
+  tenantId: string,
+  event: {
+    plan: 'solo' | 'pro';
+    billedUntil: string;
+    stripeCustomerId: string;
+    stripeSubscriptionId: string;
+    eventAt: string;
+    replacesSubscription: boolean;
+  },
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE Tenants
+          SET Plan = ?,
+              BilledUntil = ?,
+              StripeCustomerId = COALESCE(StripeCustomerId, ?),
+              StripeSubscriptionId = ?,
+              LastBillingEventAt = ?
+        WHERE Id = ?
+          AND (LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
+          AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)`,
+    )
+    .bind(
+      event.plan,
+      event.billedUntil,
+      event.stripeCustomerId,
+      event.stripeSubscriptionId,
+      event.eventAt,
+      tenantId,
+      event.eventAt,
+      event.replacesSubscription ? 1 : 0,
+      event.stripeSubscriptionId,
+    )
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
 }

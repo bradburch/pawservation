@@ -19,6 +19,7 @@ import { accountsRoutes } from './routes/accounts';
 import { adminRoutes } from './routes/admin';
 import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
+import { billingRoutes } from './routes/billing';
 import { bookingRoutes } from './routes/bookings';
 import { inviteRequestRoutes } from './routes/invite-request';
 import { oauthRoutes } from './routes/oauth';
@@ -97,6 +98,14 @@ app.route('/api', publicRoutes);
 app.route('/api', authRoutes);
 app.route('/api', bookingRoutes);
 app.route('/api', tokenRoutes); // /api/:slug/tokens — the customer's own API credentials
+// BEFORE adminRoutes, and that is not cosmetic. `adminRoutes` does .use('/:slug/admin/*', adminAuth)
+// and Hono FLATTENS .use() patterns across every app mounted at the same base, so
+// /api/:slug/admin/billing/events is inside that pattern. Handlers compose in registration order and
+// a .post() that returns a Response ends the chain — so registering billing first is what keeps a
+// shared-secret request from being 401'd by a session gate it carries no session for. Moving this
+// line below the next one is caught by the mount-order test in
+// server/__tests__/billing-endpoint.test.ts.
+app.route('/api', billingRoutes); // /api/:slug/admin/billing/events — shared-secret, no session
 app.route('/api', adminRoutes);
 app.route('/api', accountsRoutes);
 app.route('/api', tenantTokenRoutes); // /api/:slug/admin/tokens — the sitter's own API credentials

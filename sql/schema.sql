@@ -49,6 +49,33 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- and not a boolean: a boolean needs a job to flip it and is wrong for as long as that job is
   -- late. The free product stores this and publishes one derived flag; it gates nothing itself.
   PremiumUntil TEXT,
+  -- >>> 0017 plan billing (migrations/0017_plan_billing.sql). These five are fenced by the marker
+  -- pair because server/__tests__/migration-0017-plan-billing.test.ts builds a PRE-0017 database by
+  -- deleting everything between the markers and then applies the real migration file to it. That is
+  -- what keeps this block and that file from drifting, so keep the markers exactly as they are and
+  -- keep what is between them identical to the migration's ADD COLUMNs.
+  --
+  -- Which plan this sitter is on, written ONLY by POST /api/:slug/admin/billing/events. NULL = no
+  -- plan, which is what every tenant is until she subscribes. The CHECK is a second line of defence
+  -- behind the route's own valibot picklist, and it makes this file self-describing.
+  Plan TEXT CHECK (Plan IS NULL OR Plan IN ('solo', 'pro')),
+  -- Paid-through instant for the SUBSCRIPTION — the same fixed-width UTC shape PremiumUntil uses
+  -- ('YYYY-MM-DD HH:MM:SS'), for the same reason: entitlement is the string comparison
+  -- `BilledUntil > now`, so lexicographic order has to BE chronological order. A value stored as
+  -- '2027-01-01T00:00:00Z' sorts above a space-separated now ('T' > ' ') and grants access on the
+  -- strength of a separator character. `normalizeBilledUntil` (server/lib/premium.ts) is the one
+  -- place this column's values are produced.
+  BilledUntil TEXT,
+  -- The processor's own identifiers for this subscription. RECORDED, never interpreted: nothing in
+  -- this repo calls a processor or verifies a signature. The customer id is written once, on first
+  -- sight; the subscription id is replaced when a new checkout completes, which is how a
+  -- re-subscribe wins and a late cancellation for the old one cannot lower a live plan.
+  StripeCustomerId TEXT,
+  StripeSubscriptionId TEXT,
+  -- When the most recently APPLIED billing event was created, same stored shape. An event created
+  -- at or before this instant is ignored, which is the whole of what makes a redelivery a no-op.
+  LastBillingEventAt TEXT,
+  -- <<< 0017 plan billing
   -- How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
   -- 'total' = that figure is the whole charge for the stay; 'per-night' = it is a nightly rate and
   -- the backfill multiplies it by the stay's nights. A SINGLE-shaped service (a walk) has no

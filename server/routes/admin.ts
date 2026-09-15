@@ -811,6 +811,10 @@ function resolveServiceDescription(svc: ServiceBody, current: string | null): st
 }
 
 export const adminRoutes = new Hono<AppEnv>()
+  // Flattened across every app mounted at /api, so this pattern also covers routes declared in
+  // OTHER files — `/:slug/admin/billing/events` (routes/billing.ts) is inside it and stays out of
+  // this gate only by being registered first in server/index.ts. Adding an admin-shaped path that
+  // is not a session route means checking that mount order, not relaxing this line.
   .use('/:slug/admin/*', adminAuth)
 
   .get('/:slug/admin/settings', async (c) => {

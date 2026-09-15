@@ -27,6 +27,12 @@
   // `premiumOrigin()` returns null unless this is an absolute origin, and the flag it accompanies
   // is UX only — the paid tier does its own server-side entitlement check on every request — so a
   // wrong value here costs a surface that will not mount, never access that should not exist.
+  //
+  // PLAN_SUBSCRIBE is deliberately NOT set here. It is the switch for whether the dashboard offers
+  // a Subscribe control at all, published on /config as `pricing.subscribe`; UNSET MEANS OFF, and
+  // exactly the string "true" means on. PREMIUM_ORIGIN above is already set in production, so a
+  // plan panel gated on the origin alone would show every sitter a button that 404s until the
+  // billing worker's checkout route is live. Add `"PLAN_SUBSCRIBE": "true"` here when it is.
   "vars": {
     "PREMIUM_ORIGIN": "https://pawservation.com",
   },

@@ -21,15 +21,31 @@ import type { AppEnv } from '../types';
  * login), /api/signup/* (invite signup), /api/owner/* (owner console), /api/password-reset/*
  * (password recovery). Tenants can never claim these as slugs — enforced again at signup-time
  * slug generation (routes/signup.ts).
+ *
+ * `billing` is the fifth, and it names the actual defect a reserved slug creates rather than a
+ * hypothetical one: `tenantMiddleware` calls `next()` for any reserved slug WITHOUT setting
+ * `tenant` on the context (below), so every handler mounted under a path a reserved word can reach
+ * runs with no tenant resolved and must guard `c.get('tenant')` itself before touching it —
+ * `adminAuth` already did, and `routes/billing.ts`'s handler does the same for exactly this reason.
+ * `billing` itself shadows no route today (the billing endpoint is
+ * `/api/:slug/admin/billing/events`, where `billing` is a later segment, so a tenant whose slug
+ * were `billing` would only ever own `/api/billing/admin/billing/events`), but it is reserved
+ * anyway and cheaply: it keeps a future `/api/billing/*` route from ever colliding with a sitter
+ * who already holds the word, without that route having to remember to guard `tenant` on its own.
  */
-export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner', 'password-reset']);
+export const RESERVED_SLUGS = new Set(['admin', 'signup', 'owner', 'password-reset', 'billing']);
+
+/** The body this middleware answers for a slug it cannot resolve. Exported so any route that has
+ *  to reproduce this exact 404 — `routes/billing.ts`'s refusal for a rejected billing secret is the
+ *  one today — imports the literal instead of retyping it, so the two can never drift apart. */
+export const UNKNOWN_TENANT = { error: 'Unknown tenant' } as const;
 
 /** Resolves the :slug param to a tenant (404 on unknown) and stores it on the context. */
 export const tenantMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const slug = c.req.param('slug');
   if (slug && RESERVED_SLUGS.has(slug)) return next(); // handled by non-slug-scoped routes
   const tenant = slug ? await resolveTenant(slug, c.env) : null;
-  if (!tenant) return c.json({ error: 'Unknown tenant' }, 404);
+  if (!tenant) return c.json(UNKNOWN_TENANT, 404);
   c.set('tenant', tenant);
   // Disabled sitter = read-only: GET requests pass (widget shows an "unavailable" card via the
   // config `disabled` flag; sitter dashboard renders read-only), every mutation is rejected here

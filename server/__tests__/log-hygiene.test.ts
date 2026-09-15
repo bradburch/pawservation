@@ -126,6 +126,41 @@ describe('credential refusals are reported, without reporting the credential', (
     expect(line).not.toContain('cafebabe');
     expect(line).not.toContain(await hashPersonalAccessToken(presented));
   });
+
+  it('warns when a billing secret is rejected, and never logs either value', async () => {
+    const { env } = createTestEnv();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const presented = 'billing-secret-guessed-abcdef123456';
+    const configured = { ...env, BILLING_SHARED_SECRET: 'billing-secret-real-987654321' } as Env;
+
+    const res = await app.request(
+      '/api/sunny-paws/admin/billing/events',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Billing-Secret': presented,
+          'CF-Ray': '2b2c3d4e5f60718a-LHR',
+        },
+        body: '{}',
+      },
+      configured,
+    );
+
+    expect(res.status).toBe(404);
+    const line = warn.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    expect(line).toContain('billing_secret_rejected');
+    // Diagnosable: which sitter, which route, which request.
+    expect(line).toContain('sunny-paws');
+    expect(line).toContain('/api/sunny-paws/admin/billing/events');
+    expect(line).toContain('2b2c3d4e5f60718a-LHR');
+    // And not a credential dump — neither the value presented nor the value configured, and no
+    // fragment of either. A "safe" eight characters of a secret is eight characters of a secret.
+    expect(line).not.toContain(presented);
+    expect(line).not.toContain('abcdef');
+    expect(line).not.toContain('billing-secret-real');
+    expect(line).not.toContain('987654');
+  });
 });
 
 /**

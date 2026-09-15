@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import {
   createTenantAccessToken,
+  getTenantById,
   insertBookingRequest,
   insertInvitedCustomer,
   listBookingsForUser,
@@ -188,5 +189,34 @@ describe('tenant isolation', () => {
     );
     expect(res.status).toBe(200);
     expect(((await res.json()) as { bookings: unknown[] }).bookings).toEqual([]);
+  });
+
+  it('a billing event for one sitter leaves every other sitter’s plan alone', async () => {
+    const { env } = createTestEnv();
+    const configured = { ...env, BILLING_SHARED_SECRET: 'billing-secret-0123456789' } as Env;
+    await app.request(
+      '/api/sunny-paws/admin/billing/events',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Billing-Secret': 'billing-secret-0123456789',
+        },
+        body: JSON.stringify({
+          eventType: 'checkout.session.completed',
+          plan: 'pro',
+          billedUntil: new Date(Date.now() + 31 * 86_400_000).toISOString(),
+          stripeCustomerId: 'cus_A',
+          stripeSubscriptionId: 'sub_A',
+          eventId: 'evt_1',
+          eventCreated: Math.floor(Date.now() / 1000),
+        }),
+      },
+      configured,
+    );
+    const b = (await getTenantById(env.PAWSERVATION_DB, TENANT_B))!;
+    expect(b.Plan).toBeNull();
+    expect(b.BilledUntil).toBeNull();
+    expect(b.StripeCustomerId).toBeNull();
   });
 });

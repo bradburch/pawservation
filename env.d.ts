@@ -30,6 +30,28 @@ interface Env {
    */
   OWNER_EMAILS?: string;
   /**
+   * Shared secret for `POST /api/:slug/admin/billing/events` (0017). Set with
+   * `wrangler secret put BILLING_SHARED_SECRET`; never a var, never in `wrangler.jsonc`, never in a
+   * log line. UNSET ⇒ the endpoint refuses everything, which is the correct behaviour for a
+   * deployment that sells nothing.
+   *
+   * What it grants, exactly: setting one named tenant's `Plan` and `BilledUntil` — i.e. free
+   * premium for that tenant. What it does not: it is not a session, it reads no booking, it mints no
+   * credential, and it cannot touch `PremiumUntil` or `DisabledAt`.
+   */
+  BILLING_SHARED_SECRET?: string;
+  /**
+   * The value being rotated OUT, accepted alongside the one above so a rotation is an ORDERED PAIR
+   * of deploys: set this to the old value here → the caller switches to the new one → delete this
+   * (`wrangler secret delete BILLING_SHARED_SECRET_PREVIOUS`). Unset in steady state.
+   *
+   * TWO NAMED BINDINGS rather than one comma-separated value, unlike `OWNER_EMAILS`: that is a list
+   * of identities whose length is genuinely open, this is a fixed pair with two roles — and a
+   * comma-separated secret makes a secret containing a comma unrepresentable and turns a
+   * trailing-space parse bug into a silent auth bypass.
+   */
+  BILLING_SHARED_SECRET_PREVIOUS?: string;
+  /**
    * Absolute origin (scheme + host, no path) of the separately-deployed premium surface, published
    * on `GET /api/:slug/config` as `premium.origin`. REQUIRED by any deployment that HAS such a
    * surface; unset ⇒ `premium.origin` is `null` and none is advertised (`premiumOrigin`,
@@ -41,6 +63,23 @@ interface Env {
    * that is not an absolute origin is refused exactly as unset is.
    */
   PREMIUM_ORIGIN?: string;
+  /**
+   * IS SELLING SWITCHED ON? A plain deployment var, published on `GET /api/:slug/config` as
+   * `pricing.subscribe`, and the only thing that puts a Subscribe control in a sitter's dashboard
+   * (`app/admin/PlanPanel.tsx`). Exactly `'true'` (trimmed, case-insensitive) is on; UNSET — the
+   * state every fork, every staging stack and this repo's own `wrangler.jsonc` are in — is OFF, and
+   * so is any other value.
+   *
+   * SEPARATE FROM `PREMIUM_ORIGIN` on purpose, and the pair is not redundant. The origin says a
+   * checkout worker exists to be reached and where; this says its checkout route is live. The
+   * origin is already set in production, so a panel gated on it alone would have shown every sitter
+   * a Subscribe button that 404s from the day the plan panel merged until Story 10.2 shipped.
+   * The operator sets this once that route answers.
+   *
+   * Not a secret, and it grants nothing: it decides whether a control is rendered, never whether a
+   * plan is honoured — that is `isPremiumActive` reading columns only the billing endpoint writes.
+   */
+  PLAN_SUBSCRIBE?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /**
