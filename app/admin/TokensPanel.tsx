@@ -1,33 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminApi, ApiError, isAuthExpired, type AdminAccessToken } from '../shared-ui/api.js';
-import type { Session } from './shared.js';
+import { formatTimestamp, type Session } from './shared.js';
 
 const MAX_NAME_LENGTH = 80;
-
-/** A trailing 'Z' or a '+HH:MM'/'-HH:MM' offset — the only two ways a stamp states its zone.
- *  Tested after the normalising below, so any space in front of an offset is already gone. */
-const ZONED = /(?:Z|[+-]\d{2}:\d{2})$/;
-
-/**
- * `TenantAccessTokens.CreatedAt`/`LastUsedAt` come off SQLite's `datetime('now')` as
- * "YYYY-MM-DD HH:MM:SS" UTC, no 'T' and no 'Z' — not something every engine parses the same way
- * unlabelled. Label it UTC ourselves before handing it to `Date`, and fall back to the raw string
- * rather than ever rendering "Invalid Date".
- *
- * The test is for a stated ZONE, not for a 'T'. "2026-09-07T12:00:00" carries a separator and no
- * zone at all, and JavaScript reads that one as LOCAL time — so keying on the 'T' would have left
- * exactly that shape unlabelled and shifted by the viewer's offset, which is the reading nobody
- * would notice was wrong.
- */
-function formatTimestamp(sqlDatetime: string): string {
-  // Only the date/time separator becomes a 'T'. A blanket `.replace(' ', 'T')` is the first space,
-  // which is the right one here — but a stamp can carry a SECOND space before its offset
-  // ("2026-09-07 12:00:00 +01:00"), and that one has to go away entirely rather than turn into
-  // anything, or `Date` reads the whole string as invalid and the sitter sees the raw text.
-  const withT = sqlDatetime.replace(/\s+(?=\d{2}:)/, 'T').replace(/\s+(?=[+-]\d{2}:\d{2}$)/, '');
-  const d = new Date(ZONED.test(withT) ? withT : `${withT}Z`);
-  return Number.isNaN(d.getTime()) ? sqlDatetime : d.toLocaleDateString();
-}
 
 /**
  * ACCESS TOKENS (0016): a sitter's own long-lived Bearer credential for the dashboard API, minted

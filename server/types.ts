@@ -480,9 +480,20 @@ export type AppEnv = {
     adminUserId: string;
     /** Which sitter-admin credential `adminAuth` accepted: the 8-hour password session token from
      *  POST /api/admin/login, or a tenant access token (0016). Routes must NOT branch on this —
-     *  both resolve to the same TenantUser and confer identical authority — with the single
-     *  exception of token management itself, which requires the password session so a leaked
-     *  token cannot mint its own replacement (`adminSessionOnly`). */
+     *  both resolve to the same TenantUser and confer identical authority — with TWO deliberate
+     *  exceptions and no others. Token management itself requires the password session so a leaked
+     *  token cannot mint its own replacement (`adminSessionOnly`). And the settings read withholds
+     *  ONE FIELD, `stripeCustomerId`, from a tenant access token (0017, `routes/admin.ts`) — that
+     *  is a field kept out of a long-lived credential by policy, not an authority difference: the
+     *  same route answers both credentials, with the same body, minus that key.
+     *
+     *  Withholding a field is the only shape a new exception SHOULD take, and a refusal belongs in
+     *  the middleware where `adminSessionOnly` puts it. One route refuses in its own handler
+     *  instead — the self-revoke DELETE (`routes/tenant-tokens.ts`), which answers 400 to a
+     *  password session on this flag — and it is the inverse case: it refuses the credential the
+     *  middleware exists to PREFER, for a route that is meaningless without a token to resolve. It
+     *  is recorded here rather than tidied because a rule with one unnamed exception reads as a rule
+     *  nobody follows. */
     adminCredential: 'password' | 'token';
     /** Set by adminAuth ONLY on the tenant-access-token branch: `TenantAccessTokens.Id` of the
      *  credential that was presented; unset for a password session. Read by exactly one route —

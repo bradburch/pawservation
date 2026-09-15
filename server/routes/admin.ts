@@ -121,6 +121,7 @@ import {
 } from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
 import { adminAuth } from '../lib/middleware';
+import { isSoloActive } from '../lib/premium';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
@@ -903,6 +904,41 @@ export const adminRoutes = new Hono<AppEnv>()
       templates: TEMPLATE_IDS.map((id) => ({ id, label: SERVICE_TEMPLATES[id].label })),
       blocked: blocked.map((b) => ({ id: b.Id, startDate: b.StartDate, endDate: b.EndDate })),
       calendar: calendarView(connections),
+      // HER OWN PLAN (0017), on the read the dashboard already makes. Five fields and no new
+      // route: this one is already authenticated, already scoped to the slug in its path, and
+      // already fetched once per dashboard load. `tenant` is `resolveTenant`'s row and TENANT_COLS
+      // already selects all FOUR columns these five fields are derived from — `Plan`,
+      // `BilledUntil`, `StripeCustomerId` and the `DisabledAt` that `isSoloActive` refuses on — so
+      // nothing here reads the database a second time.
+      plan: tenant.Plan,
+      // VERBATIM, in the stored 'YYYY-MM-DD HH:MM:SS' shape (server/lib/premium.ts). The panel
+      // renders it through the dashboard's own formatter; this route must not invent a second
+      // format, and nothing anywhere may DECIDE from it — that is what `planActive` is for.
+      billedUntil: tenant.BilledUntil,
+      // The DERIVED boolean, never a comparison: AD-13 puts the rule in one expression in one
+      // file, and `server/__tests__/premium-entitlement.test.ts` fails any line outside
+      // `server/lib/premium.ts` that compares either dated column.
+      planActive: isSoloActive(tenant),
+      // A NON-EMPTY STRING, not `!= null`. `''` is not a customer record — it is what a caller
+      // writing this column from an empty form field, a trimmed header or a `?? ''` default leaves
+      // behind — and reading it as "the processor knows her" hands the dashboard a Manage-plan
+      // control pointed at a customer that does not exist.
+      hasBillingAccount:
+        typeof tenant.StripeCustomerId === 'string' && tenant.StripeCustomerId.length > 0,
+      // PASSWORD SESSION ONLY, and OMITTED rather than nulled for a `pawsa_` token, so a consumer
+      // can tell "withheld by policy" from "no customer yet". The precedent is `adminSessionOnly`
+      // (server/lib/middleware.ts), already used to keep a token off the token-management routes;
+      // here the same rule costs one line rather than a second middleware. The customer id is the
+      // join key at the processor to a business's name, email and card — not a secret, and not
+      // public either — and a `pawsa_` token that could read it would widen every long-lived
+      // sitter credential in the product for nothing. THE REQUIREMENT IS ON THE CALLER, not a
+      // claim about one: anything that needs this field must present a password session, and what
+      // the consumer does to obtain one is its own business. (The sentence here used to assert how
+      // the caller authenticates, which is an internal of another codebase that this repo cannot
+      // see and must not describe.)
+      ...(c.get('adminCredential') === 'password'
+        ? { stripeCustomerId: tenant.StripeCustomerId }
+        : {}),
     });
   })
 

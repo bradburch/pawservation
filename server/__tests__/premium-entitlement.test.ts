@@ -379,6 +379,27 @@ describe('entitlement combines the comp and the plan in one expression', () => {
     expect(isSoloActive(stale)).toBe(false);
   });
 
+  it('is a STRICT `>` at the boundary, with the clock injected rather than raced', () => {
+    // PAID THROUGH THIS VERY INSTANT IS NOT LIVE, and this is the case that kills a `>` loosened to
+    // `>=`. Over the wire (`plan-settings.test.ts`) the same kill depends on the route re-reading the
+    // clock inside the same wall-clock second as the fixture, which is a coin toss on a slow machine;
+    // here `now` is an argument, so it fails every time. All three readings of the boundary are
+    // asserted, because the rule is two dated columns and a loosened operator would not announce
+    // which one it was loosened on.
+    const stamp = '2026-09-08 12:00:00';
+    const now = new Date('2026-09-08T12:00:00Z');
+    expect(isSoloActive(facts({ Plan: 'solo', BilledUntil: stamp }), now)).toBe(false);
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: stamp }), now)).toBe(false);
+    expect(isPremiumActive(facts({ PremiumUntil: stamp }), now)).toBe(false);
+
+    // One second further on, and every one of them is live — so the case is not green on a helper
+    // that simply always refuses.
+    const ahead = '2026-09-08 12:00:01';
+    expect(isSoloActive(facts({ Plan: 'solo', BilledUntil: ahead }), now)).toBe(true);
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: ahead }), now)).toBe(true);
+    expect(isPremiumActive(facts({ PremiumUntil: ahead }), now)).toBe(true);
+  });
+
   /**
    * WHY `normalizeBilledUntil` EXISTS, demonstrated rather than asserted in prose. The comparison is
    * a plain string `>`; an ISO instant sorts above a space-separated `now` on the separator alone
@@ -392,6 +413,28 @@ describe('entitlement combines the comp and the plan in one expression', () => {
     expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08 00:00:00' }), now)).toBe(
       false,
     );
+  });
+});
+
+/**
+ * AND THE SCAN SEES THE WHOLE FILE, which is a separate claim from "the regex is right" and was
+ * false for the biggest route file in the repo. `liveSource` used to strip comments with two regexes
+ * that knew nothing about string literals, so the quoted route pattern in `adminRoutes`' own
+ * `.use('/:slug/admin/*', adminAuth)` read as the start of a block comment and swallowed everything
+ * up to the next comment terminator anywhere below it — 880 lines, the whole settings handler
+ * included. A scanner reporting no offenders in text it never looked at is worse than no scanner,
+ * because it is also green.
+ */
+describe('the scanner reads the WHOLE of every file it walks', () => {
+  it('sees the settings handler in admin.ts, past the quoted route pattern above it', () => {
+    const code = liveSource(
+      readFileSync(join(import.meta.dirname, '..', 'routes', 'admin.ts'), 'utf8'),
+    );
+    // Every one of these is executable text in the plan block of the settings GET, a hundred lines
+    // below that `.use()`. All four were invisible.
+    for (const name of ['planActive', 'hasBillingAccount', 'billedUntil', 'StripeCustomerId']) {
+      expect(code, name).toContain(name);
+    }
   });
 });
 
@@ -470,6 +513,15 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
 
   it('would catch one — the scanner is not vacuously green', () => {
     expect(offends(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
+    // A QUOTED `/*` IS NOT A COMMENT, and this is the case that proves the scan reaches the file's
+    // second half at all. `.use('/:slug/admin/*', adminAuth)` (server/routes/admin.ts) used to open
+    // a pseudo-comment that ran to the next `*/` anywhere below it — 880 lines, the whole settings
+    // handler included — so a comparison injected after that line survived every test in the suite.
+    expect(
+      offends(`app.use('/:slug/admin/*', adminAuth);\nif (t.${BILLED} > premiumNow()) grant();`),
+    ).toBe(true);
+    // The same bug in its line-comment spelling: a `//` inside a string ends no line.
+    expect(offends(`const p = "a//b"; if (r.${COLUMN} > premiumNow()) grant();`)).toBe(true);
     expect(offends(`now < tenant.${COLUMN}`)).toBe(true);
     expect(offends(`row.${BILLED} > premiumNow()`)).toBe(true);
     expect(offends(`stamp <= t?.${BILLED}`)).toBe(true);

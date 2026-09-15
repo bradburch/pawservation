@@ -319,13 +319,47 @@ what guards the route instead of a session or an access token. `/config` publish
 `pricing` figures (`soloMonthly`, `proMonthly`, `proAnnual`, `trialDays`) for any surface that needs
 to state them, but never a tenant's own plan state — that stays behind an authenticated read.
 
-The admin dashboard's Business section shows a Subscribe control (`app/admin/PlanPanel.tsx`) gated
-on **two properties of the deployment**, and never on the tenant's own entitlement — which is false
-for exactly the sitter the control is for:
+That authenticated read is `GET /api/:slug/admin/settings`, which publishes five plan fields
+beside everything else the dashboard loads: `plan`, `billedUntil` (the stored instant, verbatim),
+`planActive` (`isSoloActive`'s answer, never a comparison — see below), `hasBillingAccount`, and
+`stripeCustomerId`. There is no second route: this one is already authenticated, already scoped to
+the slug in its path, and already fetched once per dashboard load. **`stripeCustomerId` goes only
+to a password session** and its key is _absent_ — not null — for a `pawsa_` tenant access token, so
+a consumer can tell "withheld by policy" from "no customer yet"; the other four are the tenant's
+own plan, told to the tenant's own admin. `StripeSubscriptionId` and `LastBillingEventAt` are **off
+THIS payload**: neither consumer needs them, and the second is the billing endpoint's own ordering
+state. Not off the wire altogether — `POST /api/:slug/admin/billing/events` echoes the subscription
+id it replaced as `replaced`, to the shared-secret caller that sent it and to nothing else.
+
+`isSoloActive` and `isPremiumActive` (`server/lib/premium.ts`) are the only expressions that
+compare `BilledUntil` or `PremiumUntil` to anything, and what keeps it that way is a scan with a
+stated reach: `server/__tests__/premium-entitlement.test.ts` walks every `.ts`/`.tsx` under
+**`server/` and `app/`** — test files included, `server/lib/premium.ts` alone exempt. Those two trees
+are every module that can read a tenant row or render one, which is why they are the two; `src/`,
+`test/` and `scripts/` are outside it, so "nowhere in the repo" is a claim about those two trees and
+not about every file in the checkout. The scan reads each file through `liveSource`
+(`server/__tests__/helpers/live-source.ts`), which strips comments and literals — so the prose in
+`repo.ts` and in the suite may quote the comparison while describing it, and a quoted route pattern
+can no longer blind the scan to the rest of a file. Anything that needs "is her plan live" calls the
+helper and publishes the boolean.
+
+The admin dashboard's Business section (`app/admin/PlanPanel.tsx`) shows three things on three
+different conditions.
+
+**Plan status renders unconditionally** — the plan, the paid-through date and live/lapsed, from the
+settings read above. An outage of the paid surface, an unset `PREMIUM_ORIGIN`, a deployment that
+has stopped selling and a lapsed subscription all still show it: every fact on that line is a
+column in this product's own database. It says nothing about entitlement.
+
+**Subscribe** is gated on **two properties of the deployment** plus one fact about her plan, and
+never on the tenant's own entitlement — which is false for exactly the sitter the control is for:
 
 - **`premium.origin`** — a checkout worker exists to be reached, and where.
 - **`pricing.subscribe`** — selling is switched on. This is the `PLAN_SUBSCRIBE` var
   (`wrangler.jsonc`), where **unset means off** and exactly the string `"true"` means on.
+- **`!planActive`** — she has no live plan. Deliberately **not** `!hasBillingAccount`:
+  `StripeCustomerId` is written once and never cleared, so a sitter who cancelled keeps a billing
+  account for good, and gating on it hid Subscribe from the one sitter who wanted to press it.
 
 **Leave `PLAN_SUBSCRIBE` unset until the billing worker's checkout route is live**, then set it and
 deploy. `PREMIUM_ORIGIN` is already set in production, so a panel gated on the origin alone would
@@ -333,14 +367,65 @@ put a Subscribe button in front of every sitter that 404s on every press. The fl
 operator's switch for "we are selling now", and it grants nothing: it decides whether a control
 renders, never whether a plan is honoured.
 
-A disabled sitter is never shown the panel at all — her account cannot take a booking, so asking
-her for a card would be worse than showing nothing.
+A disabled sitter gets **neither control** — her account cannot take a booking, so asking her for a
+card would be worse than showing nothing, and there is nothing she could usefully do in a portal
+either. She sees her plan's name and one line saying the account is switched off; no paid-through
+date and no live/lapsed word, because neither means anything while the account is off. The
+`disabled` flag both gates read comes from the settings payload, the same source as the dashboard's
+own disabled banner — it is in hand before the panel paints, so no control flashes on for her while
+a `/config` request is in flight.
+
+**Manage plan** is gated on `premium.origin`, `hasBillingAccount` and a tenant that is switched on,
+and on neither of the deployment's other two flags: a sitter who already pays must be able to
+change her card and cancel after a deployment stops selling, so it is not gated on
+`pricing.subscribe`. **It is deliberately NOT gated on `planActive`.** A lapsed plan is very often
+a subscription in the processor's dunning — still alive, still retrying — and the hosted portal is
+the only place she can put a working card on it, so `planActive` here shut her out of the fix at
+the moment she needed it. `hasBillingAccount` is the question that matches the control: is there an
+account at the processor to open at all. It `POST`s to
+`<premium.origin>/premium/billing/<slug>/portal` with the admin Bearer and no body, and navigates
+the top-level window to the `url` it gets back — a `fetch` and never an anchor, because an anchor
+carries no `Authorization` header.
+
+**The two controls are not one flag negated**, so which of them a sitter sees falls out of the
+pair of questions they ask:
+
+| Her state                                           | Subscribe | Manage plan |
+| --------------------------------------------------- | --------- | ----------- |
+| Never subscribed — no billing account, no live plan | yes       | no          |
+| Live plan                                           | no        | yes         |
+| **Lapsed, with a billing account**                  | yes       | **yes**     |
+| Cancelled but still in the paid-through window      | no        | yes         |
+| Switched off (disabled)                             | no        | no          |
+
+The lapsed-with-an-account row is the only state that shows both, and it shows one extra line
+beneath them saying which is which — fix a card or read an invoice under Manage plan, start again
+under Subscribe. A paying sitter is still never offered a second subscription (`planActive` is
+plain on the Subscribe side and appears in neither Manage condition); that is the UI half of the
+double-subscription question, and the other half is a server-side refusal on the checkout route,
+because a UI is not a guard.
+
+Where no origin is published, the status line renders alone with one sentence saying plan changes
+are unavailable — shown on `configLoaded && hasBillingAccount && origin === null`, so it tracks the
+Manage control exactly, minus the origin, and never reaches a sitter who has no billing account to
+manage. It waits for the `/config` read to FINISH rather than to succeed: a read that failed is one
+of the states the sentence is true for.
+
+The panel states no price, trial length, invoice, cancellation term or refund position of its own:
+the figures come from `/config` and the terms belong on the terms page. It knows an **origin** it
+was published and two path templates on it, and nothing else about whatever serves them.
 
 `BILLING_SHARED_SECRET` is **one value held identically on two workers**: this one, which checks
 it, and the billing worker, which presents it on every event. Rotating it is therefore an ordered
 pair of deploys, which is what `BILLING_SHARED_SECRET_PREVIOUS` exists for — set the outgoing value
 there, switch the caller to the new one, then delete it. Neither value ever appears in a log line.
 Applying `0017` before deploying this worker is not optional; see "Deploying" above.
+
+**This half deploys first**, and the requirement is stated as one on the CALLER rather than as a
+claim about its internals, which this repo cannot see. Whatever serves the two paths on
+`premium.origin` reads those five plan fields from `GET /api/:slug/admin/settings`, so it must not be
+deployed before this worker publishes them, and it must fail closed — not guess — on a settings read
+that does not carry them. The order is: apply `0017`, deploy this worker, then that surface.
 
 ## Provisioning the first sitter
 
