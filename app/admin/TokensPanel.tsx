@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  adminApi,
-  ApiError,
-  isAuthExpired,
-  writeFailureMessage,
-  type AdminAccessToken,
-} from '../shared-ui/api.js';
-import { formatTimestamp, type Session } from './shared.js';
+import { adminApi, ApiError, isAuthExpired, type AdminAccessToken } from '../shared-ui/api.js';
+import { formatTimestamp, writeFailureMessage, type Session } from './shared.js';
 
 const MAX_NAME_LENGTH = 80;
 

@@ -5,7 +5,7 @@ import type {
   ServiceOption,
   ServiceQuestion,
 } from '../../src/shared/index.js';
-import { request, type AdminBooking } from '../shared-ui/api.js';
+import { isPlanLapsed, request, type AdminBooking } from '../shared-ui/api.js';
 
 /** Sitter-dashboard session. `role` mirrors the server's login/session responses. */
 export type Session = { token: string; role: 'admin'; slug: string; displayName: string };
@@ -118,12 +118,19 @@ export type Settings = {
    * comped business holds a current plan and no subscription, so she is offered Subscribe and shown
    * no banner.
    *
-   * THE TENANT'S STATE, NOT THE GATE'S ANSWER. Whether this deployment enforces the plan is a
-   * separate fact the dashboard is never told, so between a deploy and the platform owner finishing
-   * his comp sweep this reads false while nothing is actually refused. The banner is early rather
-   * than wrong, and the server's own non-GET guard is the enforcement either way.
+   * THE TENANT'S STATE, NOT THE GATE'S ANSWER. Whether this deployment enforces the plan is the
+   * separate fact `planEnforced` below carries, so between a deploy and the platform owner finishing
+   * his comp sweep this reads false while nothing is actually refused — and the banner, which
+   * requires both, stays down. The server's own non-GET guard is the enforcement either way.
    */
   planCurrent: boolean;
+  /**
+   * Whether this DEPLOYMENT is enforcing the plan (`PLAN_ENFORCE`), published beside `planCurrent`
+   * and deliberately not folded into it. The banner requires both: on the shipped default the var
+   * is unset and every save succeeds, and "your dashboard is read-only" over a dashboard that is
+   * not would be a sentence nobody believes on the day it is true.
+   */
+  planEnforced: boolean;
   /**
    * She has an account at the processor: a non-empty `StripeCustomerId`. The WHOLE of the
    * Manage-plan gate beside the published origin, and deliberately not paired with `planActive`:
@@ -146,6 +153,47 @@ export type Settings = {
    *  no control can flash on for a switched-off sitter while a request is in flight. */
   disabled: boolean;
 };
+
+/**
+ * WHAT A LAPSED PLAN MEANS, said once and read by every surface that has to say it — the dashboard's
+ * banner, its shared error router, and the write sinks that answer beside their own control instead.
+ * The sitter cannot be shown two accounts of one fact.
+ *
+ * It lives HERE, in the admin app's own module, and not in `app/shared-ui/api.ts` beside the 402
+ * predicate: that module is in the EMBED bundle's import graph, and this sentence was shipping to
+ * every booking widget from there. Not in `App.tsx` either: `SetupWizard` takes no error router at
+ * all and `TokensPanel` deliberately keeps a failure next to the button that caused it, so a
+ * constant private to the dashboard's own module could only have been copied into both.
+ *
+ * It says how to get back — the plan panel is under Business — and no "again": a never-subscribed
+ * business is not starting a plan AGAIN, and once signup comps the trial that is exactly who a
+ * lapsed business often is. It states no length for the grace, no price and no terms: those belong
+ * on the terms page and on the hosted pages the plan panel sends her to, and `plan-panel.test.ts`
+ * forbids them here besides.
+ */
+export const PLAN_LAPSED =
+  'Your plan has lapsed and your dashboard is read-only. Start a plan under Business to bring it back.';
+
+/**
+ * The same fact for a deployment where the control the sentence above names is NOT on the page —
+ * no paid surface published, or selling switched off (`PlanPanel`'s own `offersHidden`, read from
+ * the same `/config`). "Start a plan under Business" would point her at a button that is not
+ * there; the honest second sentence is who to ask.
+ */
+export const PLAN_LAPSED_CONTACT =
+  'Your plan has lapsed and your dashboard is read-only. Contact us to bring it back.';
+
+/**
+ * What to show beside a control whose WRITE failed, for the sinks that report in place rather than
+ * through the dashboard's error router. The gate answers with a machine code (`plan_lapsed`) and
+ * `request()` puts it on `ApiError.message`, so the sink that printed `e.message` printed that code
+ * at a sitter; everything else still prints the server's own sentence, which is what those sinks
+ * were already doing right.
+ */
+export function writeFailureMessage(e: unknown, fallback: string): string {
+  if (isPlanLapsed(e)) return PLAN_LAPSED;
+  return e instanceof Error ? e.message : fallback;
+}
 
 /** Shared prop shape for sections that edit the staged, save-button-gated `settings` draft. */
 export type SettingsSectionProps = {

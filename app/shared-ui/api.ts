@@ -763,43 +763,22 @@ export function isAuthExpired(e: unknown): boolean {
 }
 
 /**
- * WHAT A LAPSED PLAN MEANS, said once and read by every surface that has to say it — the dashboard's
- * banner, its shared error router, and the three write sinks that answer beside their own control
- * instead. The sitter cannot be shown two accounts of one fact.
- *
- * It lives HERE, beside `isAuthExpired`, rather than in `App.tsx`: `SetupWizard` takes no error
- * router at all and `TokensPanel` deliberately keeps a failure next to the button that caused it, so
- * a constant private to the dashboard's own module could only have been copied into both.
- *
- * It states no length for the grace, no price and no terms: those belong on the terms page and on
- * the hosted pages the plan panel sends her to, and the panel's own copy pins forbid them in this
- * product's UI besides.
- */
-export const PLAN_LAPSED =
-  'Your plan has lapsed — your dashboard is read-only until you start a plan again.';
-
-/**
- * True for the plan gate's refusal — a 402 whose body was `{ error: 'plan_lapsed' }`. BOTH halves
- * are named: a 402 alone could come from some other route, and the code alone could arrive on a 403
- * body, which is the status `isAuthExpired` reads as a dead session.
+ * True for the plan gate's refusal. A 402 ALONE is enough: the status is the gate's own answer
+ * (`planGate`, server/lib/middleware.ts answers nothing else with it), and a client that needed the
+ * body word too would print a raw code at a sitter the day a route answered 402 with a sentence.
+ * The body code is accepted as well, from `ApiError.code` when the response carried one and from
+ * the message otherwise — never from the message when a code is present, so a response that says
+ * `plan_lapsed` in prose under some other code is not mistaken for the gate.
  *
  * Deliberately NOT folded into `isAuthExpired`: her session is fine, and signing her out of a
  * dashboard she can still read would be the worse failure of the two.
+ *
+ * STATUS LOGIC ONLY. The SENTENCE that answers it, and the mapper the write sinks call, live in
+ * `app/admin/shared.ts`: this module is in the EMBED bundle's import graph, and the dashboard's
+ * "your dashboard is read-only" copy was shipping to every booking widget from here.
  */
 export function isPlanLapsed(e: unknown): boolean {
-  return e instanceof ApiError && e.status === 402 && e.message === 'plan_lapsed';
-}
-
-/**
- * What to show beside a control whose WRITE failed, for the sinks that report in place rather than
- * through the dashboard's error router. The gate answers with a machine code (`plan_lapsed`) and
- * `request()` puts it on `ApiError.message`, so the sink that printed `e.message` printed that code
- * at a sitter; everything else still prints the server's own sentence, which is what those sinks
- * were already doing right.
- */
-export function writeFailureMessage(e: unknown, fallback: string): string {
-  if (isPlanLapsed(e)) return PLAN_LAPSED;
-  return e instanceof Error ? e.message : fallback;
+  return e instanceof ApiError && (e.status === 402 || (e.code ?? e.message) === 'plan_lapsed');
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -122,6 +122,14 @@ const LAPSED_NO_ACCOUNT =
 const PORTAL_UNAVAILABLE =
   'Changing your plan is unavailable right now. Your bookings, clients and pets are unaffected.';
 
+/** The same notice for a sitter whose plan has LAPSED: the sentence above is true of her and is not
+ *  the half that explains her read-only dashboard, so this one says both — and names no control,
+ *  because on a deployment with no paid surface there is none to name. */
+const PORTAL_UNAVAILABLE_LAPSED =
+  'Your plan has lapsed, so your dashboard is read-only. ' +
+  'Changing your plan is unavailable right now — contact us. ' +
+  'Your bookings, clients and pets are unaffected.';
+
 /**
  * Open a hosted checkout at the TOP level, because a checkout page sets its own `frame-ancestors`
  * and will not render inside the dashboard's frame.
@@ -469,7 +477,13 @@ export function PlanPanel({
       {/* ONLY where both controls are on screen. Beside Manage alone it would tell a paying sitter
           her plan had lapsed; beside Subscribe alone it would point her at a button that is not
           there. */}
-      {bothControls && <p className="pb-hint">{LAPSED_WITH_ACCOUNT}</p>}
+      {/* AND on the server's `planCurrent`, not on `planActive`: a comped ex-subscriber has an
+          account and no live subscription, so she sees both controls — and she is NOT lapsed.
+          `bothControls` stays about the controls; the sentence that says "your plan has lapsed"
+          hangs on the fact it states. `=== false`, like the banner: a stale pair shows nothing. */}
+      {bothControls && settings.planCurrent === false && (
+        <p className="pb-hint">{LAPSED_WITH_ACCOUNT}</p>
+      )}
       {/* ONLY for the sitter with no billing account. Beside `LAPSED_WITH_ACCOUNT` it would be a
           second sentence about the same lapse; beside a switched-off account it would be a second
           sentence about the same silence, which `ACCOUNT_OFF` above already says better.
@@ -482,11 +496,17 @@ export function PlanPanel({
           `ACCOUNT_OFF` gets this position to itself, and a reader should not have to unfold a
           deployment-shaped name to find it. */}
       {!offersHidden &&
-        !settings.planCurrent &&
+        settings.planCurrent === false &&
         !settings.hasBillingAccount &&
         !settings.disabled && <p className="pb-hint">{LAPSED_NO_ACCOUNT}</p>}
+      {/* On a lapsed tenant the notice names the lapse too — same tenant half as the banner's
+          condition, and nothing about a lapse to a sitter who is current. */}
       {configLoaded && settings.hasBillingAccount && origin === null && (
-        <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
+        <p className="pb-hint">
+          {settings.planCurrent === false && !settings.disabled
+            ? PORTAL_UNAVAILABLE_LAPSED
+            : PORTAL_UNAVAILABLE}
+        </p>
       )}
       {error && <p className="pb-error">{error}</p>}
     </>

@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { isValidRate, SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
-import { ApiError, writeFailureMessage } from '../shared-ui/api.js';
+import { ApiError } from '../shared-ui/api.js';
 import { SERVICE_PRESETS, type ServicePreset } from './presets.js';
 import { blockNegativeNumberKeys } from './sections/fields.js';
-import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
+import {
+  adminFetch,
+  writeFailureMessage,
+  type ServiceOptionForm,
+  type Settings,
+} from './shared.js';
 import {
   makeProfileDraft,
   profilePutBody,
@@ -261,8 +266,11 @@ export function SetupWizard({
             // what a re-run should do. Anything else fails the run, named per preset.
             if (e instanceof Error && e.message.includes('already exists'))
               return { ps, type: ps.preset.createdSlug };
+            // INSIDE this catch, where the `ApiError` still is: the aggregate below only ever sees
+            // the plain Error thrown here, so a lapse mapped there would already read
+            // "Dog boarding: plan_lapsed". The label stays, the wire's code does not.
             throw new Error(
-              `${ps.preset.label}: ${e instanceof Error ? e.message : 'could not be created'}`,
+              `${ps.preset.label}: ${writeFailureMessage(e, 'could not be created')}`,
             );
           }
         }),
