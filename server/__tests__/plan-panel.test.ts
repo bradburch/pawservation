@@ -275,7 +275,7 @@ describe('where the panel sits', () => {
     // The dashboard fetches `/api/:slug/admin/settings` once per load and BusinessSection already
     // holds it — so plan status costs the panel zero extra requests, and is already loaded before
     // the panel paints. A panel that fetched it again would be a second authenticated read for
-    // five fields the page has in hand.
+    // six fields the page has in hand.
     expect(BUSINESS).toMatch(/<PlanPanel[^>]*settings=\{settings\}/);
   });
 });
