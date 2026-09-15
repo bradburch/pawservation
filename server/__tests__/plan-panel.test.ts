@@ -61,6 +61,26 @@ const RAW_APP = readFileSync(join(ADMIN, 'App.tsx'), 'utf8');
 const APP = liveSource(RAW_APP);
 /** Comments stripped, literals kept — for the one App.tsx pin whose subject is a key name. */
 const APP_TEXT = liveSource(RAW_APP, { keepLiterals: true });
+/**
+ * `app/shared-ui/api.ts`, literals kept. The lapse SENTENCE and the 402 predicate live there, beside
+ * `isAuthExpired` and not in `App.tsx`, because `handle` is not the only place a write can fail:
+ * TokensPanel keeps its failures beside the control that caused them and SetupWizard is a modal with
+ * no `handleError` prop at all, so a constant private to `App.tsx` could only have been copied.
+ */
+const API_TEXT = liveSource(
+  readFileSync(join(import.meta.dirname, '..', '..', 'app', 'shared-ui', 'api.ts'), 'utf8'),
+  { keepLiterals: true },
+);
+/** The two write surfaces that do NOT share `handle`, collapsed like `FLAT` — their sinks are long
+ *  enough that Prettier wraps them, and where it wraps is not the claim. */
+const TOKENS = liveSource(readFileSync(join(ADMIN, 'TokensPanel.tsx'), 'utf8')).replace(
+  /\s+/g,
+  ' ',
+);
+const WIZARD = liveSource(readFileSync(join(ADMIN, 'SetupWizard.tsx'), 'utf8')).replace(
+  /\s+/g,
+  ' ',
+);
 
 describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () => {
   it('renders on premium.origin and never on premium.assistant', () => {
@@ -560,7 +580,13 @@ describe('a lapsed plan is a read-only dashboard, and the dashboard says so', ()
     // already been told why her account is off and who to ask.
     expect(APP).toContain('!settings.planCurrent && !settings.disabled');
     expect(APP).toContain('{PLAN_LAPSED}');
-    expect(APP_TEXT).toMatch(/read-only until you start a plan again/);
+    // ITS OWN CLASS, not the disabled banner's. The two are mutually exclusive today, so sharing
+    // one was harmless and wrong in the way `.pb-warn-note`'s own comment argues about itself: a
+    // class whose name states a state it is not is how "make the disabled banner louder" restyles
+    // a second state silently.
+    expect(APP_TEXT).toContain('pb-lapsed-banner');
+    // The sentence itself is asserted where it lives — see the copy case below.
+    expect(API_TEXT).toMatch(/read-only until you start a plan again/);
   });
 
   it('routes a 402 plan_lapsed BEFORE isAuthExpired, so it can never sign her out', () => {
@@ -568,12 +594,46 @@ describe('a lapsed plan is a read-only dashboard, and the dashboard says so', ()
     // and not 403 — but the branch order is still pinned, because the cost of getting it wrong for
     // the NEXT literal is ejecting a sitter from the dashboard she is trying to read. The
     // `account_disabled` branch already carries that lesson one line above.
-    expect(APP_TEXT).toContain("e.message === 'plan_lapsed'");
-    const lapsedAt = APP_TEXT.indexOf("e.message === 'plan_lapsed'");
+    expect(APP_TEXT).toContain('isPlanLapsed(e)');
+    const lapsedAt = APP_TEXT.indexOf('isPlanLapsed(e)');
     const authAt = APP_TEXT.indexOf('isAuthExpired(e)');
     expect(lapsedAt).toBeGreaterThan(-1);
     expect(authAt).toBeGreaterThan(-1);
     expect(lapsedAt).toBeLessThan(authAt);
+    // AND THE PREDICATE NAMES BOTH HALVES of what the gate answers. Status alone would catch a 402
+    // some other route invented; the code alone would catch a 403 body that happened to say it.
+    expect(API_TEXT).toContain('e.status === 402');
+    expect(API_TEXT).toContain("e.message === 'plan_lapsed'");
+  });
+
+  it('says it on the write surfaces that do not share `handle`, in the same words', () => {
+    // `handle` is the error router nine panels are handed. These two are not among them: TokensPanel
+    // keeps a failure beside the control that caused it, and SetupWizard is a modal that takes no
+    // `handleError` at all — so both printed the wire's bare `plan_lapsed` at a sitter. One mapper,
+    // reading the one constant, rather than a second sentence per surface.
+    expect(TOKENS).toContain('setCreateError(writeFailureMessage(e,');
+    expect(TOKENS).toContain('setRevokeError(writeFailureMessage(e,');
+    expect(WIZARD.match(/setError\(writeFailureMessage\(e,/g)).toHaveLength(3);
+    // AND THE RAW SINK IS GONE from each, which is the half a bare `toContain` leaves open: adding
+    // the mapper somewhere and leaving the old branch beside it satisfies every line above.
+    expect(TOKENS).not.toContain('setCreateError(e instanceof Error');
+    expect(TOKENS).not.toContain('setRevokeError(e instanceof Error');
+    expect(WIZARD).not.toContain('setError(e instanceof Error');
+  });
+
+  it('holds the banner’s sentence to the copy rules the panel’s is held to', () => {
+    // Every no-figure / no-terms pin in this file reads `PANEL_TEXT`, which is `PlanPanel.tsx`. The
+    // lapse sentence lives in `api.ts`, so it was covered by one positive match and nothing else —
+    // "for the next 3 days" or a price could have joined it and stayed green. Scoped to the
+    // constant's own text, which is where a bare `\d` is exactly right and over a whole file is not.
+    const sentence = /const PLAN_LAPSED =([\s\S]*?);/.exec(API_TEXT)?.[1] ?? '';
+    // NOT VACUOUS: an extraction that matched nothing would pass every negative below.
+    expect(sentence).toMatch(/read-only until you start a plan again/);
+    expect(sentence).not.toMatch(/\d/);
+    expect(sentence).not.toMatch(/\$/);
+    expect(sentence).not.toMatch(/Cancel (?:plan|subscription)/i);
+    expect(sentence).not.toMatch(/refund|pro-?rat|notice period/i);
+    expect(sentence).not.toMatch(/end of (?:the |your )?(?:billing )?period/i);
   });
 
   it('tells the lapsed sitter with NO billing account what Subscribe does for her', () => {
@@ -584,21 +644,26 @@ describe('a lapsed plan is a read-only dashboard, and the dashboard says so', ()
     // status line's word, so either would stay green against a constant emptied to `''` — a
     // sentence declared and never read is the mutation this file has already lost twice.
     expect(PANEL_TEXT).toMatch(/brings it back/);
-    // RENDERED, and only where it is true: she holds no plan, has no account at the processor, and
-    // her account is not switched off — that last term because `ACCOUNT_OFF` already occupies this
-    // position for her and two sentences about the same silence is one too many.
+    // RENDERED, and only where it is true — condition and markup in ONE string, the way the
+    // `bothControls` case above binds them, so a sentence rendered unconditionally beside a
+    // condition that still guards something else cannot pass. `!offersHidden` is the term that
+    // makes the copy honest: it is exactly where the offers grid renders, so the Subscribe the
+    // sentence names is on the page. Without it she read "Subscribe starts a plan and brings it
+    // back" on a deployment that is not selling, on one with no paid surface at all, and — every
+    // load — for as long as the `/config` request took, which is the flash `configLoaded` exists
+    // to prevent one element below.
     expect(FLAT).toContain(
-      '!settings.planCurrent && !settings.hasBillingAccount && !settings.disabled',
+      '{!offersHidden && !settings.planCurrent && !settings.hasBillingAccount && ' +
+        '!settings.disabled && <p className="">{LAPSED_NO_ACCOUNT}</p>}',
     );
-    expect(FLAT).toContain('{LAPSED_NO_ACCOUNT}');
     // AND IT STATES NO LENGTH FOR THE GRACE, in numerals or in words, beside the no-figure and
     // no-terms pins above that already cover this constant too. Scoped to a period noun rather
     // than a bare `\d`: `PANEL_TEXT` keeps executable literals, and this panel's own `401`/`403`
     // are two of them — a pin that reads an HTTP status as a grace length is the crying-wolf pin
     // the dollar-figure case above is already scoped to avoid.
-    expect(PANEL_TEXT).not.toMatch(/\b\d+\s*-?\s*(?:day|week|month|year)s?\b/i);
+    expect(PANEL_TEXT).not.toMatch(/\b\d+\s*-?\s*(?:hour|day|week|month|year)s?\b/i);
     expect(PANEL_TEXT).not.toMatch(
-      /\b(?:one|two|three|four|five|six|seven|ten|fourteen|thirty)\s*-?\s*(?:day|week|month|year)s?\b/i,
+      /\b(?:one|two|three|four|five|six|seven|ten|fourteen|thirty)\s*-?\s*(?:\w+\s+)?(?:hour|day|week|month|year)s?\b/i,
     );
   });
 });

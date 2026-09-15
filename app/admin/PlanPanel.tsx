@@ -472,10 +472,19 @@ export function PlanPanel({
       {bothControls && <p className="pb-hint">{LAPSED_WITH_ACCOUNT}</p>}
       {/* ONLY for the sitter with no billing account. Beside `LAPSED_WITH_ACCOUNT` it would be a
           second sentence about the same lapse; beside a switched-off account it would be a second
-          sentence about the same silence, which `ACCOUNT_OFF` above already says better. */}
-      {!settings.planCurrent && !settings.hasBillingAccount && !settings.disabled && (
-        <p className="pb-hint">{LAPSED_NO_ACCOUNT}</p>
-      )}
+          sentence about the same silence, which `ACCOUNT_OFF` above already says better.
+
+          `!offersHidden` FIRST, because the sentence names Subscribe and must not out-run it: it is
+          exactly where the offers grid renders, so a deployment that is not selling, one with no
+          paid surface at all, and the stretch of every load before `/config` resolves are all
+          excluded — the last being the same flash `configLoaded` exists for one element below. It
+          subsumes `settings.disabled`; that term stays spelled out because it is the reason
+          `ACCOUNT_OFF` gets this position to itself, and a reader should not have to unfold a
+          deployment-shaped name to find it. */}
+      {!offersHidden &&
+        !settings.planCurrent &&
+        !settings.hasBillingAccount &&
+        !settings.disabled && <p className="pb-hint">{LAPSED_NO_ACCOUNT}</p>}
       {configLoaded && settings.hasBillingAccount && origin === null && (
         <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
       )}

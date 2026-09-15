@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { isValidRate, SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import { IconPaw, SERVICE_ICONS } from '../shared-ui/icons';
-import { ApiError } from '../shared-ui/api.js';
+import { ApiError, writeFailureMessage } from '../shared-ui/api.js';
 import { SERVICE_PRESETS, type ServicePreset } from './presets.js';
 import { blockNegativeNumberKeys } from './sections/fields.js';
 import { adminFetch, type ServiceOptionForm, type Settings } from './shared.js';
@@ -92,7 +92,7 @@ export function SetupWizard({
       // A 503 means the server has no Google OAuth env — degrade to the disabled note. Any
       // other failure is transient; surface it inline and let the sitter retry or skip.
       if (e instanceof ApiError && e.status === 503) setCalendarDisabled(true);
-      else setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+      else setError(writeFailureMessage(e, 'Something went wrong — try again.'));
     } finally {
       setConnecting(false);
     }
@@ -216,7 +216,9 @@ export function SetupWizard({
       setProfileInitial(profileDraft);
       setStep(2);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+      // The wizard takes no `handleError`, so its own sink is where the plan gate's refusal is
+      // said in words — every step past the first writes through the settings PUT.
+      setError(writeFailureMessage(e, 'Something went wrong — try again.'));
     } finally {
       setApplying(false);
     }
@@ -295,7 +297,7 @@ export function SetupWizard({
       await onApplied();
       goTo(mode === 'services' ? 5 : 4);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong — try again.');
+      setError(writeFailureMessage(e, 'Something went wrong — try again.'));
     } finally {
       setApplying(false);
     }
