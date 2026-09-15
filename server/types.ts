@@ -38,7 +38,8 @@ export type Tenant = {
    *  it. */
   PremiumUntil: string | null;
   /** The BASIC comp (0018): paid up through this instant without paying, granted and cleared by
-   *  hand by the platform owner and written only by `setTenantCompedUntil`. Same stored shape as
+   *  hand by the platform owner through `applyOwnerSwitches`, and set to the trial at signup by
+   *  `createTenantFromSignup` — the two writers, and the whole list. Same stored shape as
    *  `PremiumUntil` and compared the same way. null = no comp. Billing writes it never — a comp
    *  surviving a renewal, a cancellation and a redelivery is what that separation buys — and
    *  `isPlanCurrent` (server/lib/premium.ts) is the one expression that reads it. */

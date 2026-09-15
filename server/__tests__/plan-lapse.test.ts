@@ -259,5 +259,9 @@ describe('a comp and a subscription do not interfere — the story’s own AC', 
       PremiumUntil: minutesFromNow(-60 * 24 * 180),
     });
     expect(isPlanCurrent(row)).toBe(true);
+    // And the other two predicates agree that she is a paying Pro business, whatever the two
+    // expired comps say: the comps subtract nothing from any of the three answers.
+    expect(isPremiumActive(row)).toBe(true);
+    expect(isSoloActive(row)).toBe(true);
   });
 });

@@ -151,7 +151,7 @@ function isAhead(value: string | null | undefined, stamp: string): boolean {
  * TWO WAYS TO BE PREMIUM, and they are independent facts about different people's decisions:
  *
  *   1. THE PLATFORM OWNER'S COMP — `PremiumUntil` in the future. Set and cleared by hand from the
- *      owner console, written only by `setTenantPremiumUntil`, and never touched by billing. A comp
+ *      owner console, written only by `applyOwnerSwitches`, and never touched by billing. A comp
  *      surviving a renewal, a cancellation and a redelivery is precisely what that separation buys.
  *
  *   2. A PAID PRO PLAN — `Plan === 'pro'` AND `BilledUntil` in the future. `Plan === 'solo'` is
@@ -231,6 +231,20 @@ export function isPlanCurrent(tenant: EntitlementFacts, now: Date = new Date()):
     isAhead(tenant.CompedUntil, stamp) ||
     isAhead(tenant.PremiumUntil, stamp)
   );
+}
+
+/**
+ * Is the BASIC COMP itself live — `CompedUntil` ahead, and not disabled? The fourth one-expression
+ * answer in this file, and the narrowest: it is ONE of `isPlanCurrent`'s three clauses, published
+ * on its own as `compActive` so the owner console's "Basic comp" chip can light on the server's
+ * word rather than on the date's presence. A comp that ran out in 2024 is a date on the row and
+ * not a grant, and a chip lit from `compedUntil != null` told the owner a lapsed business was
+ * comped — while a browser-side `> now` is the copy AD-13 removed. Same shared early return as the
+ * other three, for the same reason.
+ */
+export function isCompActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
+  if (isDisabled(tenant)) return false;
+  return isAhead(tenant.CompedUntil, premiumNow(now));
 }
 
 /**

@@ -724,9 +724,16 @@ export type SitterRow = {
   /** The BASIC comp the owner grants by hand (0018), same stored shape. The date this console
    *  EDITS, which is why it rides raw beside the derived boolean below. */
   compedUntil: string | null;
+  /** The SERVER's own `isCompActive` answer — that comp live, and not disabled. The chip lights on
+   *  this and not on the date's presence: a comp that ran out is a date, not a grant. */
+  compActive: boolean;
   /** The SERVER's own `isPlanCurrent` answer — billed OR comped OR premium-comped, and not
    *  disabled. Three grants now, and the console re-derives none of them. */
   planCurrent: boolean;
+  /** The processor's customer id, verbatim — the key to the customer's page in the Stripe
+   *  Dashboard, which is where "why is she lapsed" is actually answered. Published to the OWNER
+   *  only, on this roster; the sitter's own settings read keeps its own policy for it. */
+  stripeCustomerId: string | null;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;

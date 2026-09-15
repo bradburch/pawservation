@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import * as v from 'valibot';
 import {
   addAllowedSitter,
+  applyOwnerSwitches,
   deleteTenantCompletely,
   deleteUnclaimedAllowedSitter,
   getAllowedSitter,
@@ -9,12 +10,14 @@ import {
   getTenantById,
   listAllowedSitters,
   listSitterRoster,
-  setTenantCompedUntil,
-  setTenantDisabled,
-  setTenantPremiumUntil,
 } from '../db/repo';
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
-import { isPlanCurrent, isPremiumActive, normalizePremiumUntil } from '../lib/premium';
+import {
+  isCompActive,
+  isPlanCurrent,
+  isPremiumActive,
+  normalizePremiumUntil,
+} from '../lib/premium';
 import { serializeAnalytics } from '../lib/analytics';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
@@ -176,9 +179,18 @@ export const ownerRoutes = new Hono<AppEnv>()
       plan: r.Plan,
       billedUntil: r.BilledUntil,
       compedUntil: r.CompedUntil,
+      // Whether that comp is LIVE, from the server: the chip lights on this and not on the date's
+      // presence, because a comp that ran out is a date on the row and not a grant.
+      compActive: isCompActive(r),
       // The DERIVED answer again, from the one expression. A console that compared a date here
       // would be the browser-side copy AD-13 removed, one rule later.
       planCurrent: isPlanCurrent(r),
+      // THE CUSTOMER ID, verbatim, to the OWNER and on this console only: FR-63's "an owner who can
+      // see why", with the seeing done on the processor's own page — the console links the row to
+      // the Stripe Dashboard customer page, where the invoice, the card and the dunning state all
+      // are. The owner has that dashboard already; the id is its key. Still no amount, no invoice
+      // and no subscription id on this payload.
+      stripeCustomerId: r.StripeCustomerId,
       clients: r.Clients,
       bookings: r.Bookings,
       // `Earned` is the raw column sum, in CENTS (0015), and the wire says so (design spec §2).
@@ -222,6 +234,7 @@ export const ownerRoutes = new Hono<AppEnv>()
       plan: tenant.Plan,
       billedUntil: tenant.BilledUntil,
       compedUntil: tenant.CompedUntil,
+      compActive: isCompActive(tenant),
       planCurrent: isPlanCurrent(tenant),
     });
   })
@@ -291,27 +304,35 @@ export const ownerRoutes = new Hono<AppEnv>()
 
     const tenant = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
-    if (disabled !== undefined) await setTenantDisabled(c.env.PAWSERVATION_DB, tenantId, disabled);
-    if ('premiumUntil' in parsed.output)
-      await setTenantPremiumUntil(c.env.PAWSERVATION_DB, tenantId, storedUntil);
-    if ('compedUntil' in parsed.output)
-      await setTenantCompedUntil(c.env.PAWSERVATION_DB, tenantId, storedComped);
+    // ONE BATCH for whichever switches are present, then the cache drop — so a body naming two of
+    // them cannot land one and not the other, and the widget never sees a half-applied row. A
+    // batch that matched no row is a tenant deleted between the lookup above and here, and is
+    // answered as the lookup would have answered it.
+    const applied = await applyOwnerSwitches(c.env.PAWSERVATION_DB, tenantId, {
+      ...(disabled !== undefined ? { disabled } : {}),
+      ...('premiumUntil' in parsed.output ? { premiumUntil: storedUntil } : {}),
+      ...('compedUntil' in parsed.output ? { compedUntil: storedComped } : {}),
+    });
+    if (!applied) return c.json({ error: 'Not found.' }, 404);
     await invalidateTenantCache(tenant.Slug, c.env); // widget/dashboard sees the change at once
 
     // Report the tenant's state as it now IS, read back rather than assembled from the request:
     // a PATCH that touched one field still answers for all of them, so the console never has to
-    // guess what the fields it did not send are currently set to.
+    // guess what the fields it did not send are currently set to. A row that is gone by now is a
+    // 404 too, not a 200 assembled from optionals over nothing.
     const after = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
+    if (!after) return c.json({ error: 'Not found.' }, 404);
     return c.json({
-      disabled: after?.DisabledAt != null,
-      premiumUntil: after?.PremiumUntil ?? null,
-      compedUntil: after?.CompedUntil ?? null,
-      // The same derived answers the roster and the detail read publish, from the same two
+      disabled: after.DisabledAt != null,
+      premiumUntil: after.PremiumUntil,
+      compedUntil: after.CompedUntil,
+      // The same derived answers the roster and the detail read publish, from the same
       // expressions — the row is already loaded, so the alternative is the console re-deriving them
       // in the browser from the dates beside them, which is exactly what AD-13 removed and what
       // reports a paying business as free.
-      premiumActive: after != null && isPremiumActive(after),
-      planCurrent: after != null && isPlanCurrent(after),
+      premiumActive: isPremiumActive(after),
+      compActive: isCompActive(after),
+      planCurrent: isPlanCurrent(after),
     });
   })
 

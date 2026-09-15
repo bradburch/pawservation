@@ -5868,6 +5868,9 @@ export type SitterRosterRow = {
   Plan: 'solo' | 'pro' | null;
   BilledUntil: string | null;
   CompedUntil: string | null; // null = no basic comp
+  /** The processor's customer id, verbatim, for the OWNER's link to the customer's page in the
+   *  Stripe Dashboard (FR-63's "see why", answered where the facts are). Owner console only. */
+  StripeCustomerId: string | null;
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
   // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
@@ -5903,6 +5906,7 @@ export async function listSitterRoster(
          t.Plan AS Plan,
          t.BilledUntil AS BilledUntil,
          t.CompedUntil AS CompedUntil,
+         t.StripeCustomerId AS StripeCustomerId,
          (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
@@ -5940,66 +5944,94 @@ export async function deleteUnclaimedAllowedSitter(
 
 /**
  * Owner-scope: flip a tenant's disabled state. `true` → DisabledAt = now (widget dark + admin
- * read-only via the tenantMiddleware guard); `false` → NULL (active). Returns whether a row
- * changed (false = no such tenant, so the route can 404). Caller must invalidateTenantCache.
+ * read-only via the tenantMiddleware guard); `false` → NULL (active). The statement, so the owner
+ * PATCH can batch it with the two comp writers below; `setTenantDisabled` runs it alone.
  */
-export async function setTenantDisabled(
+function tenantDisabledStatement(
   db: D1Database,
   tenantId: string,
   disabled: boolean,
-): Promise<boolean> {
-  const result = await db
+): D1PreparedStatement {
+  return db
     .prepare(
       disabled
         ? "UPDATE Tenants SET DisabledAt = datetime('now') WHERE Id = ?"
         : 'UPDATE Tenants SET DisabledAt = NULL WHERE Id = ?',
     )
-    .bind(tenantId)
-    .run();
+    .bind(tenantId);
+}
+
+/** Returns whether a row changed (false = no such tenant, so the route can 404). Caller must
+ *  invalidateTenantCache. */
+export async function setTenantDisabled(
+  db: D1Database,
+  tenantId: string,
+  disabled: boolean,
+): Promise<boolean> {
+  const result = await tenantDisabledStatement(db, tenantId, disabled).run();
   return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**
  * Owner-scope: set or clear a tenant's paid-through instant (0010). `null` clears it, which is
- * "free" — the same value every tenant carries until an owner grants premium. Returns whether a
- * row changed (false = no such tenant, so the route can 404). Caller must invalidateTenantCache,
- * or the change sits behind the tenant cache's TTL — for a REVOCATION that is a minute of access
- * already paid for and stopped, which is the direction that matters.
- *
- * `until` is bound as-is and must already be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC);
- * `normalizePremiumUntil` (server/lib/premium.ts) is the one place that shape is produced, so the
- * comparison `PremiumUntil > now` stays a comparison of like with like.
+ * "free" — the same value every tenant carries until an owner grants premium. `until` is bound
+ * as-is and must already be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC); `normalizePremiumUntil`
+ * (server/lib/premium.ts) is the one place that shape is produced, so the comparison
+ * `PremiumUntil > now` stays a comparison of like with like. THE ONLY WRITER of the column, run
+ * through `applyOwnerSwitches` below.
  */
-export async function setTenantPremiumUntil(
+function tenantPremiumUntilStatement(
   db: D1Database,
   tenantId: string,
   until: string | null,
-): Promise<boolean> {
-  const result = await db
-    .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
-    .bind(until, tenantId)
-    .run();
-  return (result.meta as { changes?: number }).changes !== 0;
+): D1PreparedStatement {
+  return db.prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?').bind(until, tenantId);
 }
 
 /**
- * Owner-scope: set or clear the BASIC comp (0018). A byte-for-byte mirror of
- * `setTenantPremiumUntil` above, and deliberately a SECOND writer rather than a parameter: two
- * columns, two writers, and billing writes neither. `until` is bound as-is and must already be in
- * the stored shape ('YYYY-MM-DD HH:MM:SS', UTC); `normalizePremiumUntil` (server/lib/premium.ts) is
- * the one place that shape is produced, so `CompedUntil > now` stays a comparison of like with like.
- * Caller must `invalidateTenantCache`.
+ * Owner-scope: set or clear the BASIC comp (0018). A byte-for-byte mirror of the premium statement
+ * above, and deliberately a SECOND writer rather than a parameter: two columns, two writers, and
+ * billing writes neither. `until` is bound as-is and must already be in the stored shape;
+ * `normalizePremiumUntil` (server/lib/premium.ts) is the one place that shape is produced, so
+ * `CompedUntil > now` stays a comparison of like with like. The column's other writer is
+ * `createTenantFromSignup` — the trial is a basic comp — and that is the whole list.
  */
-export async function setTenantCompedUntil(
+function tenantCompedUntilStatement(
   db: D1Database,
   tenantId: string,
   until: string | null,
+): D1PreparedStatement {
+  return db.prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?').bind(until, tenantId);
+}
+
+/**
+ * THE OWNER'S SWITCHES ON A TENANT, applied together: whether the account is switched off, how long
+ * the PAID tier is comped through, and how long the BASIC plan is. ONE `db.batch` rather than three
+ * awaited writes, so a PATCH naming two of them cannot land one and not the other (the test shim's
+ * batch is transactional, and so is D1's). Each switch is applied only when PRESENT — `'key' in` —
+ * which is what keeps them independent: `{ disabled: true }` touches neither comp, and neither comp
+ * touches the other. `null` on a comp CLEARS it, distinguished from omission.
+ *
+ * Returns whether the tenant row was there to change: every statement names the same `Id`, so the
+ * batch matches all-or-none, and `false` is "no such tenant" — deleted between the caller's lookup
+ * and this write — which the route answers as the 404 the lookup would have given. A body naming
+ * no switch is the route's 400, never an empty batch here. Caller must `invalidateTenantCache`.
+ */
+export async function applyOwnerSwitches(
+  db: D1Database,
+  tenantId: string,
+  switches: { disabled?: boolean; premiumUntil?: string | null; compedUntil?: string | null },
 ): Promise<boolean> {
-  const result = await db
-    .prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?')
-    .bind(until, tenantId)
-    .run();
-  return (result.meta as { changes?: number }).changes !== 0;
+  const statements: D1PreparedStatement[] = [];
+  if (switches.disabled !== undefined)
+    statements.push(tenantDisabledStatement(db, tenantId, switches.disabled));
+  if ('premiumUntil' in switches)
+    statements.push(tenantPremiumUntilStatement(db, tenantId, switches.premiumUntil ?? null));
+  if ('compedUntil' in switches)
+    statements.push(tenantCompedUntilStatement(db, tenantId, switches.compedUntil ?? null));
+  if (statements.length === 0) return false;
+  const results = await db.batch(statements);
+  return results.every((r) => ((r.meta as { changes?: number }).changes ?? 0) > 0);
 }
 
 /**
@@ -6023,7 +6055,7 @@ export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
  * ignored as stale, leaving the tenant permanently on a figure nobody sent.
  *
  * `PremiumUntil` IS NOT IN THIS STATEMENT AND MUST NEVER BE. It is the platform owner's manual
- * grant, written only by `setTenantPremiumUntil`, and a comp surviving a renewal, a cancellation and
+ * grant, written only by `applyOwnerSwitches`, and a comp surviving a renewal, a cancellation and
  * a redelivery is exactly what that separation buys (FR-63, spine AD-13). Neither is `DisabledAt`,
  * in either direction: a disabled tenant is written like any other, because refusing her is the
  * route's job (`tenantMiddleware` answers 403 before the handler runs, and `isPremiumActive` is
@@ -6205,9 +6237,9 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
  * platform owner's comp sweep would be read-only the moment `PLAN_ENFORCE` is set. The caller
  * produces it with `trialCompUntil` (server/lib/premium.ts) — already in the stored shape, and the
  * length read from `PRICING.trialDays` rather than typed — and this function binds it as-is, like
- * `setTenantCompedUntil` does. A THIRD writer of the column, and the only one that is not the
- * owner's hand: signup grants what the landing page promised, and the owner console is where it is
- * extended or cleared afterwards.
+ * the owner console's writer (`applyOwnerSwitches`) does. The SECOND writer of the column, and the
+ * only one that is not the owner's hand: signup grants what the landing page promised, and the
+ * owner console is where it is extended or cleared afterwards.
  */
 export async function createTenantFromSignup(
   db: D1Database,

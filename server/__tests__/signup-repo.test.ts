@@ -116,8 +116,8 @@ describe('createTenantFromSignup (atomic batch)', () => {
     // instead, so publication needs the sitter to look at it and press Next.
     expect(tenant?.ContactEmail).toBeNull();
     // The trial comp, bound AS-IS on the same INSERT (Story 10.4): the route produces the instant
-    // with `trialCompUntil` and this function neither computes nor normalises it, like
-    // `setTenantCompedUntil`. The paid tier's column is untouched — the trial is a BASIC comp.
+    // with `trialCompUntil` and this function neither computes nor normalises it, like the owner
+    // console's writer. The paid tier's column is untouched — the trial is a BASIC comp.
     expect(tenant?.CompedUntil).toBe('2099-01-01 00:00:00');
     expect(tenant?.PremiumUntil).toBeNull();
     const user = await getTenantUserByEmail(env.PAWSERVATION_DB, 'new@x.test');

@@ -201,8 +201,14 @@ export function OwnerConsole({
     }
   };
 
+  // ONE EDITOR OPEN AT A TIME. Three inline editors share a row's action cell (comp, premium,
+  // remove) and each replaced the actions when open; starting a second while the first was open
+  // left the first's state behind, so a Cancel on one could surface the other's half-typed date.
+  // Each start closes the other two first.
   const startPremiumEdit = (s: SitterRow) => {
     setDashError('');
+    cancelCompEdit();
+    cancelRemove();
     setPremiumEditId(s.tenantId);
     // premiumUntil is stored as 'YYYY-MM-DD HH:MM:SS'; <input type="date"> needs just the date part.
     // Truncation risk: if PremiumUntil ever carries a non-midnight time (only reachable via a
@@ -249,6 +255,8 @@ export function OwnerConsole({
 
   const startCompEdit = (s: SitterRow) => {
     setDashError('');
+    cancelPremiumEdit();
+    cancelRemove();
     setCompEditId(s.tenantId);
     // Same truncation caveat as the premium editor above: `<input type="date">` holds a date and
     // the column holds an instant, so pressing Save with no change re-submits midnight.
@@ -292,6 +300,8 @@ export function OwnerConsole({
 
   const startRemove = (s: SitterRow) => {
     setDashError('');
+    cancelCompEdit();
+    cancelPremiumEdit();
     setRemovingId(s.tenantId);
     setRemoveInput('');
   };
@@ -593,7 +603,11 @@ export function OwnerConsole({
                                     {PLAN_NAMES[s.plan]}
                                   </span>
                                 )}
-                                {s.compedUntil != null && (
+                                {/* The date's presence AND the server's `compActive`: a comp that
+                                    ran out is a date on the row and not a grant, and a chip lit from
+                                    the date alone said "comped" of a lapsed business. The console
+                                    compares no date to decide it. */}
+                                {s.compedUntil != null && s.compActive && (
                                   <span
                                     className="pb-chip"
                                     title={`Comped through ${s.compedUntil}`}
@@ -603,11 +617,26 @@ export function OwnerConsole({
                                 )}
                                 {/* The lapse itself, so "why is her dashboard read-only" is answered
                                     on the roster rather than inferred from the dates beside it. The
-                                    SERVER's answer again: a disabled business is not current either,
-                                    which is `isPlanCurrent`'s own shared early return and not a
-                                    second rule stated here. */}
-                                {!s.planCurrent && (
+                                    SERVER's answer again, and `=== false` rather than `!`: an older
+                                    worker's payload has no such field, and `!undefined` would light
+                                    every row Lapsed for the length of a deploy. Not beside Disabled
+                                    — a switched-off account is not current by the shared early
+                                    return, and the owner has one chip for that already. */}
+                                {s.planCurrent === false && !s.disabled && (
                                   <span className="pb-chip pb-chip-warn">Lapsed</span>
+                                )}
+                                {/* FR-63's "an owner who can see why", with the seeing done where the
+                                    facts are: the customer's page in the Stripe Dashboard, which the
+                                    owner already has. The OWNER's link, on this console only. */}
+                                {s.stripeCustomerId && (
+                                  <a
+                                    className="pb-chip"
+                                    href={`https://dashboard.stripe.com/customers/${s.stripeCustomerId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Stripe ↗
+                                  </a>
                                 )}
                               </td>
                               <td>

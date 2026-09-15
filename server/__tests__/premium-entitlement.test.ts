@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { getTenantById, getTenantBySlug } from '../db/repo';
+import { applyOwnerSwitches, getTenantById, getTenantBySlug } from '../db/repo';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
 import { isPremiumActive, isSoloActive, premiumNow, type EntitlementFacts } from '../lib/premium';
 import { resolveTenant } from '../lib/tenant-resolve';
@@ -213,6 +213,7 @@ describe('the platform owner sets and clears premium', () => {
       premiumUntil: null,
       compedUntil: null,
       premiumActive: true,
+      compActive: false,
       planCurrent: true,
     });
   });
@@ -601,6 +602,7 @@ describe('the platform owner comps the BASIC plan', () => {
       // A basic comp buys the free product's plan and NOT the paid surface — two comps, one per
       // tier, and the whole reason this is a second column rather than a reused one.
       premiumActive: false,
+      compActive: true,
       planCurrent: true,
     });
     const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
@@ -656,5 +658,76 @@ describe('the platform owner comps the BASIC plan', () => {
     // the same independence `disabled` and `premiumUntil` have had since 0010.
     expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');
     expect(t.CompedUntil).toBe('2000-01-01 00:00:00');
+
+    // THE OTHER DIRECTION, with the roles swapped — and it is a different mutation: a writer that
+    // cleared `CompedUntil` whenever `premiumUntil` was present survived the order above, because
+    // the comp was written second. Here it is written first.
+    const { env: swapped } = createTestEnv();
+    await patchOwner(swapped, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    await patchOwner(swapped, TENANT_A, { premiumUntil: PAST }, await ownerHeaders());
+    const u = (await getTenantById(swapped.PAWSERVATION_DB, TENANT_A))!;
+    expect(u.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(u.PremiumUntil).toBe('2000-01-01 00:00:00');
+
+    // And `disabled` alone leaves the comp untouched too — the three switches share one PATCH and
+    // none may be a hidden side effect of another.
+    await patchOwner(swapped, TENANT_A, { disabled: true }, await ownerHeaders());
+    const v = (await getTenantById(swapped.PAWSERVATION_DB, TENANT_A))!;
+    expect(v.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(v.PremiumUntil).toBe('2000-01-01 00:00:00');
+    expect(v.DisabledAt).not.toBeNull();
+  });
+
+  it('echoes compActive beside compedUntil, from the server and not from the date', async () => {
+    // The console's Basic comp chip lights on this boolean, never on `compedUntil != null` alone:
+    // a comp that ran out in 2024 is a date on the row and not a grant, and a chip lit from the
+    // date's presence told the owner a lapsed business was comped.
+    const { env } = createTestEnv();
+    const live = await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    expect(await live.json()).toMatchObject({ compActive: true, planCurrent: true });
+    const past = await patchOwner(env, TENANT_A, { compedUntil: PAST }, await ownerHeaders());
+    expect(await past.json()).toMatchObject({ compActive: false, planCurrent: false });
+    // Disabled: not comped either, by the shared early return.
+    await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    const off = await patchOwner(env, TENANT_A, { disabled: true }, await ownerHeaders());
+    expect(await off.json()).toMatchObject({
+      disabled: true,
+      compedUntil: '2099-01-01 00:00:00',
+      compActive: false,
+      planCurrent: false,
+    });
+  });
+
+  it('applies all three switches in ONE batch, and 404s a tenant that vanished', async () => {
+    const { env } = createTestEnv();
+    const res = await patchOwner(
+      env,
+      TENANT_A,
+      { disabled: true, premiumUntil: FUTURE, compedUntil: PAST },
+      await ownerHeaders(),
+    );
+    expect(res.status).toBe(200);
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.DisabledAt).not.toBeNull();
+    expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');
+    expect(t.CompedUntil).toBe('2000-01-01 00:00:00');
+    // A tenant deleted between the lookup and the write matches zero rows, and the answer is the
+    // same 404 the lookup gives — not a 200 assembled from `after?.` optionals over a row that is
+    // no longer there. Driven through the repo's own return value, since the window itself cannot
+    // be opened from a test.
+    expect(await applyOwnerSwitches(env.PAWSERVATION_DB, 'tnt_gone', { disabled: true })).toBe(
+      false,
+    );
+    expect(
+      await applyOwnerSwitches(env.PAWSERVATION_DB, TENANT_A, {
+        disabled: false,
+        premiumUntil: null,
+        compedUntil: null,
+      }),
+    ).toBe(true);
+    const cleared = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(cleared.DisabledAt).toBeNull();
+    expect(cleared.PremiumUntil).toBeNull();
+    expect(cleared.CompedUntil).toBeNull();
   });
 });
