@@ -67,13 +67,16 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- place this column's values are produced.
   BilledUntil TEXT,
   -- The processor's own identifiers for this subscription. RECORDED, never interpreted: nothing in
-  -- this repo calls a processor or verifies a signature. The customer id is written once, on first
-  -- sight; the subscription id is replaced when a new checkout completes, which is how a
-  -- re-subscribe wins and a late cancellation for the old one cannot lower a live plan.
+  -- this repo calls a processor or verifies a signature. Both are reassigned only by an
+  -- ESTABLISHING event — a completed checkout, or a resync for the same customer — which is how a
+  -- re-subscribe wins and a late cancellation for the old one cannot lower a live plan; an
+  -- ordinary event fills the customer id when it is missing and never moves it.
   StripeCustomerId TEXT,
   StripeSubscriptionId TEXT,
-  -- When the most recently APPLIED billing event was created, same stored shape. An event created
-  -- at or before this instant is ignored, which is the whole of what makes a redelivery a no-op.
+  -- The HIGH-WATER MARK of applied billing events' creation stamps, same stored shape. An ordinary
+  -- event or a checkout created before this instant is ignored, which is the whole of what makes a
+  -- redelivery a no-op; a resync carries a period start rather than a wall clock, so it is exempt
+  -- and never lowers the mark.
   LastBillingEventAt TEXT,
   -- <<< 0017 plan billing
   -- >>> 0018 plan comp (migrations/0018_plan_comp.sql). Fenced by the marker pair for the reason

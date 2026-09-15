@@ -130,6 +130,20 @@ describe('isPlanCurrent — each grant alone makes her current', () => {
     expect(isSoloActive(facts({ BilledUntil: stored }))).toBe(true);
   });
 
+  it('is never current for a disabled business, however far ahead all three dates are', () => {
+    // The shared early return, which is what makes the ordering claim true by construction: a
+    // disabled business is refused 403 account_disabled by tenantMiddleware long before the lapse
+    // gate runs, and this predicate says false for her anyway, so the two can never contradict.
+    const off = facts({
+      DisabledAt: '2026-07-23 00:00:00',
+      Plan: 'pro',
+      BilledUntil: minutesFromNow(60 * 24 * 365),
+      CompedUntil: minutesFromNow(60 * 24 * 365),
+      PremiumUntil: minutesFromNow(60 * 24 * 365),
+    });
+    expect(isPlanCurrent(off)).toBe(false);
+  });
+
   it('reads DisabledAt as a NON-EMPTY string, the way tenantMiddleware reads it', () => {
     // `!= null` read `''` as disabled where the middleware's truthiness test read it as active: a
     // row hand-written with an empty string was refused by the lapse gate as not current while the
@@ -154,20 +168,6 @@ describe('the two deployment flags are strings, and only the string is on', () =
     expect(planEnforceEnabled({ PLAN_ENFORCE: ' True ' } as Env)).toBe(true);
     expect(planSubscribeEnabled({ PLAN_SUBSCRIBE: ' True ' } as Env)).toBe(true);
   });
-
-  it('is never current for a disabled business, however far ahead all three dates are', () => {
-    // The shared early return, which is what makes the ordering claim true by construction: a
-    // disabled business is refused 403 account_disabled by tenantMiddleware long before the lapse
-    // gate runs, and this predicate says false for her anyway, so the two can never contradict.
-    const off = facts({
-      DisabledAt: '2026-07-23 00:00:00',
-      Plan: 'pro',
-      BilledUntil: minutesFromNow(60 * 24 * 365),
-      CompedUntil: minutesFromNow(60 * 24 * 365),
-      PremiumUntil: minutesFromNow(60 * 24 * 365),
-    });
-    expect(isPlanCurrent(off)).toBe(false);
-  });
 });
 
 describe('a comp and a subscription do not interfere — the story’s own AC', () => {
@@ -190,7 +190,7 @@ describe('a comp and a subscription do not interfere — the story’s own AC', 
       stripeCustomerId: 'cus_A',
       stripeSubscriptionId: 'sub_A',
       eventAt: '2026-09-08 12:00:00',
-      establishes: true,
+      kind: 'checkout' as const,
       ...over,
     });
     const db = env.PAWSERVATION_DB;

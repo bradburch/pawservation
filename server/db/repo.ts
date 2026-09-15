@@ -6003,6 +6003,20 @@ export async function setTenantCompedUntil(
 }
 
 /**
+ * WHICH KIND OF BILLING EVENT this is, for the guards below. Three, not five: the route's
+ * picklist has five names, but the statement only cares which of three sets of rules apply.
+ *   - `'checkout'` — a completed checkout ESTABLISHES which customer and which subscription this
+ *     business now is: it may replace the subscription and assign the customer over a stored one
+ *     (the dead-customer loop), and it is ordered by the processor's own `created`.
+ *   - `'resync'` — the caller saying "this is what the processor says right now". It establishes
+ *     the subscription too, but only for the SAME customer, and its stamp is a period start rather
+ *     than a wall clock — so it is exempt from the stale rule, and it alone is.
+ *   - `'ordinary'` — an invoice, an update, a cancellation: says something about the CURRENT
+ *     subscription and nothing about identity.
+ */
+export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
+
+/**
  * Billing-scope: record what a subscription paid for (0017). Writes `Plan`, `BilledUntil`, the two
  * processor ids and `LastBillingEventAt` in ONE statement, because a partially-applied billing write
  * would advance the stamp past a date that was never stored — and the next event would then be
@@ -6015,7 +6029,7 @@ export async function setTenantCompedUntil(
  * route's job (`tenantMiddleware` answers 403 before the handler runs, and `isPremiumActive` is
  * already false while she is disabled) and because what she paid for is what re-enabling restores.
  *
- * THE TWO GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same two decisions in
+ * THE THREE GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same decisions in
  * order to report WHICH rule fired, but two redeliveries arriving at once would interleave a
  * read-then-write; here they cannot.
  *   - `LastBillingEventAt <= ?` — an event created STRICTLY BEFORE the last one applied does
@@ -6023,30 +6037,48 @@ export async function setTenantCompedUntil(
  *     inside a single second, and a rule that refused the ties threw away the ones carrying a
  *     different payload. NFR-13 is bought by the SET semantics above instead — every column is
  *     assigned, none is extended, so the identical request twice leaves a byte-identical row while
- *     a genuinely different same-second event still lands.
+ *     a genuinely different same-second event still lands. A `'resync'` IS EXEMPT from this rule,
+ *     and only a resync: its stamp is the subscription's period start, which can be months older
+ *     than the last webhook, and the frozen row it exists to repair is exactly the row whose stamp
+ *     is newer. A `'checkout'` is NOT exempt — its stamp is the processor's own `created`, honest
+ *     to order by, and exempting it would let a redelivered old checkout regress a row to the
+ *     subscription a newer checkout had replaced.
  *   - the subscription clause — an event for a subscription that is not this tenant's current one
- *     does nothing, UNLESS `establishes` (a completed checkout, or a resync), which is how a
+ *     does nothing, UNLESS it establishes (a completed checkout, or a resync), which is how a
  *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
  *     live plan.
+ *   - the customer clause — a `'resync'` may replace the subscription ONLY when the row's
+ *     `StripeCustomerId` is null or matches the event's. A resync says "this is what the processor
+ *     says about THIS customer"; one naming a different customer is talking about somebody else's
+ *     subscription, and the shared secret alone must not be enough to move a business onto it. A
+ *     checkout is unconstrained here on purpose: assigning a fresh customer over a dead one is the
+ *     loop it closes.
+ *
+ * `LastBillingEventAt` IS A HIGH-WATER MARK, not "the last one written": `MAX(existing, eventAt)`.
+ * For every non-exempt event the `WHERE` already guarantees `eventAt` is the max, so this changes
+ * nothing for them; for a resync older than the stamp it keeps the stamp where it was. Rewinding it
+ * to the period start would re-open the door to every ordinary webhook redelivered from between
+ * the two, and the stale rule is the only thing that closes it.
  *
  * `PremiumUntil` AND `CompedUntil` ARE BOTH ABSENT FROM THIS STATEMENT AND MUST STAY ABSENT — the
  * paragraph above is written of the first and holds identically of the second. Two comps, one per
  * tier, each written only by its own owner-console writer.
  *
- * THE TWO IDS NO LONGER BEHAVE DIFFERENTLY ON THE ESTABLISHING EVENTS, and that is the change worth
- * naming. `StripeSubscriptionId` is always assigned; `StripeCustomerId` is assigned when
- * `establishes` and `COALESCE`d otherwise. A completed checkout and a resync are the two events
- * that say WHICH CUSTOMER AND WHICH SUBSCRIPTION this tenant now is; an invoice merely says that
- * subscription was paid, and one arriving late for a displaced subscription must not move the id.
- * The old unconditional `COALESCE` is why a re-subscribe under a new customer left the row naming
- * subscription B against customer A — a state the route could only log.
+ * THE TWO IDS ON THE ESTABLISHING EVENTS: `StripeSubscriptionId` is always assigned;
+ * `StripeCustomerId` is assigned when the event establishes and `COALESCE`d otherwise. A completed
+ * checkout and a resync are the two events that say WHICH CUSTOMER AND WHICH SUBSCRIPTION this
+ * tenant now is (a resync's "assign" is a no-op or a fill, by the customer clause above); an
+ * invoice merely says that subscription was paid, and one arriving late for a displaced
+ * subscription must not move the id. The old unconditional `COALESCE` is why a re-subscribe under
+ * a new customer left the row naming subscription B against customer A — a state the route could
+ * only log.
  *
  * `billedUntil` and `eventAt` must ALREADY be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC) —
  * `normalizeBilledUntil` / `normalizePremiumUntil` (server/lib/premium.ts) are the only places that
  * shape is produced, so `BilledUntil > now` stays a comparison of like with like.
  *
  * Returns whether a row changed: `false` is "no such tenant, or a guard refused it", which the route
- * distinguishes for its own answer — a caller whose own read said both rules were satisfied has been
+ * distinguishes for its own answer — a caller whose own read said every rule was satisfied has been
  * overtaken by a concurrent delivery. Caller must `invalidateTenantCache`.
  */
 export async function applyBillingEvent(
@@ -6058,9 +6090,12 @@ export async function applyBillingEvent(
     stripeCustomerId: string;
     stripeSubscriptionId: string;
     eventAt: string;
-    establishes: boolean;
+    kind: BillingEventKind;
   },
 ): Promise<boolean> {
+  const establishes = event.kind !== 'ordinary' ? 1 : 0;
+  const staleExempt = event.kind === 'resync' ? 1 : 0;
+  const sameCustomerOnly = event.kind === 'resync' ? 1 : 0;
   const result = await db
     .prepare(
       `UPDATE Tenants
@@ -6068,23 +6103,27 @@ export async function applyBillingEvent(
               BilledUntil = ?,
               StripeCustomerId = CASE WHEN ? = 1 THEN ? ELSE COALESCE(StripeCustomerId, ?) END,
               StripeSubscriptionId = ?,
-              LastBillingEventAt = ?
+              LastBillingEventAt = MAX(COALESCE(LastBillingEventAt, ''), ?)
         WHERE Id = ?
-          AND (LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
-          AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)`,
+          AND (? = 1 OR LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
+          AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)
+          AND (? = 0 OR StripeCustomerId IS NULL OR StripeCustomerId = ?)`,
     )
     .bind(
       event.plan,
       event.billedUntil,
-      event.establishes ? 1 : 0,
+      establishes,
       event.stripeCustomerId,
       event.stripeCustomerId,
       event.stripeSubscriptionId,
       event.eventAt,
       tenantId,
+      staleExempt,
       event.eventAt,
-      event.establishes ? 1 : 0,
+      establishes,
       event.stripeSubscriptionId,
+      sameCustomerOnly,
+      event.stripeCustomerId,
     )
     .run();
   return (result.meta as { changes?: number }).changes !== 0;

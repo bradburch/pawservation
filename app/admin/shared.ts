@@ -127,9 +127,9 @@ export type Settings = {
   /**
    * She has an account at the processor: a non-empty `StripeCustomerId`. The WHOLE of the
    * Manage-plan gate beside the published origin, and deliberately not paired with `planActive`:
-   * this column is written once and never cleared, so it stays true for a sitter who cancelled years
-   * ago — and a LAPSED plan is very often a subscription still in the processor's dunning, where the
-   * hosted portal is the only place she can put a working card on it.
+   * this column is reassigned only by an establishing event and never cleared, so it stays true for
+   * a sitter who cancelled years ago — and a LAPSED plan is very often a subscription still in the
+   * processor's dunning, where the hosted portal is the only place she can put a working card on it.
    *
    * True with `plan: null` is a real state (a checkout that reached the processor and stopped), and
    * in THIS repo only hand-written SQL produces it: `applyBillingEvent` writes the plan, the date and

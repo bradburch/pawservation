@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import * as v from 'valibot';
-import { applyBillingEvent, getTenantById } from '../db/repo';
+import { applyBillingEvent, getTenantById, type BillingEventKind } from '../db/repo';
 import { requestContext, securityEvent } from '../lib/log';
 import { UNKNOWN_TENANT } from '../lib/middleware';
 import { normalizeBilledUntil, normalizePremiumUntil } from '../lib/premium';
@@ -304,31 +304,61 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
   const row = await getTenantById(c.env.PAWSERVATION_DB, tenant.Id);
   if (!row) return c.json(UNKNOWN_TENANT, 404); // deleted between the middleware and here
 
-  /** The two events allowed to ESTABLISH identity — which subscription and which customer this
-   *  business now is. A completed checkout, and a resync: without the second, a resync is refused
-   *  by the very rule it exists to escape, because a frozen row holds the DISPLACED id. */
-  const establishes =
-    body.eventType === 'checkout.session.completed' || body.eventType === 'resync';
+  /**
+   * WHICH RULES APPLY (`BillingEventKind`, server/db/repo.ts). The two events allowed to ESTABLISH
+   * identity — which subscription and which customer this business now is — are a completed
+   * checkout and a resync: without the second, a resync is refused by the very rule it exists to
+   * escape, because a frozen row holds the DISPLACED id. They differ from each other in two ways
+   * the guards below spell out, which is why this is a three-way kind and not a boolean.
+   */
+  const kind: BillingEventKind =
+    body.eventType === 'checkout.session.completed'
+      ? 'checkout'
+      : body.eventType === 'resync'
+        ? 'resync'
+        : 'ordinary';
 
   /**
-   * The two ignore rules, answered 200 with the reason named. A silent 200 would make an ignored
-   * event indistinguishable from an applied one in the caller's own logs, and these two reasons are
-   * the difference between "we are in sync" and "we are talking about different subscriptions". The
-   * reason names no person and no secret.
+   * The ignore rules, answered 200 with the reason named. A silent 200 would make an ignored event
+   * indistinguishable from an applied one in the caller's own logs, and these reasons are the
+   * difference between "we are in sync" and "we are talking about different subscriptions". The
+   * reason names no person and no secret. Each mirrors a clause of the guarded UPDATE's `WHERE`.
    */
-  if (row.LastBillingEventAt != null && eventAt < row.LastBillingEventAt) {
+  if (kind !== 'resync' && row.LastBillingEventAt != null && eventAt < row.LastBillingEventAt) {
     // STRICTLY older. An event created in the SAME SECOND as the last one applies: a processor
     // emits `checkout.session.completed` and `customer.subscription.updated` for one action inside
     // one second, and refusing the ties threw away whichever arrived second along with its payload.
     // NFR-13 is bought by the writer's SET semantics instead — the identical request twice leaves a
     // byte-identical row — and this comparison agrees with the `WHERE` clause that enforces it.
+    //
+    // A RESYNC IS EXEMPT, and only a resync. Its `eventCreated` is the subscription's period start
+    // rather than a wall clock, so it is routinely older than the last webhook — and a frozen row
+    // is exactly a row whose stamp is newer than that. A checkout is NOT exempt: its stamp is the
+    // processor's own `created`, and a redelivered old checkout must not regress a row to the
+    // subscription a newer one replaced. There is no LOWER bound on `eventCreated` to relax for a
+    // resync — the schema's floor is 0 — and the 5-minute future-skew rule above still applies to
+    // it, so a resync can be as old as a period start and no newer than the clock.
     return await declined(c, row.Slug, body.eventId, 'stale_event');
   }
   if (
-    !establishes &&
+    kind === 'ordinary' &&
     row.StripeSubscriptionId != null &&
     row.StripeSubscriptionId !== body.stripeSubscriptionId
   ) {
+    return await declined(c, row.Slug, body.eventId, 'not_current_subscription');
+  }
+  if (
+    kind === 'resync' &&
+    row.StripeCustomerId != null &&
+    row.StripeCustomerId !== body.stripeCustomerId
+  ) {
+    // A resync may replace the subscription ONLY within the same customer. It says "this is what
+    // the processor says about THIS customer"; one naming a different customer is talking about
+    // somebody else's subscription, and the shared secret alone must not be enough to move a
+    // business onto it. The same reason as the clause above, because it is the same refusal from
+    // the caller's side: the event is not about this business's current subscription. A checkout
+    // is unconstrained here on purpose — assigning a fresh customer over a dead one is the loop it
+    // closes.
     return await declined(c, row.Slug, body.eventId, 'not_current_subscription');
   }
 
@@ -348,9 +378,9 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
       : null;
   // THE RECORD OF A CHANGE, no longer the record of a refusal. The customer id used to be
   // `COALESCE`d on every event, so a divergence here was a thing this endpoint noticed and could
-  // not act on; on the two establishing events it is now assigned, and this line says when that
-  // happened. On the other three it is still `COALESCE`d and the line still records a divergence
-  // that was not applied.
+  // not act on; on a checkout it is now assigned, and this line says when that happened. On the
+  // ordinary three it is still `COALESCE`d and the line still records a divergence that was not
+  // applied. A resync cannot reach this line with a divergence: the clause above declined it.
   if (row.StripeCustomerId != null && row.StripeCustomerId !== body.stripeCustomerId) {
     securityEvent('billing_customer_changed', {
       tenant: row.Slug,
@@ -365,7 +395,7 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
     stripeCustomerId: body.stripeCustomerId,
     stripeSubscriptionId: body.stripeSubscriptionId,
     eventAt,
-    establishes,
+    kind,
   });
   // Both checks above passed and the statement still declined: another delivery of a LATER event
   // landed in between. Its answer is the right one, and this one is reported as what it now is.

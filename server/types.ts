@@ -49,12 +49,16 @@ export type Tenant = {
    *  same way (0017). null = never subscribed. Solo entitlement is this column alone; premium
    *  entitlement is this column AND `Plan === 'pro'`, or a live comp. */
   BilledUntil: string | null;
-  /** The processor's customer id (0017). Recorded on first sight and never overwritten. */
+  /** The processor's customer id (0017). Filled on first sight by any event, and REASSIGNED ONLY
+   *  BY AN ESTABLISHING EVENT — a completed checkout, which may name a fresh customer over a dead
+   *  one; a resync may only fill an empty one, never move it (`applyBillingEvent`). */
   StripeCustomerId: string | null;
-  /** The processor's subscription id (0017). Replaced when a new checkout completes. */
+  /** The processor's subscription id (0017). Reassigned only by an establishing event — a
+   *  completed checkout, or a resync for the same customer. */
   StripeSubscriptionId: string | null;
-  /** When the most recently applied billing event was created (0017), same stored shape. An event
-   *  created at or before this is ignored, which is what makes a redelivery a no-op. */
+  /** The HIGH-WATER MARK of applied billing events' creation stamps (0017), same stored shape. An
+   *  ordinary event or a checkout created strictly before this is ignored, which is what makes a
+   *  redelivery a no-op; a resync is exempt (its stamp is a period start) and never lowers it. */
   LastBillingEventAt: string | null;
   /** How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
    *  'total' = the whole charge for the stay; 'per-night' = a nightly rate, multiplied by the

@@ -888,29 +888,105 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeSubscriptionId).toBeNull();
   });
 
-  it('is stale-checked by the same strictly-older rule, with no special case', async () => {
+  it('applies when OLDER than the last webhook — the freeze it exists to repair', async () => {
+    // A resync's `eventCreated` is the subscription's period start, never a wall clock, so it is
+    // routinely older than the last webhook applied — and a frozen row is exactly a row whose stamp
+    // is newer than that. This case USED TO pin the opposite ("stale-checked by the same rule, with
+    // no special case"), which refused the resync by the freeze it was sent to repair; that pin is
+    // replaced, deliberately, by this one.
     const { env } = createTestEnv();
     await post(withSecrets(env), 'sunny-paws', event({ eventCreated: AT_SECONDS + 3600 }));
-    // The caller's identity is the subscription item's period start, never a wall clock, so a
-    // resync for a period already applied is older and correctly does nothing.
+    const stampBefore = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.LastBillingEventAt;
     const older = await post(
       withSecrets(env),
       'sunny-paws',
-      event({ eventType: 'resync', eventCreated: AT_SECONDS }),
+      event({ eventType: 'resync', eventCreated: AT_SECONDS, plan: 'solo' }),
     );
-    expect(await older.json()).toMatchObject({ applied: false, reason: 'stale_event' });
-    // Equal to the second still applies — the rule is strictly `<`, unchanged by this story.
-    const equal = await post(
+    expect(await older.json()).toEqual({ applied: true });
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    // The payload SETS the current period…
+    expect(t.Plan).toBe('solo');
+    // …and the stamp is a high-water mark, left where the newer webhook put it, so an ORDINARY
+    // event redelivered from between the two is still stale.
+    expect(t.LastBillingEventAt).toBe(stampBefore);
+    const between = await post(
       withSecrets(env),
       'sunny-paws',
-      event({ eventType: 'resync', eventCreated: AT_SECONDS + 3600, plan: 'solo' }),
+      event({ eventType: 'invoice.paid', plan: 'pro', eventCreated: AT_SECONDS + 1800 }),
     );
-    expect(await equal.json()).toMatchObject({ applied: true });
+    expect(await between.json()).toMatchObject({ applied: false, reason: 'stale_event' });
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.Plan).toBe('solo');
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.Plan).toBeNull();
   });
 
-  it('assigns the customer id on the two establishing events and coalesces it on an invoice', async () => {
+  it('is the ONLY event exempt from staleness — a redelivered old checkout cannot regress the row', async () => {
+    // Two checkouts, sub_A then sub_B, then the first delivered again. It establishes, but its
+    // stamp is the processor's own `created` and honest to order by — so it is refused, and the row
+    // ends on the newer subscription's values. Were checkout exempt too, this redelivery would
+    // put sub_A back.
+    const { env } = createTestEnv();
+    await post(withSecrets(env), 'sunny-paws', event({ eventCreated: AT_SECONDS }));
+    await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({
+        stripeSubscriptionId: 'sub_B',
+        billedUntil: daysFromNow(60),
+        eventId: 'evt_checkout_b',
+        eventCreated: AT_SECONDS + 60,
+      }),
+    );
+    const redelivered = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventCreated: AT_SECONDS }),
+    );
+    expect(await redelivered.json()).toEqual({ applied: false, reason: 'stale_event' });
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.StripeSubscriptionId).toBe('sub_B');
+    expect(t.BilledUntil).toBe(normalizeBilledUntil(daysFromNow(60)));
+  });
+
+  it('replaces the subscription only for the SAME customer, and is declined for another', async () => {
+    const { env } = createTestEnv();
+    await post(withSecrets(env), 'sunny-paws', event({ eventCreated: AT_SECONDS })); // cus_A/sub_A
+    // A different customer: declined as not this business's subscription, row untouched, and the
+    // customer-changed line is NOT written — nothing changed.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const other = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({
+        eventType: 'resync',
+        stripeCustomerId: 'cus_OTHER',
+        stripeSubscriptionId: 'sub_C',
+        plan: 'solo',
+        eventCreated: AT_SECONDS + 60,
+      }),
+    );
+    expect(await other.json()).toEqual({ applied: false, reason: 'not_current_subscription' });
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.StripeCustomerId).toBe('cus_A');
+    expect(t.StripeSubscriptionId).toBe('sub_A');
+    expect(t.Plan).toBe('pro');
+    expect(warn.mock.calls.map((call) => JSON.stringify(call)).join('\n')).not.toContain(
+      'billing_customer_changed',
+    );
+    vi.restoreAllMocks();
+    // The same customer with a new subscription: the repair a resync exists for.
+    const same = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'resync', stripeSubscriptionId: 'sub_B', eventCreated: AT_SECONDS + 120 }),
+    );
+    expect(await same.json()).toEqual({ applied: true, replaced: 'sub_A' });
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeSubscriptionId).toBe(
+      'sub_B',
+    );
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeSubscriptionId).toBeNull();
+  });
+
+  it('assigns the customer id on a checkout, fills it on a resync, and coalesces it on an invoice', async () => {
     const { env } = createTestEnv();
     await post(
       withSecrets(env),
@@ -930,12 +1006,16 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
     expect(invoice.status).toBe(200);
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe('cus_A');
 
+    // A CHECKOUT assigns over a stored customer: the dead-customer loop, closed. This case USED TO
+    // show a resync doing the same, and that half is replaced deliberately — a resync naming a
+    // different customer is now declined (the case above), so a resync can only FILL an empty one.
     await post(
       withSecrets(env),
       'sunny-paws',
       event({
-        eventType: 'resync',
+        eventType: 'checkout.session.completed',
         stripeCustomerId: 'cus_FRESH',
+        stripeSubscriptionId: 'sub_FRESH',
         eventCreated: AT_SECONDS + 120,
       }),
     );
@@ -943,6 +1023,17 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
       'cus_FRESH',
     );
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeCustomerId).toBeNull();
+
+    // And a resync on a row with NO customer yet fills it — nothing to disagree with.
+    const { env: fresh } = createTestEnv();
+    await post(
+      withSecrets(fresh),
+      'sunny-paws',
+      event({ eventType: 'resync', stripeCustomerId: 'cus_FILLED', eventCreated: AT_SECONDS }),
+    );
+    expect((await getTenantById(fresh.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe(
+      'cus_FILLED',
+    );
   });
 
   it('leaves BOTH comp columns byte-identical, whichever event arrives', async () => {
