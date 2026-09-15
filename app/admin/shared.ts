@@ -100,10 +100,10 @@ export type Settings = {
     calendarId: string | null;
   };
   /**
-   * HER PLAN, read-only (0017, Story 10.3). Published by the settings GET and never sent back:
-   * `save()` in App.tsx builds its PUT body field by field rather than spreading this object, so
-   * these five cannot reach the wire; and the sticky-save `dirty` check compares the whole object
-   * against the saved snapshot, so five fields that change only on a reload can never make the
+   * HER PLAN, read-only (0017, 0018; Stories 10.3 and 10.4). Published by the settings GET and never
+   * sent back: `save()` in App.tsx builds its PUT body field by field rather than spreading this
+   * object, so these six cannot reach the wire; and the sticky-save `dirty` check compares the whole
+   * object against the saved snapshot, so six fields that change only on a reload can never make the
    * save bar appear. Both facts are why a read-only field is allowed to live on this type at all.
    */
   plan: 'solo' | 'pro' | null;
@@ -113,9 +113,23 @@ export type Settings = {
   /** `isSoloActive`'s answer, computed on the server. The dashboard must not re-derive it. */
   planActive: boolean;
   /**
-   * She has an account at the processor: a non-empty `StripeCustomerId`. One HALF of the Manage-plan
-   * gate, never the whole of it — `planActive` is the other half, because this column is written
-   * once and never cleared, so it stays true for a sitter who cancelled years ago.
+   * `isPlanCurrent`'s answer, computed on the server: billed OR comped OR premium-comped, and not
+   * disabled. A DIFFERENT QUESTION from `planActive` and published beside it deliberately — a
+   * comped business holds a current plan and no subscription, so she is offered Subscribe and shown
+   * no banner.
+   *
+   * THE TENANT'S STATE, NOT THE GATE'S ANSWER. Whether this deployment enforces the plan is a
+   * separate fact the dashboard is never told, so between a deploy and the platform owner finishing
+   * his comp sweep this reads false while nothing is actually refused. The banner is early rather
+   * than wrong, and the server's own non-GET guard is the enforcement either way.
+   */
+  planCurrent: boolean;
+  /**
+   * She has an account at the processor: a non-empty `StripeCustomerId`. The WHOLE of the
+   * Manage-plan gate beside the published origin, and deliberately not paired with `planActive`:
+   * this column is written once and never cleared, so it stays true for a sitter who cancelled years
+   * ago — and a LAPSED plan is very often a subscription still in the processor's dunning, where the
+   * hosted portal is the only place she can put a working card on it.
    *
    * True with `plan: null` is a real state (a checkout that reached the processor and stopped), and
    * in THIS repo only hand-written SQL produces it: `applyBillingEvent` writes the plan, the date and

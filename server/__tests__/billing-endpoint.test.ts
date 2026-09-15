@@ -468,7 +468,11 @@ describe('what it refuses on its content', () => {
       ['unknown plan', event({ plan: 'enterprise' })],
       ['unknown event type', event({ eventType: 'invoice.voided' })],
       ['unparseable date', event({ billedUntil: 'next tuesday' })],
-      ['past the ceiling', event({ billedUntil: daysFromNow(401) })],
+      // A RESYNC, deliberately: the ceiling and the skew bound are checked before the event type
+      // is dispatched on, so the fifth type is subject to both by construction — and this row is
+      // where that construction is pinned rather than read off the route. The boundary itself is
+      // exercised on both sides by the checkout case below.
+      ['past the ceiling', event({ eventType: 'resync', billedUntil: daysFromNow(401) })],
       ['missing field', { plan: 'pro', billedUntil: daysFromNow(31) }],
       ['not an object', 'nope'],
     ] as const) {
@@ -825,12 +829,19 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ applied: true });
+    // The WHOLE row a resync establishes, not two columns of it: `establishes` is what assigns
+    // `StripeCustomerId` rather than `COALESCE`-ing it, and the date is the whole point of an
+    // event this endpoint takes instead of a processor object.
     const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
     expect(t.Plan).toBe('pro');
     expect(t.StripeSubscriptionId).toBe('sub_A');
+    expect(t.StripeCustomerId).toBe('cus_A');
+    expect(t.BilledUntil).toBe(normalizeBilledUntil(BILLED));
     const b = (await getTenantById(env.PAWSERVATION_DB, TENANT_B))!;
     expect(b.Plan).toBeNull();
     expect(b.StripeSubscriptionId).toBeNull();
+    expect(b.StripeCustomerId).toBeNull();
+    expect(b.BilledUntil).toBeNull();
   });
 
   it('escapes the not_current_subscription rule that an invoice cannot', async () => {
@@ -869,6 +880,11 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
       }),
     );
     expect(await resync.json()).toEqual({ applied: true, replaced: 'sub_A' });
+    // `replaced` is computed from the PRE-write row, so it reports what was displaced and not what
+    // was stored. The row is the half that matters to the next event's subscription clause.
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeSubscriptionId).toBe(
+      'sub_B',
+    );
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeSubscriptionId).toBeNull();
   });
 

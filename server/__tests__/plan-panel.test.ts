@@ -530,16 +530,75 @@ describe('plan state survives a mid-session settings re-read', () => {
     expect(APP.match(/\.\.\.planFieldsOf\(fresh\)/g)).toHaveLength(2);
   });
 
-  it('names the five fields explicitly, rather than spreading the fresh payload', () => {
+  it('names the six fields explicitly, rather than spreading the fresh payload', () => {
     // Field by field, which is the same discipline `save()` uses for the PUT body: a field added to
     // `Settings` does not silently join this merge, and spreading `fresh` wholesale would be the
-    // staged-edit bug `refreshCalendarStatus` exists to avoid.
-    for (const field of ['plan:', 'billedUntil:', 'planActive:', 'hasBillingAccount:']) {
+    // staged-edit bug `refreshCalendarStatus` exists to avoid. `planCurrent` joins the list in the
+    // same commit that adds it, or the banner is right on a fresh load and stale for the rest of
+    // the session — the exact failure the other five were added to fix.
+    for (const field of [
+      'plan:',
+      'billedUntil:',
+      'planActive:',
+      'hasBillingAccount:',
+      'planCurrent:',
+    ]) {
       expect(APP, field).toContain(`  ${field} s.${field.slice(0, -1)},`);
     }
     // `stripeCustomerId` is spread conditionally, because the key is ABSENT — not null — for a
     // `pawsa_` credential, and turning that absence into an `undefined` would make the client type
     // lie about the payload it mirrors.
     expect(APP_TEXT).toContain("'stripeCustomerId' in s");
+  });
+});
+
+describe('a lapsed plan is a read-only dashboard, and the dashboard says so', () => {
+  it('puts the banner on the tenant’s own planCurrent, and never beside the disabled one', () => {
+    // The disabled banner's own slot, whose comment already establishes the right model: this is
+    // UX, and the server's non-GET guard is the actual enforcement. `!settings.disabled` is what
+    // keeps the two from stacking — a switched-off account is `planCurrent: false` too, and she has
+    // already been told why her account is off and who to ask.
+    expect(APP).toContain('!settings.planCurrent && !settings.disabled');
+    expect(APP).toContain('{PLAN_LAPSED}');
+    expect(APP_TEXT).toMatch(/read-only until you start a plan again/);
+  });
+
+  it('routes a 402 plan_lapsed BEFORE isAuthExpired, so it can never sign her out', () => {
+    // 402 cannot be mistaken for an expired session by any client, which is why the status is 402
+    // and not 403 — but the branch order is still pinned, because the cost of getting it wrong for
+    // the NEXT literal is ejecting a sitter from the dashboard she is trying to read. The
+    // `account_disabled` branch already carries that lesson one line above.
+    expect(APP_TEXT).toContain("e.message === 'plan_lapsed'");
+    const lapsedAt = APP_TEXT.indexOf("e.message === 'plan_lapsed'");
+    const authAt = APP_TEXT.indexOf('isAuthExpired(e)');
+    expect(lapsedAt).toBeGreaterThan(-1);
+    expect(authAt).toBeGreaterThan(-1);
+    expect(lapsedAt).toBeLessThan(authAt);
+  });
+
+  it('tells the lapsed sitter with NO billing account what Subscribe does for her', () => {
+    // The sitter `LAPSED_WITH_ACCOUNT` does not reach: lapsed on a comp that ran out, or never
+    // subscribed at all. She has no portal to open, so the sentence names the one control she has.
+    expect(PANEL).toContain('LAPSED_NO_ACCOUNT');
+    // A PHRASE ONLY THIS SENTENCE HAS. `Subscribe` is the button's own label and `lapsed` is the
+    // status line's word, so either would stay green against a constant emptied to `''` — a
+    // sentence declared and never read is the mutation this file has already lost twice.
+    expect(PANEL_TEXT).toMatch(/brings it back/);
+    // RENDERED, and only where it is true: she holds no plan, has no account at the processor, and
+    // her account is not switched off — that last term because `ACCOUNT_OFF` already occupies this
+    // position for her and two sentences about the same silence is one too many.
+    expect(FLAT).toContain(
+      '!settings.planCurrent && !settings.hasBillingAccount && !settings.disabled',
+    );
+    expect(FLAT).toContain('{LAPSED_NO_ACCOUNT}');
+    // AND IT STATES NO LENGTH FOR THE GRACE, in numerals or in words, beside the no-figure and
+    // no-terms pins above that already cover this constant too. Scoped to a period noun rather
+    // than a bare `\d`: `PANEL_TEXT` keeps executable literals, and this panel's own `401`/`403`
+    // are two of them — a pin that reads an HTTP status as a grace length is the crying-wolf pin
+    // the dollar-figure case above is already scoped to avoid.
+    expect(PANEL_TEXT).not.toMatch(/\b\d+\s*-?\s*(?:day|week|month|year)s?\b/i);
+    expect(PANEL_TEXT).not.toMatch(
+      /\b(?:one|two|three|four|five|six|seven|ten|fourteen|thirty)\s*-?\s*(?:day|week|month|year)s?\b/i,
+    );
   });
 });

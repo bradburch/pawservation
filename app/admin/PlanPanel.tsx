@@ -102,6 +102,19 @@ const LAPSED_WITH_ACCOUNT =
  *  the account is off and who to ask; this line says only what it means for the plan. */
 const ACCOUNT_OFF = 'This account is switched off, so its plan cannot be changed here.';
 
+/** The sitter `LAPSED_WITH_ACCOUNT` cannot reach: her plan has lapsed and she has NO account at the
+ *  processor — a comp that ran out, or a business that never subscribed. There is no portal to open
+ *  for her, so the sentence names the one control she has and says what it restores.
+ *
+ *  NO LENGTH FOR THE GRACE, in numerals or in words. `plan-panel.test.ts` forbids a numeral beside a
+ *  period noun, and a length written out would go stale silently the moment the grace changed — the
+ *  same failure a typed price is banned here for. IT WRAPS BETWEEN CLAUSES, NEVER INSIDE ONE: the
+ *  pins read this constant at the SOURCE, so a `+` that falls inside a pinned phrase splits it in
+ *  two and the pin goes red against copy that reads perfectly on screen. */
+const LAPSED_NO_ACCOUNT =
+  'Your plan has lapsed, so your dashboard is read-only. Subscribe starts a plan and ' +
+  'brings it back — your bookings, clients and pets are untouched.';
+
 /** When this deployment publishes no paid surface at all, there is nothing to press and nothing
  *  to retry — so the panel says so once, in a sentence that is about the CONTROL and never about
  *  her account. Everything else on her dashboard, her booking page and her clients are unaffected,
@@ -457,6 +470,12 @@ export function PlanPanel({
           her plan had lapsed; beside Subscribe alone it would point her at a button that is not
           there. */}
       {bothControls && <p className="pb-hint">{LAPSED_WITH_ACCOUNT}</p>}
+      {/* ONLY for the sitter with no billing account. Beside `LAPSED_WITH_ACCOUNT` it would be a
+          second sentence about the same lapse; beside a switched-off account it would be a second
+          sentence about the same silence, which `ACCOUNT_OFF` above already says better. */}
+      {!settings.planCurrent && !settings.hasBillingAccount && !settings.disabled && (
+        <p className="pb-hint">{LAPSED_NO_ACCOUNT}</p>
+      )}
       {configLoaded && settings.hasBillingAccount && origin === null && (
         <p className="pb-hint">{PORTAL_UNAVAILABLE}</p>
       )}

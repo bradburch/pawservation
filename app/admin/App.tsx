@@ -434,7 +434,19 @@ function SettingsMenu({ activeSection }: { activeSection: SectionKey }) {
 }
 
 /**
- * The five READ-ONLY plan fields of a settings payload (0017), named one by one.
+ * WHAT A LAPSED PLAN MEANS, said once and read twice — by the banner and by the refusal's own
+ * branch — so the sentence she reads at the top of the page and the one she reads after a rejected
+ * save cannot drift apart.
+ *
+ * It states no length for the grace, no price and no terms: those belong on the terms page and on
+ * the hosted pages the plan panel sends her to, and the panel's own copy pins forbid them in this
+ * product's UI besides.
+ */
+const PLAN_LAPSED =
+  'Your plan has lapsed — your dashboard is read-only until you start a plan again.';
+
+/**
+ * The six READ-ONLY plan fields of a settings payload (0017, 0018), named one by one.
  *
  * A function rather than a spread of the whole fresh payload, for the same reason `save()` builds its
  * PUT body field by field: a field added to `Settings` must not silently join a merge, and the
@@ -450,6 +462,7 @@ const planFieldsOf = (s: Settings) => ({
   billedUntil: s.billedUntil,
   planActive: s.planActive,
   hasBillingAccount: s.hasBillingAccount,
+  planCurrent: s.planCurrent,
   ...('stripeCustomerId' in s ? { stripeCustomerId: s.stripeCustomerId } : {}),
 });
 
@@ -564,6 +577,12 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       // sitter out instead of surfacing the real reason the save was rejected.
       if (e instanceof ApiError && e.message === 'account_disabled') {
         setError('Your account is disabled — contact the platform owner.');
+      } else if (e instanceof ApiError && e.message === 'plan_lapsed') {
+        // A 402, which `isAuthExpired` cannot mistake for an expired session — so forgetting this
+        // branch would have shown her a raw `plan_lapsed`, not signed her out. That asymmetry is
+        // why the server answers 402 rather than a second 403. Ordered above `isAuthExpired`
+        // anyway, because the next literal added here might not have that protection.
+        setError(PLAN_LAPSED);
       } else if (isAuthExpired(e)) {
         onSignOut();
       } else {
@@ -1017,6 +1036,16 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
       {settings.disabled && (
         <p className="pb-disabled-banner" role="status">
           Your account is disabled — contact the platform owner.
+        </p>
+      )}
+
+      {/* Same model as the banner above it: this is UX, and the server's non-GET guard is the
+          actual enforcement. `!settings.disabled` keeps the two from stacking — a switched-off
+          account holds no current plan either, and she has already been told why her account is
+          off and who to ask, which is the more useful of the two sentences. */}
+      {!settings.planCurrent && !settings.disabled && (
+        <p className="pb-disabled-banner" role="status">
+          {PLAN_LAPSED}
         </p>
       )}
 
