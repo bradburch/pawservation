@@ -716,6 +716,17 @@ export type SitterRow = {
    *  plan, so `premiumUntil` alone no longer decides it — and this repo does not re-derive the
    *  rule in the browser. */
   premiumActive: boolean;
+  /** Which plan she is on, verbatim; null = no plan. */
+  plan: 'solo' | 'pro' | null;
+  /** What her subscription has paid through, in the stored 'YYYY-MM-DD HH:MM:SS' UTC shape,
+   *  verbatim. Rendered, never compared. */
+  billedUntil: string | null;
+  /** The BASIC comp the owner grants by hand (0018), same stored shape. The date this console
+   *  EDITS, which is why it rides raw beside the derived boolean below. */
+  compedUntil: string | null;
+  /** The SERVER's own `isPlanCurrent` answer — billed OR comped OR premium-comped, and not
+   *  disabled. Three grants now, and the console re-derives none of them. */
+  planCurrent: boolean;
 };
 export type SitterRosterResponse = {
   window: SitterWindow;
@@ -1364,6 +1375,12 @@ export const owner = {
       method: 'PATCH',
       headers: { ...jsonHeaders, ...authHeaders(token) },
       body: JSON.stringify({ premiumUntil }),
+    }),
+  setSitterComped: (token: string, tenantId: string, compedUntil: string | null) =>
+    request<{ compedUntil: string | null }>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {
+      method: 'PATCH',
+      headers: { ...jsonHeaders, ...authHeaders(token) },
+      body: JSON.stringify({ compedUntil }),
     }),
   removeSitter: (token: string, tenantId: string) =>
     request<unknown>(`/api/owner/sitters/${encodeURIComponent(tenantId)}`, {

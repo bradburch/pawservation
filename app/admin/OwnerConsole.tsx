@@ -176,6 +176,11 @@ export function OwnerConsole({
   // The row currently mid premium-date edit; its inline date input replaces the row's actions.
   const [premiumEditId, setPremiumEditId] = useState<string | null>(null);
   const [premiumDateInput, setPremiumDateInput] = useState('');
+  // The row currently mid BASIC-comp edit. A second piece of state rather than one shared with the
+  // premium editor: two comps, two columns, and one date input serving both would make "which am I
+  // editing" a thing the reader has to hold in their head.
+  const [compEditId, setCompEditId] = useState<string | null>(null);
+  const [compDateInput, setCompDateInput] = useState('');
 
   const toggleDisabled = async (s: SitterRow) => {
     if (busyId) return;
@@ -229,6 +234,49 @@ export function OwnerConsole({
     try {
       await owner.setSitterPremium(session.token, s.tenantId, null);
       cancelPremiumEdit();
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startCompEdit = (s: SitterRow) => {
+    setDashError('');
+    setCompEditId(s.tenantId);
+    // Same truncation caveat as the premium editor above: `<input type="date">` holds a date and
+    // the column holds an instant, so pressing Save with no change re-submits midnight.
+    setCompDateInput(s.compedUntil ? s.compedUntil.slice(0, 10) : '');
+  };
+
+  const cancelCompEdit = () => {
+    setCompEditId(null);
+    setCompDateInput('');
+  };
+
+  const saveComp = async (s: SitterRow) => {
+    if (busyId || !compDateInput) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterComped(session.token, s.tenantId, compDateInput);
+      cancelCompEdit();
+      reloadRoster();
+    } catch (e) {
+      handleDash(e);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const clearComp = async (s: SitterRow) => {
+    if (busyId) return;
+    setDashError('');
+    setBusyId(s.tenantId);
+    try {
+      await owner.setSitterComped(session.token, s.tenantId, null);
+      cancelCompEdit();
       reloadRoster();
     } catch (e) {
       handleDash(e);
@@ -517,9 +565,57 @@ export function OwnerConsole({
                                     Premium
                                   </span>
                                 )}
+                                {/* THE SERVER'S OWN ANSWER, for the same reason the chip above it
+                                    reads one: "does she hold a current plan" is three grants OR-ed
+                                    (`isPlanCurrent`, server/lib/premium.ts), and a browser-side
+                                    date comparison would report a paying business as holding none.
+                                    The DATE the owner is editing rides in the tooltip, which states
+                                    a column's value and infers nothing about which clause fired. */}
+                                {s.planCurrent && (
+                                  <span
+                                    className="pb-chip"
+                                    title={
+                                      s.compedUntil
+                                        ? `Basic comp set to ${s.compedUntil}`
+                                        : 'No basic comp set'
+                                    }
+                                  >
+                                    Basic
+                                  </span>
+                                )}
                               </td>
                               <td>
-                                {premiumEditId === s.tenantId ? (
+                                {compEditId === s.tenantId ? (
+                                  <span className="pb-row">
+                                    <input
+                                      type="date"
+                                      aria-label={`Basic comp until date for ${s.displayName}`}
+                                      title="Expires at the start of this date, UTC"
+                                      value={compDateInput}
+                                      onChange={(e) => setCompDateInput(e.target.value)}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId || !compDateInput}
+                                      onClick={() => void saveComp(s)}
+                                    >
+                                      {busyId === s.tenantId ? '…' : 'Save'}
+                                    </button>
+                                    {s.compedUntil != null && (
+                                      <button
+                                        type="button"
+                                        className="pb-danger"
+                                        disabled={busyId === s.tenantId}
+                                        onClick={() => void clearComp(s)}
+                                      >
+                                        Clear
+                                      </button>
+                                    )}
+                                    <button type="button" onClick={cancelCompEdit}>
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : premiumEditId === s.tenantId ? (
                                   <span className="pb-row">
                                     <input
                                       type="date"
@@ -592,6 +688,13 @@ export function OwnerConsole({
                                       onClick={() => startPremiumEdit(s)}
                                     >
                                       Premium…
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyId === s.tenantId}
+                                      onClick={() => startCompEdit(s)}
+                                    >
+                                      Comp basic…
                                     </button>
                                     <button
                                       type="button"

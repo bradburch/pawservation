@@ -9,11 +9,12 @@ import {
   getTenantById,
   listAllowedSitters,
   listSitterRoster,
+  setTenantCompedUntil,
   setTenantDisabled,
   setTenantPremiumUntil,
 } from '../db/repo';
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
-import { isPremiumActive, normalizePremiumUntil } from '../lib/premium';
+import { isPlanCurrent, isPremiumActive, normalizePremiumUntil } from '../lib/premium';
 import { serializeAnalytics } from '../lib/analytics';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
@@ -167,6 +168,17 @@ export const ownerRoutes = new Hono<AppEnv>()
       // every paying Pro sitter as free the moment this column existed. One rule, one place
       // (`isPremiumActive`, server/lib/premium.ts).
       premiumActive: isPremiumActive(r),
+      // FR-63's "an owner who can see why", and it costs four fields of this product's own
+      // database: three verbatim columns and one derived boolean. Deliberately no amount, no
+      // invoice, no processor identifier and no subscription id — those stay off this payload as
+      // they already are, and FR-63's prohibition is on a revenue surface, not on this console
+      // knowing which plan its own businesses are on.
+      plan: r.Plan,
+      billedUntil: r.BilledUntil,
+      compedUntil: r.CompedUntil,
+      // The DERIVED answer again, from the one expression. A console that compared a date here
+      // would be the browser-side copy AD-13 removed, one rule later.
+      planCurrent: isPlanCurrent(r),
       clients: r.Clients,
       bookings: r.Bookings,
       // `Earned` is the raw column sum, in CENTS (0015), and the wire says so (design spec §2).
@@ -203,23 +215,32 @@ export const ownerRoutes = new Hono<AppEnv>()
       disabled: tenant.DisabledAt != null,
       premiumUntil: tenant.PremiumUntil,
       premiumActive: isPremiumActive(tenant),
+      // The same four the roster publishes, because the drill-down and the list must not disagree
+      // about who is on what.
+      plan: tenant.Plan,
+      billedUntil: tenant.BilledUntil,
+      compedUntil: tenant.CompedUntil,
+      planCurrent: isPlanCurrent(tenant),
     });
   })
 
   /**
-   * The two owner switches on a tenant: whether the account is switched off, and how long they
-   * have paid through. One PATCH rather than two endpoints because they are the same kind of
-   * thing — an owner-only edit of a column on the tenant row — and both need the same 404 and the
-   * same cache invalidation; a second endpoint would be a second place to forget either.
+   * The owner switches on a tenant: whether the account is switched off, how long the PAID tier is
+   * comped through, and how long the BASIC plan is. One PATCH rather than three endpoints because
+   * they are the same kind of thing — an owner-only edit of a column on the tenant row — and each
+   * needs the same 404 and the same cache invalidation; a second endpoint would be a second place
+   * to forget either.
    *
-   * Both fields are OPTIONAL and applied only when PRESENT, which is what keeps them independent:
+   * Every field is OPTIONAL and applied only when PRESENT, which is what keeps them independent:
    * `{ disabled: true }` must not silently revoke a subscription, and `{ premiumUntil: … }` must
-   * not silently re-enable a disabled account. A body naming neither is a 400 rather than a
+   * not silently re-enable a disabled account. A body naming none of them is a 400 rather than a
    * do-nothing 200, because the only way to send one is by mistake.
    *
-   * `premiumUntil: null` is meaningfully different from omitting it — it is how premium is
-   * CLEARED — so the field is `v.optional(v.nullable(…))` and the two cases are distinguished by
-   * `in`, never by falsiness.
+   * `premiumUntil: null` and `compedUntil: null` are meaningfully different from omitting them —
+   * they are how a comp is CLEARED — so each field is `v.optional(v.nullable(…))` and the two cases
+   * are distinguished by `in`, never by falsiness. The two comps are independent: one is the PAID
+   * tier's grant and one is this product's own plan, and setting either must not silently revoke
+   * the other.
    */
   .patch('/owner/sitters/:tenantId', async (c) => {
     const tenantId = c.req.param('tenantId');
@@ -228,23 +249,42 @@ export const ownerRoutes = new Hono<AppEnv>()
       v.object({
         disabled: v.optional(v.boolean()),
         premiumUntil: v.optional(v.nullable(v.string())),
+        compedUntil: v.optional(v.nullable(v.string())),
       }),
       raw,
     );
-    if (!parsed.success || (!('disabled' in parsed.output) && !('premiumUntil' in parsed.output)))
+    if (
+      !parsed.success ||
+      (!('disabled' in parsed.output) &&
+        !('premiumUntil' in parsed.output) &&
+        !('compedUntil' in parsed.output))
+    )
       return c.json(
-        { error: 'Expected { disabled?: boolean, premiumUntil?: string | null }.' },
+        {
+          error:
+            'Expected { disabled?: boolean, premiumUntil?: string | null, compedUntil?: string | null }.',
+        },
         400,
       );
-    const { disabled, premiumUntil } = parsed.output;
+    const { disabled, premiumUntil, compedUntil } = parsed.output;
 
     // Normalise BEFORE the tenant lookup and before any write: an unparseable date must not leave
     // a half-applied PATCH behind, and this is the last point at which nothing has happened yet.
+    // BOTH dates go through `normalizePremiumUntil` — no ceiling, past dates accepted ("paid
+    // through last March" is a true statement) — and deliberately NOT through
+    // `normalizeBilledUntil`, whose 400-day bound is the containment on what a leaked shared secret
+    // can buy and would refuse a legitimate two-year comp.
     let storedUntil: string | null = null;
     if (premiumUntil != null) {
       storedUntil = normalizePremiumUntil(premiumUntil);
       if (storedUntil === null)
         return c.json({ error: 'premiumUntil must be a date, or null to clear it.' }, 400);
+    }
+    let storedComped: string | null = null;
+    if (compedUntil != null) {
+      storedComped = normalizePremiumUntil(compedUntil);
+      if (storedComped === null)
+        return c.json({ error: 'compedUntil must be a date, or null to clear it.' }, 400);
     }
 
     const tenant = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
@@ -252,20 +292,24 @@ export const ownerRoutes = new Hono<AppEnv>()
     if (disabled !== undefined) await setTenantDisabled(c.env.PAWSERVATION_DB, tenantId, disabled);
     if ('premiumUntil' in parsed.output)
       await setTenantPremiumUntil(c.env.PAWSERVATION_DB, tenantId, storedUntil);
+    if ('compedUntil' in parsed.output)
+      await setTenantCompedUntil(c.env.PAWSERVATION_DB, tenantId, storedComped);
     await invalidateTenantCache(tenant.Slug, c.env); // widget/dashboard sees the change at once
 
     // Report the tenant's state as it now IS, read back rather than assembled from the request:
-    // a PATCH that touched one field still answers for both, so the console never has to guess
-    // what the field it did not send is currently set to.
+    // a PATCH that touched one field still answers for all of them, so the console never has to
+    // guess what the fields it did not send are currently set to.
     const after = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     return c.json({
       disabled: after?.DisabledAt != null,
       premiumUntil: after?.PremiumUntil ?? null,
-      // The same derived answer the roster and the detail read publish, from the same one
-      // expression — the row is already loaded, so the alternative is the console re-deriving it in
-      // the browser from the date beside it, which is exactly what AD-13 removed and what reports a
-      // Pro subscriber as free.
+      compedUntil: after?.CompedUntil ?? null,
+      // The same derived answers the roster and the detail read publish, from the same two
+      // expressions — the row is already loaded, so the alternative is the console re-deriving them
+      // in the browser from the dates beside them, which is exactly what AD-13 removed and what
+      // reports a paying business as free.
       premiumActive: after != null && isPremiumActive(after),
+      planCurrent: after != null && isPlanCurrent(after),
     });
   })
 

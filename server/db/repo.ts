@@ -5848,12 +5848,13 @@ export type SitterRosterRow = {
   DisplayName: string;
   CreatedAt: string;
   DisabledAt: string | null; // null = active
-  PremiumUntil: string | null; // null = no comp
-  /** 0017. Carried so `isPremiumActive` can answer for a roster row without a second copy of the
-   *  rule living in the console — the console used to re-derive it in the browser. */
+  PremiumUntil: string | null; // null = no paid-tier comp
+  /** 0017/0018. Carried so `isPremiumActive` AND `isPlanCurrent` can each answer for a roster row
+   *  without a second copy of either rule living in the console — the console used to re-derive the
+   *  first one in the browser. Two rules now, and neither is re-derived. */
   Plan: 'solo' | 'pro' | null;
   BilledUntil: string | null;
-  CompedUntil: string | null; // null = no basic comp (0018)
+  CompedUntil: string | null; // null = no basic comp
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
   // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
@@ -5963,6 +5964,26 @@ export async function setTenantPremiumUntil(
 ): Promise<boolean> {
   const result = await db
     .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
+    .bind(until, tenantId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Owner-scope: set or clear the BASIC comp (0018). A byte-for-byte mirror of
+ * `setTenantPremiumUntil` above, and deliberately a SECOND writer rather than a parameter: two
+ * columns, two writers, and billing writes neither. `until` is bound as-is and must already be in
+ * the stored shape ('YYYY-MM-DD HH:MM:SS', UTC); `normalizePremiumUntil` (server/lib/premium.ts) is
+ * the one place that shape is produced, so `CompedUntil > now` stays a comparison of like with like.
+ * Caller must `invalidateTenantCache`.
+ */
+export async function setTenantCompedUntil(
+  db: D1Database,
+  tenantId: string,
+  until: string | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?')
     .bind(until, tenantId)
     .run();
   return (result.meta as { changes?: number }).changes !== 0;

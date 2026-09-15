@@ -248,6 +248,75 @@ describe('owner sitter routes', () => {
     expect(b?.premiumUntil).toBeNull();
   });
 
+  it('publishes the plan, both dates and the server’s planCurrent on every roster row', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    raw.exec(
+      "UPDATE Tenants SET Plan = 'solo', BilledUntil = '2099-01-01 00:00:00' WHERE Id = 't_a';",
+    );
+    raw.exec("UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = 't_b';");
+
+    const res = await app.request(
+      '/api/owner/sitters?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sitters: {
+        tenantId: string;
+        plan: string | null;
+        billedUntil: string | null;
+        compedUntil: string | null;
+        planCurrent: boolean;
+      }[];
+    };
+    const a = body.sitters.find((s) => s.tenantId === 't_a');
+    const b = body.sitters.find((s) => s.tenantId === 't_b');
+    // FR-63's "an owner who can see why": four columns of this product's own database, all derived
+    // or verbatim. No amount, no invoice, no processor identifier, no subscription id.
+    expect(a).toMatchObject({
+      plan: 'solo',
+      billedUntil: '2099-01-01 00:00:00',
+      compedUntil: null,
+      planCurrent: true,
+    });
+    expect(b).toMatchObject({
+      plan: null,
+      billedUntil: null,
+      compedUntil: '2099-01-01 00:00:00',
+      planCurrent: true,
+    });
+    for (const row of body.sitters) {
+      for (const forbidden of ['stripeCustomerId', 'stripeSubscriptionId', 'lastBillingEventAt']) {
+        expect(forbidden in row).toBe(false);
+      }
+    }
+  });
+
+  it('publishes the same four on the per-sitter detail read', async () => {
+    const { env, raw } = createTestEnv();
+    reset(raw);
+    seed(raw);
+    raw.exec("UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = 't_a';");
+
+    const res = await app.request(
+      '/api/owner/sitters/t_a?window=all',
+      { headers: await ownerHeaders() },
+      env,
+    );
+    expect(res.status).toBe(200);
+    // Both surfaces or neither: the console's roster and its drill-down must not disagree about who
+    // is on what, which is why the four fields are added to the two reads in one commit.
+    expect(await res.json()).toMatchObject({
+      plan: null,
+      billedUntil: null,
+      compedUntil: '2099-01-01 00:00:00',
+      planCurrent: true,
+    });
+  });
+
   it('window=30d narrows bookings/earned vs all, while clients stay all-time', async () => {
     const { env, raw } = createTestEnv();
     seedWindowed(raw);
@@ -385,5 +454,14 @@ describe('the owner console does not re-derive entitlement in the browser', () =
     expect(SOURCE).not.toContain('On a paid plan');
     expect(SOURCE).toContain('Owner comp set to');
     expect(SOURCE).toContain('No owner comp set');
+  });
+
+  it('renders the Basic chip from the server’s planCurrent, not from a date comparison', () => {
+    // The same lesson the Premium chip was fixed for, applied before it can be learned twice: the
+    // rule is three grants now, and a browser-side `CompedUntil > now` would report a paying
+    // business as holding no plan. The AD-13 scanner walks `app/` too, so a comparison here is a
+    // red suite rather than a wrong chip — this pin is what keeps the POSITIVE half honest.
+    expect(SOURCE).toContain('s.planCurrent');
+    expect(SOURCE).toContain('Basic');
   });
 });

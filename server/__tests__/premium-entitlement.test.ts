@@ -59,6 +59,18 @@ const patchPremium = (
     env,
   );
 
+const patchOwner = (
+  env: Env,
+  tenantId: string,
+  body: Record<string, unknown>,
+  headers: Record<string, string>,
+) =>
+  app.request(
+    `/api/owner/sitters/${tenantId}`,
+    { method: 'PATCH', headers, body: JSON.stringify(body) },
+    env,
+  );
+
 describe('Tenants.PremiumUntil — the column', () => {
   it('exists on every tenant and starts NULL, which is what "free" is', async () => {
     const { env, raw } = createTestEnv();
@@ -196,7 +208,13 @@ describe('the platform owner sets and clears premium', () => {
     );
     const res = await patchPremium(env, TENANT_A, null, await ownerHeaders());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ disabled: false, premiumUntil: null, premiumActive: true });
+    expect(await res.json()).toEqual({
+      disabled: false,
+      premiumUntil: null,
+      compedUntil: null,
+      premiumActive: true,
+      planCurrent: true,
+    });
   });
 });
 
@@ -550,5 +568,75 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
       false,
     );
     expect(offends(`const d = (n: number) => normalize${BILLED}(iso, NOW);`)).toBe(false);
+  });
+});
+
+describe('the platform owner comps the BASIC plan', () => {
+  it('sets a comp, reports her current, and leaves PremiumUntil untouched', async () => {
+    const { env } = createTestEnv();
+    const res = await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      disabled: false,
+      premiumUntil: null,
+      compedUntil: '2099-01-01 00:00:00',
+      // A basic comp buys the free product's plan and NOT the paid surface — two comps, one per
+      // tier, and the whole reason this is a second column rather than a reused one.
+      premiumActive: false,
+      planCurrent: true,
+    });
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(t.PremiumUntil).toBeNull();
+  });
+
+  it('clears it with an explicit null, distinguished from omission', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = '${TENANT_A}';`);
+    const res = await patchOwner(env, TENANT_A, { compedUntil: null }, await ownerHeaders());
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { compedUntil: string | null }).compedUntil).toBeNull();
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.CompedUntil).toBeNull();
+  });
+
+  it('refuses a date it cannot store, and writes nothing at all', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = '${TENANT_A}';`);
+    const res = await patchOwner(
+      env,
+      TENANT_A,
+      { disabled: true, compedUntil: 'next tuesday-ish' },
+      await ownerHeaders(),
+    );
+    expect(res.status).toBe(400);
+    // NORMALISED BEFORE THE LOOKUP AND BEFORE ANY WRITE, which is what makes "writes nothing" true
+    // of the OTHER field in the same body rather than only of this one.
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.CompedUntil).toBe('2099-01-01 00:00:00');
+    expect(t.DisabledAt).toBeNull();
+  });
+
+  it('accepts a body naming only compedUntil, and still 400s one naming none of the three', async () => {
+    const { env } = createTestEnv();
+    expect(
+      (await patchOwner(env, TENANT_A, { compedUntil: FUTURE }, await ownerHeaders())).status,
+    ).toBe(200);
+    const empty = await patchOwner(env, TENANT_A, {}, await ownerHeaders());
+    expect(empty.status).toBe(400);
+    // The sentence names all three fields, or it is a lie told by the same commit that made it one.
+    expect(((await empty.json()) as { error: string }).error).toBe(
+      'Expected { disabled?: boolean, premiumUntil?: string | null, compedUntil?: string | null }.',
+    );
+  });
+
+  it('keeps the two comps independent, in both directions', async () => {
+    const { env } = createTestEnv();
+    await patchOwner(env, TENANT_A, { premiumUntil: FUTURE }, await ownerHeaders());
+    await patchOwner(env, TENANT_A, { compedUntil: PAST }, await ownerHeaders());
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    // Applied only when PRESENT: a comp of one tier must not silently revoke the other, which is
+    // the same independence `disabled` and `premiumUntil` have had since 0010.
+    expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');
+    expect(t.CompedUntil).toBe('2000-01-01 00:00:00');
   });
 });
