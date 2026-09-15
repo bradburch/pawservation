@@ -18,11 +18,29 @@ import type { AppEnv } from '../types';
 
 const CUSTOMER_COUNTS = ['0', '1-5', '6-15', '16-50', '50+'] as const;
 
+const MAX_WEBSITE_LENGTH = 200;
+
+/** Deliberately lenient, and the leniency is the point: a sitter types `bradpaws.com`, not
+ * `https://bradpaws.com/`, and plenty of them answer with a Facebook or Instagram page instead of
+ * a domain of their own. A `new URL()` parse or a scheme-requiring regex would reject the most
+ * common CORRECT answer and hand the visitor a 400 she cannot diagnose. This is a funnel form
+ * that emails a human and stores nothing, so the only job here is to turn away an answer that
+ * plainly does not name a web presence: non-empty, no internal whitespace, has a dot, bounded. */
+function isPlausibleWebsite(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= MAX_WEBSITE_LENGTH &&
+    !/\s/.test(trimmed) &&
+    trimmed.includes('.')
+  );
+}
+
 const InviteRequestBody = v.object({
   business: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(120)),
   name: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(80)),
   email: v.pipe(v.string(), v.trim(), v.toLowerCase(), v.maxLength(254), v.regex(EMAIL_RE)),
-  phone: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(40))),
+  website: v.pipe(v.string(), v.trim(), v.check(isPlausibleWebsite)),
   city: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(80)),
   neighborhoods: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
   services: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(200)),
@@ -54,6 +72,10 @@ function invalidFields(values: InviteFormValues): string[] {
   const email = values.email?.trim() ?? '';
   if (!email) bad.push('Email');
   else if (!EMAIL_RE.test(email) || email.length > 254) bad.push('Email (not a valid address)');
+  const website = values.website?.trim() ?? '';
+  if (!website) bad.push('Website or social page');
+  else if (!isPlausibleWebsite(website))
+    bad.push('Website or social page (something like bradpaws.com)');
   if (!values.city?.trim()) bad.push('City');
   if (!values.services?.trim()) bad.push('Services you offer');
   if (!CUSTOMER_COUNTS.includes(values.customerCount as (typeof CUSTOMER_COUNTS)[number]))
@@ -74,7 +96,7 @@ function echoValues(raw: Record<string, unknown>): InviteFormValues {
     business: asString(raw.business),
     name: asString(raw.name),
     email: asString(raw.email),
-    phone: asString(raw.phone),
+    website: asString(raw.website),
     city: asString(raw.city),
     neighborhoods: asString(raw.neighborhoods),
     services: asString(raw.services),

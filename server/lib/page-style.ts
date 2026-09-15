@@ -126,12 +126,33 @@ export const PAGE_STYLE = /* css */ `
          hero's own second button and the second link on both mid-page invitations. */
       @media (max-width: 779px) { .nav-right .signin:not(.nav-tour) { display: none; } }
       /* Sign in comes back later than the other plain link, at the width where the whole row
-         genuinely fits: with the .nav-links row back from 780px, seven items already fill the
+         genuinely fits: with the .nav-links row back from 780px, eight items already fill the
          header, and letting sign-in return before there was room for it made the row wrap again
          further up, so the header went from one line to two and back as the window widened. It is
          the one item here a visitor can reach from somewhere else on the same screen: the hero
-         note links it, and so does the footer. */
-      @media (max-width: 939px) { .nav-right .nav-signin { display: none; } }
+         note links it, and so does the footer. The threshold is measured, not chosen: the full
+         landing row needs 944px, and 960 is that with slack. .nav-signin exists on the landing
+         header alone, so this rule is already landing-only. */
+      @media (max-width: 959px) { .nav-right .nav-signin { display: none; } }
+      /* The landing row went from four links to five when About joined it, which is 16px of extra
+         gap and 41px of extra link at the width where the row first appears, and the header wrapped
+         onto a second line from 780px up. Three measurements set what follows, taken from the
+         rendered header: the row without either plain link needs 773px, with "Try the demo" 880px,
+         and with sign-in as well 944px. So this row closes its own gaps by 4px each, and the demo
+         link returns at 890px rather than at 780px with the row itself, for the reason it is
+         absent below 780px at all: it is the hero's own second button and the second link on both
+         mid-page invitations. Both are scoped by a class on the row, because the legal pages carry
+         no link row and have room for sign-in the whole way down.
+         /how-it-works carries this class too, and for the same measured reason rather than by
+         analogy: its own five-link row plus "Sign in" plus the demo button needs 782px of content
+         box, so the header wrapped onto a second line from 780px (where .nav-links appears) to
+         829px. The 4px-per-gap tightening and the sign-in drop below 890px are exactly the 80px
+         that band was short by, and above 890px the full row fits with room. Sign in stays in the
+         shared footer at every width, which is why it is the item that gives way. */
+      .nav-links-5 { gap: 20px; }
+      @media (max-width: 889px) {
+        .nav-links-5 ~ .nav-right .signin:not(.nav-tour) { display: none; }
+      }
       /* The gaps, the wordmark and the button tighten below 560px, which is what keeps the header
          to one row on most phones. Where they are not enough the row WRAPS: .nav-inner is
          flex-wrap: wrap at every width (above), and that is what actually guarantees the page
@@ -158,6 +179,14 @@ export const PAGE_STYLE = /* css */ `
         text-decoration: none;
         white-space: nowrap;
         transition: background-color 0.15s ease, color 0.15s ease;
+        /* Every .btn here is an <a> except one: the invite form's submit control. A <button>
+           inherits neither font-family nor line-height from body, so that one rendered in the
+           UA's Arial at line-height:normal and stood 39px tall next to the 46px .btn-inverse on
+           /how-it-works doing the identical job under the identical label. These two longhands
+           change nothing for an <a> (which already inherits both) and make the element the
+           button is built from stop mattering. */
+        font-family: inherit;
+        line-height: inherit;
       }
       .btn-primary {
         background: var(--green);
@@ -179,6 +208,15 @@ export const PAGE_STYLE = /* css */ `
 
       /* ── Hero ───────────────────────────────────────────────────── */
       .hero { padding: 72px 0 88px; }
+      /* Every other page's hero ends where a new band begins, so its 88px bottom padding stacks
+         with the next section's 88px top padding and reads as the join between two blocks.
+         /about's hero runs straight into the founder story on the same background, with no label
+         or heading to reintroduce it, so those 176px read as a hole between the page's own
+         subheading and its first paragraph. One class on that hero closes both halves and leaves
+         the .sub's own 30px margin as the gap. The adjacent-sibling half is what keeps this off
+         /, /how-it-works, /privacy, /terms and /contact, none of which carry the class. */
+      .hero-flush { padding-bottom: 0; }
+      .hero-flush + .section { padding-top: 0; }
       .hero-grid {
         display: grid;
         gap: 56px;
@@ -204,6 +242,18 @@ export const PAGE_STYLE = /* css */ `
         margin: 0 0 20px;
         max-width: 15ch;
       }
+      /* The other heroes cap their h1 at 15ch because a hero-visual or a CTA row sits beside or
+         under it and the short measure is what leaves room for it. /about's hero has no second
+         column at all, so 15ch put a 74-character sentence into FOUR lines of a 540px gutter with
+         the whole right half of a 1072px wrap empty beside it. Letting the sentence use the width
+         it is standing in wraps it to two lines and the emptiness goes with it. balance splits
+         those two lines evenly instead of leaving a short tail; browsers without it wrap as
+         before. Scoped through .hero-flush, which only /about carries, and placed BELOW the rule
+         it overrides: the two selectors have equal specificity, so source order is what decides. */
+      .hero-flush h1 {
+        max-width: none;
+        text-wrap: balance;
+      }
       .hero .sub {
         margin: 0 0 30px;
         max-width: 48ch;
@@ -222,7 +272,15 @@ export const PAGE_STYLE = /* css */ `
         color: var(--soft);
         max-width: 46ch;
       }
-      .note a {
+      /* Also the four prose pages' body links. Nothing had ever styled a link inside running
+         copy, because until /about and /contact existed every link on this site sat in a .note, a
+         button, the nav or the footer, all of which are styled. So ten links across /about,
+         /contact, /privacy and /terms rendered in the browser default #0000EE, on the pages a
+         reader opens to judge whether this is a real business. Same declarations, not a second
+         set, so the two can never drift into two shades of underline. */
+      .note a,
+      .legal p a,
+      .legal li a {
         color: var(--ink);
         text-decoration: underline;
         text-decoration-color: var(--green);
@@ -321,6 +379,9 @@ export const PAGE_STYLE = /* css */ `
         margin: 0 0 12px;
       }
       .section-head p { margin: 0; color: var(--body-c); max-width: 52ch; }
+      /* A section head may run to two paragraphs; the first rule zeroes every margin, so the
+         gap between them has to be put back here rather than inherited. */
+      .section-head p + p { margin-top: 14px; }
       /* Section headings and the column headings inside them are two or three words past one
          line at most widths, and the default break leaves the last word alone under a full line.
          Balance splits the lines evenly instead. Unsupported browsers wrap as before. */
@@ -473,6 +534,15 @@ export const PAGE_STYLE = /* css */ `
         display: grid;
         gap: 28px 40px;
       }
+      /* h2 as well as h3: the four prose pages (/about, /contact, /privacy, /terms) carry no
+         .section-head, so their .feature headings are the first heading under the page h1 and
+         must be h2 or the document skips a level. They keep this size, which is the point of
+         listing both here rather than letting .section h2's clamp() blow them up: correcting the
+         LEVEL must not change the LOOK. Source order matters, since .section h2 above has equal
+         specificity. /about overrides the SIZE back up further down, on its own hook and for its
+         own reason (it has exactly one heading, not a run of them); that override is the
+         exception this rule states, not a repeal of it. */
+      .feature h2,
       .feature h3 {
         font-size: 0.98rem;
         font-weight: 700;
@@ -485,17 +555,109 @@ export const PAGE_STYLE = /* css */ `
       /* Four short cards read as one row or not at all: in the three-column default the
          fourth sits alone on a second row with three empty columns beside it. */
       @media (min-width: 960px) { .features-4 { grid-template-columns: repeat(4, 1fr); } }
+      /* THREE cards have the same problem in the 640-959px band, where the default is two columns
+         and the third card sits alone with an empty cell beside it: measured at 900px on #clients,
+         a visible hole halfway down the landing page. Three cards reflow one-or-three, which is
+         also what .steps (the OTHER three-card row on that same page) already does at the same
+         780px breakpoint, so the landing stops running two three-card rows on two different
+         reflows. Later in source than the .features rules above, which it overrides at equal
+         specificity. */
+      .features-3 { grid-template-columns: 1fr; }
+      @media (min-width: 780px) { .features-3 { grid-template-columns: 1fr 1fr 1fr; } }
       /* Single-column legal prose (Privacy/Terms): .feature blocks sit directly in .wrap with
          no .features grid wrapper (that grid goes multi-column at wider viewports, which is
          wrong here), so this rule supplies the same 28px rhythm between stacked blocks. */
       .legal .feature + .feature { margin-top: 28px; }
-
-      /* ── Alongside your workflow ────────────────────────────────── */
-      .wf-grid {
-        display: grid;
-        gap: 44px;
-        align-items: start;
+      /* A reading measure. Without one this prose runs the full 1072px .wrap, which is about 130
+         characters a line at 1280px, sitting under a hero whose h1 is capped at 15ch and whose
+         .sub is capped at 48ch: a heading in a half column above a body at full width, on the four
+         pages a wary reader opens to decide whether this is a real business. 52ch is the measure
+         .section-head p already sets, so every section intro on the landing and the tour is
+         already read at it and this borrows the number rather than inventing a second one; it
+         works out at roughly 72 characters a line. It caps the TEXT and not the .feature block,
+         which is what lets /about's founder grid set its prose to the same measure as every other
+         page here and hand the width left over to the portrait beside it. */
+      .legal p,
+      .legal li { max-width: 52ch; }
+      /* .feature p zeroes every margin for the three-across cards, which leaves a legal or
+         /about block's stacked paragraphs with no gap at all. Put it back for the single-column
+         prose only, where a .feature really is several paragraphs of one answer. */
+      .legal .feature p + p { margin-top: 12px; }
+      /* /about's ONE heading, at the size a section heading is on every other page here.
+         0.98rem is right for a .feature wherever a .section-head h2 already carries the
+         section (the landing cards) or where a page is a long run of equal blocks (/privacy,
+         /terms, /contact, which is why this cannot be a change to .feature h2 itself). /about
+         is neither: "Why I built it" is the only heading between a 3.35rem h1 and the footer, and
+         at 0.98rem it read as a bold label rather than the head of the section it opens. The
+         declarations are .section h2's own, copied rather than re-tuned, so this page's heading
+         is the same size as every other section heading on the site instead of a fourth scale;
+         only the bottom margin is the block-spacing one rather than the label's 5px. Scoped by
+         the adjacent sibling of the hero only /about carries, the .hero-flush + .section
+         pattern above. */
+      .hero-flush + .section .feature h2 {
+        font-size: clamp(1.65rem, 3.4vw, 2.15rem);
+        font-weight: 750;
+        letter-spacing: -0.025em;
+        line-height: 1.15;
+        margin: 0 0 18px;
       }
+
+      /* ── /about founder portrait ────────────────────────────────── */
+      /* The photo carries a claim the words can't (a dog walker wrote this), so it is content
+         with real alt text, and its intrinsic 360x480 is declared on the tag so nothing reflows
+         around it while it loads. It stacks above the copy on a phone at the 200px this rule sets
+         and moves beside it, larger, at the breakpoint below. */
+      .founder { display: grid; gap: 20px; align-items: start; }
+      .founder-photo {
+        width: 200px;
+        max-width: 100%;
+        height: auto;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+      }
+      .founder > div > * + * { margin-top: 12px; }
+      /* The three questions are quotes from real clients, so they are set apart as quotes and
+         given no bullet: the point is the wording, not that there happen to be three. */
+      .founder-qs {
+        margin: 0;
+        padding: 0 0 0 14px;
+        list-style: none;
+        border-left: 2px solid var(--line);
+      }
+      .founder-qs li { font-size: 0.9rem; color: var(--ink); }
+      .founder-qs li + li { margin-top: 6px; }
+      /* Two columns, prose first and the portrait beside it, from 920px.
+
+         The old shape was a 200px photo column then 1fr of prose from 780px, and it had two
+         holes rather than one. The prose is capped at 52ch by .legal p above, so the 1fr
+         column was 842px wide carrying a 473px paragraph: 371px of the wrap was empty to the
+         RIGHT of the copy, while the 200px photo bottomed out 232px above it and left a hole
+         UNDER the picture. Both are the same measurement problem, so both are fixed by the same
+         swap: the prose keeps its 52ch measure in the first column and the picture moves into the
+         width that was going spare, displayed at up to its natural 360px (never above it, so it
+         is never upscaled) where it stands 480px tall against roughly 500px of copy. The photo
+         holds the tag's own width/height attributes, so the aspect box is still reserved and
+         nothing reflows while it loads.
+
+         align-items: center is the belt: where the two columns still differ at a middling
+         width, the difference splits above and below the picture and reads as an optical centre
+         rather than as a hole under it.
+
+         The breakpoint moved 780px -> 920px because below that the second column has to be
+         narrow enough to squeeze the prose under its measure, and one stacked column is honest
+         where two cramped ones are not. .founder is markup only /about has, so this rule cannot
+         reach another page even though it names no page-level hook. */
+      @media (min-width: 920px) {
+        .founder {
+          grid-template-columns: minmax(0, 1fr) clamp(260px, 30vw, 360px);
+          gap: 40px;
+          align-items: center;
+        }
+        .founder > div { grid-column: 1; grid-row: 1; }
+        .founder-photo { grid-column: 2; grid-row: 1; width: 100%; }
+      }
+
+      /* ── wf-* label/pair layout (pricing note, how-it-works page) ── */
       .wf-h {
         font-size: 1.02rem;
         font-weight: 700;
@@ -551,11 +713,7 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 700;
         color: var(--ink);
       }
-      @media (min-width: 780px) {
-        .wf-grid { grid-template-columns: 1fr 1fr; gap: 56px; }
-      }
-      /* The closing line under a section's columns, used twice: the link out to the long-form
-         tour under the workflow columns, and the invite line under the two price cards. */
+      /* The closing line under a section's columns: the invite line under the two price cards. */
       .wf-more { margin-top: 24px; }
       /* Two mid-page invitations, under the client section and under the dashboard: the page
          exists to get a sitter to ask for an invite, and the hero and the closing panel were the
@@ -745,6 +903,13 @@ export const PAGE_STYLE = /* css */ `
         outline-offset: 3px;
         border-radius: 4px;
       }
+      /* The ring above is --green because every ground on this site is light, with one exception:
+         the CTA panel's dark gradient, where #2e6440 on #1d3826 is 1.83:1 and reads as no ring at
+         all. That band holds the invite button, the "already have an account" link and the tour's
+         demo/pricing links, so a keyboard visitor loses the page's primary action. Only the COLOR
+         is overridden, so width, offset and radius stay one rule; the panel's own form fields
+         already focus white, which is the shape this follows. */
+      .cta-panel :focus-visible { outline-color: #fff; }
       @media (prefers-reduced-motion: reduce) {
         html { scroll-behavior: auto; }
         .btn { transition: none; }

@@ -13,7 +13,7 @@ const VALID_FIELDS: Record<string, string> = {
   business: "Rex's Best Walks",
   name: 'Rex Handler',
   email: 'rex@example.com',
-  phone: '555-0100',
+  website: 'rexsbestwalks.com',
   city: 'Portland',
   neighborhoods: 'Alberta, Hawthorne',
   services: 'Dog walking, drop-in visits',
@@ -74,7 +74,7 @@ describe('POST /request-invite', () => {
       VALID_FIELDS.business,
       VALID_FIELDS.name,
       VALID_FIELDS.email,
-      VALID_FIELDS.phone,
+      VALID_FIELDS.website,
       VALID_FIELDS.city,
       VALID_FIELDS.neighborhoods,
       VALID_FIELDS.services,
@@ -206,6 +206,70 @@ describe('POST /request-invite', () => {
     const html = await res.text();
     expect(html).toContain('Email (not a valid address)');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('a missing website is a 400 that NAMES the website field, not the generic line', async () => {
+    const { env } = createTestEnv();
+    withResendEnv(env);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const { website: _website, ...rest3 } = VALID_FIELDS;
+    const res = await postInvite(env, rest3);
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    // invalidFields() is a hand-maintained mirror of InviteRequestBody: a required field added to
+    // the schema and not to the mirror still 400s, but says nothing about WHICH field to fix.
+    expect(html).toContain('Please fix this field, then try again:');
+    expect(html).toContain('Website or social page');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('a value that does not name a web presence at all is refused, and named', async () => {
+    const { env } = createTestEnv();
+    withResendEnv(env);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const res = await postInvite(env, { ...VALID_FIELDS, website: 'no idea sorry' });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('Website or social page (something like bradpaws.com)');
+    // Still echoed back, escaped, so she is not retyping the whole form.
+    expect(html).toContain('value="no idea sorry"');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('a bare domain with no scheme is accepted and reaches the owner email under its own label', async () => {
+    const { env } = createTestEnv();
+    withResendEnv(env);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    // The common correct answer: no https://, no trailing slash. A strict URL parse would 400 it.
+    const res = await postInvite(env, { ...VALID_FIELDS, website: 'bradpaws.com' });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/request-invite/thanks');
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { text: string; html: string };
+    expect(body.text).toContain('Website: bradpaws.com');
+    expect(body.html).toContain('bradpaws.com');
+  });
+
+  it('a Facebook page is an acceptable website answer', async () => {
+    const { env } = createTestEnv();
+    withResendEnv(env);
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const res = await postInvite(env, {
+      ...VALID_FIELDS,
+      website: 'facebook.com/bradpaws',
+    });
+    expect(res.status).toBe(303);
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { text: string };
+    expect(body.text).toContain('Website: facebook.com/bradpaws');
   });
 
   it('the rate limit is charged ONLY on valid submissions: five invalid posts do not burn the cap, and five subsequent valid posts all succeed', async () => {
@@ -376,6 +440,25 @@ describe('GET /request-invite/thanks', () => {
     const res = await app.request('/request-invite/thanks?fallback=1', {}, env);
     const html = await res.text();
     expect(html).toContain(`href="mailto:${SUPPORT_EMAIL}?subject=Pawservation%20invite"`);
+  });
+});
+
+describe('the rendered invite form', () => {
+  it('asks for a website and no longer asks for a phone number', async () => {
+    const { env } = createTestEnv();
+    const html = await (await app.request('/', {}, env)).text();
+    // Required, with a real label bound to the input's id (script-free page: no JS validation).
+    expect(html).toContain('<label for="inv-website">Website or social page</label>');
+    expect(html).toContain('id="inv-website" name="website"');
+    expect(html).toContain('required');
+    // type="url" would make the BROWSER demand a scheme, defeating the lenient server rule.
+    expect(html).not.toContain('id="inv-website" name="website" type="url"');
+    // The label and placeholder have to tell a sitter with no domain that a social page counts.
+    expect(html).toContain('Facebook');
+    expect(html).toContain('Instagram');
+    // Phone is gone from the form entirely, not merely made optional.
+    expect(html).not.toContain('name="phone"');
+    expect(html).not.toContain('inv-phone');
   });
 });
 
