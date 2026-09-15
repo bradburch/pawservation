@@ -12,6 +12,7 @@ import {
   shouldRefreshLastUsed,
 } from './personal-access-token';
 import { requestContext, securityEvent } from './log';
+import { isPlanCurrent, planEnforceEnabled } from './premium';
 import { resolveTenant } from './tenant-resolve';
 import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
@@ -300,6 +301,41 @@ export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
     return c.json({ error: 'Sign in with your password to manage your access tokens.' }, 403);
   }
   await next();
+});
+
+/**
+ * A LAPSED PLAN IS A READ-ONLY DASHBOARD, and it is a NARROWER fact than a disabled account.
+ *
+ * `tenantMiddleware` refuses non-GETs for a DISABLED business across the whole `/api/:slug/*`
+ * surface, booking included. This one is mounted only over `/:slug/admin/*`, because A-17's whole
+ * point is that her clients keep booking while her dashboard goes quiet. The two never both fire: a
+ * disabled business is refused earlier, and `isPlanCurrent` is false for her anyway.
+ *
+ * 402 AND NOT 403. `isAuthExpired` (app/shared-ui/api.ts) treats 401 and 403 as an expired session,
+ * and the dashboard only avoids signing a sitter out on `account_disabled` by testing that literal
+ * FIRST. A second 403 literal is a second chance to get that order wrong, and the cost of getting
+ * it wrong is ejecting her from the dashboard she is trying to read. A forgotten branch on 402
+ * shows her an ugly message instead, and that asymmetry is the whole of the argument — it holds for
+ * clients this repo does not own, too.
+ *
+ * FOUR EARLY RETURNS, IN THIS ORDER, and each is a different question:
+ *   - a GET is never refused. The settings read is what renders the notice and the Subscribe
+ *     control, so gating it would make the lapse unfixable from the UI.
+ *   - no tenant on the context means a RESERVED slug, where `tenantMiddleware` calls `next()`
+ *     without resolving one. Those handlers guard their own, exactly as `adminAuth` does.
+ *   - the deployment is not enforcing. Unset is off, and it ships unset.
+ *   - she holds a current plan, by any of the three grants.
+ *
+ * It is safe to run twice — Hono flattens `.use()` across every app mounted at the same base — and
+ * needs no short-circuit latch of its own, because it is a pure read of the context.
+ */
+export const planGate = createMiddleware<AppEnv>(async (c, next) => {
+  if (c.req.method === 'GET') return next();
+  const tenant = c.get('tenant');
+  if (!tenant) return next();
+  if (!planEnforceEnabled(c.env)) return next();
+  if (isPlanCurrent(tenant)) return next();
+  return c.json({ error: 'plan_lapsed' }, 402);
 });
 
 /**

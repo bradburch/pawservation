@@ -120,8 +120,8 @@ import {
   type PetOwnerLink,
 } from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
-import { adminAuth } from '../lib/middleware';
-import { isPlanCurrent, isSoloActive } from '../lib/premium';
+import { adminAuth, planGate } from '../lib/middleware';
+import { isPlanCurrent, isSoloActive, planEnforceEnabled } from '../lib/premium';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
@@ -817,6 +817,11 @@ export const adminRoutes = new Hono<AppEnv>()
   // this gate only by being registered first in server/index.ts. Adding an admin-shaped path that
   // is not a session route means checking that mount order, not relaxing this line.
   .use('/:slug/admin/*', adminAuth)
+  // AFTER `adminAuth`, so an unauthenticated caller still gets 401 and learns nothing about a
+  // business's plan, and so the `pawsa_`-on-a-disabled-business 401 still fires first. Its scope is
+  // exactly the line above's, INHERITED rather than restated — which is the point: the
+  // forty-sixth admin write route is covered by construction.
+  .use('/:slug/admin/*', planGate)
 
   .get('/:slug/admin/settings', async (c) => {
     const tenant = c.get('tenant');
@@ -1674,6 +1679,12 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     // Disabled tenants are read-only — connecting a calendar is a settings write via the callback.
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
+    // …and so is a lapsed plan, for the identical reason. THIS IS THE ONE GET THAT WRITES, so the
+    // method rule the gate is built on cannot reach it and a guard in the handler is what does —
+    // mirroring the line above rather than inventing a second mechanism. `create-calendar` beside
+    // it needs no twin: it is a POST, and the middleware already has it.
+    if (planEnforceEnabled(c.env) && !isPlanCurrent(tenant))
+      return c.json({ error: 'plan_lapsed' }, 402);
     if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
 

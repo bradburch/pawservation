@@ -5,6 +5,7 @@ import { mintAdminToken, mintToken } from '../lib/token';
 import { calendarSyncKey, calendarWidgetSyncKey } from '../lib/calendar-sync';
 import { getProviderConnection } from '../db/repo';
 import { signState } from '../lib/oauth-state';
+import { premiumNow } from '../lib/premium';
 
 const adminHeaders = async () => ({
   Authorization: `Bearer ${await mintAdminToken('u_admin', TENANT_A, TEST_SECRET)}`,
@@ -110,6 +111,33 @@ describe('disabled tenant: GET-side writes are suppressed', () => {
       env,
     );
     expect(res.status).not.toBe(403); // 200 {url} if Google env configured, else 503 — never 403
+  });
+
+  it('blocks GET oauth/start for a LAPSED plan with plan_lapsed 402', async () => {
+    // The one state-changing GET under /:slug/admin/*, and therefore the one place a method rule
+    // cannot reach. The disabled gate has the identical hole and closes it one line above; this
+    // mirrors that guard rather than inventing a second mechanism for the same shape of problem.
+    const { env } = createTestEnv(); // no grant of any kind, which is every row today
+    const res = await app.request(
+      '/api/sunny-paws/admin/providers/calendar/oauth/start',
+      { headers: await adminHeaders() },
+      { ...env, PLAN_ENFORCE: 'true' } as Env,
+    );
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: 'plan_lapsed' });
+  });
+
+  it('does NOT 402 oauth/start for a business holding a comp — control', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare('UPDATE Tenants SET CompedUntil = ? WHERE Id = ?')
+      .run(premiumNow(new Date(Date.now() + 3_600_000)), TENANT_A);
+    const res = await app.request(
+      '/api/sunny-paws/admin/providers/calendar/oauth/start',
+      { headers: await adminHeaders() },
+      { ...env, PLAN_ENFORCE: 'true' } as Env,
+    );
+    expect(res.status).not.toBe(402); // 200 {url} if Google env configured, else 503 — never 402
   });
 
   // Mirrors oauth-callback.test.ts's happy-path setup exactly (state signing, nonce cache seed,

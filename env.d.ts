@@ -80,6 +80,23 @@ interface Env {
    * plan is honoured — that is `isPremiumActive` reading columns only the billing endpoint writes.
    */
   PLAN_SUBSCRIBE?: string;
+  /**
+   * IS THE PLAN ENFORCED? A plain deployment var, read only by `planGate`
+   * (`server/lib/middleware.ts`), which refuses non-GET requests under `/:slug/admin/*` for a
+   * business holding no current plan. Exactly `'true'` (trimmed, case-insensitive) is on; UNSET is
+   * OFF, and so is any other value.
+   *
+   * IT SHIPS UNSET, and that is not caution for its own sake. Every row in the book reads as
+   * holding no plan until the platform owner comps it, because 0017 seeded nothing and tenant
+   * creation writes no plan — so the deploy that ships the gate would otherwise be the outage. The
+   * owner sweeps the book from the owner console, checks that the pre-flip query returns zero rows
+   * (see README), and sets this last.
+   *
+   * Not a secret, and it grants nothing: it decides whether a refusal is issued, never who is
+   * entitled — that is `isPlanCurrent` reading three columns only the owner console and the billing
+   * endpoint write.
+   */
+  PLAN_ENFORCE?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /**

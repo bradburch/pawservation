@@ -234,6 +234,29 @@ export function planSubscribeEnabled(env: Env): boolean {
   return env.PLAN_SUBSCRIBE?.trim().toLowerCase() === 'true';
 }
 
+/**
+ * Is this deployment ENFORCING the plan (`PLAN_ENFORCE`)? The switch the lapse gate reads, and the
+ * whole of the safety on the day that gate ships.
+ *
+ * WHY IT MUST EXIST AT ALL, stated plainly. Migration 0017 added five nullable columns and seeded
+ * nothing — "seeding `Plan` to `'solo'` on every row would silently make the whole book
+ * Solo-entitled" — and tenant creation writes four columns of which none is a plan. There is no
+ * free tier left to fall back to. So on the day the gate ships, every business in the book reads as
+ * holding no plan. Without this var, the merge that deploys the gate IS the outage; with it, the
+ * deploy is inert and the owner flips it by hand after comping the existing book.
+ *
+ * EXACTLY `'true'`, trimmed and case-folded, for `planSubscribeEnabled`'s own argument above: a var
+ * whose truthiness is the JavaScript kind turns a typo into a live switch. Here the cost of that
+ * typo is every sitter's dashboard going read-only at once.
+ *
+ * A property of the DEPLOYMENT, and deliberately NOT folded into the `planCurrent` the settings
+ * read publishes: that field is the tenant's own state, and one field that means exactly one thing
+ * is one thing to keep in step.
+ */
+export function planEnforceEnabled(env: Env): boolean {
+  return env.PLAN_ENFORCE?.trim().toLowerCase() === 'true';
+}
+
 export function premiumOrigin(env: Env): string | null {
   const configured = env.PREMIUM_ORIGIN?.trim().replace(/\/$/, '');
   if (!configured) return null;
