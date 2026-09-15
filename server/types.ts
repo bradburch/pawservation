@@ -37,6 +37,12 @@ export type Tenant = {
    *  column keeps its shape and its meaning — the OWNER'S MANUAL GRANT — and billing never writes
    *  it. */
   PremiumUntil: string | null;
+  /** The BASIC comp (0018): paid up through this instant without paying, granted and cleared by
+   *  hand by the platform owner and written only by `setTenantCompedUntil`. Same stored shape as
+   *  `PremiumUntil` and compared the same way. null = no comp. Billing writes it never — a comp
+   *  surviving a renewal, a cancellation and a redelivery is what that separation buys — and
+   *  `isPlanCurrent` (server/lib/premium.ts) is the one expression that reads it. */
+  CompedUntil: string | null;
   /** Which plan this sitter is on (0017), written only by the billing endpoint. null = no plan. */
   Plan: 'solo' | 'pro' | null;
   /** What the SUBSCRIPTION has paid through, same stored shape as PremiumUntil and compared the

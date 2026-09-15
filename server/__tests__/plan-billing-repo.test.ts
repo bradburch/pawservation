@@ -308,6 +308,7 @@ describe('normalizeBilledUntil — one shape in, and a ceiling on what a leaked 
       PremiumUntil: null,
       Plan: 'pro' as const,
       BilledUntil: billedUntil,
+      CompedUntil: null,
     });
     expect(isPremiumActive(facts(past), NOW)).toBe(false);
     // The same instant left in the shape it arrived in says the opposite: 'T' sorts above the

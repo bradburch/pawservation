@@ -1,0 +1,29 @@
+-- Migration 0018. A PLAN CAN BE COMPED.
+-- One nullable column on Tenants: the instant a business is paid up through WITHOUT paying,
+-- granted and cleared by hand by the platform owner (PATCH /api/owner/sitters/:tenantId). Additive
+-- only.
+-- NOT a hand-set BilledUntil, and the reasons are the whole of why this file exists rather than a
+-- runbook line. `normalizeBilledUntil` refuses anything more than MAX_BILLED_AHEAD_DAYS = 400
+-- ahead (server/lib/premium.ts), a ceiling written as the containment on what a leaked shared
+-- secret can buy — an owner comping a business for two years is a legitimate thing to record and
+-- would be refused by a bound written for a different threat. And `applyBillingEvent`
+-- (server/db/repo.ts) ASSIGNS BilledUntil unconditionally, so a comp written there is overwritten
+-- by the next invoice: right when the comp was shorter, wrong when it was longer. A second column
+-- inherits PremiumUntil's separation for free — billing names neither, so a comp survives a
+-- renewal, a cancellation and a redelivery.
+-- No initial value, deliberately: every existing row reads NULL, NULL is false on every clause of
+-- `isPlanCurrent`, and so applying this file moves nobody's plan state by a hair. The separate
+-- safety is the PLAN_ENFORCE deployment var, which ships unset.
+-- NO SchemaMeta MARKER, and that is a decision rather than an omission, for 0017's reason: this
+-- migration is purely additive, a second run dies loudly on `duplicate column name`, and
+-- `PRAGMA table_info(Tenants)` answers "has it been applied?" outright. SQLite has no
+-- `ADD COLUMN IF NOT EXISTS` (migrations/README.md), so idempotency is not provided and is not
+-- wanted — the file is idempotent in the sense that matters, which is that it is safe to KNOW
+-- whether it ran and unsafe to guess.
+-- This file must never wrap its statement in an explicit SQL transaction (see migrations/README.md
+-- and 0011's history) — D1's remote executor rejects that outright.
+-- MIGRATE FIRST, THEN DEPLOY. TENANT_COLS (server/db/repo.ts) selects this column on every tenant
+-- resolution, so a worker deployed against an un-migrated database answers `no such column` on
+-- every request. The reverse order costs nothing: the column sits unread until the worker that
+-- reads it ships.
+ALTER TABLE Tenants ADD COLUMN CompedUntil TEXT;

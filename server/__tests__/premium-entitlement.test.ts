@@ -79,20 +79,22 @@ describe('Tenants.PremiumUntil — the column', () => {
 });
 
 describe('the tenant KV cache key is versioned for exactly this', () => {
-  it('caches under v6, so no entry from an earlier worker is ever read back', async () => {
+  it('caches under v7, so no entry from an earlier worker is ever read back', async () => {
     const { env } = createTestEnv();
 
     // Each older key is what some PREVIOUS worker left behind: the same row, minus the column its
     // migration added. Read either one and the field it lacks comes back `undefined` — a paying
     // sitter demoted to free (v2/0010), a sitter who chose per-night billed at a third of her
     // rate (v3/0013), a monthly invoicer whose payments reach back 14 days instead of the 45 she
-    // chose (v4/0014), or a sitter who paid a minute ago reported free (v5/0017) — for a whole TTL,
-    // with the type insisting none of them can happen.
+    // chose (v4/0014), or a sitter who paid a minute ago reported free (v5/0017), or a business the
+    // owner comped a minute ago reported as holding no plan (v6/0018) — for a whole TTL, with the
+    // type insisting none of them can happen.
     for (const key of [
       'tenant:sunny-paws:config:v2',
       'tenant:sunny-paws:config:v3',
       'tenant:sunny-paws:config:v4',
       'tenant:sunny-paws:config:v5',
+      'tenant:sunny-paws:config:v6',
     ]) {
       await env.PAWSERVATION_CACHE.put(
         key,
@@ -116,7 +118,7 @@ describe('the tenant KV cache key is versioned for exactly this', () => {
     expect(tenant?.AttributionSpillDays).toBe(14);
 
     // The new entry lands under the new key.
-    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v6')).not.toBeNull();
+    expect(await env.PAWSERVATION_CACHE.get('tenant:sunny-paws:config:v7')).not.toBeNull();
   });
 });
 
@@ -333,6 +335,7 @@ const facts = (over: Partial<EntitlementFacts>): EntitlementFacts => ({
   PremiumUntil: null,
   Plan: null,
   BilledUntil: null,
+  CompedUntil: null,
   ...over,
 });
 
@@ -453,16 +456,18 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   const EXEMPT = join(ROOT, 'server', 'lib', 'premium.ts');
 
   /**
-   * `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain — and `BilledUntil` the
-   * same, because since 0017 the rule is TWO dated columns and a second copy of half of it is no
-   * better than a second copy of all of it. `BilledUntil` is the likelier one to be re-derived, too:
-   * it arrives with a subscription, and "is she still paying" is a question a route feels entitled
-   * to answer on the spot.
+   * `PremiumUntil > x` and `x < PremiumUntil`, through any accessor chain — and `BilledUntil` and
+   * `CompedUntil` the same, because the rule is now THREE dated columns and a second copy of a third
+   * of it is no better than a second copy of all of it. `BilledUntil` is the likeliest to be
+   * re-derived (it arrives with a subscription, and "is she still paying" is a question a route
+   * feels entitled to answer on the spot); `CompedUntil` is the likeliest to be MISSED, because it
+   * is the newest and reads like a field rather than like a rule.
    */
-  const COMPARISON = /((?:premium|billed)until\s*[<>]|[<>]=?\s*[\w.?!]*(?:premium|billed)until)/i;
+  const COMPARISON =
+    /((?:premium|billed|comped)until\s*[<>]|[<>]=?\s*[\w.?!]*(?:premium|billed|comped)until)/i;
 
   /** The column named anywhere on the line, however far from the operator. */
-  const NAMED = /(?:premium|billed)until/i;
+  const NAMED = /(?:premium|billed|comped)until/i;
   /** A comparison, spelled with the spaces a formatter puts around one. Spaced deliberately: a
    *  `<` in `Record<string, …>` or in a JSX tag is not a comparison and reporting it would make
    *  this scan the thing everyone deletes. */
@@ -510,6 +515,7 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
   // stops covering that file.
   const COLUMN = 'PremiumUntil';
   const BILLED = 'BilledUntil';
+  const COMPED = 'CompedUntil';
 
   it('would catch one — the scanner is not vacuously green', () => {
     expect(offends(`s.${COLUMN} > new Date().toISOString()`)).toBe(true);
@@ -525,6 +531,12 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
     expect(offends(`now < tenant.${COLUMN}`)).toBe(true);
     expect(offends(`row.${BILLED} > premiumNow()`)).toBe(true);
     expect(offends(`stamp <= t?.${BILLED}`)).toBe(true);
+    // THE WIDENING, SHOWN TO FIRE. A regex that learned a third column and was never run against
+    // one is a widened CLAIM, not a widened check — and this column is the one a reader is most
+    // likely to treat as an ordinary field, because it is the newest of the three.
+    expect(offends(`row.${COMPED} > premiumNow()`)).toBe(true);
+    expect(offends(`now < tenant.${COMPED}`)).toBe(true);
+    expect(offends(`const c = t.${COMPED}; if (c > stamp) allow();`)).toBe(true);
     // The aliased local, in the shape a probe actually wrote it.
     expect(offends(`const until = t.${BILLED}; until > stamp;`)).toBe(true);
     expect(offends(`const u = row.${COLUMN}; if (u > premiumNow()) mount();`)).toBe(true);
@@ -532,6 +544,7 @@ describe('nothing outside server/lib/premium.ts compares PremiumUntil or BilledU
     expect(offends(`// ${COLUMN} > now, merely described`)).toBe(false);
     expect(offends(`/* ${BILLED} > now, merely described */`)).toBe(false);
     expect(offends(`const sql = 'UPDATE Tenants SET ${COLUMN} = ?';`)).toBe(false);
+    expect(offends(`const sql = 'UPDATE Tenants SET ${COMPED} = ?';`)).toBe(false);
     expect(offends(`const rows = raw.prepare('SELECT ${COLUMN} FROM Tenants').all();`)).toBe(false);
     expect(offends(`const by = (r: R): Record<string, string> => ({ x: r.${COLUMN} });`)).toBe(
       false,

@@ -96,11 +96,14 @@ export function normalizeBilledUntil(raw: string, now: Date = new Date()): strin
 }
 
 /**
- * THE FOUR COLUMNS ENTITLEMENT IS DECIDED FROM, and nothing else. Narrower than `Tenant` on purpose:
+ * THE FIVE COLUMNS PLAN STATE IS DECIDED FROM, and nothing else. Narrower than `Tenant` on purpose:
  * the owner console's roster row is not a tenant row, and the alternative to this type was a second
  * copy of the rule in `routes/owner.ts` — which is the exact thing spine AD-13 forbids.
  */
-export type EntitlementFacts = Pick<Tenant, 'DisabledAt' | 'PremiumUntil' | 'Plan' | 'BilledUntil'>;
+export type EntitlementFacts = Pick<
+  Tenant,
+  'DisabledAt' | 'PremiumUntil' | 'Plan' | 'BilledUntil' | 'CompedUntil'
+>;
 
 /**
  * Is this tenant premium right now? The one place the question is answered (spine AD-13).
@@ -151,6 +154,43 @@ export function isPremiumActive(tenant: EntitlementFacts, now: Date = new Date()
 export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
   if (tenant.DisabledAt != null) return false;
   return typeof tenant.BilledUntil === 'string' && tenant.BilledUntil > premiumNow(now);
+}
+
+/**
+ * Does this business hold a CURRENT PLAN, by any of the three grants? The question the read-only
+ * dashboard is decided from (Story 10.4), and the third one-expression answer in this file.
+ *
+ * THREE GRANTS, OR-ed, and each is somebody's separate decision: a paid subscription
+ * (`BilledUntil`, written only by billing), the platform owner's BASIC comp (`CompedUntil`), and
+ * the platform owner's PAID comp (`PremiumUntil`). A maximum, never a precedence — an owner-set
+ * date EARLIER than `BilledUntil` takes nothing away from a business who is paying.
+ *
+ * `PremiumUntil` IS IN IT, AND THAT IS NOT DECORATION. A business comped on the paid tier but
+ * holding no subscription is `isPremiumActive === true` and `isSoloActive === false`. Were this
+ * predicate `!isSoloActive` instead, her paid assistant would hold write access — through her own
+ * forwarded credential — to a dashboard this product had just made read-only. Folding it in is what
+ * stops two products disagreeing about whether she may write, and it is why this predicate is
+ * TIER-BLIND: the thing that lapsed is the plan, not a tier.
+ *
+ * `isSoloActive` IS NOT WIDENED INTO THIS, and that is the smaller honest shape. It is published as
+ * `planActive` and its question is "does she have a live paid subscription" — a comped business does
+ * not, and must still be able to buy one. Two predicates answering two questions, both inside the
+ * one file the AD-13 scanner exempts, is correct; folding them would change a shipped wire field's
+ * meaning.
+ *
+ * The `DisabledAt` early return is shared with both predicates above, which is what makes the
+ * ordering claim true by construction rather than by arrangement: a disabled business is refused
+ * `account_disabled` by `tenantMiddleware` long before the lapse gate runs, and is not current here
+ * either, so the two refusals can never contradict each other.
+ */
+export function isPlanCurrent(tenant: EntitlementFacts, now: Date = new Date()): boolean {
+  if (tenant.DisabledAt != null) return false;
+  const stamp = premiumNow(now);
+  return (
+    (typeof tenant.BilledUntil === 'string' && tenant.BilledUntil > stamp) ||
+    (typeof tenant.CompedUntil === 'string' && tenant.CompedUntil > stamp) ||
+    (typeof tenant.PremiumUntil === 'string' && tenant.PremiumUntil > stamp)
+  );
 }
 
 /**

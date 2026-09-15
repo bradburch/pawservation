@@ -76,6 +76,22 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- at or before this instant is ignored, which is the whole of what makes a redelivery a no-op.
   LastBillingEventAt TEXT,
   -- <<< 0017 plan billing
+  -- >>> 0018 plan comp (migrations/0018_plan_comp.sql). Fenced by the marker pair for the reason
+  -- 0017's block above is: server/__tests__/migration-0018-plan-comp.test.ts builds a PRE-0018
+  -- database by deleting everything between these markers and then applies the real migration file
+  -- to it. That is what keeps this block and that file from drifting, so keep the markers exactly
+  -- as they are and keep what is between them identical to the migration's ADD COLUMN.
+  --
+  -- THE BASIC COMP: paid up through this instant without paying, set and cleared by hand from the
+  -- owner console and written ONLY by `setTenantCompedUntil`. Billing never touches it, exactly as
+  -- billing never touches PremiumUntil — a comp surviving a renewal, a cancellation and a
+  -- redelivery is what that separation buys. Same fixed-width UTC shape as the other two dated
+  -- columns ('YYYY-MM-DD HH:MM:SS'), because `CompedUntil > now` is a plain string comparison whose
+  -- lexicographic order has to BE chronological order; `normalizePremiumUntil`
+  -- (server/lib/premium.ts) is the one place this column's values are produced, and it has no
+  -- 400-day ceiling, which is the shape a two-year comp needs.
+  CompedUntil TEXT,
+  -- <<< 0018 plan comp
   -- How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
   -- 'total' = that figure is the whole charge for the stay; 'per-night' = it is a nightly rate and
   -- the backfill multiplies it by the stay's nights. A SINGLE-shaped service (a walk) has no

@@ -121,7 +121,7 @@ import {
 } from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
 import { adminAuth } from '../lib/middleware';
-import { isSoloActive } from '../lib/premium';
+import { isPlanCurrent, isSoloActive } from '../lib/premium';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
 import { embedSnippets } from '../lib/snippet';
@@ -904,11 +904,11 @@ export const adminRoutes = new Hono<AppEnv>()
       templates: TEMPLATE_IDS.map((id) => ({ id, label: SERVICE_TEMPLATES[id].label })),
       blocked: blocked.map((b) => ({ id: b.Id, startDate: b.StartDate, endDate: b.EndDate })),
       calendar: calendarView(connections),
-      // HER OWN PLAN (0017), on the read the dashboard already makes. Five fields and no new
+      // HER OWN PLAN (0017, 0018), on the read the dashboard already makes. Six fields and no new
       // route: this one is already authenticated, already scoped to the slug in its path, and
       // already fetched once per dashboard load. `tenant` is `resolveTenant`'s row and TENANT_COLS
-      // already selects all FOUR columns these five fields are derived from — `Plan`,
-      // `BilledUntil`, `StripeCustomerId` and the `DisabledAt` that `isSoloActive` refuses on — so
+      // already selects all FIVE columns these six fields are derived from — `Plan`, `BilledUntil`,
+      // `CompedUntil`, `StripeCustomerId` and the `DisabledAt` both predicates refuse on — so
       // nothing here reads the database a second time.
       plan: tenant.Plan,
       // VERBATIM, in the stored 'YYYY-MM-DD HH:MM:SS' shape (server/lib/premium.ts). The panel
@@ -925,6 +925,16 @@ export const adminRoutes = new Hono<AppEnv>()
       // control pointed at a customer that does not exist.
       hasBillingAccount:
         typeof tenant.StripeCustomerId === 'string' && tenant.StripeCustomerId.length > 0,
+      // DOES SHE HOLD A CURRENT PLAN, by any of the three grants (Story 10.4)? The DERIVED boolean
+      // again, never a comparison — and the TENANT's state, not the gate's answer: `PLAN_ENFORCE`
+      // is a fact about the deployment and is deliberately not folded in, so this field means
+      // exactly one thing and stays one thing to keep in step. It goes to BOTH credentials, unlike
+      // `stripeCustomerId` below: this is not a processor identifier, it is her own state told to
+      // her own admin, and a `pawsa_` client that could not see it would discover the refusal by
+      // being refused. `planActive` beside it is a different question and both are published: a
+      // comped business is `planCurrent` true and `planActive` false, and must still be offered
+      // Subscribe.
+      planCurrent: isPlanCurrent(tenant),
       // PASSWORD SESSION ONLY, and OMITTED rather than nulled for a `pawsa_` token, so a consumer
       // can tell "withheld by policy" from "no customer yet". The precedent is `adminSessionOnly`
       // (server/lib/middleware.ts), already used to keep a token off the token-management routes;

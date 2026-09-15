@@ -47,8 +47,16 @@ const TENANT_CACHE_TTL_SECONDS = 60;
  * silent — so a v5 entry, which has neither field, would report a sitter who has just PAID as free
  * for the remainder of its TTL. Exactly the v3 failure again, one-directional and in the direction
  * nobody notices, except that this time the sitter typed a card number a minute earlier.
+ *
+ * v7: `CompedUntil` (migration 0018). The basic comp joins the two grants above as a third, and
+ * `isPlanCurrent` reads it on every admin write and every settings read — reading anything that is
+ * not a string as "not that", fail-closed and therefore silent. So a v6 entry, which has no such
+ * field, would report a business the owner comped a minute ago as holding no plan for the
+ * remainder of its TTL — and, once `PLAN_ENFORCE` is set, would refuse her writes on the strength
+ * of a cached shape. One-directional again, and this time the failure is visible to her: she
+ * presses Save and is told her plan has lapsed.
  */
-const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v6`;
+const tenantCacheKey = (slug: string) => `tenant:${slug}:config:v7`;
 
 export async function resolveTenant(slug: string, env: Env): Promise<Tenant | null> {
   const key = tenantCacheKey(slug);

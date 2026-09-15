@@ -62,7 +62,7 @@ import { DEMO_EMAIL } from '../lib/demo';
  */
 
 const TENANT_COLS =
-  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
+  'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CompedUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
   'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
@@ -5853,6 +5853,7 @@ export type SitterRosterRow = {
    *  rule living in the console — the console used to re-derive it in the browser. */
   Plan: 'solo' | 'pro' | null;
   BilledUntil: string | null;
+  CompedUntil: string | null; // null = no basic comp (0018)
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
   // SUM(Payments.Amount) in CENTS (0015), PaidDate >= sinceDate. NOT renamed `EarnedCents`: this
@@ -5887,6 +5888,7 @@ export async function listSitterRoster(
          t.PremiumUntil AS PremiumUntil,
          t.Plan AS Plan,
          t.BilledUntil AS BilledUntil,
+         t.CompedUntil AS CompedUntil,
          (SELECT COUNT(*) FROM EndUsers u WHERE u.TenantId = t.Id AND u.Email <> ?) AS Clients,
          (SELECT COUNT(*) FROM BookingRequests b
             WHERE b.TenantId = t.Id AND b.Status = 'confirmed'
