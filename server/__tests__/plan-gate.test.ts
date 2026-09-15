@@ -125,18 +125,45 @@ describe('the lapse gate refuses writes and never reads', () => {
 
 describe('what the gate must never reach', () => {
   it('never refuses the billing endpoint, which is how she un-lapses', async () => {
-    const { env } = createTestEnv();
     // Registered at server/index.ts:117, BEFORE adminRoutes at :118 — so `adminAuth` never reaches
     // it and neither does this gate. THE EXCLUSION IS LOAD-BEARING, and this is the case that fails
-    // the day someone "tidies" the mount order. No shared secret is configured here, so the route
-    // answers its own refusal; what matters is that the refusal is ITS one and not the gate's.
+    // the day someone "tidies" the mount order.
+    //
+    // Driven with a VALID secret on a LAPSED business, all the way to `{ applied: true }`, because
+    // the exemption's whole point is that the event LANDS: a case that posts no secret and asserts
+    // only `!== 402` is satisfied by the route's own 404 and holds under either mount order, which
+    // is to say it holds on the day the gate starts refusing her only way back.
+    const { env } = createTestEnv(); // every seeded row holds no grant at all
+    const BILLING_SECRET = 'plan-gate-billing-secret-0123456789';
+    const billing = { ...enforcing(env), BILLING_SHARED_SECRET: BILLING_SECRET } as Env;
+
+    // She is lapsed before the event, stated rather than assumed — without this the 200 below
+    // proves only that the endpoint works, not that it works for somebody the gate refuses.
+    expect((await putSettings(billing, 'sunny-paws', TENANT_A)).status).toBe(402);
+
     const res = await app.request(
       '/api/sunny-paws/admin/billing/events',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
-      enforcing(env),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Billing-Secret': BILLING_SECRET },
+        body: JSON.stringify({
+          eventType: 'checkout.session.completed',
+          plan: 'pro',
+          billedUntil: new Date(Date.now() + 31 * 86_400_000).toISOString(),
+          stripeCustomerId: 'cus_A',
+          stripeSubscriptionId: 'sub_A',
+          eventId: 'evt_plan_gate',
+          eventCreated: Math.floor(Date.now() / 1000),
+        }),
+      },
+      billing,
     );
-    expect(res.status).not.toBe(402);
-    expect(await res.json()).not.toEqual(LAPSED);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ applied: true });
+
+    // …and she is un-lapsed: the very write refused above now passes, and TENANT_B is untouched.
+    expect((await putSettings(billing, 'sunny-paws', TENANT_A)).status).not.toBe(402);
+    expect((await putSettings(billing, 'happy-tails', TENANT_B)).status).toBe(402);
   });
 
   it('never refuses the booking surface — A-17, satisfied by scope rather than by a clause', async () => {

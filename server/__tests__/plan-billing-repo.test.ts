@@ -27,7 +27,7 @@ const event = (over: Partial<Parameters<typeof applyBillingEvent>[2]> = {}) => (
   stripeCustomerId: 'cus_A',
   stripeSubscriptionId: 'sub_A',
   eventAt: AT.first,
-  replacesSubscription: true,
+  establishes: true,
   ...over,
 });
 
@@ -53,7 +53,7 @@ describe('applyBillingEvent — what one event does to a tenant row', () => {
       event({
         billedUntil: '2026-09-20 00:00:00',
         eventAt: AT.later,
-        replacesSubscription: false,
+        establishes: false,
       }),
     );
     // Lower than what was there, and it is what is there now. The processor's date is the truth;
@@ -70,22 +70,68 @@ describe('applyBillingEvent — what one event does to a tenant row', () => {
     await applyBillingEvent(
       env.PAWSERVATION_DB,
       TENANT_A,
-      event({ billedUntil: '2026-09-20 00:00:00', eventAt: AT.later, replacesSubscription: false }),
+      event({ billedUntil: '2026-09-20 00:00:00', eventAt: AT.later, establishes: false }),
     );
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.PremiumUntil).toBe(
       '2099-01-01 00:00:00',
     );
   });
 
-  it('records the customer id on first sight only, and never overwrites it', async () => {
+  it('coalesces the customer id on an ordinary event, and never overwrites it', async () => {
     const { env } = createTestEnv();
     await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event());
     await applyBillingEvent(
       env.PAWSERVATION_DB,
       TENANT_A,
-      event({ stripeCustomerId: 'cus_OTHER', eventAt: AT.later, replacesSubscription: false }),
+      event({ stripeCustomerId: 'cus_OTHER', eventAt: AT.later, establishes: false }),
     );
+    // AN INVOICE MERELY SAYS THAT SUBSCRIPTION WAS PAID. It does not say which customer this
+    // business now is, and one arriving late for a subscription that has been displaced must not
+    // move the id out from under the live one.
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe('cus_A');
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeCustomerId).toBeNull();
+  });
+
+  it('ASSIGNS the customer id when the event establishes identity', async () => {
+    const { env } = createTestEnv();
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event());
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({
+        stripeCustomerId: 'cus_NEW',
+        stripeSubscriptionId: 'sub_NEW',
+        eventAt: AT.later,
+        establishes: true,
+      }),
+    );
+    // THE DEAD-CUSTOMER LOOP, CLOSED WITHOUT A NEW ROUTE. A business whose customer record the
+    // processor no longer has presses Subscribe, the checkout retries once without the stored id,
+    // the processor mints a fresh customer, and the completed checkout that follows now ASSIGNS it
+    // — so her Manage-plan button works again with no human in the loop.
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.StripeCustomerId).toBe('cus_NEW');
+    expect(t.StripeSubscriptionId).toBe('sub_NEW');
+    const b = (await getTenantById(env.PAWSERVATION_DB, TENANT_B))!;
+    expect(b.StripeCustomerId).toBeNull();
+    expect(b.StripeSubscriptionId).toBeNull();
+  });
+
+  it('never names CompedUntil, so a BASIC comp survives a renewal and a cancellation', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET CompedUntil = '2099-01-01 00:00:00' WHERE Id = '${TENANT_A}'`);
+    await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event());
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({ billedUntil: '2026-09-20 00:00:00', eventAt: AT.later, establishes: false }),
+    );
+    // The same separation `PremiumUntil` has had since 0017, inherited for free by being a second
+    // column: two comps, two owner-written columns, and one statement that names neither.
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.CompedUntil).toBe(
+      '2099-01-01 00:00:00',
+    );
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.CompedUntil).toBeNull();
   });
 
   /**
@@ -162,7 +208,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
           stripeSubscriptionId: 'sub_OLD',
           billedUntil: '2020-01-01 00:00:00',
           eventAt: AT.later,
-          replacesSubscription: false,
+          establishes: false,
         }),
       ),
     ).toBe(false);
@@ -182,7 +228,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
           stripeSubscriptionId: 'sub_B',
           billedUntil: '2026-11-08 00:00:00',
           eventAt: AT.later,
-          replacesSubscription: true,
+          establishes: true,
         }),
       ),
     ).toBe(true);
@@ -207,7 +253,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
         stripeSubscriptionId: 'sub_B',
         billedUntil: '2026-11-08 00:00:00',
         eventAt: AT.later,
-        replacesSubscription: true,
+        establishes: true,
       }),
     );
     // `customer.subscription.deleted` for sub_A, and genuinely newer than everything applied.
@@ -219,7 +265,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
           stripeSubscriptionId: 'sub_A',
           billedUntil: '2026-10-09 00:00:00',
           eventAt: '2026-11-08 12:00:00',
-          replacesSubscription: false,
+          establishes: false,
         }),
       ),
     ).toBe(false);
@@ -266,7 +312,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
       await applyBillingEvent(
         env.PAWSERVATION_DB,
         TENANT_A,
-        event({ eventAt: AT.later, replacesSubscription: false }),
+        event({ eventAt: AT.later, establishes: false }),
       ),
     ).toBe(true);
     const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;

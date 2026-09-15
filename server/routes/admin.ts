@@ -1679,10 +1679,15 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     // Disabled tenants are read-only — connecting a calendar is a settings write via the callback.
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
-    // …and so is a lapsed plan, for the identical reason. THIS IS THE ONE GET THAT WRITES, so the
-    // method rule the gate is built on cannot reach it and a guard in the handler is what does —
-    // mirroring the line above rather than inventing a second mechanism. `create-calendar` beside
-    // it needs no twin: it is a POST, and the middleware already has it.
+    // …and so is a lapsed plan, for the identical reason. THIS IS THE ONE GET THIS FILE GUARDS FOR
+    // LAPSE BY HAND, because it is the only GET here that starts a SITTER-INITIATED write she could
+    // not otherwise make: the method rule the gate is built on cannot reach it, so a guard in the
+    // handler is what does — mirroring the line above rather than inventing a second mechanism.
+    // It is not the only GET in this repo that writes at all (`reconcileIfStale` below and in
+    // `booking-ops.ts` writes on GET too), and those deliberately have no twin: a background
+    // calendar reconcile is not her write, it is already skipped for a disabled tenant, and
+    // refusing it would rot her availability rather than protect anything. `create-calendar`
+    // beside this route needs no twin either: it is a POST, and the middleware already has it.
     if (planEnforceEnabled(c.env) && !isPlanCurrent(tenant))
       return c.json({ error: 'plan_lapsed' }, 402);
     if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)

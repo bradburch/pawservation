@@ -803,3 +803,157 @@ describe('what it says in the log when it declines', () => {
     expect(CODE).not.toContain('invalidateTenantCache(tenant.Slug');
   });
 });
+
+/**
+ * A FIFTH EVENT TYPE. The file's own `event()` / `post()` / `withSecrets()` helpers are reused
+ * verbatim rather than restated under new names, so these cases and the four above send the same
+ * header and the same seven fields.
+ *
+ * `AT_SECONDS` anchors this block's ordering in the PAST and counts forward: `eventCreated` is
+ * bounded five minutes ahead of this worker's clock, so a fixture that counted forward from `now`
+ * would be refused `event_created_in_future` before any rule under test ran.
+ */
+const AT_SECONDS = T0 - 7200;
+
+describe('resync — the fifth event type, and the one that repairs a frozen row', () => {
+  it('is accepted by the picklist and applies like any other event', async () => {
+    const { env } = createTestEnv();
+    const res = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'resync', eventCreated: AT_SECONDS }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ applied: true });
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.Plan).toBe('pro');
+    expect(t.StripeSubscriptionId).toBe('sub_A');
+    const b = (await getTenantById(env.PAWSERVATION_DB, TENANT_B))!;
+    expect(b.Plan).toBeNull();
+    expect(b.StripeSubscriptionId).toBeNull();
+  });
+
+  it('escapes the not_current_subscription rule that an invoice cannot', async () => {
+    const { env } = createTestEnv();
+    await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'checkout.session.completed', eventCreated: AT_SECONDS }),
+    );
+
+    // A FROZEN ROW holds the DISPLACED subscription id, which is exactly the state the caller is
+    // trying to repair — so without the exemption a resync is refused by the rule it exists to
+    // escape. An invoice for the same unfamiliar subscription is still refused, which is what makes
+    // this an exemption rather than a hole.
+    const invoice = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({
+        eventType: 'invoice.paid',
+        stripeSubscriptionId: 'sub_B',
+        eventCreated: AT_SECONDS + 3600,
+      }),
+    );
+    expect(await invoice.json()).toMatchObject({
+      applied: false,
+      reason: 'not_current_subscription',
+    });
+
+    const resync = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({
+        eventType: 'resync',
+        stripeSubscriptionId: 'sub_B',
+        eventCreated: AT_SECONDS + 3600,
+      }),
+    );
+    expect(await resync.json()).toEqual({ applied: true, replaced: 'sub_A' });
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeSubscriptionId).toBeNull();
+  });
+
+  it('is stale-checked by the same strictly-older rule, with no special case', async () => {
+    const { env } = createTestEnv();
+    await post(withSecrets(env), 'sunny-paws', event({ eventCreated: AT_SECONDS + 3600 }));
+    // The caller's identity is the subscription item's period start, never a wall clock, so a
+    // resync for a period already applied is older and correctly does nothing.
+    const older = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'resync', eventCreated: AT_SECONDS }),
+    );
+    expect(await older.json()).toMatchObject({ applied: false, reason: 'stale_event' });
+    // Equal to the second still applies — the rule is strictly `<`, unchanged by this story.
+    const equal = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'resync', eventCreated: AT_SECONDS + 3600, plan: 'solo' }),
+    );
+    expect(await equal.json()).toMatchObject({ applied: true });
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.Plan).toBe('solo');
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.Plan).toBeNull();
+  });
+
+  it('assigns the customer id on the two establishing events and coalesces it on an invoice', async () => {
+    const { env } = createTestEnv();
+    await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'checkout.session.completed', eventCreated: AT_SECONDS }),
+    );
+
+    const invoice = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({
+        eventType: 'invoice.paid',
+        stripeCustomerId: 'cus_LATE',
+        eventCreated: AT_SECONDS + 60,
+      }),
+    );
+    expect(invoice.status).toBe(200);
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe('cus_A');
+
+    await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({
+        eventType: 'resync',
+        stripeCustomerId: 'cus_FRESH',
+        eventCreated: AT_SECONDS + 120,
+      }),
+    );
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.StripeCustomerId).toBe(
+      'cus_FRESH',
+    );
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_B))!.StripeCustomerId).toBeNull();
+  });
+
+  it('leaves BOTH comp columns byte-identical, whichever event arrives', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(
+      `UPDATE Tenants SET PremiumUntil = '2099-01-01 00:00:00', CompedUntil = '2098-01-01 00:00:00'
+       WHERE Id = '${TENANT_A}';`,
+    );
+    const types = [
+      'checkout.session.completed',
+      'invoice.paid',
+      'customer.subscription.updated',
+      'customer.subscription.deleted',
+      'resync',
+    ] as const;
+    for (const [i, eventType] of types.entries()) {
+      await post(
+        withSecrets(env),
+        'sunny-paws',
+        event({ eventType, eventCreated: AT_SECONDS + i }),
+      );
+    }
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');
+    expect(t.CompedUntil).toBe('2098-01-01 00:00:00');
+    const b = (await getTenantById(env.PAWSERVATION_DB, TENANT_B))!;
+    expect(b.PremiumUntil).toBeNull();
+    expect(b.CompedUntil).toBeNull();
+  });
+});

@@ -61,26 +61,34 @@ const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 const BillingEvent = v.object({
   /**
-   * WHICH event this is. A four-value closed set, so it cannot become a free-text channel, and the
-   * minimum needed to express the one exception to the subscription rule: a completed checkout
-   * REPLACES the recorded subscription id, and nothing else may.
+   * WHICH event this is. A FIVE-value closed set, so it cannot become a free-text channel, and the
+   * minimum needed to express the one exception to the subscription rule: two of the five ESTABLISH
+   * identity — a completed checkout and a resync — and nothing else may.
+   *
+   * `resync` is the caller saying "this is what the processor says right now", after a delivery was
+   * lost or a row was frozen against a subscription it no longer holds. It carries the same seven
+   * fields as every other event and needs no special case for staleness, because its identity is
+   * the subscription item's own period start rather than a wall clock.
    */
   eventType: v.picklist([
     'checkout.session.completed',
     'invoice.paid',
     'customer.subscription.updated',
     'customer.subscription.deleted',
+    'resync',
   ]),
   /** The picklist is what makes "a plan outside the two is refused" a parse failure rather than a
    *  hand-written branch that someone can forget to write. */
   plan: v.picklist(['solo', 'pro']),
   billedUntil: v.pipe(v.string(), v.maxLength(MAX_FIELD)),
   /**
-   * BOTH IDS NON-EMPTY. `''` is a string to valibot and stored as one, and each empty id is
-   * permanent: an empty `StripeSubscriptionId` matches no incoming subscription, so every later
-   * non-checkout event is `not_current_subscription` forever, and an empty `StripeCustomerId`
-   * survives the writer's `COALESCE` and can never be replaced. Neither is reachable again without
-   * hand-written SQL, which is a high price for a field the caller can simply be required to fill.
+   * BOTH IDS NON-EMPTY. `''` is a string to valibot and stored as one, and an empty id freezes this
+   * tenant against every ORDINARY event: an empty `StripeSubscriptionId` matches no incoming
+   * subscription, so every later non-establishing event is `not_current_subscription` forever, and
+   * an empty `StripeCustomerId` survives those same events' `COALESCE` untouched. Only an
+   * ESTABLISHING event — a checkout, or a resync — assigns over either, so the repair exists but
+   * costs a round trip through the processor, which is a high price for a field the caller can
+   * simply be required to fill.
    */
   stripeCustomerId: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_FIELD)),
   stripeSubscriptionId: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_FIELD)),
@@ -296,8 +304,11 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
   const row = await getTenantById(c.env.PAWSERVATION_DB, tenant.Id);
   if (!row) return c.json(UNKNOWN_TENANT, 404); // deleted between the middleware and here
 
-  /** A completed checkout is the one event allowed to REPLACE the recorded subscription. */
-  const replacesSubscription = body.eventType === 'checkout.session.completed';
+  /** The two events allowed to ESTABLISH identity — which subscription and which customer this
+   *  business now is. A completed checkout, and a resync: without the second, a resync is refused
+   *  by the very rule it exists to escape, because a frozen row holds the DISPLACED id. */
+  const establishes =
+    body.eventType === 'checkout.session.completed' || body.eventType === 'resync';
 
   /**
    * The two ignore rules, answered 200 with the reason named. A silent 200 would make an ignored
@@ -314,7 +325,7 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
     return await declined(c, row.Slug, body.eventId, 'stale_event');
   }
   if (
-    !replacesSubscription &&
+    !establishes &&
     row.StripeSubscriptionId != null &&
     row.StripeSubscriptionId !== body.stripeSubscriptionId
   ) {
@@ -324,18 +335,22 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
   /**
    * WHAT THIS EVENT DISPLACES, established before the write so it can be reported afterwards.
    *
-   * A completed checkout is allowed to assign a new subscription id over a live one, and the
-   * writer `COALESCE`s the customer id rather than assigning it — so a re-subscribe under a
-   * different customer leaves the row naming subscription B against customer A, which is the
-   * portal opening for the wrong person (FR-60). The customer divergence is logged rather than
-   * written, because "a sitter is one customer forever" is the assumption this endpoint is not
-   * entitled to overturn on a single event; the displaced subscription is reported to the caller,
-   * which is the only party that can tell whether it meant to.
+   * An establishing event is allowed to assign a new subscription id over a live one AND to assign
+   * the customer id over a stored one, which is what closes the dead-customer loop: a business whose
+   * customer record the processor no longer has presses Subscribe, the checkout retries without the
+   * stored id, the processor mints a fresh customer, and the completed checkout that follows records
+   * it. The displaced SUBSCRIPTION is reported to the caller, which is the only party that can tell
+   * whether it meant to.
    */
   const replaced =
     row.StripeSubscriptionId != null && row.StripeSubscriptionId !== body.stripeSubscriptionId
       ? row.StripeSubscriptionId
       : null;
+  // THE RECORD OF A CHANGE, no longer the record of a refusal. The customer id used to be
+  // `COALESCE`d on every event, so a divergence here was a thing this endpoint noticed and could
+  // not act on; on the two establishing events it is now assigned, and this line says when that
+  // happened. On the other three it is still `COALESCE`d and the line still records a divergence
+  // that was not applied.
   if (row.StripeCustomerId != null && row.StripeCustomerId !== body.stripeCustomerId) {
     securityEvent('billing_customer_changed', {
       tenant: row.Slug,
@@ -350,7 +365,7 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
     stripeCustomerId: body.stripeCustomerId,
     stripeSubscriptionId: body.stripeSubscriptionId,
     eventAt,
-    replacesSubscription,
+    establishes,
   });
   // Both checks above passed and the statement still declined: another delivery of a LATER event
   // landed in between. Its answer is the right one, and this one is reported as what it now is.

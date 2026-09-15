@@ -127,7 +127,7 @@ describe('a comp and a subscription do not interfere — the story’s own AC', 
       stripeCustomerId: 'cus_A',
       stripeSubscriptionId: 'sub_A',
       eventAt: '2026-09-08 12:00:00',
-      replacesSubscription: true,
+      establishes: true,
       ...over,
     });
     const db = env.PAWSERVATION_DB;

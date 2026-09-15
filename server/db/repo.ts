@@ -6012,14 +6012,21 @@ export async function setTenantCompedUntil(
  *     assigned, none is extended, so the identical request twice leaves a byte-identical row while
  *     a genuinely different same-second event still lands.
  *   - the subscription clause — an event for a subscription that is not this tenant's current one
- *     does nothing, UNLESS `replacesSubscription` (a completed checkout), which is how a
+ *     does nothing, UNLESS `establishes` (a completed checkout, or a resync), which is how a
  *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
  *     live plan.
  *
- * The two ids behave differently on purpose, so they are written as two clauses rather than one
- * clever one: `StripeCustomerId` is `COALESCE`d, recorded on first sight and never overwritten,
- * because a sitter is one customer forever; `StripeSubscriptionId` is assigned, because she may hold
- * several over time and only one at a time is current.
+ * `PremiumUntil` AND `CompedUntil` ARE BOTH ABSENT FROM THIS STATEMENT AND MUST STAY ABSENT — the
+ * paragraph above is written of the first and holds identically of the second. Two comps, one per
+ * tier, each written only by its own owner-console writer.
+ *
+ * THE TWO IDS NO LONGER BEHAVE DIFFERENTLY ON THE ESTABLISHING EVENTS, and that is the change worth
+ * naming. `StripeSubscriptionId` is always assigned; `StripeCustomerId` is assigned when
+ * `establishes` and `COALESCE`d otherwise. A completed checkout and a resync are the two events
+ * that say WHICH CUSTOMER AND WHICH SUBSCRIPTION this tenant now is; an invoice merely says that
+ * subscription was paid, and one arriving late for a displaced subscription must not move the id.
+ * The old unconditional `COALESCE` is why a re-subscribe under a new customer left the row naming
+ * subscription B against customer A — a state the route could only log.
  *
  * `billedUntil` and `eventAt` must ALREADY be in the stored shape ('YYYY-MM-DD HH:MM:SS', UTC) —
  * `normalizeBilledUntil` / `normalizePremiumUntil` (server/lib/premium.ts) are the only places that
@@ -6038,7 +6045,7 @@ export async function applyBillingEvent(
     stripeCustomerId: string;
     stripeSubscriptionId: string;
     eventAt: string;
-    replacesSubscription: boolean;
+    establishes: boolean;
   },
 ): Promise<boolean> {
   const result = await db
@@ -6046,7 +6053,7 @@ export async function applyBillingEvent(
       `UPDATE Tenants
           SET Plan = ?,
               BilledUntil = ?,
-              StripeCustomerId = COALESCE(StripeCustomerId, ?),
+              StripeCustomerId = CASE WHEN ? = 1 THEN ? ELSE COALESCE(StripeCustomerId, ?) END,
               StripeSubscriptionId = ?,
               LastBillingEventAt = ?
         WHERE Id = ?
@@ -6056,12 +6063,14 @@ export async function applyBillingEvent(
     .bind(
       event.plan,
       event.billedUntil,
+      event.establishes ? 1 : 0,
+      event.stripeCustomerId,
       event.stripeCustomerId,
       event.stripeSubscriptionId,
       event.eventAt,
       tenantId,
       event.eventAt,
-      event.replacesSubscription ? 1 : 0,
+      event.establishes ? 1 : 0,
       event.stripeSubscriptionId,
     )
     .run();
