@@ -120,7 +120,7 @@ import {
   type PetOwnerLink,
 } from '../lib/calendar-backfill';
 import { DEMO_EMAIL } from '../lib/demo';
-import { adminAuth, planGate } from '../lib/middleware';
+import { adminAuth, planExempt, planGate } from '../lib/middleware';
 import { isPlanCurrent, isSoloActive, planEnforceEnabled } from '../lib/premium';
 import { signState } from '../lib/oauth-state';
 import { calendarView } from '../lib/providers';
@@ -811,6 +811,20 @@ function resolveServiceDescription(svc: ServiceBody, current: string | null): st
   return typeof svc.description === 'string' ? svc.description.trim() || null : null;
 }
 
+/**
+ * May a GET-side calendar self-heal run for this business? Not for a DISABLED one (read-only, and
+ * the reason this check existed), and not for a LAPSED one while the deployment ENFORCES — a
+ * read-only dashboard whose every load still pushed events to Google would be read-only in name
+ * only. Under the shipped default (`PLAN_ENFORCE` unset) the second clause is inert, so nothing
+ * changes on the day this merges. One helper for the two admin reads that reconcile, so they cannot
+ * drift; the cron sweep asks `listConnectedCalendarTenants` the same question, and the widget's
+ * pull in `booking-ops.ts` deliberately does not ask it (see the note on `oauth/start`).
+ */
+function calendarWritesAllowed(env: Env, tenant: Tenant): boolean {
+  if (tenant.DisabledAt) return false;
+  return !planEnforceEnabled(env) || isPlanCurrent(tenant);
+}
+
 export const adminRoutes = new Hono<AppEnv>()
   // Flattened across every app mounted at /api, so this pattern also covers routes declared in
   // OTHER files — `/:slug/admin/billing/events` (routes/billing.ts) is inside it and stays out of
@@ -940,6 +954,13 @@ export const adminRoutes = new Hono<AppEnv>()
       // comped business is `planCurrent` true and `planActive` false, and must still be offered
       // Subscribe.
       planCurrent: isPlanCurrent(tenant),
+      // IS THE DEPLOYMENT ENFORCING? The other half of the banner's condition, published as its own
+      // field rather than folded into `planCurrent` — that one is the tenant's state and stays one
+      // thing. The dashboard's "read-only" sentence requires BOTH: on the shipped default the var
+      // is unset and every save succeeds, and a banner about a refusal that does not happen is a
+      // banner nobody believes on the day it is true. A fact about the deployment, so it goes to
+      // both credentials like `planCurrent` does.
+      planEnforced: planEnforceEnabled(c.env),
       // PASSWORD SESSION ONLY, and OMITTED rather than nulled for a `pawsa_` token, so a consumer
       // can tell "withheld by policy" from "no customer yet". The precedent is `adminSessionOnly`
       // (server/lib/middleware.ts), already used to keep a token off the token-management routes;
@@ -1588,7 +1609,10 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ disabledServices }, 200);
   })
 
-  .post('/:slug/admin/blocked', async (c) => {
+  // `planExempt` (lib/middleware.ts): a lapsed business may still block dates. Her clients keep
+  // booking under A-17, so she must keep being able to close a date to them; the docblock on the
+  // marker is the whole list, and this route's reason is there.
+  .post('/:slug/admin/blocked', planExempt, async (c) => {
     const tenant = c.get('tenant');
     const body = await c.req
       .json<{ startDate?: string; endDate?: string }>()
@@ -1640,7 +1664,9 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ id }, 201);
   })
 
-  .delete('/:slug/admin/blocked/:id', async (c) => {
+  // `planExempt` for the reason the POST above gives: a date she closed by mistake must be
+  // reopenable, or the lapse costs her a booking she wanted.
+  .delete('/:slug/admin/blocked/:id', planExempt, async (c) => {
     const tenant = c.get('tenant');
     // cancelBlockedRange is a soft delete (Status -> 'cancelled', SyncPending re-armed) and returns
     // a three-way result: `undefined` when no row matched (404, matching the old hard-DELETE's
@@ -1679,19 +1705,27 @@ export const adminRoutes = new Hono<AppEnv>()
     const tenant = c.get('tenant');
     // Disabled tenants are read-only — connecting a calendar is a settings write via the callback.
     if (tenant.DisabledAt) return c.json({ error: 'account_disabled' }, 403);
-    // …and so is a lapsed plan, for the identical reason. THIS IS THE ONE GET THIS FILE GUARDS FOR
-    // LAPSE BY HAND, because it is the only GET here that starts a SITTER-INITIATED write she could
-    // not otherwise make: the method rule the gate is built on cannot reach it, so a guard in the
-    // handler is what does — mirroring the line above rather than inventing a second mechanism.
-    // It is not the only GET in this repo that writes at all (`reconcileIfStale` below and in
-    // `booking-ops.ts` writes on GET too), and those deliberately have no twin: a background
-    // calendar reconcile is not her write, it is already skipped for a disabled tenant, and
-    // refusing it would rot her availability rather than protect anything. `create-calendar`
-    // beside this route needs no twin either: it is a POST, and the middleware already has it.
-    if (planEnforceEnabled(c.env) && !isPlanCurrent(tenant))
-      return c.json({ error: 'plan_lapsed' }, 402);
+    // CONFIG BEFORE PLAN. "This server cannot connect a calendar" is true of every business on it
+    // and is the fact worth telling; a 402 first would send a lapsed sitter to buy a plan for a
+    // control that will 503 the moment she has one. The disabled 403 stays above both, because
+    // that answer is about her account and not about a control.
     if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_CLIENT_SECRET)
       return c.json({ error: 'Google Calendar is not configured on this server.' }, 503);
+    // …and a lapsed plan is read-only for the identical reason the disabled account is. THIS IS
+    // THE ONE GET THIS FILE GUARDS FOR LAPSE BY HAND, because it is the only GET here that starts
+    // a SITTER-INITIATED write she could not otherwise make: the method rule the gate is built on
+    // cannot reach it, so a guard in the handler is what does — mirroring the disabled line rather
+    // than inventing a second mechanism. It is not the only GET in this repo that writes at all
+    // (`reconcileIfStale` below and in `booking-ops.ts` writes on GET too): the two admin reads
+    // below skip it for a lapsed business under enforcement exactly as they do for a disabled one,
+    // because the product must not keep writing her calendar on the strength of a dashboard she
+    // opened to read; the widget's pull in `booking-ops.ts` deliberately does NOT — that one keeps
+    // her CLIENTS' availability honest, which is A-17's promise, and it writes nothing to Google.
+    // `create-calendar` beside this route needs no twin either: it is a POST, and the middleware
+    // already has it. The callback in `routes/oauth.ts` carries the same guard for the 600-second
+    // window in which a state signed before the lapse can still arrive.
+    if (planEnforceEnabled(c.env) && !isPlanCurrent(tenant))
+      return c.json({ error: 'plan_lapsed' }, 402);
 
     const nonce = crypto.randomUUID();
     await c.env.PAWSERVATION_CACHE.put(NONCE_KEY(nonce), '1', { expirationTtl: 600 });
@@ -1719,7 +1753,9 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ url: buildAuthUrl(c.env, state, callbackUriFor(c.req.url)) });
   })
 
-  .post('/:slug/admin/providers/calendar/disconnect', async (c) => {
+  // `planExempt`: a lapsed business must be able to stop this product writing her calendar.
+  // Connecting one (`oauth/start`, `create-calendar`) is not exempt — that is a settings write.
+  .post('/:slug/admin/providers/calendar/disconnect', planExempt, async (c) => {
     const tenant = c.get('tenant');
     const conn = await getProviderConnection(c.env.PAWSERVATION_DB, tenant.Id, 'calendar');
     if (conn?.RefreshToken) {
@@ -2557,8 +2593,10 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get('/:slug/admin/bookings', async (c) => {
     const tenant = c.get('tenant');
-    // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET.
-    if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant);
+    // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET. And
+    // neither is a business whose plan has lapsed, while the deployment enforces — see
+    // `calendarWritesAllowed`.
+    if (calendarWritesAllowed(c.env, tenant)) await reconcileIfStale(c.env, tenant);
     const rows = await listBookingsForTenant(c.env.PAWSERVATION_DB, tenant.Id);
     // Cancellation policy per service, so each confirmed row can preview the fee it would owe if
     // cancelled today (one query, keyed by ServiceType; NULL/missing = no policy).
@@ -2643,7 +2681,10 @@ export const adminRoutes = new Hono<AppEnv>()
     });
   })
 
-  .post('/:slug/admin/bookings/:id/status', async (c) => {
+  // `planExempt` (lib/middleware.ts): a lapsed business may still ANSWER a request. Her clients
+  // keep submitting them under A-17, and a request loop that takes requests in but lets none be
+  // answered is a pile, not a booking page.
+  .post('/:slug/admin/bookings/:id/status', planExempt, async (c) => {
     const tenant = c.get('tenant');
     const id = c.req.param('id');
     const body = await c.req
@@ -2968,8 +3009,9 @@ export const adminRoutes = new Hono<AppEnv>()
   // here in JS from the aggregates — no extra queries, no KV caching (prototype-scale D1).
   .get('/:slug/admin/analytics', async (c) => {
     const tenant = c.get('tenant');
-    // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET.
-    if (!tenant.DisabledAt) await reconcileIfStale(c.env, tenant);
+    // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET, nor
+    // for a lapsed plan under enforcement — see `calendarWritesAllowed`.
+    if (calendarWritesAllowed(c.env, tenant)) await reconcileIfStale(c.env, tenant);
     const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
     const data = await getAnalytics(c.env.PAWSERVATION_DB, tenant.Id, today);
     return c.json(serializeAnalytics(data));

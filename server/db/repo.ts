@@ -24,6 +24,7 @@ import type {
   TenantUser,
 } from '../types';
 import { EXTRA_TIME_ORIGINS } from '../types';
+import { isPlanCurrent } from '../lib/premium';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { Account, CalendarCostBasis, ServiceQuestion } from '../../src/shared/index.js';
@@ -5762,8 +5763,20 @@ export async function listBookingPetsForUser(
 /** INSTANCE SCOPE — the one calendar-sync exemption to the tenantId-first rule, same class as
  * the owner-scope functions above: the cron sweep must discover WHICH tenants to sync before any
  * tenant context exists. Read-only, and every row it returns is then processed through the
- * ordinary tenant-scoped path. Disabled tenants are excluded — read-only tenants must not sync. */
-export async function listConnectedCalendarTenants(db: D1Database): Promise<Tenant[]> {
+ * ordinary tenant-scoped path. Disabled tenants are excluded — read-only tenants must not sync.
+ *
+ * AND A LAPSED PLAN IS EXCLUDED WHILE THE DEPLOYMENT ENFORCES (`planEnforced`, which the caller
+ * reads from `PLAN_ENFORCE`): the sweep is the one writer of a business's calendar that needs no
+ * request from her, so a lapse that made her dashboard read-only and left this pushing events to
+ * Google every fifteen minutes would be a lapse in name only. Applied IN CODE over the rows the
+ * SQL returns, not in the `WHERE`: the query compares no date, because `isPlanCurrent`
+ * (server/lib/premium.ts) is the one expression allowed to (AD-13), and a second copy of the rule
+ * in SQL is exactly what the scanner exists to refuse. Under the shipped default the flag is off
+ * and the list is what it always was. */
+export async function listConnectedCalendarTenants(
+  db: D1Database,
+  planEnforced: boolean,
+): Promise<Tenant[]> {
   // Table-qualified TENANT_COLS (same pattern as BOOKING_COLS_QUALIFIED above): the join against
   // ProviderConnections shares no column names with Tenants today, but qualifying defensively
   // avoids a silent ambiguous-column break if that ever changes.
@@ -5778,7 +5791,7 @@ export async function listConnectedCalendarTenants(db: D1Database): Promise<Tena
        ORDER BY t.Id`,
     )
     .all<Tenant>();
-  return results;
+  return planEnforced ? results.filter((t) => isPlanCurrent(t)) : results;
 }
 
 export async function getOwnerUserByEmail(

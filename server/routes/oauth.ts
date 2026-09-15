@@ -4,6 +4,7 @@ import { getTenantById, setProviderTokens } from '../db/repo';
 import { backfillCalendarEvents } from '../lib/calendar-sync';
 import { callbackUriFor, exchangeCode } from '../lib/google-calendar';
 import { verifyState } from '../lib/oauth-state';
+import { isPlanCurrent, planEnforceEnabled } from '../lib/premium';
 import { encryptToken } from '../lib/token-crypto';
 import type { AppEnv } from '../types';
 
@@ -105,6 +106,11 @@ export const oauthRoutes = new Hono<AppEnv>().get('/oauth/google/callback', asyn
   // The callback bypasses tenantMiddleware (fixed /oauth path carries no slug), so re-apply the
   // disabled check here: a disabled tenant must not connect a calendar even if start slipped through.
   if (tenant.DisabledAt) return fail('unavailable', 'tenant_disabled', { tenant: tenant.Slug });
+  // …and the lapse check beside it, for the same shape of gap: a state signed by `oauth/start`
+  // BEFORE the plan lapsed (or before `PLAN_ENFORCE` was set) is valid for 600 seconds, and this
+  // route sits outside the lapse gate. Narrow, and closed the same way the disabled one is.
+  if (planEnforceEnabled(c.env) && !isPlanCurrent(tenant))
+    return fail('unavailable', 'plan_lapsed', { tenant: tenant.Slug });
 
   try {
     // Same derivation as /start's authorize URL, from this request's own origin — Google compares

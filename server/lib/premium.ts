@@ -119,6 +119,33 @@ export type EntitlementFacts = Pick<
 >;
 
 /**
+ * IS THE ACCOUNT SWITCHED OFF? `DisabledAt` is a non-empty string, and that is the whole test —
+ * shared by the three predicates below and by `tenantMiddleware`'s read-only guard, so the four
+ * cannot disagree about one row. `!= null` would read an empty string as "disabled" where the
+ * middleware's truthiness test read it as "active": a row hand-written with `''` would then be
+ * refused by the lapse gate as not current while the widget kept taking bookings for it. One
+ * spelling, exported, and the middleware imports it rather than restating it.
+ */
+export function isDisabled(tenant: Pick<Tenant, 'DisabledAt'>): boolean {
+  return typeof tenant.DisabledAt === 'string' && tenant.DisabledAt.length > 0;
+}
+
+/**
+ * IS THIS STORED INSTANT IN THE FUTURE? The one comparison each of the three predicates below
+ * makes, per column. `typeof === 'string'` is the fail-closed answer to a missing column (a stale
+ * cache entry from a previous worker); `STORED_INSTANT.test` is the fail-closed answer to a value
+ * in the WRONG SHAPE. Both exist because the compare is lexicographic and honest only over
+ * homogeneous input: a row hand-written as '2026-09-15T08:00:00Z' sorts above every
+ * space-separated `now` of that same day on its 'T' alone, so a grant that ran out that morning
+ * reads as current until midnight — the inverse of the failure the shape check on the way in
+ * prevents, reachable by any SQL that bypassed it. Anything that is not exactly
+ * `YYYY-MM-DD HH:MM:SS` is "not that".
+ */
+function isAhead(value: string | null | undefined, stamp: string): boolean {
+  return typeof value === 'string' && STORED_INSTANT.test(value) && value > stamp;
+}
+
+/**
  * Is this tenant premium right now? The one place the question is answered (spine AD-13).
  *
  * TWO WAYS TO BE PREMIUM, and they are independent facts about different people's decisions:
@@ -138,17 +165,17 @@ export type EntitlementFacts = Pick<
  * about is what a shared early return prevents. The conditions stay independent in the database, so
  * a disable touches neither timestamp: re-enabling restores whatever was already paid for.
  *
- * The `typeof x === 'string'` guards are not defensive noise. Anything that is not a stored instant
- * is "not that", including the `undefined` a stale KV entry from a previous worker produces — the
- * failure is closed, and therefore silent, which is why the cache key moved to v6 in the same
- * commit as 0017.
+ * The `typeof x === 'string'` guard inside `isAhead` is not defensive noise. Anything that is not a
+ * stored instant is "not that", including the `undefined` a stale KV entry from a previous worker
+ * produces — the failure is closed, and therefore silent, which is why the cache key moved to v6 in
+ * the same commit as 0017. The shape check beside it is the same rule for a value that IS a string
+ * and is not an instant in the stored shape.
  */
 export function isPremiumActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
-  if (tenant.DisabledAt != null) return false;
+  if (isDisabled(tenant)) return false;
   const stamp = premiumNow(now);
-  const comped = typeof tenant.PremiumUntil === 'string' && tenant.PremiumUntil > stamp;
-  const billed =
-    tenant.Plan === 'pro' && typeof tenant.BilledUntil === 'string' && tenant.BilledUntil > stamp;
+  const comped = isAhead(tenant.PremiumUntil, stamp);
+  const billed = tenant.Plan === 'pro' && isAhead(tenant.BilledUntil, stamp);
   return comped || billed;
 }
 
@@ -165,8 +192,8 @@ export function isPremiumActive(tenant: EntitlementFacts, now: Date = new Date()
  * re-derived somewhere else.
  */
 export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
-  if (tenant.DisabledAt != null) return false;
-  return typeof tenant.BilledUntil === 'string' && tenant.BilledUntil > premiumNow(now);
+  if (isDisabled(tenant)) return false;
+  return isAhead(tenant.BilledUntil, premiumNow(now));
 }
 
 /**
@@ -197,12 +224,12 @@ export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): 
  * either, so the two refusals can never contradict each other.
  */
 export function isPlanCurrent(tenant: EntitlementFacts, now: Date = new Date()): boolean {
-  if (tenant.DisabledAt != null) return false;
+  if (isDisabled(tenant)) return false;
   const stamp = premiumNow(now);
   return (
-    (typeof tenant.BilledUntil === 'string' && tenant.BilledUntil > stamp) ||
-    (typeof tenant.CompedUntil === 'string' && tenant.CompedUntil > stamp) ||
-    (typeof tenant.PremiumUntil === 'string' && tenant.PremiumUntil > stamp)
+    isAhead(tenant.BilledUntil, stamp) ||
+    isAhead(tenant.CompedUntil, stamp) ||
+    isAhead(tenant.PremiumUntil, stamp)
   );
 }
 
@@ -244,7 +271,17 @@ const ABSOLUTE_ORIGIN = /^https?:\/\/[^/?#\s]+$/;
  * does is the failure being avoided.
  */
 export function planSubscribeEnabled(env: Env): boolean {
-  return env.PLAN_SUBSCRIBE?.trim().toLowerCase() === 'true';
+  return flagIsOn(env.PLAN_SUBSCRIBE);
+}
+
+/**
+ * The one reading of a deployment flag: EXACTLY the string `'true'`, trimmed and case-folded.
+ * `typeof === 'string'` first, because `wrangler.jsonc` can bind a var as a JSON boolean — `"PLAN_ENFORCE":
+ * true` — and `true.trim` is a TypeError on every request that reads it, which for the lapse gate
+ * is every admin write in the book. A boolean is not the string, and is off.
+ */
+function flagIsOn(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().toLowerCase() === 'true';
 }
 
 /**
@@ -267,7 +304,7 @@ export function planSubscribeEnabled(env: Env): boolean {
  * is one thing to keep in step.
  */
 export function planEnforceEnabled(env: Env): boolean {
-  return env.PLAN_ENFORCE?.trim().toLowerCase() === 'true';
+  return flagIsOn(env.PLAN_ENFORCE);
 }
 
 export function premiumOrigin(env: Env): string | null {

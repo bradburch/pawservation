@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { applyBillingEvent, getTenantById } from '../db/repo';
-import { isPlanCurrent, isPremiumActive, isSoloActive, premiumNow } from '../lib/premium';
+import {
+  isDisabled,
+  isPlanCurrent,
+  isPremiumActive,
+  isSoloActive,
+  planEnforceEnabled,
+  planSubscribeEnabled,
+  premiumNow,
+} from '../lib/premium';
 import type { Tenant } from '../types';
 import { createTestEnv, TENANT_A } from './helpers';
 
@@ -88,8 +96,63 @@ describe('isPlanCurrent — each grant alone makes her current', () => {
     expect(isPlanCurrent(facts({ CompedUntil: minutesFromNow(-1) }))).toBe(false);
     // "Comped through this very instant" is not current, and by the time this line runs the stamp
     // is already in the past — so this is the assertion that can be made about the boundary without
-    // racing the clock in the flaky direction.
-    expect(isPlanCurrent(facts({ CompedUntil: premiumNow() }))).toBe(false);
+    // racing the clock in the flaky direction. SEEDED INTO EACH OF THE THREE COLUMNS IN TURN: the
+    // rule is three comparisons, and a `>` loosened to `>=` on one of them would not announce
+    // which — a probe on the comp column alone stayed green with the billed clause loosened.
+    const now = premiumNow();
+    expect(isPlanCurrent(facts({ CompedUntil: now }))).toBe(false);
+    expect(isPlanCurrent(facts({ Plan: 'pro', BilledUntil: now }))).toBe(false);
+    expect(isPlanCurrent(facts({ PremiumUntil: now }))).toBe(false);
+  });
+
+  it('reads a value that is not in the stored shape as "not that", per column', () => {
+    // The compare is lexicographic and honest only over homogeneous input. A row hand-written as an
+    // ISO instant sorts above a space-separated `now` of the SAME DAY on its 'T' alone (84 > 32),
+    // so without a shape check a grant that ran out this morning reads as current until midnight —
+    // the mirror image of the failure the normalisers prevent on the way in, and reachable by any
+    // SQL that bypassed them. The fixture is therefore an instant ONE SECOND AGO with a 'T' in it:
+    // twenty-six years ago would read as past under either rule and prove nothing. (For the one
+    // second a day that straddles midnight the loosened rule happens to agree; the assertion holds
+    // either way, it is only the mutation's kill that has that window.) Each column in turn,
+    // because the check is per column and a probe on one says nothing about the other two.
+    const iso = premiumNow(new Date(Date.now() - 1000)).replace(' ', 'T');
+    expect(isPlanCurrent(facts({ CompedUntil: iso }))).toBe(false);
+    expect(isPlanCurrent(facts({ Plan: 'pro', BilledUntil: iso }))).toBe(false);
+    expect(isPlanCurrent(facts({ PremiumUntil: iso }))).toBe(false);
+    // The other two predicates read the same columns through the same check.
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: iso }))).toBe(false);
+    expect(isPremiumActive(facts({ PremiumUntil: iso }))).toBe(false);
+    expect(isSoloActive(facts({ BilledUntil: iso }))).toBe(false);
+    // NOT VACUOUS: the same instant in the stored shape, in the future, is current under all three.
+    const stored = minutesFromNow(60);
+    expect(isPlanCurrent(facts({ CompedUntil: stored }))).toBe(true);
+    expect(isPremiumActive(facts({ PremiumUntil: stored }))).toBe(true);
+    expect(isSoloActive(facts({ BilledUntil: stored }))).toBe(true);
+  });
+
+  it('reads DisabledAt as a NON-EMPTY string, the way tenantMiddleware reads it', () => {
+    // `!= null` read `''` as disabled where the middleware's truthiness test read it as active: a
+    // row hand-written with an empty string was refused by the lapse gate as not current while the
+    // widget kept taking bookings for it. One spelling, shared — `isDisabled` — and pinned here on
+    // both the helper and the predicate that used to disagree with it.
+    expect(isDisabled({ DisabledAt: '' })).toBe(false);
+    expect(isDisabled({ DisabledAt: null })).toBe(false);
+    expect(isDisabled({ DisabledAt: '2026-07-23 00:00:00' })).toBe(true);
+    expect(isPlanCurrent(facts({ DisabledAt: '', CompedUntil: minutesFromNow(60) }))).toBe(true);
+    expect(isPremiumActive(facts({ DisabledAt: '', PremiumUntil: minutesFromNow(60) }))).toBe(true);
+    expect(isSoloActive(facts({ DisabledAt: '', BilledUntil: minutesFromNow(60) }))).toBe(true);
+  });
+});
+
+describe('the two deployment flags are strings, and only the string is on', () => {
+  it('reads a JSON boolean `true` as OFF rather than throwing on every request', () => {
+    // `wrangler.jsonc` can bind a var as a JSON boolean, and `true.trim()` is a TypeError — for the
+    // lapse gate, on every admin write in the book. Both readers, because both have the hazard.
+    const bound = { PLAN_ENFORCE: true, PLAN_SUBSCRIBE: true } as unknown as Env;
+    expect(planEnforceEnabled(bound)).toBe(false);
+    expect(planSubscribeEnabled(bound)).toBe(false);
+    expect(planEnforceEnabled({ PLAN_ENFORCE: ' True ' } as Env)).toBe(true);
+    expect(planSubscribeEnabled({ PLAN_SUBSCRIBE: ' True ' } as Env)).toBe(true);
   });
 
   it('is never current for a disabled business, however far ahead all three dates are', () => {

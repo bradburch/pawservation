@@ -33,7 +33,7 @@ import {
   listTenantAccessTokens,
   revokeTenantAccessToken,
 } from '../db/repo';
-import { adminAuth, adminSessionOnly } from '../lib/middleware';
+import { adminAuth, adminSessionOnly, planExempt } from '../lib/middleware';
 import { generateTenantAccessToken, hashPersonalAccessToken } from '../lib/personal-access-token';
 import { MAX_TOKEN_NAME_LENGTH } from './tokens';
 import type { AppEnv } from '../types';
@@ -217,7 +217,10 @@ export const tenantTokenRoutes = new Hono<AppEnv>()
    * Idempotence needs no `COALESCE` here the way `/:id` does: a second call cannot reach this
    * handler at all, because `adminAuth` no longer resolves the credential and answers 401 first.
    */
-  .delete(`/:slug/admin/tokens/${SELF}`, async (c) => {
+  // `planExempt` (lib/middleware.ts): REVOCATION is exempt from the lapse gate, on both DELETE
+  // routes — a leaked credential on a lapsed business would otherwise be a leak she cannot stop.
+  // Minting (the POST above) is not exempt.
+  .delete(`/:slug/admin/tokens/${SELF}`, planExempt, async (c) => {
     if (c.get('adminCredential') === 'password') {
       return c.json(
         { error: 'You are signed in with your password; revoke a token from the list instead.' },
@@ -249,7 +252,7 @@ export const tenantTokenRoutes = new Hono<AppEnv>()
    * and every other path under `/tokens/`. Adding one here as well would read as though the
    * subtree's were optional.
    */
-  .delete('/:slug/admin/tokens/:id', async (c) => {
+  .delete('/:slug/admin/tokens/:id', planExempt, async (c) => {
     const revoked = await revokeTenantAccessToken(
       c.env.PAWSERVATION_DB,
       c.get('tenant').Id,

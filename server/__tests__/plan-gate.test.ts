@@ -1,7 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
+import { createTenantAccessToken, getProviderConnection } from '../db/repo';
+import { planGate } from '../lib/middleware';
+import { hashPersonalAccessToken } from '../lib/personal-access-token';
 import { premiumNow } from '../lib/premium';
+import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
+import { liveSource } from './helpers/live-source';
+import type { AppEnv } from '../types';
 
 /**
  * A LAPSED PLAN IS A READ-ONLY DASHBOARD (Story 10.4), in `disabled-guard.test.ts`'s shape.
@@ -242,5 +250,200 @@ describe('two businesses, because a cross-tenant lapse looks completely ordinary
       enforcing(env),
     );
     expect([401, 403]).toContain(across.status);
+  });
+});
+
+/**
+ * WHAT THE GATE EXEMPTS, AND HOW. A-17 said her booking page keeps working — but a request her
+ * clients keep submitting is one she must be able to ANSWER, for dates she must be able to BLOCK, or
+ * the requests pile up unanswered against a calendar she cannot close. And a credential she leaked
+ * or a calendar she connected must be revocable by a sitter whose plan has lapsed, or the lapse
+ * turns a leak into a standing one. So four writes are exempt: answering a request, blocking dates,
+ * revoking a token, disconnecting the calendar. Everything else stays refused.
+ *
+ * BY A MARKER ON THE ROUTE, NOT A PATH LIST IN THE MIDDLEWARE. `planExempt` is a no-op middleware
+ * placed in the exempt route's own handler chain; `planGate` finds it on the request's matched
+ * routes. The exemption is declared where the route is, the gate names no path, and a route that
+ * wants out has to say so on its own line — which is the property the last case here pins.
+ */
+describe('what the gate exempts, by a marker on the route', () => {
+  it('lets a lapsed sitter answer a booking request', async () => {
+    const { env } = createTestEnv(); // no grant of any kind
+    expect((await putSettings(enforcing(env), 'sunny-paws', TENANT_A)).status).toBe(402);
+    const res = await app.request(
+      '/api/sunny-paws/admin/bookings/seed_sp_pend1/status',
+      { method: 'POST', headers: await headers(TENANT_A), body: '{"status":"declined"}' },
+      enforcing(env),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('lets her block dates, and unblock them', async () => {
+    const { env } = createTestEnv();
+    const block = await app.request(
+      '/api/sunny-paws/admin/blocked',
+      {
+        method: 'POST',
+        headers: await headers(TENANT_A),
+        body: '{"startDate":"2029-03-01","endDate":"2029-03-04"}',
+      },
+      enforcing(env),
+    );
+    expect(block.status).toBe(201);
+    const { id } = (await block.json()) as { id: string };
+    // Unblocking is the same loop: a date she closed by mistake must be reopenable, or the lapse
+    // costs her clients a booking she wanted to take.
+    const unblock = await app.request(
+      `/api/sunny-paws/admin/blocked/${id}`,
+      { method: 'DELETE', headers: await headers(TENANT_A) },
+      enforcing(env),
+    );
+    expect(unblock.status).toBe(204);
+  });
+
+  it('lets her revoke a credential — by id from a session, and a token itself', async () => {
+    const { env } = createTestEnv();
+    const secret = 'pawsa_' + 'a'.repeat(40);
+    const row = await createTenantAccessToken(env.PAWSERVATION_DB, TENANT_A, {
+      tenantUserId: 'tu_sunny',
+      name: 'leaked',
+      tokenHash: await hashPersonalAccessToken(secret),
+      maxLive: 10,
+    });
+    expect(row).not.toBeNull();
+    // Minting stays refused — that is the write a lapsed business has no claim to.
+    const mint = await app.request(
+      '/api/sunny-paws/admin/tokens',
+      { method: 'POST', headers: await headers(TENANT_A), body: '{"name":"CI bot"}' },
+      enforcing(env),
+    );
+    expect(mint.status).toBe(402);
+    // A token revoking ITSELF, the route a disconnecting script actually calls.
+    const self = await app.request(
+      '/api/sunny-paws/admin/tokens/self',
+      { method: 'DELETE', headers: { Authorization: `Bearer ${secret}` } },
+      enforcing(env),
+    );
+    expect(self.status).toBe(200);
+    expect(await self.json()).toEqual({ revoked: true });
+    // …and the password session revoking by id: already revoked, so 404 — but the gate has let
+    // the request reach the handler, which is the claim.
+    const byId = await app.request(
+      `/api/sunny-paws/admin/tokens/${row!.Id}`,
+      { method: 'DELETE', headers: await headers(TENANT_A) },
+      enforcing(env),
+    );
+    expect(byId.status).toBe(404);
+    expect(await byId.json()).toEqual({ error: 'No such token.' });
+  });
+
+  it('lets her disconnect her calendar, so the product stops writing it', async () => {
+    const { env } = createTestEnv();
+    const res = await app.request(
+      '/api/sunny-paws/admin/providers/calendar/disconnect',
+      { method: 'POST', headers: await headers(TENANT_A) },
+      enforcing(env),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'disconnected' });
+    const conn = await getProviderConnection(env.PAWSERVATION_DB, TENANT_A, 'calendar');
+    expect(conn?.Status).not.toBe('connected');
+    // Connecting one is not exempt: it is a settings write she could not otherwise make.
+    const create = await app.request(
+      '/api/sunny-paws/admin/providers/calendar/create-calendar',
+      { method: 'POST', headers: await headers(TENANT_A) },
+      enforcing(env),
+    );
+    expect(create.status).toBe(402);
+  });
+
+  it('still refuses the writes beside them — the exemption is the route, never the file', async () => {
+    const { env } = createTestEnv();
+    for (const [method, path, body] of [
+      ['PUT', '/api/sunny-paws/admin/settings', '{}'],
+      ['POST', '/api/sunny-paws/admin/services', '{}'],
+      ['POST', '/api/sunny-paws/admin/tokens', '{"name":"x"}'],
+      ['POST', '/api/sunny-paws/admin/accounts/pet_1/payments', '{}'],
+    ] as const) {
+      const res = await app.request(
+        path,
+        { method, headers: await headers(TENANT_A), body },
+        enforcing(env),
+      );
+      expect(res.status, `${method} ${path}`).toBe(402);
+      expect(await res.json()).toEqual(LAPSED);
+    }
+  });
+
+  it('is a marker the gate finds on the matched route, and the gate names no path', () => {
+    const middleware = liveSource(
+      readFileSync(join(import.meta.dirname, '..', 'lib', 'middleware.ts'), 'utf8'),
+      { keepLiterals: true },
+    );
+    // The mechanism: the gate looks for `planExempt` among the handlers matched for this request.
+    expect(middleware).toContain('matchedRoutes(c)');
+    expect(middleware).toContain('handler === planExempt');
+    // And NOT a list: none of the four exempt paths is spelled in the middleware. A future route
+    // that wants out declares it on its own line, beside its handler, where its reviewer is.
+    for (const fragment of ['/status', '/blocked', '/tokens', '/disconnect']) {
+      expect(middleware, fragment).not.toContain(fragment);
+    }
+    // The marker is on each exempt route's own line, in the file that declares the route.
+    const admin = liveSource(
+      readFileSync(join(import.meta.dirname, '..', 'routes', 'admin.ts'), 'utf8'),
+      { keepLiterals: true },
+    ).replace(/\s+/g, ' ');
+    expect(admin).toContain(".post('/:slug/admin/bookings/:id/status', planExempt,");
+    expect(admin).toContain(".post('/:slug/admin/blocked', planExempt,");
+    expect(admin).toContain(".delete('/:slug/admin/blocked/:id', planExempt,");
+    expect(admin).toContain(".post('/:slug/admin/providers/calendar/disconnect', planExempt,");
+    const tokens = liveSource(
+      readFileSync(join(import.meta.dirname, '..', 'routes', 'tenant-tokens.ts'), 'utf8'),
+      { keepLiterals: true },
+    ).replace(/\s+/g, ' ');
+    expect(tokens).toContain('.delete(`/:slug/admin/tokens/${SELF}`, planExempt,');
+    expect(tokens).toContain(".delete('/:slug/admin/tokens/:id', planExempt,");
+  });
+});
+
+describe('a READ is GET, HEAD or OPTIONS — on the lapse gate and the disabled guard alike', () => {
+  it('passes HEAD and OPTIONS through the lapse gate', async () => {
+    const { env } = createTestEnv();
+    for (const method of ['HEAD', 'OPTIONS']) {
+      const res = await app.request(
+        '/api/sunny-paws/admin/settings',
+        { method, headers: await headers(TENANT_A) },
+        enforcing(env),
+      );
+      // A CORS preflight is an OPTIONS with no credential of its own; refusing it 402 refuses the
+      // real request before it is made. HEAD is a GET without a body. Neither writes.
+      expect(res.status, method).not.toBe(402);
+    }
+  });
+
+  it('passes HEAD and OPTIONS through the disabled guard, in the same commit', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET DisabledAt = '2026-07-23 00:00:00' WHERE Id = '${TENANT_A}';`);
+    for (const method of ['HEAD', 'OPTIONS']) {
+      const res = await app.request('/api/sunny-paws/config', { method }, env);
+      expect(res.status, method).not.toBe(403);
+    }
+    // And a POST is still refused, so the widening is exactly two methods wide.
+    const post = await app.request(
+      '/api/sunny-paws/identify',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      env,
+    );
+    expect(post.status).toBe(403);
+  });
+
+  it('answers 401 with no tenant on the context, mirroring adminAuth rather than failing open', async () => {
+    // Behind `adminAuth` this branch is unreachable — it 401s first. Pinned on the gate alone so a
+    // mount that forgot `adminAuth` fails closed rather than skipping the plan check.
+    const bare = new Hono<AppEnv>().use('*', planGate).put('/x', (c) => c.json({ ok: true }));
+    const { env } = createTestEnv();
+    const res = await bare.request('/x', { method: 'PUT' }, enforcing(env));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'Please sign in.' });
   });
 });

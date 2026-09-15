@@ -5,6 +5,7 @@ import {
   MAX_BILLED_AHEAD_DAYS,
   normalizeBilledUntil,
   normalizePremiumUntil,
+  premiumNow,
 } from '../lib/premium';
 import { createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
@@ -357,9 +358,14 @@ describe('normalizeBilledUntil — one shape in, and a ceiling on what a leaked 
       CompedUntil: null,
     });
     expect(isPremiumActive(facts(past), NOW)).toBe(false);
-    // The same instant left in the shape it arrived in says the opposite: 'T' sorts above the
-    // space in a space-separated `now`, so a tenant paid through this morning reads as premium.
-    expect(isPremiumActive(facts('2026-09-08T00:00:00Z'), NOW)).toBe(true);
+    // The same instant left in the shape it arrived in sorts the OPPOSITE way on the bare compare:
+    // 'T' sorts above the space in a space-separated `now`, so a tenant paid through this morning
+    // would read as premium — which is why the reader now refuses the shape outright (`isAhead`,
+    // server/lib/premium.ts) rather than trusting the compare on it. This line used to assert
+    // `true` through the predicate as the demonstration; the demonstration is the compare, and the
+    // predicate's answer is the fail-closed one.
+    expect('2026-09-08T00:00:00Z' > premiumNow(NOW)).toBe(true);
+    expect(isPremiumActive(facts('2026-09-08T00:00:00Z'), NOW)).toBe(false);
   });
 
   it('refuses an expanded-year instant, which walks straight past the ceiling', () => {

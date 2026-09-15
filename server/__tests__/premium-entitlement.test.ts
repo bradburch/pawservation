@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { getTenantById, getTenantBySlug } from '../db/repo';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
-import { isPremiumActive, isSoloActive, type EntitlementFacts } from '../lib/premium';
+import { isPremiumActive, isSoloActive, premiumNow, type EntitlementFacts } from '../lib/premium';
 import { resolveTenant } from '../lib/tenant-resolve';
 import { createTestEnv, OWNER_EMAIL, TENANT_A, TENANT_B, TEST_SECRET } from './helpers';
 import { liveSource } from './helpers/live-source';
@@ -425,14 +425,32 @@ describe('entitlement combines the comp and the plan in one expression', () => {
    * WHY `normalizeBilledUntil` EXISTS, demonstrated rather than asserted in prose. The comparison is
    * a plain string `>`; an ISO instant sorts above a space-separated `now` on the separator alone
    * ('T' is 84, ' ' is 32). Both values below name the same instant, twelve hours in the past.
+   *
+   * THIS CASE USED TO ASSERT THE INVERSION THROUGH THE PREDICATE — `isPremiumActive` said `true`
+   * for the ISO-shaped value — as the demonstration. Since Story 10.4's fix round the reader
+   * refuses any value not in the stored shape (`isAhead`, server/lib/premium.ts), so the predicate
+   * now says `false` for it: fail-closed, and the inversion is demonstrated on the bare string
+   * compare the predicate is built on instead. Both halves are still here — the hazard, and the
+   * reader's answer to it.
    */
   it('would grant a lapsed Pro plan a free day if a date were stored ISO-shaped', () => {
     const now = new Date('2026-09-08T12:00:00Z');
+    // The bare compare, which is what the column's homogeneity makes honest: the ISO spelling of
+    // an instant twelve hours in the past sorts ABOVE `now`.
+    const stamp = premiumNow(now);
+    expect('2026-09-08T00:00:00Z' > stamp).toBe(true);
+    expect('2026-09-08 00:00:00' > stamp).toBe(false);
+    // And the reader refuses the shape rather than trusting the compare on it, so a row that
+    // bypassed the normaliser reads as lapsed and not as a free day.
     expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08T00:00:00Z' }), now)).toBe(
-      true,
+      false,
     );
     expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08 00:00:00' }), now)).toBe(
       false,
+    );
+    // NOT VACUOUS: the same instant, stored-shaped and ahead of `now`, is live.
+    expect(isPremiumActive(facts({ Plan: 'pro', BilledUntil: '2026-09-08 12:00:01' }), now)).toBe(
+      true,
     );
   });
 });

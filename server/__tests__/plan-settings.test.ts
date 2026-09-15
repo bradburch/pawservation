@@ -24,6 +24,7 @@ type PlanFields = {
   planActive: boolean;
   hasBillingAccount: boolean;
   planCurrent: boolean;
+  planEnforced: boolean;
   stripeCustomerId?: string | null;
 };
 
@@ -463,5 +464,25 @@ describe('the settings read publishes whether her plan is current', () => {
     const b = await read(env, SLUG[TENANT_B], await adminToken(TENANT_B));
     expect(a.planCurrent).toBe(true);
     expect(b.planCurrent).toBe(false);
+  });
+
+  it('publishes whether the DEPLOYMENT is enforcing, beside it and not folded into it', async () => {
+    // `planCurrent` is the tenant's state and must stay one thing. But the banner that reads it
+    // says "your dashboard is read-only", and on the shipped default — `PLAN_ENFORCE` unset — every
+    // save succeeds; a sentence about a refusal that does not happen is a sentence nobody believes
+    // the day it is true. So the deployment's half is published as its own field, `planEnforced`,
+    // and the banner requires both. Same value to both credentials: it is a fact about the
+    // deployment, not about her.
+    const { env } = createTestEnv(); // no grant, so planCurrent is false either way
+    const dark = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(dark.planCurrent).toBe(false);
+    expect(dark.planEnforced).toBe(false);
+    const enforcing = { ...env, PLAN_ENFORCE: 'true' } as Env;
+    const lit = await read(enforcing, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(lit.planCurrent).toBe(false);
+    expect(lit.planEnforced).toBe(true);
+    // And through a `pawsa_` token, as `planCurrent` is.
+    const token = await mintTenantToken(env, TENANT_A, 'tu_sunny');
+    expect((await read(enforcing, SLUG[TENANT_A], token)).planEnforced).toBe(true);
   });
 });

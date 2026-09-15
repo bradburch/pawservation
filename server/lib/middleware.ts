@@ -1,4 +1,6 @@
 import { createMiddleware } from 'hono/factory';
+import { matchedRoutes } from 'hono/route';
+import { COMPOSED_HANDLER } from 'hono/utils/constants';
 import {
   findLivePersonalAccessToken,
   findLiveTenantAccessToken,
@@ -12,7 +14,7 @@ import {
   shouldRefreshLastUsed,
 } from './personal-access-token';
 import { requestContext, securityEvent } from './log';
-import { isPlanCurrent, planEnforceEnabled } from './premium';
+import { isDisabled, isPlanCurrent, planEnforceEnabled } from './premium';
 import { resolveTenant } from './tenant-resolve';
 import { extractBearer, verifyAdminToken, verifyOwnerToken, verifyToken } from './token';
 import type { AppEnv } from '../types';
@@ -48,16 +50,31 @@ export const tenantMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const tenant = slug ? await resolveTenant(slug, c.env) : null;
   if (!tenant) return c.json(UNKNOWN_TENANT, 404);
   c.set('tenant', tenant);
-  // Disabled sitter = read-only: GET requests pass (widget shows an "unavailable" card via the
-  // config `disabled` flag; sitter dashboard renders read-only), every mutation is rejected here
-  // at the one chokepoint the whole /api/:slug/* surface flows through. Sitter LOGIN and owner
-  // routes bypass tenantMiddleware, so a disabled sitter can still sign in and the owner can still
-  // manage them.
-  if (tenant.DisabledAt && c.req.method !== 'GET') {
+  // Disabled sitter = read-only: READS pass (widget shows an "unavailable" card via the config
+  // `disabled` flag; sitter dashboard renders read-only), every mutation is rejected here at the
+  // one chokepoint the whole /api/:slug/* surface flows through. Sitter LOGIN and owner routes
+  // bypass tenantMiddleware, so a disabled sitter can still sign in and the owner can still manage
+  // them. `isDisabled` rather than a truthiness test, so this guard and the three predicates in
+  // `lib/premium.ts` read the column one way: a non-empty string.
+  //
+  // `READ_METHODS`, not `!== 'GET'`: this used to refuse HEAD and OPTIONS too, and `planGate`
+  // below copied it. A CORS preflight is an OPTIONS that carries no credential and precedes the
+  // real request — refusing it refuses the real request before it is ever made, with a status the
+  // browser never shows — and HEAD is a GET without a body. Widened here and in `planGate` in the
+  // same commit, so the two guards keep agreeing about what a read is.
+  if (isDisabled(tenant) && !READ_METHODS.has(c.req.method)) {
     return c.json({ error: 'account_disabled' }, 403);
   }
   await next();
 });
+
+/**
+ * The methods that never write, and that both read-only guards therefore pass: GET, HEAD (a GET
+ * without a body) and OPTIONS (a CORS preflight, which carries no credential and precedes the real
+ * request). Everything else is treated as a mutation. One set, read by `tenantMiddleware` and
+ * `planGate`, so "what is a read" is decided once.
+ */
+export const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * Requires a Bearer end-user credential for the resolved tenant, of which there are two — a widget
@@ -304,9 +321,48 @@ export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
 });
 
 /**
+ * THE OPT-OUT MARKER for `planGate` below: a no-op middleware a route places in its own handler
+ * chain — `.post('/:slug/admin/blocked', planExempt, async (c) => …)` — and which the gate finds
+ * among the request's matched routes. The exemption is declared where the route is, on the route's
+ * own line, beside the reviewer who can see what it exempts; the gate itself names no path, so
+ * there is no list in this file to keep in step with the routes and no way to exempt a route by
+ * accident of prefix. `plan-gate.test.ts` pins both halves: that the gate reads the marker, and
+ * that this file spells none of the exempt paths.
+ *
+ * WHAT IS EXEMPT, AND WHY — the set is small, and every member is a write that keeps something
+ * from getting worse rather than one that builds anything:
+ *   - ANSWERING A BOOKING REQUEST (`/:slug/admin/bookings/:id/status`) and BLOCKING OR UNBLOCKING
+ *     DATES (`/:slug/admin/blocked`). A-17's promise is that her clients keep booking while her
+ *     dashboard goes quiet — but a request her clients keep submitting is one she must be able to
+ *     answer, on dates she must be able to close, or the requests pile up unanswered against a
+ *     calendar she cannot block. So the whole request loop keeps working; what she loses is
+ *     everything else: settings, services, rates, minting tokens, connecting a calendar, exports,
+ *     imports.
+ *   - REVOKING A CREDENTIAL (`DELETE /:slug/admin/tokens/*`, by id or a token revoking itself). A
+ *     leaked `pawsa_` token on a lapsed business would otherwise be a leak she cannot stop.
+ *   - DISCONNECTING THE CALENDAR (`/:slug/admin/providers/calendar/disconnect`). She must be able
+ *     to stop the product writing her calendar; connecting one stays refused.
+ */
+export const planExempt = createMiddleware<AppEnv>((_c, next) => next());
+
+/**
+ * Is `planExempt` on this request's route? Read off the router's own match rather than off the
+ * context, because a middleware in the chain BEHIND this one has not run yet and cannot have set
+ * anything. `COMPOSED_HANDLER` is the wrapper Hono puts around a sub-app's handlers when that app
+ * has its own error handler; none does today, so the first test is the one that fires, and the
+ * second is what keeps this true if one ever does.
+ */
+const routeIsPlanExempt = (c: Parameters<Parameters<typeof createMiddleware<AppEnv>>[0]>[0]) =>
+  matchedRoutes(c).some(
+    ({ handler }) =>
+      handler === planExempt ||
+      (handler as { [COMPOSED_HANDLER]?: unknown })[COMPOSED_HANDLER] === planExempt,
+  );
+
+/**
  * A LAPSED PLAN IS A READ-ONLY DASHBOARD, and it is a NARROWER fact than a disabled account.
  *
- * `tenantMiddleware` refuses non-GETs for a DISABLED business across the whole `/api/:slug/*`
+ * `tenantMiddleware` refuses mutations for a DISABLED business across the whole `/api/:slug/*`
  * surface, booking included. This one is mounted only over `/:slug/admin/*`, because A-17's whole
  * point is that her clients keep booking while her dashboard goes quiet. The two never both fire: a
  * disabled business is refused earlier, and `isPlanCurrent` is false for her anyway.
@@ -318,11 +374,14 @@ export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
  * shows her an ugly message instead, and that asymmetry is the whole of the argument — it holds for
  * clients this repo does not own, too.
  *
- * FOUR EARLY RETURNS, IN THIS ORDER, and each is a different question:
- *   - a GET is never refused. The settings read is what renders the notice and the Subscribe
- *     control, so gating it would make the lapse unfixable from the UI.
- *   - no tenant on the context means a RESERVED slug, where `tenantMiddleware` calls `next()`
- *     without resolving one. Those handlers guard their own, exactly as `adminAuth` does.
+ * FIVE EARLY RETURNS, IN THIS ORDER, and each is a different question:
+ *   - a READ is never refused — GET, HEAD or OPTIONS, the same `READ_METHODS` the disabled guard
+ *     passes, so the two guards agree about what a read is. The settings read is what renders the
+ *     notice and the Subscribe control, so gating it would make the lapse unfixable from the UI.
+ *   - no tenant on the context is answered 401, exactly as `adminAuth` answers it. Behind
+ *     `adminAuth` this cannot happen — it has already refused — but a mount that forgot `adminAuth`
+ *     must fail closed here rather than skip the plan check on the strength of a missing row.
+ *   - the route carries `planExempt` (above).
  *   - the deployment is not enforcing. Unset is off, and it ships unset.
  *   - she holds a current plan, by any of the three grants.
  *
@@ -330,9 +389,10 @@ export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
  * needs no short-circuit latch of its own, because it is a pure read of the context.
  */
 export const planGate = createMiddleware<AppEnv>(async (c, next) => {
-  if (c.req.method === 'GET') return next();
+  if (READ_METHODS.has(c.req.method)) return next();
   const tenant = c.get('tenant');
-  if (!tenant) return next();
+  if (!tenant) return c.json({ error: 'Please sign in.' }, 401);
+  if (routeIsPlanExempt(c)) return next();
   if (!planEnforceEnabled(c.env)) return next();
   if (isPlanCurrent(tenant)) return next();
   return c.json({ error: 'plan_lapsed' }, 402);
