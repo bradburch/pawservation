@@ -404,6 +404,27 @@ describe('the settings read publishes whether her plan is current', () => {
     expect(body.hasBillingAccount).toBe(true);
   });
 
+  it('says true for a business comped on the PAID tier, holding no subscription at all', async () => {
+    const { env, raw } = createTestEnv();
+    // `PremiumUntil` ALONE — the owner console's other comp, and the fourth grant source this
+    // route can be reached through. It is in `isPlanCurrent` deliberately: were the rule written
+    // as `!isSoloActive`, this business would be told her dashboard is read-only while the paid
+    // assistant her comp bought kept writing to it through her own forwarded credential. Seeded
+    // through a raw UPDATE because no plan column is involved at all.
+    raw
+      .prepare('UPDATE Tenants SET PremiumUntil = ? WHERE Id = ?')
+      .run(minutesFromNow(60), TENANT_A);
+
+    const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
+    expect(body.planCurrent).toBe(true);
+    // And every field that describes a SUBSCRIPTION still says she has none, so she is offered
+    // Subscribe exactly as the basic-comp case above is.
+    expect(body.planActive).toBe(false);
+    expect(body.plan).toBeNull();
+    expect(body.billedUntil).toBeNull();
+    expect(body.hasBillingAccount).toBe(false);
+  });
+
   it('says false for a disabled business, however far ahead every date is', async () => {
     const { env, raw } = createTestEnv();
     seedPlan(raw, TENANT_A, {

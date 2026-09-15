@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { applyBillingEvent, getTenantById } from '../db/repo';
 import { isPlanCurrent, isPremiumActive, isSoloActive, premiumNow } from '../lib/premium';
 import type { Tenant } from '../types';
+import { createTestEnv, TENANT_A } from './helpers';
 
 /**
  * "DOES THIS BUSINESS HOLD A CURRENT PLAN?" — the third one-expression predicate, and the one the
@@ -23,8 +25,10 @@ import type { Tenant } from '../types';
 const minutesFromNow = (minutes: number): string =>
   premiumNow(new Date(Date.now() + minutes * 60_000));
 
-/** The four columns entitlement is decided from, with everything absent by default. Built as a
- *  `Tenant`-shaped `Pick` rather than a cast so a sixth grant added later fails to compile here. */
+/** The FIVE columns plan state is decided from (`EntitlementFacts`, server/lib/premium.ts), with
+ *  everything absent by default. An object literal whose overrides are checked against
+ *  `Partial<Tenant>` rather than a cast, so a column renamed out from under this helper fails to
+ *  compile here; a SIXTH grant would fail at the call sites instead, which is the honest limit. */
 const facts = (over: Partial<Tenant> = {}) => ({
   DisabledAt: null,
   PremiumUntil: null,
@@ -43,9 +47,14 @@ describe('isPlanCurrent — each grant alone makes her current', () => {
   it('is current on a live CompedUntil with no subscription at all', () => {
     const comped = facts({ CompedUntil: minutesFromNow(60) });
     expect(isPlanCurrent(comped)).toBe(true);
-    // And she is NOT paying, which is the state the owner console creates and the panel must still
-    // offer Subscribe to. Two predicates answering two questions.
+    // And the basic comp buys NEITHER of the other two things, which is the whole reason it is a
+    // second column rather than a hand-set date on an existing one. She is not paying — the state
+    // the owner console creates, and the panel must still offer her Subscribe — and she is not on
+    // the PAID tier either, so nothing premium attaches to a comp of this product's own plan.
+    // Three predicates answering three questions; `isPremiumActive` reads `PremiumUntil`, and a
+    // later hand that widened it into this column would grant a paid surface for free.
     expect(isSoloActive(comped)).toBe(false);
+    expect(isPremiumActive(comped)).toBe(false);
   });
 
   it('is current on a live PremiumUntil alone, which is why the gate is tier-blind', () => {
@@ -99,26 +108,81 @@ describe('isPlanCurrent — each grant alone makes her current', () => {
 });
 
 describe('a comp and a subscription do not interfere — the story’s own AC', () => {
-  it('keeps a LONGER comp standing across a cancellation, a renewal and a redelivery', () => {
-    // The columns are separate and billing names neither comp column, so "survives" is a property
-    // of the schema rather than of a sequence. Asserted as a sequence anyway, because that is the
-    // claim the AC makes and a structural guarantee nobody checked is a guarantee nobody has.
-    const comp = minutesFromNow(60 * 24 * 400);
-    const premium = minutesFromNow(60 * 24 * 500);
-    const sequence = [
-      minutesFromNow(60), // a renewal, paid ahead
-      minutesFromNow(-60), // a cancellation, lowering the date
-      minutesFromNow(-60), // the same event redelivered
-    ];
-    for (const billedUntil of sequence) {
-      const row = facts({ Plan: 'solo', BilledUntil: billedUntil, CompedUntil: comp });
-      expect(isPlanCurrent(row)).toBe(true);
-      // Byte-identical throughout: nothing in this rule reads or rewrites either comp.
-      expect(row.CompedUntil).toBe(comp);
-      const withPremium = facts({ Plan: 'pro', BilledUntil: billedUntil, PremiumUntil: premium });
-      expect(isPlanCurrent(withPremium)).toBe(true);
-      expect(withPremium.PremiumUntil).toBe(premium);
-    }
+  it('keeps both comps byte-identical across a checkout, a renewal, a redelivery and a cancellation', async () => {
+    // AGAINST THE WRITER, not against a literal. The claim the AC makes is that BILLING never
+    // touches either comp — and the only thing that can falsify that is `applyBillingEvent`, which
+    // is the one statement in the product that writes a plan. Asserted against a seeded row and a
+    // real sequence of events, because a version of this case built from object literals re-read
+    // the property the line above it had just set: it could not fail, whatever the writer did.
+    const { env, raw } = createTestEnv();
+    const comped = '2028-01-01 00:00:00';
+    const premium = '2029-01-01 00:00:00';
+    raw
+      .prepare('UPDATE Tenants SET CompedUntil = ?, PremiumUntil = ? WHERE Id = ?')
+      .run(comped, premium, TENANT_A);
+
+    const event = (over: Partial<Parameters<typeof applyBillingEvent>[2]> = {}) => ({
+      plan: 'solo' as const,
+      billedUntil: '2026-10-08 00:00:00',
+      stripeCustomerId: 'cus_A',
+      stripeSubscriptionId: 'sub_A',
+      eventAt: '2026-09-08 12:00:00',
+      replacesSubscription: true,
+      ...over,
+    });
+    const db = env.PAWSERVATION_DB;
+    const comps = async () => {
+      const t = (await getTenantById(db, TENANT_A))!;
+      // …and she is current at every step, which is the consequence the two columns exist for.
+      expect(isPlanCurrent(t)).toBe(true);
+      return {
+        CompedUntil: t.CompedUntil,
+        PremiumUntil: t.PremiumUntil,
+        BilledUntil: t.BilledUntil,
+      };
+    };
+
+    // The checkout.
+    expect(await applyBillingEvent(db, TENANT_A, event())).toBe(true);
+    expect(await comps()).toEqual({
+      CompedUntil: comped,
+      PremiumUntil: premium,
+      BilledUntil: '2026-10-08 00:00:00',
+    });
+
+    // The renewal — a later invoice.paid, paid further ahead.
+    const renewal = event({ billedUntil: '2026-11-08 00:00:00', eventAt: '2026-10-08 12:00:00' });
+    expect(await applyBillingEvent(db, TENANT_A, renewal)).toBe(true);
+    expect(await comps()).toEqual({
+      CompedUntil: comped,
+      PremiumUntil: premium,
+      BilledUntil: '2026-11-08 00:00:00',
+    });
+
+    // The SAME event redelivered. Equality of second is not staleness, so this one applies again
+    // and has to be inert by SET semantics rather than by refusal.
+    expect(await applyBillingEvent(db, TENANT_A, renewal)).toBe(true);
+    expect(await comps()).toEqual({
+      CompedUntil: comped,
+      PremiumUntil: premium,
+      BilledUntil: '2026-11-08 00:00:00',
+    });
+
+    // And the cancellation, which LOWERS the paid-through date into the past. The hardest step for
+    // the comps: a writer that treated a plan as one date would have to clear or lower something
+    // here, and both comps are still what the owner set.
+    expect(
+      await applyBillingEvent(
+        db,
+        TENANT_A,
+        event({ billedUntil: '2026-09-09 00:00:00', eventAt: '2026-11-08 12:00:00' }),
+      ),
+    ).toBe(true);
+    expect(await comps()).toEqual({
+      CompedUntil: comped,
+      PremiumUntil: premium,
+      BilledUntil: '2026-09-09 00:00:00',
+    });
   });
 
   it('lets an EARLIER comp take nothing away from a paying business', () => {
