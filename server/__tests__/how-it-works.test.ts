@@ -148,6 +148,12 @@ describe('GET /how-it-works — the tour page', () => {
     // the stored tiers (feeToCancelToday), so the client can never name a figure.
     expect(body).toMatch(/worked out here from the windows you wrote/i);
     expect(body).toContain('free to withdraw');
+    // VERIFIED: cancelBooking fires sendCancellationNoticeToSitter (server/lib/booking-ops.ts) —
+    // the only send*() call in that file — while editBooking sends nothing. The landing page said
+    // this out loud until the owner cut its two-column grid on 2026-09-09, which left the promise
+    // stated here and pinned nowhere. It is pinned here now, because a sitter who is told she
+    // will be emailed and is not has been sold a notification the code does not send.
+    expect(body).toContain('you get an email saying what is owed');
     for (const lie of ['they enter the fee', 'they choose the fee', 'agree a fee'])
       expect(body.toLowerCase(), lie).not.toContain(lie);
   });
@@ -370,6 +376,42 @@ describe('GET /how-it-works — the tour page', () => {
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
+  /**
+   * The four rules moved here from /about on 2026-09-09, when the owner narrowed that page to why
+   * the product exists and who made it. They were stated on that page ALONE and had almost no test
+   * coverage, which is how a page trim can carry off four promises without a single failure, so
+   * they are pinned here now: the headline of each rule, and for each one the clause that carries
+   * the claim a sitter would hold the product to. VERIFIED against the invariants they describe:
+   * createBooking writes Status = 'pending' and capacity counts pending rows; there is no billing
+   * code in this repo and Payments only ever RECORDS; a client is added by the sitter
+   * (POST /:slug/admin/customers) and nothing in this product lists sitters to a stranger; and
+   * estimateCost refuses an unpriced pet set (code 'unpriced_pet_set') rather than inferring a
+   * rate for it.
+   */
+  it('carries the four rules the software will not break', async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('Four rules the software will not break');
+    expect(body).toContain('Nothing books itself.');
+    expect(body).toContain('waits for you to confirm or decline');
+    expect(body).toContain('Your money is yours.');
+    expect(body).toContain('It never holds your funds or takes a cut, on either plan.');
+    expect(body).toContain('Your clients stay your clients.');
+    expect(body).toContain('This is not a marketplace and not a directory.');
+    expect(body).toContain('You add each client before they can book');
+    expect(body).toContain('No price you didn&rsquo;t type.');
+    expect(body).toContain('The software will not invent a rate.');
+    expect(body).toContain('refuse to quote a combination you never priced');
+    // They sit in the honesty section, which is where a sitter is already being told what this
+    // will and will not do, rather than in a band of their own bolted onto the tour.
+    expect(body.indexOf('Four rules the software will not break')).toBeGreaterThan(
+      body.indexOf('id="limits"'),
+    );
+    // The money rule was shortened where the Services aside above it already says the same thing
+    // (see the test on that aside); what it must never do is state Pro's Stripe arrangement a
+    // second time in different words, which is how two surfaces start disagreeing.
+    expect(body.match(/own Stripe account/g)?.length).toBe(1);
+  });
+
   it('offers the demo without jargon or a signup scare, everywhere it offers it', async () => {
     const body = await howItWorksBody();
     expect(body.match(/nothing to sign up for/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
@@ -530,17 +572,16 @@ describe('the landing page claims only what ships', () => {
     // change-and-cancel rule into the "You and your clients" section, which is where a reader
     // looking for "what is this like for my clients" actually looks, and made that the ONE place
     // on the page it is stated (it had been in a feature card, the workflow block and this FAQ
-    // answer at once). The promise itself is unchanged and still pinned, word for word.
-    // The two facts that make it safe for the sitter: re-approval, and a fee she never negotiates.
-    expect(body).toContain('A change takes effect straight away');
-    expect(body).toContain('your approval comes after the change, not before it');
+    // answer at once). The owner cut that section's two-column grid on 2026-09-09, so the
+    // re-approval mechanic ("a change takes effect straight away, your approval comes after it")
+    // is no longer on this page at all and is stated on the tour instead; the promise the sitter
+    // is being sold here - her clients do this themselves - is what stays pinned.
+    expect(body).toContain('they do it on the page');
     expect(body).not.toMatch(/comes back to you as pending, so you re-approve/i);
     // The fee is the sitter's stored policy applied server-side (feeToCancelToday), and the
-    // cancel route reads NO request body at all, so the client cannot name a figure. The page
-    // said that as "worked out here and not typed in by them"; the copy pass replaced the
-    // negative half with the positive claim, which asserts the same fact about the same code.
+    // cancel route reads NO request body at all, so the client cannot name a figure.
     // What must never appear is the opposite: a client choosing or proposing what she owes.
-    expect(body).toMatch(/the fee your own policy sets/i);
+    expect(body).toMatch(/your own cancellation policy sets the fee/i);
     for (const lie of ['they enter the fee', 'they choose the fee', 'agree a fee'])
       expect(body.toLowerCase(), lie).not.toContain(lie);
   });
@@ -593,19 +634,15 @@ describe('the landing page claims only what ships', () => {
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
   });
 
-  it('does not label the workflow column five unchanging things when one of them changes', async () => {
+  it('never labels a list of unchanging things with a count', async () => {
     const body = await landingBody();
-    // The fifth item WAS "The dates question stops being a text." — the one thing that does
-    // change — which is why the label had to carry "and one that does". In the September 2026
-    // trim that item was promoted out of the column into the "You and your clients" section it
-    // had always been the argument for, so the column holds only things that genuinely stay put
-    // and the label stopped counting them at all. The miscount it existed to prevent is what
-    // stays pinned: a label that counts must never count an item the column no longer holds.
-    expect(body).toContain('Nothing about how you work has to change.');
+    // The column these guarded ("Five things that don't change") once counted an item that DID
+    // change, which is why the label had to be corrected twice before it stopped counting at all.
+    // The owner deleted the whole workflow section on 2026-09-09, so the positive pins went with
+    // it — but the ban is not about that section: a label that counts is a claim about the list
+    // beneath it, and it goes stale the moment an item moves. Neither form may come back.
     expect(body).not.toContain('Five things that don&rsquo;t change');
     expect(body).not.toContain('Four things that don&rsquo;t change');
-    // …and the promoted line is still on the page, once, where landing.test.ts pins it.
-    expect(body).toContain('The dates question stops being a text.');
   });
 
   it('presents both tiers as products, and neither as a checkout', async () => {

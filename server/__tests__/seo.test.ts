@@ -374,7 +374,12 @@ describe('SEO surface', () => {
   });
 
   it.each([
-    ['/about', 'Booking software that stays out of the way'],
+    // The owner moved /about to a first-person founder story on 2026-09-09; the landing page's
+    // product voice is unchanged, and this is the one page that speaks as "I".
+    [
+      '/about',
+      'I&rsquo;m a dog walker and pet sitter, and I built this for my own business first.',
+    ],
     ['/contact', 'Talk to a person'],
   ])('serves %s as a real trust-anchor page', async (path, heading) => {
     const { env } = createTestEnv();
@@ -392,12 +397,233 @@ describe('SEO surface', () => {
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
+  /**
+   * 2026-09-09: the owner narrowed /about to two things, why this exists and who made it, and
+   * took the product off it. "Four rules the software will not break" MOVED to /how-it-works,
+   * where how-it-works.test.ts pins all four; the plans block was deleted outright because the
+   * landing page's #pricing section and the product llms.txt already state those numbers, and a
+   * fourth surface stating them is a fourth chance for two of them to disagree. What is pinned
+   * here is the narrowing: the founder story is the page, and neither the prices nor the rules
+   * may drift back onto it without the surfaces that own them being touched too.
+   */
+  it('keeps /about to the creator, with no plans, prices or product rules on it', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/about', {}, env)).text();
+    // The three things the owner supplied, and the whole of what the page may claim about him.
+    // The intro is first-name-only from 2026-09-10 on the owner's instruction ("remove my last
+    // name from the intro"). The full name is untouched everywhere it is ATTRIBUTION rather than
+    // introduction: the photo's alt text, this page's meta description, the shared footer's
+    // "Created by", and the homepage JSON-LD's founder. Pinned on the surviving text, so the
+    // sentence cannot quietly grow a surname back or lose the introduction altogether.
+    expect(body).toContain('I&rsquo;m Brad.');
+    expect(body).toContain('Brad Burch with a small black dog');
+    expect(body).toContain('https://bradpaws.com/');
+    expect(body).toContain('Did I pay you for last week?');
+    expect(body).not.toMatch(/\$\d/);
+    expect(body).not.toContain('per sitter per month');
+    expect(body).not.toContain('free trial');
+    expect(body).not.toContain('Four rules the software will not break');
+  });
+
+  /**
+   * /about's three composition rules, and the proof they cannot reach another page.
+   *
+   * The page is one column of prose with no second column anywhere in its markup, and every
+   * default it inherits was measured for a page that HAS one: the shared `.hero h1` caps at 15ch
+   * so a hero-visual can sit beside it, and `.feature h2` is 0.98rem because a `.section-head`
+   * h2 normally sits above it. On /about those two produced a four-line headline in a 540px
+   * gutter with the right half of the wrap empty, and a section heading that read as a bold
+   * label; the founder grid's 200px photo column left a 232px hole under the picture beside
+   * prose capped at 52ch. All three were measured in a real browser on 2026-09-10.
+   *
+   * Each override is scoped through markup only /about carries, which is the half of this test
+   * that matters: `.hero-flush` (the hero class and its adjacent sibling, the pattern already
+   * used to close this page's hero padding) and `.founder`. A future tidy-up that widened any of
+   * these to `.hero h1`, `.feature h2` or `.legal` would silently re-scale the landing page's
+   * cards and the three other prose pages, which no test on those pages would catch, because
+   * they assert on markup and this is a stylesheet. So both halves are pinned together: the
+   * rules exist, AND no page but /about carries anything they can match.
+   */
+  it("scopes /about's composition overrides to /about", async () => {
+    const { env } = createTestEnv();
+    const about = await (await app.request('/about', {}, env)).text();
+    // 1. The headline uses the width it is standing in instead of a 15ch column with an empty
+    //    half beside it.
+    expect(about).toContain('.hero-flush h1 {');
+    expect(about).toContain('max-width: none;');
+    // 2. "Why I built it" is this page's only heading, at the size a section heading is
+    //    everywhere else here rather than at the 0.98rem label size the prose pages want.
+    expect(about).toContain('.hero-flush + .section .feature h2 {');
+    // 3. The portrait moved into the width the 52ch prose leaves over, which closed the hole
+    //    under it. Both the placement and the breakpoint it happens at are load-bearing.
+    expect(about).toContain('@media (min-width: 920px) {');
+    expect(about).toContain('.founder-photo { grid-column: 2; grid-row: 1; width: 100%; }');
+    // The base .feature h2 size the other prose pages and the landing cards read at survives.
+    expect(about).toContain('font-size: 0.98rem;');
+    // The scoping proof. Every selector above needs `.hero-flush` or `.founder` in the markup,
+    // and only /about has either, so the rules are unreachable from the other five pages even
+    // though the stylesheet is inlined into all of them.
+    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/contact']) {
+      const body = await (await app.request(path, {}, env)).text();
+      const markup = body.replace(/<style>[\s\S]*?<\/style>/g, '');
+      const classes = new Set(
+        [...markup.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)),
+      );
+      expect(
+        [...classes].filter((c) => c === 'hero-flush' || c.startsWith('founder')),
+        path,
+      ).toEqual([]);
+    }
+  });
+
+  /**
+   * 2026-09-09, the same narrowing one step further: the page is the REASON the product exists,
+   * so it does not also recruit. The founder story's closing paragraph asked sitters to try it
+   * "while it's still early", which is the landing page's invite form stated a second time on the
+   * page a reader reaches for who is behind this. Deleting it also took this page's only
+   * statements that the product is small and independent and that questions reach a person;
+   * /contact makes both in its own words, and the second assertion here is what stops the pair
+   * from being lost outright rather than merely moved. The closing demo/tour line stays: it is
+   * wayfinding for a reader who has finished the page.
+   */
+  it('keeps /about off recruiting, and leaves the trust claims standing on /contact', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/about', {}, env)).text();
+    for (const pitch of [
+      'looking for a handful of pet sitters',
+      'help me work out what to improve',
+      'The invite list is short',
+      'there is no sales team to get past',
+    ])
+      expect(body, pitch).not.toContain(pitch);
+    // The one client-question line is a list of TYPES of question, so it may not put a count on
+    // them: there were not exactly three, and three is only how many are quoted.
+    expect(body).toContain('I kept getting questions like:');
+    expect(body).not.toContain('the same three');
+    // Wayfinding survives the cut.
+    expect(body).toContain('href="/demo"');
+    expect(body).toContain('href="/how-it-works"');
+    // The claims the deletion carried off, still made where they were always also made.
+    const contact = await (await app.request('/contact', {}, env)).text();
+    expect(contact).toContain('no sales team');
+    expect(contact).toContain('messages reach the person who builds it');
+  });
+
   it('tells a pet owner on /contact to go to their sitter, not to us', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/contact', {}, env)).text();
     // The most common reason someone reaches a pet-care product's contact page is that they want
     // their SITTER. Saying so first is worth more than a form nobody can answer.
     expect(body).toContain('contact your sitter directly');
+  });
+
+  /**
+   * The owner asked for /about in the header on 2026-09-09 ("the about page should be part of the
+   * header links"). It goes in the .nav-links row and NOT in .nav-right, because .nav-right is
+   * where that row's links are duplicated for the widths .nav-links is hidden at, and /about is
+   * already in the shared footer's Company block at every width. A copy in both rows would print
+   * the link twice on one screen, which is the exact thing the "Full tour" pair is arranged to
+   * avoid.
+   */
+  it('puts /about in the landing header without printing it twice', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/', {}, env)).text();
+    const nav = body.slice(body.indexOf('<header class="nav">'), body.indexOf('</header>'));
+    expect(nav).toContain('<a href="/about">About</a>');
+    expect(nav.match(/href="\/about"/g)?.length).toBe(1);
+    // The row carrying five links is the one the measured breakpoints in PAGE_STYLE are cut for.
+    expect(nav).toContain('class="nav-links nav-links-5"');
+  });
+
+  /**
+   * Heading levels, on every worker-served page at once.
+   *
+   * /about, /contact, /privacy and /terms all went h1 straight to h3: their prose blocks are
+   * `.feature`s, and `.feature` was a landing-page CARD component, where h3 is right because a
+   * `.section-head` h2 sits above it. On a page with no `.section-head` there is no h2, so a
+   * screen reader hears "heading level 3" with nothing at level 2 to hang it on, on the four pages
+   * a wary reader or an agent opens to decide whether this is a real business.
+   *
+   * The fix was the LEVEL and not the look: PAGE_STYLE lists `.feature h2` beside `.feature h3` so
+   * those headings keep their 0.98rem size rather than inheriting `.section h2`'s clamp(). This
+   * test is why the two halves cannot drift apart again, and it is deliberately a sweep rather
+   * than four assertions, so a page added later is covered the day it is added.
+   */
+  it('never skips a heading level on any page', async () => {
+    const { env } = createTestEnv();
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/about',
+      '/contact',
+      '/privacy',
+      '/terms',
+      '/request-invite/thanks',
+    ]) {
+      const body = await (await app.request(path, {}, env)).text();
+      const levels = [...body.matchAll(/<h([1-6])[\s>]/g)].map((m) => Number(m[1]));
+      expect(levels[0], `${path} must open at h1`).toBe(1);
+      expect(levels.filter((l) => l === 1).length, `${path} h1 count`).toBe(1);
+      let deepest = 0;
+      for (const level of levels) {
+        expect(
+          level,
+          `${path} jumps to h${level} with no h${level - 1} above it`,
+        ).toBeLessThanOrEqual(deepest + 1);
+        deepest = Math.max(deepest, level);
+      }
+    }
+  });
+
+  /**
+   * The header is ONE row at every width, and all three five-link rows say so the same way.
+   *
+   * /how-it-works carries five section anchors plus "Sign in" plus the demo button, which needs
+   * 782px of content box: it wrapped onto a second line from 780px (where `.nav-links` appears at
+   * all) to 829px, measured in a real browser. `.nav-links-5` is the tuning that already existed
+   * for the landing's five-link row — 4px off each gap, and the plain sign-in link dropped below
+   * 890px — and it is exactly the 80px that band was short by. /about joined this pair on
+   * 2026-09-10 with the landing's own five links (How it works, Dashboard, Pricing, Full tour,
+   * About) and the same "Sign in" + "Try the demo" shape /how-it-works carries, so it needs the
+   * identical tuning for the identical reason. Pinned on all three rows together, because the
+   * failure mode is one of them being edited and the others left behind.
+   */
+  it('gives all three five-link headers the row tuning cut for five links', async () => {
+    const { env } = createTestEnv();
+    for (const path of ['/', '/how-it-works', '/about']) {
+      const body = await (await app.request(path, {}, env)).text();
+      const nav = body.slice(body.indexOf('<header class="nav">'), body.indexOf('</header>'));
+      expect(nav, path).toContain('class="nav-links nav-links-5"');
+      expect(nav.match(/<a href="#|<a href="\//g)?.length, path).toBeGreaterThan(0);
+      // Five links in the row is what the breakpoints are measured against. A sixth needs new
+      // measurements, not a sixth <a>.
+      const row = nav.slice(nav.indexOf('nav-links-5'), nav.indexOf('</nav>'));
+      expect(row.match(/<a /g)?.length, `${path} link count`).toBe(5);
+    }
+  });
+
+  /**
+   * Three rules in the shared stylesheet whose absence is INVISIBLE in review and only shows up
+   * to a keyboard user, on a dark band, or in a browser's default palette. Each was a live defect
+   * measured in a real browser on 2026-09-09; each is one declaration, which is exactly the kind
+   * of line a tidy-up deletes. Asserting on the served CSS is the only reach a unit test has here,
+   * since these pages carry no script and the stylesheet is inlined into every one of them.
+   */
+  it('keeps the three shared-stylesheet rules whose absence is invisible', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/', {}, env)).text();
+    // 1. The focus ring is --green, which is 1.83:1 against the CTA panel's dark gradient and
+    //    reads as no ring at all. The panel holds the invite form's submit button.
+    expect(body).toContain('.cta-panel :focus-visible { outline-color: #fff; }');
+    // 2. A <button> inherits neither font-family nor line-height from body, and the invite form's
+    //    submit is the one .btn on this site that is not an <a>. Without these it rendered in
+    //    Arial at 39px beside a 46px .btn-inverse doing the same job on /how-it-works.
+    expect(body).toContain('font-family: inherit;');
+    expect(body).toContain('line-height: inherit;');
+    // 3. Body links in the prose pages. Until /about and /contact existed, every link on this
+    //    site sat in a .note, a button, the nav or the footer, so running copy had no link style
+    //    and ten links rendered in the browser default #0000EE.
+    expect(body).toContain('.legal p a,');
   });
 
   it('links every page to the trust anchors through one shared footer', async () => {
