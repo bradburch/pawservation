@@ -1720,8 +1720,11 @@ export const adminRoutes = new Hono<AppEnv>()
     // (`reconcileIfStale` below and in `booking-ops.ts` writes on GET too): the two admin reads
     // below skip it for a lapsed business under enforcement exactly as they do for a disabled one,
     // because the product must not keep writing her calendar on the strength of a dashboard she
-    // opened to read; the widget's pull in `booking-ops.ts` deliberately does NOT — that one keeps
-    // her CLIENTS' availability honest, which is A-17's promise, and it writes nothing to Google.
+    // opened to read; the widget's pull in `booking-ops.ts` deliberately does NOT skip it — that
+    // one keeps her CLIENTS' availability honest, which is A-17's promise, but it still redrives
+    // her outbox to Google (her own blocked-date writes and anything else queued), same as the
+    // reads it is NOT exempted from — "stops writing her calendar" is a claim about the cron and
+    // these two reads only, never about this pull. See README.md's guard-order note.
     // `create-calendar` beside this route needs no twin either: it is a POST, and the middleware
     // already has it. The callback in `routes/oauth.ts` carries the same guard for the 600-second
     // window in which a state signed before the lapse can still arrive.

@@ -85,14 +85,16 @@ CREATE TABLE IF NOT EXISTS Tenants (
   -- to it. That is what keeps this block and that file from drifting, so keep the markers exactly
   -- as they are and keep what is between them identical to the migration's ADD COLUMN.
   --
-  -- THE BASIC COMP: paid up through this instant without paying, set and cleared by hand from the
-  -- owner console and written ONLY by `setTenantCompedUntil`. Billing never touches it, exactly as
-  -- billing never touches PremiumUntil — a comp surviving a renewal, a cancellation and a
-  -- redelivery is what that separation buys. Same fixed-width UTC shape as the other two dated
-  -- columns ('YYYY-MM-DD HH:MM:SS'), because `CompedUntil > now` is a plain string comparison whose
-  -- lexicographic order has to BE chronological order; `normalizePremiumUntil`
-  -- (server/lib/premium.ts) is the one place this column's values are produced, and it has no
-  -- 400-day ceiling, which is the shape a two-year comp needs.
+  -- THE BASIC COMP: paid up through this instant without paying. TWO writers: the owner console's
+  -- hand-set grant (`applyOwnerSwitches` -> `tenantCompedUntilStatement`, server/db/repo.ts), and
+  -- signup's trial (`createTenantFromSignup`, stamped with `trialCompUntil`, server/lib/premium.ts).
+  -- Billing never touches it, exactly as billing never touches PremiumUntil — a comp surviving a
+  -- renewal, a cancellation and a redelivery is what that separation buys. Same fixed-width UTC
+  -- shape as the other two dated columns ('YYYY-MM-DD HH:MM:SS'), because `CompedUntil > now` is a
+  -- plain string comparison whose lexicographic order has to BE chronological order; that shape is
+  -- produced by `toStoredInstant` (server/lib/premium.ts), which both writers go through — the
+  -- owner console's via `normalizePremiumUntil`, signup's via `trialCompUntil` directly — and it has
+  -- no 400-day ceiling, which is the shape a two-year comp needs.
   CompedUntil TEXT,
   -- <<< 0018 plan comp
   -- How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):

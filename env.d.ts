@@ -100,8 +100,8 @@ interface Env {
    * checks that the pre-flip query returns zero rows (see README), and sets this last.
    *
    * Not a secret, and it grants nothing: it decides whether a refusal is issued, never who is
-   * entitled — that is `isPlanCurrent` reading three columns only the owner console and the billing
-   * endpoint write.
+   * entitled — that is `isPlanCurrent` reading three columns written by the owner console, the
+   * billing endpoint, and (CompedUntil only, the trial) signup.
    */
   PLAN_ENFORCE?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */

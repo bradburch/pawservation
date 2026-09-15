@@ -96,4 +96,38 @@ describe('the README’s pre-flip SELECT agrees with isPlanCurrent on every row'
     // 8 rows with three nulls or three past instants, switched on, and no others.
     expect(expected.size).toBe(8);
   });
+
+  it('disagrees with isPlanCurrent on a hand-written ISO ("T"-shaped) instant', async () => {
+    // The matrix above seeds only the STORED shape ('YYYY-MM-DD HH:MM:SS'). A hand-typed ISO
+    // instant from an incident runbook ('...T...Z') is a plausible thing to land in the column by
+    // hand, and the two readers disagree about it. The SELECT compares it as TEXT against
+    // `datetime('now')` (also stored-shape): 'T' > '-' as a character, so an ISO string sorts ABOVE
+    // any stored-shape 'now' regardless of the actual date, and the SQL reads this row as CURRENT —
+    // it is not one of the rows the pre-flip check would warn the owner about. `isAhead` (premium.ts)
+    // requires the exact stored shape and fails closed on anything else, so `isPlanCurrent` reads
+    // the identical row as NOT current — refused, the very outage E10 exists to prevent. A clean
+    // pre-flip check (zero rows) does not rule this out; see the runbook's note beside the SELECT.
+    const { env, raw } = createTestEnv();
+    const now = new Date();
+    const isoFuture = new Date(now.getTime() + 3_600_000).toISOString(); // 'T'-shaped, not the stored shape
+    const slug = 'm-t-shaped';
+    raw
+      .prepare(
+        `INSERT INTO Tenants (Id, Slug, DisplayName, DisabledAt, Plan, BilledUntil, CompedUntil, PremiumUntil)
+         VALUES (?, ?, ?, NULL, 'solo', ?, NULL, NULL)`,
+      )
+      .run(`tnt_${slug}`, slug, slug, isoFuture);
+    const row = {
+      DisabledAt: null,
+      Plan: 'solo' as const,
+      BilledUntil: isoFuture,
+      CompedUntil: null,
+      PremiumUntil: null,
+    };
+    expect(isPlanCurrent(row, now)).toBe(false); // fails closed on the wrong shape — refused
+
+    const { results } = await env.PAWSERVATION_DB.prepare(preflipSql()).all<{ Slug: string }>();
+    const slugs = results.map((r) => r.Slug);
+    expect(slugs).not.toContain(slug); // …but the SQL reads it as current — the documented gap
+  });
 });

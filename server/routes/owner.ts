@@ -14,6 +14,7 @@ import {
 import { isEmailConfigured, sendSitterInvite } from '../lib/email';
 import {
   isCompActive,
+  isDisabled,
   isPlanCurrent,
   isPremiumActive,
   normalizePremiumUntil,
@@ -161,7 +162,7 @@ export const ownerRoutes = new Hono<AppEnv>()
       slug: r.Slug,
       displayName: r.DisplayName,
       createdAt: r.CreatedAt,
-      disabled: r.DisabledAt != null,
+      disabled: isDisabled(r),
       // Published raw ('YYYY-MM-DD HH:MM:SS', UTC) rather than as a derived boolean, same
       // rationale as the detail route below: the owner is setting the date, so the date is what
       // they need to see.
@@ -226,7 +227,7 @@ export const ownerRoutes = new Hono<AppEnv>()
     // business as free and the scanner walks `app/` for exactly that.
     return c.json({
       ...serializeAnalytics(data),
-      disabled: tenant.DisabledAt != null,
+      disabled: isDisabled(tenant),
       premiumUntil: tenant.PremiumUntil,
       premiumActive: isPremiumActive(tenant),
       // The same four the roster publishes, because the drill-down and the list must not disagree
@@ -323,7 +324,7 @@ export const ownerRoutes = new Hono<AppEnv>()
     const after = await getTenantById(c.env.PAWSERVATION_DB, tenantId);
     if (!after) return c.json({ error: 'Not found.' }, 404);
     return c.json({
-      disabled: after.DisabledAt != null,
+      disabled: isDisabled(after),
       premiumUntil: after.PremiumUntil,
       compedUntil: after.CompedUntil,
       // The same derived answers the roster and the detail read publish, from the same

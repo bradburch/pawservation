@@ -1038,4 +1038,50 @@ describe('GET /:slug/availability/month triggers a widget-scoped reconciliation'
     );
     expect(res.status).toBe(200);
   });
+
+  // Pins the qualifier README.md and admin.ts's oauth/start comment now carry: under enforcement,
+  // the two admin GETs and the cron stop writing a lapsed sitter's calendar, but this widget pull
+  // (her CLIENTS' own read of the month grid) deliberately does not — it also flushes whatever her
+  // own exempt writes (blocked dates) queued to the outbox. `createTestEnv()` seeds no plan grant
+  // of any kind, so TENANT_A is lapsed the moment enforcement is on; no disable, no comp.
+  it('a lapsed, enforced tenant: the widget pull still redrives her outbox to Google', async () => {
+    const { env } = createTestEnv();
+    await connectCalendar(env);
+    await clearSeededBookings(env);
+    // insertBookingRequest hard-codes SyncPending = 1 and this row is given no GCalEventId, so it
+    // is a queued CREATE sitting in the outbox exactly as her own blocked-date write would queue one.
+    const id = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: null,
+      serviceType: 'boarding',
+      startDate: IN_WINDOW_START,
+      endDate: IN_WINDOW_END,
+      optionKey: 'standard',
+      petCount: 1,
+      estCost: 15000,
+      status: 'confirmed',
+    });
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (_url, init) =>
+        init?.method === 'POST'
+          ? new Response(JSON.stringify({ id: 'evt_widget_redrive' }), { status: 200 })
+          : calendarListResponse([]),
+      );
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    // No ExecutionContext — the pull is awaited (the deterministic fallback used elsewhere in this
+    // file), so one request both redrives the outbox and paints the grid.
+    const res = await app.request(
+      monthUrl(IN_WINDOW_START.slice(0, 7)),
+      { headers: { Authorization: `Bearer ${token}` } },
+      { ...env, PLAN_ENFORCE: 'true' } as Env,
+    );
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalled(); // the widget pull reached Google despite the lapse
+    const row = await env.PAWSERVATION_DB.prepare(
+      'SELECT SyncPending, GCalEventId FROM BookingRequests WHERE Id = ?',
+    )
+      .bind(id)
+      .first<{ SyncPending: number; GCalEventId: string | null }>();
+    expect(row).toMatchObject({ SyncPending: 0, GCalEventId: 'evt_widget_redrive' });
+  });
 });

@@ -298,11 +298,19 @@ describe('POST /api/signup/complete — sitter', () => {
     );
     const mine = (
       (await roster.json()) as {
-        sitters: { slug: string; compedUntil: string | null; planCurrent: boolean }[];
+        sitters: {
+          slug: string;
+          compedUntil: string | null;
+          planCurrent: boolean;
+          compActive: boolean;
+        }[];
       }
     ).sitters.find((s) => s.slug === slug)!;
     expect(mine.compedUntil).toBe(row.CompedUntil);
     expect(mine.planCurrent).toBe(true);
+    // The chip itself gates on compActive, not on compedUntil's mere presence (E3/A9) — a signup
+    // trial's comp must light it exactly as an owner-granted one does.
+    expect(mine.compActive).toBe(true);
   });
 
   it('never publishes the signup email — it is a login credential, not a public contact', async () => {

@@ -375,20 +375,26 @@ names no path, and a route that wants out has to say so where its reviewer is. T
 "Read-only except answering requests and blocking dates" is what shipped; the owner can widen or
 narrow it, and the PR asks him to.
 
-**The product stops writing her calendar too, while the deployment enforces.** The two admin reads
-that run a calendar self-heal (`/admin/bookings`, `/admin/analytics`) skip it for a lapsed business
-exactly as they do for a disabled one, and the fifteen-minute sweep's `listConnectedCalendarTenants`
-leaves her out — the predicate applied in code over the rows, never in SQL. The widget's own pull on
-the month grid deliberately still runs: it keeps her clients' availability honest, which is A-17's
-promise, and writes nothing to Google.
+**The cron and the dashboard's reads stop writing her calendar, while the deployment enforces.** The
+two admin reads that run a calendar self-heal (`/admin/bookings`, `/admin/analytics`) skip it for a
+lapsed business exactly as they do for a disabled one, and the fifteen-minute sweep's
+`listConnectedCalendarTenants` leaves her out — the predicate applied in code over the rows, never
+in SQL. **The booking page's own pull does not stop**: it keeps her clients' availability honest,
+which is A-17's promise, but that same pull also redrives her outbox — her own blocked-date writes
+and anything else queued — to Google, up to once every ten minutes (the widget's own throttle)
+whenever a client opens the month grid. That is deliberate — it is also how a block she just set
+through the one exempt write reaches Google at all while she is otherwise read-only — but it means
+"stops writing her calendar" is true of the cron and the two admin reads only, not of the product as
+a whole.
 
-**One narrow gap is accepted.** `GET …/providers/calendar/oauth/start` guards the lapse by hand
+**A guard-order note, not a gap.** `GET …/providers/calendar/oauth/start` guards the lapse by hand
 (the one GET that starts a sitter-initiated write), and the global `/oauth/google/callback` carries
-the same guard beside its disabled one — but a state signed by `oauth/start` before the lapse, or
-before the flip, is valid for 600 seconds and reaches the callback outside both gates. That window
-is closed by the callback's guard; what remains is that `oauth/start` answers "not configured"
-(503) before "lapsed" (402), because the first is true of every business on the server and the
-second would send her to buy a plan for a control that will 503 the moment she has one.
+the same guard beside its disabled one — a state signed by `oauth/start` before the lapse, or before
+the flip, is valid for 600 seconds and would otherwise reach the callback outside both gates, but
+that window is closed by the callback's own guard. What remains is ordering, not exposure:
+`oauth/start` answers "not configured" (503) before "lapsed" (402), because the first is true of
+every business on the server and the second would send her to buy a plan for a control that will
+503 the moment she has one.
 
 **It ships dark, and that is not caution for its own sake.** `PLAN_ENFORCE` (unset = off, exactly
 `"true"` = on, read with `typeof === 'string'` so a JSON boolean is off rather than a TypeError on
@@ -423,7 +429,14 @@ that the demo dashboards go read-only. The same command is the rollback diagnosi
 itself is one line — unset `PLAN_ENFORCE`. No data is written by the flip and none is undone by the
 unflip. `server/__tests__/plan-preflip-sql.test.ts` reads this exact statement out of this file and
 runs it over every combination of the three dated columns, asserting it agrees with `isPlanCurrent`
-row for row — so editing the SQL here, or the predicate there, is caught by the suite.
+row for row — so editing the SQL here, or the predicate there, is caught by the suite. **That
+agreement assumes every dated column is already in the STORED shape** ('YYYY-MM-DD HH:MM:SS'). A
+hand-written ISO instant (say, `2027-01-01T00:00:00Z` typed during an incident) sorts ABOVE any
+stored-shape `now` as plain text, so this SELECT reads it as current and will not warn about it —
+while `isPlanCurrent` reads the same value as not current, because `isAhead` fails closed on
+anything that is not the exact stored shape, and refuses. Normalize it before relying on a clean
+pre-flip check: `UPDATE Tenants SET BilledUntil = strftime('%Y-%m-%d %H:%M:%S', BilledUntil) WHERE
+BilledUntil IS NOT NULL` (repeat for `CompedUntil`/`PremiumUntil` as needed).
 
 **One state the runbook cannot fix from here: a disabled business with a live subscription.**
 `adminAuth` refuses her `pawsa_` credential outright, and her password session still reaches a

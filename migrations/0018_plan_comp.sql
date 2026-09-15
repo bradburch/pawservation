@@ -1,7 +1,7 @@
 -- Migration 0018. A PLAN CAN BE COMPED.
--- One nullable column on Tenants: the instant a business is paid up through WITHOUT paying,
--- granted and cleared by hand by the platform owner (PATCH /api/owner/sitters/:tenantId). Additive
--- only.
+-- One nullable column on Tenants: the instant a business is paid up through WITHOUT paying. Two
+-- writers: granted and cleared by hand by the platform owner (PATCH /api/owner/sitters/:tenantId),
+-- and stamped on signup as the trial's own comp (createTenantFromSignup). Additive only.
 -- NOT a hand-set BilledUntil, and the reasons are the whole of why this file exists rather than a
 -- runbook line. `normalizeBilledUntil` refuses anything more than MAX_BILLED_AHEAD_DAYS = 400
 -- ahead (server/lib/premium.ts), a ceiling written as the containment on what a leaked shared

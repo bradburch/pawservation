@@ -81,4 +81,12 @@ describe('owner disable/enable/remove routes', () => {
     const body = (await res.json()) as { sitters: { tenantId: string; disabled: boolean }[] };
     expect(body.sitters.find((s) => s.tenantId === TENANT_A)?.disabled).toBe(true);
   });
+
+  it('roster reads an empty-string DisabledAt as active, the same as every guard (isDisabled)', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET DisabledAt='' WHERE Id='${TENANT_A}';`);
+    const res = await app.request('/api/owner/sitters', { headers: await ownerHeaders() }, env);
+    const body = (await res.json()) as { sitters: { tenantId: string; disabled: boolean }[] };
+    expect(body.sitters.find((s) => s.tenantId === TENANT_A)?.disabled).toBe(false);
+  });
 });
