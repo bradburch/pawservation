@@ -217,20 +217,28 @@ describe('GET /:slug/config and the plan', () => {
     raw.exec(
       `UPDATE Tenants
           SET Plan = 'pro', BilledUntil = '2099-01-01 00:00:00',
+              CompedUntil = '2098-01-01 00:00:00',
               StripeCustomerId = 'cus_leaked', StripeSubscriptionId = 'sub_leaked',
               LastBillingEventAt = '2026-09-08 00:00:00'
         WHERE Id = '${TENANT_A}'`,
     );
     const body = await (await app.request('/api/sunny-paws/config', {}, env)).text();
+    // `compedUntil`, `planCurrent` and `planEnforced` joined the list with 0018 and the lapse gate:
+    // whether a business holds a plan is her own state told to her own admin, and a visitor's
+    // browser has no more use for it than for the renewal date.
     for (const absent of [
       '"plan"',
       '"billedUntil"',
+      '"compedUntil"',
+      '"planCurrent"',
+      '"planEnforced"',
       '"stripeCustomerId"',
       '"stripeSubscriptionId"',
       '"lastBillingEventAt"',
       'cus_leaked',
       'sub_leaked',
       '2099-01-01',
+      '2098-01-01',
     ]) {
       expect(body, absent).not.toContain(absent);
     }

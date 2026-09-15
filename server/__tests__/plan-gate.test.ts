@@ -110,9 +110,10 @@ describe('the lapse gate refuses writes and never reads', () => {
     const { env, raw } = createTestEnv();
     raw.exec(`UPDATE Tenants SET DisabledAt = '2026-07-23 00:00:00' WHERE Id = '${TENANT_A}';`);
     const put = await putSettings(enforcing(env), 'sunny-paws', TENANT_A);
-    // `tenantMiddleware` runs at server/index.ts:103, long before adminRoutes at :118, so a
-    // switched-off account is always refused first — which is correct, because it is the stronger
-    // fact — and `isPlanCurrent` is false for her anyway, so the two can never contradict.
+    // `tenantMiddleware` is registered on `/api/:slug/*` in server/index.ts before any route app
+    // is mounted, so a switched-off account is always refused first — which is correct, because
+    // it is the stronger fact — and `isPlanCurrent` is false for her anyway, so the two can never
+    // contradict.
     expect(put.status).toBe(403);
     expect(await put.json()).toEqual({ error: 'account_disabled' });
   });
@@ -133,9 +134,9 @@ describe('the lapse gate refuses writes and never reads', () => {
 
 describe('what the gate must never reach', () => {
   it('never refuses the billing endpoint, which is how she un-lapses', async () => {
-    // Registered at server/index.ts:117, BEFORE adminRoutes at :118 — so `adminAuth` never reaches
-    // it and neither does this gate. THE EXCLUSION IS LOAD-BEARING, and this is the case that fails
-    // the day someone "tidies" the mount order.
+    // `billingRoutes` is mounted in server/index.ts BEFORE `adminRoutes` — so `adminAuth` never
+    // reaches it and neither does this gate. THE EXCLUSION IS LOAD-BEARING, and this is the case
+    // that fails the day someone "tidies" the mount order.
     //
     // Driven with a VALID secret on a LAPSED business, all the way to `{ applied: true }`, because
     // the exemption's whole point is that the event LANDS: a case that posts no secret and asserts
@@ -225,7 +226,12 @@ describe('what the gate must never reach', () => {
 describe('two businesses, because a cross-tenant lapse looks completely ordinary doing it', () => {
   it('refuses A and leaves B untouched, and tells A nothing about B', async () => {
     const { env, raw } = createTestEnv();
-    comp(raw, TENANT_B, minutesFromNow(60)); // B is current; A holds nothing
+    // B is current on a PAID plan — billed, not comped — so the `billedUntil: null` assertion on
+    // A's read below has something to be null AGAINST: with B merely comped it was inert, true of
+    // every row in the database.
+    raw
+      .prepare('UPDATE Tenants SET Plan = ?, BilledUntil = ? WHERE Id = ?')
+      .run('solo', minutesFromNow(60), TENANT_B);
 
     const a = await putSettings(enforcing(env), 'sunny-paws', TENANT_A);
     expect(a.status).toBe(402);
@@ -239,9 +245,14 @@ describe('two businesses, because a cross-tenant lapse looks completely ordinary
       { headers: await headers(TENANT_A) },
       enforcing(env),
     );
-    const body = (await read.json()) as { planCurrent: boolean; billedUntil: string | null };
+    const body = (await read.json()) as {
+      planCurrent: boolean;
+      billedUntil: string | null;
+      plan: string | null;
+    };
     expect(body.planCurrent).toBe(false);
     expect(body.billedUntil).toBeNull();
+    expect(body.plan).toBeNull();
 
     // And A's credential against B's path is still refused by the chain that already existed.
     const across = await app.request(

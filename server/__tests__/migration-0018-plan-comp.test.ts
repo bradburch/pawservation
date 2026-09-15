@@ -108,4 +108,18 @@ describe('migration 0018 applied to a pre-0018 database', () => {
     migrated.exec(MIGRATION);
     expect(columnsOf(migrated)).toEqual(columnsOf(dbFrom(SCHEMA)));
   });
+
+  it('dies loudly on a second run, exactly as its docblock claims — and changes nothing', () => {
+    // THE DOCBLOCK'S CLAIM, PINNED: "a second run dies loudly on `duplicate column name`". That is
+    // the repo's convention for an additive migration (0017 made the same decision and declined a
+    // `SchemaMeta` marker for the same reason) — SQLite has no `ADD COLUMN IF NOT EXISTS`, so the
+    // file is not idempotent and is not meant to be; it is safe to KNOW whether it ran and unsafe
+    // to guess. A migration that silently succeeded twice would be the one that hides a database
+    // whose state nobody can read off it.
+    const raw = dbFrom(preMigrationSchema());
+    raw.exec(MIGRATION);
+    const once = columnsOf(raw);
+    expect(() => raw.exec(MIGRATION)).toThrow(/duplicate column name/i);
+    expect(columnsOf(raw)).toEqual(once);
+  });
 });

@@ -583,6 +583,31 @@ describe('what it refuses on its shape', () => {
     ).toBe(200);
   });
 
+  it('holds a resync to the same future-skew bound, exempt from staleness or not', async () => {
+    // The one rule a resync is NOT exempt from on the time axis. Its stamp may be as old as a
+    // period start; it may not be newer than this worker's clock plus five minutes, because a
+    // stamp accepted from the future is written to the high-water mark and freezes the row against
+    // every real event after it — the exact failure the skew bound exists for, and one the
+    // staleness exemption would otherwise have re-opened for the event most likely to be
+    // hand-built.
+    const { env } = createTestEnv();
+    const res = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'resync', eventCreated: T0 + 6 * 60 }),
+    );
+    expect(res.status).toBe(400);
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.LastBillingEventAt).toBeNull();
+    // Just inside the bound is still accepted, so the case is not green on a helper that refuses
+    // every resync.
+    const inside = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'resync', eventCreated: T0 + 4 * 60 }),
+    );
+    expect(inside.status).toBe(200);
+  });
+
   it('refuses a malformed body under a BAD secret as an unknown tenant, never a 400', async () => {
     // The ordering is the property: a 400 here would tell an unauthenticated caller that both the
     // endpoint and the slug are real, which is exactly what the byte-identical 404 exists to hide.
@@ -1050,11 +1075,14 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
       'resync',
     ] as const;
     for (const [i, eventType] of types.entries()) {
-      await post(
+      const res = await post(
         withSecrets(env),
         'sunny-paws',
         event({ eventType, eventCreated: AT_SECONDS + i }),
       );
+      // EACH ONE LANDS. Five declined events would leave both comps byte-identical too, and prove
+      // nothing about the writer — the claim is that the statement that DID run named neither.
+      expect(await res.json(), eventType).toMatchObject({ applied: true });
     }
     const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
     expect(t.PremiumUntil).toBe('2099-01-01 00:00:00');

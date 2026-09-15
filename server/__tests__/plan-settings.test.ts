@@ -248,8 +248,8 @@ describe('the settings read publishes the sitter’s own plan', () => {
 });
 
 describe('the settings PUT cannot write plan state', () => {
-  it('ignores all five plan fields in the body and leaves every column untouched', async () => {
-    // THE FIVE FIELDS ARE READ-ONLY ON THE WIRE, and that is a property of the WRITE path rather
+  it('ignores all seven plan fields in the body and leaves every column untouched', async () => {
+    // THE SEVEN FIELDS ARE READ-ONLY ON THE WIRE, and that is a property of the WRITE path rather
     // than of the client that happens to build its body field by field today. The settings PUT is
     // the one authenticated write a sitter's own dashboard makes against her tenant row, so if it
     // honoured these keys a sitter could grant herself a plan — or a paid-through date — with one
@@ -273,6 +273,12 @@ describe('the settings PUT cannot write plan state', () => {
           planActive: true,
           hasBillingAccount: true,
           stripeCustomerId: 'cus_attacker',
+          // The self-comp: a lapsed business granting herself the grant the owner console hands
+          // out, through the one write her own credential can make. Inert, or the gate is a
+          // suggestion.
+          compedUntil: minutesFromNow(60 * 24 * 365 * 50),
+          planCurrent: true,
+          planEnforced: false,
         }),
       },
       env,
@@ -282,19 +288,26 @@ describe('the settings PUT cannot write plan state', () => {
     expect(res.status).toBe(204);
 
     const row = raw
-      .prepare('SELECT Plan, BilledUntil, StripeCustomerId FROM Tenants WHERE Id = ?')
+      .prepare('SELECT Plan, BilledUntil, CompedUntil, StripeCustomerId FROM Tenants WHERE Id = ?')
       .get(TENANT_A) as {
       Plan: string | null;
       BilledUntil: string | null;
+      CompedUntil: string | null;
       StripeCustomerId: string | null;
     };
-    expect(row).toEqual({ Plan: 'solo', BilledUntil: paidThrough, StripeCustomerId: 'cus_sunny' });
+    expect(row).toEqual({
+      Plan: 'solo',
+      BilledUntil: paidThrough,
+      CompedUntil: null,
+      StripeCustomerId: 'cus_sunny',
+    });
 
     // And the read still answers the seeded plan, not the one the body asked for.
     const body = await read(env, SLUG[TENANT_A], await adminToken(TENANT_A));
     expect(body.plan).toBe('solo');
     expect(body.billedUntil).toBe(paidThrough);
     expect(body.stripeCustomerId).toBe('cus_sunny');
+    expect(body.planEnforced).toBe(false);
   });
 });
 
