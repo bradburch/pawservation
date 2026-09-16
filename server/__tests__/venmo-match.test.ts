@@ -29,7 +29,7 @@ const run = (over: Partial<Parameters<typeof matchVenmoTxns>[0]> = {}) =>
   });
 
 /**
- * Story 2.5 — VENMO IMPORT RECORDS AGAINST HOUSEHOLDS (supports FR-7a). Once a payer resolves to
+ * VENMO IMPORT RECORDS AGAINST HOUSEHOLDS. Once a payer resolves to
  * exactly one client, resolving further to a SPECIFIC BOOKING is no longer this module's job at
  * all: the payment goes to that client's household (0011), whatever it's for. There is deliberately
  * no "ambiguous — which booking?" bucket any more, because there is nothing left to be ambiguous
@@ -118,8 +118,8 @@ describe('matchVenmoTxns', () => {
   });
 
   it('never proposes over-paying anything — a household payment carries no balance to exceed', () => {
-    // A prepayment far larger than anything owed is still legitimate (Story 2.3): the amount is
-    // never checked against a balance here at all.
+    // A prepayment far larger than anything owed is still legitimate — it reads as credit: the
+    // amount is never checked against a balance here at all.
     const preview = run({ txns: [txn({ amountCents: 10000000 })] });
     expect(preview.matched).toEqual([{ ...preview.matched[0], amountCents: 10000000 }]);
   });

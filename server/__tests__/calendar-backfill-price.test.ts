@@ -83,7 +83,7 @@ function readCosts(
   return { estCost: row?.EstCost ?? null, cancellationFee: row?.CancellationFee ?? null };
 }
 
-// Fix round 1: BASE_AMOUNT_SQL (server/db/repo.ts) reads CancellationFee, not EstCost, for a
+// BASE_AMOUNT_SQL (server/db/repo.ts) reads CancellationFee, not EstCost, for a
 // cancelled row. These prove insertBackfilledBooking and updateBackfilledBookingCost both write
 // into that column for a cancelled adoption, not just EstCost — the gap that let a re-priced
 // cancelled stay report success while the household balance silently didn't move.

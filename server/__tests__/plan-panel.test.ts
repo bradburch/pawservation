@@ -114,8 +114,8 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
 
   it('also requires pricing.subscribe, the flag that says a checkout route exists', () => {
     // `PREMIUM_ORIGIN` is already set in production, so `origin` alone is true on the day this
-    // merges and every Subscribe press would 404 against a checkout route Story 10.2 has not
-    // shipped. `PLAN_SUBSCRIBE` is the deployment's own answer to "is selling switched on".
+    // merges and every Subscribe press would 404 against a checkout route that is not yet
+    // answering. `PLAN_SUBSCRIBE` is the deployment's own answer to "is selling switched on".
     expect(PANEL).toContain('pricing?.subscribe === true');
   });
 
@@ -129,14 +129,14 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).not.toContain('config?.disabled');
   });
 
-  it('keeps the status line OUTSIDE every condition — NFR-2, pinned structurally', () => {
+  it('keeps the status line OUTSIDE every condition — pinned structurally', () => {
     // THE PIN THIS REPLACES was `not.toContain('return null')`, which is a check on one SPELLING of
     // one regression. Two independent probes hid the whole status line and stayed green: one wrapped
     // the status `<p>` in `{!offersHidden && ( … )}`, the other put `return <></>` above the real
-    // return. `return false`, `return undefined` and a wrapper all evaded it too. NFR-2 is that a
-    // sitter whose plan lapsed, whose deployment stopped selling, whose account is switched off or
-    // whose paid surface is unreachable is still told what she is on — so what has to be pinned is
-    // the POSITION of that markup, not the absence of one keyword.
+    // return. `return false`, `return undefined` and a wrapper all evaded it too. The rule is that
+    // a sitter whose plan lapsed, whose deployment stopped selling, whose account is switched off
+    // or whose paid surface is unreachable is still told what she is on — so what has to be pinned
+    // is the POSITION of that markup, not the absence of one keyword.
     const statusAt = FLAT.indexOf('<strong>{planName}</strong>');
     expect(statusAt).toBeGreaterThan(-1);
 
@@ -243,10 +243,10 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
   });
 
   it('sends her somewhere to cancel, and states no terms of its own', () => {
-    // The old pin here said this panel promised NO cancellation control, which was true until
-    // Story 10.3 and is not after it. What must stay true is that it promises it ELSEWHERE: the
-    // control opens a hosted page, and the panel states no notice period, no refund position and
-    // no proration of its own. Those belong on the terms page (FR-60, FR-64).
+    // The old pin here said this panel promised NO cancellation control, which was true before
+    // the Manage-plan control existed and is not now. What must stay true is that it promises it
+    // ELSEWHERE: the control opens a hosted page, and the panel states no notice period, no refund
+    // position and no proration of its own. Those belong on the terms page.
     expect(PANEL_TEXT).toContain('/portal');
     // ELSEWHERE is the half that was unpinned: a "Cancel plan" button added to this panel kept every
     // assertion here green, and an in-app cancellation control is a cancellation flow this product
@@ -369,7 +369,7 @@ describe('the plan status line', () => {
   it('renders the stored instant through the dashboard’s own formatter', () => {
     // The column's shape is "YYYY-MM-DD HH:MM:SS" UTC, with no 'T' and no 'Z' — not something
     // every engine parses the same way unlabelled. Rendering the date is fine; DECIDING from it is
-    // what AD-13 forbids, which is why `planActive` arrives already answered.
+    // what the one-expression rule forbids, which is why `planActive` arrives already answered.
     expect(PANEL).toContain('formatTimestamp(settings.billedUntil)');
   });
 });
@@ -550,7 +550,8 @@ describe('the Manage plan control', () => {
     expect(PANEL.match(/setConfigLoaded\(true\)/g)).toHaveLength(2);
     expect(PANEL).toMatch(/\.catch\([\s\S]{0,160}setConfigLoaded\(true\)/);
     // No retry, no spinner, no second control: her booking page, her clients and the rest of her
-    // dashboard are unaffected, which is the whole of NFR-2's claim.
+    // dashboard are unaffected, which is the whole of the claim: nothing on the dashboard depends
+    // on the paid surface being up.
     expect(PANEL_TEXT).not.toMatch(/\bretry\b/i);
     expect(PANEL).not.toContain('setInterval');
   });

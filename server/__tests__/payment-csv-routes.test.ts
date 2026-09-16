@@ -216,7 +216,7 @@ describe('POST /:slug/admin/payments/csv/preview', () => {
 });
 
 /**
- * Story 2.5's mapped-CSV sibling of `payments/venmo/import`. Same security shape: the body carries
+ * The mapped-CSV sibling of `payments/venmo/import`. Same security shape: the body carries
  * only WHICH row goes on which household — `applyMapping` and `matchCsvPayments` both run again
  * from the raw file, so an `accountId` is honoured only when the fresh match independently agrees.
  */

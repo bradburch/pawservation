@@ -9,7 +9,7 @@
  *
  * So: comments always go, and by default so do string and template literals. A literal is not
  * executable structure either — `const gate = 'premium?.origin'` satisfies a naive `toContain`
- * exactly as a comment does — and dropping them is also what keeps the AD-13 scanner from
+ * exactly as a comment does — and dropping them is also what keeps the one-expression scanner from
  * reporting the SQL in `repo.ts` and the `UPDATE Tenants SET PremiumUntil = …` fixtures in this
  * suite, both of which name the columns it hunts for.
  *
@@ -24,9 +24,9 @@
  * was — get that wrong in the one direction nobody notices. `adminRoutes`' own
  * `.use('/:slug/admin/*', adminAuth)` read as the start of a block comment and swallowed 880 lines
  * of `server/routes/admin.ts`, the whole settings handler included, so every pin over that file and
- * the AD-13 scanner itself were green over text they had never looked at. `server/routes/owner.ts`,
- * `server/lib/middleware.ts`, `server/index.ts` and `server/routes/bookings.ts` each lost a span to
- * a quoted route pattern of their own.
+ * the one-expression scanner itself were green over text they had never looked at.
+ * `server/routes/owner.ts`, `server/lib/middleware.ts`, `server/index.ts` and
+ * `server/routes/bookings.ts` each lost a span to a quoted route pattern of their own.
  *
  * Still deliberately not a TypeScript parser, and two limits are worth knowing rather than
  * discovering:

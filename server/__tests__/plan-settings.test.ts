@@ -7,7 +7,7 @@ import { MAX_LIVE_TOKENS_PER_USER } from '../routes/tenant-tokens';
 import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 /**
- * PLAN STATE ON THE READ THE DASHBOARD ALREADY MAKES (Story 10.3).
+ * PLAN STATE ON THE READ THE DASHBOARD ALREADY MAKES.
  *
  * Six fields on `GET /:slug/admin/settings` and no new route: this one is already authenticated,
  * already tenant-scoped by the slug in its path, and already fetched once per dashboard load. A
@@ -15,7 +15,7 @@ import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
  *
  * Every claim below is about the PAYLOAD, never about the derivation: `planActive` is
  * `isSoloActive`'s answer and this file asserts the route publishes what that helper says, not
- * that some comparison came out a particular way. AD-13's scanner walks this file too.
+ * that some comparison came out a particular way. The one-expression scanner walks this file too.
  */
 
 type PlanFields = {

@@ -8,8 +8,8 @@ import {
 } from '../db/repo';
 import { createTestEnv, seedPets } from './helpers';
 
-// Seeded clean-slate tenant (sql/seed.sql): customers but NO bookings, same reason Story 2.1/2.2's
-// tests use it — household assertions can be exact.
+// Seeded clean-slate tenant (sql/seed.sql): customers but NO bookings, the same reason the
+// household-balance tests use it — household assertions can be exact.
 const TENANT_C = 'tnt_pawsandrelax';
 
 /** `estCost` and `prepay`'s `amount` are CENTS (0015) — both go straight into a money column. */
@@ -39,7 +39,7 @@ const prepay = (env: Env, tenantId: string, accountId: string, amount: number) =
   });
 
 /**
- * Story 2.3 — PREPAYMENT READS AS CREDIT, NOT AS AN ERROR (FR-7b). Stories 2.1/2.2 already gave a
+ * PREPAYMENT READS AS CREDIT, NOT AS AN ERROR. The household-balance tests already give a
  * prepaying household a negative balance; this file locks in the two guarantees that make that
  * number safe to act on rather than a coincidence of the current test data:
  *
@@ -50,10 +50,10 @@ const prepay = (env: Env, tenantId: string, accountId: string, amount: number) =
  *    Payments/BookingRequests tables on every call.
  *
  * No production code changes accompany this file: it exists to pin down, with a name on it, the
- * specific scenarios FR-7b describes that Stories 2.1/2.2 exercised only in passing (a single
+ * specific prepayment scenarios the household-balance tests exercised only in passing (a single
  * "prepaid, no booking yet" snapshot, never a payment-then-booking sequence).
  */
-describe('household credit (Story 2.3)', () => {
+describe('household credit', () => {
   it('counts a payment recorded before its booking exists exactly as it would after', async () => {
     const { env, raw } = createTestEnv();
     const ana = await insertInvitedCustomer(
