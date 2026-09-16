@@ -557,24 +557,20 @@ the top-level window to the `url` it gets back — a `fetch` and never an anchor
 carries no `Authorization` header.
 
 **Sync with Stripe** stands beside Manage plan on exactly the same gate — `canManage`, and never
-`planCurrent`. It is for a row that has stopped matching the processor: a delivery lost between the
-processor and the billing endpoint above leaves `BilledUntil` behind while the processor holds a live,
-paid subscription, so the row reads "lapsed", the paid surface refuses her a second subscription
-because the first is still open, and the repair is to ask the processor what it has. A lapsed row is
-the usual case, but a comped ex-subscriber — `planCurrent: true` — can be in the same state, and
-the route reads `planCurrent` for nothing; gating the button on it would hide the repair from one
-of the two sitters it exists for. The trade-off is a button a sitter with a healthy row also sees;
-the sentence beneath it says when to press it, and a needless press changes nothing. It `POST`s to
-`<premium.origin>/premium/billing/<slug>/resync` with the admin Bearer and no body, and what it
-renders is that route's own answer: `{ applied: true }` reads "Synced with Stripe."; any other 2xx
-reads "Already up to date." — the billing endpoint declining under one of its own ordering rules is
-not a failure, and a sync that said "done" for a row that did not move would teach her to press it
-twice; a 409's sentence is shown verbatim, because those are written for her; a 503 reads "try
-again", because every 503 that route answers is about its own deployment and not about her plan;
-and a 401 or 403 from that origin is never treated as this dashboard's session expiring. On any
-2xx the dashboard re-reads its own settings payload — the same mid-session re-read the calendar
-popup uses, which merges the plan fields into both the state and the saved snapshot — so the status
-line catches up without a reload.
+`planCurrent`. It is for a row that has stopped matching the processor — a lost renewal delivery
+leaves `BilledUntil` behind while the processor holds a live, paid subscription, so the row reads
+"lapsed" — and the repair is to ask the processor what it has. A lapsed row is the usual case, but
+a comped ex-subscriber — `planCurrent: true` — can be in the same state; gating the button on
+`planCurrent` would hide the repair from one of the two sitters it exists for. The trade-off is a
+button a sitter with a healthy row also sees; the sentence beneath it says when to press it, and a
+needless press changes nothing. It `POST`s the third path template on the published origin,
+`<premium.origin>/premium/billing/<slug>/resync`, with the admin Bearer and no body, and holds no
+more of that route than its answer's shape: a 2xx `{ applied: true }` re-reads the plan fields —
+the same mid-session re-read the calendar popup uses, which merges them into both the state and
+the saved snapshot — and then renders "Synced with Stripe.", which says the processor's latest
+payment was copied to this page and not that the date moved; a 409 shows that route's own
+sentence; anything else — any other 2xx, or any other status — shows "Could not sync with
+Stripe — try again." as this dashboard's own sentence, and never as a sign-out.
 
 **The two controls are not one flag negated**, so which of them a sitter sees falls out of the
 pair of questions they ask:

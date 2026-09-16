@@ -584,11 +584,11 @@ describe('what it refuses on its shape', () => {
   });
 
   it('holds a resync to the same future-skew bound, exempt from staleness or not', async () => {
-    // The one rule a resync is NOT exempt from on the time axis. Its stamp may be as old as a
-    // period start; it may not be newer than this worker's clock plus five minutes, because a
-    // stamp accepted from the future is written to the high-water mark and freezes the row against
-    // every real event after it — the exact failure the skew bound exists for, and one the
-    // staleness exemption would otherwise have re-opened for the event most likely to be
+    // The one rule a resync is NOT exempt from on the time axis. Its stamp may be as old as the
+    // payment it is derived from; it may not be newer than this worker's clock plus five minutes,
+    // because a stamp accepted from the future is written to the high-water mark and freezes the
+    // row against every real event after it — the exact failure the skew bound exists for, and one
+    // the staleness exemption would otherwise have re-opened for the event most likely to be
     // hand-built.
     const { env } = createTestEnv();
     const res = await post(
@@ -914,11 +914,11 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
   });
 
   it('applies when OLDER than the last webhook — the freeze it exists to repair', async () => {
-    // A resync's `eventCreated` is the subscription's period start, never a wall clock, so it is
-    // routinely older than the last webhook applied — and a frozen row is exactly a row whose stamp
-    // is newer than that. This case USED TO pin the opposite ("stale-checked by the same rule, with
-    // no special case"), which refused the resync by the freeze it was sent to repair; that pin is
-    // replaced, deliberately, by this one.
+    // A resync's `eventCreated` is a stamp the caller derives from a payment, never a wall clock,
+    // so it is routinely older than the last webhook applied — and a frozen row is exactly a row
+    // whose stamp is newer than that. This case USED TO pin the opposite ("stale-checked by the
+    // same rule, with no special case"), which refused the resync by the freeze it was sent to
+    // repair; that pin is replaced, deliberately, by this one.
     const { env } = createTestEnv();
     await post(withSecrets(env), 'sunny-paws', event({ eventCreated: AT_SECONDS + 3600 }));
     const stampBefore = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.LastBillingEventAt;

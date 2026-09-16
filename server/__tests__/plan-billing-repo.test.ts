@@ -359,8 +359,9 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
     expect(t.Plan).toBe('solo');
     expect(t.BilledUntil).toBe('2026-12-08 00:00:00');
     // …and the stamp is MONOTONIC: it is the high-water mark of applied stamps, not the last one
-    // written. Rewinding it to the period start would re-open the door to every ordinary webhook
-    // redelivered from between the two, and the stale rule is the only thing that closes it.
+    // written. Rewinding it to the resync's payment-derived stamp would re-open the door to every
+    // ordinary webhook redelivered from between the two, and the stale rule is the only thing that
+    // closes it.
     expect(t.LastBillingEventAt).toBe(AT.later);
     // Proof of that: an ORDINARY event from between the two is still stale.
     expect(
