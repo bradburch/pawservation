@@ -592,7 +592,14 @@ describe('the Sync with Stripe control', () => {
     expect(hintAt).toBeGreaterThan(start);
     expect(hintAt).toBeLessThan(end);
     expect(FLAT.slice(start, buttonAt)).not.toContain('planCurrent');
-    expect(FLAT_TEXT).toContain("{busy === 'sync' ? 'Syncing…' : 'Sync with Stripe'}");
+    // The whole opening tag, not the label alone: every button in this panel is
+    // `disabled={busy !== null}`, so a sync in flight disables Subscribe and Manage plan and a
+    // checkout or portal call in flight disables this one. Dropping the attribute leaves the guard
+    // below making a second press a no-op — a button that looks live and is not.
+    expect(FLAT_TEXT).toContain(
+      '<button type="button" disabled={busy !== null} onClick={() => void syncWithStripe()}> ' +
+        "{busy === 'sync' ? 'Syncing…' : 'Sync with Stripe'}",
+    );
     // The handler's own guard, the third of three: a press with no origin, or with another call
     // in flight, does nothing — exactly as the other two.
     expect(PANEL.match(/if \(busy \|\| !origin\) return;/g)).toHaveLength(3);
@@ -668,6 +675,28 @@ describe('the Sync with Stripe control', () => {
     expect(PANEL_TEXT).toMatch(/try again\./);
     expect(PANEL).not.toContain('isAuthExpired');
     expect(PANEL).not.toContain('handleError');
+  });
+
+  it('clears both sentences and takes busy on press, and releases busy however the call ends', () => {
+    // THE HANDLER'S BOOKKEEPING, pinned as two ordered strings because each line of it survived
+    // deletion under every other case here. The press preamble first: `setError('')` and
+    // `setNotice('')` together, because the panel now has two sentences and a press must displace
+    // both — a second press answering 409 beneath a still-standing "Synced with Stripe." is two
+    // sentences that contradict each other, and a stale error beside a fresh notice is the same
+    // fault the other way. Then `setBusy('sync')`, the key by its literal, because it is what
+    // disables every button in the panel for the duration and turns this one's label.
+    expect(FLAT_TEXT).toContain(
+      "const syncWithStripe = async () => { if (busy || !origin) return; setError(''); " +
+        "setNotice(''); setBusy('sync'); try {",
+    );
+    // And the release, UNCONDITIONAL and in a `finally`. The other two handlers keep `busy` set on
+    // the success path because they are navigating away; this one navigates nowhere, so `busy`
+    // must come back on every exit or one press leaves the panel reading "Syncing…" with every
+    // button disabled for the rest of the session. Anchored on the catch so it is THIS handler's
+    // `finally` and not the checkout's or the portal's `if (!navigated)` shape.
+    expect(FLAT).toContain(
+      'setError(e instanceof ApiError ? e.message : SYNC_FAILED); } finally { setBusy(null); }',
+    );
   });
 
   it('states no price, no period and no refund beside the control', () => {
