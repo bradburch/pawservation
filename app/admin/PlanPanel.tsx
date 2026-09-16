@@ -86,20 +86,17 @@ const CHECKOUT_FAILED = 'Could not start checkout — try again.';
 const PORTAL_FAILED = 'Could not open plan management — try again.';
 
 /** The third of the family, for the sync. Same rule — the ONE message this panel will show for a
- *  failure it does not recognise — and one more reason it is the only sentence for a 503 here: a
- *  503 from the other worker is ITS deployment (a var unset, the processor unreachable, a counter
- *  it cannot read), and its sentence about that is not one to put in front of her as if it were
- *  about her plan. "Try again" is true of all of them. */
+ *  failure it does not recognise — and here that is every failure but one: the sync relays the
+ *  server's sentence for a 409 alone, and this is the sentence for everything else, a 2xx the
+ *  endpoint declined included. "Try again" is true of all of them. */
 const SYNC_FAILED = 'Could not sync with Stripe — try again.';
 
-/** The two answers a sync can come back with, in the sitter's terms. `applied: true` is the row
- *  having moved; anything else 2xx is the receiver's own ordering rule declining to move it, which
- *  is not a failure and must not read as one — a sync that said "done" for a row that did not move
- *  would train her to press it twice, and one rendered as an error for a row already right would
- *  send her to us for nothing. Neither names a date, a plan or a figure: the status line above is
- *  re-read and says those. */
+/** The one success sentence a sync has, in the sitter's terms. It says the processor's latest
+ *  payment was copied to this page and the page re-read — and NOT that the date moved: the
+ *  endpoint answers `applied: true` on identical values, so a press on a row that was already
+ *  right reads "Synced" as well, and the status line above, freshly re-read, is what says the
+ *  date. Names no date, no plan and no figure for that reason. */
 const SYNCED = 'Synced with Stripe.';
-const ALREADY_SYNCED = 'Already up to date.';
 
 /** Beside Sync with Stripe: when to press it and what it does, and nothing about how. Modest on
  *  purpose — a sitter cannot see that her row has stopped matching what the processor holds, so
@@ -237,13 +234,16 @@ export function PlanPanel({
    * The dashboard's own mid-session re-read of the settings payload — the one the calendar popup
    * already uses, which merges the plan fields into both the state and the saved snapshot — handed
    * in rather than rebuilt here, because the plan fields on `settings` above are read-only and the
-   * panel holds no way to refresh them. Called once, after a sync the other worker answered 2xx,
-   * so the status line says what the row now says instead of "lapsed" for the rest of the session.
+   * panel holds no way to refresh them. Called once, after a sync the other worker answered
+   * `applied: true`, and AWAITED before the success sentence renders and before `busy` is released,
+   * so the status line has had its chance to say what the row now says before "Synced" appears
+   * above it — never "Synced" over a line still reading "lapsed".
    *
    * IT IS THE DASHBOARD'S REQUEST TO ITS OWN API, so its failures are the dashboard's to route —
    * through `handle`, which may rightly sign her out on a 401 from THIS product — and never this
-   * panel's. It is called and not awaited, so nothing it does can land in the `catch` below and be
-   * reported beside the button as a sync that failed.
+   * panel's. The await sits in its own swallowing `try`, so nothing it does can land in the
+   * `catch` below and be reported beside the button as a sync that failed: the re-read reports
+   * through the dashboard's own banner, and the sync itself did succeed.
    */
   onPlanChanged: () => Promise<void>;
   /**
@@ -425,24 +425,31 @@ export function PlanPanel({
    * the answer is a JSON verdict, not a URL, so there is no `navigated` latch, no `openAtTopLevel`
    * and no scheme check to reuse.
    *
-   * THE STATUS MAP, and each line's reason:
-   *   - 401/403 → a plain Error with this panel's sentence, never an ApiError, for the reason the
-   *     props docblock gives: a refusal from another origin must not reach `isAuthExpired`.
-   *   - 503 → the SAME plain Error. The other worker's 503s are its own deployment — a var unset,
-   *     the processor unreachable, a counter it cannot read — and its sentence says so in words
-   *     about a deployment, which in front of her would read as words about her plan. "Try again"
-   *     is true of all of them.
-   *   - anything else non-2xx → an ApiError carrying the server's own words. Its 409s are written
-   *     for her ("No payment found at Stripe for this business.") and are worth more than ours; a
-   *     429's "try again in a few minutes" is the one refusal genuinely worth a wait.
-   *   - 2xx → `applied: true` is the row having moved; anything else is the receiver declining
-   *     under one of its own ordering rules, which is "already up to date" and not a failure.
+   * THE STATUS MAP, and each line's reason. The contract this panel holds is a path template, a
+   * Bearer, `{ applied }` on a 2xx and `{ error }` otherwise — and it relays exactly ONE status's
+   * `error`:
+   *   - 409 → an ApiError carrying the server's own words, which are written for her and are
+   *     worth more than ours. Written as the literal `409` so that no other status can be relayed
+   *     by widening this line by accident.
+   *   - every other non-2xx → a plain Error with this panel's sentence, never an ApiError. A 401 or
+   *     403 from another origin judging its own credential must not reach `isAuthExpired` and sign
+   *     her out of this dashboard (the props docblock); a 503 is that deployment's sentence and not
+   *     one about her plan; a 404 is an origin that does not serve the route yet; a 429 from a
+   *     shared rate bucket may carry a machine code rather than a sentence; a 500 carries nothing
+   *     she can act on. "Try again" is true of all of them. One trade-off is deliberate: a 401 or
+   *     403 whose REAL cause is her own dashboard session having expired also reads "try again"
+   *     here — her next ordinary dashboard call is what signs her out, and this button must never
+   *     be the one that does, because it cannot tell the two causes apart.
+   *   - 2xx with `applied: true` → the endpoint took the payment the caller copied from the
+   *     processor, whether or not the date changed. The re-read, then "Synced with Stripe."
+   *   - 2xx with anything else → the endpoint DECLINED the copy. A failed sync: the panel's own
+   *     sentence, no notice, and no re-read, because nothing changed to re-read. `!== true`, not
+   *     falsiness, so a stale bundle/API pair lands here and not in a false "Synced".
    *
-   * Then the dashboard's own re-read, so the status line catches up — fire-and-forget, on the
-   * success path only, and after the notice: see the prop's docblock for why a re-read failure may
-   * never be reported here as a sync failure. Busy is released before that re-read completes; a
-   * second press in the gap is a second resync, which the route answers identically and the
-   * endpoint applies as a same-second event — harmless, rate-limited, and not worth a second latch.
+   * The re-read is AWAITED, in its own swallowing `try`, before the notice: `busy` is held until
+   * the status line has had its chance to catch up, so "Synced" never renders above a line still
+   * saying "lapsed", and a re-read failure — the dashboard's own, reported through its own banner —
+   * cannot reach this handler's `catch` and be rendered as a sync that failed.
    */
   const syncWithStripe = async () => {
     if (busy || !origin) return;
@@ -456,13 +463,17 @@ export function PlanPanel({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        if (res.status === 401 || res.status === 403) throw new Error(SYNC_FAILED);
-        if (res.status === 503) throw new Error(SYNC_FAILED);
-        throw new ApiError(res.status, body.error ?? SYNC_FAILED);
+        if (res.status === 409) throw new ApiError(409, body.error ?? SYNC_FAILED);
+        throw new Error(SYNC_FAILED);
       }
       const { applied } = (await res.json()) as { applied?: unknown };
-      setNotice(applied === true ? SYNCED : ALREADY_SYNCED);
-      void onPlanChanged();
+      if (applied !== true) throw new Error(SYNC_FAILED);
+      try {
+        await onPlanChanged();
+      } catch {
+        // The re-read reports through the dashboard's own banner; the sync itself succeeded.
+      }
+      setNotice(SYNCED);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : SYNC_FAILED);
     } finally {
@@ -619,7 +630,11 @@ export function PlanPanel({
             : PORTAL_UNAVAILABLE}
         </p>
       )}
-      {notice && <p className="pb-ok">{notice}</p>}
+      {notice && (
+        <p role="status" className="pb-ok">
+          {notice}
+        </p>
+      )}
       {error && <p className="pb-error">{error}</p>}
     </>
   );
