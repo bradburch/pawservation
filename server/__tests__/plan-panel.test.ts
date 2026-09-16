@@ -218,13 +218,18 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     expect(PANEL).not.toContain('e instanceof Error ? e.message');
   });
 
-  it('checks res.ok on BOTH calls, and throws on a non-2xx rather than reading the body', () => {
+  it('checks res.ok on all THREE calls, and throws on a non-2xx rather than reading the body', () => {
     // DELETING THE WHOLE `if (!res.ok)` BLOCK was green on either path. Three things went with it:
     // the server's own sentence was never shown, and a non-2xx body that happened to carry an https
     // `url` was navigated to. `res.ok` and `res.status` appeared nowhere in this file.
-    expect(PANEL.match(/if \(!res\.ok\)/g)).toHaveLength(2);
-    expect(PANEL.match(/throw new ApiError\(res\.status,/g)).toHaveLength(2);
-    expect(PANEL.match(/body\.error \?\?/g)).toHaveLength(2);
+    //
+    // THREE: the checkout, the portal, and the sync — `syncWithStripe` reuses this machinery and is
+    // the third occurrence of each. The three are NAMED, as path templates on the published origin,
+    // by the "makes exactly three calls" case below; an integer here without that name beside it is
+    // what let the portal's addition break a green suite.
+    expect(PANEL.match(/if \(!res\.ok\)/g)).toHaveLength(3);
+    expect(PANEL.match(/throw new ApiError\(res\.status,/g)).toHaveLength(3);
+    expect(PANEL.match(/body\.error \?\?/g)).toHaveLength(3);
   });
 
   it('never lets a CROSS-ORIGIN 401 or 403 sign her out of this dashboard', () => {
@@ -234,8 +239,10 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     // know, or a refusal of its own answers 401/403 with the sitter's dashboard session perfectly
     // good. So those two throw a plain Error carrying this panel's copy, which cannot reach
     // `isAuthExpired` at all — and the panel therefore holds no sign-out path and takes no
-    // `handleError`. BOTH paths, counted, because one of them missing is the whole bug.
-    expect(PANEL.match(/res\.status === 401 \|\| res\.status === 403/g)).toHaveLength(2);
+    // `handleError`. ALL THREE paths, counted — the checkout, the portal and the sync
+    // (`syncWithStripe`, the third occurrence; the three are named by the "makes exactly three
+    // calls" case below) — because one of them missing is the whole bug.
+    expect(PANEL.match(/res\.status === 401 \|\| res\.status === 403/g)).toHaveLength(3);
     expect(PANEL.match(/throw new Error\(CHECKOUT_FAILED\)/g)).toHaveLength(2);
     expect(PANEL.match(/throw new Error\(PORTAL_FAILED\)/g)).toHaveLength(2);
     expect(PANEL).not.toContain('isAuthExpired');
@@ -553,6 +560,141 @@ describe('the Manage plan control', () => {
     // dashboard are unaffected, which is the whole of NFR-2's claim.
     expect(PANEL_TEXT).not.toMatch(/\bretry\b/i);
     expect(PANEL).not.toContain('setInterval');
+  });
+});
+describe('the Sync with Stripe control', () => {
+  it('makes exactly three calls to the published origin, and these are their paths', () => {
+    // THE NAME EVERY COUNT IN THIS FILE REFERS TO. Four pins above count the checkout/portal
+    // machinery — `if (!res.ok)`, `throw new ApiError(res.status,`, `body.error ??`, the 401/403
+    // refusal — and each is 3 because a third call reuses it. An integer without a name beside it
+    // is what let the portal's addition break a green suite: this case is the name. A fourth
+    // template, or a second origin, fails here before it fails anywhere else.
+    for (const path of ['checkout', 'portal', 'resync']) {
+      expect(PANEL_TEXT).toContain(`\`\${origin}/premium/billing/\${session.slug}/${path}\``);
+    }
+    expect(PANEL_TEXT.match(/\/premium\/billing\//g)).toHaveLength(3);
+  });
+
+  it('renders beside Manage plan, on canManage and never on planCurrent', () => {
+    // The same gate as Manage plan, and INSIDE its block — not a second `{canManage` block and not a
+    // narrower one. Not `planCurrent === false`, though a lapsed row is the usual case: a comped
+    // ex-subscriber is `planCurrent: true` and can hold a row that stopped matching the processor
+    // too, and the route it presses reads `planCurrent` for nothing. The cost is a button a healthy
+    // row sees as well; the hint beneath says when to press it. Containment by brace matching, the
+    // way the assurance line is pinned, because position in the file is not the claim.
+    const manage = blocksOpeningWith('{canManage');
+    expect(manage).toHaveLength(1);
+    const [start, end] = manage[0];
+    const buttonAt = FLAT.indexOf('void syncWithStripe()');
+    expect(buttonAt).toBeGreaterThan(start);
+    expect(buttonAt).toBeLessThan(end);
+    const hintAt = FLAT.indexOf('{SYNC_HINT}');
+    expect(hintAt).toBeGreaterThan(start);
+    expect(hintAt).toBeLessThan(end);
+    expect(FLAT.slice(start, buttonAt)).not.toContain('planCurrent');
+    expect(FLAT_TEXT).toContain("{busy === 'sync' ? 'Syncing…' : 'Sync with Stripe'}");
+    // The handler's own guard, the third of three: a press with no origin, or with another call
+    // in flight, does nothing — exactly as the other two.
+    expect(PANEL.match(/if \(busy \|\| !origin\) return;/g)).toHaveLength(3);
+  });
+
+  it('syncs with a POST carrying the admin Bearer, no body, and no Content-Type', () => {
+    // Anchored on the `/resync` template and closed on `});`, the way the portal pin is, so it is
+    // THIS call's init object being read and a `body:` line cannot hide behind the headers. The
+    // route reads no body — it resolves everything from the slug and the credential.
+    expect(PANEL_TEXT).toMatch(
+      /\/resync`, \{\s*method: 'POST',\s*headers: \{ Authorization: `Bearer \$\{session\.token\}` \},\s*\}\);/,
+    );
+    // Still ONE in the file, and it is still the checkout's.
+    expect(PANEL_TEXT.match(/'Content-Type'/g)).toHaveLength(1);
+    expect(PANEL_TEXT).not.toMatch(/<a\s[^>]*href/);
+    // No navigation: the answer is a verdict, not a URL. The navigation machinery — the `navigated`
+    // latch, the scheme check, `openAtTopLevel` — is counted at TWO elsewhere in this file, and a
+    // sync must not become a third; those pins are the assertion, and this comment is the reason.
+  });
+
+  it('renders applied:true as Synced and anything else as Already up to date, then re-reads settings', () => {
+    // `applied` is the route's own derivation from the billing endpoint's answer. TRUE is the row
+    // having moved; anything else 2xx is the receiver declining under one of its own ordering
+    // rules, which is not a failure — a sync rendered as an error for a row already right sends her
+    // to us for nothing, and one that said "done" for a row that did not move trains her to press
+    // it twice. `=== true`, not truthiness: a stale bundle/API pair shows the honest sentence.
+    expect(FLAT).toContain('setNotice(applied === true ? SYNCED : ALREADY_SYNCED)');
+    expect(PANEL_TEXT).toMatch(/Synced with Stripe\./);
+    expect(PANEL_TEXT).toMatch(/Already up to date\./);
+    // RENDERED, in the dashboard's own success class, and not left as a declared constant — the
+    // mutation this file has lost twice.
+    expect(FLAT).toContain('{notice && <p className="">{notice}</p>}');
+    expect(PANEL_TEXT).toContain('<p className="pb-ok">{notice}</p>');
+    // THEN THE RE-READ, on the success path only and after the notice. The plan fields on
+    // `settings` are read-only and the panel holds no way to refresh them; without this the status
+    // line says "lapsed" for the rest of the session after the one press that fixed it. `void`,
+    // never awaited inside the try: it is the dashboard's request to its OWN API, routed through
+    // the dashboard's own `run`, and a failure there is a different fact with a different owner —
+    // it must never be reported beside this button as a sync that failed.
+    expect(PANEL.match(/void onPlanChanged\(\)/g)).toHaveLength(1);
+    expect(FLAT.indexOf('void onPlanChanged()')).toBeGreaterThan(FLAT.indexOf('setNotice(applied'));
+    expect(PANEL).not.toContain('await onPlanChanged()');
+    // And it IS the dashboard's mid-session re-read — the one the calendar popup uses, which merges
+    // the plan fields into both the state and the saved snapshot — handed down through the section
+    // that renders the panel, not a second fetch of the same payload.
+    expect(BUSINESS).toMatch(/<PlanPanel[^>]*onPlanChanged=\{onPlanChanged\}/);
+    expect(FLAT_APP).toMatch(/<BusinessSection [^>]*onPlanChanged=\{refreshCalendarStatus\}/);
+  });
+
+  it('shows a 409’s own sentence, maps a 503 to try-again, and never lets a cross-origin 401/403 sign her out', () => {
+    // THE THREE THROWS AS ONE ORDERED STRING, because the order is the behaviour. 401/403 first: a
+    // refusal from another origin judging its own credential must throw a plain Error, which cannot
+    // reach `isAuthExpired` and sign her out of this dashboard — the hazard the checkout and portal
+    // paths already document, and the counted pins above (now three) hold. 503 second, the SAME
+    // plain Error: every 503 that route answers is about ITS deployment — a var unset, the processor
+    // unreachable, a counter it cannot read — and its sentence about that, in front of a sitter who
+    // pressed "Sync with Stripe", reads as a sentence about her plan. "Try again" is true of all of
+    // them. Everything else third, as an ApiError carrying the server's own words: its 409s are
+    // written for her ("No payment found at Stripe for this business.") and are worth more than
+    // ours. Swap the second and third and a deployment sentence is relayed; drop the first and she
+    // is signed out.
+    expect(FLAT).toContain(
+      'if (res.status === 401 || res.status === 403) throw new Error(SYNC_FAILED); ' +
+        'if (res.status === 503) throw new Error(SYNC_FAILED); ' +
+        'throw new ApiError(res.status, body.error ?? SYNC_FAILED);',
+    );
+    expect(PANEL.match(/throw new Error\(SYNC_FAILED\)/g)).toHaveLength(2);
+    // ONE 503 branch in the file, and it is the sync's. The checkout and portal paths relay a 503's
+    // sentence today; changing that is a change to those paths, not a side effect of this one.
+    expect(PANEL.match(/res\.status === 503/g)).toHaveLength(1);
+    // And the catch renders only an ApiError's message, as the other two do — never the browser's.
+    expect(PANEL).toContain('e instanceof ApiError ? e.message : SYNC_FAILED');
+    expect(PANEL_TEXT).toMatch(/try again\./);
+    expect(PANEL).not.toContain('isAuthExpired');
+    expect(PANEL).not.toContain('handleError');
+  });
+
+  it('states no price, no period and no refund beside the control', () => {
+    // The whole-file pins above already cover every literal in the panel; this one reads the FOUR
+    // constants by name, so a figure or a term that joined one of them is named in the failure
+    // rather than found by a regex over five hundred lines. Each negative rides on a positive: an
+    // extraction that matched nothing passes every `not.toMatch`, and the positive is what makes
+    // them bite. "period" is banned outright — not only "billing period" — because a sentence about
+    // syncing is one word away from promising when the next one starts.
+    for (const name of ['SYNC_FAILED', 'SYNCED', 'ALREADY_SYNCED', 'SYNC_HINT']) {
+      const sentence = new RegExp(`const ${name} =([\\s\\S]*?);`).exec(PANEL_TEXT)?.[1] ?? '';
+      expect(sentence, name).toMatch(/[a-z]/);
+      expect(sentence, name).not.toMatch(/\d/);
+      expect(sentence, name).not.toMatch(/\$/);
+      expect(sentence, name).not.toMatch(/period/i);
+      expect(sentence, name).not.toMatch(/refund|pro-?rat|notice period/i);
+      expect(sentence, name).not.toMatch(/Cancel (?:plan|subscription)/i);
+      expect(sentence, name).not.toMatch(/\bretry\b/i);
+    }
+    // The hint says WHEN and WHAT, and names the processor so a sitter knows whose answer she is
+    // asking for — and nothing about how, and no date, plan or figure: the status line above is
+    // re-read and says those.
+    const hint = /const SYNC_HINT =([\s\S]*?);/.exec(PANEL_TEXT)?.[1] ?? '';
+    expect(hint).toMatch(/looks wrong/);
+    expect(hint).toMatch(/Stripe/);
+    expect(PANEL_TEXT).toContain('Sync with Stripe');
+    expect(FLAT).toContain('{SYNC_HINT}');
   });
 });
 
