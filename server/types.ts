@@ -393,7 +393,7 @@ export type HouseholdBalanceRow = {
 };
 
 /**
- * The drill-down behind one household balance (Story 2.4, FR-7c) — `getHouseholdDetail` in
+ * The drill-down behind one household balance — `getHouseholdDetail` in
  * `server/db/repo.ts`. `expectedTotalCents`/`paidTotalCents`/`balanceCents` are
  * `getHouseholdBalances`'s own numbers for this household, passed through rather than recomputed,
  * so the detail can never disagree with the balance it sits beneath.
