@@ -22,8 +22,9 @@ const ROOT = join(import.meta.dirname, '..', '..');
 const MIGRATION = readFileSync(join(ROOT, 'migrations', '0018_plan_comp.sql'), 'utf8');
 const SCHEMA = readFileSync(join(ROOT, 'sql', 'schema.sql'), 'utf8');
 
-/** Named through a variable rather than spelled beside an operator, so the AD-13 scanner — which
- *  walks this file too — never reports its own fixture. */
+/** Named through a variable rather than spelled beside an operator, so the one-expression
+ *  scanner (premium-entitlement.test.ts) — which walks this file too — never reports its own
+ *  fixture. */
 const NEW_COLUMN = 'CompedUntil';
 
 const START = '-- >>> 0018 plan comp';

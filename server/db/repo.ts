@@ -1431,8 +1431,8 @@ export async function insertAccountPayment(
  * graph `buildAccounts` derives for invoice numbering and `getHouseholdBalances` derives for money,
  * built here with NO activity filter. `getHouseholdBalances` deliberately drops a household with no
  * bookings and no payments (a statement for a client who has never booked or paid is noise on the
- * Earnings page) — but the Venmo importer (Story 2.5) needs to resolve a client's FIRST-EVER payment
- * to their household, before any activity exists to filter on. An owner with no live pet holds no
+ * Earnings page) — but the Venmo importer needs to resolve a client's FIRST-EVER payment to their
+ * household, before any activity exists to filter on. An owner with no live pet holds no
  * edge in the graph at all and is simply absent from the returned map — they belong to no household,
  * and the importer surfaces that rather than guessing one.
  */
@@ -2703,9 +2703,9 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
 }
 
 /**
- * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — every booking, its cost, its
- * extra charges, and every payment, so a sitter questioning a number can settle a dispute or check
- * a cancellation fee without leaving it.
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE — every booking, its cost, its extra charges, and
+ * every payment, so a sitter questioning a number can settle a dispute or check a cancellation fee
+ * without leaving it.
  *
  * Finds the household by asking `getHouseholdBalances` for the whole tenant and matching by
  * MEMBERSHIP (`petIds.includes(accountId)`), the same resolution every other household read uses —
@@ -5770,9 +5770,9 @@ export async function listBookingPetsForUser(
  * request from her, so a lapse that made her dashboard read-only and left this pushing events to
  * Google every fifteen minutes would be a lapse in name only. Applied IN CODE over the rows the
  * SQL returns, not in the `WHERE`: the query compares no date, because `isPlanCurrent`
- * (server/lib/premium.ts) is the one expression allowed to (AD-13), and a second copy of the rule
- * in SQL is exactly what the scanner exists to refuse. Under the shipped default the flag is off
- * and the list is what it always was. */
+ * (server/lib/premium.ts) is the one expression allowed to, and a second copy of the rule in SQL
+ * is exactly what the one-expression scanner exists to refuse. Under the shipped default the flag
+ * is off and the list is what it always was. */
 export async function listConnectedCalendarTenants(
   db: D1Database,
   planEnforced: boolean,
@@ -5869,7 +5869,8 @@ export type SitterRosterRow = {
   BilledUntil: string | null;
   CompedUntil: string | null; // null = no basic comp
   /** The processor's customer id, verbatim, for the OWNER's link to the customer's page in the
-   *  Stripe Dashboard (FR-63's "see why", answered where the facts are). Owner console only. */
+   *  Stripe Dashboard — the owner can see WHY a business is on the plan it is, and the seeing
+   *  happens where the facts are. Owner console only. */
   StripeCustomerId: string | null;
   Clients: number; // COUNT(EndUsers), all-time
   Bookings: number; // confirmed, non-blocked, CreatedAt >= sinceDate
@@ -6056,7 +6057,7 @@ export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
  *
  * `PremiumUntil` IS NOT IN THIS STATEMENT AND MUST NEVER BE. It is the platform owner's manual
  * grant, written only by `applyOwnerSwitches`, and a comp surviving a renewal, a cancellation and
- * a redelivery is exactly what that separation buys (FR-63, spine AD-13). Neither is `DisabledAt`,
+ * a redelivery is exactly what that separation buys. Neither is `DisabledAt`,
  * in either direction: a disabled tenant is written like any other, because refusing her is the
  * route's job (`tenantMiddleware` answers 403 before the handler runs, and `isPremiumActive` is
  * already false while she is disabled) and because what she paid for is what re-enabling restores.
@@ -6067,15 +6068,14 @@ export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
  *   - `LastBillingEventAt <= ?` — an event created STRICTLY BEFORE the last one applied does
  *     nothing. Equality applies, deliberately: a processor emits several events for one action
  *     inside a single second, and a rule that refused the ties threw away the ones carrying a
- *     different payload. NFR-13 is bought by the SET semantics above instead — every column is
- *     assigned, none is extended, so the identical request twice leaves a byte-identical row while
- *     a genuinely different same-second event still lands. A `'resync'` IS EXEMPT from this rule,
- *     and only a resync: its stamp is one the caller derives from a payment, not a wall clock, and
- *     can be months older than the last webhook — and the frozen row it exists to repair is
- *     exactly the row whose stamp is newer. A `'checkout'` is NOT exempt — its stamp is the
- *     processor's own `created`, honest
- *     to order by, and exempting it would let a redelivered old checkout regress a row to the
- *     subscription a newer checkout had replaced.
+ *     different payload. Idempotence is bought by the SET semantics above instead — every column
+ *     is assigned, none is extended, so the identical request twice leaves a byte-identical row
+ *     while a genuinely different same-second event still lands. A `'resync'` IS EXEMPT from this
+ *     rule, and only a resync: its stamp is one the caller derives from a payment, not a wall
+ *     clock, and can be months older than the last webhook — and the frozen row it exists to
+ *     repair is exactly the row whose stamp is newer. A `'checkout'` is NOT exempt — its stamp is
+ *     the processor's own `created`, honest to order by, and exempting it would let a redelivered
+ *     old checkout regress a row to the subscription a newer checkout had replaced.
  *   - the subscription clause — an event for a subscription that is not this tenant's current one
  *     does nothing, UNLESS it establishes (a completed checkout, or a resync), which is how a
  *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
@@ -6233,7 +6233,7 @@ export async function deleteTenantCompletely(db: D1Database, tenantId: string): 
  * Dog + cat pet-type REGISTRY rows are seeded (spec F1): without them a sitter who skips the
  * wizard could never take a booking.
  *
- * `compedUntil` IS THE TRIAL (Story 10.4). Written into `CompedUntil` on the same INSERT, so the
+ * `compedUntil` IS THE TRIAL. Written into `CompedUntil` on the same INSERT, so the
  * new business holds a current plan from her first login: without it, a tenant created after the
  * platform owner's comp sweep would be read-only the moment `PLAN_ENFORCE` is set. The caller
  * produces it with `trialCompUntil` (server/lib/premium.ts) — already in the stored shape, and the

@@ -40,7 +40,7 @@ async function book(
 }
 
 /**
- * Story 2.4 — BOOKING DETAIL BENEATH THE HOUSEHOLD BALANCE (FR-7c). `getHouseholdBalances` answers
+ * BOOKING DETAIL BENEATH THE HOUSEHOLD BALANCE. `getHouseholdBalances` answers
  * "does this household owe money"; this is the drill-down that answers "what is that number made
  * of" — every booking, its cost, its extra charges, and every payment, with a cancellation fee
  * staying on ITS booking and a household-level payment staying at the household rather than being

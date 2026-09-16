@@ -1675,9 +1675,9 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
 /**
  * "What do I owe?" — the one question `/bookings/mine` cannot answer, because a booking's own
  * `estCostCents` is what THAT stay costs, not what the household owes across every stay and payment.
- * The household balance already existed (`buildHouseholdBalances`, Story 2.1) and was reachable
- * only from the admin dashboard; this is the same computation, unchanged, reached from the other
- * side of the same number.
+ * The household balance already existed (`buildHouseholdBalances`) and was reachable only from
+ * the admin dashboard; this is the same computation, unchanged, reached from the other side of
+ * the same number.
  *
  * REUSES rather than reimplements: `getHouseholdDetailForOwner` resolves the caller's household by
  * the SAME union-find `buildAccounts` graph every household read uses and then reads it through

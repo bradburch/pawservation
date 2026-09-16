@@ -223,7 +223,7 @@ describe('tenant access tokens — authenticating', () => {
     const viaJwt = await settings(env, jwt);
     expect(viaToken.status).toBe(200);
     const body = (await viaToken.json()) as { adminEmail: string | null };
-    // IDENTICAL AUTHORITY, MINUS THE ONE FIELD POLICY WITHHOLDS. Story 10.3 publishes
+    // IDENTICAL AUTHORITY, MINUS THE ONE FIELD POLICY WITHHOLDS. The settings read publishes
     // `stripeCustomerId` on this payload for a password session only, and OMITS the key entirely
     // for a token — so the two bodies differ by exactly that key and must still match on every
     // other. Deleting it from the JWT body rather than loosening the comparison keeps this a

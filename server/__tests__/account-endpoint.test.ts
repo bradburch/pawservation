@@ -201,7 +201,7 @@ describe('GET /:slug/account', () => {
     expect(body.bookings[0]).not.toHaveProperty('outstanding');
   });
 
-  it('gives a prepaying caller a NEGATIVE balance, not an error (mirrors Story 2.3)', async () => {
+  it('gives a prepaying caller a NEGATIVE balance, not an error, like the admin side', async () => {
     const { env, raw } = createTestEnv();
     const ana = await insertInvitedCustomer(
       env.PAWSERVATION_DB,

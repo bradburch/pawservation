@@ -339,8 +339,8 @@ describe('a valid event records what the subscription paid for', () => {
     const after = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
     expect(after.PremiumUntil).toBe(before);
     // The plan lapsed and the comp did not — asserted as the two stored VALUES rather than as a
-    // comparison between the two columns, because `premium-entitlement.test.ts`'s AD-13 scanner
-    // refuses that comparison in any module but server/lib/premium.ts, test files included.
+    // comparison between the two columns, because `premium-entitlement.test.ts`'s one-expression
+    // scanner refuses that comparison in any module but server/lib/premium.ts, test files included.
     expect(after.BilledUntil).toBe(normalizeBilledUntil(lapsed));
     expect(after.PremiumUntil).toBe('2099-01-01 00:00:00');
   });
@@ -356,7 +356,7 @@ describe('a valid event records what the subscription paid for', () => {
 });
 
 describe('which event wins', () => {
-  it('APPLIES a repeat of the same event and leaves the row byte-identical (NFR-13)', async () => {
+  it('APPLIES a repeat of the same event and leaves the row byte-identical', async () => {
     // Equality is not staleness. Stripe emits `checkout.session.completed` and
     // `customer.subscription.updated` for one action inside the same second, and the old `<=` threw
     // the second one away with a different payload. Idempotence is bought by SET semantics instead,

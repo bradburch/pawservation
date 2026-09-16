@@ -532,7 +532,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(petIds).toEqual(['pet_sp_bella']);
   });
 
-  // Regression for the fix round 1 finding: BASE_AMOUNT_SQL reads CancellationFee (not EstCost)
+  // Regression: BASE_AMOUNT_SQL reads CancellationFee (not EstCost)
   // for a cancelled row, so a [CANCELLED]-marked event must land its price there too, or the
   // household balance silently doesn't move even though the row imported "successfully".
   it('an imported [CANCELLED] event contributes its price to the household balance', async () => {

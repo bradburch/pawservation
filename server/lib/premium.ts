@@ -81,8 +81,8 @@ export function trialCompUntil(now: Date = new Date()): string {
 }
 
 /**
- * The furthest ahead a BILLING event may claim a tenant is paid through (NFR-14) — the containment
- * on what a leaked shared secret can buy. 400 days is annual (366 in a leap year) plus a few days of
+ * The furthest ahead a BILLING event may claim a tenant is paid through — the containment on what
+ * a leaked shared secret can buy. 400 days is annual (366 in a leap year) plus a few days of
  * grace plus clock skew, and the longest period this product sells is `PRICING.proAnnual`. Revisit
  * only if something longer than a year is ever sold.
  *
@@ -111,7 +111,7 @@ export function normalizeBilledUntil(raw: string, now: Date = new Date()): strin
 /**
  * THE FIVE COLUMNS PLAN STATE IS DECIDED FROM, and nothing else. Narrower than `Tenant` on purpose:
  * the owner console's roster row is not a tenant row, and the alternative to this type was a second
- * copy of the rule in `routes/owner.ts` — which is the exact thing spine AD-13 forbids.
+ * copy of the rule in `routes/owner.ts` — the exact thing the one-expression rule forbids.
  */
 export type EntitlementFacts = Pick<
   Tenant,
@@ -146,7 +146,8 @@ function isAhead(value: string | null | undefined, stamp: string): boolean {
 }
 
 /**
- * Is this tenant premium right now? The one place the question is answered (spine AD-13).
+ * Is this tenant premium right now? The one place the question is answered — the rule lives in one
+ * expression in one file, and `premium-entitlement.test.ts` scans every other module to keep it so.
  *
  * TWO WAYS TO BE PREMIUM, and they are independent facts about different people's decisions:
  *
@@ -187,9 +188,9 @@ export function isPremiumActive(tenant: EntitlementFacts, now: Date = new Date()
  *
  * ITS ONE CALLER is `GET /:slug/admin/settings` (server/routes/admin.ts), which publishes the
  * answer as `planActive` so that neither that route nor the dashboard's plan panel re-derives it.
- * It was exported and tested before it had any caller, deliberately: AD-13 asks for the rule in
- * one expression in one file, and the half of a rule left unwritten is the half that gets
- * re-derived somewhere else.
+ * It was exported and tested before it had any caller, deliberately: the rule belongs in one
+ * expression in one file, and the half of a rule left unwritten is the half that gets re-derived
+ * somewhere else.
  */
 export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
   if (isDisabled(tenant)) return false;
@@ -198,7 +199,8 @@ export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): 
 
 /**
  * Does this business hold a CURRENT PLAN, by any of the three grants? The question the read-only
- * dashboard is decided from (Story 10.4), and the third one-expression answer in this file.
+ * dashboard is decided from — a lapsed plan keeps the booking page working and makes the dashboard
+ * read-only — and the third one-expression answer in this file.
  *
  * THREE GRANTS, OR-ed, and each is somebody's separate decision: a paid subscription
  * (`BilledUntil`, written only by billing), the platform owner's BASIC comp (`CompedUntil`), and
@@ -215,8 +217,8 @@ export function isSoloActive(tenant: EntitlementFacts, now: Date = new Date()): 
  * `isSoloActive` IS NOT WIDENED INTO THIS, and that is the smaller honest shape. It is published as
  * `planActive` and its question is "does she have a live paid subscription" — a comped business does
  * not, and must still be able to buy one. Two predicates answering two questions, both inside the
- * one file the AD-13 scanner exempts, is correct; folding them would change a shipped wire field's
- * meaning.
+ * one file the one-expression scanner exempts, is correct; folding them would change a shipped
+ * wire field's meaning.
  *
  * The `DisabledAt` early return is shared with both predicates above, which is what makes the
  * ordering claim true by construction rather than by arrangement: a disabled business is refused
@@ -239,8 +241,8 @@ export function isPlanCurrent(tenant: EntitlementFacts, now: Date = new Date()):
  * on its own as `compActive` so the owner console's "Basic comp" chip can light on the server's
  * word rather than on the date's presence. A comp that ran out in 2024 is a date on the row and
  * not a grant, and a chip lit from `compedUntil != null` told the owner a lapsed business was
- * comped — while a browser-side `> now` is the copy AD-13 removed. Same shared early return as the
- * other three, for the same reason.
+ * comped — while a browser-side `> now` is the second copy of the rule this file exists to
+ * prevent. Same shared early return as the other three, for the same reason.
  */
 export function isCompActive(tenant: EntitlementFacts, now: Date = new Date()): boolean {
   if (isDisabled(tenant)) return false;

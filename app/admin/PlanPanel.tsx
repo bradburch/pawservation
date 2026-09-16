@@ -12,7 +12,8 @@ import { Hint } from './Hint';
  *   - THE STATUS LINE renders unconditionally. The plan, the paid-through date and live/lapsed are
  *     columns in this product's own database, answered by the same request that drew the rest of
  *     the dashboard — so an outage of the paid surface, an unset `PREMIUM_ORIGIN`, a deployment
- *     that has stopped selling and a lapsed subscription all still show it (NFR-2). It says
+ *     that has stopped selling and a lapsed subscription all still show it: nothing on this
+ *     dashboard may depend on the paid surface being up. It says
  *     nothing about ENTITLEMENT: this repo records who has paid and publishes the fact, and
  *     deciding what a plan buys belongs to whatever consumes it.
  *
@@ -103,7 +104,7 @@ const SYNCED = 'Synced with Stripe.';
  *  the button is pressed at the direction of a human who can, and the sentence has to be true for
  *  the sitter whose row is fine and who presses it anyway. No "period" and no figure: `plan-panel.
  *  test.ts` reads this constant by name, and a sentence about syncing is one word away from
- *  promising when the next period starts. */
+ *  promising a renewal date. */
 const SYNC_HINT =
   'If your plan looks wrong here, this asks Stripe what it has and updates this page.';
 
@@ -128,7 +129,7 @@ const LAPSED_WITH_ACCOUNT =
   'or start a new plan with Subscribe.';
 
 /** The whole of what a switched-off account is told here. Her plan's NAME still renders above it —
- *  it is a column in this product's own database and NFR-2 does not stop applying to her — but
+ *  it is a column in this product's own database and is still hers to see — but
  *  neither "paid through" nor "lapsed" is true of an account that cannot take a booking, and a
  *  paid-through date beside one reads as a promise. The dashboard's own banner has already said why
  *  the account is off and who to ask; this line says only what it means for the plan. */
@@ -488,7 +489,8 @@ export function PlanPanel({
    * about the deployment. It does not hide the PANEL: a sitter whose plan lapsed, whose deployment
    * stopped selling, or whose paid surface is down must still be told what she is on and when it
    * runs out, because every fact on that line is a column in this product's own database, answered
-   * by the same request that drew the rest of her dashboard (NFR-2).
+   * by the same request that drew the rest of her dashboard, and nothing here may depend on the
+   * paid surface being up.
    */
   const offersHidden = !origin || !sellingIsOn || settings.disabled || !pricing;
 
@@ -534,10 +536,11 @@ export function PlanPanel({
           </Hint>
         )}
       </h3>
-      {/* THE STATUS LINE, outside every condition on this page — NFR-2, and the one structural fact
-          about this file's markup. The plan's NAME renders for every sitter there is, including a
-          switched-off one; only the date and the word beside it are withheld from her, because
-          neither is true of an account that cannot take a booking. */}
+      {/* THE STATUS LINE, outside every condition on this page — the dashboard's independence from
+          the paid surface, and the one structural fact about this file's markup. The plan's NAME
+          renders for every sitter there is, including a switched-off one; only the date and the
+          word beside it are withheld from her, because neither is true of an account that cannot
+          take a booking. */}
       <p>
         <strong>{planName}</strong>
         {!settings.disabled && paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
