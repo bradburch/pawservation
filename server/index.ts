@@ -75,24 +75,27 @@ app.use('*', async (c, next) => {
     // word. The header suppresses the API's own URLs without touching the render.
     c.header('X-Robots-Tag', 'noindex');
   }
+  // Both policies frame exactly one thing — whatever premium surface this deployment configures,
+  // if any — and nothing else, so the allowance is the configured origin itself, never '*'. Unset
+  // (a fork, a self-hoster, no PREMIUM_ORIGIN) leaves either policy with no frame-src at all, i.e.
+  // the page frames nothing, exactly as before this existed. The dashboard frames it from the
+  // Services section (`app/admin/sections/ServicesSection.tsx`); the widget frames it from the
+  // signed-in bookings view (`app/embed/MineTab.tsx`), and without this directive the frame is
+  // blocked by `default-src 'self'` before it loads — silently, since the mount takes no space
+  // until the page reports a height.
+  const origin = premiumOrigin(c.env);
+  const frameSrc = origin ? `; frame-src 'self' ${origin}` : '';
   if (c.req.path.startsWith('/embed')) {
-    c.header('Content-Security-Policy', EMBEDDABLE_CSP);
+    c.header('Content-Security-Policy', `${EMBEDDABLE_CSP}${frameSrc}`);
   } else {
-    // The dashboard frames exactly one thing — whatever premium surface this deployment
-    // configures, if any — and nothing else, so the allowance is the configured origin itself,
-    // never '*'. Unset (a fork, a self-hoster, no PREMIUM_ORIGIN) leaves LOCKED_CSP with no
-    // frame-src at all, i.e. this page frames nothing, exactly as before this existed.
-    //
-    // AND `connect-src`, for the same origin and in the same breath, because the dashboard does not
-    // only FRAME that surface: the plan panel POSTs to it for a checkout session and for a billing
-    // portal session (`app/admin/PlanPanel.tsx`). With no `connect-src` the policy falls back to
-    // `default-src 'self'` and the browser blocks both requests before they leave the page — on any
-    // deployment whose paid surface is on a different host. The commercial deployment happens to
-    // publish the dashboard's own origin, which is the only reason nothing noticed.
-    const origin = premiumOrigin(c.env);
-    const csp = origin
-      ? `${LOCKED_CSP}; frame-src 'self' ${origin}; connect-src 'self' ${origin}`
-      : LOCKED_CSP;
+    // AND `connect-src` here, for the same origin and in the same breath, because the dashboard
+    // does not only FRAME that surface: the plan panel POSTs to it for a checkout session and for a
+    // billing portal session (`app/admin/PlanPanel.tsx`). With no `connect-src` the policy falls
+    // back to `default-src 'self'` and the browser blocks both requests before they leave the page
+    // — on any deployment whose paid surface is on a different host. The commercial deployment
+    // happens to publish the dashboard's own origin, which is the only reason nothing noticed.
+    // The widget gets no `connect-src`: nothing in it fetches that origin.
+    const csp = origin ? `${LOCKED_CSP}${frameSrc}; connect-src 'self' ${origin}` : LOCKED_CSP;
     c.header('Content-Security-Policy', csp);
     c.header('X-Frame-Options', 'DENY');
   }

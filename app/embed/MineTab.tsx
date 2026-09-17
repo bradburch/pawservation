@@ -29,6 +29,60 @@ function whenText(b: Booking): string {
     : formatFriendlyDate(b.startDate);
 }
 
+/**
+ * The paid surface's page for a signed-in customer, framed beneath her bookings. Entirely
+ * data-driven off `/config`'s published `premium` block (server/routes/public.ts): renders only
+ * when `premium.chat === true` and `premium.origin` is a non-empty string, otherwise nothing — no
+ * gating logic beyond that, and no knowledge of what the framed page is or does. It mirrors the
+ * dashboard's settings-review card (app/admin/sections/ServicesSection.tsx): the one shared
+ * address is the path template itself, a deployment-level constant like the origin, and height
+ * follows the widget's own resize protocol (App.tsx / public/embed.js) — the framed page posts
+ * `{ type: 'pawservation:resize', height: number }` and this listener applies it.
+ *
+ * Two things that card does not need, because this one lives inside a widget that is itself an
+ * auto-resizing iframe on somebody else's page:
+ *  - It starts at ZERO height and grows only once the framed page reports one. A page that never
+ *    loads — origin unreachable, entitlement lapsed between two reads, a blocked request — never
+ *    posts, so it never takes up space and never bounces the host page. A cross-origin load
+ *    failure is mostly invisible to the parent; `onError` covers the cases the browser does report
+ *    and unmounts the frame outright. The booking form and the list above are unaffected either way.
+ *  - `event.source` is checked as well as `event.origin`. The audit card is the only frame on its
+ *    page; the widget is not the only thing on the host page that may post to it.
+ */
+function PaidSurfaceEmbed({ config }: { config: TenantConfig }) {
+  const origin = config.premium?.chat === true ? config.premium.origin : null;
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const [height, setHeight] = useState(0);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!origin) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== origin) return;
+      if (event.source !== frame.current?.contentWindow) return;
+      const data = event.data as { type?: string; height?: number };
+      if (data?.type === 'pawservation:resize' && typeof data.height === 'number') {
+        if (!Number.isFinite(data.height)) return;
+        setHeight(Math.max(0, Math.ceil(data.height)));
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [origin]);
+
+  if (!origin || failed) return null;
+
+  return (
+    <iframe
+      ref={frame}
+      title="Your account"
+      src={`${origin}/premium/pay/${slug}`}
+      onError={() => setFailed(true)}
+      style={{ width: '100%', border: '0', display: 'block', height: `${height}px` }}
+    />
+  );
+}
+
 export function MineTab({
   config,
   onEdit,
@@ -117,148 +171,159 @@ export function MineTab({
   if (needIdentify) return <Identify onDone={reload} />;
   if (error) return <p className="bp-error">{error}</p>;
   if (!bookings) return <p>Loading…</p>;
+  // One element under both signed-in states, empty list included: whether there is anything to
+  // show a customer with no bookings is the framed page's question, and it answers by height.
+  const paid = <PaidSurfaceEmbed config={config} />;
   if (bookings.length === 0)
-    return <p>No bookings yet — switch to Book to request your first one.</p>;
+    return (
+      <>
+        <p>No bookings yet — switch to Book to request your first one.</p>
+        {paid}
+      </>
+    );
 
   return (
-    <ul className="bp-mine">
-      {bookings.map((b) => {
-        const confirming = confirmId === b.id;
-        const feeCents = b.feeIfCancelledTodayCents ?? 0;
-        return (
-          <li key={b.id} className="bp-mine-item">
-            <div className="bp-mine-head">
-              <strong className="bp-mine-title">{labelFor(b.type)}</strong>
-              <span className="bp-mine-status">{STATUS_TEXT[b.status] ?? b.status}</span>
-            </div>
-            <div className="bp-mine-when">{whenText(b)}</div>
-            <div className="bp-mine-meta">
-              {b.pets.length > 0
-                ? b.pets.join(', ')
-                : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`}
-              {b.estCostCents != null ? ` · est. ${formatCents(b.estCostCents)}` : ''}
-              {b.chargesTotalCents > 0
-                ? ` · plus ${formatCents(b.chargesTotalCents)} (${b.charges
-                    .map((ch) => ch.label)
-                    .join(', ')})`
-                : ''}
-              {b.status === 'cancelled' &&
-              b.cancellationFeeCents != null &&
-              b.cancellationFeeCents > 0
-                ? ` · cancellation fee ${formatCents(b.cancellationFeeCents)}`
-                : ''}
-            </div>
-            {/* The action slot is ALWAYS rendered, empty or not: the widget lives in an
+    <>
+      <ul className="bp-mine">
+        {bookings.map((b) => {
+          const confirming = confirmId === b.id;
+          const feeCents = b.feeIfCancelledTodayCents ?? 0;
+          return (
+            <li key={b.id} className="bp-mine-item">
+              <div className="bp-mine-head">
+                <strong className="bp-mine-title">{labelFor(b.type)}</strong>
+                <span className="bp-mine-status">{STATUS_TEXT[b.status] ?? b.status}</span>
+              </div>
+              <div className="bp-mine-when">{whenText(b)}</div>
+              <div className="bp-mine-meta">
+                {b.pets.length > 0
+                  ? b.pets.join(', ')
+                  : `${b.petCount} pet${b.petCount === 1 ? '' : 's'}`}
+                {b.estCostCents != null ? ` · est. ${formatCents(b.estCostCents)}` : ''}
+                {b.chargesTotalCents > 0
+                  ? ` · plus ${formatCents(b.chargesTotalCents)} (${b.charges
+                      .map((ch) => ch.label)
+                      .join(', ')})`
+                  : ''}
+                {b.status === 'cancelled' &&
+                b.cancellationFeeCents != null &&
+                b.cancellationFeeCents > 0
+                  ? ` · cancellation fee ${formatCents(b.cancellationFeeCents)}`
+                  : ''}
+              </div>
+              {/* The action slot is ALWAYS rendered, empty or not: the widget lives in an
                 auto-resizing iframe, and a row that grows a button on some loads and not others
                 changes scrollHeight and bounces the host page. */}
-            <div className="bp-mine-actions">
-              {/* Both server answers, never client date math — and deliberately different
+              <div className="bp-mine-actions">
+                {/* Both server answers, never client date math — and deliberately different
                   questions: a stay already under way can be cancelled but not re-dated. The row
                   never wraps (see .bp-mine-actions), so one button or two is the same height. */}
-              {b.editable && !confirming ? (
-                <button type="button" className="bp-mine-edit" onClick={() => onEdit(b)}>
-                  Change booking
-                </button>
-              ) : null}
-              {b.cancellable && !confirming ? (
-                <button
-                  type="button"
-                  className="bp-mine-cancel"
-                  ref={(el) => {
-                    if (el) cancelButtons.current.set(b.id, el);
-                    else cancelButtons.current.delete(b.id);
-                  }}
-                  onClick={() => {
-                    returnToId.current = b.id;
-                    setCancelError('');
-                    setConfirmId(b.id);
-                  }}
-                >
-                  Cancel booking
-                </button>
-              ) : null}
-            </div>
-
-            {/* Confirm step as an in-card overlay (absolute inset-0), NOT an expanding panel: it
-                covers the card instead of adding to it, so document height is identical whether
-                it's open or closed and the embedding page never jumps. */}
-            {confirming ? (
-              <div
-                className="bp-mine-confirm"
-                role="group"
-                aria-label="Confirm cancellation"
-                // Escape backs out, the cheap way out of a destructive prompt. Bound to the
-                // overlay rather than the document because focus is already inside it, and
-                // ignored mid-request so it can't be used to dismiss a cancel already in flight.
-                onKeyDown={(e) => {
-                  if (e.key !== 'Escape' || busyId === b.id) return;
-                  e.stopPropagation();
-                  setCancelError('');
-                  setConfirmId(null);
-                }}
-              >
-                {/* Only the COPY scrolls; the action row below is pinned. A long contact line or a
-                    wrapped service label must never push the buttons out of reach, and the fix
-                    can't be "let the card grow" — that would move the host page. */}
-                <div className="bp-mine-confirm-body">
-                  <p className="bp-mine-confirm-q">Cancel this booking?</p>
-                  <p className="bp-mine-confirm-fee">
-                    {feeCents > 0
-                      ? `A ${formatCents(feeCents)} cancellation fee applies.`
-                      : 'No cancellation fee applies.'}
-                  </p>
-                  {/* Rescheduling now has a real answer in the widget, so it is offered FIRST —
-                      but only when the server says this booking is still changeable; otherwise
-                      the phone/email line stands alone, exactly as it did before. */}
-                  <p className="bp-mine-confirm-alt">
-                    {b.editable
-                      ? 'Need different dates instead? Back out and choose Change booking. '
-                      : 'Need different dates instead? '}
-                    {config.contactPhone ? (
-                      <>
-                        Call <a href={`tel:${config.contactPhone}`}>{config.contactPhone}</a>
-                      </>
-                    ) : null}
-                    {config.contactPhone && config.contactEmail ? ' or ' : null}
-                    {config.contactEmail ? (
-                      <>
-                        email <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
-                      </>
-                    ) : null}
-                    {!config.contactPhone && !config.contactEmail
-                      ? `Get in touch with ${config.displayName}`
-                      : null}{' '}
-                    to move it rather than cancel.
-                  </p>
-                  {/* Reserved slot: the message appears in space the overlay already occupies. */}
-                  <p className="bp-mine-confirm-err">{cancelError}</p>
-                </div>
-                <div className="bp-mine-confirm-row">
+                {b.editable && !confirming ? (
+                  <button type="button" className="bp-mine-edit" onClick={() => onEdit(b)}>
+                    Change booking
+                  </button>
+                ) : null}
+                {b.cancellable && !confirming ? (
                   <button
                     type="button"
-                    className="bp-mine-keep"
-                    ref={keepRef}
+                    className="bp-mine-cancel"
+                    ref={(el) => {
+                      if (el) cancelButtons.current.set(b.id, el);
+                      else cancelButtons.current.delete(b.id);
+                    }}
                     onClick={() => {
+                      returnToId.current = b.id;
                       setCancelError('');
-                      setConfirmId(null);
+                      setConfirmId(b.id);
                     }}
                   >
-                    Keep booking
+                    Cancel booking
                   </button>
-                  <button
-                    type="button"
-                    className="bp-mine-confirm-go"
-                    disabled={busyId === b.id}
-                    onClick={() => void cancel(b)}
-                  >
-                    {busyId === b.id ? 'Cancelling…' : 'Yes, cancel'}
-                  </button>
-                </div>
+                ) : null}
               </div>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
+
+              {/* Confirm step as an in-card overlay (absolute inset-0), NOT an expanding panel: it
+                covers the card instead of adding to it, so document height is identical whether
+                it's open or closed and the embedding page never jumps. */}
+              {confirming ? (
+                <div
+                  className="bp-mine-confirm"
+                  role="group"
+                  aria-label="Confirm cancellation"
+                  // Escape backs out, the cheap way out of a destructive prompt. Bound to the
+                  // overlay rather than the document because focus is already inside it, and
+                  // ignored mid-request so it can't be used to dismiss a cancel already in flight.
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Escape' || busyId === b.id) return;
+                    e.stopPropagation();
+                    setCancelError('');
+                    setConfirmId(null);
+                  }}
+                >
+                  {/* Only the COPY scrolls; the action row below is pinned. A long contact line or a
+                    wrapped service label must never push the buttons out of reach, and the fix
+                    can't be "let the card grow" — that would move the host page. */}
+                  <div className="bp-mine-confirm-body">
+                    <p className="bp-mine-confirm-q">Cancel this booking?</p>
+                    <p className="bp-mine-confirm-fee">
+                      {feeCents > 0
+                        ? `A ${formatCents(feeCents)} cancellation fee applies.`
+                        : 'No cancellation fee applies.'}
+                    </p>
+                    {/* Rescheduling now has a real answer in the widget, so it is offered FIRST —
+                      but only when the server says this booking is still changeable; otherwise
+                      the phone/email line stands alone, exactly as it did before. */}
+                    <p className="bp-mine-confirm-alt">
+                      {b.editable
+                        ? 'Need different dates instead? Back out and choose Change booking. '
+                        : 'Need different dates instead? '}
+                      {config.contactPhone ? (
+                        <>
+                          Call <a href={`tel:${config.contactPhone}`}>{config.contactPhone}</a>
+                        </>
+                      ) : null}
+                      {config.contactPhone && config.contactEmail ? ' or ' : null}
+                      {config.contactEmail ? (
+                        <>
+                          email <a href={`mailto:${config.contactEmail}`}>{config.contactEmail}</a>
+                        </>
+                      ) : null}
+                      {!config.contactPhone && !config.contactEmail
+                        ? `Get in touch with ${config.displayName}`
+                        : null}{' '}
+                      to move it rather than cancel.
+                    </p>
+                    {/* Reserved slot: the message appears in space the overlay already occupies. */}
+                    <p className="bp-mine-confirm-err">{cancelError}</p>
+                  </div>
+                  <div className="bp-mine-confirm-row">
+                    <button
+                      type="button"
+                      className="bp-mine-keep"
+                      ref={keepRef}
+                      onClick={() => {
+                        setCancelError('');
+                        setConfirmId(null);
+                      }}
+                    >
+                      Keep booking
+                    </button>
+                    <button
+                      type="button"
+                      className="bp-mine-confirm-go"
+                      disabled={busyId === b.id}
+                      onClick={() => void cancel(b)}
+                    >
+                      {busyId === b.id ? 'Cancelling…' : 'Yes, cancel'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {paid}
+    </>
   );
 }
