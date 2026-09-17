@@ -336,7 +336,7 @@ describe('booking flow', () => {
     expect(api.headers.get('Content-Security-Policy') ?? '').toContain("frame-ancestors 'none'");
   });
 
-  it('allows framing the configured premium origin from the locked (non-embed) CSP only', async () => {
+  it('allows framing the configured premium origin from both policies, and connecting from one', async () => {
     const { env } = createTestEnv();
     const configured = { ...env, PREMIUM_ORIGIN: 'https://premium.example' } as Env;
 
@@ -354,10 +354,16 @@ describe('booking flow', () => {
       "connect-src 'self' https://premium.example",
     );
 
-    // The embed page's own CSP is unaffected by PREMIUM_ORIGIN — it stays the same permissive
-    // policy either way, since it is already framable by design.
+    // The embed page frames that origin too — the signed-in bookings view mounts a page from it
+    // (`app/embed/MineTab.tsx`) — so it carries the same `frame-src`, and it still refuses no
+    // ancestor: it is framable by any host page by design, and that half is untouched.
     const embed = await app.request('/embed/sunny-paws', {}, configured);
-    expect(embed.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
+    const embedCsp = embed.headers.get('Content-Security-Policy') ?? '';
+    expect(embedCsp).toContain("frame-src 'self' https://premium.example");
+    expect(embedCsp).not.toContain('frame-ancestors');
+    // But NOT `connect-src`: nothing in the widget fetches that origin, and a directive that opens a
+    // channel nobody uses is one the next reader has to work out the reason for.
+    expect(embedCsp).not.toContain('connect-src');
   });
 
   it('omits frame-src and connect-src entirely when no PREMIUM_ORIGIN is configured', async () => {
@@ -369,6 +375,10 @@ describe('booking flow', () => {
     // would have to work out whether it was load-bearing.
     expect(api.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
     expect(api.headers.get('Content-Security-Policy') ?? '').not.toContain('connect-src');
+    // The embed page likewise: with no origin published the widget's mount renders nothing, and
+    // the policy says the same thing — this page frames nothing.
+    const embed = await app.request('/embed/sunny-paws', {}, env);
+    expect(embed.headers.get('Content-Security-Policy') ?? '').not.toContain('frame-src');
   });
 
   it('creates a calendar event when the tenant calendar is connected', async () => {

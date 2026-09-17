@@ -615,6 +615,23 @@ The panel states no price, trial length, invoice, cancellation term or refund po
 the figures come from `/config` and the terms belong on the terms page. It knows an **origin** it
 was published and three path templates on it, and nothing else about whatever serves them.
 
+The panel is not the only place this product addresses that origin. It **frames** two pages from
+it, each on the flag for its own audience: the dashboard's Services section mounts
+`<premium.origin>/premium/audit/<slug>` on `premium.assistant` (`app/admin/sections/ServicesSection.tsx`),
+and the booking widget's signed-in bookings view mounts `<premium.origin>/premium/pay/<slug>`
+beneath the customer's bookings on `premium.chat` (`app/embed/MineTab.tsx`). Both are the same
+decision: a path template on the published origin, and nothing else — this repo does not know what
+either page shows, and the only protocol it shares with them is the widget's own resize message,
+applied after checking the event's origin (and, in the widget, its source — it sits on somebody
+else's page). The trade-off is that a page which never loads is invisible rather than reported:
+neither mount can see a cross-origin failure, so the card keeps its default height and the widget's
+frame stays at zero until the page posts one, and the booking form and the list above it work
+exactly as they do on a deployment with no origin at all. The server's half of each mount is one
+CSP directive: when `PREMIUM_ORIGIN` is set, both the locked policy and the embed policy carry
+`frame-src 'self' <origin>` (`server/index.ts`), and only the locked one carries `connect-src`,
+because only the dashboard fetches from that origin. Unset, neither policy names a `frame-src` and
+neither page frames anything.
+
 `BILLING_SHARED_SECRET` is **one value held identically on two workers**: this one, which checks
 it, and the billing worker, which presents it on every event. Rotating it is therefore an ordered
 pair of deploys, which is what `BILLING_SHARED_SECRET_PREVIOUS` exists for — set the outgoing value
