@@ -40,7 +40,7 @@ const post = async (
   );
 
 /**
- * Story 2.5 — VENMO IMPORT RECORDS AGAINST HOUSEHOLDS (supports FR-7a). A payment from a known
+ * VENMO IMPORT RECORDS AGAINST HOUSEHOLDS. A payment from a known
  * client is recorded against her household in ONE row (0011) — there is no booking to pick, so
  * there is nothing left for the sitter to get wrong by picking the wrong one. Idempotency is still
  * the partial unique index on `(TenantId, ExternalRef)`, now exercised through `insertAccountPayment`

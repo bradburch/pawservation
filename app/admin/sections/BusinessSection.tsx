@@ -48,6 +48,7 @@ export function BusinessSection({
   saveBlocked,
   onSave,
   handleError,
+  onPlanChanged,
 }: SettingsSectionProps & {
   /** Needed only by the data export, which fetches CSV bytes with the admin bearer token. */
   session: Session;
@@ -60,6 +61,10 @@ export function BusinessSection({
   /** The dashboard's failure path, passed through to `TokensPanel` — an expired or revoked
    *  password session there must sign the sitter out, not print a banner beside a dead session. */
   handleError: (e: unknown) => void;
+  /** The dashboard's mid-session settings re-read, passed through to `PlanPanel` for the press
+   *  that asks the paid surface to re-read her subscription — the plan fields it renders are
+   *  read-only here, and only the dashboard can refresh them without disturbing staged edits. */
+  onPlanChanged: () => Promise<void>;
 }) {
   return (
     <>
@@ -295,10 +300,10 @@ export function BusinessSection({
           OFFERS are hidden on a deployment that sells no plans, which is absence rather than an
           error; see the panel's own docblock for why that gate is `premium.origin` and not
           `premium.assistant`. */}
-      {/* No `handleError`: both of this panel's calls go to ANOTHER origin judging its own
+      {/* No `handleError`: all three of this panel's calls go to ANOTHER origin judging its own
           credential, where a 401 or 403 says nothing about this dashboard session — so there is no
           failure there that signing her out would answer. See PlanPanel's props. */}
-      <PlanPanel session={session} settings={settings} />
+      <PlanPanel session={session} settings={settings} onPlanChanged={onPlanChanged} />
     </>
   );
 }

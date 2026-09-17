@@ -67,7 +67,7 @@ function monthLabel(month: string): string {
 }
 
 /**
- * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c). Every booking's cost and extra
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE. Every booking's cost and extra
  * charges stay attributed to that booking — a cancellation fee never reads as part of some other
  * stay — and a household-level payment is listed on its own, never pinned to whichever booking
  * happened to be open. Fetches independently of the summary row above it: the server's own
@@ -467,7 +467,7 @@ export function EarningsView({
                       handleError={handleError}
                     />
                   )}
-                  {/* THE DRILL-DOWN (Story 2.4, FR-7c): every booking, its cost, its extra charges,
+                  {/* THE DRILL-DOWN: every booking, its cost, its extra charges,
                       and every payment — including household-level ones — behind THIS balance. */}
                   <button
                     onClick={() => setDetailId(detailId === h.accountId ? null : h.accountId)}

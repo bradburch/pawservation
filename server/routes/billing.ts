@@ -11,7 +11,7 @@ import { constantTimeEqual } from '../lib/timing';
 import type { AppEnv } from '../types';
 
 /**
- * THE FREE PRODUCT'S BILLING EAR (0017, spine AD-12 item 5).
+ * THE FREE PRODUCT'S BILLING EAR (migration 0017).
  *
  * One route. It takes a DATE, not a processor object: it calls no processor, verifies no signature,
  * holds no API key, and learns nothing about what a plan entitles beyond the two columns it writes.
@@ -68,7 +68,7 @@ const BillingEvent = v.object({
    * `resync` is the caller saying "this is what the processor says right now", after a delivery was
    * lost or a row was frozen against a subscription it no longer holds. It carries the same seven
    * fields as every other event and needs no special case for staleness, because its identity is
-   * the subscription item's own period start rather than a wall clock.
+   * a stamp the caller derives from a payment, not a wall clock.
    */
   eventType: v.picklist([
     'checkout.session.completed',
@@ -92,8 +92,8 @@ const BillingEvent = v.object({
    */
   stripeCustomerId: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_FIELD)),
   stripeSubscriptionId: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_FIELD)),
-  /** LOGGING ONLY. There is no seen-set here — idempotence is the event-ordering rule (NFR-13), not
-   *  a table of ids — but this is the handle that ties a line in this worker's log to a line in the
+  /** LOGGING ONLY. There is no seen-set here — idempotence is the event-ordering rule, not a
+   *  table of ids — but this is the handle that ties a line in this worker's log to a line in the
    *  caller's, and it names no person. */
   eventId: v.pipe(v.string(), v.maxLength(MAX_FIELD)),
   /** The processor's own unit: whole seconds since the epoch. Bounded at both ends so the `Date`
@@ -328,16 +328,17 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
     // STRICTLY older. An event created in the SAME SECOND as the last one applies: a processor
     // emits `checkout.session.completed` and `customer.subscription.updated` for one action inside
     // one second, and refusing the ties threw away whichever arrived second along with its payload.
-    // NFR-13 is bought by the writer's SET semantics instead — the identical request twice leaves a
-    // byte-identical row — and this comparison agrees with the `WHERE` clause that enforces it.
+    // Idempotence is bought by the writer's SET semantics instead — the identical request twice
+    // leaves a byte-identical row — and this comparison agrees with the `WHERE` clause that
+    // enforces it.
     //
-    // A RESYNC IS EXEMPT, and only a resync. Its `eventCreated` is the subscription's period start
-    // rather than a wall clock, so it is routinely older than the last webhook — and a frozen row
-    // is exactly a row whose stamp is newer than that. A checkout is NOT exempt: its stamp is the
-    // processor's own `created`, and a redelivered old checkout must not regress a row to the
+    // A RESYNC IS EXEMPT, and only a resync. Its `eventCreated` is a stamp the caller derives from
+    // a payment, not a wall clock, so it is routinely older than the last webhook — and a frozen
+    // row is exactly a row whose stamp is newer than that. A checkout is NOT exempt: its stamp is
+    // the processor's own `created`, and a redelivered old checkout must not regress a row to the
     // subscription a newer one replaced. There is no LOWER bound on `eventCreated` to relax for a
     // resync — the schema's floor is 0 — and the 5-minute future-skew rule above still applies to
-    // it, so a resync can be as old as a period start and no newer than the clock.
+    // it, so a resync can be as old as the payment it is derived from and no newer than the clock.
     return await declined(c, row.Slug, body.eventId, 'stale_event');
   }
   if (

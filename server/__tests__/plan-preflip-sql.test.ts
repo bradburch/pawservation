@@ -8,10 +8,11 @@ import { createTestEnv } from './helpers';
  * THE PRE-FLIP SQL IS A FOURTH COPY OF THE RULE, and this is what keeps it the same rule.
  *
  * `isPlanCurrent` (server/lib/premium.ts) is the one expression allowed to decide whether a business
- * holds a current plan, and the AD-13 scanner refuses a second one anywhere under `server/` or
- * `app/`. The runbook in README.md then hands the platform owner a `SELECT` to run BY HAND before
- * setting `PLAN_ENFORCE` — "every row it returns is a business whose dashboard goes read-only" — and
- * that sentence is a claim that the SQL and the predicate agree on every row. Nothing checked it.
+ * holds a current plan, and the one-expression scanner refuses a second one anywhere under
+ * `server/` or `app/`. The runbook in README.md then hands the platform owner a `SELECT` to run BY
+ * HAND before setting `PLAN_ENFORCE` — "every row it returns is a business whose dashboard goes
+ * read-only" — and that sentence is a claim that the SQL and the predicate agree on every row.
+ * Nothing checked it.
  *
  * So this file READS THE SQL OUT OF THE README — it spells no comparison of its own, which is what
  * keeps the scanner green over it — seeds every combination of the three dated columns (null, past,

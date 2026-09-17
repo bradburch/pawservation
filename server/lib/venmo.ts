@@ -1,6 +1,6 @@
 /**
  * Venmo CSV import: turning the file a sitter downloads from Venmo into payments — in CENTS, to
- * the cent — that can be proposed against the households they came from (Story 2.5, 0011).
+ * the cent — that can be proposed against the households they came from (migration 0011).
  *
  * PURE. No D1, no env, no fetch — every function here takes plain data and returns plain data, so
  * `server/db/repo.ts` remains the only module that touches the database.
@@ -206,7 +206,7 @@ export type PreviewRow = {
   note: string;
 };
 /**
- * A transaction resolved to exactly one household. Story 2.5 records it there and nowhere more
+ * A transaction resolved to exactly one household. The import records it there and nowhere more
  * specific: which booking(s) it covers is not this module's question — 0011 exists precisely so
  * that question never has to be answered by hand.
  */
@@ -228,7 +228,7 @@ export type VenmoPreview = {
  * D1 — the routes hand it a client list and a set, and the same function runs again on confirm so
  * the server never has to trust a client's idea of what was matched.
  *
- * STORY 2.5 — VENMO IMPORT RECORDS AGAINST HOUSEHOLDS (supports FR-7a). Earlier versions of this
+ * VENMO IMPORT RECORDS AGAINST HOUSEHOLDS. Earlier versions of this
  * function ranked a payer's OUTSTANDING BOOKINGS and asked the sitter to pick one — bookkeeping this
  * module was doing FOR her, the same shape of problem 0011 solved for hand-recorded payments. Once a
  * payer resolves to one client, `buildAccounts` names their household unambiguously (it partitions

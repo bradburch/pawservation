@@ -19,9 +19,9 @@ export const accountsRoutes = new Hono<AppEnv>()
   .use('/:slug/admin/accounts/*', adminAuth)
 
   /**
-   * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — every booking, its cost, its
-   * extra charges, and every payment, so the sitter can settle a dispute or check a cancellation
-   * fee without leaving the number she is questioning. Same 404-for-unowned-id answer as the
+   * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE — every booking, its cost, its extra charges, and
+   * every payment, so the sitter can settle a dispute or check a cancellation fee without leaving
+   * the number she is questioning. Same 404-for-unowned-id answer as the
    * sibling payment routes: `getHouseholdDetail` returns null for an account id of another tenant
    * or no tenant at all, indistinguishably.
    *

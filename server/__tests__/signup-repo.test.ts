@@ -115,7 +115,7 @@ describe('createTenantFromSignup (atomic batch)', () => {
     // before the sitter ever saw a prompt. The wizard prefills the field from `adminEmail`
     // instead, so publication needs the sitter to look at it and press Next.
     expect(tenant?.ContactEmail).toBeNull();
-    // The trial comp, bound AS-IS on the same INSERT (Story 10.4): the route produces the instant
+    // The trial comp, bound AS-IS on the same INSERT: the route produces the instant
     // with `trialCompUntil` and this function neither computes nor normalises it, like the owner
     // console's writer. The paid tier's column is untouched — the trial is a BASIC comp.
     expect(tenant?.CompedUntil).toBe('2099-01-01 00:00:00');

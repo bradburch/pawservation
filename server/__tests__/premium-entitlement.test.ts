@@ -199,9 +199,9 @@ describe('the platform owner sets and clears premium', () => {
   it('echoes the DERIVED flag beside the date, so the console never re-derives it', async () => {
     // The echo is the third place the console learns a sitter's premium state, after the roster and
     // the detail read, and it is the one that answers a WRITE — so an echo carrying the date alone
-    // sends the browser straight back to the comparison AD-13 removed. This sitter is the case that
-    // comparison gets wrong: her comp is being cleared to null in this very request, and she is
-    // still premium, because she pays for Pro.
+    // sends the browser straight back to the comparison the one-expression rule removed. This
+    // sitter is the case that comparison gets wrong: her comp is being cleared to null in this very
+    // request, and she is still premium, because she pays for Pro.
     const { env, raw } = createTestEnv();
     raw.exec(
       `UPDATE Tenants SET Plan='pro', BilledUntil='2099-01-01 00:00:00' WHERE Id='${TENANT_A}';`,
@@ -343,7 +343,7 @@ describe('premium is per tenant, like everything else', () => {
 });
 
 /**
- * THE ONE EXPRESSION (0017, spine AD-13). Two ways to be premium — the platform owner's comp, or a
+ * THE ONE EXPRESSION (migration 0017). Two ways to be premium — the platform owner's comp, or a
  * paid Pro plan — and one way to be Solo, which is a paid subscription and nothing to do with the
  * comp. They share exactly one condition, the disable, so it is written once as a single early
  * return: two tiers that can drift on the one thing they agree about is the failure this shape
@@ -428,7 +428,7 @@ describe('entitlement combines the comp and the plan in one expression', () => {
    * ('T' is 84, ' ' is 32). Both values below name the same instant, twelve hours in the past.
    *
    * THIS CASE USED TO ASSERT THE INVERSION THROUGH THE PREDICATE — `isPremiumActive` said `true`
-   * for the ISO-shaped value — as the demonstration. Since Story 10.4's fix round the reader
+   * for the ISO-shaped value — as the demonstration. The reader now
    * refuses any value not in the stored shape (`isAhead`, server/lib/premium.ts), so the predicate
    * now says `false` for it: fail-closed, and the inversion is demonstrated on the bare string
    * compare the predicate is built on instead. Both halves are still here — the hazard, and the
@@ -479,7 +479,7 @@ describe('the scanner reads the WHOLE of every file it walks', () => {
 });
 
 /**
- * ONE EXPRESSION MEANS ONE EXPRESSION, and this is the assertion that keeps it that way. AD-13's
+ * ONE EXPRESSION MEANS ONE EXPRESSION, and this is the assertion that keeps it that way. The
  * requirement is not "a helper exists" — it is that nowhere else answers the same question. A second
  * copy does not announce itself: it is a `>` in a component that was right the day it was written
  * and silently wrong the day a second grant existed, which is exactly what the owner console's

@@ -100,7 +100,7 @@ export type Settings = {
     calendarId: string | null;
   };
   /**
-   * HER PLAN, read-only (0017, 0018; Stories 10.3 and 10.4). Published by the settings GET and never
+   * HER PLAN, read-only (migrations 0017 and 0018). Published by the settings GET and never
    * sent back: `save()` in App.tsx builds its PUT body field by field rather than spreading this
    * object, so these six cannot reach the wire; and the sticky-save `dirty` check compares the whole
    * object against the saved snapshot, so six fields that change only on a reload can never make the

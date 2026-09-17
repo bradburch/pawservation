@@ -180,7 +180,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
   });
 
   /**
-   * The other half of NFR-13, and the stronger statement: not merely "the second call returns
+   * The other half of idempotence, and the stronger statement: not merely "the second call returns
    * false", but that the row is byte-identical afterwards — `LastBillingEventAt` included. A writer
    * that refused the change but still advanced the stamp would look idempotent from its return value
    * and silently swallow the next genuine event.
@@ -332,7 +332,7 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
   });
 
   /**
-   * THE RESYNC RULES (Story 10.4 fix round). A resync's `eventAt` is the subscription's period
+   * THE RESYNC RULES. A resync's `eventAt` is the subscription's period
    * start, not a wall clock, so it can legitimately be OLDER than the last webhook applied — and
    * the frozen row it exists to repair is exactly the row whose stamp is newer than that. So a
    * resync is exempt from the stale rule. A CHECKOUT IS NOT: its stamp is the processor's own
@@ -359,8 +359,9 @@ describe('applyBillingEvent — the two rules that decide which event wins', () 
     expect(t.Plan).toBe('solo');
     expect(t.BilledUntil).toBe('2026-12-08 00:00:00');
     // …and the stamp is MONOTONIC: it is the high-water mark of applied stamps, not the last one
-    // written. Rewinding it to the period start would re-open the door to every ordinary webhook
-    // redelivered from between the two, and the stale rule is the only thing that closes it.
+    // written. Rewinding it to the resync's payment-derived stamp would re-open the door to every
+    // ordinary webhook redelivered from between the two, and the stale rule is the only thing that
+    // closes it.
     expect(t.LastBillingEventAt).toBe(AT.later);
     // Proof of that: an ORDINARY event from between the two is still stale.
     expect(
@@ -498,7 +499,7 @@ describe('normalizeBilledUntil — one shape in, and a ceiling on what a leaked 
     expect(normalizeBilledUntil('2020-01-01T00:00:00Z', NOW)).toBe('2020-01-01 00:00:00');
   });
 
-  it('is a ceiling of exactly 400 days (NFR-14)', () => {
+  it('is a ceiling of exactly 400 days', () => {
     // Stated as a literal, separately from the boundary test below. `MAX_BILLED_AHEAD_DAYS ± 1`
     // moves with the constant, so a mutation that widened the ceiling to a decade passed a test
     // written in terms of it.
