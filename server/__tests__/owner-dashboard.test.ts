@@ -274,7 +274,7 @@ describe('owner sitter routes', () => {
     };
     const a = body.sitters.find((s) => s.tenantId === 't_a');
     const b = body.sitters.find((s) => s.tenantId === 't_b');
-    // FR-63's "an owner who can see why": columns of this product's own database, all derived or
+    // An owner who can see WHY: columns of this product's own database, all derived or
     // verbatim. No amount, no invoice, no subscription id. The CUSTOMER id IS published — to the
     // owner, on the owner console only — because it is the key to the Stripe Dashboard page where
     // "why" actually lives, and the owner has that dashboard already; the subscription id and the
@@ -541,7 +541,7 @@ describe('the owner console does not re-derive entitlement in the browser', () =
   it('renders the basic-comp chip only while the comp is CURRENT, on the server’s own boolean', () => {
     // The date's presence AND the server's `compActive`: a comp that ran out in 2024 is a date on
     // the row and not a grant, and a chip lit from the date alone told the owner a lapsed business
-    // was comped. No browser comparison — the AD-13 scanner walks this file for one.
+    // was comped. No browser comparison — the one-expression scanner walks this file for one.
     expect(FLAT).toContain('{s.compedUntil != null && s.compActive && ( <span');
     expect(FLAT).toContain('`Comped through ${s.compedUntil}`');
     // The retired shape, so the boolean cannot be dropped back out of the gate.
@@ -549,12 +549,12 @@ describe('the owner console does not re-derive entitlement in the browser', () =
   });
 
   it('renders the Lapsed chip from the server’s planCurrent, and never beside Disabled', () => {
-    // The AD-13 scanner walks `app/` too, so a browser-side `CompedUntil > now` here is a red suite
-    // rather than a wrong chip — this pin is what keeps the POSITIVE half honest: the answer is
-    // fetched, not re-derived. `=== false` and not `!`: an older worker's payload has no such
-    // field, and `!undefined` would light every row Lapsed for the length of a deploy. And not
-    // beside Disabled — a switched-off account is not current by the shared early return, and the
-    // owner has one chip for that already.
+    // The one-expression scanner walks `app/` too, so a browser-side `CompedUntil > now` here is a
+    // red suite rather than a wrong chip — this pin is what keeps the POSITIVE half honest: the
+    // answer is fetched, not re-derived. `=== false` and not `!`: an older worker's payload has no
+    // such field, and `!undefined` would light every row Lapsed for the length of a deploy. And
+    // not beside Disabled — a switched-off account is not current by the shared early return, and
+    // the owner has one chip for that already.
     expect(FLAT).toContain(
       '{s.planCurrent === false && !s.disabled && ( <span className="pb-chip pb-chip-warn">Lapsed<',
     );
@@ -562,7 +562,7 @@ describe('the owner console does not re-derive entitlement in the browser', () =
   });
 
   it('links the row to the Stripe Dashboard customer page when there is a customer', () => {
-    // FR-63's "an owner who can see why", with the seeing done where the facts are — on the
+    // An owner who can see WHY, with the seeing done where the facts are — on the
     // processor's own page, which the owner already has access to. The link is the OWNER's, on the
     // owner console only; nothing on a sitter's dashboard renders it. Built from the published id
     // verbatim, and absent when there is none.

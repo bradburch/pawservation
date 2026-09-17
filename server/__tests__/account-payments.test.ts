@@ -18,7 +18,7 @@ const TENANT_C = 'tnt_pawsandrelax'; // seeded clean slate: customers, no bookin
 const SLUG_C = 'paws-and-relax';
 
 /**
- * Story 2.2 — ONE PAYMENT, ONE ROW, AGAINST THE HOUSEHOLD. A client who pays monthly writes one
+ * ONE PAYMENT, ONE ROW, AGAINST THE HOUSEHOLD. A client who pays monthly writes one
  * cheque covering eight bookings; the sitter must never be asked to carve it into eight amounts
  * nobody agreed to.
  */

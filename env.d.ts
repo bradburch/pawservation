@@ -73,8 +73,8 @@ interface Env {
    * SEPARATE FROM `PREMIUM_ORIGIN` on purpose, and the pair is not redundant. The origin says a
    * checkout worker exists to be reached and where; this says its checkout route is live. The
    * origin is already set in production, so a panel gated on it alone would have shown every sitter
-   * a Subscribe button that 404s from the day the plan panel merged until Story 10.2 shipped.
-   * The operator sets this once that route answers.
+   * a Subscribe button that 404s for as long as the checkout route on that origin is not yet
+   * answering. The operator sets this once it does.
    *
    * Not a secret, and it grants nothing: it decides whether a control is rendered, never whether a
    * plan is honoured — that is `isPremiumActive` reading columns only the billing endpoint writes.

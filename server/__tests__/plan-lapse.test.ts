@@ -14,7 +14,7 @@ import { createTestEnv, TENANT_A } from './helpers';
 
 /**
  * "DOES THIS BUSINESS HOLD A CURRENT PLAN?" — the third one-expression predicate, and the one the
- * lapse gate refuses on (Story 10.4).
+ * lapse gate refuses on.
  *
  * THREE GRANTS, OR-ed, and `PremiumUntil` is in the list rather than being decoration. A business
  * comped on the PAID tier but holding no subscription is `isPremiumActive === true` and

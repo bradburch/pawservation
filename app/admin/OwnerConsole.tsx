@@ -625,8 +625,8 @@ export function OwnerConsole({
                                 {s.planCurrent === false && !s.disabled && (
                                   <span className="pb-chip pb-chip-warn">Lapsed</span>
                                 )}
-                                {/* FR-63's "an owner who can see why", with the seeing done where the
-                                    facts are: the customer's page in the Stripe Dashboard, which the
+                                {/* The owner can see WHY, with the seeing done where the facts
+                                    are: the customer's page in the Stripe Dashboard, which the
                                     owner already has. The OWNER's link, on this console only. This is
                                     the LIVE-mode dashboard URL; a test-mode `cus_` id opened here
                                     relies on the Dashboard's own mode redirect, not on anything this

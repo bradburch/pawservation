@@ -16,8 +16,8 @@ import app from '../index';
 import { serializeAnalytics } from '../lib/analytics';
 
 /**
- * Story 2.1 — the PURE half. A household is the connected component `buildAccounts` already
- * derives (two customers who share a single pet are one household), and its balance is
+ * HOUSEHOLD BALANCES — the PURE half. A household is the connected component `buildAccounts`
+ * already derives (two customers who share a single pet are one household), and its balance is
  * Σ(booking costs + charges) − Σ(payments) over every booking belonging to it. No schema change is
  * involved anywhere in this file: every figure comes from per-booking money that exists today.
  */
@@ -111,7 +111,7 @@ describe('buildHouseholdBalances (pure)', () => {
   });
 
   /**
-   * Story 2.2's half of the sum. A payment recorded against the HOUSEHOLD is one row covering
+   * The payments half of the sum. A payment recorded against the HOUSEHOLD is one row covering
    * however many bookings; it is resolved by MEMBERSHIP — "the household whose pets contain this
    * id" — rather than by equality on the account id, because the account id is the
    * lexicographically-first pet and a new pet can rename it.
@@ -212,8 +212,8 @@ const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: numbe
   });
 
 /**
- * Story 2.1 — the DB half. Same arithmetic, now over real rows: no migration is involved, the
- * rollup is computed from the per-booking payments that already exist.
+ * HOUSEHOLD BALANCES — the DB half. Same arithmetic, now over real rows: no migration is
+ * involved, the rollup is computed from the per-booking payments that already exist.
  */
 describe('getHouseholdBalances (repo)', () => {
   it('rolls two customers who share a pet into ONE balance', async () => {
