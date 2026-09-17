@@ -75,7 +75,7 @@ describe('runCalendarSweep — backfill for pre-existing rows', () => {
  * calendar that needs no request from her at all, so a lapse that made her dashboard read-only and
  * left the sweep pushing events to Google every fifteen minutes would be a lapse in name only.
  * Through `repo.ts`, with the predicate applied IN CODE over the rows the SQL returns: the query
- * itself compares no date, because `isPlanCurrent` is the one expression allowed to (AD-13).
+ * itself compares no date, because `isPlanCurrent` is the one expression allowed to.
  */
 describe('runCalendarSweep — a lapsed business is not swept while the deployment enforces', () => {
   afterEach(() => vi.restoreAllMocks());

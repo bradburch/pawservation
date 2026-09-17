@@ -12,7 +12,7 @@ import { liveSource } from './helpers/live-source';
 import type { AppEnv } from '../types';
 
 /**
- * A LAPSED PLAN IS A READ-ONLY DASHBOARD (Story 10.4), in `disabled-guard.test.ts`'s shape.
+ * A LAPSED PLAN IS A READ-ONLY DASHBOARD, in `disabled-guard.test.ts`'s shape.
  *
  * The gate is ONE `.use()` line declared immediately after `adminAuth`, so its scope is exactly
  * `adminAuth`'s flattened scope and not a list anybody maintains. What this file pins is the three

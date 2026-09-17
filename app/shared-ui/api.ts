@@ -288,7 +288,7 @@ export type VenmoPreviewRow = {
   note: string;
 };
 /**
- * Story 2.5 — a matched row names a HOUSEHOLD, not a booking: once a payer resolves to one client,
+ * A matched row names a HOUSEHOLD, not a booking: once a payer resolves to one client,
  * `buildAccounts` names their household unambiguously, so there is no "which booking?" step left to
  * ask the sitter (no `ambiguous` bucket any more).
  */
@@ -663,7 +663,7 @@ export type AnalyticsPayload = {
 };
 
 /**
- * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE (Story 2.4, FR-7c) — mirrors `HouseholdDetailRow` in
+ * THE DRILL-DOWN BEHIND ONE HOUSEHOLD BALANCE — mirrors `HouseholdDetailRow` in
  * `server/types.ts`, field for field, in CENTS. `expectedTotalCents`/`paidTotalCents`/`balanceCents`
  * are the same numbers the household row in `AnalyticsPayload.households` already carries, repeated
  * here so the detail view reconciles to itself without the caller having to keep the summary row
@@ -1171,7 +1171,7 @@ export const adminApi = {
       }),
   },
   households: {
-    /** The bookings, charges and payments behind one household balance (Story 2.4). */
+    /** The bookings, charges and payments behind one household balance. */
     detail: (slug: string, token: string, accountId: string) =>
       request<HouseholdDetail>(`/api/${slug}/admin/accounts/${accountId}`, {
         headers: authHeaders(token),

@@ -66,7 +66,7 @@ export function VenmoImportPanel({
       const next = await adminApi.payments.venmoPreview(session.slug, session.token, text);
       setCsv(text);
       setPreview(next);
-      // A matched row already names ONE household unambiguously (Story 2.5) — there is nothing
+      // A matched row already names ONE household unambiguously — there is nothing
       // left for the sitter to choose, so every matched row starts ticked.
       setChoices(new Map(next.matched.map((m) => [m.txnId, m.accountId])));
     } catch (e) {

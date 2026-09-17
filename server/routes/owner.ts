@@ -172,11 +172,11 @@ export const ownerRoutes = new Hono<AppEnv>()
       // every paying Pro sitter as free the moment this column existed. One rule, one place
       // (`isPremiumActive`, server/lib/premium.ts).
       premiumActive: isPremiumActive(r),
-      // FR-63's "an owner who can see why", and it costs four fields of this product's own
-      // database: three verbatim columns and one derived boolean. Deliberately no amount, no
-      // invoice, no processor identifier and no subscription id — those stay off this payload as
-      // they already are, and FR-63's prohibition is on a revenue surface, not on this console
-      // knowing which plan its own businesses are on.
+      // An owner who can see WHY a business is on the plan it is, and it costs four fields of this
+      // product's own database: three verbatim columns and one derived boolean. Deliberately no
+      // amount, no invoice, no processor identifier and no subscription id — those stay off this
+      // payload as they already are. The rule this product keeps is that it holds no revenue
+      // surface; the console knowing which plan its own businesses are on is not one.
       plan: r.Plan,
       billedUntil: r.BilledUntil,
       compedUntil: r.CompedUntil,
@@ -184,10 +184,10 @@ export const ownerRoutes = new Hono<AppEnv>()
       // presence, because a comp that ran out is a date on the row and not a grant.
       compActive: isCompActive(r),
       // The DERIVED answer again, from the one expression. A console that compared a date here
-      // would be the browser-side copy AD-13 removed, one rule later.
+      // would be the browser-side copy the one-expression rule removed, one rule later.
       planCurrent: isPlanCurrent(r),
-      // THE CUSTOMER ID, verbatim, to the OWNER and on this console only: FR-63's "an owner who can
-      // see why", with the seeing done on the processor's own page — the console links the row to
+      // THE CUSTOMER ID, verbatim, to the OWNER and on this console only: the owner can see why,
+      // with the seeing done on the processor's own page — the console links the row to
       // the Stripe Dashboard customer page, where the invoice, the card and the dunning state all
       // are. The owner has that dashboard already; the id is its key. Still no amount, no invoice
       // and no subscription id on this payload.
@@ -223,8 +223,8 @@ export const ownerRoutes = new Hono<AppEnv>()
     // sync with the tenant row. The DATES are published raw ('YYYY-MM-DD HH:MM:SS', UTC) because
     // the owner is setting them and a date is what she needs to see; whether one has PASSED is
     // never the console's comparison to make — it is `premiumActive` and `planCurrent` below, from
-    // the one expression each (spine AD-13), because a browser-side `> now` reports a paying
-    // business as free and the scanner walks `app/` for exactly that.
+    // the one expression each, because a browser-side `> now` reports a paying business as free
+    // and the one-expression scanner walks `app/` for exactly that.
     return c.json({
       ...serializeAnalytics(data),
       disabled: isDisabled(tenant),
@@ -329,8 +329,8 @@ export const ownerRoutes = new Hono<AppEnv>()
       compedUntil: after.CompedUntil,
       // The same derived answers the roster and the detail read publish, from the same
       // expressions — the row is already loaded, so the alternative is the console re-deriving them
-      // in the browser from the dates beside them, which is exactly what AD-13 removed and what
-      // reports a paying business as free.
+      // in the browser from the dates beside them, which is exactly the second copy of the rule
+      // the one-expression scanner refuses, and what reports a paying business as free.
       premiumActive: isPremiumActive(after),
       compActive: isCompActive(after),
       planCurrent: isPlanCurrent(after),

@@ -4,15 +4,16 @@ import { formatTimestamp, type Session, type Settings } from './shared.js';
 import { Hint } from './Hint';
 
 /**
- * HER PLAN: what she is on, and the two controls that change it.
+ * HER PLAN: what she is on, the two controls that change it, and the one that re-reads it.
  *
- * THREE THINGS RENDER HERE, on three different conditions, and the difference between them is the
- * whole design of this file:
+ * FOUR THINGS RENDER HERE, on three different conditions — the fourth shares the third's — and the
+ * difference between them is the whole design of this file:
  *
  *   - THE STATUS LINE renders unconditionally. The plan, the paid-through date and live/lapsed are
  *     columns in this product's own database, answered by the same request that drew the rest of
  *     the dashboard — so an outage of the paid surface, an unset `PREMIUM_ORIGIN`, a deployment
- *     that has stopped selling and a lapsed subscription all still show it (NFR-2). It says
+ *     that has stopped selling and a lapsed subscription all still show it: nothing on this
+ *     dashboard may depend on the paid surface being up. It says
  *     nothing about ENTITLEMENT: this repo records who has paid and publishes the fact, and
  *     deciding what a plan buys belongs to whatever consumes it.
  *
@@ -39,6 +40,15 @@ import { Hint } from './Hint';
  *     `hasBillingAccount` is the question that matches the control: is there an account at the
  *     processor to open at all.
  *
+ *   - SYNC WITH STRIPE renders on exactly the condition MANAGE PLAN does, and beside it. It asks
+ *     the paid surface to re-read this business's subscription from the processor and write what
+ *     it finds into this product's row — the repair for a row that stopped matching the processor
+ *     after a delivery was lost, which reads "lapsed" here while the processor holds a live, paid
+ *     subscription. NOT on `planCurrent`, though a lapsed row is the usual case: a comped
+ *     ex-subscriber is `planCurrent: true` and can be in that state too, and the route reads
+ *     `planCurrent` for nothing. The cost is a button a healthy row sees as well; the hint beneath
+ *     says when to press it, and a needless press changes nothing.
+ *
  * SUBSCRIBE AND MANAGE ARE NOT ONE FLAG NEGATED. They ask two different questions — "is there an
  * account at the processor" and "is there no live plan" — and the states fall out of the pair:
  * a sitter who never subscribed gets SUBSCRIBE alone; a live plan (a cancelled-in-grace one
@@ -49,13 +59,14 @@ import { Hint } from './Hint';
  * which is the paid surface's to build: a UI is not a guard, because that route is reachable with
  * curl and an admin token.
  *
- * BOTH CONTROLS ARE A `fetch` AND NOT AN ANCHOR: the admin session is a JWT in localStorage and an
- * anchor carries no Authorization header — `app/shared-ui/api.ts`'s `exportCsv` docblock is where
- * this repo already writes that down. Each returned URL is opened on `window.top`, because a
+ * ALL THREE CONTROLS ARE A `fetch` AND NOT AN ANCHOR: the admin session is a JWT in localStorage and
+ * an anchor carries no Authorization header — `app/shared-ui/api.ts`'s `exportCsv` docblock is where
+ * this repo already writes that down. The two that answer a URL open it on `window.top`, because a
  * hosted checkout and a hosted billing page both set their own frame-ancestors and will not render
- * inside a frame. Two path templates on the published origin, and this file states no price, no
- * trial length, no invoice, no cancellation terms and no refund position of its own: the figures
- * come from `/config` and the terms belong on the terms page.
+ * inside a frame; the third answers a verdict and navigates nowhere. Three path templates on the
+ * published origin, and this file states no price, no trial length, no invoice, no cancellation
+ * terms and no refund position of its own: the figures come from `/config` and the terms belong on
+ * the terms page.
  *
  * IT FETCHES `/config` ITSELF, exactly as SettingsReviewEmbed does: one more read of a cached
  * public endpoint is cheaper than threading new state through App.tsx. A failed read now costs the
@@ -74,6 +85,28 @@ const CHECKOUT_FAILED = 'Could not start checkout — try again.';
  *  this panel is willing to show for a failure it does not recognise — the browser's own
  *  "Failed to fetch" is not a plan problem and must not be rendered as one. */
 const PORTAL_FAILED = 'Could not open plan management — try again.';
+
+/** The third of the family, for the sync. Same rule — the ONE message this panel will show for a
+ *  failure it does not recognise — and here that is every failure but one: the sync relays the
+ *  server's sentence for a 409 alone, and this is the sentence for everything else, a 2xx the
+ *  endpoint declined included. "Try again" is true of all of them. */
+const SYNC_FAILED = 'Could not sync with Stripe — try again.';
+
+/** The one success sentence a sync has, in the sitter's terms. It says the processor's latest
+ *  payment was copied to this page and the page re-read — and NOT that the date moved: the
+ *  endpoint answers `applied: true` on identical values, so a press on a row that was already
+ *  right reads "Synced" as well, and the status line above, freshly re-read, is what says the
+ *  date. Names no date, no plan and no figure for that reason. */
+const SYNCED = 'Synced with Stripe.';
+
+/** Beside Sync with Stripe: when to press it and what it does, and nothing about how. Modest on
+ *  purpose — a sitter cannot see that her row has stopped matching what the processor holds, so
+ *  the button is pressed at the direction of a human who can, and the sentence has to be true for
+ *  the sitter whose row is fine and who presses it anyway. No "period" and no figure: `plan-panel.
+ *  test.ts` reads this constant by name, and a sentence about syncing is one word away from
+ *  promising a renewal date. */
+const SYNC_HINT =
+  'If your plan looks wrong here, this asks Stripe what it has and updates this page.';
 
 /** Beside Manage plan. The assurance the Subscribe Hint carries for every sitter who has not bought
  *  yet — and which stopped reaching the sitter who HAS, the moment that Hint learned to hide behind
@@ -96,7 +129,7 @@ const LAPSED_WITH_ACCOUNT =
   'or start a new plan with Subscribe.';
 
 /** The whole of what a switched-off account is told here. Her plan's NAME still renders above it —
- *  it is a column in this product's own database and NFR-2 does not stop applying to her — but
+ *  it is a column in this product's own database and is still hers to see — but
  *  neither "paid through" nor "lapsed" is true of an account that cannot take a booking, and a
  *  paid-through date beside one reads as a promise. The dashboard's own banner has already said why
  *  the account is off and who to ask; this line says only what it means for the plan. */
@@ -186,6 +219,7 @@ const PLAN_NAMES: Record<'solo' | 'pro', string> = { solo: 'Solo', pro: 'Pro' };
 export function PlanPanel({
   session,
   settings,
+  onPlanChanged,
 }: {
   session: Session;
   /**
@@ -198,12 +232,28 @@ export function PlanPanel({
    */
   settings: Settings;
   /**
+   * The dashboard's own mid-session re-read of the settings payload — the one the calendar popup
+   * already uses, which merges the plan fields into both the state and the saved snapshot — handed
+   * in rather than rebuilt here, because the plan fields on `settings` above are read-only and the
+   * panel holds no way to refresh them. Called once, after a sync the other worker answered
+   * `applied: true`, and AWAITED before the success sentence renders and before `busy` is released,
+   * so the status line has had its chance to say what the row now says before "Synced" appears
+   * above it — never "Synced" over a line still reading "lapsed".
+   *
+   * IT IS THE DASHBOARD'S REQUEST TO ITS OWN API, so its failures are the dashboard's to route —
+   * through `handle`, which may rightly sign her out on a 401 from THIS product — and never this
+   * panel's. The await sits in its own swallowing `try`, so nothing it does can land in the
+   * `catch` below and be reported beside the button as a sync that failed: the re-read reports
+   * through the dashboard's own banner, and the sync itself did succeed.
+   */
+  onPlanChanged: () => Promise<void>;
+  /**
    * NO `handleError`, deliberately, and this panel is the one place in the dashboard that takes
    * none. Every other panel hands its failures to App.tsx's `handle`, which signs the sitter out on
    * a 401 or 403 — the right answer when the refusal came from THIS product judging her session.
-   * Both of this panel's calls go to another origin judging its own credential, where those two
-   * statuses say nothing about her dashboard session, so there is no failure here that signing her
-   * out would answer. The `!res.ok` branches below are where that is enforced.
+   * All three of this panel's calls go to another origin judging its own credential, where those
+   * two statuses say nothing about her dashboard session, so there is no failure here that signing
+   * her out would answer. The `!res.ok` branches below are where that is enforced.
    */
 }) {
   const [config, setConfig] = useState<TenantConfig | null>(null);
@@ -218,6 +268,9 @@ export function PlanPanel({
   const [configLoaded, setConfigLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
+  /** The sync's success line. The other two handlers navigate away on success and have no sentence
+   *  to show, so this is the panel's first — cleared on the next sync press and by nothing else. */
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -365,13 +418,79 @@ export function PlanPanel({
   };
 
   /**
+   * SYNC WITH STRIPE — ask the other worker to re-read this business's subscription from the
+   * processor and write what it finds into this product's row. Built from `openPortal`'s parts and
+   * deliberately FEWER of them: a POST with the Bearer and no body (the route reads none — it
+   * resolves everything from the slug and the credential, which is what keeps this file's one
+   * `Content-Type` the checkout's), the same `!res.ok` refusal order, and no navigation at all —
+   * the answer is a JSON verdict, not a URL, so there is no `navigated` latch, no `openAtTopLevel`
+   * and no scheme check to reuse.
+   *
+   * THE STATUS MAP, and each line's reason. The contract this panel holds is a path template, a
+   * Bearer, `{ applied }` on a 2xx and `{ error }` otherwise — and it relays exactly ONE status's
+   * `error`:
+   *   - 409 → an ApiError carrying the server's own words, which are written for her and are
+   *     worth more than ours. Written as the literal `409` so that no other status can be relayed
+   *     by widening this line by accident.
+   *   - every other non-2xx → a plain Error with this panel's sentence, never an ApiError. A 401 or
+   *     403 from another origin judging its own credential must not reach `isAuthExpired` and sign
+   *     her out of this dashboard (the props docblock); a 503 is that deployment's sentence and not
+   *     one about her plan; a 404 is an origin that does not serve the route yet; a 429 from a
+   *     shared rate bucket may carry a machine code rather than a sentence; a 500 carries nothing
+   *     she can act on. "Try again" is true of all of them. One trade-off is deliberate: a 401 or
+   *     403 whose REAL cause is her own dashboard session having expired also reads "try again"
+   *     here — her next ordinary dashboard call is what signs her out, and this button must never
+   *     be the one that does, because it cannot tell the two causes apart.
+   *   - 2xx with `applied: true` → the endpoint took the payment the caller copied from the
+   *     processor, whether or not the date changed. The re-read, then "Synced with Stripe."
+   *   - 2xx with anything else → the endpoint DECLINED the copy. A failed sync: the panel's own
+   *     sentence, no notice, and no re-read, because nothing changed to re-read. `!== true`, not
+   *     falsiness, so a stale bundle/API pair lands here and not in a false "Synced".
+   *
+   * The re-read is AWAITED, in its own swallowing `try`, before the notice: `busy` is held until
+   * the status line has had its chance to catch up, so "Synced" never renders above a line still
+   * saying "lapsed", and a re-read failure — the dashboard's own, reported through its own banner —
+   * cannot reach this handler's `catch` and be rendered as a sync that failed.
+   */
+  const syncWithStripe = async () => {
+    if (busy || !origin) return;
+    setError('');
+    setNotice('');
+    setBusy('sync');
+    try {
+      const res = await fetch(`${origin}/premium/billing/${session.slug}/resync`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (res.status === 409) throw new ApiError(409, body.error ?? SYNC_FAILED);
+        throw new Error(SYNC_FAILED);
+      }
+      const { applied } = (await res.json()) as { applied?: unknown };
+      if (applied !== true) throw new Error(SYNC_FAILED);
+      try {
+        await onPlanChanged();
+      } catch {
+        // The re-read reports through the dashboard's own banner; the sync itself succeeded.
+      }
+      setNotice(SYNCED);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : SYNC_FAILED);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
    * THE DEPLOYMENT'S HALF of the Subscribe gate — a checkout worker exists to be reached, the
    * deployment is selling, the tenant is not switched off, and the figures are published. Her own
    * half (`!settings.planActive`) is applied at each of the two render sites, so this name stays
    * about the deployment. It does not hide the PANEL: a sitter whose plan lapsed, whose deployment
    * stopped selling, or whose paid surface is down must still be told what she is on and when it
    * runs out, because every fact on that line is a column in this product's own database, answered
-   * by the same request that drew the rest of her dashboard (NFR-2).
+   * by the same request that drew the rest of her dashboard, and nothing here may depend on the
+   * paid surface being up.
    */
   const offersHidden = !origin || !sellingIsOn || settings.disabled || !pricing;
 
@@ -417,10 +536,11 @@ export function PlanPanel({
           </Hint>
         )}
       </h3>
-      {/* THE STATUS LINE, outside every condition on this page — NFR-2, and the one structural fact
-          about this file's markup. The plan's NAME renders for every sitter there is, including a
-          switched-off one; only the date and the word beside it are withheld from her, because
-          neither is true of an account that cannot take a booking. */}
+      {/* THE STATUS LINE, outside every condition on this page — the dashboard's independence from
+          the paid surface, and the one structural fact about this file's markup. The plan's NAME
+          renders for every sitter there is, including a switched-off one; only the date and the
+          word beside it are withheld from her, because neither is true of an account that cannot
+          take a booking. */}
       <p>
         <strong>{planName}</strong>
         {!settings.disabled && paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
@@ -467,11 +587,16 @@ export function PlanPanel({
           <p>
             <button type="button" disabled={busy !== null} onClick={() => void openPortal()}>
               {busy === 'portal' ? 'Opening…' : 'Manage plan'}
+            </button>{' '}
+            <button type="button" disabled={busy !== null} onClick={() => void syncWithStripe()}>
+              {busy === 'sync' ? 'Syncing…' : 'Sync with Stripe'}
             </button>
           </p>
           {/* The Subscribe Hint's assurance, for the sitter that Hint no longer reaches. A fact
               about where her card lives, not a term — the terms belong on the terms page. */}
           <p className="pb-hint">{MANAGE_ON_STRIPE}</p>
+          {/* When to press the second button, for the sitter whose row is fine and sees it anyway. */}
+          <p className="pb-hint">{SYNC_HINT}</p>
         </>
       )}
       {/* ONLY where both controls are on screen. Beside Manage alone it would tell a paying sitter
@@ -506,6 +631,11 @@ export function PlanPanel({
           {settings.planCurrent === false && !settings.disabled
             ? PORTAL_UNAVAILABLE_LAPSED
             : PORTAL_UNAVAILABLE}
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="pb-ok">
+          {notice}
         </p>
       )}
       {error && <p className="pb-error">{error}</p>}

@@ -223,7 +223,7 @@ async function backfillInBackground(c: Context<AppEnv>, tenant: Tenant): Promise
  * match against. Loaded identically by every preview and every confirm step: a confirm re-derives
  * the whole match set rather than trusting what the preview told the browser.
  *
- * `accountId` (Story 2.5) is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
+ * `accountId` is looked up via `getAccountIdsByOwner`, NOT `getHouseholdBalances` — the
  * latter only returns households with existing bookings or payments, and a client's first-ever
  * payment must still resolve to their household with none of either on record yet.
  *
@@ -935,8 +935,8 @@ export const adminRoutes = new Hono<AppEnv>()
       // renders it through the dashboard's own formatter; this route must not invent a second
       // format, and nothing anywhere may DECIDE from it — that is what `planActive` is for.
       billedUntil: tenant.BilledUntil,
-      // The DERIVED boolean, never a comparison: AD-13 puts the rule in one expression in one
-      // file, and `server/__tests__/premium-entitlement.test.ts` fails any line outside
+      // The DERIVED boolean, never a comparison: the rule lives in one expression in one file,
+      // and `server/__tests__/premium-entitlement.test.ts` fails any line outside
       // `server/lib/premium.ts` that compares either dated column.
       planActive: isSoloActive(tenant),
       // A NON-EMPTY STRING, not `!= null`. `''` is not a customer record — it is what a caller
@@ -945,7 +945,7 @@ export const adminRoutes = new Hono<AppEnv>()
       // control pointed at a customer that does not exist.
       hasBillingAccount:
         typeof tenant.StripeCustomerId === 'string' && tenant.StripeCustomerId.length > 0,
-      // DOES SHE HOLD A CURRENT PLAN, by any of the three grants (Story 10.4)? The DERIVED boolean
+      // DOES SHE HOLD A CURRENT PLAN, by any of the three grants? The DERIVED boolean
       // again, never a comparison — and the TENANT's state, not the gate's answer: `PLAN_ENFORCE`
       // is a fact about the deployment and is deliberately not folded in, so this field means
       // exactly one thing and stays one thing to keep in step. It goes to BOTH credentials, unlike
@@ -3039,7 +3039,7 @@ export const adminRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS (Story 2.5, 0011). The CSV comes
+   * Record the rows the sitter approved AGAINST THEIR HOUSEHOLDS (migration 0011). The CSV comes
    * back with the request and is parsed and matched AGAIN from scratch: the body supplies only
    * which transaction goes on which household, so every dollar figure, date and note is the
    * server's own reading of the file. An accountId is honoured only when it is EXACTLY the
