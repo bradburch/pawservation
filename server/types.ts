@@ -59,7 +59,8 @@ export type Tenant = {
   StripeSubscriptionId: string | null;
   /** The HIGH-WATER MARK of applied billing events' creation stamps (0017), same stored shape. An
    *  ordinary event or a checkout created strictly before this is ignored, which is what makes a
-   *  redelivery a no-op; a resync is exempt (its stamp is a period start) and never lowers it. */
+   *  redelivery a no-op; a resync is exempt (its stamp is one the caller derives from a payment,
+   *  not a wall clock) and never lowers it. */
   LastBillingEventAt: string | null;
   /** How the calendar backfill reads a description `Cost:` on a RANGE-shaped service (0013):
    *  'total' = the whole charge for the stay; 'per-night' = a nightly rate, multiplied by the

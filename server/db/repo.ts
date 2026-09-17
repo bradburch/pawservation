@@ -6042,8 +6042,8 @@ export async function applyOwnerSwitches(
  *     business now is: it may replace the subscription and assign the customer over a stored one
  *     (the dead-customer loop), and it is ordered by the processor's own `created`.
  *   - `'resync'` — the caller saying "this is what the processor says right now". It establishes
- *     the subscription too, but only for the SAME customer, and its stamp is a period start rather
- *     than a wall clock — so it is exempt from the stale rule, and it alone is.
+ *     the subscription too, but only for the SAME customer, and its stamp is one the caller derives
+ *     from a payment, not a wall clock — so it is exempt from the stale rule, and it alone is.
  *   - `'ordinary'` — an invoice, an update, a cancellation: says something about the CURRENT
  *     subscription and nothing about identity.
  */
@@ -6071,11 +6071,11 @@ export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
  *     different payload. Idempotence is bought by the SET semantics above instead — every column
  *     is assigned, none is extended, so the identical request twice leaves a byte-identical row
  *     while a genuinely different same-second event still lands. A `'resync'` IS EXEMPT from this
- *     rule, and only a resync: its stamp is the subscription's period start, which can be months
- *     older than the last webhook, and the frozen row it exists to repair is exactly the row whose
- *     stamp is newer. A `'checkout'` is NOT exempt — its stamp is the processor's own `created`,
- *     honest to order by, and exempting it would let a redelivered old checkout regress a row to
- *     the subscription a newer checkout had replaced.
+ *     rule, and only a resync: its stamp is one the caller derives from a payment, not a wall
+ *     clock, and can be months older than the last webhook — and the frozen row it exists to
+ *     repair is exactly the row whose stamp is newer. A `'checkout'` is NOT exempt — its stamp is
+ *     the processor's own `created`, honest to order by, and exempting it would let a redelivered
+ *     old checkout regress a row to the subscription a newer checkout had replaced.
  *   - the subscription clause — an event for a subscription that is not this tenant's current one
  *     does nothing, UNLESS it establishes (a completed checkout, or a resync), which is how a
  *     re-subscribe wins and a late cancellation for the subscription it replaced cannot lower a
@@ -6090,8 +6090,8 @@ export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
  * `LastBillingEventAt` IS A HIGH-WATER MARK, not "the last one written": `MAX(existing, eventAt)`.
  * For every non-exempt event the `WHERE` already guarantees `eventAt` is the max, so this changes
  * nothing for them; for a resync older than the stamp it keeps the stamp where it was. Rewinding it
- * to the period start would re-open the door to every ordinary webhook redelivered from between
- * the two, and the stale rule is the only thing that closes it.
+ * to the resync's payment-derived stamp would re-open the door to every ordinary webhook
+ * redelivered from between the two, and the stale rule is the only thing that closes it.
  *
  * `PremiumUntil` AND `CompedUntil` ARE BOTH ABSENT FROM THIS STATEMENT AND MUST STAY ABSENT — the
  * paragraph above is written of the first and holds identically of the second. Two comps, one per

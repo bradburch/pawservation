@@ -440,7 +440,8 @@ BilledUntil IS NOT NULL` (repeat for `CompedUntil`/`PremiumUntil` as needed).
 
 **One state the runbook cannot fix from here: a disabled business with a live subscription.**
 `adminAuth` refuses her `pawsa_` credential outright, and her password session still reaches a
-dashboard whose plan panel withholds Manage plan — `canManage` is gated on `!settings.disabled` —
+dashboard whose plan panel withholds Manage plan and Sync with Stripe — both stand on `canManage`,
+which is gated on `!settings.disabled` —
 so she cannot reach a hosted portal to stop a card that keeps being charged. Cancel it in the Stripe
 Dashboard by hand: the owner console's roster links each row with a customer id straight to that
 customer's page there. The alternative is this repo holding a processor secret and a cancel call,
@@ -457,13 +458,14 @@ to state them, but never a tenant's own plan state — that stays behind an auth
 Its `eventType` is a **five-value closed set**, so it can never become a free-text channel. Four are
 a processor's own event names; the fifth is **`resync`** — the caller saying "this is what the
 processor says right now", after a delivery was lost or a row was frozen against a subscription it
-no longer holds. It exists for a route on the paid surface's origin; this repo does not call that
-route, knows nothing else about it, and gains no control that presses it. A completed checkout and
+no longer holds. It exists for a route on the paid surface's origin, and the dashboard's Sync with
+Stripe control (below) is what presses it — this repo knows that route as a path template on
+`premium.origin` and nothing else about it. A completed checkout and
 a `resync` are the **two events that ESTABLISH** which customer and which subscription a business
 now is, and they differ from each other in two ways:
 
-- **a `resync` is exempt from the staleness rule, and only a resync.** Its `eventCreated` is the
-  subscription's period start rather than a wall clock, so it is routinely older than the last
+- **a `resync` is exempt from the staleness rule, and only a resync.** Its `eventCreated` is a
+  stamp the caller derives from a payment, not a wall clock, so it is routinely older than the last
   webhook applied — and a frozen row is exactly a row whose stamp is newer than that. A checkout is
   NOT exempt: its stamp is the processor's own `created`, honest to order by, and a redelivered old
   checkout must not regress a row to the subscription a newer one replaced. `LastBillingEventAt`
@@ -554,6 +556,22 @@ account at the processor to open at all. It `POST`s to
 the top-level window to the `url` it gets back — a `fetch` and never an anchor, because an anchor
 carries no `Authorization` header.
 
+**Sync with Stripe** stands beside Manage plan on exactly the same gate — `canManage`, and never
+`planCurrent`. It is for a row that has stopped matching the processor — a lost renewal delivery
+leaves `BilledUntil` behind while the processor holds a live, paid subscription, so the row reads
+"lapsed" — and the repair is to ask the processor what it has. A lapsed row is the usual case, but
+a comped ex-subscriber — `planCurrent: true` — can be in the same state; gating the button on
+`planCurrent` would hide the repair from one of the two sitters it exists for. The trade-off is a
+button a sitter with a healthy row also sees; the sentence beneath it says when to press it, and a
+needless press changes nothing. It `POST`s the third path template on the published origin,
+`<premium.origin>/premium/billing/<slug>/resync`, with the admin Bearer and no body, and holds no
+more of that route than its answer's shape: a 2xx `{ applied: true }` re-reads the plan fields —
+the same mid-session re-read the calendar popup uses, which merges them into both the state and
+the saved snapshot — and then renders "Synced with Stripe.", which says the processor's latest
+payment was copied to this page and not that the date moved; a 409 shows that route's own
+sentence; anything else — any other 2xx, or any other status — shows "Could not sync with
+Stripe — try again." as this dashboard's own sentence, and never as a sign-out.
+
 **The two controls are not one flag negated**, so which of them a sitter sees falls out of the
 pair of questions they ask:
 
@@ -564,6 +582,8 @@ pair of questions they ask:
 | **Lapsed, with a billing account**                  | yes       | **yes**     |
 | Cancelled but still in the paid-through window      | no        | yes         |
 | Switched off (disabled)                             | no        | no          |
+
+Sync with Stripe renders in exactly the rows Manage plan does — it is the same gate.
 
 The lapsed-with-an-account row is the only state that shows both, and it shows one extra line
 beneath them saying which is which — fix a card or read an invoice under Manage plan, start again
@@ -584,7 +604,7 @@ of the states the sentence is true for. On a lapsed tenant the sentence names th
 
 The panel states no price, trial length, invoice, cancellation term or refund position of its own:
 the figures come from `/config` and the terms belong on the terms page. It knows an **origin** it
-was published and two path templates on it, and nothing else about whatever serves them.
+was published and three path templates on it, and nothing else about whatever serves them.
 
 `BILLING_SHARED_SECRET` is **one value held identically on two workers**: this one, which checks
 it, and the billing worker, which presents it on every event. Rotating it is therefore an ordered
@@ -593,7 +613,7 @@ there, switch the caller to the new one, then delete it. Neither value ever appe
 Applying `0017` and `0018` before deploying this worker is not optional; see "Deploying" above.
 
 **This half deploys first**, and the requirement is stated as one on the CALLER rather than as a
-claim about its internals, which this repo cannot see. Whatever serves the two paths on
+claim about its internals, which this repo cannot see. Whatever serves the three paths on
 `premium.origin` reads those plan fields from `GET /api/:slug/admin/settings`, so it must not be
 deployed before this worker publishes them, and it must fail closed — not guess — on a settings read
 that does not carry them. The order is: apply `0017` and `0018`, deploy this worker with

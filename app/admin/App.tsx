@@ -659,7 +659,10 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
    * request `refresh()` uses can be narrowed entirely on the client by only merging that one
    * field into both `settings` and `savedSnapshot` (the latter so this fetch doesn't itself make
    * the page look dirty — see `dirty`'s definition above). Used by the calendar-connect popup
-   * poll below, which used to call the full `refresh()` and blow away staged edits.
+   * poll below, which used to call the full `refresh()` and blow away staged edits — and handed to
+   * the plan panel as `onPlanChanged`, for the press that asks the paid surface to re-read her
+   * subscription: the row that press writes is read back as the plan fields below, and without a
+   * re-read the status line says "lapsed" for the rest of the session after the press that fixed it.
    *
    * PLUS THE PLAN FIELDS (0017, 0018), which are merged for the opposite reason to the one that makes
    * everything else here off limits. They are not staged edits and cannot be: they are read-only,
@@ -955,6 +958,7 @@ function Dashboard({ session, onSignOut }: { session: Session; onSignOut: () => 
         saveBlocked={unpricedService !== undefined}
         onSave={save}
         handleError={handle}
+        onPlanChanged={refreshCalendarStatus}
       />
     ),
     pets: (

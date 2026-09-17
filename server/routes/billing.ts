@@ -68,7 +68,7 @@ const BillingEvent = v.object({
    * `resync` is the caller saying "this is what the processor says right now", after a delivery was
    * lost or a row was frozen against a subscription it no longer holds. It carries the same seven
    * fields as every other event and needs no special case for staleness, because its identity is
-   * the subscription item's own period start rather than a wall clock.
+   * a stamp the caller derives from a payment, not a wall clock.
    */
   eventType: v.picklist([
     'checkout.session.completed',
@@ -332,13 +332,13 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
     // leaves a byte-identical row — and this comparison agrees with the `WHERE` clause that
     // enforces it.
     //
-    // A RESYNC IS EXEMPT, and only a resync. Its `eventCreated` is the subscription's period start
-    // rather than a wall clock, so it is routinely older than the last webhook — and a frozen row
-    // is exactly a row whose stamp is newer than that. A checkout is NOT exempt: its stamp is the
-    // processor's own `created`, and a redelivered old checkout must not regress a row to the
+    // A RESYNC IS EXEMPT, and only a resync. Its `eventCreated` is a stamp the caller derives from
+    // a payment, not a wall clock, so it is routinely older than the last webhook — and a frozen
+    // row is exactly a row whose stamp is newer than that. A checkout is NOT exempt: its stamp is
+    // the processor's own `created`, and a redelivered old checkout must not regress a row to the
     // subscription a newer one replaced. There is no LOWER bound on `eventCreated` to relax for a
     // resync — the schema's floor is 0 — and the 5-minute future-skew rule above still applies to
-    // it, so a resync can be as old as a period start and no newer than the clock.
+    // it, so a resync can be as old as the payment it is derived from and no newer than the clock.
     return await declined(c, row.Slug, body.eventId, 'stale_event');
   }
   if (
