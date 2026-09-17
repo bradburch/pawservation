@@ -2833,7 +2833,16 @@ export const adminRoutes = new Hono<AppEnv>()
     });
   })
 
-  .post('/:slug/admin/bookings/:id/payments', async (c) => {
+  // `planExempt` (lib/middleware.ts): a lapsed business may still RECORD a payment. The money this
+  // route logs was collected elsewhere — Venmo, cash, a cheque — and is a fact whether or not she
+  // is paying for the dashboard; a lapse that refused to write it down would leave her books WRONG
+  // rather than merely frozen, which is the same criterion the other exemptions rest on (an
+  // unanswered request, an unblockable date, an unrevocable token, a calendar she cannot
+  // disconnect: each a state that gets worse, not one that fails to improve). The trade-off is
+  // that a lapsed sitter can still keep her ledger by hand; that is books-keeping, not a feature
+  // the plan sells. Adding a CHARGE stays refused — a new figure on the bill is not a record of
+  // money that already moved.
+  .post('/:slug/admin/bookings/:id/payments', planExempt, async (c) => {
     const tenant = c.get('tenant');
     const bookingId = c.req.param('id');
     const body = await c.req
@@ -2932,7 +2941,10 @@ export const adminRoutes = new Hono<AppEnv>()
     });
   })
 
-  .delete('/:slug/admin/bookings/:id/payments/:paymentId', async (c) => {
+  // `planExempt` for the reason the POST above gives: a payment recorded in error — the wrong
+  // booking, the wrong amount, money since refunded — must be reversible, or the lapse freezes the
+  // mistake into her books.
+  .delete('/:slug/admin/bookings/:id/payments/:paymentId', planExempt, async (c) => {
     const tenant = c.get('tenant');
     const deleted = await deletePayment(
       c.env.PAWSERVATION_DB,

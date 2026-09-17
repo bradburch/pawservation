@@ -269,8 +269,11 @@ describe('two businesses, because a cross-tenant lapse looks completely ordinary
  * clients keep submitting is one she must be able to ANSWER, for dates she must be able to BLOCK, or
  * the requests pile up unanswered against a calendar she cannot close. And a credential she leaked
  * or a calendar she connected must be revocable by a sitter whose plan has lapsed, or the lapse
- * turns a leak into a standing one. So four writes are exempt: answering a request, blocking dates,
- * revoking a token, disconnecting the calendar. Everything else stays refused.
+ * turns a leak into a standing one. And money a client already handed her is a fact whether or not
+ * she is paying for the dashboard — a lapse that refused to record it, or to reverse a record made
+ * in error, would leave her books WRONG rather than merely frozen. So five writes are exempt:
+ * answering a request, blocking dates, revoking a token, disconnecting the calendar, and recording
+ * or reversing a payment. Everything else stays refused.
  *
  * BY A MARKER ON THE ROUTE, NOT A PATH LIST IN THE MIDDLEWARE. `planExempt` is a no-op middleware
  * placed in the exempt route's own handler chain; `planGate` finds it on the request's matched
@@ -368,6 +371,44 @@ describe('what the gate exempts, by a marker on the route', () => {
     expect(create.status).toBe(402);
   });
 
+  it('lets her record a payment already collected, and reverse one recorded in error', async () => {
+    const { env } = createTestEnv(); // no grant of any kind
+    expect((await putSettings(enforcing(env), 'sunny-paws', TENANT_A)).status).toBe(402);
+    // Money the client already sent is a fact; a lapse that refused to record it would make the
+    // books wrong, not merely frozen — which is the criterion the other four exemptions share.
+    const record = await app.request(
+      '/api/sunny-paws/admin/bookings/seed_sp_board1/payments',
+      {
+        method: 'POST',
+        headers: await headers(TENANT_A),
+        body: '{"amountCents":4000,"method":"venmo","paidDate":"2028-06-20"}',
+      },
+      enforcing(env),
+    );
+    expect(record.status).toBe(201);
+    const { payment } = (await record.json()) as { payment: { id: string } };
+    // Reversal is the same books-keeping: a payment recorded against the wrong booking must be
+    // undoable, or the lapse freezes the mistake in place.
+    const reverse = await app.request(
+      `/api/sunny-paws/admin/bookings/seed_sp_board1/payments/${payment.id}`,
+      { method: 'DELETE', headers: await headers(TENANT_A) },
+      enforcing(env),
+    );
+    expect(reverse.status).toBe(204);
+    // The charge beside them is not exempt: an extra she adds is a new figure on the bill, not a
+    // record of money that already moved.
+    const charge = await app.request(
+      '/api/sunny-paws/admin/bookings/seed_sp_board1/charges',
+      {
+        method: 'POST',
+        headers: await headers(TENANT_A),
+        body: '{"label":"late pickup","amountCents":1000}',
+      },
+      enforcing(env),
+    );
+    expect(charge.status).toBe(402);
+  });
+
   it('still refuses the writes beside them — the exemption is the route, never the file', async () => {
     const { env } = createTestEnv();
     for (const [method, path, body] of [
@@ -394,9 +435,9 @@ describe('what the gate exempts, by a marker on the route', () => {
     // The mechanism: the gate looks for `planExempt` among the handlers matched for this request.
     expect(middleware).toContain('matchedRoutes(c)');
     expect(middleware).toContain('handler === planExempt');
-    // And NOT a list: none of the four exempt paths is spelled in the middleware. A future route
+    // And NOT a list: none of the five exempt paths is spelled in the middleware. A future route
     // that wants out declares it on its own line, beside its handler, where its reviewer is.
-    for (const fragment of ['/status', '/blocked', '/tokens', '/disconnect']) {
+    for (const fragment of ['/status', '/blocked', '/tokens', '/disconnect', '/payments']) {
       expect(middleware, fragment).not.toContain(fragment);
     }
     // The marker is on each exempt route's own line, in the file that declares the route.
@@ -408,6 +449,8 @@ describe('what the gate exempts, by a marker on the route', () => {
     expect(admin).toContain(".post('/:slug/admin/blocked', planExempt,");
     expect(admin).toContain(".delete('/:slug/admin/blocked/:id', planExempt,");
     expect(admin).toContain(".post('/:slug/admin/providers/calendar/disconnect', planExempt,");
+    expect(admin).toContain(".post('/:slug/admin/bookings/:id/payments', planExempt,");
+    expect(admin).toContain(".delete('/:slug/admin/bookings/:id/payments/:paymentId', planExempt,");
     const tokens = liveSource(
       readFileSync(join(import.meta.dirname, '..', 'routes', 'tenant-tokens.ts'), 'utf8'),
       { keepLiterals: true },

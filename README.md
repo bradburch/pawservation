@@ -344,7 +344,8 @@ columns they read:
   below. `Plan === 'pro'` with `BilledUntil` in the future is the paid route to the same surface the
   comp grants; `Plan === 'solo'` buys this product's own paid tier and is never itself premium.
 
-**A lapsed plan is a read-only dashboard — except for answering requests and blocking dates.**
+**A lapsed plan is a read-only dashboard — except for answering requests, blocking dates, and keeping
+the books true.**
 `planGate` (`server/lib/middleware.ts`) is one `.use()` line declared immediately after `adminAuth`,
 so it covers exactly `adminAuth`'s flattened scope — every write under `/:slug/admin/*`, including
 the routes declared in `accounts.ts` and `tenant-tokens.ts` — and answers
@@ -355,7 +356,7 @@ the disabled guard shares — is never refused. **Her booking page is untouched:
 `adminRoutes` and not in `tenantMiddleware`, so `POST /:slug/bookings` is outside it by prefix, and
 so is `POST /:slug/admin/billing/events`, which is outside by mount order and is how she un-lapses.
 
-**Four writes are exempt, by a marker on the route and not a path list in the middleware.**
+**Five writes are exempt, by a marker on the route and not a path list in the middleware.**
 `planExempt` is a no-op middleware a route places in its own handler chain, and the gate finds it
 among the request's matched routes — so the exemption is declared on the route's own line, the gate
 names no path, and a route that wants out has to say so where its reviewer is. The set:
@@ -370,10 +371,18 @@ names no path, and a route that wants out has to say so where its reviewer is. T
   leaked `pawsa_` token on a lapsed business would otherwise be a leak she cannot stop; minting
   stays refused;
 - **disconnecting the calendar** (`POST …/providers/calendar/disconnect`) — she must be able to stop
-  the product writing her calendar; connecting one stays refused.
+  the product writing her calendar; connecting one stays refused;
+- **recording or reversing a payment** (`POST` and `DELETE` on `/:slug/admin/bookings/:id/payments`)
+  — the money was collected elsewhere and is a fact whether or not she is paying for the dashboard,
+  so a lapse that refused to write it down, or to undo a record made in error, would leave her books
+  WRONG rather than merely frozen. Every member of this set is a write that keeps something from
+  getting worse, and this is the one that keeps the ledger honest. The trade-off: a lapsed sitter
+  can still keep her books by hand, which is books-keeping and not a feature the plan sells. Adding
+  a charge stays refused — a new figure on the bill is not a record of money that already moved —
+  and so does a payment on a household account (`/:slug/admin/accounts/:id/payments`).
 
-"Read-only except answering requests and blocking dates" is what shipped; the owner can widen or
-narrow it, and the PR asks him to.
+"Read-only except answering requests, blocking dates and recording payments" is what shipped; the
+owner can widen or narrow it.
 
 **The cron and the dashboard's reads stop writing her calendar, while the deployment enforces.** The
 two admin reads that run a calendar self-heal (`/admin/bookings`, `/admin/analytics`) skip it for a

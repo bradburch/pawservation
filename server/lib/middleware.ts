@@ -342,6 +342,10 @@ export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
  *     leaked `pawsa_` token on a lapsed business would otherwise be a leak she cannot stop.
  *   - DISCONNECTING THE CALENDAR (`/:slug/admin/providers/calendar/disconnect`). She must be able
  *     to stop the product writing her calendar; connecting one stays refused.
+ *   - RECORDING OR REVERSING A PAYMENT (`/:slug/admin/bookings/:id/payments`, POST and DELETE).
+ *     The money was collected elsewhere and is a fact either way; a lapse that refused to write it
+ *     down, or to undo a record made in error, would leave her books WRONG rather than frozen.
+ *     Adding a charge stays refused: a new figure on the bill is not a record of money that moved.
  */
 export const planExempt = createMiddleware<AppEnv>((_c, next) => next());
 
