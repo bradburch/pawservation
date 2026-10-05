@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import app from '../index';
-import { createTestEnv, TENANT_A, endUserToken } from './helpers';
+import { clearSeededBookings, createTestEnv, TENANT_A, endUserToken } from './helpers';
 import { getTenantBySlug, insertBookingRequest, updateTenantSettings } from '../db/repo';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
 import { addDays, addMonths, getPacificDateStr } from '../../src/shared/index.js';
@@ -10,14 +10,20 @@ import type { MonthAvailability, MonthDay } from '../lib/availability';
 const JESS_END_USER_ID = 'eu_sp_jess';
 
 describe('GET /api/:slug/availability/month', () => {
+  // Months relative to the real clock, never absolute: a pinned month rots once its days pass
+  // (they paint "Too soon to book"), which turned main red in October 2026 with no code change.
+  const M = addMonths(getPacificDateStr(), 2).slice(0, 7);
+  const N = addMonths(getPacificDateStr(), 3).slice(0, 7);
+  const daysInM = new Date(Date.UTC(Number(M.slice(0, 4)), Number(M.slice(5, 7)), 0)).getUTCDate();
+
   it('D1 boarding booking: blocks, partial, available, mine', async () => {
     const { env } = createTestEnv();
     // A blocked day (no calendar involved — a plain 'blocked' BookingRequests row).
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
-      startDate: '2026-10-10',
-      endDate: '2026-10-11',
+      startDate: `${M}-10`,
+      endDate: `${M}-11`,
       optionKey: null,
       petCount: 1,
       estCost: null,
@@ -27,8 +33,8 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: JESS_END_USER_ID,
       serviceType: 'boarding',
-      startDate: '2026-10-20',
-      endDate: '2026-10-21',
+      startDate: `${M}-20`,
+      endDate: `${M}-21`,
       optionKey: null,
       petCount: 1,
       estCost: null,
@@ -37,25 +43,25 @@ describe('GET /api/:slug/availability/month', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=boarding&month=2026-10',
+      `/api/sunny-paws/availability/month?type=boarding&month=${M}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { today: string; days: MonthDay[] };
-    expect(body.days).toHaveLength(31);
+    expect(body.days).toHaveLength(daysInM);
 
-    const d10 = body.days.find((d) => d.date === '2026-10-10')!;
+    const d10 = body.days.find((d) => d.date === `${M}-10`)!;
     expect(d10.status).toBe('unavailable');
 
-    const d20 = body.days.find((d) => d.date === '2026-10-20')!;
+    const d20 = body.days.find((d) => d.date === `${M}-20`)!;
     expect(d20.status).toBe('partial');
     expect(d20.used).toBe(1);
     expect(d20.max).toBe(2); // Sunny Paws boarding seeded MaxConcurrentPets=2
     expect(d20.mine).toBe(true);
 
-    const d15 = body.days.find((d) => d.date === '2026-10-15')!;
+    const d15 = body.days.find((d) => d.date === `${M}-15`)!;
     expect(d15.status).toBe('available');
     expect(d15.mine).toBe(false);
 
@@ -68,8 +74,8 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'blocked',
-      startDate: '2026-10-10',
-      endDate: '2026-10-11',
+      startDate: `${M}-10`,
+      endDate: `${M}-11`,
       optionKey: null,
       petCount: 1,
       estCost: null,
@@ -78,8 +84,8 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: JESS_END_USER_ID,
       serviceType: 'boarding',
-      startDate: '2026-10-20',
-      endDate: '2026-10-21',
+      startDate: `${M}-20`,
+      endDate: `${M}-21`,
       optionKey: null,
       petCount: 1,
       estCost: null,
@@ -88,7 +94,7 @@ describe('GET /api/:slug/availability/month', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=walk&month=2026-10',
+      `/api/sunny-paws/availability/month?type=walk&month=${M}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
@@ -96,10 +102,10 @@ describe('GET /api/:slug/availability/month', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { today: string; days: MonthDay[] };
 
-    const d10 = body.days.find((d) => d.date === '2026-10-10')!;
+    const d10 = body.days.find((d) => d.date === `${M}-10`)!;
     expect(d10.status).toBe('unavailable');
 
-    const d20 = body.days.find((d) => d.date === '2026-10-20')!;
+    const d20 = body.days.find((d) => d.date === `${M}-20`)!;
     expect(d20.status).toBe('available'); // boarding events ignored for walks
     expect(d20.max).toBeNull();
     expect(d20.used).toBeNull();
@@ -107,16 +113,17 @@ describe('GET /api/:slug/availability/month', () => {
 
   it('no bookings at all: every day available', async () => {
     const { env } = createTestEnv();
+    await clearSeededBookings(env); // seed.sql rows are absolute-dated and would land in M one day
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=boarding&month=2026-10',
+      `/api/sunny-paws/availability/month?type=boarding&month=${M}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { today: string; days: MonthDay[] };
-    expect(body.days).toHaveLength(31);
+    expect(body.days).toHaveLength(daysInM);
     expect(body.days.every((d) => d.status === 'available')).toBe(true);
   });
 
@@ -127,8 +134,8 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'boarding',
-      startDate: '2026-10-05',
-      endDate: '2026-10-06',
+      startDate: `${M}-05`,
+      endDate: `${M}-06`,
       optionKey: null,
       petCount: 2,
       estCost: null,
@@ -137,14 +144,14 @@ describe('GET /api/:slug/availability/month', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=boarding&month=2026-10',
+      `/api/sunny-paws/availability/month?type=boarding&month=${M}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { days: MonthDay[] };
-    const d5 = body.days.find((d) => d.date === '2026-10-05')!;
+    const d5 = body.days.find((d) => d.date === `${M}-05`)!;
     expect(d5.status).toBe('unavailable');
     expect(d5.used).toBe(2);
     expect(d5.max).toBe(2);
@@ -174,7 +181,7 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, 'tnt_sunnypaws', {
       endUserId: null,
       serviceType: 'walk',
-      startDate: '2026-10-05',
+      startDate: `${M}-05`,
       endDate: null,
       optionKey: 'morning-walk',
       petCount: 1,
@@ -185,19 +192,19 @@ describe('GET /api/:slug/availability/month', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=walk&month=2026-10&option=morning-walk',
+      `/api/sunny-paws/availability/month?type=walk&month=${M}&option=morning-walk`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { days: MonthDay[] };
-    const d5 = body.days.find((d) => d.date === '2026-10-05')!;
+    const d5 = body.days.find((d) => d.date === `${M}-05`)!;
     expect(d5.status).toBe('unavailable');
     expect(d5.used).toBeNull(); // customers never see raw counts
     expect(d5.max).toBeNull();
 
-    const d6 = body.days.find((d) => d.date === '2026-10-06')!;
+    const d6 = body.days.find((d) => d.date === `${M}-06`)!;
     expect(d6.status).toBe('available');
   });
 
@@ -205,7 +212,7 @@ describe('GET /api/:slug/availability/month', () => {
     const { env } = createTestEnv();
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=walk&month=2026-10&option=does-not-exist',
+      `/api/sunny-paws/availability/month?type=walk&month=${M}&option=does-not-exist`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
@@ -235,7 +242,7 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: JESS_END_USER_ID,
       serviceType: 'walk',
-      startDate: '2026-10-15',
+      startDate: `${M}-15`,
       endDate: null,
       optionKey: 'afternoon-walk',
       petCount: 1,
@@ -246,14 +253,14 @@ describe('GET /api/:slug/availability/month', () => {
 
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=walk&month=2026-10',
+      `/api/sunny-paws/availability/month?type=walk&month=${M}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { days: MonthDay[] };
-    const d15 = body.days.find((d) => d.date === '2026-10-15')!;
+    const d15 = body.days.find((d) => d.date === `${M}-15`)!;
     expect(d15.mine).toBe(true);
   });
 
@@ -271,7 +278,7 @@ describe('GET /api/:slug/availability/month', () => {
       await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
         endUserId: null,
         serviceType: 'walk',
-        startDate: '2026-11-12',
+        startDate: `${N}-12`,
         endDate: null,
         optionKey: 'd30',
         petCount: 2,
@@ -282,15 +289,15 @@ describe('GET /api/:slug/availability/month', () => {
     }
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=walk&option=d30&month=2026-11',
+      `/api/sunny-paws/availability/month?type=walk&option=d30&month=${N}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { days: MonthDay[] };
-    const d12 = body.days.find((d) => d.date === '2026-11-12')!;
+    const d12 = body.days.find((d) => d.date === `${N}-12`)!;
     expect(d12.status).toBe('unavailable'); // 4 pets ≥ capacity 4
-    const d13 = body.days.find((d) => d.date === '2026-11-13')!;
+    const d13 = body.days.find((d) => d.date === `${N}-13`)!;
     expect(d13.status).toBe('available');
   });
 
@@ -307,7 +314,7 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'walk',
-      startDate: '2026-11-12',
+      startDate: `${N}-12`,
       endDate: null,
       optionKey: 'd30',
       petCount: 1,
@@ -318,7 +325,7 @@ describe('GET /api/:slug/availability/month', () => {
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const daysFor = async (petIds?: string) => {
       const res = await app.request(
-        '/api/sunny-paws/availability/month?type=walk&option=d30&month=2026-11' +
+        `/api/sunny-paws/availability/month?type=walk&option=d30&month=${N}` +
           (petIds === undefined ? '' : `&petIds=${petIds}`),
         { headers: { Authorization: `Bearer ${token}` } },
         env,
@@ -328,13 +335,13 @@ describe('GET /api/:slug/availability/month', () => {
     };
 
     const two = await daysFor('pet_sp_bella,pet_sp_mochi');
-    expect(two.find((d) => d.date === '2026-11-12')).toMatchObject({
+    expect(two.find((d) => d.date === `${N}-12`)).toMatchObject({
       status: 'unavailable',
       reason: 'Not enough room for 2 pets',
     });
     // One pet still fits, and the reason stays null on an open day.
     const one = await daysFor('pet_sp_bella');
-    expect(one.find((d) => d.date === '2026-11-12')).toMatchObject({
+    expect(one.find((d) => d.date === `${N}-12`)).toMatchObject({
       status: 'available',
       reason: null,
     });
@@ -353,8 +360,8 @@ describe('GET /api/:slug/availability/month', () => {
     await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
       endUserId: null,
       serviceType: 'housesitting',
-      startDate: '2026-11-05',
-      endDate: '2026-11-06',
+      startDate: `${N}-05`,
+      endDate: `${N}-06`,
       optionKey: 'standard',
       petCount: 2,
       estCost: null,
@@ -362,13 +369,13 @@ describe('GET /api/:slug/availability/month', () => {
     });
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const res = await app.request(
-      '/api/sunny-paws/availability/month?type=housesitting&month=2026-11',
+      `/api/sunny-paws/availability/month?type=housesitting&month=${N}`,
       { headers: { Authorization: `Bearer ${token}` } },
       env,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { days: MonthDay[] };
-    const d5 = body.days.find((d) => d.date === '2026-11-05')!;
+    const d5 = body.days.find((d) => d.date === `${N}-05`)!;
     expect(d5.status).toBe('unavailable');
     expect(d5.used).toBe(2);
     expect(d5.max).toBe(2);

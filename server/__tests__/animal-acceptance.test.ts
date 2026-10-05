@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { setServiceAcceptedPetTypes } from '../db/repo';
 import { adminToken, createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { addDays, getPacificDateStr } from '../../src/shared/index.js';
+
+// Relative to the clock: an absolute "future" date goes past and the route refuses `date_in_past`
+// before reaching the acceptance rule under test.
+const START = addDays(getPacificDateStr(), 30);
+const END = addDays(START, 2);
 
 const book = async (env: Env, token: string, petIds: string[], type = 'boarding') =>
   app.request(
@@ -12,8 +18,8 @@ const book = async (env: Env, token: string, petIds: string[], type = 'boarding'
       body: JSON.stringify({
         type,
         optionKey: type === 'boarding' ? 'standard' : 'd30',
-        startDate: '2026-10-01',
-        ...(type === 'boarding' ? { endDate: '2026-10-03' } : {}),
+        startDate: START,
+        ...(type === 'boarding' ? { endDate: END } : {}),
         petIds,
       }),
     },
@@ -103,8 +109,8 @@ describe('per-service pet-type acceptance (booking POST)', () => {
         body: JSON.stringify({
           type: 'boarding',
           optionKey: 'standard',
-          startDate: '2026-10-01',
-          endDate: '2026-10-03',
+          startDate: START,
+          endDate: END,
           petIds: [petId],
         }),
       },
