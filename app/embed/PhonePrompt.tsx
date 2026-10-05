@@ -49,8 +49,8 @@ export function PhonePrompt({
   return (
     <div className="bp-identify">
       <p className="bp-signin-lede">
-        Before you book, please add a phone number so {displayName} can reach you while your pets
-        are in their care. You&apos;ll only be asked once.
+        Before you book, please add a phone number so {displayName} can reach you. You&apos;ll only
+        be asked once.
       </p>
       <label className="bp-field">
         Your phone number

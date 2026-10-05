@@ -70,13 +70,15 @@ describe('the widget puts the prompt in front of booking', () => {
     expect(APP).toContain('const askingForPhone = !editing && (askPhone ?? needsPhone(me));');
   });
 
-  it('renders the prompt INSTEAD of the booking form while asking', () => {
-    const asking = APP.indexOf('askingForPhone ? (');
+  it('shows the prompt in front of the booking form, which stays mounted (hidden) so its entries survive', () => {
+    const asking = APP.indexOf('{askingForPhone && (');
     const prompt = APP.indexOf('<PhonePrompt', asking);
     const form = APP.indexOf('<BookTab', asking);
     expect(asking).toBeGreaterThan(-1);
     expect(prompt).toBeGreaterThan(asking);
     expect(form).toBeGreaterThan(prompt);
+    expect(APP).toContain('<div hidden={askingForPhone}>');
+    expect(APP).not.toContain('askingForPhone ? (');
   });
 
   it('turns a phone_required refusal from the booking POST into the prompt', () => {

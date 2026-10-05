@@ -183,44 +183,49 @@ export default function App() {
             }}
           />
         </>
-      ) : askingForPhone ? (
-        <>
-          <h1 className="bp-greeting">One thing first, {firstName}</h1>
-          <PhonePrompt
-            displayName={config.displayName}
-            onSaved={() => {
-              setAskPhone(false);
-              reloadMe();
-            }}
-            onAuthExpired={onAuthExpired}
-          />
-        </>
       ) : (
         <>
-          <h1 className="bp-greeting">
-            {editing ? 'Change your booking' : `How can I help, ${firstName}?`}
-          </h1>
-          <BookTab
-            // A fresh mount per edit target: BookTab seeds its dates, pets, arrival time and
-            // answers from `editing` in useState initializers, which run once per mount. Without
-            // the key, switching from one booking to another (or back to a new request) would
-            // keep the previous form's state.
-            key={editing?.id ?? 'new'}
-            config={config}
-            pets={me?.pets ?? null}
-            savedAnswers={me?.savedAnswers ?? null}
-            editing={editing}
-            onEditSaved={() => {
-              setEditing(null);
-              setShowMine(true);
-            }}
-            onEditCancel={() => {
-              setEditing(null);
-              setShowMine(true);
-            }}
-            onAuthExpired={onAuthExpired}
-            onPhoneRequired={() => setAskPhone(true)}
-          />
+          {askingForPhone && (
+            <>
+              <h1 className="bp-greeting">One thing first, {firstName}</h1>
+              <PhonePrompt
+                displayName={config.displayName}
+                onSaved={() => {
+                  setAskPhone(false);
+                  reloadMe();
+                }}
+                onAuthExpired={onAuthExpired}
+              />
+            </>
+          )}
+          {/* Hidden, never unmounted, while the phone is asked for: BookTab holds the dates and pets
+              the client entered, and a booking that bounced on a missing phone must not cost them. */}
+          <div hidden={askingForPhone}>
+            <h1 className="bp-greeting">
+              {editing ? 'Change your booking' : `How can I help, ${firstName}?`}
+            </h1>
+            <BookTab
+              // A fresh mount per edit target: BookTab seeds its dates, pets, arrival time and
+              // answers from `editing` in useState initializers, which run once per mount. Without
+              // the key, switching from one booking to another (or back to a new request) would
+              // keep the previous form's state.
+              key={editing?.id ?? 'new'}
+              config={config}
+              pets={me?.pets ?? null}
+              savedAnswers={me?.savedAnswers ?? null}
+              editing={editing}
+              onEditSaved={() => {
+                setEditing(null);
+                setShowMine(true);
+              }}
+              onEditCancel={() => {
+                setEditing(null);
+                setShowMine(true);
+              }}
+              onAuthExpired={onAuthExpired}
+              onPhoneRequired={() => setAskPhone(true)}
+            />
+          </div>
         </>
       )}
       {contact}
