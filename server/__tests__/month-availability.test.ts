@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { createTestEnv, TENANT_A, endUserToken } from './helpers';
 import { getTenantBySlug, insertBookingRequest, updateTenantSettings } from '../db/repo';
@@ -10,6 +10,14 @@ import type { MonthAvailability, MonthDay } from '../lib/availability';
 const JESS_END_USER_ID = 'eu_sp_jess';
 
 describe('GET /api/:slug/availability/month', () => {
+  // These tests use fixed October 2026 dates; pin 'now' before them so the suite does not rot as the real date passes.
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date('2026-09-15T12:00:00Z'), toFake: ['Date'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('D1 boarding booking: blocks, partial, available, mine', async () => {
     const { env } = createTestEnv();
     // A blocked day (no calendar involved — a plain 'blocked' BookingRequests row).

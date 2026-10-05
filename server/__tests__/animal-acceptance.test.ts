@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
 import { setServiceAcceptedPetTypes } from '../db/repo';
 import { adminToken, createTestEnv, endUserToken, TENANT_A } from './helpers';
@@ -21,6 +21,14 @@ const book = async (env: Env, token: string, petIds: string[], type = 'boarding'
   );
 
 describe('per-service pet-type acceptance (booking POST)', () => {
+  // These tests use fixed October 2026 dates; pin 'now' before them so the suite does not rot as the real date passes.
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date('2026-09-15T12:00:00Z'), toFake: ['Date'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('rejects a pet whose type is off the service list, with the plain-language message', async () => {
     const { env } = createTestEnv();
     await setServiceAcceptedPetTypes(env.PAWSERVATION_DB, TENANT_A, 'boarding', ['dog']);
