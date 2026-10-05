@@ -5,6 +5,7 @@ import type { PriceResult } from '../lib/availability';
 import { SERVICE_TEMPLATES, type TemplateId } from '../lib/services';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import { createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { addDays, getPacificDateStr } from '../../src/shared/index.js';
 
 /** Every quote here is single-pet and rate-less by design: the single-pet fallback
  *  (`distinct.length === 1` in `estimateCost`) resolves to `option.Rate` with no stored pet-set
@@ -185,6 +186,10 @@ describe('the quote reports the holiday breakdown it priced with', () => {
 });
 
 describe('quote/stamp parity across a holiday', () => {
+  // The NEXT Christmas week, from the clock: these book through the real route, which refuses a
+  // past date (`date_in_past`) before pricing anything. Ten days ahead rolls to next year once
+  // Dec 23 is within reach. Dec 24 and 25 are holidays every year (no observed-day shifting).
+  const Y = addDays(getPacificDateStr(), 10).slice(0, 4);
   it('the booking stamps exactly what the quote said, holidays included', async () => {
     const { env, raw } = createTestEnv();
     raw
@@ -194,7 +199,7 @@ describe('quote/stamp parity across a holiday', () => {
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const quote = (await (
       await app.request(
-        '/api/sunny-paws/availability?type=boarding&start=2026-12-23&end=2026-12-27&petIds=pet_sp_bella',
+        `/api/sunny-paws/availability?type=boarding&start=${Y}-12-23&end=${Y}-12-27&petIds=pet_sp_bella`,
         { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
@@ -208,8 +213,8 @@ describe('quote/stamp parity across a holiday', () => {
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'boarding',
-            startDate: '2026-12-23',
-            endDate: '2026-12-27',
+            startDate: `${Y}-12-23`,
+            endDate: `${Y}-12-27`,
             petIds: ['pet_sp_bella'],
           }),
         },
@@ -231,7 +236,7 @@ describe('quote/stamp parity across a holiday', () => {
     const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
     const quote = (await (
       await app.request(
-        '/api/sunny-paws/availability?type=checkin&option=d15&start=2026-12-25&petIds=pet_sp_bella',
+        `/api/sunny-paws/availability?type=checkin&option=d15&start=${Y}-12-25&petIds=pet_sp_bella`,
         { headers: { Authorization: `Bearer ${token}` } },
         env,
       )
@@ -245,7 +250,7 @@ describe('quote/stamp parity across a holiday', () => {
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'checkin',
-            startDate: '2026-12-25',
+            startDate: `${Y}-12-25`,
             optionKey: 'd15',
             petIds: ['pet_sp_bella'],
           }),
