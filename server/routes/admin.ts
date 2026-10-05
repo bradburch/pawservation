@@ -2348,6 +2348,9 @@ export const adminRoutes = new Hono<AppEnv>()
     // it once: in a name-on-the-first-row file the create happens on a LATER row (the first one
     // carrying a pet), and it takes the name from here rather than from its own blank cell.
     const nameByEmail = new Map<string, string>();
+    // The same thing for the phone, which a CREATE needs as much as a name: typed once, on any
+    // earlier row of the file, it counts for every later row of that client.
+    const phoneByEmail = new Map<string, string>();
     const livePetCount = (email: string) => {
       const id = idByEmail.get(email);
       return id ? (livePetNames.get(id)?.size ?? 0) : 0;
@@ -2412,6 +2415,9 @@ export const adminRoutes = new Hono<AppEnv>()
       // Fifth column, added later and therefore OPTIONAL: a four-column file (every file exported
       // before this existed) reads it as blank and behaves exactly as it always did.
       const rawCoOwners = cells[4] ?? '';
+      // Sixth column, after the co-owner one for the same reason that one is fifth: every older file
+      // still reads each of its columns where it always did. Required only to CREATE a client.
+      const rawPhone = cells[5] ?? '';
       const email = rawEmail.trim().toLowerCase();
       if (!EMAIL_RE.test(email)) {
         skippedRows.push({ row, reason: 'Invalid email address' });
@@ -2423,6 +2429,13 @@ export const adminRoutes = new Hono<AppEnv>()
       }
       const name = rawName.trim();
       if (name) nameByEmail.set(email, name);
+      // A phone that is GIVEN must be one — the manual-add rule — whether or not this row creates.
+      const phoneCheck = validatePhone(rawPhone);
+      if (!phoneCheck.ok && phoneCheck.code === 'phone_invalid') {
+        skippedRows.push({ row, reason: `Phone: ${phoneCheck.reason}` });
+        continue;
+      }
+      if (phoneCheck.ok) phoneByEmail.set(email, phoneCheck.phone);
 
       try {
         // A customer created by an earlier row of THIS file is found here too, so one-row-per-pet
@@ -2446,6 +2459,13 @@ export const adminRoutes = new Hono<AppEnv>()
         const createName = nameByEmail.get(email) ?? '';
         if (!existing && !createName) {
           skippedRows.push({ row, reason: 'Missing name' });
+          continue;
+        }
+        // Every client the product creates has a phone on file, so a create needs one — from this
+        // row or any earlier row for the same email. An existing client keeps the one on file.
+        const createPhone = phoneByEmail.get(email) ?? null;
+        if (!existing && createPhone === null) {
+          skippedRows.push({ row, reason: 'Missing phone' });
           continue;
         }
         if (petName && !petType) {
@@ -2487,7 +2507,7 @@ export const adminRoutes = new Hono<AppEnv>()
             tenant.Id,
             email,
             createName,
-            null,
+            createPhone,
             petName,
             petType,
           );
@@ -2534,13 +2554,14 @@ export const adminRoutes = new Hono<AppEnv>()
           await addCoOwnerToPets(c.env.PAWSERVATION_DB, tenant.Id, ownerId, petIds);
         } else {
           const createName = nameByEmail.get(email);
-          if (!createName) {
-            // There is no name to create them with — the pet is already imported, so say what the
-            // sitter has to add rather than failing anything.
+          const createPhone = phoneByEmail.get(email);
+          if (!createName || createPhone === undefined) {
+            // There is no name or no phone to create them with — the pet is already imported, so
+            // say what the sitter has to add rather than failing anything.
             for (const row of rows)
               skippedRows.push({
                 row,
-                reason: `Co-owner ${email} needs a row of their own with their name`,
+                reason: `Co-owner ${email} needs a row of their own with their name and phone`,
               });
             continue;
           }
@@ -2551,7 +2572,7 @@ export const adminRoutes = new Hono<AppEnv>()
             tenant.Id,
             email,
             createName,
-            null,
+            createPhone,
             petIds,
           );
           ownerId = customer.Id;

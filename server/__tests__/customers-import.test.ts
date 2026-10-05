@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
-import { adminToken, createTestEnv, TENANT_A } from './helpers';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { buildClientImportPrompt } from '../../app/admin/importPrompt.js';
+import { adminToken, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 
 type ImportResult = {
   importedCustomers: number;
@@ -10,10 +13,29 @@ type ImportResult = {
   skippedRows: { row: number; reason: string }[];
 };
 
+/**
+ * The fixtures in this file predate the phone column and are about everything EXCEPT the phone
+ * rule, so `importCsv` gives every data row a phone: padded to the five older columns, then the
+ * sixth. Blank lines stay blank — the importer skips them, and a padded one would become a row.
+ * No fixture here quotes a cell, so a plain split is exact. The phone rule's own tests pass
+ * `{ asIs: true }`.
+ */
+function withPhone(csv: string, phone = '(555) 555-0100'): string {
+  const [header, ...rows] = csv.split('\n');
+  const phoned = rows.map((r) => {
+    if (r === '') return r;
+    const cells = r.split(',');
+    while (cells.length < 5) cells.push('');
+    return [...cells, phone].join(',');
+  });
+  return [header, ...phoned].join('\n');
+}
+
 async function importCsv(
   env: Env,
   csv: string,
   sendInvites = false,
+  opts?: { asIs?: boolean },
 ): Promise<{ status: number; body: ImportResult }> {
   const token = await adminToken(TENANT_A);
   const res = await app.request(
@@ -21,7 +43,7 @@ async function importCsv(
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ csv, sendInvites }),
+      body: JSON.stringify({ csv: opts?.asIs ? csv : withPhone(csv), sendInvites }),
     },
     env,
   );
@@ -226,7 +248,7 @@ describe('POST /:slug/admin/customers/import', () => {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          csv: 'email,name,pet name,pet type\nhopper@example.com,Hope,Thumper,rabbit',
+          csv: 'email,name,pet name,pet type\nhopper@example.com,Hope,Thumper,rabbit,,(555) 555-0100',
         }),
       },
       env,
@@ -387,7 +409,7 @@ describe('POST /:slug/admin/customers/import', () => {
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv, sendInvites: false }),
+        body: JSON.stringify({ csv: withPhone(csv), sendInvites: false }),
       },
       env,
     );
@@ -396,5 +418,124 @@ describe('POST /:slug/admin/customers/import', () => {
     expect(body.skippedRows).toEqual([{ row: 2, reason: 'Could not import this row' }]);
     vi.doUnmock('../db/repo');
     vi.resetModules();
+  });
+
+  // ── The phone column ──────────────────────────────────────────────────────────────────────────
+  // Sixth, after the co-owner column, so every older file still reads its other columns where it
+  // always did. Required to CREATE a client (like the name, a phone on any earlier row of the same
+  // file counts); a pet row for a client who already exists needs none.
+  const PHONE_HEADER = 'Client Email,Client Name,Pet Name,Pet Type,Co-owner Emails,Phone';
+
+  it('skips a row that would create a client with no phone, says which, and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = `${PHONE_HEADER}\nnophone@example.com,No Phone,Rex,dog,,\n`;
+    const { body } = await importCsv(env, csv, false, { asIs: true });
+    expect(body.skippedRows).toEqual([{ row: 2, reason: 'Missing phone' }]);
+    expect(body.importedCustomers).toBe(0);
+    expect(
+      raw.prepare('SELECT * FROM EndUsers WHERE Email = ?').get('nophone@example.com'),
+    ).toBeUndefined();
+  });
+
+  it('treats a whitespace-only phone as missing', async () => {
+    const { env } = createTestEnv();
+    const csv = `${PHONE_HEADER}\nblank@example.com,Blank,Rex,dog,,   \n`;
+    const { body } = await importCsv(env, csv, false, { asIs: true });
+    expect(body.skippedRows).toEqual([{ row: 2, reason: 'Missing phone' }]);
+  });
+
+  it('skips a row whose phone is not one, naming the rule', async () => {
+    const { env } = createTestEnv();
+    const csv = `${PHONE_HEADER}\nbad@example.com,Bad,Rex,dog,,n/a\n`;
+    const { body } = await importCsv(env, csv, false, { asIs: true });
+    expect(body.skippedRows).toHaveLength(1);
+    expect(body.skippedRows[0]!.row).toBe(2);
+    expect(body.skippedRows[0]!.reason).toMatch(/^Phone: .*7 digits/);
+    expect(body.importedCustomers).toBe(0);
+  });
+
+  it('stores the phone trimmed, and takes it from an earlier row of the same file', async () => {
+    const { env, raw } = createTestEnv();
+    const csv =
+      `${PHONE_HEADER}\n` +
+      'multi@example.com,Multi Pet,,,, (555) 555-0123 \n' +
+      'multi@example.com,,Bella,dog,,\n';
+    const { body } = await importCsv(env, csv, false, { asIs: true });
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(1);
+    expect(
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Email = ?').get('multi@example.com') as {
+          Phone: string;
+        }
+      ).Phone,
+    ).toBe('(555) 555-0123');
+  });
+
+  it('needs no phone for a pet row of a client who already exists, and keeps theirs', async () => {
+    const { env, raw } = createTestEnv();
+    const csv = `${PHONE_HEADER}\njess@example.com,,Comet,dog,,\n`;
+    const { body } = await importCsv(env, csv, false, { asIs: true });
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedPets).toBe(1);
+    expect(
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Id = ?').get('eu_sp_jess') as {
+          Phone: string;
+        }
+      ).Phone,
+    ).toBe('(555) 555-0142');
+  });
+
+  it('reads an older four-column file the same way, refusing only the clients it would create', async () => {
+    const { env } = createTestEnv();
+    const csv =
+      'Client Email,Client Name,Pet Name,Pet Type\n' +
+      'jess@example.com,Jess Demo,Comet,dog\n' +
+      'newold@example.com,New Old,Rex,dog\n';
+    const { body } = await importCsv(env, csv, false, { asIs: true });
+    expect(body.importedPets).toBe(1);
+    expect(body.importedCustomers).toBe(0);
+    expect(body.skippedRows).toEqual([{ row: 3, reason: 'Missing phone' }]);
+  });
+
+  // The two copies of the example file a sitter is handed — the one the dashboard links to and the
+  // one in the docs — must be the same file, and it must import cleanly as it stands.
+  it('ships an example file that imports with nothing skipped, phones included', async () => {
+    const root = join(import.meta.dirname, '..', '..');
+    const shipped = readFileSync(join(root, 'public', 'clients-import-example.csv'), 'utf8');
+    expect(readFileSync(join(root, 'docs', 'examples', 'clients-import-example.csv'), 'utf8')).toBe(
+      shipped,
+    );
+    expect(shipped.split('\n')[0]).toBe(PHONE_HEADER);
+    const { env, raw } = createTestEnv();
+    // happy-tails: jess is already a client there (the "existing client" rows), sam/tina/rob are not.
+    const res = await app.request(
+      '/api/happy-tails/admin/customers/import',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${await adminToken(TENANT_B)}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ csv: shipped, sendInvites: false }),
+      },
+      env,
+    );
+    const body = (await res.json()) as ImportResult;
+    expect(body.skippedRows).toEqual([]);
+    expect(body.importedCustomers).toBe(3);
+    const phones = raw
+      .prepare('SELECT Email, Phone FROM EndUsers WHERE TenantId = ? AND Email != ? ORDER BY Email')
+      .all(TENANT_B, 'jess@example.com') as { Email: string; Phone: string | null }[];
+    expect(phones.every((r) => r.Phone !== null)).toBe(true);
+  });
+
+  it('tells the AI that reformats a client list to keep the phone, in the sixth column', () => {
+    const prompt = buildClientImportPrompt([{ petType: 'dog', label: 'Dog' }]);
+    expect(prompt).toContain(PHONE_HEADER);
+    expect(prompt).toContain('exactly 6 columns');
+    expect(prompt).not.toMatch(/don't need to keep \(phone numbers/);
+    expect(prompt).toMatch(/Phone[^\n]*every client needs one/i);
   });
 });

@@ -1067,16 +1067,17 @@ export function ClientsSection({
         </span>
       </div>
       <p className="pb-applies">
-        One row per pet, repeating the email for a client with several pets — the name only has to
-        appear once. Every client needs at least one pet: rows that would leave a client with none,
-        or a new client with no name, are skipped and listed back to you.
+        One row per pet, repeating the email for a client with several pets — the name and phone
+        only have to appear once. Every client needs at least one pet and a phone number: rows that
+        would leave a client with no pet, or create one with no name or no phone, are skipped and
+        listed back to you. The phone goes in the last column (<em>Phone</em>).
       </p>
       <p className="pb-applies">
-        <strong>Two people sharing a pet?</strong> Put the other owner&rsquo;s email in the last
-        column (<em>Co-owner Emails</em>; separate several with semicolons) and give them a row of
-        their own with their name and no pet — they&rsquo;ll be added to the same account and billed
-        together. Repeating the pet on a second row instead creates a <em>second</em> pet, because
-        two clients can each own a &ldquo;Bella&rdquo;.
+        <strong>Two people sharing a pet?</strong> Put the other owner&rsquo;s email in the{' '}
+        <em>Co-owner Emails</em> column (separate several with semicolons) and give them a row of
+        their own with their name, their phone and no pet — they&rsquo;ll be added to the same
+        account and billed together. Repeating the pet on a second row instead creates a{' '}
+        <em>second</em> pet, because two clients can each own a &ldquo;Bella&rdquo;.
       </p>
       {importResult && (
         <div className="pb-row">

@@ -34,3 +34,11 @@ describe('the dashboard asks for a phone wherever it creates a client', () => {
     expect(FLAT).toMatch(/const ready = [^;]*phone\.trim\(\) !== ''/);
   });
 });
+
+describe('the import panel says what a new client needs', () => {
+  it('names the phone beside the name, and the column it goes in', () => {
+    expect(TEXT).toContain('the name and phone only have to appear once');
+    expect(TEXT).toContain('create one with no name or no phone, are skipped');
+    expect(TEXT).toContain('their own with their name, their phone and no pet');
+  });
+});
