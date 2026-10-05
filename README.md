@@ -255,9 +255,9 @@ npx wrangler secret put BILLING_SHARED_SECRET      # guards POST /api/:slug/admi
 # the caller to the new one, then `npx wrangler secret delete BILLING_SHARED_SECRET_PREVIOUS`.
 # PREMIUM_ORIGIN is set in wrangler.jsonc as a plain var (not a secret); edit the value there if needed.
 # It is published on /config as premium.origin for clients that cannot resolve relative paths (*.workers.dev embeds).
-# PLAN_SUBSCRIBE is a plain var too, and is deliberately NOT set: unset means the dashboard offers no
-# Subscribe control. See "Plans and billing" below for when to add it.
-# PLAN_ENFORCE is the same shape and is also deliberately NOT set: unset means a business holding no
+# PLAN_SUBSCRIBE is a plain var too, and is set to "true" in production: unset means the dashboard
+# offers no Subscribe control. See "Plans and billing" below.
+# PLAN_ENFORCE is the same shape and is deliberately NOT set: unset means a business holding no
 # current plan still has a writable dashboard. Set it to exactly "true" only after the pre-flip check
 # in "Plans and billing" returns zero rows. Both are `vars` entries in wrangler.jsonc — a STRING, never
 # a JSON boolean — so the flip and the unflip are each a deploy, and a value set in the dashboard is
@@ -545,9 +545,10 @@ never on the tenant's own entitlement — which is false for exactly the sitter 
   cancelled keeps a billing account for good, and gating on it hid Subscribe from the one sitter who
   wanted to press it.
 
-**Leave `PLAN_SUBSCRIBE` unset until the billing worker's checkout route is live**, then set it and
-deploy. `PREMIUM_ORIGIN` is already set in production, so a panel gated on the origin alone would
-put a Subscribe button in front of every sitter that 404s on every press. The flag is the
+**`PLAN_SUBSCRIBE` is set in production now that the billing worker's checkout route is live**;
+unsetting it and redeploying hides the controls again. `PREMIUM_ORIGIN` is set in production, so a
+panel gated on the origin alone would put a Subscribe button in front of every sitter that 404s on
+every press if the route were not live. The flag is the
 operator's switch for "we are selling now", and it grants nothing: it decides whether a control
 renders, never whether a plan is honoured.
 
