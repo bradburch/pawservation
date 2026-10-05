@@ -36,6 +36,7 @@ describe('co-owned pets in the widget', () => {
       TENANT_A,
       'co@example.com',
       'Co Owner',
+      '(555) 555-0100',
     );
     await addPetOwner(env.PAWSERVATION_DB, TENANT_A, 'pet_sp_bella', co.Id);
     const token = await endUserToken(env, 'sunny-paws', 'co@example.com');

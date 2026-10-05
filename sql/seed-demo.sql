@@ -261,13 +261,13 @@ UPDATE TenantServices
 INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUES
   ('eu_sp_marco', 'tnt_sunnypaws', 'marco@example.com', 'Marco Reyes', '(555) 555-0188', 'active'),
   ('eu_sp_priya', 'tnt_sunnypaws', 'priya@example.com', 'Priya Shah', '(555) 555-0117', 'active'),
-  ('eu_sp_ana', 'tnt_sunnypaws', 'ana@example.com', 'Ana Whitfield', NULL, 'active'),
+  ('eu_sp_ana', 'tnt_sunnypaws', 'ana@example.com', 'Ana Whitfield', '(555) 555-0129', 'active'),
   ('eu_ht_marco', 'tnt_happytails', 'marco@example.com', 'Marco Reyes', '(555) 555-0188', 'active'),
   ('eu_ht_devon', 'tnt_happytails', 'devon@example.com', 'Devon Alvarez', '(555) 555-0163', 'active'),
-  ('eu_ht_kate', 'tnt_happytails', 'kate@example.com', 'Kate Lindqvist', NULL, 'active'),
-  ('eu_ht_rosa', 'tnt_happytails', 'rosa@example.com', 'Rosa Bright', NULL, 'active'),
+  ('eu_ht_kate', 'tnt_happytails', 'kate@example.com', 'Kate Lindqvist', '(555) 555-0135', 'active'),
+  ('eu_ht_rosa', 'tnt_happytails', 'rosa@example.com', 'Rosa Bright', '(555) 555-0151', 'active'),
   ('eu_pr_omar', 'tnt_pawsandrelax', 'omar@example.com', 'Omar Haddad', '(555) 555-0104', 'active'),
-  ('eu_pr_nina', 'tnt_pawsandrelax', 'nina@example.com', 'Nina Castellanos', NULL, 'active');
+  ('eu_pr_nina', 'tnt_pawsandrelax', 'nina@example.com', 'Nina Castellanos', '(555) 555-0176', 'active');
 
 -- One pet each (client-AND-pet invariant: no owners without pets), except Marco, who has TWO
 -- dogs at Sunny Paws on purpose: boarding is dog-only there, so his household is the demo's one

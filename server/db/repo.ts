@@ -5019,6 +5019,24 @@ export async function promoteCustomerActive(
 }
 
 /**
+ * Set the client's phone — already validated and trimmed by `validatePhone` (server/lib/phone.ts);
+ * this never clears one, because every client must have a phone on file. Returns whether a row
+ * changed, so a caller can 404 an unknown or foreign id (the WHERE is the tenant guard).
+ */
+export async function setEndUserPhone(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  phone: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE EndUsers SET Phone = ? WHERE TenantId = ? AND Id = ?')
+    .bind(phone, tenantId, endUserId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
  * Set (or clear) the client's Venmo handle. The value is stored '@'-less and is used for exactly
  * one thing: matching a row of an uploaded Venmo CSV to this client. NULL means "match on Name",
  * which is the common case — hence the field's label in the admin UI. Returns whether a row
