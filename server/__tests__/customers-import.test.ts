@@ -487,6 +487,25 @@ describe('POST /:slug/admin/customers/import', () => {
     ).toBe('(555) 555-0142');
   });
 
+  it('fills a blank phone on an existing client from the row, and never overwrites one on file', async () => {
+    const { env, raw } = createTestEnv();
+    const phoneOf = () =>
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Id = ?').get('eu_sp_jess') as {
+          Phone: string;
+        }
+      ).Phone;
+    const csv = `${PHONE_HEADER}\njess@example.com,,Comet,dog,,(555) 555-0177\n`;
+    // On file: kept.
+    expect((await importCsv(env, csv, false, { asIs: true })).body.skippedRows).toEqual([]);
+    expect(phoneOf()).toBe('(555) 555-0142');
+    // Blank: filled with the typed, trimmed phone.
+    raw.prepare(`UPDATE EndUsers SET Phone = '  ' WHERE Id = 'eu_sp_jess'`).run();
+    const csv2 = `${PHONE_HEADER}\njess@example.com,,Dash,dog,, (555) 555-0188 \n`;
+    expect((await importCsv(env, csv2, false, { asIs: true })).body.skippedRows).toEqual([]);
+    expect(phoneOf()).toBe('(555) 555-0188');
+  });
+
   it('reads an older four-column file the same way, refusing only the clients it would create', async () => {
     const { env } = createTestEnv();
     const csv =

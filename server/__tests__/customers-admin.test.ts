@@ -589,6 +589,37 @@ describe('admin customers: phone', () => {
     expect(rowFor(raw, 'jess@example.com')?.Phone).toBe('(555) 555-0142');
   });
 
+  it('fills a blank phone on an existing client with the typed one', async () => {
+    const { env, raw } = createTestEnv();
+    for (const blank of [null, '   ']) {
+      raw.prepare(`UPDATE EndUsers SET Phone = ? WHERE Id = 'eu_sp_jess'`).run(blank);
+      const res = await post(env, {
+        email: 'jess@example.com',
+        name: 'Jess Demo',
+        phone: '  (555) 555-0177 ',
+        petName: `Comet${blank === null ? 1 : 2}`,
+        petType: 'dog',
+      });
+      expect(res.status).toBe(201);
+      expect(((await res.json()) as { phone: string }).phone).toBe('(555) 555-0177');
+      expect(rowFor(raw, 'jess@example.com')?.Phone).toBe('(555) 555-0177');
+    }
+  });
+
+  it('never overwrites a phone already on file with the typed one', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, {
+      email: 'jess@example.com',
+      name: 'Jess Demo',
+      phone: '(555) 555-0177',
+      petName: 'Comet',
+      petType: 'dog',
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { phone: string }).phone).toBe('(555) 555-0142');
+    expect(rowFor(raw, 'jess@example.com')?.Phone).toBe('(555) 555-0142');
+  });
+
   it('still refuses a malformed phone on the append path', async () => {
     const { env } = createTestEnv();
     const res = await post(env, {

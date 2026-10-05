@@ -895,7 +895,9 @@ export async function createBooking(
   // check on the REQUEST and before anything is written: a caller learns what is wrong with what
   // they sent first, and the demo identity (which never persists) has already returned above.
   // Blank or whitespace-only counts as none (`phoneOnFile`).
-  if (requester && phoneOnFile(requester.Phone) === null)
+  // A missing requester row fails closed, with the refusal `updateMyPhone` gives an unknown client.
+  if (!requester) return fail(404, 'Not found.', 'unknown_customer');
+  if (phoneOnFile(requester.Phone) === null)
     return fail(
       400,
       `Add a phone number so ${tenant.DisplayName} can reach you, then send your request again.`,

@@ -363,4 +363,38 @@ describe('POST /:slug/admin/customers/co-owner: phone', () => {
       ).Phone,
     ).toBe('(555) 555-0142');
   });
+
+  describe('co-owner link: an existing client’s phone', () => {
+    const phoneOf = (raw: ReturnType<typeof createTestEnv>['raw']) =>
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Id = ?').get('eu_sp_jess') as {
+          Phone: string;
+        }
+      ).Phone;
+
+    it('fills a blank phone with the typed one', async () => {
+      const { env, raw } = createTestEnv();
+      raw.prepare(`UPDATE EndUsers SET Phone = '  ' WHERE Id = 'eu_sp_jess'`).run();
+      const { status } = await addCoOwner(env, {
+        email: 'jess@example.com',
+        name: 'Jess Demo',
+        phone: ' (555) 555-0177 ',
+        petIds: ['pet_sp_bella'],
+      });
+      expect(status).toBe(201);
+      expect(phoneOf(raw)).toBe('(555) 555-0177');
+    });
+
+    it('never overwrites a phone already on file', async () => {
+      const { env, raw } = createTestEnv();
+      const { status } = await addCoOwner(env, {
+        email: 'jess@example.com',
+        name: 'Jess Demo',
+        phone: '(555) 555-0177',
+        petIds: ['pet_sp_bella'],
+      });
+      expect(status).toBe(201);
+      expect(phoneOf(raw)).toBe('(555) 555-0142');
+    });
+  });
 });

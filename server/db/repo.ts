@@ -5037,6 +5037,26 @@ export async function setEndUserPhone(
 }
 
 /**
+ * Fill a BLANK phone (null or whitespace-only) with one the sitter typed — already validated and
+ * trimmed by `validatePhone`. A phone already on file is never touched: the WHERE says so, so a
+ * caller cannot overwrite one by mistake. Returns whether a row changed.
+ */
+export async function fillBlankEndUserPhone(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  phone: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE EndUsers SET Phone = ? WHERE TenantId = ? AND Id = ? AND (Phone IS NULL OR TRIM(Phone) = '')",
+    )
+    .bind(phone, tenantId, endUserId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
  * Set (or clear) the client's Venmo handle. The value is stored '@'-less and is used for exactly
  * one thing: matching a row of an uploaded Venmo CSV to this client. NULL means "match on Name",
  * which is the common case — hence the field's label in the admin UI. Returns whether a row

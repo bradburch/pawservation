@@ -198,6 +198,34 @@ describe('PATCH /:slug/me', () => {
     ]);
   });
 
+  it('ignores any id in the body — only the token’s own client is changed', async () => {
+    const { env, raw } = createTestEnv();
+    raw.prepare(`UPDATE EndUsers SET Phone = NULL WHERE Id = 'eu_sp_jess'`).run();
+    // A second client of the same sitter, with no phone: the id a hostile body would aim at.
+    raw
+      .prepare(
+        `INSERT INTO EndUsers (Id, TenantId, Email, Name, Status, Phone) VALUES ('eu_sp_priya', ?, 'priya@example.com', 'Priya', 'active', NULL)`,
+      )
+      .run(TENANT_A);
+    const before = raw
+      .prepare(`SELECT Id, Phone FROM EndUsers WHERE Id <> 'eu_sp_jess' ORDER BY Id`)
+      .all();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    for (const extra of [
+      { id: 'eu_sp_priya' },
+      { customerId: 'eu_sp_priya' },
+      { endUserId: 'eu_sp_priya', email: 'priya@example.com' },
+    ]) {
+      expect((await patchMe(env, token, { phone: '(555) 555-0199', ...extra })).status).toBe(200);
+    }
+    expect(raw.prepare(`SELECT Phone FROM EndUsers WHERE Id = 'eu_sp_jess'`).get()).toEqual({
+      Phone: '(555) 555-0199',
+    });
+    expect(
+      raw.prepare(`SELECT Id, Phone FROM EndUsers WHERE Id <> 'eu_sp_jess' ORDER BY Id`).all(),
+    ).toEqual(before);
+  });
+
   it('requires a signed-in client', async () => {
     const { env } = createTestEnv();
     const res = await app.request(
@@ -272,6 +300,21 @@ describe('POST /:slug/bookings: a phone on file is required', () => {
       env,
     );
     expect(((await res.json()) as { code: string }).code).not.toBe('phone_required');
+  });
+
+  it('refuses when the requester’s row is missing, rather than skipping the gate', async () => {
+    const { env, raw } = createTestEnv();
+    const token = await endUserToken(env, SLUG, 'jess@example.com');
+    raw.exec('PRAGMA foreign_keys = OFF');
+    raw.prepare(`DELETE FROM EndUsers WHERE Id = 'eu_sp_jess'`).run();
+    const before = (raw.prepare('SELECT COUNT(*) AS n FROM BookingRequests').get() as { n: number })
+      .n;
+    const res = await book(env, token);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { code: string }).code).toBe('unknown_customer');
+    expect(
+      (raw.prepare('SELECT COUNT(*) AS n FROM BookingRequests').get() as { n: number }).n,
+    ).toBe(before);
   });
 
   it('never blocks the demo identity, which persists nothing', async () => {
