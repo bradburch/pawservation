@@ -343,7 +343,10 @@ function PersonAdder({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
-  const ready = email.trim() !== '' && name.trim() !== '' && group.livePetIds.length > 0;
+  // A phone is required to create the person (the route refuses without one); for an email that is
+  // already a client the server keeps the phone on file and ignores this one.
+  const ready =
+    email.trim() !== '' && name.trim() !== '' && phone.trim() !== '' && group.livePetIds.length > 0;
 
   const add = async () => {
     if (!ready || busy) return;
@@ -385,8 +388,10 @@ function PersonAdder({
       />
       <input
         type="tel"
-        placeholder="Phone (optional)"
-        aria-label="New person's phone (optional)"
+        placeholder="Phone"
+        aria-label="New person's phone"
+        required
+        maxLength={40}
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
       />
@@ -617,11 +622,12 @@ export function ClientsSection({
     }
   };
 
-  // Every client is added WITH their first pet — the server refuses a pet-less create, so the
-  // form requires name + pet before Add enables.
+  // Every client is added WITH their first pet and a phone — the server refuses a pet-less or
+  // phone-less create, so the form requires name + phone + pet before Add enables.
   const canAddCustomer =
     custEmail.trim() !== '' &&
     custName.trim() !== '' &&
+    custPhone.trim() !== '' &&
     custPetName.trim() !== '' &&
     selectedCustPetType !== '';
 
@@ -988,8 +994,10 @@ export function ClientsSection({
         />
         <input
           type="tel"
-          placeholder="Phone (optional)"
-          aria-label="Client phone (optional)"
+          placeholder="Phone"
+          aria-label="Client phone"
+          required
+          maxLength={40}
           value={custPhone}
           onChange={(e) => setCustPhone(e.target.value)}
         />
