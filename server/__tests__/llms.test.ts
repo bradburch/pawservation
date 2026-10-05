@@ -37,6 +37,14 @@ describe('llms.txt + JSON-LD', () => {
     expect(body).toContain('credit');
   });
 
+  it('publishes how the account holder sets their phone, and the refusal that asks for it', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/embed/sunny-paws/llms.txt', {}, env)).text();
+    expect(body).toContain('- Your phone: PATCH ');
+    expect(body).toContain('/api/sunny-paws/me');
+    expect(body).toContain('phone_required');
+  });
+
   it('publishes how to get a credential that outlives the widget session', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/embed/sunny-paws/llms.txt', {}, env)).text();

@@ -25,10 +25,28 @@ type ImportResult = {
 
 const HEADER = 'Client Email,Client Name,Pet Name,Pet Type,Co-owner Emails';
 
+/**
+ * The fixtures in this file predate the phone column and are about everything EXCEPT the phone
+ * rule, so `importCsv` gives every data row a phone: padded to the five older columns, then the
+ * sixth. Blank lines stay blank — the importer skips them, and a padded one would become a row.
+ * No fixture here quotes a cell, so a plain split is exact. The phone rule's own tests pass
+ * `{ asIs: true }`.
+ */
+function withPhone(csv: string, phone = '(555) 555-0100'): string {
+  const [header, ...rows] = csv.split('\n');
+  const phoned = rows.map((r) => {
+    if (r === '') return r;
+    const cells = r.split(',');
+    while (cells.length < 5) cells.push('');
+    return [...cells, phone].join(',');
+  });
+  return [header, ...phoned].join('\n');
+}
+
 async function importCsv(
   env: Env,
   csv: string,
-  opts?: { slug?: string; tenantId?: string },
+  opts?: { slug?: string; tenantId?: string; asIs?: boolean },
 ): Promise<{ status: number; body: ImportResult }> {
   const token = await adminToken(opts?.tenantId ?? TENANT_A);
   const res = await app.request(
@@ -36,7 +54,7 @@ async function importCsv(
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ csv, sendInvites: false }),
+      body: JSON.stringify({ csv: opts?.asIs ? csv : withPhone(csv), sendInvites: false }),
     },
     env,
   );
@@ -244,7 +262,7 @@ describe('CSV import: co-ownership', () => {
   });
 
   // Old files keep working: four columns, and five with the new cell left blank, behave identically.
-  it('imports an old four-column file unchanged', async () => {
+  it('imports an old four-column file unchanged, given a phone', async () => {
     const { env, raw } = createTestEnv();
     const csv =
       'Client Email,Client Name,Pet Name,Pet Type\n' +
@@ -309,5 +327,40 @@ describe('CSV import: co-ownership', () => {
       .all(TENANT_A) as { pet: string }[];
     expect(live).toHaveLength(1);
     expect(live[0]!.pet).not.toBe('pet_sp_bella');
+  });
+
+  it('creates a co-owner only from a row of their own that gives a phone', async () => {
+    const { env, raw } = createTestEnv();
+    const csv =
+      `${HEADER},Phone\n` +
+      'tina@example.com,Tina Alvarez,Luna,dog,rob@example.com,(555) 555-0110\n' +
+      'rob@example.com,Rob Alvarez,,,,\n';
+    const { body } = await importCsv(env, csv, { asIs: true });
+    expect(body.importedPets).toBe(1);
+    expect(body.coOwnerLinks).toBe(0);
+    expect(body.skippedRows.map((r) => r.reason)).toContain(
+      'Co-owner rob@example.com needs a row of their own with their name and phone',
+    );
+    expect(
+      raw.prepare('SELECT Id FROM EndUsers WHERE Email = ?').get('rob@example.com'),
+    ).toBeUndefined();
+  });
+
+  it('creates the co-owner with the phone their own row gives', async () => {
+    const { env, raw } = createTestEnv();
+    const csv =
+      `${HEADER},Phone\n` +
+      'tina@example.com,Tina Alvarez,Luna,dog,rob@example.com,(555) 555-0110\n' +
+      'rob@example.com,Rob Alvarez,,,,(555) 555-0111\n';
+    const { body } = await importCsv(env, csv, { asIs: true });
+    expect(body.skippedRows).toEqual([]);
+    expect(body.coOwnerLinks).toBe(1);
+    expect(
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Email = ?').get('rob@example.com') as {
+          Phone: string;
+        }
+      ).Phone,
+    ).toBe('(555) 555-0111');
   });
 });

@@ -108,7 +108,7 @@ INSERT OR REPLACE INTO TenantPetTypes (TenantId, PetType, Label) VALUES
 INSERT OR REPLACE INTO EndUsers (Id, TenantId, Email, Name, Phone, Status) VALUES
   ('eu_sp_jess', 'tnt_sunnypaws', 'jess@example.com', 'Jess Demo', '(555) 555-0142', 'active'),
   ('eu_ht_jess', 'tnt_happytails', 'jess@example.com', 'Jess Demo', '(555) 555-0142', 'active'),
-  ('eu_pr_jess', 'tnt_pawsandrelax', 'jess@example.com', 'Jess Demo', NULL, 'active');
+  ('eu_pr_jess', 'tnt_pawsandrelax', 'jess@example.com', 'Jess Demo', '(555) 555-0142', 'active');
 
 -- Demo pets (sitter-managed). Jess has two at Sunny Paws (dogs+cats), one at Happy Tails
 -- (dogs only), one at Paws & Relax — EVERY seeded customer owns a pet (client-AND-pet invariant).

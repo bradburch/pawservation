@@ -9,6 +9,13 @@
  */
 export const DEMO_EMAIL = 'demo@pawservation.com';
 
+/**
+ * The demo shadow customer's phone. Every client must have one on file, and the shadow signs in to
+ * the same widget, so it needs one too or the public demo would open on the one-time phone prompt.
+ * 555-01XX is the range reserved for fiction: it rings nobody.
+ */
+export const DEMO_PHONE = '(555) 555-0100';
+
 // Hostnames of embedding pages allowed to use the demo login; localhost/127.0.0.1 = wrangler dev.
 const DEMO_ALLOWED_HOSTS = new Set([
   'pawservation.com',

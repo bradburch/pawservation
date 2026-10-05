@@ -41,6 +41,12 @@ the availability/conflict math.
   accept it per service.
 - **Pet co-ownership** — a pet can belong to more than one customer account (e.g.
   co-parents), and a pet can be marked deceased without losing its booking history.
+- **Every client has a phone on file** — so a sitter can always reach the person whose keys
+  she holds. Adding a client or a second person in the dashboard, and the CSV import (a sixth
+  `Phone` column), all require one; a client added before this who has none is asked for it
+  once, on their next sign-in to the booking widget, and cannot send a new booking request
+  until they give it (`PATCH /api/:slug/me`). The check is deliberately light: the text the
+  person typed, trimmed, at most 40 characters, with at least seven digits — no reformatting.
 - **Admin dashboard** — lands on a monthly **Calendar** view of bookings and time off;
   plus bookings (confirm/decline/cancel), earnings and payment tracking, client list with
   CSV import, services & rates card grid, time off, embed codes, and in-app help.
