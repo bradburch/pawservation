@@ -12,7 +12,7 @@ const countEndUsers = (raw: ReturnType<typeof createTestEnv>['raw']) =>
 /**
  * Every path that creates a client requires a phone. The widget's sign-in is not one of them, and
  * this pins that it stays that way: /identify is invite-only and /verify only promotes, so a new
- * creation path added there would have to get past these two tests first.
+ * creation path added there would have to get past these tests first.
  */
 describe('the sign-in path creates no client', () => {
   it('identify refuses an unknown email and writes no row', async () => {
@@ -29,6 +29,32 @@ describe('the sign-in path creates no client', () => {
     );
     expect(res.status).toBe(403);
     expect(countEndUsers(raw)).toBe(before);
+  });
+
+  it('an unknown email cannot get through the verify step either, and no row appears', async () => {
+    const { env, raw } = createTestEnv();
+    const before = countEndUsers(raw);
+    const post = (path: string, body: unknown) =>
+      app.request(
+        `/api/${SLUG}/${path}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        env,
+      );
+    // identify mints no code for a stranger, so there is nothing to verify; a made-up code id and
+    // code (the only thing a caller could send) must be refused rather than create the person.
+    const idRes = await post('identify', { email: 'stranger@example.com' });
+    expect(idRes.status).toBe(403);
+    const vRes = await post('verify', { codeId: 'lc_stranger', code: '123456' });
+    expect(vRes.status).toBe(401);
+    expect(((await vRes.json()) as { token?: string }).token).toBeUndefined();
+    expect(countEndUsers(raw)).toBe(before);
+    expect(
+      raw.prepare('SELECT Id FROM EndUsers WHERE Email = ?').get('stranger@example.com'),
+    ).toBeUndefined();
   });
 
   it('a full identify → verify round trip for a known client inserts nothing', async () => {
