@@ -13,6 +13,8 @@ import './widget.css';
 import { Identify } from './Identify';
 import { BookTab } from './BookTab';
 import { MineTab } from './MineTab';
+import { needsPhone } from './phone-gate';
+import { PhonePrompt } from './PhonePrompt';
 import { slug, parentOrigin } from './shared';
 
 export default function App() {
@@ -28,6 +30,12 @@ export default function App() {
    * already changes the widget's height; nothing here changes height on an in-place interaction.
    */
   const [editing, setEditing] = useState<Booking | null>(null);
+  /**
+   * The phone prompt's override of `/me`: `true` once a booking POST was refused `phone_required`,
+   * `false` once a phone has been saved (until `/me` re-loads and says so itself), `null` = follow
+   * `/me`. Reset on every sign-in and sign-out, so one client's answer never stands in for another's.
+   */
+  const [askPhone, setAskPhone] = useState<boolean | null>(null);
 
   // Report content height to the parent loader so the iframe auto-resizes (story 3.1).
   useEffect(() => {
@@ -63,6 +71,7 @@ export default function App() {
   const onAuthExpired = useCallback(() => {
     setToken(slug, null);
     setAuthed(false);
+    setAskPhone(null);
   }, []);
 
   const loadMe = useCallback(async (): Promise<Me | null> => {
@@ -80,7 +89,7 @@ export default function App() {
     }
   }, [authed, onAuthExpired]);
 
-  const { data: me } = useAsync(loadMe);
+  const { data: me, reload: reloadMe } = useAsync(loadMe);
 
   if (error) return <p className="bp-error">{error}</p>;
   if (!config) return <p>Loading…</p>;
@@ -131,7 +140,12 @@ export default function App() {
           <li>We&apos;ll email you a 6-digit sign-in code — no password to remember.</li>
           <li>Pick your dates and your pets, and send the request.</li>
         </ol>
-        <Identify onDone={() => setAuthed(true)} />
+        <Identify
+          onDone={() => {
+            setAskPhone(null);
+            setAuthed(true);
+          }}
+        />
         <p className="bp-new-client">
           <strong>New client?</strong> Booking is invite-only — get in touch with{' '}
           {config.displayName} and they&apos;ll add you and your pets.
@@ -142,6 +156,9 @@ export default function App() {
   }
 
   const firstName = (me?.name ?? '').trim().split(/\s+/)[0] || 'there';
+  // Booking a NEW request waits for a phone; changing an existing booking does not, matching the
+  // server, which gates only the booking POST.
+  const askingForPhone = !editing && (askPhone ?? needsPhone(me));
   return (
     <div className="bp-widget bp-book-view">
       <div className="bp-topline">
@@ -168,29 +185,47 @@ export default function App() {
         </>
       ) : (
         <>
-          <h1 className="bp-greeting">
-            {editing ? 'Change your booking' : `How can I help, ${firstName}?`}
-          </h1>
-          <BookTab
-            // A fresh mount per edit target: BookTab seeds its dates, pets, arrival time and
-            // answers from `editing` in useState initializers, which run once per mount. Without
-            // the key, switching from one booking to another (or back to a new request) would
-            // keep the previous form's state.
-            key={editing?.id ?? 'new'}
-            config={config}
-            pets={me?.pets ?? null}
-            savedAnswers={me?.savedAnswers ?? null}
-            editing={editing}
-            onEditSaved={() => {
-              setEditing(null);
-              setShowMine(true);
-            }}
-            onEditCancel={() => {
-              setEditing(null);
-              setShowMine(true);
-            }}
-            onAuthExpired={onAuthExpired}
-          />
+          {askingForPhone && (
+            <>
+              <h1 className="bp-greeting">One thing first, {firstName}</h1>
+              <PhonePrompt
+                displayName={config.displayName}
+                onSaved={() => {
+                  setAskPhone(false);
+                  reloadMe();
+                }}
+                onAuthExpired={onAuthExpired}
+              />
+            </>
+          )}
+          {/* Hidden, never unmounted, while the phone is asked for: BookTab holds the dates and pets
+              the client entered, and a booking that bounced on a missing phone must not cost them. */}
+          <div hidden={askingForPhone}>
+            <h1 className="bp-greeting">
+              {editing ? 'Change your booking' : `How can I help, ${firstName}?`}
+            </h1>
+            <BookTab
+              // A fresh mount per edit target: BookTab seeds its dates, pets, arrival time and
+              // answers from `editing` in useState initializers, which run once per mount. Without
+              // the key, switching from one booking to another (or back to a new request) would
+              // keep the previous form's state.
+              key={editing?.id ?? 'new'}
+              config={config}
+              pets={me?.pets ?? null}
+              savedAnswers={me?.savedAnswers ?? null}
+              editing={editing}
+              onEditSaved={() => {
+                setEditing(null);
+                setShowMine(true);
+              }}
+              onEditCancel={() => {
+                setEditing(null);
+                setShowMine(true);
+              }}
+              onAuthExpired={onAuthExpired}
+              onPhoneRequired={() => setAskPhone(true)}
+            />
+          </div>
         </>
       )}
       {contact}

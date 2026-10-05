@@ -54,6 +54,7 @@ export function BookTab({
   onEditSaved,
   onEditCancel,
   onAuthExpired,
+  onPhoneRequired,
 }: {
   config: TenantConfig;
   pets: Pet[] | null;
@@ -75,6 +76,8 @@ export function BookTab({
   onEditSaved: () => void;
   onEditCancel: () => void;
   onAuthExpired: () => void;
+  /** The booking POST refused for want of a phone on file — the parent shows the phone prompt. */
+  onPhoneRequired: () => void;
 }) {
   const [type, setType] = useState(editing?.type ?? config.services[0]?.type ?? 'boarding');
   const service = config.services.find((s) => s.type === type) ?? config.services[0];
@@ -382,6 +385,12 @@ export function BookTab({
     } catch (e) {
       if (isAuthExpired(e)) {
         onAuthExpired();
+        return;
+      }
+      // No phone on file: the server's own gate, reached when /me could not say so up front (a
+      // failed load, or a phone cleared since). The prompt is the only way forward.
+      if (e instanceof ApiError && e.code === 'phone_required') {
+        onPhoneRequired();
         return;
       }
       // The POST's stable code, not its prose: this is the one refusal with its own card.

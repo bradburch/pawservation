@@ -67,6 +67,9 @@ export type Pet = {
 /** The signed-in customer's own view of themselves — `GET /api/:slug/me`. */
 export type Me = {
   name: string | null;
+  /** The phone on file, trimmed; `null` = none (the widget asks for one, once). OPTIONAL because a
+   *  widget bundle can outlive the worker that served it: absent means "not known", never "none". */
+  phone?: string | null;
   pets: Pet[];
   /** Intake answers to pre-fill, `{ serviceType: { questionId: value } }`. The SERVER has already
    *  dropped anything whose question was reworded, retyped or narrowed past it, so the widget can
@@ -893,6 +896,15 @@ export const api = {
   me: (slug: string, token: string) =>
     request<Me>(`/api/${slug}/me`, {
       headers: authHeaders(token),
+    }),
+
+  /** The signed-in client sets their own phone — the one-time prompt. The server trims and checks
+   *  it (`phone_required` / `phone_invalid`) and answers with the value it stored. */
+  updateMyPhone: (slug: string, token: string, phone: string) =>
+    request<{ phone: string }>(`/api/${slug}/me`, {
+      method: 'PATCH',
+      headers: { ...jsonHeaders, ...authHeaders(token) },
+      body: JSON.stringify({ phone }),
     }),
 
   monthAvailability: (

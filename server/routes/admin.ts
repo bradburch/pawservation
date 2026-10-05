@@ -20,6 +20,7 @@ import {
   getBookingSyncData,
   getBookingWithCustomer,
   getEndUserById,
+  fillBlankEndUserPhone,
   getEndUserByEmail,
   getHouseholdDetail,
   getHouseholdsWithUnappliedCredits,
@@ -177,6 +178,7 @@ import {
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
+import { phoneOnFile, validatePhone } from '../lib/phone';
 import type { AppEnv, Tenant, TenantService, TenantServiceOption } from '../types';
 import type {
   CancellationTier,
@@ -1916,15 +1918,18 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req.json<Body>().catch(() => ({}) as Body);
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
-    const phone = rawPhone || null;
+    const phoneCheck = validatePhone(body.phone);
     const petName = typeof body.petName === 'string' ? body.petName.trim() : '';
     const petType = typeof body.petType === 'string' ? body.petType.trim() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
     if (email === DEMO_EMAIL)
       return c.json({ error: 'That email is reserved for the Pawservation demo.' }, 400);
     if (!name) return c.json({ error: "Enter the client's name." }, 400);
-    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
+    // A phone that is GIVEN must be one, on either path below. Whether one must be given at all is
+    // decided after the lookup: only a CREATE needs it, because the append path keeps the phone on
+    // file.
+    if (!phoneCheck.ok && phoneCheck.code === 'phone_invalid')
+      return c.json({ error: phoneCheck.reason, code: phoneCheck.code }, 400);
     if (!petName)
       return c.json({ error: 'Enter a pet name — every client needs at least one pet.' }, 400);
     // Registry membership only (0015), same rule as the add-pet route: recordable even if no
@@ -1938,22 +1943,37 @@ export const adminRoutes = new Hono<AppEnv>()
     let customer;
     if (existing) {
       // Idempotent re-POST: never downgrade an active customer to invited, never touch their
-      // stored name/phone. Add the pet only if it's new for them; a repeat of an existing pet is
+      // stored name, nor a phone already on file. Add the pet only if it's new for them; a repeat of an existing pet is
       // a no-op, not an error. `listEndUserPets` is LIVE pets only, so a deceased pet's name may
       // be used again — the CSV import applies that same live-only rule (it filters DeceasedAt out
       // of the map it dedups against), and the two must not drift.
       customer = existing;
+      // The one exception to "never touch": a BLANK phone is filled with the one just typed, and a
+      // phone on file is never overwritten.
+      if (phoneCheck.ok && phoneOnFile(existing.Phone) === null) {
+        await fillBlankEndUserPhone(
+          c.env.PAWSERVATION_DB,
+          tenant.Id,
+          existing.Id,
+          phoneCheck.phone,
+        );
+        customer = { ...existing, Phone: phoneCheck.phone };
+      }
       const pets = await listEndUserPets(c.env.PAWSERVATION_DB, tenant.Id, existing.Id);
       if (!pets.some((p) => p.Name.toLowerCase() === petName.toLowerCase()))
         await addEndUserPet(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, petName, petType);
     } else {
+      // Every client the product creates has a phone on file: the sitter must always be able to
+      // reach the person whose keys she holds.
+      if (!phoneCheck.ok)
+        return c.json({ error: "Enter the client's phone number.", code: phoneCheck.code }, 400);
       // One atomic batch — if the pet insert fails, no customer row is left standing.
       customer = await insertInvitedCustomerWithPet(
         c.env.PAWSERVATION_DB,
         tenant.Id,
         email,
         name,
-        phone,
+        phoneCheck.phone,
         petName,
         petType,
       );
@@ -1963,7 +1983,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // introduction. The welcome mail is the explicit POST /:slug/admin/customers/:id/welcome
     // below, so the sitter chooses when (and whether) a client first hears from Pawservation.
     // `created` tells the dashboard whether this made a new client or appended a pet to an
-    // existing one — the two must not read as the same outcome (a typed name/phone is discarded
+    // existing one — the two must not read as the same outcome (a typed name, and a typed phone where one is on file, is discarded
     // on the append path, and the sitter deserves to know that).
     return c.json(
       {
@@ -2008,8 +2028,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req.json<Body>().catch(() => ({}) as Body);
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
-    const phone = rawPhone || null;
+    const phoneCheck = validatePhone(body.phone);
     // De-duplicated here rather than trusted: a repeated id would trip PetOwners' PRIMARY KEY and
     // abort the batch, turning a harmless double-send into a 500.
     const petIds = Array.isArray(body.petIds)
@@ -2019,7 +2038,9 @@ export const adminRoutes = new Hono<AppEnv>()
     if (email === DEMO_EMAIL)
       return c.json({ error: 'That email is reserved for the Pawservation demo.' }, 400);
     if (!name) return c.json({ error: "Enter this person's name." }, 400);
-    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
+    // Given → must be valid, on either path; required only to CREATE (the manual-add rule).
+    if (!phoneCheck.ok && phoneCheck.code === 'phone_invalid')
+      return c.json({ error: phoneCheck.reason, code: phoneCheck.code }, 400);
     if (petIds.length === 0)
       return c.json(
         { error: 'Choose at least one pet — a client can never be added without pets.' },
@@ -2045,16 +2066,28 @@ export const adminRoutes = new Hono<AppEnv>()
     let customer;
     if (existing) {
       // The merge case. Never downgrade an active customer to invited, never rewrite the name or
-      // phone already on file — exactly the manual-add route's append semantics.
+      // a phone already on file — exactly the manual-add route's append semantics.
       await addCoOwnerToPets(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, petIds);
       customer = existing;
+      // A blank phone is filled with the one just typed; one on file is never overwritten.
+      if (phoneCheck.ok && phoneOnFile(existing.Phone) === null) {
+        await fillBlankEndUserPhone(
+          c.env.PAWSERVATION_DB,
+          tenant.Id,
+          existing.Id,
+          phoneCheck.phone,
+        );
+        customer = { ...existing, Phone: phoneCheck.phone };
+      }
     } else {
+      if (!phoneCheck.ok)
+        return c.json({ error: "Enter this person's phone number.", code: phoneCheck.code }, 400);
       customer = await insertInvitedCustomerAsCoOwner(
         c.env.PAWSERVATION_DB,
         tenant.Id,
         email,
         name,
-        phone,
+        phoneCheck.phone,
         petIds,
       );
     }
@@ -2337,6 +2370,9 @@ export const adminRoutes = new Hono<AppEnv>()
     // it once: in a name-on-the-first-row file the create happens on a LATER row (the first one
     // carrying a pet), and it takes the name from here rather than from its own blank cell.
     const nameByEmail = new Map<string, string>();
+    // The same thing for the phone, which a CREATE needs as much as a name: typed once, on any
+    // earlier row of the file, it counts for every later row of that client.
+    const phoneByEmail = new Map<string, string>();
     const livePetCount = (email: string) => {
       const id = idByEmail.get(email);
       return id ? (livePetNames.get(id)?.size ?? 0) : 0;
@@ -2401,6 +2437,9 @@ export const adminRoutes = new Hono<AppEnv>()
       // Fifth column, added later and therefore OPTIONAL: a four-column file (every file exported
       // before this existed) reads it as blank and behaves exactly as it always did.
       const rawCoOwners = cells[4] ?? '';
+      // Sixth column, after the co-owner one for the same reason that one is fifth: every older file
+      // still reads each of its columns where it always did. Required only to CREATE a client.
+      const rawPhone = cells[5] ?? '';
       const email = rawEmail.trim().toLowerCase();
       if (!EMAIL_RE.test(email)) {
         skippedRows.push({ row, reason: 'Invalid email address' });
@@ -2412,6 +2451,13 @@ export const adminRoutes = new Hono<AppEnv>()
       }
       const name = rawName.trim();
       if (name) nameByEmail.set(email, name);
+      // A phone that is GIVEN must be one — the manual-add rule — whether or not this row creates.
+      const phoneCheck = validatePhone(rawPhone);
+      if (!phoneCheck.ok && phoneCheck.code === 'phone_invalid') {
+        skippedRows.push({ row, reason: `Phone: ${phoneCheck.reason}` });
+        continue;
+      }
+      if (phoneCheck.ok) phoneByEmail.set(email, phoneCheck.phone);
 
       try {
         // A customer created by an earlier row of THIS file is found here too, so one-row-per-pet
@@ -2435,6 +2481,13 @@ export const adminRoutes = new Hono<AppEnv>()
         const createName = nameByEmail.get(email) ?? '';
         if (!existing && !createName) {
           skippedRows.push({ row, reason: 'Missing name' });
+          continue;
+        }
+        // Every client the product creates has a phone on file, so a create needs one — from this
+        // row or any earlier row for the same email. An existing client keeps the one on file, unless it is blank.
+        const createPhone = phoneByEmail.get(email) ?? null;
+        if (!existing && createPhone === null) {
+          skippedRows.push({ row, reason: 'Missing phone' });
           continue;
         }
         if (petName && !petType) {
@@ -2468,6 +2521,11 @@ export const adminRoutes = new Hono<AppEnv>()
           );
           petSet.set(petName.toLowerCase(), pet.Id);
           livePetNames.set(existing.Id, petSet);
+          // A blank phone on file is filled from the file; one on file is never overwritten.
+          if (createPhone !== null && phoneOnFile(existing.Phone) === null) {
+            await fillBlankEndUserPhone(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, createPhone);
+            existing.Phone = createPhone;
+          }
           noteCoOwners(row, email, { id: pet.Id, name: petName }, rawCoOwners);
         } else {
           // Customer + first pet in one atomic batch — a failed pet insert leaves no customer.
@@ -2476,7 +2534,7 @@ export const adminRoutes = new Hono<AppEnv>()
             tenant.Id,
             email,
             createName,
-            null,
+            createPhone,
             petName,
             petType,
           );
@@ -2523,13 +2581,14 @@ export const adminRoutes = new Hono<AppEnv>()
           await addCoOwnerToPets(c.env.PAWSERVATION_DB, tenant.Id, ownerId, petIds);
         } else {
           const createName = nameByEmail.get(email);
-          if (!createName) {
-            // There is no name to create them with — the pet is already imported, so say what the
-            // sitter has to add rather than failing anything.
+          const createPhone = phoneByEmail.get(email);
+          if (!createName || createPhone === undefined) {
+            // There is no name or no phone to create them with — the pet is already imported, so
+            // say what the sitter has to add rather than failing anything.
             for (const row of rows)
               skippedRows.push({
                 row,
-                reason: `Co-owner ${email} needs a row of their own with their name`,
+                reason: `Co-owner ${email} needs a row of their own with their name and phone`,
               });
             continue;
           }
@@ -2540,7 +2599,7 @@ export const adminRoutes = new Hono<AppEnv>()
             tenant.Id,
             email,
             createName,
-            null,
+            createPhone,
             petIds,
           );
           ownerId = customer.Id;

@@ -1,6 +1,6 @@
-Client Email,Client Name,Pet Name,Pet Type,Co-owner Emails
-jess@example.com,Jess Nguyen,Bella,dog,
-jess@example.com,Jess Nguyen,Mochi,cat,
-sam@example.com,Sam Diaz,Rex,dog,
-tina@example.com,Tina Alvarez,Luna,dog,rob@example.com
-rob@example.com,Rob Alvarez,,,
+Client Email,Client Name,Pet Name,Pet Type,Co-owner Emails,Phone
+jess@example.com,Jess Nguyen,Bella,dog,,(555) 555-0142
+jess@example.com,Jess Nguyen,Mochi,cat,,(555) 555-0142
+sam@example.com,Sam Diaz,Rex,dog,,(555) 555-0168
+tina@example.com,Tina Alvarez,Luna,dog,rob@example.com,(555) 555-0110
+rob@example.com,Rob Alvarez,,,,(555) 555-0111
