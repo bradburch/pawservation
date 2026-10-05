@@ -19,6 +19,7 @@ import {
   listMyBookings,
   monthGrid,
   quoteBooking,
+  updateMyPhone,
   type BookingOpsContext,
   type OpResult,
 } from '../lib/booking-ops';
@@ -116,6 +117,16 @@ export const bookingRoutes = new Hono<AppEnv>()
   )
 
   .get('/:slug/me', async (c) => respond(c, await getMe(opsContext(c))))
+
+  /**
+   * The caller's own phone, and nothing else — `{ phone }`. Same auth as GET /me (the `.use` above
+   * covers every method), and the row written is the token's own `endUserId`: the request names no
+   * customer, so there is no one else's to substitute.
+   */
+  .patch('/:slug/me', async (c) => {
+    const body = await c.req.json<{ phone?: unknown }>().catch(() => ({}) as { phone?: unknown });
+    return respond(c, await updateMyPhone(opsContext(c), { phone: body?.phone }));
+  })
 
   /**
    * "What do I owe?" — the caller's own household balance. `getMyAccount` resolves it from the

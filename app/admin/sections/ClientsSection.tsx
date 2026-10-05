@@ -343,7 +343,10 @@ function PersonAdder({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
-  const ready = email.trim() !== '' && name.trim() !== '' && group.livePetIds.length > 0;
+  // A phone is required to create the person (the route refuses without one); for an email that is
+  // already a client the server keeps the phone on file and ignores this one.
+  const ready =
+    email.trim() !== '' && name.trim() !== '' && phone.trim() !== '' && group.livePetIds.length > 0;
 
   const add = async () => {
     if (!ready || busy) return;
@@ -385,8 +388,10 @@ function PersonAdder({
       />
       <input
         type="tel"
-        placeholder="Phone (optional)"
-        aria-label="New person's phone (optional)"
+        placeholder="Phone"
+        aria-label="New person's phone"
+        required
+        maxLength={40}
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
       />
@@ -617,11 +622,12 @@ export function ClientsSection({
     }
   };
 
-  // Every client is added WITH their first pet — the server refuses a pet-less create, so the
-  // form requires name + pet before Add enables.
+  // Every client is added WITH their first pet and a phone — the server refuses a pet-less or
+  // phone-less create, so the form requires name + phone + pet before Add enables.
   const canAddCustomer =
     custEmail.trim() !== '' &&
     custName.trim() !== '' &&
+    custPhone.trim() !== '' &&
     custPetName.trim() !== '' &&
     selectedCustPetType !== '';
 
@@ -988,8 +994,10 @@ export function ClientsSection({
         />
         <input
           type="tel"
-          placeholder="Phone (optional)"
-          aria-label="Client phone (optional)"
+          placeholder="Phone"
+          aria-label="Client phone"
+          required
+          maxLength={40}
           value={custPhone}
           onChange={(e) => setCustPhone(e.target.value)}
         />
@@ -1059,16 +1067,17 @@ export function ClientsSection({
         </span>
       </div>
       <p className="pb-applies">
-        One row per pet, repeating the email for a client with several pets — the name only has to
-        appear once. Every client needs at least one pet: rows that would leave a client with none,
-        or a new client with no name, are skipped and listed back to you.
+        One row per pet, repeating the email for a client with several pets — the name and phone
+        only have to appear once. Every client needs at least one pet and a phone number: rows that
+        would leave a client with no pet, or create one with no name or no phone, are skipped and
+        listed back to you. The phone goes in the last column (<em>Phone</em>).
       </p>
       <p className="pb-applies">
-        <strong>Two people sharing a pet?</strong> Put the other owner&rsquo;s email in the last
-        column (<em>Co-owner Emails</em>; separate several with semicolons) and give them a row of
-        their own with their name and no pet — they&rsquo;ll be added to the same account and billed
-        together. Repeating the pet on a second row instead creates a <em>second</em> pet, because
-        two clients can each own a &ldquo;Bella&rdquo;.
+        <strong>Two people sharing a pet?</strong> Put the other owner&rsquo;s email in the{' '}
+        <em>Co-owner Emails</em> column (separate several with semicolons) and give them a row of
+        their own with their name, their phone and no pet — they&rsquo;ll be added to the same
+        account and billed together. Repeating the pet on a second row instead creates a{' '}
+        <em>second</em> pet, because two clients can each own a &ldquo;Bella&rdquo;.
       </p>
       {importResult && (
         <div className="pb-row">

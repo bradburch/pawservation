@@ -376,19 +376,20 @@ describe('which event wins', () => {
     // The case the old rule actually lost: one action, two events, one second.
     const { env } = createTestEnv();
     await post(withSecrets(env), 'sunny-paws', event());
+    const until = daysFromNow(62);
     const res = await post(
       withSecrets(env),
       'sunny-paws',
       event({
         eventType: 'customer.subscription.updated',
-        billedUntil: daysFromNow(62),
+        billedUntil: until,
         eventId: 'evt_same_second',
         eventCreated: T0,
       }),
     );
     expect(await res.json()).toEqual({ applied: true });
     expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.BilledUntil).toBe(
-      normalizeBilledUntil(daysFromNow(62)),
+      normalizeBilledUntil(until),
     );
   });
 
@@ -950,13 +951,14 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
     // ends on the newer subscription's values. Were checkout exempt too, this redelivery would
     // put sub_A back.
     const { env } = createTestEnv();
+    const until = daysFromNow(60);
     await post(withSecrets(env), 'sunny-paws', event({ eventCreated: AT_SECONDS }));
     await post(
       withSecrets(env),
       'sunny-paws',
       event({
         stripeSubscriptionId: 'sub_B',
-        billedUntil: daysFromNow(60),
+        billedUntil: until,
         eventId: 'evt_checkout_b',
         eventCreated: AT_SECONDS + 60,
       }),
@@ -969,7 +971,7 @@ describe('resync — the fifth event type, and the one that repairs a frozen row
     expect(await redelivered.json()).toEqual({ applied: false, reason: 'stale_event' });
     const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
     expect(t.StripeSubscriptionId).toBe('sub_B');
-    expect(t.BilledUntil).toBe(normalizeBilledUntil(daysFromNow(60)));
+    expect(t.BilledUntil).toBe(normalizeBilledUntil(until));
   });
 
   it('replaces the subscription only for the SAME customer, and is declined for another', async () => {

@@ -17,6 +17,7 @@ describe('admin customers', () => {
         body: JSON.stringify({
           email: 'guest@example.com',
           name: 'Guest',
+          phone: '(555) 555-0100',
           petName: 'Rex',
           petType: 'dog',
         }),
@@ -332,6 +333,7 @@ describe('admin customers', () => {
           body: JSON.stringify({
             email: 'fresh@example.com',
             name: 'Fresh',
+            phone: '(555) 555-0100',
             petName: 'Rex',
             petType: 'dog',
           }),
@@ -361,7 +363,11 @@ describe('admin customers', () => {
     const create = async (email: string, name: string, petName: string) => {
       const res = await app.request(
         `/api/${SLUG}/admin/customers`,
-        { method: 'POST', headers, body: JSON.stringify({ email, name, petName, petType: 'dog' }) },
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ email, name, phone: '(555) 555-0100', petName, petType: 'dog' }),
+        },
         env,
       );
       expect(res.status).toBe(201);
@@ -427,6 +433,7 @@ describe('admin customers', () => {
         body: JSON.stringify({
           email: 'solo@example.com',
           name: 'Solo',
+          phone: '(555) 555-0100',
           petName: 'Only',
           petType: 'dog',
         }),
@@ -512,5 +519,117 @@ describe('PATCH /:slug/admin/customers/:id — Venmo username', () => {
     expect(
       (await patch(env, 'eu_sp_jess', { venmoUsername: 'nope' }, TENANT_B, 'happy-tails')).status,
     ).toBe(404);
+  });
+});
+
+/**
+ * Every client the sitter creates has a phone: she must always be able to reach the person whose
+ * keys she holds. Required to CREATE, and only then — re-posting an existing client's email (the
+ * append-a-pet path) keeps the phone already on file and needs none. A phone that IS given must
+ * pass the shared rule on either path.
+ */
+describe('admin customers: phone', () => {
+  const post = async (env: Env, body: Record<string, unknown>) =>
+    app.request(
+      `/api/${SLUG}/admin/customers`,
+      {
+        method: 'POST',
+        headers: { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      env,
+    );
+  const base = { email: 'newphone@example.com', name: 'New Phone', petName: 'Rex', petType: 'dog' };
+  const rowFor = (raw: ReturnType<typeof createTestEnv>['raw'], email: string) =>
+    raw
+      .prepare('SELECT Phone FROM EndUsers WHERE TenantId = ? AND Email = ?')
+      .get(TENANT_A, email) as { Phone: string | null } | undefined;
+
+  it('refuses a create with no phone, or a blank one, and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    for (const phone of [undefined, '', '   ']) {
+      const res = await post(env, { ...base, phone });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Enter the client's phone number.",
+        code: 'phone_required',
+      });
+    }
+    expect(rowFor(raw, base.email)).toBeUndefined();
+  });
+
+  it('refuses a phone with too few digits, or too long, and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    for (const phone of ['n/a', '555-010', '5'.repeat(41)]) {
+      const res = await post(env, { ...base, phone });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { code: string }).code).toBe('phone_invalid');
+    }
+    expect(rowFor(raw, base.email)).toBeUndefined();
+  });
+
+  it('stores the phone trimmed and otherwise exactly as typed, and returns it', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, { ...base, phone: '  +44 20 7946 0958 (work) ' });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { phone: string }).phone).toBe('+44 20 7946 0958 (work)');
+    expect(rowFor(raw, base.email)?.Phone).toBe('+44 20 7946 0958 (work)');
+  });
+
+  it('needs no phone to add a pet to an existing client, and keeps the one on file', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, {
+      email: 'jess@example.com',
+      name: 'Jess Demo',
+      petName: 'Comet',
+      petType: 'dog',
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { created: boolean }).created).toBe(false);
+    expect(rowFor(raw, 'jess@example.com')?.Phone).toBe('(555) 555-0142');
+  });
+
+  it('fills a blank phone on an existing client with the typed one', async () => {
+    const { env, raw } = createTestEnv();
+    for (const blank of [null, '   ']) {
+      raw.prepare(`UPDATE EndUsers SET Phone = ? WHERE Id = 'eu_sp_jess'`).run(blank);
+      const res = await post(env, {
+        email: 'jess@example.com',
+        name: 'Jess Demo',
+        phone: '  (555) 555-0177 ',
+        petName: `Comet${blank === null ? 1 : 2}`,
+        petType: 'dog',
+      });
+      expect(res.status).toBe(201);
+      expect(((await res.json()) as { phone: string }).phone).toBe('(555) 555-0177');
+      expect(rowFor(raw, 'jess@example.com')?.Phone).toBe('(555) 555-0177');
+    }
+  });
+
+  it('never overwrites a phone already on file with the typed one', async () => {
+    const { env, raw } = createTestEnv();
+    const res = await post(env, {
+      email: 'jess@example.com',
+      name: 'Jess Demo',
+      phone: '(555) 555-0177',
+      petName: 'Comet',
+      petType: 'dog',
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { phone: string }).phone).toBe('(555) 555-0142');
+    expect(rowFor(raw, 'jess@example.com')?.Phone).toBe('(555) 555-0142');
+  });
+
+  it('still refuses a malformed phone on the append path', async () => {
+    const { env } = createTestEnv();
+    const res = await post(env, {
+      email: 'jess@example.com',
+      name: 'Jess Demo',
+      phone: 'n/a',
+      petName: 'Comet',
+      petType: 'dog',
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe('phone_invalid');
   });
 });

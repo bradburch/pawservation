@@ -29,7 +29,9 @@ async function addCoOwner(
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      // A phone unless the test says otherwise: every create needs one, and most tests here are
+      // about something else. `phone: undefined` in `body` drops it (JSON.stringify omits it).
+      body: JSON.stringify({ phone: '(555) 555-0100', ...body }),
     },
     env,
   );
@@ -310,5 +312,89 @@ describe('POST /:slug/admin/customers/co-owner', () => {
       env,
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /:slug/admin/customers/co-owner: phone', () => {
+  it('refuses to create a person with no phone, and writes nothing', async () => {
+    const { env, raw } = createTestEnv();
+    for (const phone of [undefined, '  ']) {
+      const { status, body } = await addCoOwner(env, {
+        email: 'rob@example.com',
+        name: 'Rob Alvarez',
+        phone,
+        petIds: ['pet_sp_bella'],
+      });
+      expect(status).toBe(400);
+      expect(body).toEqual({ error: "Enter this person's phone number.", code: 'phone_required' });
+    }
+    expect(
+      raw.prepare('SELECT Id FROM EndUsers WHERE Email = ?').get('rob@example.com'),
+    ).toBeUndefined();
+  });
+
+  it('refuses a malformed phone', async () => {
+    const { env } = createTestEnv();
+    const { status, body } = await addCoOwner(env, {
+      email: 'rob@example.com',
+      name: 'Rob Alvarez',
+      phone: 'ask Tina',
+      petIds: ['pet_sp_bella'],
+    });
+    expect(status).toBe(400);
+    expect(body.code).toBe('phone_invalid');
+  });
+
+  it('links an existing client with no phone given, keeping the one on file', async () => {
+    const { env, raw } = createTestEnv();
+    const { status, body } = await addCoOwner(env, {
+      email: 'jess@example.com',
+      name: 'Jess Demo',
+      phone: undefined,
+      petIds: ['pet_sp_bella'],
+    });
+    expect(status).toBe(201);
+    expect(body.created).toBe(false);
+    expect(
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Id = ?').get('eu_sp_jess') as {
+          Phone: string;
+        }
+      ).Phone,
+    ).toBe('(555) 555-0142');
+  });
+
+  describe('co-owner link: an existing client’s phone', () => {
+    const phoneOf = (raw: ReturnType<typeof createTestEnv>['raw']) =>
+      (
+        raw.prepare('SELECT Phone FROM EndUsers WHERE Id = ?').get('eu_sp_jess') as {
+          Phone: string;
+        }
+      ).Phone;
+
+    it('fills a blank phone with the typed one', async () => {
+      const { env, raw } = createTestEnv();
+      raw.prepare(`UPDATE EndUsers SET Phone = '  ' WHERE Id = 'eu_sp_jess'`).run();
+      const { status } = await addCoOwner(env, {
+        email: 'jess@example.com',
+        name: 'Jess Demo',
+        phone: ' (555) 555-0177 ',
+        petIds: ['pet_sp_bella'],
+      });
+      expect(status).toBe(201);
+      expect(phoneOf(raw)).toBe('(555) 555-0177');
+    });
+
+    it('never overwrites a phone already on file', async () => {
+      const { env, raw } = createTestEnv();
+      const { status } = await addCoOwner(env, {
+        email: 'jess@example.com',
+        name: 'Jess Demo',
+        phone: '(555) 555-0177',
+        petIds: ['pet_sp_bella'],
+      });
+      expect(status).toBe(201);
+      expect(phoneOf(raw)).toBe('(555) 555-0142');
+    });
   });
 });

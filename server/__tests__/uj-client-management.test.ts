@@ -21,6 +21,7 @@ describe('client management flow', () => {
         body: JSON.stringify({
           email: EMAIL,
           name: 'New Client',
+          phone: '(555) 555-0100',
           petName: 'Whiskers',
           petType: 'cat',
         }),

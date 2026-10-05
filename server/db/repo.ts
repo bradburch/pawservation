@@ -38,8 +38,9 @@ import {
 } from '../../src/shared/index.js';
 import { isNotNullViolation, isUniqueViolation } from '../lib/db-errors';
 import { deriveAttributedRef } from '../lib/payment-attribution';
+import { phoneOnFile } from '../lib/phone';
 import { constantTimeEqual } from '../lib/timing';
-import { DEMO_EMAIL } from '../lib/demo';
+import { DEMO_EMAIL, DEMO_PHONE } from '../lib/demo';
 
 /**
  * The ONLY module allowed to touch PAWSERVATION_DB. Every function below either resolves a
@@ -4759,7 +4760,17 @@ export async function ensureDemoCustomer(
   petType: PetType,
 ): Promise<EndUser> {
   const existing = await getEndUserByEmail(db, tenantId, email);
-  if (existing) return existing;
+  if (existing) {
+    if (phoneOnFile(existing.Phone) !== null) return existing;
+    // A shadow provisioned before every client needed a phone. Backfilled here, once, so the
+    // public demo never opens on the widget's phone prompt. The reserved email is in the WHERE as
+    // well as in the caller: this statement cannot reach a real client's row.
+    await db
+      .prepare('UPDATE EndUsers SET Phone = ? WHERE TenantId = ? AND Id = ? AND Email = ?')
+      .bind(DEMO_PHONE, tenantId, existing.Id, DEMO_EMAIL)
+      .run();
+    return { ...existing, Phone: DEMO_PHONE };
+  }
   const id = `eu_demo_${crypto.randomUUID()}`;
   const petId = `pet_demo_${crypto.randomUUID()}`;
   const invitedAt = new Date().toISOString();
@@ -4768,9 +4779,9 @@ export async function ensureDemoCustomer(
       db
         .prepare(
           `INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status, InvitedAt)
-           VALUES (?, ?, ?, 'Demo Visitor', NULL, 'active', ?)`,
+           VALUES (?, ?, ?, 'Demo Visitor', ?, 'active', ?)`,
         )
-        .bind(id, tenantId, email, invitedAt),
+        .bind(id, tenantId, email, DEMO_PHONE, invitedAt),
       db
         .prepare(
           `INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType) VALUES (?, ?, ?, 'Biscuit', ?)`,
@@ -4791,7 +4802,7 @@ export async function ensureDemoCustomer(
     TenantId: tenantId,
     Email: email,
     Name: 'Demo Visitor',
-    Phone: null,
+    Phone: DEMO_PHONE,
     VenmoUsername: null,
     Status: 'active',
     InvitedAt: invitedAt,
@@ -5005,6 +5016,44 @@ export async function promoteCustomerActive(
     .prepare("UPDATE EndUsers SET Status = 'active' WHERE TenantId = ? AND Id = ?")
     .bind(tenantId, endUserId)
     .run();
+}
+
+/**
+ * Set the client's phone — already validated and trimmed by `validatePhone` (server/lib/phone.ts);
+ * this never clears one, because every client must have a phone on file. Returns whether a row
+ * changed, so a caller can 404 an unknown or foreign id (the WHERE is the tenant guard).
+ */
+export async function setEndUserPhone(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  phone: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE EndUsers SET Phone = ? WHERE TenantId = ? AND Id = ?')
+    .bind(phone, tenantId, endUserId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Fill a BLANK phone (null or whitespace-only) with one the sitter typed — already validated and
+ * trimmed by `validatePhone`. A phone already on file is never touched: the WHERE says so, so a
+ * caller cannot overwrite one by mistake. Returns whether a row changed.
+ */
+export async function fillBlankEndUserPhone(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  phone: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE EndUsers SET Phone = ? WHERE TenantId = ? AND Id = ? AND (Phone IS NULL OR TRIM(Phone) = '')",
+    )
+    .bind(phone, tenantId, endUserId)
+    .run();
+  return (result.meta as { changes?: number }).changes !== 0;
 }
 
 /**

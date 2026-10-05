@@ -59,6 +59,7 @@ import {
   replaceExtraTimeCharges,
   replaceSavedAnswers,
   restoreBookingAfterEdit,
+  setEndUserPhone,
   updateBookingForEdit,
 } from '../db/repo';
 import { buildSavedAnswerMap, savedAnswerEntries } from './saved-answers';
@@ -79,6 +80,7 @@ import {
 } from './calendar-sync';
 import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
+import { phoneOnFile, validatePhone } from './phone';
 import { isUniqueViolation } from './db-errors';
 import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
 import {
@@ -610,6 +612,9 @@ export async function monthGrid(
 
 export type MePayload = {
   name: string | null;
+  /** The phone on file, trimmed; `null` when there is none (a blank or whitespace-only value is
+   *  none). The widget asks for one, once, when this is `null`. */
+  phone: string | null;
   pets: { id: string; name: string; petType: string }[];
   savedAnswers: Record<string, Record<string, string>>;
 };
@@ -628,9 +633,36 @@ export async function getMe(ctx: BookingOpsContext): Promise<OpResult<MePayload>
   ]);
   return ok({
     name: user?.Name ?? null,
+    phone: phoneOnFile(user?.Phone),
     pets: pets.map((p) => ({ id: p.Id, name: p.Name, petType: p.PetType })),
     savedAnswers: buildSavedAnswerMap(savedRows, services),
   });
+}
+
+// ─── "My phone" ──────────────────────────────────────────────────────────────
+
+export type MyPhonePayload = { phone: string };
+
+/**
+ * The signed-in client sets their own phone — the widget's one-time prompt, and any API client
+ * answering a `phone_required` refusal. Same rule as every creation path (`validatePhone`), written
+ * to the caller's own row only: the `endUserId` comes from the token, never from the request.
+ * The demo identity is refused — its row is one shadow shared by every visitor to the public demo,
+ * and it already has a phone.
+ */
+export async function updateMyPhone(
+  ctx: BookingOpsContext,
+  input: { phone: unknown },
+): Promise<OpResult<MyPhonePayload>> {
+  const { env, tenant, endUserId } = ctx;
+  const user = await getEndUserById(env.PAWSERVATION_DB, tenant.Id, endUserId);
+  if (!user) return fail(404, 'Not found.', 'unknown_customer');
+  if (user.Email === DEMO_EMAIL)
+    return fail(400, 'The demo account cannot be changed.', 'demo_identity');
+  const check = validatePhone(input.phone);
+  if (!check.ok) return fail(400, check.reason, check.code);
+  await setEndUserPhone(env.PAWSERVATION_DB, tenant.Id, endUserId, check.phone);
+  return ok({ phone: check.phone });
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────
@@ -857,6 +889,20 @@ export async function createBooking(
       201,
     );
   }
+
+  // The owner's ruling: a client with no phone on file cannot book until they give one — the
+  // sitter must always be able to reach the person whose keys she holds. Placed here, after every
+  // check on the REQUEST and before anything is written: a caller learns what is wrong with what
+  // they sent first, and the demo identity (which never persists) has already returned above.
+  // Blank or whitespace-only counts as none (`phoneOnFile`).
+  // A missing requester row fails closed, with the refusal `updateMyPhone` gives an unknown client.
+  if (!requester) return fail(404, 'Not found.', 'unknown_customer');
+  if (phoneOnFile(requester.Phone) === null)
+    return fail(
+      400,
+      `Add a phone number so ${tenant.DisplayName} can reach you, then send your request again.`,
+      'phone_required',
+    );
 
   // Optimistic insert, then a single capacity check that excludes our own just-inserted row.
   // The check covers both "those dates were already full" and the check-then-insert race (a
