@@ -28,13 +28,15 @@
   // is UX only — the paid tier does its own server-side entitlement check on every request — so a
   // wrong value here costs a surface that will not mount, never access that should not exist.
   //
-  // PLAN_SUBSCRIBE is deliberately NOT set here. It is the switch for whether the dashboard offers
-  // a Subscribe control at all, published on /config as `pricing.subscribe`; UNSET MEANS OFF, and
-  // exactly the string "true" means on. PREMIUM_ORIGIN above is already set in production, so a
-  // plan panel gated on the origin alone would show every sitter a button that 404s until the
-  // billing worker's checkout route is live. Add `"PLAN_SUBSCRIBE": "true"` here when it is.
+  // PLAN_SUBSCRIBE is ON here, because the billing worker's checkout route is live. It is the switch
+  // for whether the dashboard offers a Subscribe control at all, published on /config as
+  // `pricing.subscribe`; UNSET MEANS OFF, and exactly the string "true" means on. PREMIUM_ORIGIN
+  // above is set in production, so with this unset a plan panel gated on the origin alone would
+  // show every sitter a button that 404s. Removing it and redeploying hides the plan controls
+  // again; it grants nothing, since it decides whether a control renders, never whether a plan is
+  // honoured.
   //
-  // PLAN_ENFORCE is deliberately NOT set here either. It is the switch for whether a business
+  // PLAN_ENFORCE is deliberately NOT set here. It is the switch for whether a business
   // holding no current plan gets a read-only dashboard; UNSET MEANS OFF, and exactly the STRING
   // "true" means on — a JSON `true` is read as off. Both flags live in this file rather than in the
   // dashboard so the flip and the unflip are each a deploy that the repo records. Add
@@ -42,6 +44,7 @@
   // returns zero rows.
   "vars": {
     "PREMIUM_ORIGIN": "https://pawservation.com",
+    "PLAN_SUBSCRIBE": "true",
   },
   // Calendar sweep: outbox re-drive + Google reconcile for every connected tenant.
   // server/index.ts exports the matching scheduled() handler.
