@@ -177,6 +177,7 @@ import {
   MAX_PET_COUNT_CAP,
   minutesBetweenTimes,
 } from '../lib/validation';
+import { validatePhone } from '../lib/phone';
 import type { AppEnv, Tenant, TenantService, TenantServiceOption } from '../types';
 import type {
   CancellationTier,
@@ -1916,15 +1917,18 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req.json<Body>().catch(() => ({}) as Body);
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
-    const phone = rawPhone || null;
+    const phoneCheck = validatePhone(body.phone);
     const petName = typeof body.petName === 'string' ? body.petName.trim() : '';
     const petType = typeof body.petType === 'string' ? body.petType.trim() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
     if (email === DEMO_EMAIL)
       return c.json({ error: 'That email is reserved for the Pawservation demo.' }, 400);
     if (!name) return c.json({ error: "Enter the client's name." }, 400);
-    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
+    // A phone that is GIVEN must be one, on either path below. Whether one must be given at all is
+    // decided after the lookup: only a CREATE needs it, because the append path keeps the phone on
+    // file.
+    if (!phoneCheck.ok && phoneCheck.code === 'phone_invalid')
+      return c.json({ error: phoneCheck.reason, code: phoneCheck.code }, 400);
     if (!petName)
       return c.json({ error: 'Enter a pet name — every client needs at least one pet.' }, 400);
     // Registry membership only (0015), same rule as the add-pet route: recordable even if no
@@ -1947,13 +1951,17 @@ export const adminRoutes = new Hono<AppEnv>()
       if (!pets.some((p) => p.Name.toLowerCase() === petName.toLowerCase()))
         await addEndUserPet(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, petName, petType);
     } else {
+      // Every client the product creates has a phone on file: the sitter must always be able to
+      // reach the person whose keys she holds.
+      if (!phoneCheck.ok)
+        return c.json({ error: "Enter the client's phone number.", code: phoneCheck.code }, 400);
       // One atomic batch — if the pet insert fails, no customer row is left standing.
       customer = await insertInvitedCustomerWithPet(
         c.env.PAWSERVATION_DB,
         tenant.Id,
         email,
         name,
-        phone,
+        phoneCheck.phone,
         petName,
         petType,
       );
@@ -2008,8 +2016,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const body = await c.req.json<Body>().catch(() => ({}) as Body);
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const rawPhone = typeof body.phone === 'string' ? body.phone.trim() : '';
-    const phone = rawPhone || null;
+    const phoneCheck = validatePhone(body.phone);
     // De-duplicated here rather than trusted: a repeated id would trip PetOwners' PRIMARY KEY and
     // abort the batch, turning a harmless double-send into a 500.
     const petIds = Array.isArray(body.petIds)
@@ -2019,7 +2026,9 @@ export const adminRoutes = new Hono<AppEnv>()
     if (email === DEMO_EMAIL)
       return c.json({ error: 'That email is reserved for the Pawservation demo.' }, 400);
     if (!name) return c.json({ error: "Enter this person's name." }, 400);
-    if (phone !== null && phone.length > 40) return c.json({ error: 'Phone is too long.' }, 400);
+    // Given → must be valid, on either path; required only to CREATE (the manual-add rule).
+    if (!phoneCheck.ok && phoneCheck.code === 'phone_invalid')
+      return c.json({ error: phoneCheck.reason, code: phoneCheck.code }, 400);
     if (petIds.length === 0)
       return c.json(
         { error: 'Choose at least one pet — a client can never be added without pets.' },
@@ -2049,12 +2058,14 @@ export const adminRoutes = new Hono<AppEnv>()
       await addCoOwnerToPets(c.env.PAWSERVATION_DB, tenant.Id, existing.Id, petIds);
       customer = existing;
     } else {
+      if (!phoneCheck.ok)
+        return c.json({ error: "Enter this person's phone number.", code: phoneCheck.code }, 400);
       customer = await insertInvitedCustomerAsCoOwner(
         c.env.PAWSERVATION_DB,
         tenant.Id,
         email,
         name,
-        phone,
+        phoneCheck.phone,
         petIds,
       );
     }
