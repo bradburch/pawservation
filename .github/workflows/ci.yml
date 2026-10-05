@@ -16,7 +16,7 @@ concurrency:
 jobs:
   quality:
     name: Typecheck · Lint · Format · Test · Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
 
@@ -48,7 +48,7 @@ jobs:
     needs: quality
     # Only deploy real pushes to main — never PRs or forks.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     concurrency:
       # Serialize deploys so one is never interrupted by the next push.
