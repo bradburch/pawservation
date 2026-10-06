@@ -1403,7 +1403,7 @@ const TERMS_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>Changes</h2>
-            <p>We may update these terms from time to time. We&rsquo;ll email you before any material change takes effect.</p>
+            <p>We may update these terms from time to time. We&rsquo;ll email you at least 30 days before a material change takes effect.</p>
           </div>
         </div>
       </section>

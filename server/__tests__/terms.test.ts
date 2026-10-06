@@ -37,6 +37,6 @@ describe('GET /terms', () => {
     // No refund policy exists in the product or the PRD, so the page promises none.
     expect(body).toMatch(/including a refund, contact us/);
     expect(body).not.toMatch(/check back periodically/i);
-    expect(body).toMatch(/email you before any material change/);
+    expect(body).toMatch(/email you at least 30 days before a material change takes effect/);
   });
 });
