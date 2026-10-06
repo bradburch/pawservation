@@ -40,7 +40,15 @@ const InviteRequestBody = v.object({
   business: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(120)),
   name: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(80)),
   email: v.pipe(v.string(), v.trim(), v.toLowerCase(), v.maxLength(254), v.regex(EMAIL_RE)),
-  website: v.pipe(v.string(), v.trim(), v.check(isPlausibleWebsite)),
+  // Optional: a sitter with no website and no social page is exactly who the "no website
+  // needed" path is for. A value that IS given must still name a web presence.
+  website: v.optional(
+    v.pipe(
+      v.string(),
+      v.trim(),
+      v.check((value) => value === '' || isPlausibleWebsite(value)),
+    ),
+  ),
   city: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(80)),
   neighborhoods: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
   services: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(200)),
@@ -73,8 +81,7 @@ function invalidFields(values: InviteFormValues): string[] {
   if (!email) bad.push('Email');
   else if (!EMAIL_RE.test(email) || email.length > 254) bad.push('Email (not a valid address)');
   const website = values.website?.trim() ?? '';
-  if (!website) bad.push('Website or social page');
-  else if (!isPlausibleWebsite(website))
+  if (website && !isPlausibleWebsite(website))
     bad.push('Website or social page (something like yourbusiness.com)');
   if (!values.city?.trim()) bad.push('City');
   if (!values.services?.trim()) bad.push('Services you offer');

@@ -55,8 +55,8 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
                 <input id="inv-email" name="email" type="email" maxlength="254" required autocomplete="email" value="${esc(values.email)}" />
               </div>
               <div class="invite-field">
-                <label for="inv-website">Website or social page</label>
-                <input id="inv-website" name="website" type="text" maxlength="200" required autocomplete="url" placeholder="yourbusiness.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
+                <label for="inv-website">Website or social page <span class="invite-optional">(optional)</span></label>
+                <input id="inv-website" name="website" type="text" maxlength="200" autocomplete="url" placeholder="yourbusiness.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-city">City</label>
