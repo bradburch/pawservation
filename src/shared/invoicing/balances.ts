@@ -17,7 +17,7 @@
  * of three things its callers own:
  *
  *  - **What a booking is WORTH.** `expected` arrives already computed by the one server-side rule
- *    that owns it (`CREDITABLE_AMOUNT_SQL` in `server/db/repo.ts`: the quote or the assessed
+ *    that owns it (`creditableAmountSql` in `server/db/repo.ts`: the quote or the assessed
  *    cancellation fee, plus extra charges, and zero for a request that was declined). Restating that
  *    arithmetic here would be a second money rule, which is the drift this codebase exists to avoid.
  *  - **Deceased pets.** The caller filters them out of `links`, exactly as `buildAccounts` requires.
@@ -110,7 +110,7 @@ export function buildPaymentAnchors(
  * One household's statement. `balanceCents` negative means the household is IN CREDIT.
  *
  * Every total here is CENTS and says so (0015, design spec §2 "Wire"): the caller sums figures its
- * own `CREDITABLE_AMOUNT_SQL` produced in cents, and a total that did not name its unit is exactly
+ * own `creditableAmountSql` produced in cents, and a total that did not name its unit is exactly
  * the field a reader picks up as dollars. The per-booking inputs (`HouseholdBooking.expected` /
  * `.paid`) keep their names: they are this module's arguments, not anybody's wire, and the caller
  * that fills them names the unit at the SQL it read them from.

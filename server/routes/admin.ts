@@ -140,6 +140,7 @@ import {
 } from '../lib/services';
 import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
+import { tenantToday } from '../lib/tenant-today';
 import {
   isVenmoTxnId,
   MAX_VENMO_ROWS,
@@ -477,6 +478,10 @@ function parseExpectedBooking(v: unknown): ExpectedBooking | null {
     return null;
   return { startDate, endDate, petCount, estCostCents };
 }
+
+/** A booking payment, or a kept credit, on a walk of a series whose date has not arrived. */
+const NOT_YET_DUE_MESSAGE =
+  "This walk isn't due yet — record it as a payment on the household instead.";
 
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
@@ -3002,17 +3007,41 @@ export const adminRoutes = new Hono<AppEnv>()
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
-    const paymentId = await insertPayment(c.env.PAWSERVATION_DB, tenant.Id, {
-      bookingRequestId: bookingId,
-      amount: body.amountCents,
-      method: body.method,
-      paidDate: body.paidDate,
-      note,
-      externalRef: null,
-    });
-    // Guard refused: foreign, blocked/external, declined, or a cancelled booking that owes
-    // nothing — no fee and no live charges (pending is deliberately allowed).
-    if (!paymentId) return c.json({ error: 'Not found.' }, 404);
+    // ONE `today` for the insert and for the refusal's explanation below: two clock reads either
+    // side of midnight could refuse a walk as not yet due and then find it due, answering 404.
+    const today = tenantToday(tenant);
+    const paymentId = await insertPayment(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      {
+        bookingRequestId: bookingId,
+        amount: body.amountCents,
+        method: body.method,
+        paidDate: body.paidDate,
+        note,
+        externalRef: null,
+      },
+      today,
+    );
+    if (!paymentId) {
+      // A walk of a series that is not yet due is refused by the accrual, not by existence, so the
+      // sitter is told where the money goes (see `insertPayment`). Same predicate as
+      // `notYetDueSql`, same `today`.
+      const booking = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
+      if (
+        booking &&
+        booking.ServiceType !== 'blocked' &&
+        booking.ServiceType !== 'external' &&
+        booking.SeriesId !== null &&
+        booking.StartDate > today &&
+        booking.Status !== 'cancelled' &&
+        booking.Status !== 'declined'
+      )
+        return c.json({ error: NOT_YET_DUE_MESSAGE, code: 'not_yet_due' }, 409);
+      // Otherwise: foreign, blocked/external, declined, or a cancelled booking that owes nothing —
+      // no fee and no live charges (pending is deliberately allowed).
+      return c.json({ error: 'Not found.' }, 404);
+    }
     const payments = await listPaymentsForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     const created = payments.find((p) => p.Id === paymentId);
     if (!created) return c.json({ error: 'Not found.' }, 404);
@@ -3040,7 +3069,12 @@ export const adminRoutes = new Hono<AppEnv>()
    */
   .post('/:slug/admin/bookings/:id/credit/keep', async (c) => {
     const tenant = c.get('tenant');
-    const result = await keepBookingCredit(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('id'));
+    const result = await keepBookingCredit(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+      tenantToday(tenant),
+    );
     switch (result.outcome) {
       case 'kept':
         return c.json({ keptCents: result.amount });
@@ -3056,6 +3090,8 @@ export const adminRoutes = new Hono<AppEnv>()
         );
       case 'no-credit':
         return c.json({ error: 'That booking is not in credit.' }, 409);
+      case 'not-yet-due':
+        return c.json({ error: NOT_YET_DUE_MESSAGE, code: 'not_yet_due' }, 409);
       default: {
         const unhandled: never = result;
         return c.json({ error: `Cannot close this credit (${String(unhandled)}).` }, 409);
@@ -3171,8 +3207,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET, nor
     // for a lapsed plan under enforcement — see `calendarWritesAllowed`.
     if (calendarWritesAllowed(c.env, tenant)) await reconcileIfStale(c.env, tenant);
-    const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
-    const data = await getAnalytics(c.env.PAWSERVATION_DB, tenant.Id, today);
+    const data = await getAnalytics(c.env.PAWSERVATION_DB, tenant.Id, tenantToday(tenant));
     return c.json(serializeAnalytics(data));
   })
 
@@ -3468,7 +3503,7 @@ export const adminRoutes = new Hono<AppEnv>()
    * per-booking figure, computed inside its read from the same numbers the household balance is
    * built from, rather than subtracted here or trusted from anywhere else. This is the fix a prior review asked for:
    * `getHouseholdDetail` also lists `declined` bookings, whose `expectedCents` is zeroed by
-   * `CREDITABLE_AMOUNT_SQL` but which can still carry a payment recorded before they were
+   * `creditableAmountSql` but which can still carry a payment recorded before they were
    * declined (`insertPayment` allows it while a booking is still pending) — leaving a NEGATIVE
    * outstanding. Handing that straight to `proposeAttribution` would trip its own
    * unreadable-amount guard and refuse the household's ENTIRE credit, not just skip the one
@@ -3539,7 +3574,12 @@ export const adminRoutes = new Hono<AppEnv>()
       credits: Awaited<ReturnType<typeof listPaymentsForAccount>>;
     }[] = [];
     if (requestedAccountId !== undefined) {
-      const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, requestedAccountId);
+      const detail = await getHouseholdDetail(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        requestedAccountId,
+        tenantToday(tenant),
+      );
       if (!detail) return c.json({ error: 'Not found.' }, 404);
       const credits = await listPaymentsForAccount(
         c.env.PAWSERVATION_DB,
@@ -3548,7 +3588,11 @@ export const adminRoutes = new Hono<AppEnv>()
       );
       if (credits.length > 0) targets.push({ accountId: detail.accountId, detail, credits });
     } else {
-      const candidates = await getHouseholdsWithUnappliedCredits(c.env.PAWSERVATION_DB, tenant.Id);
+      const candidates = await getHouseholdsWithUnappliedCredits(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        tenantToday(tenant),
+      );
       for (const { accountId, detail, credits } of candidates)
         targets.push({ accountId, detail, credits });
     }
@@ -4074,7 +4118,12 @@ export const adminRoutes = new Hono<AppEnv>()
     const skipped: { paymentId: string; reason: string }[] = [];
     for (const attribution of attributions) {
       try {
-        const result = await applyAttribution(c.env.PAWSERVATION_DB, tenant.Id, attribution);
+        const result = await applyAttribution(
+          c.env.PAWSERVATION_DB,
+          tenant.Id,
+          attribution,
+          tenantToday(tenant),
+        );
         if (result.ok) applied++;
         else skipped.push({ paymentId: attribution.paymentId, reason: result.reason });
       } catch (err) {
@@ -4354,7 +4403,7 @@ export const adminRoutes = new Hono<AppEnv>()
    *
    * The route itself never decides EstCost vs. CancellationFee — `updateBackfilledBookingCost`
    * writes into whichever column the row's own Status says the balance reads, so a cancelled
-   * adoption's correction lands where `BASE_AMOUNT_SQL` actually looks for it.
+   * adoption's correction lands where `baseAmountSql` actually looks for it.
    */
   .patch('/:slug/admin/bookings/:id/cost', async (c) => {
     const tenant = c.get('tenant');

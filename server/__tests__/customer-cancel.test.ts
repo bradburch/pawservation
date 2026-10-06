@@ -591,7 +591,7 @@ describe('Earnings after a customer cancellation', () => {
     const owed = analytics.outstanding.find((o) => o.BookingId === id);
     // The STAY nets to zero — the base amount is the $0 fee, not the $200 EstCost. The separately
     // logged charge is a receivable in its own right and survives the cancellation, which is the
-    // long-standing rule OUTSTANDING_WHERE_SQL encodes ("a charge is owed on a stay that happened
+    // long-standing rule outstandingWhereSql encodes ("a charge is owed on a stay that happened
     // whether or not it was later cancelled"). If a customer cancellation should ALSO void
     // outstanding charges, that is a deliberate change to the shared earnings predicate — and to
     // the Venmo importer's candidate set, which reads the same SQL.
@@ -607,7 +607,7 @@ describe('Earnings after a customer cancellation', () => {
   });
 
   /**
-   * The other direction of the same guard. OUTSTANDING_WHERE_SQL surfaces a fee-free cancellation
+   * The other direction of the same guard. outstandingWhereSql surfaces a fee-free cancellation
    * that still carries extra charges (charges survive a cancellation by design), so the Earnings
    * page actively tells the sitter she is owed $45 — and *Record payment* used to 404 on exactly
    * that row, because insertPayment's guard tested the fee alone.

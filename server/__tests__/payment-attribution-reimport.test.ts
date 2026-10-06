@@ -177,13 +177,18 @@ describe('re-import of the source file after attribution', () => {
     // The sitter then places that credit: $150 onto the stay, $50 left as household credit.
     const credit = soleCredit(raw);
     expect(
-      await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
-        paymentId: credit.Id,
-        accountId: home.accountId,
-        // Cents on both sides now — the repo's own unit and the importer wire's alike.
-        splits: [{ bookingId: stay, amount: 15000 }],
-        remainder: 5000,
-      }),
+      await applyAttribution(
+        env.PAWSERVATION_DB,
+        TENANT_C,
+        {
+          paymentId: credit.Id,
+          accountId: home.accountId,
+          // Cents on both sides now — the repo's own unit and the importer wire's alike.
+          splits: [{ bookingId: stay, amount: 15000 }],
+          remainder: 5000,
+        },
+        '2026-10-06',
+      ),
     ).toEqual({ ok: true });
     const before = ledger(raw);
     expect(before).toMatchObject({ rows: 2, total: 20000 }); // SUM(Amount): cents
@@ -200,7 +205,12 @@ describe('re-import of the source file after attribution', () => {
       .toMatchObject({ imported: 0, skipped: [{ txnId: TXN_ID, reason: 'Already imported' }] });
 
     expect(ledger(raw)).toEqual(before);
-    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const detail = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
     expect(detail?.bookings.find((b) => b.bookingId === stay)?.paidTotalCents).toBe(15000); // cents
   });
 
@@ -236,13 +246,18 @@ describe('re-import of the source file after attribution', () => {
 
     const credit = soleCredit(raw);
     expect(
-      await applyAttribution(env.PAWSERVATION_DB, TENANT_C, {
-        paymentId: credit.Id,
-        accountId: home.accountId,
-        // Cents on both sides now — the repo's own unit and the importer wire's alike.
-        splits: [{ bookingId: stay, amount: 15000 }],
-        remainder: 5000,
-      }),
+      await applyAttribution(
+        env.PAWSERVATION_DB,
+        TENANT_C,
+        {
+          paymentId: credit.Id,
+          accountId: home.accountId,
+          // Cents on both sides now — the repo's own unit and the importer wire's alike.
+          splits: [{ bookingId: stay, amount: 15000 }],
+          remainder: 5000,
+        },
+        '2026-10-06',
+      ),
     ).toEqual({ ok: true });
     const before = ledger(raw);
     expect(before).toMatchObject({ rows: 2, total: 20000 }); // SUM(Amount): cents

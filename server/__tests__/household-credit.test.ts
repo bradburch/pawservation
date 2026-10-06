@@ -66,7 +66,7 @@ describe('household credit', () => {
 
     await prepay(env, TENANT_C, mia, 30000);
     // No booking exists yet: pure prepayment reads as credit, not an error or a dangling reference.
-    const [before] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const [before] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(before).toMatchObject({
       expectedTotalCents: 0,
       paidTotalCents: 30000,
@@ -76,7 +76,7 @@ describe('household credit', () => {
     // The booking arrives AFTER the payment. Timing carries no meaning in the arithmetic: the same
     // subtraction runs whether the payment or the booking was recorded first.
     await book(env, TENANT_C, ana.Id, [mia], 12000);
-    const [after] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const [after] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(after).toMatchObject({
       expectedTotalCents: 12000,
       paidTotalCents: 30000,
@@ -96,14 +96,16 @@ describe('household credit', () => {
     await prepay(env, TENANT_C, mia, 30000);
 
     await book(env, TENANT_C, ana.Id, [mia], 10000);
-    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balanceCents).toBe(
-      -20000,
-    );
+    expect(
+      (await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06'))[0].balanceCents,
+    ).toBe(-20000);
 
     // A second booking pushes the household from credit into owing money — same computation, no
     // special-cased "apply the credit" call anywhere in between.
     await book(env, TENANT_C, ana.Id, [mia], 25000);
-    expect((await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C))[0].balanceCents).toBe(5000);
+    expect(
+      (await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06'))[0].balanceCents,
+    ).toBe(5000);
   });
 
   it('never lets a household in credit read as owing money in a filtered outstanding list', async () => {
@@ -126,7 +128,7 @@ describe('household credit', () => {
     await prepay(env, TENANT_C, mia, 50000); // Ana prepays with no booking at all — pure credit.
     await book(env, TENANT_C, jen.Id, [rex], 9000); // Jen genuinely owes $90.
 
-    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     // Any "who owes me money" list is built by filtering this same server-computed balance, never a
     // second money rule — so a credit household filters itself out by the sign of its own balance.
     const outstanding = households.filter((h) => h.balanceCents > 0);

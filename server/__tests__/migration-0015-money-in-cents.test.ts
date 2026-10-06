@@ -113,7 +113,7 @@ describe('migration 0015 (money in cents) against a pre-migration database', () 
     // The `WHERE … IS NOT NULL` guard on the two BookingRequests statements. Without it SQLite
     // would leave the NULL alone anyway (NULL * 100 is NULL), but the guard is what makes that
     // intentional rather than incidental, and a fee of 0 is a DIFFERENT fact from no fee at all —
-    // OUTSTANDING_WHERE_SQL reads a stored 0 as a receivable of nothing, and a NULL as no cancel.
+    // outstandingWhereSql reads a stored 0 as a receivable of nothing, and a NULL as no cancel.
     const raw = preMigrationDb();
     raw.exec(MIGRATION);
     expect(one(raw, "SELECT CancellationFee FROM BookingRequests WHERE Id = 'br_plain'")).toEqual({

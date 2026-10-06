@@ -66,14 +66,19 @@ describe('GET /:slug/account', () => {
     );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_acct', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_A, jen.Id, [rex], 10000);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 2500,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 2500,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const token = await endUserToken(env, 'sunny-paws', 'jen@example.com');
 
     const res = await app.request(
@@ -117,14 +122,19 @@ describe('GET /:slug/account', () => {
     );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_hh', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_A, jen.Id, [rex], 25000);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 8750,
-      method: 'venmo',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 8750,
+        method: 'venmo',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: rex,
       amount: 10000,
@@ -158,14 +168,19 @@ describe('GET /:slug/account', () => {
     );
     const [rex] = seedPets(raw, TENANT_A, jen.Id, [{ id: 'p_rex_cents', petType: 'dog' }]);
     const bookingId = await book(env, TENANT_A, jen.Id, [rex], 10050);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 2550,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 2550,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const token = await endUserToken(env, 'sunny-paws', 'jen@example.com');
 
     const res = await app.request(

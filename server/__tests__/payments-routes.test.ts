@@ -33,14 +33,19 @@ describe('admin payment routes', () => {
   it('records a payment and returns it with the new paid total', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 1000, // repo call: CENTS (0015), as the route body below now is too.
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 1000, // repo call: CENTS (0015), as the route body below now is too.
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const res = await postPayment(env, bookingId, goodBody);
     expect(res.status).toBe(201);
     const body = (await res.json()) as {

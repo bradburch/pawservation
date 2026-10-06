@@ -50,14 +50,19 @@ const pay = (
   amount: number,
   paidDate = '2026-07-01',
 ) =>
-  insertPayment(env.PAWSERVATION_DB, tenantId, {
-    bookingRequestId,
-    amount,
-    method: 'cash',
-    paidDate,
-    note: null,
-    externalRef: null,
-  });
+  insertPayment(
+    env.PAWSERVATION_DB,
+    tenantId,
+    {
+      bookingRequestId,
+      amount,
+      method: 'cash',
+      paidDate,
+      note: null,
+      externalRef: null,
+    },
+    '2026-07-15',
+  );
 
 describe('getAnalytics (repo)', () => {
   it('monthly: 12 zero-filled buckets, oldest first, out-of-window payments excluded', async () => {
@@ -232,8 +237,8 @@ describe('getAnalytics (repo)', () => {
    * after re-confirmation `100 > 250` is false so it never came back as outstanding either.
    *
    * `credits` is the mirror of the outstanding predicate, and mutually exclusive with it: for the
-   * two statuses `OUTSTANDING_WHERE_SQL` covers (confirmed, cancelled) the "keepable" amount is
-   * byte-identical to `EXPECTED_AMOUNT_SQL`, so no booking can be both owing and in credit. It is
+   * two statuses `outstandingWhereSql` covers (confirmed, cancelled) the "keepable" amount is
+   * byte-identical to `expectedAmountSql`, so no booking can be both owing and in credit. It is
    * NOT a payable balance and gets no *Record payment* button — which is why it does not disturb
    * the rule that `insertPayment`'s guard and the outstanding predicate must agree in both
    * directions.

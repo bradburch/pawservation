@@ -577,39 +577,54 @@ describe('VenmoUsername', () => {
 describe('Payments.ExternalRef', () => {
   it('is unique per tenant and lists back for the importer', async () => {
     const { env } = createTestEnv();
-    const first = await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: 'seed_sp_board1',
-      amount: 10000, // cents (0015)
-      method: 'venmo',
-      paidDate: '2026-07-03',
-      note: 'Venmo import',
-      externalRef: '4139874112233445566',
-    });
-    expect(first).not.toBeNull();
-    expect(await listPaymentExternalRefs(env.PAWSERVATION_DB, TENANT_A)).toEqual([
-      '4139874112233445566',
-    ]);
-    // The partial unique index — not a convention — is what makes a replay impossible.
-    await expect(
-      insertPayment(env.PAWSERVATION_DB, TENANT_A, {
+    const first = await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
         bookingRequestId: 'seed_sp_board1',
         amount: 10000, // cents (0015)
         method: 'venmo',
         paidDate: '2026-07-03',
         note: 'Venmo import',
         externalRef: '4139874112233445566',
-      }),
+      },
+      '2026-07-15',
+    );
+    expect(first).not.toBeNull();
+    expect(await listPaymentExternalRefs(env.PAWSERVATION_DB, TENANT_A)).toEqual([
+      '4139874112233445566',
+    ]);
+    // The partial unique index — not a convention — is what makes a replay impossible.
+    await expect(
+      insertPayment(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        {
+          bookingRequestId: 'seed_sp_board1',
+          amount: 10000, // cents (0015)
+          method: 'venmo',
+          paidDate: '2026-07-03',
+          note: 'Venmo import',
+          externalRef: '4139874112233445566',
+        },
+        '2026-07-15',
+      ),
     ).rejects.toThrow(/UNIQUE constraint failed/);
     // …but the SAME transaction id in ANOTHER tenant is a different transaction entirely.
     expect(
-      await insertPayment(env.PAWSERVATION_DB, TENANT_B, {
-        bookingRequestId: 'seed_ht_board1',
-        amount: 10000, // cents (0015)
-        method: 'venmo',
-        paidDate: '2026-07-03',
-        note: 'Venmo import',
-        externalRef: '4139874112233445566',
-      }),
+      await insertPayment(
+        env.PAWSERVATION_DB,
+        TENANT_B,
+        {
+          bookingRequestId: 'seed_ht_board1',
+          amount: 10000, // cents (0015)
+          method: 'venmo',
+          paidDate: '2026-07-03',
+          note: 'Venmo import',
+          externalRef: '4139874112233445566',
+        },
+        '2026-07-15',
+      ),
     ).not.toBeNull();
     expect(await listPaymentExternalRefs(env.PAWSERVATION_DB, TENANT_A)).toHaveLength(1);
   });
@@ -618,14 +633,19 @@ describe('Payments.ExternalRef', () => {
     const { env } = createTestEnv();
     for (const amount of [10, 20, 30]) {
       expect(
-        await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-          bookingRequestId: 'seed_sp_board1',
-          amount,
-          method: 'cash',
-          paidDate: '2026-07-03',
-          note: null,
-          externalRef: null,
-        }),
+        await insertPayment(
+          env.PAWSERVATION_DB,
+          TENANT_A,
+          {
+            bookingRequestId: 'seed_sp_board1',
+            amount,
+            method: 'cash',
+            paidDate: '2026-07-03',
+            note: null,
+            externalRef: null,
+          },
+          '2026-07-15',
+        ),
       ).not.toBeNull();
     }
     expect(await listPaymentExternalRefs(env.PAWSERVATION_DB, TENANT_A)).toEqual([]);

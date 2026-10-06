@@ -83,7 +83,7 @@ function readCosts(
   return { estCost: row?.EstCost ?? null, cancellationFee: row?.CancellationFee ?? null };
 }
 
-// BASE_AMOUNT_SQL (server/db/repo.ts) reads CancellationFee, not EstCost, for a
+// baseAmountSql (server/db/repo.ts) reads CancellationFee, not EstCost, for a
 // cancelled row. These prove insertBackfilledBooking and updateBackfilledBookingCost both write
 // into that column for a cancelled adoption, not just EstCost — the gap that let a re-priced
 // cancelled stay report success while the household balance silently didn't move.
@@ -105,9 +105,9 @@ describe('a cancelled backfilled booking and the household balance', () => {
 
     const { estCost, cancellationFee } = readCosts(raw, bookingId);
     expect(estCost).toBe(2500); // the stay's own figure, in cents, kept regardless of status
-    expect(cancellationFee).toBe(2500); // the column BASE_AMOUNT_SQL actually reads once cancelled
+    expect(cancellationFee).toBe(2500); // the column baseAmountSql actually reads once cancelled
 
-    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2026-10-06');
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
     expect(household?.expectedTotalCents).toBe(2500);
     expect(household?.balanceCents).toBe(2500);
@@ -137,7 +137,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
 
     // The point of the feature: correcting the row must move the household statement with it,
     // not just the raw column.
-    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2026-10-06');
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
     expect(household?.expectedTotalCents).toBe(4000);
     expect(household?.balanceCents).toBe(4000);
@@ -162,7 +162,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ estCostCents: 6000 });
 
-    // CancellationFee is the column BASE_AMOUNT_SQL reads for a cancelled row, so that is the one
+    // CancellationFee is the column baseAmountSql reads for a cancelled row, so that is the one
     // the balance follows. EstCost must move WITH it: insertBackfilledBooking stamps both to the
     // same figure for a cancelled adoption, so leaving EstCost behind here would make insert and
     // update disagree about the same invariant — and EstCost is what the sitter actually SEES
@@ -172,7 +172,7 @@ describe('PATCH /:slug/admin/bookings/:id/cost', () => {
     expect(cancellationFee).toBe(6000); // the column, in cents
     expect(estCost).toBe(6000);
 
-    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const balances = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2026-10-06');
     const household = balances.find((h) => h.owners.some((o) => o.endUserId === endUserId));
     expect(household?.expectedTotalCents).toBe(6000);
     expect(household?.balanceCents).toBe(6000);

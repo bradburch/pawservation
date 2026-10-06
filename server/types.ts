@@ -335,7 +335,7 @@ export type AnalyticsData = {
     PaidTotal: number;
   }[];
   /**
-   * Bookings paid MORE than they may keep — the mirror of `outstanding` (see `CREDIT_WHERE_SQL` in
+   * Bookings paid MORE than they may keep — the mirror of `outstanding` (see `creditWhereSql` in
    * `server/db/repo.ts`), and mutually exclusive with it. `Keepable` is the whole amount the booking
    * may keep (quote or assessed fee, plus charges; zero for a declined row), so the credit is
    * `PaidTotal - Keepable` — derived once in `serializeAnalytics`, never restated.
@@ -349,6 +349,8 @@ export type AnalyticsData = {
     Status: string;
     Keepable: number;
     PaidTotal: number;
+    /** 1 for a walk of a series whose date has not arrived (`notYetDueSql`), else 0. */
+    NotYetDue: number;
   }[];
   /**
    * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets `buildAccounts` derives,
@@ -427,7 +429,7 @@ export type HouseholdDetailRow = {
     paidTotalCents: number;
     /** What this booking contributes to `expectedTotalCents`: `costCents + chargesTotalCents`, or
      *  zero for a declined request — declined bookings are never billed at all, the same rule
-     *  `CREDITABLE_AMOUNT_SQL` applies to the balance above. Sums to `expectedTotalCents` exactly. */
+     *  `creditableAmountSql` applies to the balance above. Sums to `expectedTotalCents` exactly. */
     expectedCents: number;
     /**
      * WHAT THIS BOOKING STILL OWES: `max(0, expectedCents − paidTotalCents)`, computed by the

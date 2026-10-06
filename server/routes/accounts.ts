@@ -7,6 +7,7 @@ import {
   listPaymentsForAccount,
 } from '../db/repo';
 import { adminAuth } from '../lib/middleware';
+import { tenantToday } from '../lib/tenant-today';
 import {
   AMOUNT_RANGE_MESSAGE,
   isPaymentMethod,
@@ -35,6 +36,7 @@ export const accountsRoutes = new Hono<AppEnv>()
       c.env.PAWSERVATION_DB,
       tenant.Id,
       c.req.param('accountId'),
+      tenantToday(tenant),
     );
     if (!detail) return c.json({ error: 'Not found.' }, 404);
     // EMITTED VERBATIM. Every money field on the row is cents and names itself so (design spec §2),
@@ -86,7 +88,11 @@ export const accountsRoutes = new Hono<AppEnv>()
     const payments = await listPaymentsForAccount(c.env.PAWSERVATION_DB, tenant.Id, accountId);
     const created = payments.find((p) => p.Id === paymentId);
     if (!created) return c.json({ error: 'Not found.' }, 404);
-    const households = await getHouseholdBalances(c.env.PAWSERVATION_DB, tenant.Id);
+    const households = await getHouseholdBalances(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      tenantToday(tenant),
+    );
     return c.json(
       {
         payment: {

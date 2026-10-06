@@ -29,6 +29,7 @@ import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/s
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { Account, CalendarCostBasis, ServiceQuestion } from '../../src/shared/index.js';
 import {
+  addDays,
   buildAccounts,
   buildHouseholdBalances,
   buildPaymentAnchors,
@@ -745,7 +746,7 @@ export async function insertBackfilledBooking(
 ): Promise<string> {
   const id = crypto.randomUUID();
   // A cancelled adoption's price is also stamped into CancellationFee, not EstCost alone:
-  // BASE_AMOUNT_SQL reads CancellationFee (not EstCost) for a cancelled row, and the convention
+  // baseAmountSql reads CancellationFee (not EstCost) for a cancelled row, and the convention
   // this feature adopts from (`keepsCalendarEventOnCancel`) keeps a cancelled event on the
   // calendar only when a fee is owed — every adopted [CANCELLED] event is a receivable by that
   // convention, so it must land in the column the balance actually sums. EstCost keeps the same
@@ -856,9 +857,9 @@ export async function listActiveAdoptedEventIds(
  * Writes BOTH columns for a cancelled row, exactly as `insertBackfilledBooking` does — the two
  * must agree about the same invariant or a correction half-lands:
  *
- *  - `CancellationFee` is what `BASE_AMOUNT_SQL` reads once cancelled, so the balance only follows
+ *  - `CancellationFee` is what `baseAmountSql` reads once cancelled, so the balance only follows
  *    a correction that reaches it. Guarded by the SAME `CASE WHEN Status = 'cancelled'` test
- *    `BASE_AMOUNT_SQL` uses, so a confirmed row's fee column is never invented.
+ *    `baseAmountSql` uses, so a confirmed row's fee column is never invented.
  *  - `EstCost` is set UNCONDITIONALLY, because it is the figure the sitter actually SEES:
  *    `listBookingsForTenant` renders it raw in the admin list and the inline Edit affordance
  *    prefills from it. Leaving it behind on a cancelled row meant a stay corrected from $25 to
@@ -1305,7 +1306,7 @@ export async function getBookingWithCustomer(
  * id, or null when the guard refused (route 404s on null, the existing idiom).
  *
  * A terminal row normally refuses payment, with exactly the two exceptions that make it a live
- * receivable — and they are the same two `OUTSTANDING_WHERE_SQL` bills a cancelled row for, which
+ * receivable — and they are the same two `outstandingWhereSql` bills a cancelled row for, which
  * is the point: the sitter must never be shown an outstanding balance whose *Record payment*
  * button 404s.
  *   1. A NON-ZERO assessed CancellationFee. The test is `> 0`, not `IS NOT NULL`: a customer
@@ -1316,9 +1317,19 @@ export async function getBookingWithCustomer(
  *      owed on a stay that happened whether or not it was later cancelled) and EstCost is never
  *      mutated to absorb them, so a fee-FREE cancel carrying $45 of extras is genuinely owed $45.
  *      NOTHING IN THIS GUARD IS SCALED BY 0015: it compares stored cents against the literal 0,
- *      and `OUTSTANDING_WHERE_SQL` — the predicate it must keep agreeing with — is unscaled too.
+ *      and `outstandingWhereSql` — the predicate it must keep agreeing with — is unscaled too.
  * 'declined' gets neither exception, matching the earnings predicate: a declined row is never
  * billed, so it is never payable.
+ *
+ * A WALK NOT YET DUE (`notYetDueSql`) takes no booking payment, and that is the same agreement
+ * read in the other direction: a future walk is not outstanding, so it takes no booking payment;
+ * prepaying is a household payment that nets on the walk's date. Accepting one here would make it
+ * creditable over-payment the day it landed, and keeping that credit would bill the client a
+ * second time when the walk's date arrives. One exception, the same as a cancelled row's second:
+ * a live BookingCharges total — a surcharge is owed when it is logged, whatever the walk's date,
+ * so outstanding lists a charged future walk and its *Record payment* must work. The route
+ * answers a refused future walk 409 `not_yet_due`, not 404, so the sitter is told where the money
+ * goes instead.
  *
  * `externalRef` carries the Venmo transaction id for imported payments (NULL for hand-recorded
  * ones). A replay violates the partial unique index and THROWS rather than returning null — the
@@ -1337,21 +1348,26 @@ export async function insertPayment(
     note: string | null;
     externalRef: string | null;
   },
+  /** The sitter's own date (`tenantToday`) — which walks of a series are owed yet. */
+  today: string,
 ): Promise<string | null> {
   const id = crypto.randomUUID();
+  const notYetDue = notYetDueSql(today, '');
+  const liveCharges = `COALESCE((
+                    SELECT SUM(c.Amount) FROM BookingCharges c
+                    WHERE c.TenantId = BookingRequests.TenantId
+                      AND c.BookingRequestId = BookingRequests.Id
+                  ), 0) > 0`;
   const result = await db
     .prepare(
       `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
-         AND (Status NOT IN ('cancelled', 'declined')
+         AND ((Status NOT IN ('cancelled', 'declined') AND NOT ${notYetDue})
               OR COALESCE(CancellationFee, 0) > 0
-              OR (Status = 'cancelled' AND COALESCE((
-                    SELECT SUM(c.Amount) FROM BookingCharges c
-                    WHERE c.TenantId = BookingRequests.TenantId
-                      AND c.BookingRequestId = BookingRequests.Id
-                  ), 0) > 0))`,
+              OR (Status = 'cancelled' AND ${liveCharges})
+              OR (${notYetDue} AND ${liveCharges}))`,
     )
     .bind(
       id,
@@ -1723,7 +1739,7 @@ export async function deleteAccountPayment(
  * or before an earlier attribution in the SAME request already settled it — this function is
  * called once per attribution, sequentially, by its one caller in `admin.ts`, so a second call in
  * one batch sees the first one's write already committed) or a hand-crafted request. `expected` is
- * `CREDITABLE_AMOUNT_SQL`, already 0 for a `declined` booking and `CancellationFee` (default 0) for
+ * `creditableAmountSql`, already 0 for a `declined` booking and `CancellationFee` (default 0) for
  * a fee-free `cancelled` one, so a split against either is refused here as ordinary overpayment —
  * no separate status check is needed, matching the preview's own `outstanding > 0` candidate
  * filter rather than inventing a second rule for the same fact.
@@ -1790,6 +1806,7 @@ export async function applyAttribution(
      *  be one of `splits`' own; `amount` is EXCLUDED from that split (see above). */
     tip?: { bookingId: string; amount: number };
   },
+  today: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const { paymentId, accountId, splits, remainder, tip } = input;
 
@@ -1915,7 +1932,13 @@ export async function applyAttribution(
   // guard here reads (see its doc comment for why that is a narrowing rather than a second rule).
   // A household this account id does not resolve to leaves the map empty and every split is refused,
   // exactly as a `null` detail did. The graph loaded above is handed back rather than re-read.
-  const outstandingByBooking = await householdOutstandingByBooking(db, tenantId, accountId, graph);
+  const outstandingByBooking = await householdOutstandingByBooking(
+    db,
+    tenantId,
+    accountId,
+    today,
+    graph,
+  );
   const foreign = splits.find((s) => !outstandingByBooking.has(s.bookingId));
   if (foreign) {
     return {
@@ -1952,7 +1975,7 @@ export async function applyAttribution(
   // applications in a batch — this function is called once per attribution, sequentially, awaited —
   // sees the first one's write already committed and refuses rather than doubling it.
   //
-  // `expected` is `CREDITABLE_AMOUNT_SQL`, which is already 0 for a `declined` booking and
+  // `expected` is `creditableAmountSql`, which is already 0 for a `declined` booking and
   // `CancellationFee` (defaulting to 0) for a `cancelled` one — so a split against a declined, or a
   // fee-free-cancelled, booking is refused here with no separate status check: its outstanding is
   // already <= 0, and every split is a positive whole number of cents (checked above), so it can never
@@ -2030,7 +2053,7 @@ export async function applyAttribution(
   // as SATISFIED, so `CHECK (Amount > 0)` would wave a NULL amount straight through. Every caveat on
   // the source guard about relaxing that column applies here word for word.
   //
-  // THE MONEY EXPRESSION IS `CREDITABLE_AMOUNT_SQL` OVER THE SAME TWO JOINS the pre-read's
+  // THE MONEY EXPRESSION IS `creditableAmountSql` OVER THE SAME TWO JOINS the pre-read's
   // `householdOutstandingByBooking` uses, spliced from the same constants so the backstop and the
   // readable check cannot come to mean different things. Household membership is deliberately NOT
   // re-asserted here: the pre-read owns that question (it is not racy — a booking does not change
@@ -2050,7 +2073,7 @@ export async function applyAttribution(
       ${PAYMENTS_JOIN_SQL}
       ${CHARGES_JOIN_SQL}
       WHERE b.TenantId = ? AND b.Id = ?
-        AND ${CREDITABLE_AMOUNT_SQL} - COALESCE(paid.Total, 0) >= ?)`;
+        AND ${creditableAmountSql(today)} - COALESCE(paid.Total, 0) >= ?)`;
 
   /** What this booking's own payment row carries on top of its split: the tip, or nothing. */
   const tipOn = (bookingId: string) => (tip && tip.bookingId === bookingId ? tip.amount : 0);
@@ -2058,7 +2081,7 @@ export async function applyAttribution(
   const statements = [
     // THE TIP CHARGE GOES FIRST IN THE BATCH, AND THE ORDERING IS LOAD-BEARING IN BOTH DIRECTIONS.
     //
-    // `outstandingStillOwedGuard` below reads `CREDITABLE_AMOUNT_SQL`, which includes
+    // `outstandingStillOwedGuard` below reads `creditableAmountSql`, which includes
     // `CHARGES_JOIN_SQL` — so it sees charges written EARLIER IN THIS SAME BATCH. The tipped
     // booking's split insert binds `split + tip` as both the amount and the threshold, and the
     // booking only owes `split + tip` once the tip charge exists. Insert the charge AFTER the split
@@ -2194,7 +2217,7 @@ export async function applyAttribution(
         // States only what was actually checked. A concurrent payment is the expected cause, but
         // the guard fires on ANY drop in live outstanding between the pre-read and the write — an
         // admin lowering EstCost in another tab, a status flip to `declined` (which zeroes
-        // CREDITABLE_AMOUNT_SQL), a deleted charge. Naming "settled by another request" would
+        // creditableAmountSql), a deleted charge. Naming "settled by another request" would
         // assert a fact the code did not establish, and send the sitter looking for a payment
         // that isn't there.
         reason: `A booking named by payment ${paymentId} no longer owes at least the amount this attribution names; nothing was written.`,
@@ -2358,22 +2381,62 @@ export async function listChargesForTenant(
  * elsewhere.
  */
 /**
+ * The one gate a date passes before it is spliced into money SQL as a literal: `YYYY-MM-DD` and a
+ * real calendar day (`addDays(d, 0)` round-trips it; `2030-02-30` does not). Throws `RangeError`, so
+ * nothing malformed ever reaches a statement.
+ */
+function assertSqlDate(today: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || addDays(today, 0) !== today) {
+    throw new RangeError('money SQL needs a real YYYY-MM-DD today');
+  }
+  return today;
+}
+
+/**
  * The base amount a booking is expected to bring in, on its own, IN CENTS (0015): EstCost
  * normally, but the assessed CancellationFee for a cancelled one — a cancelled-with-fee booking is a live
  * receivable. COALESCE'd to 0 so a booking with neither (never priced, or cancelled with no fee
  * assessed) resolves to a real number rather than NULLing out a sum it's added into. SQLite
  * cannot reference a SELECT alias inside an expression, so this is spliced into SELECT, WHERE and
  * ORDER BY rather than aliased once.
+ *
+ * A WALK OF A SERIES IS OWED FROM ITS OWN DATE: until then it is 0, so a confirmed year of Tuesdays
+ * reads as one walk at a time, never as twelve months owed on the day it was agreed. Scoped to
+ * `SeriesId IS NOT NULL` on purpose — applying the date test to every booking would silently change
+ * every client's balance for every future stay, which is a different decision. A cancellation fee
+ * is owed when assessed, whatever the date. `today` is a validated literal, not a `?`: this
+ * fragment is spliced up to twice per statement, and a positional bind per occurrence is an
+ * ordering nobody can see.
  */
-const BASE_AMOUNT_SQL =
-  "COALESCE(CASE WHEN b.Status = 'cancelled' THEN b.CancellationFee ELSE b.EstCost END, 0)";
+function baseAmountSql(today: string): string {
+  const d = assertSqlDate(today);
+  return `COALESCE(CASE
+    WHEN b.Status = 'cancelled' THEN b.CancellationFee
+    WHEN b.SeriesId IS NOT NULL AND b.StartDate > '${d}' THEN 0
+    ELSE b.EstCost END, 0)`;
+}
+
+/**
+ * A WALK NOT YET DUE: a pending or confirmed walk of a series whose date has not arrived — exactly
+ * the rows `baseAmountSql` zeroes by date. Stated once, for the three readers that must agree with
+ * that zero: `insertPayment`'s guard (no booking payment on it), `keepBookingCredit`'s guard (no
+ * credit kept on it) and the credits list's `NotYetDue` column (so the Earnings page never offers
+ * Keep on one). A cancelled walk is never "not yet due" — its fee is owed when assessed — and a
+ * declined one has its own, older refusal everywhere. `alias` is the table prefix (`'b.'`, or `''`
+ * for an unaliased `FROM BookingRequests`).
+ */
+function notYetDueSql(today: string, alias: 'b.' | ''): string {
+  const d = assertSqlDate(today);
+  return `(${alias}SeriesId IS NOT NULL AND ${alias}StartDate > '${d}'
+    AND ${alias}Status NOT IN ('cancelled', 'declined'))`;
+}
 
 /**
  * What a booking TOTALS to owing: the base amount above PLUS any extra charges logged against it
  * (BookingCharges) — a charge is owed on a stay that happened whether or not it was later
  * cancelled, and EstCost/CancellationFee are never mutated to absorb it. This is the single
  * "how much is this booking worth" figure the earnings payload's outstanding predicate is built
- * on (see `OUTSTANDING_WHERE_SQL` below), and `CREDITABLE_AMOUNT_SQL` reuses it too, so a charge
+ * on (see `outstandingWhereSql` below), and `creditableAmountSql` reuses it too, so a charge
  * logged in the admin panel is never invisible to either. Expects a `chg` subquery
  * (SUM(BookingCharges.Amount) per booking) aliased in scope — see `CHARGES_JOIN_SQL`.
  *
@@ -2381,9 +2444,9 @@ const BASE_AMOUNT_SQL =
  * whole point of 0015: a balance expression is one-unit integer arithmetic, and a `* 100` or a
  * `/ 100` appearing anywhere in this block would mean two units had been mixed.
  */
-const EXPECTED_AMOUNT_SQL = `(${BASE_AMOUNT_SQL} + COALESCE(chg.Total, 0))`;
+const expectedAmountSql = (today: string) => `(${baseAmountSql(today)} + COALESCE(chg.Total, 0))`;
 
-/** The extra-charges LEFT JOIN `EXPECTED_AMOUNT_SQL` depends on. Carries one bind param (tenantId). */
+/** The extra-charges LEFT JOIN `expectedAmountSql` depends on. Carries one bind param (tenantId). */
 const CHARGES_JOIN_SQL = `LEFT JOIN (
          SELECT BookingRequestId, SUM(Amount) AS Total
          FROM BookingCharges WHERE TenantId = ? GROUP BY BookingRequestId
@@ -2399,7 +2462,8 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
  *
  * `insertPayment`'s guard is the other reader of this rule (it cannot share the SQL — it has no
  * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
- * a non-zero CancellationFee OR a live charges total). It must keep agreeing with this predicate
+ * a non-zero CancellationFee OR a live charges total — and refuses a walk not yet due unless it
+ * carries a live charge, the date half of `baseAmountSql`). It must keep agreeing with this predicate
  * in both directions, or the Earnings page shows a balance whose *Record payment* button 404s.
  * NEITHER SIDE IS SCALED BY 0015 — both compare cents to cents, and scaling one would be exactly
  * the drift this paragraph exists to prevent.
@@ -2409,41 +2473,42 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
  * never satisfy the under-paid predicate anyway — the exclusion just makes that invariant
  * explicit rather than relying on NULL comparisons to fail closed.
  */
-const OUTSTANDING_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
+const outstandingWhereSql = (today: string) => `b.ServiceType NOT IN ('blocked', 'external')
      AND b.Status IN ('confirmed', 'cancelled')
-     AND ${EXPECTED_AMOUNT_SQL} > COALESCE(paid.Total, 0)`;
+     AND ${expectedAmountSql(today)} > COALESCE(paid.Total, 0)`;
 
 /**
  * How much of the money received against a booking the sitter may legitimately KEEP. Identical to
- * `EXPECTED_AMOUNT_SQL` for every status except `'declined'`, which is never billed at all (see
+ * `expectedAmountSql` for every status except `'declined'`, which is never billed at all (see
  * `insertPayment`'s guard and the outstanding predicate above) and may therefore keep nothing — so a
  * deposit taken on a request the sitter went on to decline is owed back in full, not merely the part
  * above its old quote. Written as a CASE over the expected amount rather than as a second formula,
  * so that "the same figure, minus one status" is literal in the SQL.
  */
-const CREDITABLE_AMOUNT_SQL = `(CASE WHEN b.Status = 'declined' THEN 0 ELSE ${EXPECTED_AMOUNT_SQL} END)`;
+const creditableAmountSql = (today: string) =>
+  `(CASE WHEN b.Status = 'declined' THEN 0 ELSE ${expectedAmountSql(today)} END)`;
 
 /**
  * A booking is IN CREDIT when more has been paid against it than it may keep — the exact mirror of
- * `OUTSTANDING_WHERE_SQL`'s arithmetic, and the reason an edit can no longer swallow money in
+ * `outstandingWhereSql`'s arithmetic, and the reason an edit can no longer swallow money in
  * silence: `updateBookingForEdit` re-stamps `EstCost` and returns the row to `'pending'`, so a $250
  * stay paid in full and edited down to $100 left $150 of the customer's money on no screen at all
  * (outstanding asks only whether something is still OWED, and it filters to confirmed/cancelled).
  *
  * **Mutually exclusive with the outstanding predicate, by construction.** For the two statuses
- * outstanding covers, `CREDITABLE_AMOUNT_SQL` IS `EXPECTED_AMOUNT_SQL`, so `expected > paid` and
+ * outstanding covers, `creditableAmountSql` IS `expectedAmountSql`, so `expected > paid` and
  * `paid > keepable` cannot both hold; for `'pending'`/`'declined'` outstanding deliberately does not
  * run at all. That is what lets this exist without disturbing the standing rule that
- * `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in both directions: a credit is not
+ * `insertPayment`'s guard and `outstandingWhereSql` must agree in both directions: a credit is not
  * a payable balance, it is a NEGATIVE one, and the UI gives it no *Record payment* button. There is
  * no refund path in this product — the sitter settles it with her client — so surfacing the figure
  * is the whole job. Expects `paid` and `chg` subqueries aliased in scope.
  */
-const CREDIT_WHERE_SQL = `b.ServiceType NOT IN ('blocked', 'external')
-     AND COALESCE(paid.Total, 0) > ${CREDITABLE_AMOUNT_SQL}`;
+const creditWhereSql = (today: string) => `b.ServiceType NOT IN ('blocked', 'external')
+     AND COALESCE(paid.Total, 0) > ${creditableAmountSql(today)}`;
 
 /**
- * The `paid` subquery `CREDIT_WHERE_SQL` and the outstanding predicate both expect in scope. One
+ * The `paid` subquery `creditWhereSql` and the outstanding predicate both expect in scope. One
  * bind param (tenantId), like `CHARGES_JOIN_SQL`.
  */
 const PAYMENTS_JOIN_SQL = `LEFT JOIN (
@@ -2453,10 +2518,11 @@ const PAYMENTS_JOIN_SQL = `LEFT JOIN (
 
 /** How much this booking is over-paid by, in CENTS; the Earnings page renders it with
  *  `formatCents` — nothing divides it back. */
-const CREDIT_AMOUNT_SQL = `(COALESCE(paid.Total, 0) - ${CREDITABLE_AMOUNT_SQL})`;
+const creditAmountSql = (today: string) =>
+  `(COALESCE(paid.Total, 0) - ${creditableAmountSql(today)})`;
 
 /**
- * WHAT ONE BOOKING STILL OWES, IN CENTS — `CREDITABLE_AMOUNT_SQL` minus the payments recorded
+ * WHAT ONE BOOKING STILL OWES, IN CENTS — `creditableAmountSql` minus the payments recorded
  * against that booking, and NOTHING ELSE. One expression, in one place, because there are two
  * readers of it and a second copy is a second answer:
  *
@@ -2503,15 +2569,16 @@ export const KEPT_OVERPAYMENT_LABEL = 'Overpayment kept';
 export const TIP_LABEL = 'Tip';
 
 export type KeepCreditResult =
-  /** `amount` is CENTS (0015) — computed by `CREDIT_AMOUNT_SQL` and returned by the INSERT, so it
+  /** `amount` is CENTS (0015) — computed by `creditAmountSql` and returned by the INSERT, so it
    *  is the same unit as the credit the Earnings page displays. The route publishes it unchanged
    *  as `keptCents`; nothing divides it back. */
-  { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };
+  | { outcome: 'kept'; amount: number }
+  | { outcome: 'not-found' | 'declined' | 'no-credit' | 'not-yet-due' };
 
 /**
  * CLOSE AN OVER-PAYMENT THE CLIENT AGREED THE SITTER KEEPS, by logging it as a `BookingCharges` row.
  *
- * The credit was previously display-only: `CREDIT_WHERE_SQL` surfaced the money and nothing could
+ * The credit was previously display-only: `creditWhereSql` surfaced the money and nothing could
  * resolve it, so it sat on the Earnings page forever. There are exactly two honest resolutions, and
  * they must not be conflated because they say opposite things about revenue:
  *
@@ -2522,19 +2589,25 @@ export type KeepCreditResult =
  *     charge. That is this function.
  *
  * **The amount is computed in the SQL from the very expressions the Earnings page displays the credit
- * with** (`CREDIT_AMOUNT_SQL` over `CREDITABLE_AMOUNT_SQL`), never passed in — the same doctrine as
+ * with** (`creditAmountSql` over `creditableAmountSql`), never passed in — the same doctrine as
  * the cancellation fee, and the reason the charge can never differ from the figure the sitter was
  * shown. `INSERT ... SELECT ... WHERE` (insertPayment's idiom) makes the guard atomic with the write,
- * and the guard IS `CREDIT_WHERE_SQL`: a booking that is not in credit inserts nothing. Since the new
- * charge raises `EXPECTED_AMOUNT_SQL` by exactly the credit, the row afterwards is neither in credit
+ * and the guard IS `creditWhereSql`: a booking that is not in credit inserts nothing. Since the new
+ * charge raises `expectedAmountSql` by exactly the credit, the row afterwards is neither in credit
  * nor outstanding — the two predicates stay mutually exclusive, which is what keeps this from
- * disturbing the standing rule that `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in
+ * disturbing the standing rule that `insertPayment`'s guard and `outstandingWhereSql` must agree in
  * both directions.
  *
- * A `'declined'` row is refused: it may keep NOTHING (`CREDITABLE_AMOUNT_SQL` is 0 for it by rule),
+ * A `'declined'` row is refused: it may keep NOTHING (`creditableAmountSql` is 0 for it by rule),
  * so a charge cannot close its credit, and offering the action anyway would be a button that does not
  * work — the mirror of the "balance whose *Record payment* 404s" defect. Its only resolution is the
  * refund path. `serializeAnalytics` publishes `canKeep` from the same rule so the UI never offers it.
+ *
+ * A walk NOT YET DUE (`notYetDueSql`) is refused too, `'not-yet-due'` — even one carrying a charge,
+ * whose payment beyond the charge is still a prepayment of the walk. Its "credit" is only the walk
+ * not being owed yet: on the walk's date `baseAmountSql` stops zeroing it and the payment nets
+ * against it. Keeping it now would log a charge that bills the client for the walk a second time
+ * the day it falls due. `canKeep` is false for it, from the same fragment.
  *
  * Reversible by design: deleting the charge re-opens the credit, because both figures are derived
  * rather than stamped.
@@ -2543,16 +2616,18 @@ export async function keepBookingCredit(
   db: D1Database,
   tenantId: string,
   bookingId: string,
+  today: string,
 ): Promise<KeepCreditResult> {
   const id = crypto.randomUUID();
   const inserted = await db
     .prepare(
       `INSERT INTO BookingCharges (Id, TenantId, BookingRequestId, Label, Amount)
-       SELECT ?, b.TenantId, b.Id, ?, ${CREDIT_AMOUNT_SQL}
+       SELECT ?, b.TenantId, b.Id, ?, ${creditAmountSql(today)}
        FROM BookingRequests b
        ${PAYMENTS_JOIN_SQL}
        ${CHARGES_JOIN_SQL}
-       WHERE b.TenantId = ? AND b.Id = ? AND b.Status != 'declined' AND ${CREDIT_WHERE_SQL}
+       WHERE b.TenantId = ? AND b.Id = ? AND b.Status != 'declined'
+         AND NOT ${notYetDueSql(today, 'b.')} AND ${creditWhereSql(today)}
        RETURNING Amount`,
     )
     .bind(id, KEPT_OVERPAYMENT_LABEL, tenantId, tenantId, tenantId, bookingId)
@@ -2564,18 +2639,20 @@ export async function keepBookingCredit(
   // money route gives them.
   const row = await db
     .prepare(
-      `SELECT b.Status AS Status, ${CREDIT_AMOUNT_SQL} AS Credit
+      `SELECT b.Status AS Status, ${creditAmountSql(today)} AS Credit,
+              ${notYetDueSql(today, 'b.')} AS NotYetDue
        FROM BookingRequests b
        ${PAYMENTS_JOIN_SQL}
        ${CHARGES_JOIN_SQL}
        WHERE b.TenantId = ? AND b.Id = ? AND b.ServiceType NOT IN ('blocked', 'external')`,
     )
     .bind(tenantId, tenantId, tenantId, bookingId)
-    .first<{ Status: string; Credit: number }>();
+    .first<{ Status: string; Credit: number; NotYetDue: number }>();
   if (!row) return { outcome: 'not-found' };
   // "Nothing to close" is checked first: it is the more useful thing to say even about a declined
   // row, and it is the answer to a double-click on a credit that has already been closed.
   if (row.Credit <= 0) return { outcome: 'no-credit' };
+  if (row.NotYetDue) return { outcome: 'not-yet-due' };
   return row.Status === 'declined' ? { outcome: 'declined' } : { outcome: 'no-credit' };
 }
 
@@ -2593,7 +2670,7 @@ export async function keepBookingCredit(
  * (see `computeHouseholdRollup`'s account-payments read below) — those rows are the one piece of
  * schema this rollup now depends on that did not exist when it first shipped.
  *
- * ONE MONEY RULE, not a second one. `Expected` is `CREDITABLE_AMOUNT_SQL` verbatim — the quote, or
+ * ONE MONEY RULE, not a second one. `Expected` is `creditableAmountSql` verbatim — the quote, or
  * the assessed cancellation fee on a cancelled row, plus extra charges, and zero for a request that
  * was declined (never billed, so every dollar taken against it is the client's). Reusing exactly
  * that expression is what makes a household balance reconcile to the per-booking Earnings lists it
@@ -2619,8 +2696,9 @@ export async function keepBookingCredit(
 export async function getHouseholdBalances(
   db: D1Database,
   tenantId: string,
+  today: string,
 ): Promise<HouseholdBalanceRow[]> {
-  return (await computeHouseholdRollup(db, tenantId)).households;
+  return (await computeHouseholdRollup(db, tenantId, today)).households;
 }
 
 /**
@@ -2642,8 +2720,9 @@ export async function getHouseholdBalances(
 export async function getOrphanedAccountPayments(
   db: D1Database,
   tenantId: string,
+  today: string,
 ): Promise<{ accountId: string; totalCents: number }[]> {
-  return (await computeHouseholdRollup(db, tenantId)).orphanedPayments;
+  return (await computeHouseholdRollup(db, tenantId, today)).orphanedPayments;
 }
 
 type HouseholdRollup = {
@@ -2655,12 +2734,16 @@ type HouseholdRollup = {
   orphanedPayments: { accountId: string; totalCents: number }[];
 };
 
-async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise<HouseholdRollup> {
+async function computeHouseholdRollup(
+  db: D1Database,
+  tenantId: string,
+  today: string,
+): Promise<HouseholdRollup> {
   const [moneyRes, petsRes, links, ownersRes, accountPaidRes, deceasedLinks] = await Promise.all([
     db
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId,
-                ${CREDITABLE_AMOUNT_SQL} AS Expected,
+                ${creditableAmountSql(today)} AS Expected,
                 COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
          ${PAYMENTS_JOIN_SQL}
@@ -2769,8 +2852,8 @@ async function computeHouseholdRollup(db: D1Database, tenantId: string): Promise
  * through rather than recomputed, so this can never print a number the balance above it
  * disagrees with.
  *
- * Each booking's `cost` and `expected` are read with the SAME `BASE_AMOUNT_SQL`/
- * `CREDITABLE_AMOUNT_SQL` expressions the household sum is built from (declined zeroed, cancelled
+ * Each booking's `cost` and `expected` are read with the SAME `baseAmountSql`/
+ * `creditableAmountSql` expressions the household sum is built from (declined zeroed, cancelled
  * reading its assessed fee), which is what makes `Σ(bookings[].expectedCents) ===
  * expectedTotalCents` a fact of the SQL rather than a coincidence two readers happen to agree on
  * today.
@@ -2849,7 +2932,7 @@ function resolveHousehold(
  * too and why the graph passed in is not narrowed. A candidate that turns out to belong to someone
  * else lands in someone else's row here and is simply not read.
  *
- * This is a NARROWING, never a second money rule: `BASE_AMOUNT_SQL`/`CREDITABLE_AMOUNT_SQL`,
+ * This is a NARROWING, never a second money rule: `baseAmountSql`/`creditableAmountSql`,
  * `PAYMENTS_JOIN_SQL`, `CHARGES_JOIN_SQL` and `buildHouseholdBalances` are the same expressions
  * `getHouseholdBalances` sums for the Earnings page, so the drill-down and the balance above it
  * cannot drift.
@@ -2859,6 +2942,7 @@ async function householdDetailFor(
   tenantId: string,
   graph: AccountGraph,
   resolved: { account: Account; paymentPetIds: string[] },
+  today: string,
 ): Promise<HouseholdDetailRow | null> {
   const { account, paymentPetIds } = resolved;
   const owners = account.ownerIds.map(() => '?').join(', ');
@@ -2876,10 +2960,10 @@ async function householdDetailFor(
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
                 b.StartDate AS StartDate, b.EndDate AS EndDate, b.Status AS Status,
-                ${BASE_AMOUNT_SQL} AS Cost,
+                ${baseAmountSql(today)} AS Cost,
                 COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal,
-                ${CREDITABLE_AMOUNT_SQL} AS Expected
+                ${creditableAmountSql(today)} AS Expected
          FROM BookingRequests b
          ${PAYMENTS_JOIN_SQL}
          ${CHARGES_JOIN_SQL}
@@ -3072,16 +3156,17 @@ async function bulkHouseholdDetails(
   wantedAccountIds: Set<string>,
   payments: PaymentRow[],
   paymentsByHousehold: Map<string, PaymentRow[]>,
+  today: string,
 ): Promise<Map<string, HouseholdDetailRow>> {
   const [bookingRes, petsRes, chargeRes] = await Promise.all([
     db
       .prepare(
         `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId, b.ServiceType AS ServiceType,
                 b.StartDate AS StartDate, b.EndDate AS EndDate, b.Status AS Status,
-                ${BASE_AMOUNT_SQL} AS Cost,
+                ${baseAmountSql(today)} AS Cost,
                 COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal,
-                ${CREDITABLE_AMOUNT_SQL} AS Expected
+                ${creditableAmountSql(today)} AS Expected
          FROM BookingRequests b
          ${PAYMENTS_JOIN_SQL}
          ${CHARGES_JOIN_SQL}
@@ -3164,7 +3249,7 @@ async function bulkHouseholdDetails(
  *
  * IDENTICAL ANSWERS, NOT MERELY SIMILAR, on three counts that each have a defect behind them:
  *
- *  - `Expected` is `CREDITABLE_AMOUNT_SQL`, never `BASE_AMOUNT_SQL`. It zeroes a `declined`
+ *  - `Expected` is `creditableAmountSql`, never `baseAmountSql`. It zeroes a `declined`
  *    booking, which is what makes a split against one refuse as ordinary overpayment with no
  *    separate status check — the overpay guard depends on it, and the preview's read-cost test
  *    pins the same expression in the bulk path for the same reason.
@@ -3183,8 +3268,8 @@ async function bulkHouseholdDetails(
  *
  * EXPORTED ONLY SO THOSE THREE PROPERTIES CAN BE MECHANICALLY PINNED. `applyAttribution` is its
  * one production caller. Prose asserting "the same answer as `getHouseholdDetail`" is worth
- * nothing on its own: swapping the money expression here for `EXPECTED_AMOUNT_SQL` (a credit
- * lands on a DECLINED booking) or for `BASE_AMOUNT_SQL` (a legitimate split covering a booking's
+ * nothing on its own: swapping the money expression here for `expectedAmountSql` (a credit
+ * lands on a DECLINED booking) or for `baseAmountSql` (a legitimate split covering a booking's
  * extra charge is refused as overpayment) left the whole suite green, because every declined- and
  * charge-bearing fixture in this feature's tests exercises the preview path instead. The
  * equivalence test in `payment-attribution-repo.test.ts` compares this map against the one
@@ -3194,6 +3279,7 @@ export async function householdOutstandingByBooking(
   db: D1Database,
   tenantId: string,
   accountId: string,
+  today: string,
   /** The caller's already-loaded graph. `applyAttribution` has one (it resolved this household's
    *  payment pet ids from it) and passing it back is what keeps this to TWO reads; omitting it
    *  costs the two graph reads on top, which is the shape a test or a future caller wants. */
@@ -3210,7 +3296,7 @@ export async function householdOutstandingByBooking(
   const bookingRes = await db
     .prepare(
       `SELECT b.Id AS BookingId, b.EndUserId AS EndUserId,
-              ${CREDITABLE_AMOUNT_SQL} AS Expected,
+              ${creditableAmountSql(today)} AS Expected,
               COALESCE(paid.Total, 0) AS PaidTotal
        FROM BookingRequests b
        ${PAYMENTS_JOIN_SQL}
@@ -3266,13 +3352,14 @@ export async function getHouseholdDetail(
   db: D1Database,
   tenantId: string,
   accountId: string,
+  today: string,
 ): Promise<HouseholdDetailRow | null> {
   const graph = await loadAccountGraph(db, tenantId);
   // Membership over the component's pets OR its payment anchors: an account id from before the
   // first-sorted pet DIED is still this household's id as far as the money filed under it is
   // concerned, and a drill-down that 404'd on it would strand the payment it lists.
   const resolved = resolveHousehold(graph, { accountId });
-  return resolved ? householdDetailFor(db, tenantId, graph, resolved) : null;
+  return resolved ? householdDetailFor(db, tenantId, graph, resolved, today) : null;
 }
 
 /**
@@ -3318,6 +3405,7 @@ export type HouseholdAttributionCandidate = {
 export async function getHouseholdsWithUnappliedCredits(
   db: D1Database,
   tenantId: string,
+  today: string,
 ): Promise<HouseholdAttributionCandidate[]> {
   const [graph, paymentsRes] = await Promise.all([
     loadAccountGraph(db, tenantId),
@@ -3370,6 +3458,7 @@ export async function getHouseholdsWithUnappliedCredits(
     // `BookingRequestId` are mutually exclusive by CHECK, so the list bucketed above is the same
     // list `householdPayments` must show. One bucketing, both uses — they cannot disagree.
     creditsByHousehold,
+    today,
   );
   return wanted.flatMap((account) => {
     const detail = details.get(account.id);
@@ -3393,13 +3482,14 @@ export async function getHouseholdDetailForOwner(
   db: D1Database,
   tenantId: string,
   endUserId: string,
+  today: string,
 ): Promise<{ accountId: string | null; detail: HouseholdDetailRow | null }> {
   const graph = await loadAccountGraph(db, tenantId);
   const resolved = resolveHousehold(graph, { ownerId: endUserId });
   if (!resolved) return { accountId: null, detail: null };
   return {
     accountId: resolved.account.id,
-    detail: await householdDetailFor(db, tenantId, graph, resolved),
+    detail: await householdDetailFor(db, tenantId, graph, resolved, today),
   };
 }
 
@@ -3408,6 +3498,9 @@ export async function getAnalytics(
   tenantId: string,
   today: string,
 ): Promise<AnalyticsData> {
+  // Refused up front, before the rollup below is started un-awaited: a malformed date would
+  // otherwise reject that promise while the aggregate statements are still being built.
+  assertSqlDate(today);
   // Last 12 calendar months ending with today's month, oldest first (e.g. '2025-08'..'2026-07').
   const [y, m] = today.split('-').map(Number);
   const months: string[] = [];
@@ -3427,7 +3520,7 @@ export async function getAnalytics(
   // alongside the five aggregates rather than adding a serial hop to the dashboard's hottest read.
   // ONE rollup call gives both halves of the money: what each household holds, and what belongs to
   // no household at all. Asking twice would read the whole tenant twice to answer one question.
-  const householdsPending = computeHouseholdRollup(db, tenantId);
+  const householdsPending = computeHouseholdRollup(db, tenantId, today);
 
   const [monthlyRes, byServiceRes, topClientsRes, outstandingRes, creditsRes] = await Promise.all([
     db
@@ -3469,12 +3562,12 @@ export async function getAnalytics(
       .prepare(
         // EstCost here is the BASE amount only (quote/fee, no charges) — ChargesTotal is reported
         // separately so the UI can show the two apart (see serializeAnalytics). The outstanding
-        // predicate and ORDER BY use EXPECTED_AMOUNT_SQL (base + charges) so a cancelled booking
+        // predicate and ORDER BY use expectedAmountSql (base + charges) so a cancelled booking
         // with no assessed fee but a live charge still surfaces here. Declined (and any other
         // non-confirmed/cancelled) rows are excluded outright — never billed.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
-                ${BASE_AMOUNT_SQL} AS EstCost,
+                ${baseAmountSql(today)} AS EstCost,
                 COALESCE(chg.Total, 0) AS ChargesTotal,
                 COALESCE(paid.Total, 0) AS PaidTotal
          FROM BookingRequests b
@@ -3484,20 +3577,21 @@ export async function getAnalytics(
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
          ${CHARGES_JOIN_SQL}
-         WHERE b.TenantId = ? AND ${OUTSTANDING_WHERE_SQL}
-         ORDER BY (${EXPECTED_AMOUNT_SQL}) - COALESCE(paid.Total, 0) DESC`,
+         WHERE b.TenantId = ? AND ${outstandingWhereSql(today)}
+         ORDER BY (${expectedAmountSql(today)}) - COALESCE(paid.Total, 0) DESC`,
       )
       .bind(tenantId, tenantId, tenantId)
       .all<AnalyticsData['outstanding'][number]>(),
     db
       .prepare(
-        // OVER-payments: the mirror of the query above (see CREDIT_WHERE_SQL). `Keepable` is what
+        // OVER-payments: the mirror of the query above (see creditWhereSql). `Keepable` is what
         // this booking may keep in total — charges included — so the UI derives the credit as
         // `PaidTotal - Keepable` with the same one-rule arithmetic the outstanding row uses.
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
-                ${CREDITABLE_AMOUNT_SQL} AS Keepable,
-                COALESCE(paid.Total, 0) AS PaidTotal
+                ${creditableAmountSql(today)} AS Keepable,
+                COALESCE(paid.Total, 0) AS PaidTotal,
+                ${notYetDueSql(today, 'b.')} AS NotYetDue
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
          LEFT JOIN (
@@ -3505,8 +3599,8 @@ export async function getAnalytics(
            FROM Payments WHERE TenantId = ? GROUP BY BookingRequestId
          ) paid ON paid.BookingRequestId = b.Id
          ${CHARGES_JOIN_SQL}
-         WHERE b.TenantId = ? AND ${CREDIT_WHERE_SQL}
-         ORDER BY COALESCE(paid.Total, 0) - (${CREDITABLE_AMOUNT_SQL}) DESC, b.Id`,
+         WHERE b.TenantId = ? AND ${creditWhereSql(today)}
+         ORDER BY COALESCE(paid.Total, 0) - (${creditableAmountSql(today)}) DESC, b.Id`,
       )
       .bind(tenantId, tenantId, tenantId)
       .all<AnalyticsData['credits'][number]>(),
