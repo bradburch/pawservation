@@ -9,7 +9,7 @@ import {
   sendSignupLink,
   sendSitterInvite,
   sendResetLink,
-  sendInviteRequest,
+  sendSignupNotice,
 } from '../lib/email';
 
 /** The one brand asset every mail carries — see the LOGO_URL doc comment in lib/email.ts. */
@@ -123,17 +123,8 @@ const TEMPLATES: [string, (send: typeof env) => Promise<void>, boolean][] = [
   ['sendSitterInvite', (e) => sendSitterInvite(e, 'a@b.test', 'https://w.test/setup?t=abc'), false],
   ['sendResetLink', (e) => sendResetLink(e, 'a@b.test', 'https://w.test/reset?t=abc'), false],
   [
-    'sendInviteRequest',
-    (e) =>
-      sendInviteRequest(e, {
-        business: HOSTILE,
-        name: HOSTILE,
-        email: 'a@b.test',
-        website: HOSTILE,
-        city: HOSTILE,
-        services: 'Boarding',
-        customerCount: '10',
-      }),
+    'sendSignupNotice',
+    (e) => sendSignupNotice(e, { email: `${HOSTILE}@b.test`, mode: 'review' }),
     true,
   ],
 ];

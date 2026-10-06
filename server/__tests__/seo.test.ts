@@ -110,13 +110,15 @@ describe('SEO surface', () => {
     }
   });
 
-  it('keeps the transactional invite pages out of search', async () => {
+  it('keeps the transactional sign-up pages out of search', async () => {
     const { env } = createTestEnv();
-    const body = await (await app.request('/request-invite/thanks', {}, env)).text();
-    expect(body).toContain('<meta name="robots" content="noindex" />');
-    // GET /request-invite is a redirect into the homepage form, not a second copy of it.
+    for (const path of ['/signup', '/signup/sent']) {
+      const body = await (await app.request(path, {}, env)).text();
+      expect(body, path).toContain('<meta name="robots" content="noindex" />');
+    }
+    // The retired invite-request URLs redirect to the sign-up page rather than serving a copy.
     const redirect = await app.request('/request-invite', {}, env);
-    expect(redirect.status).toBe(302);
+    expect(redirect.status).toBe(301);
   });
 
   it('pins the built embed title the per-tenant rewrite is anchored on', () => {
@@ -574,7 +576,8 @@ describe('SEO surface', () => {
       '/privacy',
       '/terms',
       '/getting-started',
-      '/request-invite/thanks',
+      '/signup',
+      '/signup/sent',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       const levels = [...body.matchAll(/<h([1-6])[\s>]/g)].map((m) => Number(m[1]));
@@ -697,24 +700,21 @@ describe('SEO surface', () => {
       '/getting-started',
     ])
       pages.push({ label: path, body: await (await app.request(path, {}, env)).text() });
-    // The two transactional pages render from server/routes/invite-request.ts rather than from
-    // pageHead, so they were outside this loop: the thanks page was spot-checked for `&mdash;`
-    // only and the 400 re-render was checked nowhere at all. Both inline PAGE_STYLE.
-    pages.push({
-      label: '/request-invite/thanks',
-      body: await (await app.request('/request-invite/thanks', {}, env)).text(),
-    });
+    // The sign-up pages render from server/routes/signup-page.ts rather than from pageHead, so they
+    // are added by hand: the form, the sent page, and the 400 re-render. All inline PAGE_STYLE.
+    for (const path of ['/signup', '/signup/sent'])
+      pages.push({ label: path, body: await (await app.request(path, {}, env)).text() });
     const rerender = await app.request(
-      '/request-invite',
+      '/signup',
       {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'name=&email=&about=',
+        body: 'email=nope',
       },
       env,
     );
     expect(rerender.status).toBe(400);
-    pages.push({ label: '/request-invite (400 re-render)', body: await rerender.text() });
+    pages.push({ label: '/signup (400 re-render)', body: await rerender.text() });
 
     for (const { label, body } of pages) {
       const allowed = (body.match(/Pawservation &mdash; Pet bookings/g) ?? []).length;

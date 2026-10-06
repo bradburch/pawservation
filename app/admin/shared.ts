@@ -110,6 +110,9 @@ export type Settings = {
   /** What the subscription has paid through, in the stored 'YYYY-MM-DD HH:MM:SS' UTC shape,
    *  verbatim. Rendered, never compared — `planActive` is the derived answer. */
   billedUntil: string | null;
+  /** The comp (the signup trial, or the owner's grant) runs until, same stored shape, verbatim.
+   *  Rendered, never compared — `planCurrent` says whether any grant is live. */
+  compedUntil: string | null;
   /** `isSoloActive`'s answer, computed on the server. The dashboard must not re-derive it. */
   planActive: boolean;
   /**

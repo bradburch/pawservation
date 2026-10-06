@@ -67,13 +67,17 @@ describe('GET / — landing page', () => {
     expect(body).toContain('data-pawservation-tenant');
   });
 
-  it('has exactly one on-page invite-request form posting to /request-invite, no mailto anywhere', async () => {
+  it('sends every Sign up straight to /signup: no form here, no anchor hop, no mailto', async () => {
     const body = await landingBody();
     expect(body).not.toMatch(/href="mailto:/);
-    expect(body.match(/<form\b/g)?.length).toBe(1);
-    expect(body).toContain('<form class="invite-form" method="post" action="/request-invite">');
-    expect(body).toContain('name="business"');
-    expect(body).toContain('name="fax"'); // honeypot field
+    // One page, one form: a form here made the sitter submit twice (here, then the challenge).
+    expect(body).not.toMatch(/<form\b/);
+    expect(body).not.toContain('href="#invite-h"');
+    expect(body).not.toContain('href="/#invite-h"');
+    expect(body).toContain('<a class="btn btn-inverse" href="/signup">Sign up</a>');
+    expect(body.match(/href="\/signup"/g)!.length).toBeGreaterThanOrEqual(8);
+    // The widget lives on /signup, never here: this page stays script-free.
+    expect(body).not.toContain('cf-turnstile');
   });
 
   it('makes no multi-pet pricing claim (rates ship with pet-mix-rates)', async () => {
@@ -428,13 +432,13 @@ describe('GET / — landing page', () => {
 
   it('labels the call to action Sign up, and says the link comes by email', async () => {
     const body = await landingBody();
-    // There is no self-serve signup: /api/signup/* is allowlist-only, and the form posts to
-    // /request-invite, which emails the owner. "Sign up" is truthful only beside the sentence
-    // saying a person sends the sign-up link, and the submit button names what it asks for.
+    // The form posts to /signup (routes/signup-page.ts), which emails the link itself in open
+    // mode. "Sign up" is truthful only beside the sentence saying we email a sign-up link, and the
+    // submit button names what it asks for.
     expect(body).not.toContain('Ask for an invite');
     expect(body).toContain('<h2 id="invite-h">Sign up</h2>');
     expect(body).toContain('email you a sign-up link');
-    expect(body).toContain('type="submit">Request a sign-up link</button>');
+    expect(body).not.toContain('added by hand');
   });
 
   it('says who it is for: one sitter with ten to twenty regular clients', async () => {

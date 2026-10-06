@@ -11,13 +11,13 @@
  *   - a credential, or any prefix, suffix, or hash of one (a "safe" 8 chars of a token is 8 chars
  *     of a token, and a hash is a rainbow-table lookup for anything short);
  *   - an email address, name, phone, or street address;
- *   - a rate-limit key — `routes/password-reset.ts` and `routes/invite-request.ts` build theirs
+ *   - a rate-limit key — `routes/password-reset.ts` and `routes/signup-page.ts` build theirs
  *     out of the caller's email and IP, so the key IS the PII.
  *
  * What SHOULD go in: the tenant slug, the credential KIND, the route, a reason code. Enough to
  * answer "is one sitter being probed, and with what" without naming who.
  *
- * THE EVENT NAMES, all of them — five, and this is the list:
+ * THE EVENT NAMES, all of them — six, and this is the list:
  *   - `wrong_tenant` (lib/middleware.ts) — a VALID widget session presented for another sitter;
  *   - `personal_access_token_rejected` (lib/middleware.ts) — a `pawsv_` end-user token that is
  *     unknown, revoked, or another sitter's, which are one answer to the caller on purpose;
@@ -30,6 +30,9 @@
  *     answered identically to an unknown tenant, so this line is the ONLY place that distinction
  *     exists. It carries the slug and the request context and never the presented value, no prefix
  *     of it, and not its length.
+ *   - `turnstile_rejected` (lib/turnstile.ts) — a /signup submission whose Turnstile token
+ *     Siteverify refused, or that was minted for another action or hostname. It carries a reason
+ *     code and Cloudflare's enumerated `error-codes`, never the token, the address or the IP.
  */
 export function securityEvent(event: string, detail: Record<string, string | number>): void {
   console.warn('security', { event, ...detail });

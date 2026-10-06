@@ -30,14 +30,22 @@ function decodePayload(token: string | null): LinkPayload | null {
   }
 }
 
-function ExpiredNotice() {
+/** A dead link. A sign-up link is replaced at /signup (which also serves owners and invited
+ * sitters); a password-reset link is replaced from the sign-in page's "Forgot password?". */
+function ExpiredNotice({ isReset }: { isReset: boolean }) {
   return (
     <div className="pb-wrap pb-login">
       <h1>This link isn&rsquo;t valid anymore</h1>
-      <p>
-        This link has expired or was already used — enter your email on the{' '}
-        <a href="/admin">sign-in page</a> to get a fresh one.
-      </p>
+      {isReset ? (
+        <p>
+          This link has expired or was already used. Use &ldquo;Forgot password?&rdquo; on the{' '}
+          <a href="/admin">sign-in page</a> to get a fresh one.
+        </p>
+      ) : (
+        <p>
+          This link has expired or was already used. <a href="/signup">Get a new link</a>.
+        </p>
+      )}
     </div>
   );
 }
@@ -62,11 +70,12 @@ export default function App() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  if (!token || !payload || payload.exp < now) return <ExpiredNotice />;
+  if (!token || !payload || payload.exp < now) return <ExpiredNotice isReset={isReset} />;
 
   const sitter = payload.kind === 'sitter';
 
-  const submit = async () => {
+  const submit = async (e?: { preventDefault(): void }) => {
+    e?.preventDefault();
     if (busy) return;
     if (!isReset && sitter && !businessName.trim()) {
       setError('Enter your business name.');
@@ -135,51 +144,58 @@ export default function App() {
           will need a new token from Settings afterwards.
         </p>
       )}
-      {!isReset && sitter && (
+      {/* A real form, so Enter submits and password managers recognise the new password. */}
+      <form onSubmit={(e) => void submit(e)}>
+        {!isReset && sitter && (
+          <label>
+            Business name
+            <input
+              value={businessName}
+              autoComplete="organization"
+              onChange={(e) => setBusinessName(e.target.value)}
+            />
+          </label>
+        )}
         <label>
-          Business name
+          Password
           <input
-            value={businessName}
-            autoComplete="organization"
-            onChange={(e) => setBusinessName(e.target.value)}
+            type="password"
+            value={password}
+            autoComplete="new-password"
+            onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void submit()}
           />
         </label>
-      )}
-      <label>
-        Password
-        <input
-          type="password"
-          value={password}
-          autoComplete="new-password"
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void submit()}
-        />
-      </label>
-      <p className="pb-hint">
-        At least {MIN_PASSWORD_LENGTH} characters. Avoid common passwords and anything based on your
-        email address.
-      </p>
-      <label>
-        Confirm password
-        <input
-          type="password"
-          value={confirm}
-          autoComplete="new-password"
-          onChange={(e) => setConfirm(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void submit()}
-        />
-      </label>
-      <button onClick={submit} disabled={busy}>
-        {busy
-          ? isReset
-            ? 'Resetting…'
-            : 'Setting up…'
-          : isReset
-            ? 'Reset password'
-            : 'Finish setup'}
-      </button>
+        <p className="pb-hint">
+          At least {MIN_PASSWORD_LENGTH} characters. Avoid common passwords and anything based on
+          your email address.
+        </p>
+        <label>
+          Confirm password
+          <input
+            type="password"
+            value={confirm}
+            autoComplete="new-password"
+            onChange={(e) => setConfirm(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void submit()}
+          />
+        </label>
+        <button type="submit" disabled={busy}>
+          {busy
+            ? isReset
+              ? 'Resetting…'
+              : 'Setting up…'
+            : isReset
+              ? 'Reset password'
+              : 'Finish setup'}
+        </button>
+      </form>
       {error && <p className="pb-error">{error}</p>}
+      {error.startsWith('This link has expired') && !isReset && (
+        <p>
+          <a href="/signup">Get a new link</a>
+        </p>
+      )}
     </div>
   );
 }

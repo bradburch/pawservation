@@ -19,8 +19,11 @@ import {
 } from '../lib/reset-link';
 import { mintAdminToken, mintOwnerToken } from '../lib/token';
 import { EMAIL_RE } from '../lib/validation';
-import { EXPIRED_ERROR } from './signup';
 import type { AppEnv } from '../types';
+
+/** A dead reset link is replaced from the sign-in page's "Forgot password?", not from /signup. */
+const EXPIRED_ERROR =
+  'This link has expired or was already used — enter your email on the sign-in page to get a fresh one.';
 
 /**
  * Password recovery for both auth systems (owner console, sitter dashboard). Non-slug-scoped

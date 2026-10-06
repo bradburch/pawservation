@@ -8,7 +8,7 @@ import {
   buildProductJsonLdScript,
   buildProductLlmsTxt,
 } from './lib/llms';
-import { renderInviteForm } from './lib/invite-form';
+import { TURNSTILE_SCRIPT_ORIGIN } from './lib/turnstile';
 import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
 import { PAGE_STYLE } from './lib/page-style';
@@ -21,11 +21,11 @@ import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
 import { billingRoutes } from './routes/billing';
 import { bookingRoutes } from './routes/bookings';
-import { inviteRequestRoutes } from './routes/invite-request';
 import { oauthRoutes } from './routes/oauth';
 import { ownerRoutes } from './routes/owner';
 import { passwordResetRoutes } from './routes/password-reset';
 import { publicRoutes } from './routes/public';
+import { signupPageRoutes } from './routes/signup-page';
 import { signupRoutes } from './routes/signup';
 import { tenantTokenRoutes } from './routes/tenant-tokens';
 import { tokenRoutes } from './routes/tokens';
@@ -84,7 +84,13 @@ app.use('*', async (c, next) => {
   // blocked by `default-src 'self'` before it loads — silently, since the mount takes no space
   // until the page reports a height.
   const origin = premiumOrigin(c.env);
-  const frameSrc = origin ? `; frame-src 'self' ${origin}` : '';
+  // /signup is the ONE page that runs a third-party script: Cloudflare Turnstile's widget, a
+  // script plus an iframe from challenges.cloudflare.com (routes/signup-page.ts). The allowance
+  // is added for that exact path only — every other marketing page stays script-free.
+  const turnstile = c.req.path === '/signup' ? TURNSTILE_SCRIPT_ORIGIN : null;
+  const frames = [turnstile, origin].filter(Boolean).join(' ');
+  const frameSrc = frames ? `; frame-src 'self' ${frames}` : '';
+  const scriptSrc = turnstile ? `; script-src 'self' ${turnstile}` : '';
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', `${EMBEDDABLE_CSP}${frameSrc}`);
   } else {
@@ -95,7 +101,7 @@ app.use('*', async (c, next) => {
     // — on any deployment whose paid surface is on a different host. The commercial deployment
     // happens to publish the dashboard's own origin, which is the only reason nothing noticed.
     // The widget gets no `connect-src`: nothing in it fetches that origin.
-    const csp = origin ? `${LOCKED_CSP}${frameSrc}; connect-src 'self' ${origin}` : LOCKED_CSP;
+    const csp = `${LOCKED_CSP}${scriptSrc}${frameSrc}${origin ? `; connect-src 'self' ${origin}` : ''}`;
     c.header('Content-Security-Policy', csp);
     c.header('X-Frame-Options', 'DENY');
   }
@@ -125,7 +131,7 @@ app.route('/api', signupRoutes); // /api/signup/* — no slug ('signup' is a res
 app.route('/api', passwordResetRoutes); // /api/password-reset/* — no slug ('password-reset' is a reserved slug)
 app.route('/api', ownerRoutes); // /api/owner/* — owner-token-gated ('owner' is a reserved slug)
 app.route('/', oauthRoutes); // global OAuth callback — no slug, no tenant middleware
-app.route('/', inviteRequestRoutes); // GET/POST /request-invite* — a page, not an /api route
+app.route('/', signupPageRoutes); // GET/POST /signup, /signup/sent (+ /request-invite redirects) — pages
 
 /** Serve a built Vite page for a worker-routed path, with mutable headers. */
 const page = (asset: string) =>
@@ -404,7 +410,7 @@ const LANDING_HTML = `<!doctype html>
           <a class="signin nav-tour" href="/how-it-works">Full tour</a>
           <a class="signin nav-signin" href="/admin">Sign in</a>
           <a class="signin" href="/demo">Try the demo</a>
-          <a class="btn btn-primary btn-sm" href="#invite-h">Sign up</a>
+          <a class="btn btn-primary btn-sm" href="/signup">Sign up</a>
         </div>
       </div>
     </header>
@@ -426,12 +432,12 @@ const LANDING_HTML = `<!doctype html>
               they owe. You still confirm every booking, so the relationship stays yours.
             </p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="#invite-h">Sign up</a>
+              <a class="btn btn-primary" href="/signup">Sign up</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
               The demo is there so you can poke around without signing up for anything.
-              Pawservation itself is invite-only while it grows, and you can
+              When you&rsquo;re ready, <a href="/signup">sign up</a> with just your email, or
               <a href="/admin">sign in</a> if you already have an account.
             </p>
           </div>
@@ -606,7 +612,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
@@ -686,7 +692,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
@@ -728,7 +734,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="#pricing">See Pro pricing</a>
           </div>
         </div>
@@ -763,8 +769,8 @@ const LANDING_HTML = `<!doctype html>
                 <li>Client accounts and pet records</li>
                 <li>Google Calendar sync, both directions</li>
               </ul>
-              <a class="btn btn-primary" href="#invite-h">Sign up</a>
-              <p class="note">The first ${PRICING.trialDays} days are free, and you don&rsquo;t need a card to start. New sitters are added by hand for now, so ask and we&rsquo;ll email you a sign-up link.</p>
+              <a class="btn btn-primary" href="/signup">Sign up</a>
+              <p class="note">The first ${PRICING.trialDays} days are free, and you don&rsquo;t need a card to start. Enter your email and we&rsquo;ll email you a link to get started.</p>
             </div>
             <div class="price-card">
               <div class="price-head">
@@ -783,13 +789,13 @@ const LANDING_HTML = `<!doctype html>
                 <li>Card payments through your own Stripe account: deposits, saved cards, and the balance charged after each stay, at Stripe&rsquo;s published rate with no fee from Pawservation</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
-              <a class="btn btn-primary" href="#invite-h">Sign up</a>
+              <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
             </div>
           </div>
           <p class="note wf-more">${TRIAL_LINE}</p>
           <p class="note wf-more">
-            <a href="#invite-h">Sign up</a> and we&rsquo;ll get you started.
+            <a href="/signup">Sign up</a> and we&rsquo;ll get you started.
           </p>
         </div>
       </section>
@@ -821,8 +827,11 @@ const LANDING_HTML = `<!doctype html>
         <div class="wrap">
           <div class="cta-panel">
             <h2 id="invite-h">Sign up</h2>
-            <p>Pawservation is invite-only while it grows, so new sitters are added by hand. Tell us about your business and we&rsquo;ll email you a sign-up link, then help you set up your services, rates, and booking page.</p>
-            ${renderInviteForm()}
+            <p>Enter your email and we&rsquo;ll email you a sign-up link. Then set up your services, rates, and booking page.</p>
+            <div class="cta-row">
+              <a class="btn btn-inverse" href="/signup">Sign up</a>
+              <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
+            </div>
           </div>
         </div>
       </section>
@@ -835,7 +844,7 @@ const LANDING_HTML = `<!doctype html>
 
 /**
  * The tour at /how-it-works — the page the landing links to when someone wants the whole picture
- * before asking for an invite. Same constraints as the landing: served under LOCKED_CSP, so it is
+ * before signing up. Same constraints as the landing: served under LOCKED_CSP, so it is
  * script-free and styled only by the shared PAGE_STYLE. The embed snippet is shown as escaped
  * text (&lt;script&gt;), and the three screenshots are the landing page's own, already budgeted.
  *
@@ -902,7 +911,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             the relationship stays yours.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="/#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
           <p class="note">
@@ -1164,7 +1173,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="install-copy">
             <span class="label">Getting started</span>
             <h2 id="setup-h">Three steps to a booking page</h2>
-            <p><strong>Sign up.</strong> Pawservation is invite-only while it grows, so tell us about your business and we will email you a sign-up link.</p>
+            <p><strong>Sign up.</strong> Enter your email on the homepage and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
             <p><strong>Share your booking page.</strong> No website? Copy your booking link from <strong>Settings &rarr; Your website</strong>, and send it to clients. Have a website? Copy the code from the same place, already carrying your business&rsquo;s name, and paste it into a Code block on Squarespace, or use the second code with Wix&rsquo;s &ldquo;Embed a site&rdquo;. It sizes itself to fit.</p>
             <p class="note">${PRICE_LINE} Pro adds card payments, booking by WhatsApp, booking by chat and extra sitters. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
@@ -1252,9 +1261,9 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         <div class="wrap">
           <div class="cta-panel">
             <h2 id="tour-cta-h">Sign up when you are ready</h2>
-            <p>Tell us about your business and we will set up your services, rates and booking page. Or poke at the demo first: nothing to sign up for and nothing you can break.</p>
+            <p>Enter your email and we will email you a sign-up link; the wizard then sets up your services, rates and booking page. Or poke at the demo first: nothing to sign up for and nothing you can break.</p>
             <div class="cta-row">
-              <a class="btn btn-inverse" href="/#invite-h">Sign up</a>
+              <a class="btn btn-inverse" href="/signup">Sign up</a>
               <a class="signin-inverse" href="/demo">Try the demo</a>
               <a class="signin-inverse" href="/#pricing">See pricing</a>
             </div>
@@ -1458,7 +1467,7 @@ const TERMS_HTML = `<!doctype html>
  * It is also not a call to action. The founder story's closing paragraph ("I'm looking for a
  * handful of pet sitters and dog walkers to try it while it's still early") was removed on the
  * owner's instruction the same week: the page states why the thing exists, and recruiting belongs
- * to the landing page's invite form. The closing line pointing at the demo and the tour stays,
+ * to the sign-up page. The closing line pointing at the demo and the tour stays,
  * because it is wayfinding for a reader who has finished this page rather than a pitch. That
  * removal also took the page's only statements that this is a small independent product with no
  * sales team and that questions reach a person; /contact still says both, in its own words.
@@ -1607,7 +1616,7 @@ const CONTACT_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>You run a pet-care business and want an account</h2>
-            <p>Use the <a href="/#invite-h">sign-up form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
+            <p>Use the <a href="/signup">sign-up page</a>. Enter your email and we&rsquo;ll email you a sign-up link; from there you set up your services, rates and booking page.</p>
           </div>
           <div class="feature">
             <h2>You already have an account and something is wrong</h2>
@@ -1667,7 +1676,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
         </a>
         <div class="nav-right">
           <a class="signin" href="/admin">Sign in</a>
-          <a class="btn btn-primary btn-sm" href="/#invite-h">Sign up</a>
+          <a class="btn btn-primary btn-sm" href="/signup">Sign up</a>
         </div>
       </div>
     </header>
@@ -1708,7 +1717,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
 
           <div class="feature" id="sign-up">
             <h2>1. Sign up and sign in</h2>
-            <p>Enter your email on the <a href="/#invite-h">sign-up form</a> and we email you a sign-up link. Follow it to the page headed &ldquo;Set up your business&rdquo;, type your business name, choose a password, and press &ldquo;Finish setup&rdquo;. You land in your dashboard, already signed in.</p>
+            <p>Enter your email on the <a href="/signup">sign-up page</a> and we email you a link. Follow it to the page headed &ldquo;Set up your business&rdquo;, type your business name, choose a password, and press &ldquo;Finish setup&rdquo;. You land in your dashboard, already signed in.</p>
             <p>Your booking page&rsquo;s address is made from the business name you type here, so type it the way you want clients to see it.</p>
             <p>After that, sign in at <a href="/admin">the sign-in page</a> with your email and password. &ldquo;Forgot password?&rdquo; there emails you a reset link.</p>
             <p>The first time you sign in, &ldquo;Quick setup&rdquo; opens by itself and walks you through four steps: &ldquo;About Your Business&rdquo;, &ldquo;What Services Do You Offer?&rdquo;, &ldquo;Set Your Prices&rdquo; and &ldquo;Connect Your Calendar&rdquo;. Each step has &ldquo;Skip for now&rdquo;, and everything it sets can be changed later in the places below.</p>

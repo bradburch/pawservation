@@ -314,13 +314,15 @@ describe('where the panel sits', () => {
 });
 
 describe('the plan status line', () => {
-  it('reads the three status fields from the settings payload, and no others', () => {
+  it('reads the status fields from the settings payload, and no others', () => {
     // Through the NAME LOOKUP, not a bare `settings.plan`: `toContain('settings.plan')` is
     // satisfied by `settings.planActive` on the line below it, so the plan-name read could be
     // deleted outright and this case would stay green on the strength of a different field.
     expect(PANEL).toContain('PLAN_NAMES[settings.plan]');
     expect(PANEL).toContain('settings.billedUntil');
     expect(PANEL).toContain('settings.planActive');
+    // The signup trial's end date: a comp, rendered as "Free trial until …".
+    expect(PANEL).toContain('settings.compedUntil');
     // The processor's ids are not status. Neither is needed to say what she is on and until when,
     // and both would be ids handed to a browser for nothing.
     expect(PANEL).not.toContain('stripeSubscriptionId');
@@ -1013,9 +1015,51 @@ describe('a lapsed plan is a read-only dashboard, and the dashboard says so', ()
     // than a bare `\d`: `PANEL_TEXT` keeps executable literals, and this panel's own `401`/`403`
     // are two of them — a pin that reads an HTTP status as a grace length is the crying-wolf pin
     // the dollar-figure case above is already scoped to avoid.
-    expect(PANEL_TEXT).not.toMatch(/\b\d+\s*-?\s*(?:hour|day|week|month|year)s?\b/i);
-    expect(PANEL_TEXT).not.toMatch(
+    // ONE sanctioned period is exempted, by its exact sentence: the paid checkout charges at once
+    // when under two days of the signup trial remain, and the Subscribe Hint must say so. That is
+    // a charging rule, not a grace length, and any OTHER period phrase still fails here.
+    const NO_SANCTIONED = PANEL_TEXT.replace('or today if your trial ends within two days.', '');
+    expect(NO_SANCTIONED).not.toMatch(/\b\d+\s*-?\s*(?:hour|day|week|month|year)s?\b/i);
+    expect(NO_SANCTIONED).not.toMatch(
       /\b(?:one|two|three|four|five|six|seven|ten|fourteen|thirty)\s*-?\s*(?:\w+\s+)?(?:hour|day|week|month|year)s?\b/i,
     );
+  });
+});
+
+describe('one free trial per sitter (premium checkout caps the trial at the signup comp)', () => {
+  it('in the signup comp: subscribing adds no free time, first charge is the comp end', () => {
+    expect(FLAT_TEXT).toContain(
+      "Subscribing doesn't add to your free trial: your plan switches on now and is first charged on",
+    );
+    expect(FLAT_TEXT).toContain('or today if your trial ends within two days.');
+    expect(FLAT_TEXT).toContain(
+      "Choosing a plan now doesn't add free time: it switches on today and is first charged when your free trial ends on",
+    );
+  });
+
+  it('comp over: no second trial, in both the Hint and the line under the offers', () => {
+    expect(FLAT_TEXT).toContain(
+      "You've had your free trial, so your plan is charged when you subscribe.",
+    );
+    expect(FLAT_TEXT).toContain(
+      "You've had your free trial, so a plan is charged when you subscribe.",
+    );
+  });
+
+  it('never comped: the published trial, unchanged; the bookings sentence stays in every branch', () => {
+    expect(FLAT_TEXT).toContain('-day free trial starts when you subscribe.');
+    expect(FLAT_TEXT).toContain('Every plan starts with a');
+    expect(FLAT_TEXT).toContain(
+      'Nothing about your bookings, clients or pets changes when you subscribe',
+    );
+  });
+
+  it('chooses the branch from the trial date and the comp column, never a clock', () => {
+    // trialUntil is the live comp's date (planCurrent-gated); trialUsed is a comp date with no live trial.
+    expect(FLAT).toMatch(
+      /const trialUsed = trialUntil === null && typeof settings\.compedUntil === /,
+    );
+    expect(FLAT).toMatch(/trialUntil !== null \? .*: trialUsed \?/);
+    expect(PANEL).not.toMatch(/Date\.now|new Date\(/);
   });
 });

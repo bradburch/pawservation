@@ -79,6 +79,10 @@ import { Hint } from './Hint';
  *  recognise. The browser's own `TypeError: Failed to fetch` is not a plan problem and must not be
  *  rendered as one — and neither is a 401 or 403 from the other worker, for the reason the `!res.ok`
  *  branch below gives. */
+/** Under the "Free trial" status line. */
+const TRIAL_IS_SOLO =
+  'Your trial includes everything in Solo. The booking assistant, booking by WhatsApp and card payments need Pro.';
+
 const CHECKOUT_FAILED = 'Could not start checkout — try again.';
 
 /** The sibling of CHECKOUT_FAILED, for the other hosted page. Same rule: this is the ONE message
@@ -307,8 +311,33 @@ export function PlanPanel({
    * as nothing at all: the line would show a date with no plan in front of it. A render on a stale
    * bundle/API pair must degrade to the honest answer, never throw and never print a blank.
    */
+  const hasPlan = settings.plan === 'solo' || settings.plan === 'pro';
+  /**
+   * THE SIGNUP TRIAL, which is a comp with no plan row: `planCurrent` (the server's answer) says a
+   * grant is live and `compedUntil` is its date, rendered only. Without this a sitter on day one
+   * of her trial read "No plan yet". Same non-empty-string rule as `paidThrough` below.
+   */
+  const trialUntil =
+    !hasPlan &&
+    settings.planCurrent === true &&
+    typeof settings.compedUntil === 'string' &&
+    settings.compedUntil !== ''
+      ? formatTimestamp(settings.compedUntil)
+      : null;
+  /**
+   * ONE FREE TRIAL PER SITTER. The paid surface's checkout caps a subscription's trial at the
+   * signup comp (and charges at once when under two days remain), so the Subscribe copy must not
+   * promise a fresh trial: `trialUntil` (above) is a live comp, and a comp date with no live trial
+   * means she has had hers. A comp date at all is the only signal; no clock is read here.
+   */
+  const trialUsed =
+    trialUntil === null && typeof settings.compedUntil === 'string' && settings.compedUntil !== '';
   const planName =
-    settings.plan === 'solo' || settings.plan === 'pro' ? PLAN_NAMES[settings.plan] : 'No plan yet';
+    settings.plan === 'solo' || settings.plan === 'pro'
+      ? PLAN_NAMES[settings.plan]
+      : trialUntil !== null
+        ? 'Free trial'
+        : 'No plan yet';
   /**
    * RENDERED, never compared. `planActive` is the server's answer to "is it live"; this string is
    * only ever the date beside it.
@@ -527,13 +556,17 @@ export function PlanPanel({
     <>
       <h3>
         Your plan
-        {/* The Hint is SUBSCRIBE'S OWN COPY — it promises a free trial that starts when she
-            subscribes — so it hides on the same condition as the offers grid below, and not on the
+        {/* The Hint is SUBSCRIBE'S OWN COPY — what subscribing does to her trial (one per sitter,
+            see `trialUsed`) — so it hides on the same condition as the offers grid below, and not on the
             offers condition alone, which left it standing beside the Manage plan button. */}
         {!offersHidden && !settings.planActive && pricing && (
           <Hint label="Your plan">
-            Payment is handled by Stripe on their own page — we never see your card. Your{' '}
-            {pricing.trialDays}-day free trial starts when you subscribe.
+            Payment is handled by Stripe on their own page — we never see your card.{' '}
+            {trialUntil !== null
+              ? `Subscribing doesn't add to your free trial: your plan switches on now and is first charged on ${trialUntil}, or today if your trial ends within two days.`
+              : trialUsed
+                ? "You've had your free trial, so your plan is charged when you subscribe."
+                : `Your ${pricing.trialDays}-day free trial starts when you subscribe.`}
           </Hint>
         )}
       </h3>
@@ -545,7 +578,10 @@ export function PlanPanel({
       <p>
         <strong>{planName}</strong>
         {!settings.disabled && paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
+        {!settings.disabled && trialUntil !== null && ` until ${trialUntil}`}
       </p>
+      {/* The trial is a Solo-level comp: say so, so Pro's extras are not a surprise. */}
+      {!settings.disabled && trialUntil !== null && <p className="pb-hint">{TRIAL_IS_SOLO}</p>}
       {settings.disabled && <p className="pb-hint">{ACCOUNT_OFF}</p>}
       {/* SUBSCRIBE HIDES ON A LIVE PLAN, which is the UI half of the double-subscription question;
           the other half is a server-side refusal on the checkout route, which is the paid surface's
@@ -577,9 +613,13 @@ export function PlanPanel({
             ))}
           </ul>
           <p className="pb-hint">
-            Every plan starts with a {pricing.trialDays}-day free trial. Nothing about your
-            bookings, clients or pets changes when you subscribe — a plan only decides which extras
-            are switched on.
+            {trialUntil !== null
+              ? `Choosing a plan now doesn't add free time: it switches on today and is first charged when your free trial ends on ${trialUntil}.`
+              : trialUsed
+                ? "You've had your free trial, so a plan is charged when you subscribe."
+                : `Every plan starts with a ${pricing.trialDays}-day free trial.`}{' '}
+            Nothing about your bookings, clients or pets changes when you subscribe — a plan only
+            decides which extras are switched on.
           </p>
         </>
       )}

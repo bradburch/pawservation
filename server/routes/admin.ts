@@ -954,6 +954,9 @@ export const adminRoutes = new Hono<AppEnv>()
       // renders it through the dashboard's own formatter; this route must not invent a second
       // format, and nothing anywhere may DECIDE from it — that is what `planActive` is for.
       billedUntil: tenant.BilledUntil,
+      // The comp's end, VERBATIM — the signup trial is a comp (createTenantFromSignup), and the
+      // plan panel shows "Free trial until <date>" from it. Rendered, never compared.
+      compedUntil: tenant.CompedUntil,
       // The DERIVED boolean, never a comparison: the rule lives in one expression in one file,
       // and `server/__tests__/premium-entitlement.test.ts` fails any line outside
       // `server/lib/premium.ts` that compares either dated column.

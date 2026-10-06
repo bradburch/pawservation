@@ -153,11 +153,11 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).not.toContain('nothing reaches your calendar');
   });
 
-  it('ends with a way to ask for access, since the product is invite-only', async () => {
+  it('ends with a way to sign up', async () => {
     const body = await howItWorksBody();
     expect(body).not.toMatch(/href="mailto:/);
-    expect(body).toContain('href="/#invite-h"');
-    expect(body).toContain('invite-only');
+    expect(body).toContain('href="/signup"');
+    expect(body).toContain('email you a sign-up link');
   });
 
   it('never re-acquires a pricing absolute that PetRateMode retired', async () => {

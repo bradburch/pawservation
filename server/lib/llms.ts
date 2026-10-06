@@ -118,7 +118,7 @@ export function buildProductLlmsTxt(origin: string): string {
 
 - ${PRICE_LINE} The ${PRICING.trialDays}-day free trial is Solo, with no card needed to start it.
 - Pro adds booking by WhatsApp: clients message the sitter's own WhatsApp number to book, get a quote, reschedule or cancel, through the same booking assistant as the chat on the booking page. The sitter gets each new request as a WhatsApp alert with Confirm and Decline buttons, and the client hears the outcome. Nothing is booked until the sitter confirms.
-- New sitters are added by invitation while the product grows: ${origin}/#invite-h
+- New sitters sign up with their email at ${origin}/signup
 
 ## Pages
 
@@ -159,9 +159,9 @@ Availability, quotes and booking requests are authenticated as the pet owner, an
  * governed by California law with disputes in San Francisco County, so the city/region/country
  * here restates a jurisdiction the site states publicly elsewhere. No `streetAddress`, because
  * there is no premises to name and inventing one to satisfy a validator is exactly the
- * fabrication structured data exists to prevent. The `email` is the same address /contact and the
- * invite-request thanks page already publish, imported from one declaration rather than
- * restated — three places, one address, or one of them stops being read.
+ * fabrication structured data exists to prevent. The `email` is the same address /contact already
+ * publishes, imported from one declaration rather than restated — two places, one address, or one
+ * of them stops being read.
  */
 export function buildProductJsonLdScript(origin: string): string {
   const ld = {
@@ -241,7 +241,7 @@ export function buildProductJsonLdScript(origin: string): string {
           {
             '@type': 'ContactPoint',
             contactType: 'sales',
-            url: `${origin}/#invite-h`,
+            url: `${origin}/signup`,
           },
         ],
       },
