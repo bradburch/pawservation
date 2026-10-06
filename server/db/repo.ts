@@ -67,7 +67,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CompedUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt, SeriesId';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -659,7 +659,9 @@ export async function listSlotBookingCounts(
 /** Every row — including 'blocked' time off — is born sync-pending; the outbox clears on push
  * success. 'blocked' rows sync as an all-day UNAVAILABLE event the same way a real booking syncs
  * as its own event; only 'external' (Google-owned, materialized by reconcile) is never written
- * here at all. */
+ * here at all. The one exception is a series walk (`seriesId` set): it is inserted with
+ * `syncPending: 0`, because a row with a series never carries its own calendar event — the
+ * series' event does. */
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -679,14 +681,19 @@ export async function insertBookingRequest(
     answers?: Record<string, string>;
     source?: string | null;
     idempotencyKey?: string | null;
+    /** The series this walk belongs to (0019); undefined/null = a single booking. */
+    seriesId?: string | null;
+    /** 1 (the default) arms the calendar outbox for this row; a series walk passes 0, because
+     *  the series' own calendar event already carries it. */
+    syncPending?: 0 | 1;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending, SeriesId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -704,7 +711,8 @@ export async function insertBookingRequest(
       row.status,
       row.source ?? null,
       row.idempotencyKey ?? null,
-      1,
+      row.syncPending ?? 1,
+      row.seriesId ?? null,
     )
     .run();
   return id;
@@ -713,7 +721,7 @@ export async function insertBookingRequest(
 /**
  * Insert a booking ADOPTED from an existing Google Calendar event.
  *
- * Deliberately NOT `insertBookingRequest`, which hard-codes `SyncPending = 1`. An adopted row is a
+ * Deliberately NOT `insertBookingRequest`, whose `SyncPending` defaults to 1. An adopted row is a
  * record of an event Google already has: arming the outbox would push a SECOND event for the same
  * stay and break the read-only guarantee the backfill is built on. `GCalEventId` is stamped here
  * instead, so reconcile stops materializing the event as an `'external'` row and treats it as a

@@ -1510,6 +1510,8 @@ export type MyBooking = {
   editable: boolean;
   feeIfCancelledTodayCents: number | null;
   status: string;
+  /** The series this booking belongs to (0019); null = a single booking. */
+  seriesId: string | null;
 };
 
 function parseAnswers(raw: string, bookingId: string): Record<string, string> {
@@ -1612,6 +1614,7 @@ export async function listMyBookings(
             )
           : null,
         status: r.Status,
+        seriesId: r.SeriesId ?? null,
       };
     }),
   });

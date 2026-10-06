@@ -2760,6 +2760,7 @@ export const adminRoutes = new Hono<AppEnv>()
               )
             : null,
         createdAt: r.CreatedAt,
+        seriesId: r.SeriesId ?? null,
       })),
     });
   })

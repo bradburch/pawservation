@@ -444,6 +444,7 @@ describe('rowsToCapacityEvents', () => {
         CancellationFee: null,
         Status: 'confirmed',
         CreatedAt: '',
+        SeriesId: null,
         CapacityKind: null,
       },
       {
@@ -462,6 +463,7 @@ describe('rowsToCapacityEvents', () => {
         CancellationFee: null,
         Status: 'pending',
         CreatedAt: '',
+        SeriesId: null,
         CapacityKind: 'boarding',
       },
     ]);
